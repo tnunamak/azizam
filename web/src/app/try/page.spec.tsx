@@ -65,7 +65,7 @@ beforeEach(() => {
     configurable: true,
     value: () => {},
   });
-  // The Incognito switch renders on every tab; the switch measures itself with ResizeObserver, which jsdom lacks.
+  // The keep-request-history switch renders on every tab; the switch measures itself with ResizeObserver, which jsdom lacks.
   vi.stubGlobal(
     "ResizeObserver",
     class {

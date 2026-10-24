@@ -93,7 +93,7 @@ beforeEach(() => {
     return json(url.includes("workflows") ? activeCatalog : { aliases: [], models: [] });
   });
   vi.stubGlobal("fetch", fetchMock);
-  // The "Don't keep this prompt" switch measures itself.
+  // The keep-request-history switch measures itself.
   vi.stubGlobal(
     "ResizeObserver",
     class {

@@ -61,7 +61,7 @@ const kept = {
   workflow_download_url: "https://gw.test/v1/assets/img_kept/content?md=full",
   source: { id: "app:a1", kind: "app", label: "Robin", person_id: "usr_robin" },
 };
-// The same person's item made with "Don't keep this prompt".
+// The same person's item made with keep request history off.
 const forgotten = {
   ...base,
   asset_id: "img_forgotten",

@@ -137,15 +137,15 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("Try: Incognito and prompt keeping", () => {
+describe("Try: keep request history and prompt keeping", () => {
   it("shows what happens to the prompt before Run, and keeps it by default", async () => {
     const user = userEvent.setup();
     renderTry();
     await ready();
     const toggle = await screen.findByRole("switch", {
-      name: "Incognito",
+      name: "Keep request history",
     });
-    expect(toggle).not.toBeChecked();
+    expect(toggle).toBeChecked();
     expect(
       screen.getByText(
         "Azizam tries to keep the prompt with the picture.",
@@ -165,10 +165,10 @@ describe("Try: Incognito and prompt keeping", () => {
     renderTry();
     await ready();
     await user.click(
-      await screen.findByRole("switch", { name: "Incognito" }),
+      await screen.findByRole("switch", { name: "Keep request history" }),
     );
     expect(
-      screen.getByText("The picture still goes to Library."),
+      screen.getByText("The prompt isn’t kept. The picture still goes to Library."),
     ).toBeVisible();
     expect(sessionStorage.getItem("azizam.try.forget")).toBe("1");
     const example = screen.queryByRole("button", { name: "Try an example" });
@@ -179,15 +179,15 @@ describe("Try: Incognito and prompt keeping", () => {
     expect(submittedBody().extensions).toEqual({
       "com.azizam.prompts": { mode: "forget" },
     });
-    expect(screen.getByText("Incognito: this isn’t saved")).toBeVisible();
+    expect(screen.getByText("Not saved in your History")).toBeVisible();
     expect(screen.queryByText("Prompt not kept")).toBeNull();
 
     cleanup();
     renderTry();
     await ready();
     expect(
-      await screen.findByRole("switch", { name: "Incognito" }),
-    ).toBeChecked();
+      await screen.findByRole("switch", { name: "Keep request history" }),
+    ).not.toBeChecked();
   });
 
   it("offers no switch when the person turned memory off", async () => {
@@ -242,14 +242,14 @@ describe("Try: Incognito and prompt keeping", () => {
   it("is offered on a chat, which History keeps, and not to someone signed out", async () => {
     account.params = new URLSearchParams("capability=chat");
     renderTry();
-    expect(await screen.findByRole("switch", { name: "Incognito" })).toBeVisible();
+    expect(await screen.findByRole("switch", { name: "Keep request history" })).toBeVisible();
     cleanup();
     account.promptMemory.mockClear();
     account.params = new URLSearchParams("capability=image");
     renderTry({ ...member, authenticated: false });
     await ready();
     expect(account.promptMemory).not.toHaveBeenCalled();
-    expect(screen.queryByRole("switch", { name: "Incognito" })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Keep request history" })).toBeNull();
   });
 });
 
@@ -269,7 +269,7 @@ it("honors the displayed off snapshot when Run refresh finds memory on", async (
   await user.click(screen.getByRole("button", { name: "Run" }));
   await screen.findByAltText("Generated result", {}, { timeout: 15000 });
   expect(
-    screen.getByText("The picture still goes to Library."),
+    screen.getByText("The prompt isn’t kept. The picture still goes to Library."),
   ).toBeVisible();
   expect(account.promptMemory).toHaveBeenCalledTimes(2);
   expect(submittedBody().extensions).toEqual({
@@ -301,7 +301,7 @@ it("explains unreadable prompt settings while preserving the privacy fact", asyn
     ),
   ).toBeVisible();
   expect(
-    screen.getByRole("switch", { name: "Incognito" }),
+    screen.getByRole("switch", { name: "Keep request history" }),
   ).toBeVisible();
 });
 
@@ -370,7 +370,7 @@ it.each(["sign-out", "unmount"] as const)(
         expect(screen.getByRole("combobox", { name: "Model" }))
           .toHaveTextContent("Fixture speech"),
       );
-      await screen.findByRole("switch", { name: "Incognito" });
+      await screen.findByRole("switch", { name: "Keep request history" });
       const example = screen.queryByRole("button", { name: "Try an example" });
       const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
       if (example && promptBox?.value === "") await userEvent.setup().click(example);

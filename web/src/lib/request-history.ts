@@ -1,7 +1,7 @@
 /**
  * Request history: what the person's apps sent and what came back, as the gateway keeps it
  * (docs/design/REQUEST_RETENTION.md sections 3.4, 8, 10 and 13.3). The History page, the member's
- * settings, the Home notice and Try's Incognito switch share these shapes and words, so none of
+ * settings, the Home notice and Try's keep-request-history switch share these shapes and words, so none of
  * them says something different.
  */
 /** The member's choice, as `GET` and `PUT /me/api/retention` answer. */
@@ -161,7 +161,7 @@ export function sizeWords(bytes: number): string {
 
 const NOT_KEPT_REASON: Record<string, string> = {
   server_disabled: "Azizam doesn’t keep request history on this gateway.",
-  request_forget: "This request was sent as Incognito.",
+  request_forget: "Keep request history was off for this request.",
   no_person: "No one was signed in, so there was no history to keep it in.",
   member_disabled: "Request history was off for you.",
   no_scope: "The app had no stable scope to keep it under.",

@@ -204,13 +204,13 @@ type Result = {
   probabilities?: Array<{ option: string; probability: number | null }>;
   /** The run asked the gateway not to keep its words, or memory was off. */
   promptNotSaved?: boolean;
-  /** The run was sent as Incognito: nothing about it was kept. */
-  incognito?: boolean;
+  /** The run was sent with keep request history off: nothing about it was kept. */
+  historyOff?: boolean;
 };
 
 /** Tabs whose words the gateway can keep with what they make. */
 const MEMORY_TABS = new Set<TryTab>(["image", "speech", "workflow"]);
-/** "Don't keep this prompt", remembered for the browser session. */
+/** Keep request history switched off, remembered for the browser session. */
 const FORGET_SESSION_KEY = "azizam.try.forget";
 /** Remove secrets persisted by older versions; new keys stay in page memory. */
 const TRY_KEY_STORAGE_KEY = "azizam.try.key";
@@ -1287,7 +1287,7 @@ export default function TryPage() {
   const [activeTab, setActiveTab] = useState<TryTab>("chat");
   const viewer = useViewer();
   const personViewer = viewer.authenticated && !viewer.serviceAdmin;
-  // Whether this person's requests are kept in History; Incognito's note says what would be.
+  // Whether this person's requests are kept in History; the keep-history switch's note says what would be.
   // Undefined while loading, null when it cannot be read.
   const [historyChoice, setHistoryChoice] = useState<
     RequestHistoryChoice | null | undefined
@@ -2049,8 +2049,8 @@ export default function TryPage() {
         setForget(true);
       }
       // A prompt the member or the household turned off still goes with forget on the tabs that keep prompts,
-      // as before: the request text is what the prompt is, so History must not keep it either. Incognito is
-      // the same control on every tab.
+      // as before: the request text is what the prompt is, so History must not keep it either. The keep-history
+      // switch is the same control on every tab.
       const promptsOff =
         MEMORY_TABS.has(tab) &&
         (keepState === "member-off" ||
@@ -2162,7 +2162,7 @@ export default function TryPage() {
           checkingReceipt: tab === "chat",
           runId,
           promptNotSaved,
-          incognito: forget,
+          historyOff: forget,
         },
       }));
       if (tab === "chat") {
@@ -2862,8 +2862,8 @@ export default function TryPage() {
                     </label>
                   )}
                   {personViewer ? (
-                    <IncognitoControl
-                      id={`incognito-${tab.value}`}
+                    <KeepHistoryControl
+                      id={`keep-history-${tab.value}`}
                       keepState={keepState}
                       history={historyChoice}
                       forget={forget}
@@ -3031,10 +3031,10 @@ function ResultView({
     <div className="min-w-0 space-y-5">
       <div className="space-y-2">
         <h2 className="font-semibold">{result.title}</h2>
-        {result.incognito ? (
+        {result.historyOff ? (
           <p className="text-muted-foreground text-meta flex items-center gap-1.5">
             <Ghost aria-hidden="true" className="size-4 shrink-0" />
-            Incognito: this isn’t saved
+            Not saved in your History
           </p>
         ) : result.promptNotSaved ? (
           <p className="text-muted-foreground text-meta flex items-center gap-1.5">
@@ -3302,20 +3302,14 @@ function ResultMedia({
 }
 
 /**
- * "Don't keep this prompt", set before Run (ChatGPT's Temporary Chat and
- * Safari's private mode: the mode is chosen before you send, and the screen
- * shows it). One row above Run: the switch and what happens to the words.
- * When memory is off for the person or the household there is no choice
- * to make, so the row says so instead of offering a switch that does
- * nothing.
+ * Keep request history: one switch on every Try tab, set before Run. On, the
+ * request is kept as the person's settings say. Off, it goes with forget, so
+ * the gateway keeps nothing about it, and the choice lasts for this browser
+ * tab only. The switch starts on, which is the default for a person who keeps
+ * request history. Where the person's settings already decide (history or
+ * prompt keeping off), the row says so and offers no switch.
  */
-/**
- * Incognito: one switch on every Try tab. On, the request goes with `extensions["com.azizam.prompts"]` set to
- * forget, so the gateway keeps nothing about it, and it lasts for this browser tab only. Off, the note says what
- * the gateway would keep, from the member's own settings. Where the prompt setting already decides (a picture,
- * sound or workflow result with prompt keeping off), the row says so and offers no switch.
- */
-function IncognitoControl({
+function KeepHistoryControl({
   id,
   forget,
   onForget,
@@ -3326,6 +3320,7 @@ function IncognitoControl({
   made,
 }: {
   id: string;
+  /** Off: the request goes with forget. */
   forget: boolean;
   onForget: (next: boolean) => void;
   keepState: TryKeepState | null;
@@ -3383,7 +3378,7 @@ function IncognitoControl({
   ) {
     return (
       <div
-        data-slot="incognito"
+        data-slot="keep-history"
         data-state="not-kept"
         className="rounded-control bg-muted flex items-center gap-3 border px-3 py-2.5"
       >
@@ -3413,9 +3408,11 @@ function IncognitoControl({
   if (forget) {
     note = (
       <>
-        <span className="block">Incognito: this isn’t saved.</span>
+        <span className="block">Not saved in your History.</span>
         {memory ? (
-          <span className="block">The {made} still goes to Library.</span>
+          <span className="block">
+            The prompt isn’t kept. The {made} still goes to Library.
+          </span>
         ) : null}
       </>
     );
@@ -3446,10 +3443,12 @@ function IncognitoControl({
       </>
     );
   }
+  // With request history off, this switch can only still decide the prompt kept with a picture.
+  const label = history?.keep === false ? "Keep prompts" : "Keep request history";
   return (
     <div
-      data-slot="incognito"
-      data-state={forget ? "incognito" : "kept"}
+      data-slot="keep-history"
+      data-state={forget ? "off" : "on"}
       className={cn(
         "rounded-control flex items-center gap-3 border px-3 py-2.5",
         forget && "bg-muted",
@@ -3458,7 +3457,7 @@ function IncognitoControl({
       <Ghost aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
       <div className="min-w-0 flex-1">
         <label htmlFor={id} className="text-body block font-medium">
-          Incognito
+          {label}
         </label>
         <p id={`${id}-note`} className="text-muted-foreground text-meta">
           {note}
@@ -3466,8 +3465,8 @@ function IncognitoControl({
       </div>
       <Switch
         id={id}
-        checked={forget}
-        onCheckedChange={onForget}
+        checked={!forget}
+        onCheckedChange={(next) => onForget(!next)}
         aria-describedby={`${id}-note`}
       />
     </div>
