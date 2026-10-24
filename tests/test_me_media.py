@@ -1598,22 +1598,25 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertFalse(any(receipt["served_locally"] for receipt in usage["receipts"]))
 
     def _submit_picture(self, job_id: str, submit_request_id: str, *, app_id: str, created_at: int | None = None,
-                        status: str = media_jobs.STATUS_SUCCEEDED) -> None:
+                        status: str = media_jobs.STATUS_SUCCEEDED, links_job: bool = True) -> None:
         # The image route's submit receipt names no model, and its job names this receipt as the parent.
+        # It names its job too, unless it predates that link (links_job=False).
         self._receipt(app_id, submit_request_id, intent="image.generate",
                       route_path="/gateway/v1/media/jobs/image-generations", requested_model=None,
-                      resolved_model=None, status="ok", backend="comfyui", created_at=created_at)
+                      resolved_model=None, status="ok", backend="comfyui", created_at=created_at,
+                      job_id=job_id if links_job else None)
         media_jobs.create(media_jobs.MediaJob(
             job_id=job_id, request_id=f"imgjob_idem_{job_id}", intent="image.generate",
             parent_request_id=submit_request_id, app_id=app_id, status=status,
         ), path=self.jobs_db)
 
     def _work_receipt(self, request_id: str, job_id: str, *, app_id: str, attempt: int = 1, status: str = "ok",
-                      started: bool = True, remote: bool = False, cost: float | None = None) -> None:
+                      started: bool = True, remote: bool = False, cost: float | None = None,
+                      created_at: int | None = None) -> None:
         # The worker's receipt for one attempt: it carries the job's id and reports where the work ran.
         self._receipt(app_id, request_id, job_id=job_id, attempt_number=attempt, intent="image.generate",
                       route_path="/v1/images/generations", status=status, backend="local-engine", remote=remote,
-                      started=started, cost=cost)
+                      started=started, cost=cost, created_at=created_at)
 
     def test_a_picture_made_through_a_job_counts_once_and_is_local(self) -> None:
         self._submit_picture("mj_try", "req_try_submit", app_id=self.app_a["id"])
@@ -1651,15 +1654,52 @@ class MeMediaRouterTests(unittest.TestCase):
         [row] = usage["receipts"]
         self.assertEqual(row["status"], "error")
 
-    def test_a_job_refused_before_dispatch_counts_once_as_cost_not_recorded(self) -> None:
+    def test_a_worker_refused_job_counts_once_as_failed_with_its_cost_not_recorded(self) -> None:
+        # No attempt receipt exists, so the submit receipt's "ok" is not the outcome; the job record's failure is.
         self._submit_picture("mj_refused", "req_refused_submit", app_id=self.app_a["id"],
                              status=media_jobs.STATUS_FAILED)
         usage = self.client.get("/me/api/usage/summary").json()
-        self.assertEqual((usage["requests"], usage["local_requests"], usage["unknown_paid_requests"]), (1, 0, 0))
+        self.assertEqual((usage["requests"], usage["failed_requests"], usage["local_requests"]), (1, 1, 0))
+        self.assertEqual(usage["unknown_paid_requests"], 0)
         self.assertFalse(usage["remote_spend_available"])
         [row] = usage["receipts"]
+        self.assertEqual(row["status"], "failed")
         self.assertFalse(row["served_locally"])
         self.assertIsNone(row["remote_spend"])
+
+    def test_a_job_record_the_viewer_cannot_read_does_not_fail_its_request(self) -> None:
+        # The job belongs to another App, so Alice's Usage does not read its failure.
+        self._receipt(self.app_a["id"], "req_foreign_submit", job_id="mj_foreign",
+                      route_path="/gateway/v1/media/jobs/image-generations", requested_model=None,
+                      resolved_model=None, status="ok", backend="comfyui")
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="mj_foreign", request_id="imgjob_foreign", intent="image.generate",
+            parent_request_id="req_foreign_submit", app_id=self.app_b["id"], status=media_jobs.STATUS_FAILED,
+        ), path=self.jobs_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 0))
+        self.assertEqual(usage["receipts"][0]["status"], "ok")
+
+    def test_a_picture_counts_once_after_its_job_record_is_erased(self) -> None:
+        # The work receipt is stored first: the submit receipt must still be the request, not the earliest row.
+        self._work_receipt("req_erased_work", "mj_erased", app_id=self.app_a["id"], status="error",
+                           created_at=int(time.time()) - 5)
+        self._submit_picture("mj_erased", "req_erased_submit", app_id=self.app_a["id"])
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 1)
+        media_jobs.delete_succeeded(["mj_erased"], path=self.jobs_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 1))
+        [row] = usage["receipts"]
+        self.assertEqual((row["request_id"], row["status"]), ("req_erased_submit", "error"))
+
+    def test_an_older_submit_receipt_stays_unlinked_once_its_job_record_is_erased(self) -> None:
+        # Known gap, accepted: a submit receipt written before it named its job has no link after erasure,
+        # so it counts on its own beside the work receipt.
+        self._submit_picture("mj_old", "req_old_submit", app_id=self.app_a["id"], links_job=False)
+        self._work_receipt("req_old_work", "mj_old", app_id=self.app_a["id"])
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 1)
+        media_jobs.delete_succeeded(["mj_old"], path=self.jobs_db)
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 2)
 
     def test_a_request_outside_any_job_is_counted_as_before(self) -> None:
         self._receipt(self.app_a["id"], "req_plain_chat", intent="chat.completions",
@@ -1708,6 +1748,20 @@ class MeMediaRouterTests(unittest.TestCase):
         usage = self.client.get("/me/api/usage/summary").json()
         self.assertEqual((usage["requests"], usage["local_requests"]), (2, 2))
         self.assertEqual(sorted(row["request_id"] for row in usage["receipts"]), ["audjob_one", "vidjob_one"])
+
+    def test_an_audio_job_counts_once_after_its_job_record_is_erased(self) -> None:
+        # Its one receipt is the job's own, so with no submit receipt to pair it with, erasure leaves nothing to double.
+        self._receipt(self.app_a["id"], "audjob_erased", job_id="mj_aud_erased", intent="audio.generate",
+                      route_path="/gateway/v1/media/jobs", requested_model="model-one", resolved_model="model-one",
+                      backend="local-engine", started=True, status="ok")
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="mj_aud_erased", request_id="audjob_erased", intent="audio.generate",
+            parent_request_id="audjob_erased", app_id=self.app_a["id"], status=media_jobs.STATUS_SUCCEEDED,
+        ), path=self.jobs_db)
+        media_jobs.delete_succeeded(["mj_aud_erased"], path=self.jobs_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (1, 1))
+        self.assertEqual([row["request_id"] for row in usage["receipts"]], ["audjob_erased"])
 
     def test_receipt_cost_prefers_the_provider_figure_then_the_recorded_cost(self) -> None:
         self.assertEqual(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": "0.01"}},
@@ -2586,6 +2640,8 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(usage["requests"], 1)
         self.assertEqual(usage["local_requests"], 0)
         self.assertFalse(usage["receipts"][0]["served_locally"])
+        # The job failed, and its receipt never recorded a success, so Usage counts the request as failed.
+        self.assertEqual((usage["failed_requests"], usage["receipts"][0]["status"]), (1, "failed"))
 
 
 

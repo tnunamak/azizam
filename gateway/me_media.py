@@ -1761,14 +1761,22 @@ def _attempt_order(receipt: Mapping[str, Any]) -> tuple[int, int, str]:
     return (attempt if isinstance(attempt, int) else 0, int(receipt.get("_stored_at") or 0), str(receipt["request_id"]))
 
 
-def _fold_media_jobs(receipts: list[dict[str, Any]], jobs: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Count each media job once, as its submit receipt, with the outcome its work receipts recorded.
+# The Try page's image job submit route. Its receipt names the job it created; the worker's attempt receipts are on another route.
+_IMAGE_JOB_SUBMIT_PATH = "/gateway/v1/media/jobs/image-generations"
 
-    The worker writes a job's ``job_id`` on every attempt's work receipt, and a Make submit receipt
-    carries it too. The job names the submit receipt it was made from, by its creating receipt,
-    parent or request id. Only ``receipts`` the viewer can read take part, so no folded value comes
-    from a receipt they cannot read. When the submit receipt is not among them, the job's earliest
-    receipt stands for it. Receipts outside any job pass through unchanged.
+
+def _fold_media_jobs(
+    receipts: list[dict[str, Any]], jobs: Mapping[str, Mapping[str, Any]], job_scope: _MediaScope,
+) -> list[dict[str, Any]]:
+    """Count each media job once, as its submit receipt, with the outcome its attempts recorded.
+
+    The Try image route writes the job's ``job_id`` on its submit receipt, so the pair stays linked after
+    the job record is erased. An older submit receipt has no ``job_id``; the job names it by its creating
+    receipt, parent or request id, while the record exists. The worker writes the job's ``job_id`` on every
+    attempt's receipt, and a Make receipt carries it too. Only ``receipts`` the viewer can read take part,
+    so no folded value comes from a receipt they cannot read. When the submit receipt is not among them,
+    the job's earliest receipt stands for it. A job with no attempt receipt takes the failure its record
+    shows, when the viewer can read that record. Receipts outside any job pass through unchanged.
     """
     by_request_id = {receipt["request_id"]: receipt for receipt in receipts}
     members_by_job: dict[str, list[dict[str, Any]]] = {}
@@ -1779,17 +1787,14 @@ def _fold_media_jobs(receipts: list[dict[str, Any]], jobs: Mapping[str, Mapping[
     in_jobs: set[str] = set()
     for job_id, members in members_by_job.items():
         job = jobs.get(job_id)
-        submit = None
-        for request_id in _job_receipt_ids(job) if job is not None else []:
-            candidate = by_request_id.get(request_id)
-            if (candidate is not None and candidate["request_id"] not in folded
-                    and str(candidate.get("job_id") or job_id) == job_id):
-                submit = candidate
-                break
+        submit = _submit_receipt(job_id, members, job, by_request_id, folded)
         if submit is not None and all(member is not submit for member in members):
             members = [submit, *members]
         display = submit if submit is not None else min(members, key=_attempt_order)
-        folded[display["request_id"]] = _job_request(display, members, submit=submit is not None)
+        attempts = [member for member in members if member is not submit]
+        failed = (submit is not None and not attempts and job is not None
+                  and job.get("status") == media_jobs.STATUS_FAILED and _job_in_scope(job, job_scope))
+        folded[display["request_id"]] = _job_request(display, members, submit=submit is not None, failed=failed)
         in_jobs.update(member["request_id"] for member in members)
     return [
         folded[receipt["request_id"]] if receipt["request_id"] in folded else receipt
@@ -1798,11 +1803,37 @@ def _fold_media_jobs(receipts: list[dict[str, Any]], jobs: Mapping[str, Mapping[
     ]
 
 
-def _job_request(display: Mapping[str, Any], members: list[dict[str, Any]], *, submit: bool) -> dict[str, Any]:
+def _submit_receipt(
+    job_id: str,
+    members: list[dict[str, Any]],
+    job: Mapping[str, Any] | None,
+    by_request_id: Mapping[str, dict[str, Any]],
+    folded: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """The receipt that is the job's request, when the viewer can read it.
+
+    The Try image route's submit receipt names its job, so it is found without the job record. An older
+    submit receipt is found through the job record instead, as the receipt that record names.
+    """
+    submits = [member for member in members if member.get("path") == _IMAGE_JOB_SUBMIT_PATH]
+    if submits:
+        return min(submits, key=_attempt_order)
+    for request_id in _job_receipt_ids(job) if job is not None else []:
+        candidate = by_request_id.get(request_id)
+        if (candidate is not None and candidate["request_id"] not in folded
+                and str(candidate.get("job_id") or job_id) == job_id):
+            return candidate
+    return None
+
+
+def _job_request(
+    display: Mapping[str, Any], members: list[dict[str, Any]], *, submit: bool, failed: bool,
+) -> dict[str, Any]:
     """One job's request: the receipt that stands for it, with the outcome, backend, start and cost its work recorded.
 
     A job with several work receipts, such as retries, is one request, and its cost is the sum of their
-    recorded costs. A job with no work receipt keeps the standing receipt's own facts.
+    recorded costs. A job with no work receipt keeps the standing receipt's own facts, except that
+    ``failed`` (its job record shows the job failed) makes the outcome failed.
     """
     work = [member for member in members if member is not display] if submit else members
     newest = sorted(work or [display], key=_attempt_order, reverse=True)
@@ -1810,7 +1841,7 @@ def _job_request(display: Mapping[str, Any], members: list[dict[str, Any]], *, s
     costs = [cost for cost in (_receipt_cost(member) for member in members) if cost is not None]
     request = {
         **display,
-        "status": newest[0].get("status"),
+        "status": "failed" if failed else newest[0].get("status"),
         "backend": _string_first(*(member.get("backend") for member in newest), display.get("backend")),
         "started_at_ms": min(started) if started else display.get("started_at_ms"),
         "remote": any(_receipt_is_paid_remote(member) for member in members),
@@ -1889,7 +1920,8 @@ def _usage_summary(
     # Requests per source across the whole scope, so the Source picker can rank
     # sources by activity whichever source is currently selected.
     source_requests: dict[str, int] = {}
-    for entry in _fold_media_jobs(scoped, media_jobs.get_many(job_ids, path=media_jobs_path) if job_ids else {}):
+    for entry in _fold_media_jobs(scoped, media_jobs.get_many(job_ids, path=media_jobs_path) if job_ids else {},
+                                  media_scope):
         tallied = _source_id(entry.get("source"))
         if tallied:
             source_requests[tallied] = source_requests.get(tallied, 0) + 1
@@ -2006,7 +2038,7 @@ def _usage_summary(
     receipt_list = []
     shown = receipts[:USAGE_RECEIPT_LIMIT]
     visible_receipts = receipt_store.get_many(
-        [rid for internal in shown for rid in (internal["request_id"], internal.get("_outcome_request_id")) if rid],
+        [internal["request_id"] for internal in shown],
         audience="client", viewer_person_id=actor.user_id, path=receipts_path,
     )
     for internal in shown:
@@ -2015,10 +2047,9 @@ def _usage_summary(
             visible["remote_spend"] = _receipt_cost(internal)
             # The row reads the same rule as the totals; a client never sees the backend name.
             visible["served_locally"] = _receipt_served_locally(internal)
-            # A media job's row shows the outcome and remote flag its work receipt recorded.
-            outcome = internal.get("_outcome_request_id")
-            if outcome:
-                visible["status"] = visible_receipts.get(outcome, {}).get("status", internal.get("status"))
+            # A media job's row shows the outcome and remote flag the fold counted: its attempts', or the job's failure.
+            if internal.get("_outcome_request_id"):
+                visible["status"] = internal.get("status")
                 visible["remote"] = internal.get("remote")
             visible["capability"] = _capability(internal)
             visible["source"] = internal.get("source")
