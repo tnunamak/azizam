@@ -130,13 +130,9 @@ for (const width of [1440, 390]) {
     // Home: a member who predates request history is told once. "Not now" and "Turn on" both answer it.
     makePredatingMember(baseURL!);
     await page.goto("/");
-    const notice = page.getByText("Request history is available");
+    const notice = page.getByText("Request history is available.");
     await expect(notice).toBeVisible();
-    await expect(
-      page.getByText(
-        "Azizam can now keep your request history so you can look back at what you asked. It’s off for you until you turn it on.",
-      ),
-    ).toBeVisible();
+    await expect(page.getByText("Look back at what you asked. It’s off for you until you turn it on.")).toBeVisible();
     await page.screenshot({ path: shot(width, "home-notice"), fullPage: true });
     if (width === 390) {
       await page.getByRole("button", { name: "Turn on" }).click();

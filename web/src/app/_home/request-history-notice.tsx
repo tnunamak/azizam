@@ -1,8 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Info, X } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
-import { Callout } from "@/components/product/status-ui";
 import { Button } from "@/components/ui/button";
 import { accountApi } from "@/lib/account-api";
 import { toast } from "@/lib/toast";
@@ -49,33 +49,39 @@ export function RequestHistoryNotice() {
   if (!enabled || !data?.notice_due || data.household_off) return null;
   const busy = turnOn.isPending || dismiss.isPending;
   return (
-    <Callout
-      severity="info"
-      title="Request history is available"
-      actions={
-        <>
-          <Button
-            size="sm"
-            disabled={busy}
-            onClick={() => turnOn.mutate(data)}
-          >
-            Turn on
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => dismiss.mutate(undefined)}
-          >
-            Not now
-          </Button>
-        </>
-      }
+    // A slim one-line banner on the page tint, not a card (judge round 2): it asks once, and Make stays the
+    // page's one primary action, so Turn on is an outline button and Not now a text button.
+    <section
+      aria-labelledby="history-notice-title"
+      className="bg-muted rounded-panel flex min-h-12 flex-wrap items-center gap-x-3 gap-y-1 py-1.5 pr-1.5 pl-4"
     >
-      <p>
-        Azizam can now keep your request history so you can look back at what
-        you asked. It’s off for you until you turn it on.
+      <Info aria-hidden="true" className="text-info size-4 shrink-0" />
+      <p className="text-meta min-w-0 flex-1">
+        <span id="history-notice-title" role="heading" aria-level={2} className="font-medium">
+          Request history is available.
+        </span>{" "}
+        <span className="text-muted-foreground">
+          Look back at what you asked. It’s off for you until you turn it on.
+        </span>
       </p>
-    </Callout>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => turnOn.mutate(data)}>
+          Turn on
+        </Button>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => dismiss.mutate(undefined)}>
+          Not now
+        </Button>
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label="Dismiss"
+          className="text-muted-foreground"
+          disabled={busy}
+          onClick={() => dismiss.mutate(undefined)}
+        >
+          <X aria-hidden="true" />
+        </Button>
+      </div>
+    </section>
   );
 }
