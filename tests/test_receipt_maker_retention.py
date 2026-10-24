@@ -2,8 +2,9 @@
 
 The maker is the person a request ran as. The gateway writes that person onto the receipt when the receipt is created,
 from the request's own authentication. An App's owner is not the maker of the requests that come through the App, so
-owning the App never shows the full entry. A receipt with no maker shows its kind and decision to everyone, its App's
-owner included (REQUEST_RETENTION.md 13.3, DECISIONS.md D51).
+owning the App never shows the full entry. A receipt with no maker shows its kind and decision to everyone who may open
+it. In a service App the owner may not open a member's receipt at all: an owner gets absence there (OV3 slice 1,
+REQUEST_RETENTION.md 13.3, DECISIONS.md D51).
 """
 from __future__ import annotations
 
@@ -74,9 +75,11 @@ def test_the_maker_sees_the_full_retention_entry(case):
     assert case.open_as("maker", "req_mine") == [ENTRY]
 
 
-def test_an_app_owner_who_is_not_the_maker_sees_only_kind_and_decision(case):
+def test_an_app_owner_who_is_not_the_maker_gets_absence_for_a_members_receipt(case):
     case.store("req_member", case.shared, maker="member")
-    assert case.open_as("owner", "req_member") == SUMMARY
+    with pytest.raises(UserPortalError) as exc:
+        case.open_as("owner", "req_member")
+    assert exc.value.status_code == 404
 
 
 def test_the_member_who_made_a_request_on_a_shared_app_reads_its_full_entry(case):
@@ -118,7 +121,7 @@ async def _keyless_chat(address: str) -> httpx.Response:
         })
 
 
-def test_a_trusted_address_request_names_no_maker_and_its_app_owner_sees_only_kind_and_decision(world):
+def test_a_trusted_address_request_names_no_maker_and_its_app_owner_gets_absence(world):
     with sqlite3.connect(world.db) as conn:
         app_id, owner_id = conn.execute("SELECT id, owner_user_id FROM apps WHERE kind='service'").fetchone()
     admin_store.add_trusted_address(app_id, TRUSTED_ADDRESS, max_entries=32, path=world.db, created_by=owner_id)
@@ -129,8 +132,9 @@ def test_a_trusted_address_request_names_no_maker_and_its_app_owner_sees_only_ki
     assert all("maker_person_id" not in receipt for receipt in mine)
     session = AdminSession(subject=owner_id, email="fixture@example.test", role="none", issued_at=1,
                            expires_at=4_000_000_000)
-    entry = get_user_receipt(session, mine[0]["request_id"], path=world.db, receipts_path=world.receipts)["retention"]
-    assert entry == [{"kind": "request_history", "decision": "not_kept"}]
+    with pytest.raises(UserPortalError) as exc:
+        get_user_receipt(session, mine[0]["request_id"], path=world.db, receipts_path=world.receipts)
+    assert exc.value.status_code == 404
 
 
 @pytest.mark.parametrize("accepted, final", [("alice", None), ("alice", "bob"), (None, "bob")],
