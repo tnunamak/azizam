@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from html import escape
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -14,10 +15,11 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
 from starlette.routing import Mount, Route, WebSocketRoute
 
 import proxy
-from gateway import accounts, admin_store, metrics_writer, providers, receipt_store
+from gateway import accounts, admin_store, metrics_writer, providers, receipt_store, runtime_auth
 from tests.support.app_keys import issue_app_key
 from gateway.admin_api import _require_admin
 from gateway.admin_oidc import CookieConfig, csrf_token_for_session, encode_session_cookie, session_from_claims
@@ -212,6 +214,30 @@ def test_openapi_snapshot_and_security():
     for row in INVENTORY:
         if row["auth"] == "session-only":
             assert row["method"].lower() not in schema["paths"].get(row["path"], {})
+
+
+def test_openapi_declares_each_header_that_carries_an_app_key():
+    schemes = proxy.app.openapi()["components"]["securitySchemes"]
+    assert schemes["AppKeyBearer"]["type"] == "http"
+    assert schemes["AppKeyBearer"]["scheme"] == "bearer"
+    assert "trusted" in schemes["AppKeyBearer"]["description"]
+    # The declared headers are the ones the proxy reads, and it reads no query key unless the owner turns that on.
+    header_names = {scheme["name"] for scheme in schemes.values() if scheme.get("in") == "header"}
+    assert header_names == set(runtime_auth.CLIENT_KEY_HEADERS)
+    assert not [scheme for scheme in schemes.values() if scheme.get("in") == "query"]
+    for header in header_names:
+        assert proxy.get_client_api_key_from_headers({header: "app-key-fixture"}) == "app-key-fixture"
+    assert proxy.get_client_api_key_from_headers({"authorization": "Bearer app-key-fixture"}) == "app-key-fixture"
+
+
+def test_unsigned_reference_lists_every_path_of_the_schema():
+    client = TestClient(proxy.app)
+    paths = proxy.app.openapi()["paths"]
+    for url in ("/docs", "/redoc"):
+        response = client.get(url)
+        assert response.status_code == 200, url
+        for path in paths:
+            assert f"<code>{escape(path)}</code>" in response.text, path
 
 
 def _digest(value):
