@@ -219,9 +219,13 @@ function SampleFace({ row }: { row: HomeCapability }) {
   );
 }
 
-/** The sample disc: 36 px, white with a dark glyph, as on Recent's dark audio tile. It plays the sample. */
+/**
+ * A sample's play button: a 44 px target, so a thumb can reach it on a phone, around the 36 px disc that Recent's
+ * audio tile uses (--media-disc: the dark scrim on the light face, white on the dark one). It plays the sample.
+ */
+const SAMPLE_BUTTON = "group pointer-events-auto flex size-11 items-center justify-center rounded-full focus-visible:outline-none";
 const SAMPLE_DISC =
-  "pointer-events-auto flex size-9 items-center justify-center bg-sample-disc text-sample-disc-foreground rounded-full shadow-sm transition-opacity hover:opacity-90 focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none [&_svg]:size-4 [&_svg]:translate-x-px [&_svg]:fill-current max-sm:size-11";
+  "bg-media-disc text-media-disc-foreground flex size-9 items-center justify-center rounded-full shadow-sm transition-opacity duration-(--motion-fast) group-hover:opacity-90 group-focus-visible:ring-ring group-focus-visible:ring-2 group-focus-visible:ring-offset-2 [&_svg]:size-4 [&_svg]:translate-x-px [&_svg]:fill-current";
 
 /**
  * Nothing to show yet, so the chooser is a row of cards under the composer, on the composer's 760 px edges:
@@ -287,7 +291,7 @@ function FirstVisitList({
                 <span className="pointer-events-none absolute inset-x-0 top-0 flex aspect-4/3 items-center justify-center">
                   <button
                     type="button"
-                    className={SAMPLE_DISC}
+                    className={SAMPLE_BUTTON}
                     aria-label={playing === kind ? `Pause the ${capabilityLabel(row)} sample` : `Play a ${capabilityLabel(row)} sample`}
                     onClick={async () => {
                       const audio = audioRef.current;
@@ -305,7 +309,9 @@ function FirstVisitList({
                       }
                     }}
                   >
-                    {playing === kind ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+                    <span aria-hidden="true" className={SAMPLE_DISC}>
+                      {playing === kind ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+                    </span>
                   </button>
                 </span>
               ) : null}

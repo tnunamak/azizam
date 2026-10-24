@@ -50,9 +50,6 @@
   /* The play disc on an audio face: the dark scrim on the light face, a white disc on the dark one. */
   --media-disc: rgb(5 15 18 / 64%);
   --media-disc-foreground: #ffffff;
-  /* A sample's play disc on a first-visit card: white with a dark glyph in both themes. */
-  --sample-disc: rgb(255 255 255 / 85%);
-  --sample-disc-foreground: #0c1f25;
   /* A first-visit audio card's well: Voice teal; Music amber to rose. */
   --well-voice-from: rgb(10 102 118 / 22%);
   --well-voice-to: rgb(10 102 118 / 8%);
@@ -401,8 +398,6 @@
   --color-overlay: var(--overlay);
   --color-media-disc: var(--media-disc);
   --color-media-disc-foreground: var(--media-disc-foreground);
-  --color-sample-disc: var(--sample-disc);
-  --color-sample-disc-foreground: var(--sample-disc-foreground);
   --color-well-voice-from: var(--well-voice-from);
   --color-well-voice-to: var(--well-voice-to);
   --color-well-music-from: var(--well-music-from);

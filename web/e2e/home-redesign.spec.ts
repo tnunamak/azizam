@@ -297,6 +297,32 @@ test("at 1440 px a first visit's cards keep the composer's 760 px edges, under a
   expect(Math.round(row.y - (box.y + box.height))).toBe(16);
 });
 
+// A first visit's Voice and Music play discs are Recent's audio disc: the dark scrim on the light face, white on the dark one.
+for (const colorScheme of ["light", "dark"] as const) {
+  test(`a first visit's play discs are the Recent audio disc, 36 px, in ${colorScheme}`, async ({ isolated }) => {
+    const member = await isolated.member();
+    const { page } = member;
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    await seedFirstVisitMember(page, member.context.request);
+    await page.goto("/");
+    const group = page.getByRole("region", { name: "What you can make here" }).getByRole("group", { name: "What to make" });
+    for (const name of ["Play a Voice sample", "Play a Music sample"]) {
+      const button = group.getByRole("button", { name });
+      const disc = button.locator("span").first();
+      const look = await disc.evaluate((node) => {
+        const style = getComputedStyle(node);
+        return { fill: style.backgroundColor, glyph: style.color, width: node.getBoundingClientRect().width };
+      });
+      expect(look.width).toBe(36);
+      expect(look.fill).toBe(colorScheme === "light" ? "rgba(5, 15, 18, 0.64)" : "rgba(255, 255, 255, 0.85)");
+      expect(look.glyph).toBe(colorScheme === "light" ? "rgb(255, 255, 255)" : "rgb(12, 31, 37)");
+      // The hit area stays 44 px, so the disc is no smaller to a thumb than before.
+      expect((await button.boundingBox())!.width).toBe(44);
+    }
+  });
+}
+
 test("at 768 px a first visit's chosen ring stays inside its card, and every caption ends on one line", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;
