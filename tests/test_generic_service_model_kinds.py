@@ -1,9 +1,11 @@
 """A model saved through any service save is checked against its kind, as the engine page checks it.
 
 Add and edit both reach ``service_registry.upsert_service_in_registry``, which runs
-``refuse_unoffered_kinds``. A refusal names the same field and the same 400 the engine page gives.
-A whole-registry save checks each record it adds or changes, and leaves a stored record it does not
-change as it is. A package import checks every record it brings before anything is written.
+``refuse_unoffered_kinds_in_record`` against the stored record. A save checks a record it adds or changes
+(its models or capabilities) and leaves a stored record it does not change as it is, so a legacy row never
+blocks a save that leaves its kinds alone. A refusal names the same field and the same 400 the engine page gives.
+A whole-registry save and a package import check each record they add or change, before anything is written.
+A left-out record that a fix brings back is checked as a new record.
 """
 
 from __future__ import annotations

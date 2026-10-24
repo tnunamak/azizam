@@ -863,12 +863,15 @@ class AdminSQLiteStore:
         try:
             if section == "services" and isinstance(record, Mapping) and service_registry.is_litellm_service_record(held.id, record):
                 raise ValueError(f"service {held.id!r} is a managed substrate; remove it and the gateway restores its own")
-            candidate = copy.deepcopy(self.get_service_registry())
+            current = self.get_service_registry()
+            candidate = copy.deepcopy(current)
             candidate[section] = {**(candidate.get(section) or {}), held.key: record}
             try:
                 registry = service_registry.normalize_service_registry(candidate)
             except ValueError as error:
                 raise ValueError(projection.scrub_text(str(error)[:600], record_carriers.legacy_secret_texts(record))) from None
+            # A left-out record is not in ``current``, so it is checked as new; the others only if they change.
+            service_registry.refuse_unoffered_kinds_in_registry(registry, before=current)
             saved = self._persist_service_registry(
                 registry,
                 action="operator.service.updated",

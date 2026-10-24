@@ -562,7 +562,7 @@ def build_raw(
         else:
             raw.pop("headers", None)
     models_config = _models_config(definition, values, models, stored_models)
-    service_registry.refuse_unoffered_kinds(models_config, record_caps)
+    # The kind rule runs in the registry write, which knows the stored record.
     if models_config:
         raw["models"] = models_config
         raw.setdefault("model_policy_schema_version", service_registry.MODEL_POLICY_SCHEMA_VERSION)

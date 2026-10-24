@@ -2626,6 +2626,10 @@ def create_admin_router(
                 actor=ctx, expected_generation=expected_generation)
         except _RouteError as exc:
             return exc.as_response()
+        except engine_check.DraftError as exc:
+            return engine_admin.EngineRouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+            ).as_response()
         except PermissionError as exc:
             return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
