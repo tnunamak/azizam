@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useReducer, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Video } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
 import { api, queryKeys } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -15,13 +15,15 @@ import { ownerEngineAlert, ownerProviderAlert } from "@/components/shell/use-own
 import { appPlumbingCapabilities } from "@/lib/terms";
 import { Button } from "@/components/ui/button";
 import { AppMark } from "@/components/product/app-mark";
+import { MediaBadge, Waveform } from "@/components/product/audio-cover";
+import { BrandMark } from "@/components/product/brand-mark";
 import { CapNotice } from "@/components/product/cap-notice";
 import { ErrorState } from "@/components/product/error-state";
 import { PageHeader } from "@/components/product/page-header";
 import { RelativeTime } from "@/components/product/relative-time";
 import { capabilityMeta, SectionHeading } from "@/components/product/readiness";
 import { homeApi, type HomeCapability, type HomeSnapshot } from "./home-api";
-import { HomeComposer } from "./home-composer";
+import { HomeComposer, selectedRow } from "./home-composer";
 import { Recent } from "./home-recent";
 import { OwnerPanel } from "./home-owner-panel";
 import {
@@ -29,7 +31,7 @@ import {
   chooserRows,
   firstNameOf,
   gatewayNeeds,
-  greetingFor,
+  greetingParts,
   kindOf,
   listFacts,
   offeredRows,
@@ -124,57 +126,126 @@ function YourApps({ home }: { home: HomeSnapshot }) {
 }
 
 /**
- * Columns by how many tiles there are, so no row ends with one tile beside empty cells:
- * four sit two by two, then in one row once Home's column is at its full width.
+ * Columns by how many cards there are, so no row ends with one card beside empty cells: four sit two by
+ * two, then in one row once Home's column is at its full width.
  */
 const STARTER_COLUMNS = [
   "",
   "",
-  "sm:grid-cols-2",
-  "sm:grid-cols-3",
-  "sm:grid-cols-2 xl:grid-cols-4",
-  "sm:grid-cols-2 lg:grid-cols-3",
+  "grid-cols-2",
+  "grid-cols-2 sm:grid-cols-3",
+  "grid-cols-2 xl:grid-cols-4",
+  "grid-cols-2 lg:grid-cols-3",
 ];
 
+/** A first visit's sample chat reply: the shape of what Chat gives back. */
+const SAMPLE_REPLY = "Day one: take the 9:10 coastal train to Seacliff, then ride the shore path to the meadow for lunch.";
+
+/** Bars for a sample waveform, the same on every render: speech comes in bursts, music in a steady swell. */
+function samplePeaks(kind: string): number[] {
+  const seed = [...kind].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return Array.from({ length: 36 }, (_, index) => {
+    const swell = 0.55 + 0.35 * Math.sin((index + seed) / 3.1);
+    const burst = Math.abs(Math.sin((index * (seed % 7 + 3)) / 4.3));
+    return Math.max(0.12, Math.min(1, swell * (0.45 + 0.55 * burst)));
+  });
+}
+
 /**
- * Nothing to show yet: what the person can make, one tile each. Choosing one chooses that kind and
- * focuses the box.
+ * What a kind of work gives back, by the modality the row says it makes: a picture, a clip's poster, a
+ * waveform or a reply. The pictures are samples the web app ships (home-sample-*.webp), not anyone's work.
+ */
+function SampleFace({ row }: { row: HomeCapability }) {
+  const outputs = row.output_modalities ?? [];
+  const { icon: Icon, tone, tint } = capabilityMeta(kindOf(row));
+  if (outputs.includes("image") || outputs.includes("video")) {
+    const video = !outputs.includes("image");
+    return (
+      <>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={video ? "/home-sample-clip.webp" : "/home-sample-picture.webp"}
+          alt=""
+          loading="lazy"
+          className="size-full object-cover"
+        />
+        {video ? <MediaBadge icon={Video} className="absolute bottom-2 left-2" /> : null}
+      </>
+    );
+  }
+  if (outputs.includes("audio"))
+    return (
+      <span className={cn("flex size-full items-center justify-center", tint)}>
+        <Waveform peaks={samplePeaks(kindOf(row))} className={cn("h-1/3 w-3/4 flex-none", tone)} />
+      </span>
+    );
+  if (outputs.includes("text"))
+    return (
+      <span className="bg-muted flex size-full flex-col p-4">
+        <Icon aria-hidden="true" className={cn("size-4 shrink-0", tone)} />
+        <span className="text-foreground text-label mt-3 line-clamp-3 font-normal">{SAMPLE_REPLY}</span>
+      </span>
+    );
+  return (
+    <span className={cn("flex size-full items-center justify-center", tint)}>
+      <Icon aria-hidden="true" className={cn("size-8", tone)} />
+    </span>
+  );
+}
+
+/**
+ * Nothing to show yet, so the chooser is a row of cards under the composer: each card's face is what that
+ * kind of work gives back, then its name and one facts line. Choosing one chooses that kind and focuses the
+ * box. The composer shows no chips meanwhile: these cards are the chooser, not a repeat of it.
  */
 function FirstVisitList({
   rows,
+  chosen,
+  lead,
   onChoose,
 }: {
   rows: HomeCapability[];
+  chosen: string | null;
+  lead: string | null;
   onChoose: (kind: string) => void;
 }) {
   return (
-    <section aria-labelledby="make-here-heading">
-      <SectionHeading id="make-here-heading" title="What you can make here" />
-      <ul className={cn("grid gap-2 sm:gap-3", STARTER_COLUMNS[Math.min(rows.length, STARTER_COLUMNS.length - 1)])}>
+    <section aria-labelledby="make-here-heading" className="space-y-4">
+      <h2 id="make-here-heading" className="sr-only">
+        What you can make here
+      </h2>
+      {lead ? <p className="text-muted-foreground text-meta">{lead}</p> : null}
+      <div
+        role="group"
+        aria-label="What to make"
+        className={cn("grid gap-x-4 gap-y-6", STARTER_COLUMNS[Math.min(rows.length, STARTER_COLUMNS.length - 1)])}
+      >
         {rows.map((row) => {
           const { icon: Icon, tone } = capabilityMeta(kindOf(row));
           const facts = listFacts(row);
           return (
-            <li key={kindOf(row)} className="min-w-0">
-              <button
-                type="button"
-                onClick={() => {
-                  onChoose(kindOf(row));
-                  window.requestAnimationFrame(() => document.getElementById("home-prompt")?.focus());
-                }}
-                className="bg-card hover:bg-muted rounded-panel flex size-full items-start max-sm:min-h-11 gap-3 p-4 text-left transition-colors duration-(--motion-fast) sm:flex-col sm:gap-3"
-              >
-                <Icon aria-hidden="true" className={cn("mt-0.5 size-5 shrink-0 sm:mt-0", tone)} />
-                <span className="flex min-w-0 flex-1 flex-col gap-1 self-stretch">
-                  <span className="text-body font-medium">{capabilityLabel(row)}</span>
-                  {row.summary ? <span className="text-muted-foreground text-meta">{row.summary}</span> : null}
-                  {facts ? <span className="text-muted-foreground text-badge mt-auto pt-1">{facts}</span> : null}
-                </span>
-              </button>
-            </li>
+            <button
+              key={kindOf(row)}
+              type="button"
+              aria-pressed={chosen === kindOf(row)}
+              onClick={() => {
+                onChoose(kindOf(row));
+                window.requestAnimationFrame(() => document.getElementById("home-prompt")?.focus());
+              }}
+              className="group min-w-0 text-left"
+            >
+              <span className="bg-muted rounded-media ring-offset-background group-hover:ring-border group-aria-pressed:ring-ring relative block aspect-4/3 overflow-hidden ring-2 ring-transparent ring-offset-2 transition-shadow duration-(--motion-fast)">
+                <SampleFace row={row} />
+              </span>
+              <span className="text-foreground text-meta mt-3 flex items-center gap-1.5 font-medium">
+                <Icon aria-hidden="true" className={cn("size-4 shrink-0", tone)} />
+                {capabilityLabel(row)}
+              </span>
+              {facts ? <span className="text-muted-foreground text-badge mt-0.5 block">{facts}</span> : null}
+            </button>
           );
         })}
-      </ul>
+      </div>
     </section>
   );
 }
@@ -281,7 +352,7 @@ export default function HomePage() {
   const now = Date.now() / 1000;
   const viewerName = viewer.name && viewer.name !== DEFAULT_VIEWER_NAME ? viewer.name : null;
   const firstName = firstNameOf(home?.authenticated ? home.user.name : viewerName);
-  const greeting = greetingFor(new Date(), firstName, firstVisit);
+  const greeting = greetingParts(new Date(), firstName, firstVisit);
   const engineFault = isOwner && !status.isError ? ownerEngineAlert(status.data?.current_health, registry) : null;
   const providerFault =
     isOwner && providers.state === "ready" ? ownerProviderAlert(providers.providers) : null;
@@ -291,6 +362,7 @@ export default function HomePage() {
     !Object.values(registry.services).some((service) => service.source !== "builtin" && service.enabled);
   const ownerViews = model.views.filter((view) => !appPlumbingCapabilities.has(view.key));
   const needs = gatewayNeeds({ engineFault, providerFault, noEngine, capabilities: ownerViews });
+  const chosenRow = selectedRow(rows, model.views, kind);
   const warning = refusal ? (refusal.warnings ?? []).find((text) => CAP_WARNING.test(text)) ?? "" : null;
 
   if (homeError) {
@@ -347,6 +419,7 @@ export default function HomePage() {
       paidOff={refusal != null}
       kind={kind}
       onKindChange={setKind}
+      chooser={!firstVisit}
     />
   ) : (
     <p className="text-meta text-muted-foreground text-center">
@@ -355,23 +428,30 @@ export default function HomePage() {
   );
 
   return (
-    // One centred column: the greeting, the composer and every section below share its two edges.
-    <div className="mx-auto w-full max-w-(--content-home) min-w-0 space-y-10 lg:space-y-12">
-      <section aria-labelledby="home-greeting" className="space-y-6 sm:pt-6 lg:pt-10">
-        <header className="space-y-2 text-center">
-          <h1 id="home-greeting" className="text-3xl font-semibold tracking-tight text-balance max-sm:text-2xl">
-            {greeting}
+    // One centred column: every section shares its two edges, and the composer sits centred inside it.
+    <div className="mx-auto w-full max-w-(--content-home) min-w-0">
+      <section aria-labelledby="home-greeting" className="sm:pt-6 lg:pt-10">
+        <header className="flex items-center justify-center gap-3">
+          <BrandMark className="size-7 max-sm:hidden" />
+          <h1 id="home-greeting" className="text-greeting text-center text-balance max-sm:text-2xl">
+            {greeting.lead}
+            {greeting.name ? (
+              <>
+                , <span className="text-muted-foreground">{greeting.name}</span>
+              </>
+            ) : null}
           </h1>
-          {firstVisit && !isOwner && ownerName ? (
-            <p className="text-muted-foreground text-body">{ownerName} set up this gateway for the household.</p>
-          ) : null}
         </header>
-        {refusal ? <CapNotice warning={warning ?? ""} at={refusal.at} owner={isOwner} /> : null}
-        {composer}
+        <div className="mt-8 space-y-3 sm:mt-10">
+          {refusal ? <CapNotice warning={warning ?? ""} at={refusal.at} owner={isOwner} /> : null}
+          {composer}
+        </div>
       </section>
       <div
         className={cn(
           "min-w-0 space-y-10",
+          // The first visit's cards are the chooser, so they sit close under the composer; Recent sits apart.
+          firstVisit ? "mt-8 sm:mt-10" : "mt-14 sm:mt-18 lg:mt-20",
           isOwner && "lg:grid lg:grid-cols-[minmax(0,1fr)_18.75rem] lg:items-start lg:gap-x-8 lg:space-y-0",
         )}
       >
@@ -383,7 +463,12 @@ export default function HomePage() {
         <div className="min-w-0 space-y-10 lg:col-start-1 lg:row-start-1">
           {firstVisit ? (
             rows.length ? (
-              <FirstVisitList rows={rows} onChoose={setKind} />
+              <FirstVisitList
+                rows={rows}
+                chosen={chosenRow ? kindOf(chosenRow) : null}
+                lead={!isOwner && ownerName ? `${ownerName} set up this gateway for the household.` : null}
+                onChoose={setKind}
+              />
             ) : null
           ) : (
             <Recent
