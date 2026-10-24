@@ -62,6 +62,8 @@ class FakeGeneration:
         self.during_start: Callable[[str], None] | None = None
         # When set, the model lookup waits on it, so a test can hold one start while other loads arrive.
         self.model_gate: threading.Event | None = None
+        # The one person whose model lookup waits on the gate; None makes every lookup wait.
+        self.model_gate_for: str | None = None
         self.model_entered = threading.Event()
         self._dir = tmp_path / "library"
         self._dir.mkdir(exist_ok=True)
@@ -84,8 +86,8 @@ class FakeGeneration:
                 return None
             return self.files[asset_id]
 
-        def model_for(_person_id: str) -> str | None:
-            if self.model_gate is not None:
+        def model_for(person_id: str) -> str | None:
+            if self.model_gate is not None and self.model_gate_for in (None, person_id):
                 self.model_entered.set()
                 self.model_gate.wait(5)
             return self.model
@@ -643,6 +645,34 @@ def test_loads_by_different_people_at_once_start_one_default_and_the_rest_defer(
     generation.finish_job("job_2")
     _default(rig.as_(carol).client)
     assert [person for person, _model, _prompt in generation.started] == [alice, bob, carol]
+
+
+def test_a_manual_make_started_during_the_default_lookup_defers_the_default_and_keeps_its_attempt(
+        rig: Rig, generation: FakeGeneration) -> None:
+    alice, bob = rig.person("alice"), rig.person("bob")
+    app = _anyone_app(rig, generation)
+    gate = threading.Event()
+    generation.model_gate, generation.model_gate_for = gate, alice
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://avatar.test") as http:
+            default = asyncio.ensure_future(http.post(DEFAULT_PATH, headers=_as(alice)))
+            # Alice's default holds the one slot while its model lookup runs, just before it would start.
+            assert await asyncio.to_thread(generation.model_entered.wait, 5)
+            # A manual make does not take that slot, so Bob's job starts while Alice's lookup still waits.
+            manual = await http.post("/me/api/profile/avatar/generate", headers=_as(bob))
+            gate.set()
+            return await default, manual
+
+    default_answer, manual_answer = asyncio.run(scenario())
+    assert manual_answer.status_code == 202
+    assert [person for person, _model, _prompt in generation.started] == [bob]
+    assert default_answer.json()["generating"] is False
+    assert avatars.get(alice, path=rig.db)["default_attempted_at"] is None
+    # The attempt is intact, so Alice's default is made on a later load, once Bob's job has stopped.
+    generation.finish_job("job_1")
+    _default(rig.as_(alice).client)
+    assert [person for person, _model, _prompt in generation.started] == [bob, alice]
 
 
 @pytest.mark.parametrize(("code", "status"), [("make_unavailable", 503), ("make_busy", 503), ("too_many_jobs", 429)])
