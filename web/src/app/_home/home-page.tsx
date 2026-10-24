@@ -254,7 +254,7 @@ function FirstVisitList({
       <div
         role="group"
         aria-label="What to make"
-        className={cn("grid gap-x-4 gap-y-6", STARTER_COLUMNS[Math.min(rows.length, STARTER_COLUMNS.length - 1)])}
+        className={cn("grid gap-x-4 gap-y-4 sm:gap-y-6", STARTER_COLUMNS[Math.min(rows.length, STARTER_COLUMNS.length - 1)])}
       >
         {rows.map((row) => {
           const kind = kindOf(row);
@@ -272,7 +272,8 @@ function FirstVisitList({
                 }}
                 className="group block w-full min-w-0 text-left"
               >
-                <span className="bg-muted rounded-media relative block aspect-4/3 overflow-hidden">
+                {/* The face is a sample, not the card's name: a screen reader hears "Chat" and its facts. */}
+                <span aria-hidden="true" className="bg-muted rounded-media relative block aspect-4/3 overflow-hidden">
                   <SampleFace row={row} />
                   {/* The chosen ring is drawn inside the face, so it never hangs outside the grid. */}
                   <span

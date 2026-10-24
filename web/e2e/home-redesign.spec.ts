@@ -284,6 +284,39 @@ test("at 1440 px a first visit's cards keep the composer's 760 px edges, under a
   expect(Math.round(row.y - (box.y + box.height))).toBe(16);
 });
 
+test("at 768 px a first visit's chosen ring stays inside its card, and every caption ends on one line", async ({ isolated }) => {
+  const member = await isolated.member();
+  const { page } = member;
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await seedFirstVisitMember(page, member.context.request);
+  await page.goto("/");
+  const group = page.getByRole("region", { name: "What you can make here" }).getByRole("group", { name: "What to make" });
+  const chat = group.getByRole("button", { name: /^Chat Starts in/ });
+  await chat.click();
+  await expect(chat).toHaveAttribute("aria-pressed", "true");
+  const shape = await group.evaluate((node) => {
+    const cards = Array.from(node.querySelectorAll<HTMLElement>("button[aria-pressed]"));
+    const ring = cards[0].querySelector<HTMLElement>("span.absolute.inset-0");
+    const faces = cards.map((card) => card.firstElementChild!.getBoundingClientRect());
+    return {
+      ring: ring ? getComputedStyle(ring).boxShadow : "",
+      outline: getComputedStyle(cards[0]).outlineStyle,
+      faceHeights: new Set(faces.map((face) => Math.round(face.height))).size,
+      captionEnds: new Set(cards.map((card) => Math.round(card.getBoundingClientRect().bottom))).size,
+      grid: node.getBoundingClientRect().toJSON(),
+      cardBoxes: cards.map((card) => card.getBoundingClientRect().toJSON()),
+    };
+  });
+  // The ring is an inset shadow on the face, so nothing is drawn outside the grid's edges.
+  expect(shape.ring).toContain("inset");
+  expect(shape.faceHeights).toBe(1);
+  expect(shape.captionEnds).toBe(1);
+  for (const card of shape.cardBoxes) {
+    expect(card.left).toBeGreaterThanOrEqual(shape.grid.left - 0.5);
+    expect(card.right).toBeLessThanOrEqual(shape.grid.right + 0.5);
+  }
+});
+
 test("H11 without an access plan the composer is absent, and Ask posts once and confirms in place", async ({ isolated, request }) => {
   const member = await isolated.member();
   const { page } = member;
