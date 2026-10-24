@@ -15,7 +15,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import media_jobs  # noqa: E402
+from gateway import media_jobs, request_source  # noqa: E402
 from gateway.media_jobs import (  # noqa: E402
     ADMIN_ONLY_FIELDS,
     ALL_STATUSES,
@@ -597,6 +597,36 @@ def test_audience_contract_is_independent_of_implementation_tables():
     assert job.to_dict("internal")["creating_receipt_id"] == "receipt-sentinel"
     assert job.to_dict("admin")["app_id"] == "app-sentinel"
     assert job.to_dict("client")["job_id"] == job.job_id
+
+
+def test_a_version_five_store_gains_the_maker_stamp_and_its_old_jobs_stay_unstamped(tmp_path):
+    """Version 6 adds the stamp columns. A job made before the stamp keeps no maker, so it has no reader."""
+    import sqlite3
+
+    path = tmp_path / "jobs.db"
+    media_jobs.init_db(path)
+    with request_source.acting_as(app_id="app_test", person_id="usr_alice", credential_id="key:alice"):
+        stamped = media_jobs.create(_make_job(request_id="req_new", app_id="app_test"), path=path)
+    old = media_jobs.create(_make_job(request_id="req_old"), path=path)
+    with sqlite3.connect(path) as conn:
+        # Rebuild the version 5 shape: no stamp columns, and the job JSON of a row written before the stamp existed.
+        for column in ("maker_person_id", "maker_credential_id", "maker_connection_id"):
+            conn.execute(f"ALTER TABLE media_jobs DROP COLUMN {column}")
+        conn.execute("UPDATE media_jobs SET job_json = json_remove(job_json, '$.maker_person_id', "
+                     "'$.maker_credential_id', '$.maker_connection_id') WHERE job_id = ?", (old.job_id,))
+        conn.execute("UPDATE media_jobs_schema_version SET version = 5")
+        conn.commit()
+
+    media_jobs.init_db(path)
+
+    assert media_jobs.schema_version(path) == media_jobs.SCHEMA_VERSION == 6
+    with sqlite3.connect(path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(media_jobs)")}
+    assert {"maker_person_id", "maker_credential_id", "maker_connection_id"} <= columns
+    migrated = media_jobs.get(old.job_id, audience="internal", path=path)
+    assert migrated is not None and migrated.get("maker_person_id") is None and migrated.get("maker_credential_id") is None
+    kept = media_jobs.get(stamped.job_id, audience="internal", path=path)
+    assert kept is not None and kept["maker_person_id"] == "usr_alice"
 
 
 if __name__ == "__main__":
