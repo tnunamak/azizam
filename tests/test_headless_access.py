@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from starlette.routing import Mount, Route, WebSocketRoute
+from starlette.testclient import WebSocketDenialResponse
 
 import proxy
 from gateway import accounts, admin_store, frontend_mount, metrics_writer, operation_security, providers, receipt_store, runtime_auth
@@ -298,23 +299,28 @@ def test_each_self_authenticating_operation_refuses_a_call_without_credentials(p
     client = principals.client
     client.cookies.clear()
     by_endpoint = _operations_by_endpoint()
-    probed = []
+    probed = set()
     for route in proxy.app.routes:
-        if not isinstance(route, APIRoute):
-            continue
-        for method in sorted(route.methods):
-            selfauth = [op for op in by_endpoint.get(route.endpoint, [])
-                        if method in op.methods and op.self_authenticates]
+        methods = {"WEBSOCKET"} if isinstance(route, WebSocketRoute) else set(getattr(route, "methods", None) or ())
+        for method in sorted(methods):
+            selfauth = [op for op in by_endpoint.get(route.endpoint, []) if method in op.methods and op.self_authenticates]
             if not selfauth:
                 continue
             mode = selfauth[0].auth
-            response = client.request(method, _concrete(route.path), json={} if method in {"POST", "PUT", "PATCH"} else None,
-                                      follow_redirects=False)
+            if method == "WEBSOCKET":
+                with pytest.raises(WebSocketDenialResponse) as denial:
+                    with client.websocket_connect(route.path):
+                        pytest.fail(f"{route.path} opened a session without credentials")
+                status = denial.value.status_code
+            else:
+                body = {} if method in {"POST", "PUT", "PATCH"} else None
+                status = client.request(method, _concrete(route.path), json=body, follow_redirects=False).status_code
             # An App key is refused with 401 or 403. A signed URL is refused without its signature (400 or 403), never served.
             refused = {operation_security.APP_KEY: {401, 403}, operation_security.SIGNED_URL: {400, 403}}[mode]
-            assert response.status_code in refused, (method, route.path, mode, response.status_code)
-            probed.append(f"{method} {route.path}")
-    assert len(probed) >= 100, len(probed)
+            assert status in refused, (method, route.path, mode, status)
+            probed.add(route.endpoint)
+    self_authenticating = {op.endpoint for ops in by_endpoint.values() for op in ops if op.self_authenticates}
+    assert self_authenticating <= probed, sorted(endpoint.__name__ for endpoint in self_authenticating - probed)
 
 
 def test_every_owner_operation_is_tagged_and_opens_with_the_owner_note():

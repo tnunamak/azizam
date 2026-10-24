@@ -31649,7 +31649,8 @@ Op = frontend_mount.Operation
 # These handlers check the caller themselves, in the error shape of their protocol. An Op the mount
 # authenticates (no ``self_authenticates``) is checked before its handler runs, on any path prefix.
 def SelfAuthOp(endpoint, methods, *, auth, **options):
-    """An operation that checks its caller itself. ``auth`` declares how: APP_KEY, or SIGNED_URL for a signed link."""
+    """An operation that checks its caller itself. ``auth`` declares how: ``operation_security.APP_KEY``, or
+    ``operation_security.SIGNED_URL`` for a link whose query signature is the credential."""
     return frontend_mount.Operation(endpoint, methods, self_authenticates=True, auth=auth, **options)
 FRONTEND_TRANSLATORS.register("identity", {
     "models.list": SelfAuthOp(list_models, frozenset({"GET"}), auth=operation_security.APP_KEY),
