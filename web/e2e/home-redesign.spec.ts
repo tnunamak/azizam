@@ -486,6 +486,54 @@ for (const viewport of LAYOUTS) {
   }
 }
 
+test("at 390 px the chooser row snaps by proximity from a 20 px edge, shows a word or nothing at its edge, and fades only while more is off-screen", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  await seedOwner(page, page.context().request);
+  await page.goto("/");
+  const group = page.getByRole("group", { name: "What to make" });
+  const fade = page.locator("[data-slot='chooser-fade']");
+  // Chromium serialises the default (proximity) strictness as a bare "x"; "mandatory" would show in the value.
+  const css = await group.evaluate((row) => ({ snap: getComputedStyle(row).scrollSnapType, padding: getComputedStyle(row).scrollPaddingInlineStart }));
+  expect(css.snap).toMatch(/^x( proximity)?$/);
+  expect(css.padding).toBe("20px");
+  // At the start the row has chips off to the right: the fade shows over its 24 px right edge.
+  await expect(fade).toHaveCount(1);
+  expect(Math.round((await fade.boundingBox())!.width)).toBe(24);
+  // A chip is either mostly in view with its word, or hidden: an icon alone, or half a word, never shows.
+  const chips = () =>
+    group.evaluate((row) => {
+      const box = row.getBoundingClientRect();
+      return Array.from(row.querySelectorAll("button")).map((chip) => {
+        const word = chip.querySelector<HTMLElement>("[data-slot='segment-word']")!;
+        const rect = word.getBoundingClientRect();
+        const visible = Math.max(0, Math.min(rect.right, box.right) - Math.max(rect.left, box.left));
+        const icon = chip.querySelector("svg");
+        return {
+          share: rect.width ? visible / rect.width : 0,
+          word: getComputedStyle(word).opacity,
+          icon: icon ? getComputedStyle(icon).opacity : "1",
+        };
+      });
+    });
+  await expect
+    .poll(async () =>
+      (await chips()).every((chip) => {
+        if (chip.share >= 0.7) return chip.word === "1" && chip.icon === "1";
+        if (chip.share <= 0.3) return chip.word === "0" && chip.icon === "0";
+        return false;
+      }),
+    )
+    .toBe(true);
+  // Scrolled to the end, the last chip's word is wholly in view, and nothing is left to the right.
+  await group.evaluate((row) => row.scrollTo({ left: row.scrollWidth }));
+  await expect(fade).toHaveCount(0);
+  await expect.poll(async () => (await chips()).at(-1)?.share ?? 0).toBeGreaterThanOrEqual(0.99);
+  // Wide enough for every chip, the row does not scroll, so it has no fade.
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await expect(fade).toHaveCount(0);
+});
+
 test("at 390 px the phone tab bar never covers the end of Home, with the request history notice showing", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;

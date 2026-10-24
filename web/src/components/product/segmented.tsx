@@ -14,30 +14,33 @@ export interface SegmentOption<T extends string> {
   badge?: ReactNode;
 }
 
-/** Which of a scrolling pill row's segments are not wholly in view (none outside a pill row). */
-function usePartlyHidden(rowRef: RefObject<HTMLDivElement | null>, active: boolean, count: number): Set<number> {
-  const [partial, setPartial] = useState<Set<number>>(() => new Set());
+/**
+ * Which of a scrolling pill row's segments have less than half their word in view (none outside a pill row).
+ * Such a segment shows neither its icon nor its word: an icon alone, or a word cut in half, says less than none.
+ */
+function useHiddenWords(rowRef: RefObject<HTMLDivElement | null>, active: boolean, count: number): Set<number> {
+  const [hidden, setHidden] = useState<Set<number>>(() => new Set());
   useEffect(() => {
     const row = rowRef.current;
     if (!active || !row || typeof IntersectionObserver === "undefined") return;
-    const segments = Array.from(row.querySelectorAll<HTMLElement>(":scope > button"));
+    const words = Array.from(row.querySelectorAll<HTMLElement>(":scope > button > [data-slot='segment-word']"));
     const observer = new IntersectionObserver(
       (entries) =>
-        setPartial((current) => {
+        setHidden((current) => {
           const next = new Set(current);
           for (const entry of entries) {
-            const index = segments.indexOf(entry.target as HTMLElement);
-            if (entry.intersectionRatio < 0.98) next.add(index);
+            const index = words.indexOf(entry.target as HTMLElement);
+            if (entry.intersectionRatio < 0.5) next.add(index);
             else next.delete(index);
           }
           return next;
         }),
-      { root: row, threshold: [0, 0.5, 0.98, 1] },
+      { root: row, threshold: [0, 0.5, 1] },
     );
-    segments.forEach((segment) => observer.observe(segment));
+    words.forEach((word) => observer.observe(word));
     return () => observer.disconnect();
   }, [rowRef, active, count]);
-  return partial;
+  return hidden;
 }
 
 /**
@@ -53,9 +56,10 @@ function usePartlyHidden(rowRef: RefObject<HTMLDivElement | null>, active: boole
  * on a phone (the Home chooser). Without it, the segments share the phone width.
  *
  * `pill` draws each segment as an outlined pill (Home's chooser under the composer, like Claude's
- * starters). On a phone the row snaps chip by chip, and each chip is at least 92 px, so at 390 px
- * three and a half chips show: the half chip says the row goes on. A chip that is not wholly in view
- * hides its word (it stays in the accessible name), so the row never shows a word cut in half.
+ * starters). On a phone the row snaps (proximity) to chip starts, and each chip is at least 92 px, so at
+ * 390 px three and a half chips show: the half chip says the row goes on. A chip with less than half its
+ * word in view shows neither its icon nor its word (both stay in the accessible name), so the row never
+ * shows an icon alone or a word cut in half.
  */
 export function Segmented<T extends string>({
   label,
@@ -77,7 +81,7 @@ export function Segmented<T extends string>({
   ref?: Ref<HTMLDivElement>;
 }) {
   const rowRef = useRef<HTMLDivElement | null>(null);
-  const partial = usePartlyHidden(rowRef, pill, options.length);
+  const hidden = useHiddenWords(rowRef, pill, options.length);
   return (
     <div
       ref={(node) => {
@@ -89,7 +93,7 @@ export function Segmented<T extends string>({
       aria-label={label}
       className={cn(
         "inline-flex max-w-full items-center overflow-x-auto",
-        pill ? "max-sm:snap-x max-sm:snap-mandatory gap-2 [scrollbar-width:none]" : "gap-1 sm:h-8",
+        pill ? "max-sm:snap-x max-sm:snap-proximity gap-2 [scrollbar-width:none]" : "gap-1 sm:h-8",
         className,
       )}
     >
@@ -113,13 +117,24 @@ export function Segmented<T extends string>({
             {Icon ? (
               <Icon
                 aria-hidden="true"
-                className={cn("size-4 shrink-0", !scroll && !pill && "max-sm:hidden")}
+                className={cn(
+                  "size-4 shrink-0 transition-opacity duration-(--motion-fast)",
+                  !scroll && !pill && "max-sm:hidden",
+                  hidden.has(index) && "opacity-0",
+                )}
               />
             ) : null}
-            <span className={cn("transition-opacity duration-(--motion-fast)", partial.has(index) && "opacity-0")}>
+            <span
+              data-slot="segment-word"
+              className={cn("transition-opacity duration-(--motion-fast)", hidden.has(index) && "opacity-0")}
+            >
               {option.label}
             </span>
-            {option.badge ? <span className="text-badge font-medium">{option.badge}</span> : null}
+            {option.badge ? (
+              <span className={cn("text-badge font-medium transition-opacity duration-(--motion-fast)", hidden.has(index) && "opacity-0")}>
+                {option.badge}
+              </span>
+            ) : null}
             {typeof option.count === "number" ? (
               <span className="figures text-muted-foreground text-badge font-normal">
                 {option.count}
