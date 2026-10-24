@@ -590,6 +590,22 @@ it("marks both fields invalid when the password is refused, and names the refusa
   }
 });
 
+it("moves focus to the password field after a refusal, selects its text, and enables Sign in again", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input) === "/auth/api/login"
+      ? json({ error: { code: "invalid_login", message: "Wrong" } }, 401)
+      : original(input, init),
+  );
+  mount();
+  await submit();
+  await screen.findByRole("alert");
+  const password = screen.getByLabelText("Password") as HTMLInputElement;
+  await waitFor(() => expect(password).toHaveFocus());
+  expect([password.selectionStart, password.selectionEnd]).toEqual([0, "A long test password".length]);
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+});
+
 it("does not flag the fields for a refusal that is not about the password", async () => {
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((input, init) =>
