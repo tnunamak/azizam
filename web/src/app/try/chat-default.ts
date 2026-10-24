@@ -26,14 +26,17 @@ function earliest<T extends ChatCandidate>(candidates: readonly T[]) {
 
 /**
  * The default chat choice: the catalog's recommendation when it is an
- * ordinary chat model, else the first ordinary one in catalog order. When no
- * chat model is ordinary, the first in catalog order still stands, so Run
- * stays possible and the picker shows a choice.
+ * ordinary chat model, else the first ordinary one in catalog order. An
+ * embedding model is never the default, even when it can also chat. When
+ * every chat model takes pictures, the first of those still stands, so Run
+ * stays possible and the picker shows a choice. With no chat model at all,
+ * there is no default.
  */
 export function chatDefaultChoice<T extends ChatCandidate>(
   candidates: readonly T[],
 ): T | undefined {
-  const ordinary = candidates.filter((candidate) => !candidate.pictures && !candidate.embedding);
-  if (!ordinary.length) return earliest(candidates);
+  const chatModels = candidates.filter((candidate) => !candidate.embedding);
+  const ordinary = chatModels.filter((candidate) => !candidate.pictures);
+  if (!ordinary.length) return earliest(chatModels);
   return ordinary.find((candidate) => candidate.recommended) ?? earliest(ordinary);
 }

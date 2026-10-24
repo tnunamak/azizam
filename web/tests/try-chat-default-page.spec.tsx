@@ -115,3 +115,54 @@ describe("Chat starts on an ordinary chat model, with an empty prompt", () => {
     expect(account.tryKey).not.toHaveBeenCalled();
   });
 });
+
+// A row that both chats and makes embeddings. It sits first in the catalog.
+const dualRow = {
+  id: "dual-embed",
+  name: "Dual embedding model",
+  display_name: "Dual embedding model",
+  capability: "chat",
+  alias: false,
+  use_names: ["dual-embed"],
+  locality: "local",
+  capabilities: [
+    { intent: "chat.completions", capability: "chat", input_modalities: ["text"], output_modalities: ["text"] },
+    { intent: "text.embeddings", capability: "embed", input_modalities: ["text"], output_modalities: ["embedding"] },
+  ],
+};
+
+describe("Chat never starts on an embedding model", () => {
+  it("skips the embedding row that sits first and starts on the only other chat model", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        json(
+          url.includes("workflows")
+            ? { workflows: [] }
+            : { aliases: [], models: [dualRow, chatRow("vision-b", "Vision model B", ["text", "image"])] },
+        ),
+      ),
+    );
+    render(<TryPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Vision model B"),
+    );
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("Dual embedding model");
+  });
+
+  it("starts with no model chosen when every chat row makes embeddings, and says to choose one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        json(url.includes("workflows") ? { workflows: [] } : { aliases: [], models: [dualRow] }),
+      ),
+    );
+    render(<TryPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Choose a model"),
+    );
+    const model = screen.getByRole("combobox", { name: "Model" });
+    expect(model).not.toHaveTextContent("Dual embedding model");
+    expect(model).not.toHaveTextContent("No options available");
+  });
+});

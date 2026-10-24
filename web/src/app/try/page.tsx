@@ -1285,12 +1285,13 @@ function selectedOrDefaultModel(
   if (standIn) return standIn.id;
   if (explicit) return current;
   if (options.some((option) => option.id === current)) return current;
-  return (defaultChoice(options) ?? options[0]).id;
+  // A default that finds nothing leaves the choice empty for the person to make.
+  return defaultChoice(options)?.id ?? "";
 }
 
 /** Most tabs start on the catalog's recommendation, else the first option. */
 function recommendedChoice(options: CatalogOption[]) {
-  return options.find((option) => option.recommended);
+  return options.find((option) => option.recommended) ?? options[0];
 }
 
 export default function TryPage() {
@@ -3648,7 +3649,7 @@ function ModelSelect({
         aria-label="Model"
         className="w-full min-w-0 overflow-hidden [&_[data-slot=select-value]]:min-w-0"
       >
-        <SelectValue placeholder="No options available" />
+        <SelectValue placeholder={values.length ? "Choose a model" : "No options available"} />
       </SelectTrigger>
       <SelectContent>
         {values.map((option) => (

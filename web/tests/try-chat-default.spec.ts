@@ -55,4 +55,22 @@ describe("the default chat model is an ordinary chat model, read from the catalo
   it("gives nothing for an empty list", () => {
     expect(chatDefaultChoice([])).toBeUndefined();
   });
+
+  it("never takes an embedding row that sits first, when the only other chat model takes pictures", () => {
+    // The catalog's exact case: a dual-capability row that makes embeddings is
+    // first in catalog order, and the second row is a vision model.
+    const choice = chatDefaultChoice([
+      chat("embedding-chat", 0, { embedding: true }),
+      chat("vision", 1, { pictures: true }),
+    ]);
+    expect(choice?.id).toBe("vision");
+  });
+
+  it("gives nothing when every row makes embeddings, rather than taking the first one", () => {
+    const choice = chatDefaultChoice([
+      chat("embedder", 0, { embedding: true }),
+      chat("embedder-b", 1, { embedding: true }),
+    ]);
+    expect(choice).toBeUndefined();
+  });
 });
