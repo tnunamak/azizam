@@ -193,7 +193,7 @@ describe("Connect", () => {
     renderPage(member);
     expect(await screen.findByText("Any OpenAI-compatible app")).toBeVisible();
     expect((await picker()).queryByRole("button", { pressed: true })).toBeNull();
-    expect(screen.getByLabelText("Base URL")).toHaveValue(
+    expect(screen.getByLabelText("Gateway address")).toHaveValue(
       "https://gw.example/openai/v1",
     );
     await waitFor(() =>

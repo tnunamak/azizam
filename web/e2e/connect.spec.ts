@@ -40,10 +40,10 @@ test("owner signs in, opens Connect and copies an address from the recipe", asyn
     expect(await picker.locator("button[aria-pressed]").count()).toBe(6);
     await expect(picker.getByRole("button", { name: "More clients" })).toBeVisible();
     const recipe = page.getByRole("region", { name: "Values for Any OpenAI-compatible app" });
-    await expect(recipe.getByLabel("Base URL", { exact: true })).toHaveValue(`${baseURL}/openai/v1`);
+    await expect(recipe.getByLabel("Gateway address", { exact: true })).toHaveValue(`${baseURL}/openai/v1`);
 
     // The address copies to the clipboard as the whole value.
-    await recipe.getByRole("button", { name: "Copy Base URL" }).click();
+    await recipe.getByRole("button", { name: "Copy Gateway address" }).click();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${baseURL}/openai/v1`);
 
     // Picking a client opens its own values, with a link to its full steps.

@@ -77,7 +77,7 @@ export const anyOpenAIGuide: AppGuide = {
     steps: [],
     docs: "",
     fields: [
-      { label: "Base URL", value: "{openai_url}" },
+      { label: "Gateway address", value: "{openai_url}" },
       { label: "API key", value: "{key}" },
       { label: "Model", value: "{chat_model}" },
     ],
