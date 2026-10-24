@@ -332,10 +332,10 @@
 # another job, unresolved jobs, the Library listing, the second run), +4 bounded activity-feed cases (a mostly
 # unreadable table, cursor continuity, page size, a malformed cursor) and +1 Library source-label case.
 # Full hermetic collection measured 17295 on 2026-10-24.
-# OV3 slice 1 round 5: +4 maker-backfill cases (a user-principal job, a service-account job, the next pass on a job
-# the first pass left without a person, a user job the current code stamped) and +1 usage-count case. Full hermetic
-# collection measured 17300 on 2026-10-24.
-pytest = 17300
+# OV3 slice 1 round 5: +5 maker-backfill cases (a user-principal job, a service-account job, the next pass on a job
+# the first pass left without a person, a user job the current code stamped, a user job the current code stamped with
+# a connection) and +1 usage-count case. Full hermetic collection measured 17301 on 2026-10-24.
+pytest = 17301
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

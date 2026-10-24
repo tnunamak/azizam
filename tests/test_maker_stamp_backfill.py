@@ -300,3 +300,18 @@ def test_a_user_job_the_current_code_stamped_is_not_rewritten(stores):
 
     assert _backfill(stores) == {}
     assert _row(stores, "job_current")["maker_person_id"] == alice
+
+
+def test_a_user_job_the_current_code_stamped_with_a_connection_and_no_person_keeps_that_stamp(stores):
+    # The connection is a decided stamp. Its owner is a user, but the pass must not name a person for it.
+    alice = stores["people"]["alice"]
+    with request_source.acting_as(app_id=None, person_id=None, connection_id="connection:grant"):
+        media_jobs.create(media_jobs.MediaJob(
+            intent="image.generate", workflow="demo.image", backend="comfyui.local", request_id="req_grant",
+            job_id="job_grant", owner_key_hash=f"user:{alice}", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+            metadata={"mode": "make"},
+        ), path=stores["jobs"])
+
+    assert _backfill(stores) == {}
+    row = _row(stores, "job_grant")
+    assert row["maker_person_id"] is None and row["maker_connection_id"] == "connection:grant"

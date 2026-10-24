@@ -26,7 +26,7 @@ keys written (null when nothing resolved), so a later pass skips it. A finished 
 
 Version 2 exists because version 1 named no person for a user principal and was already recorded as finished on some
 instances. Its rows keep the three keys, null, so the legacy selection skips them. Version 2 therefore also selects a
-user-principal job with no person, and a second run finds none left.
+user-principal job with no maker stamp at all, and a second run finds none left.
 """
 from __future__ import annotations
 
@@ -44,8 +44,10 @@ from gateway import media_jobs, sqlite_startup
 MIGRATION_NAME = "maker_stamp_backfill_v2"
 BATCH_SIZE = 500
 _NO_CREDENTIAL_PREFIXES = ("user:", "service_account:")
-# A job the pass still has to stamp: a legacy row with no maker keys, or a user-principal row that has no person.
+# A job the pass still has to stamp: a legacy row with no maker keys, or a user-principal row with no maker stamp at all.
+# A row that carries a person, credential or connection is a stamp the current code wrote, so it is left alone.
 _UNSTAMPED = ("(json_type(job_json, '$.maker_person_id') IS NULL OR (json_extract(job_json, '$.maker_person_id') IS NULL "
+              "AND json_extract(job_json, '$.maker_credential_id') IS NULL AND json_extract(job_json, '$.maker_connection_id') IS NULL "
               "AND json_extract(job_json, '$.owner_key_hash') GLOB 'user:*'))")
 _MIGRATIONS_DDL = ("CREATE TABLE IF NOT EXISTS media_jobs_migrations ("
                    "name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)")
