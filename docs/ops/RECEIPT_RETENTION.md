@@ -39,7 +39,13 @@ guarantee that every provider charge has a recorded receipt cost.
 
 The Usage summary supports the current UTC calendar month only.
 Request totals aggregate retained top-level receipts. They exclude child receipts.
-The embedded `receipts` list contains at most the 50 most recent selected receipts.
+A media job is one request. Its submit receipt is the request, and the work receipts
+that carry the job's `job_id` fold into it: their costs are summed, and the backend,
+start, remote flag and outcome come from them. Work receipts are not counted apart
+from their job. A job with no work receipt keeps its submit receipt's own facts.
+Folding deletes no receipt.
+The embedded `receipts` list contains at most the 50 most recent selected requests,
+one row per request.
 Use `receipt_list_has_more` rather than treating the list length as the total.
 Creation totals also use successful jobs and surviving Library files.
 A catalog file without a recorded creation time can count by its file modification time.
