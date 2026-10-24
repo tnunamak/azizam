@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import admin_store, frontend_mount, route_registry, service_registry
+from gateway import admin_store, frontend_mount, operation_security, route_registry, service_registry
 from gateway.admin_api import AdminContext, derive_admin_attention
 from gateway.admin_runtime import AdminSQLiteStore
 
@@ -23,7 +23,7 @@ async def _served(request: Request) -> dict:
 
 def _translators() -> frontend_mount.Translators:
     return frontend_mount.Translators({"identity": {
-        "models.list": frontend_mount.Operation(_served, frozenset({"GET"}), self_authenticates=True),
+        "models.list": frontend_mount.Operation(_served, frozenset({"GET"}), self_authenticates=True, auth=operation_security.APP_KEY),
     }})
 
 

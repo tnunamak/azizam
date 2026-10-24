@@ -35,7 +35,7 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute, compile_path
 
-from gateway import frontend_loss
+from gateway import frontend_loss, operation_security
 from gateway.frontend_loss import LossReport
 
 IDENTITY = "identity"
@@ -75,6 +75,33 @@ class Operation:
     # True when the handler checks the caller itself (with its own error shape, or by a signature).
     # Every other operation is authenticated by the mount before the handler runs.
     self_authenticates: bool = False
+    # How a self-authenticating operation checks its caller: one of operation_security.SELF_AUTH_MODES.
+    # The API reference states it. An operation the mount checks declares none.
+    auth: str | None = None
+
+    def __post_init__(self) -> None:
+        name = getattr(self.endpoint, "__name__", "operation")
+        if self.self_authenticates and self.auth not in operation_security.SELF_AUTH_MODES:
+            raise FrontendMountError(f"{name} checks its caller itself and must declare its auth mode, one of "
+                                     f"{sorted(operation_security.SELF_AUTH_MODES)}, not {self.auth!r}")
+        if not self.self_authenticates and self.auth is not None:
+            raise FrontendMountError(f"{name} does not check its caller itself, so it declares no auth mode")
+
+
+def checks_caller(operation: Operation) -> bool:
+    """Whether the mount checks the caller before ``operation`` runs: every operation that does not check it itself.
+
+    The mount uses this predicate to wrap the route, and the API reference uses it to say what the operation needs.
+    """
+    return not operation.self_authenticates
+
+
+def operation_mode(operation: Operation) -> str:
+    """The mode a mounted operation is reached by: the App key the mount checks, or the mode it declares."""
+    if checks_caller(operation):
+        return operation_security.APP_KEY
+    assert operation.auth is not None  # __post_init__ requires a mode from every self-authenticating operation
+    return operation.auth
 
 
 @dataclass(frozen=True)
@@ -377,8 +404,9 @@ def _add_route(
     options: dict[str, Any] = {}
     if not operation.include_in_schema:
         options["include_in_schema"] = False
-    if operation.openapi_extra is not None:
-        options["openapi_extra"] = operation.openapi_extra
+    # The operation's extra schema, plus the security its mode implies (the API reference reads it; no request does).
+    security = operation_security.openapi_extra(operation_mode(operation))
+    options["openapi_extra"] = {**(operation.openapi_extra or {}), **security}
     if operation.response_class is not None:
         options["response_class"] = operation.response_class
     route_class = _mounted_route_class(row, operation, authenticate=authenticate, refuse=refuse)
@@ -567,7 +595,7 @@ def _mounted_route_class(
     None when the route needs no wrapper: the operation authenticates itself, the row declares no
     ``carries``, and it is not a multipart row of a translator that could lose fields.
     """
-    authenticating = not operation.self_authenticates
+    authenticating = checks_caller(operation)
     unchecked = row.body == MULTIPART and row.translator != IDENTITY
     carries = frontend_loss.Carries(row.carries) if row.carries is not None else None
     if not authenticating and carries is None and not unchecked:

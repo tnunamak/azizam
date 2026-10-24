@@ -37,7 +37,12 @@ __all__ = [
     "hash_api_key",
     "make_policy_request",
     "normalize_key_hash",
+    "CLIENT_KEY_HEADERS",
 ]
+
+# Headers, besides ``Authorization: Bearer``, that carry an App key. The proxy reads them in this order,
+# and the OpenAPI reference declares each one (gateway/app_key_openapi.py).
+CLIENT_KEY_HEADERS = ("x-api-key", "api-key")
 
 
 def hash_api_key(api_key: str) -> str:
