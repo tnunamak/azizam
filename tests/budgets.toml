@@ -346,7 +346,9 @@
 # Train r105 (Try cleanup + OV3 slice 1): collect-only 17334 measured on the merged tree (2026-10-24).
 # Train r105 release-gate fix: the public-failure scope cases split into the Library refusal (+4). Collect-only 17338,
 # and the full hermetic run passed 17334 with 3 skipped and 1 xfailed (2026-10-24).
-pytest = 17338
+# Train r105 video maker stamp: +2 cases, one for the stamp rule of a sync-delivered video and one for the four readers
+# of a service App's video through the gateway route. Collect-only 17340 measured at 2e07a5b20 (2026-10-24).
+pytest = 17340
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
