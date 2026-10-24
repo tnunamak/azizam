@@ -117,8 +117,9 @@ class MeMediaRouterTests(unittest.TestCase):
         self.client = TestClient(app)
 
     def test_job_notifications_are_scoped_even_for_owner(self) -> None:
-        for app in (self.app_a, self.app_b):
-            media_jobs.create(media_jobs.MediaJob(intent="video.generate", app_id=app["id"]), path=self.jobs_db)
+        for app, person in ((self.app_a, self.alice), (self.app_b, self.bob)):
+            with request_source.acting_as(app_id=app["id"], person_id=person["id"]):
+                media_jobs.create(media_jobs.MediaJob(intent="video.generate", app_id=app["id"]), path=self.jobs_db)
         rows = self.client.get("/me/api/jobs?scope=everyone").json()["jobs"]
         self.assertEqual(len(rows), 1)
         foreign = next(job for job in media_jobs.recent(path=self.jobs_db) if job["app_id"] == self.app_b["id"])
@@ -131,8 +132,9 @@ class MeMediaRouterTests(unittest.TestCase):
         now = int(time.time())
         for key, status, updated in (("old", "succeeded", 1), ("active", "running", 1),
                                      ("recent", "succeeded", now)):
-            media_jobs.create(media_jobs.MediaJob(job_id=key, intent="image.generate",
-                app_id=self.app_a["id"], status=status, created_at=updated, updated_at=updated), path=self.jobs_db)
+            with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+                media_jobs.create(media_jobs.MediaJob(job_id=key, intent="image.generate",
+                    app_id=self.app_a["id"], status=status, created_at=updated, updated_at=updated), path=self.jobs_db)
         with patch("gateway.me_media.time.time", return_value=now):
             first = self.client.get("/me/api/jobs?watch=1").json()
         self.assertEqual({job["job_id"] for job in first["jobs"]}, {"active", "recent"})
@@ -154,11 +156,12 @@ class MeMediaRouterTests(unittest.TestCase):
             meta["maker_person_ids"] = [maker["id"]]
             self._meta_path(asset_id).write_text(json.dumps(meta))
         self._receipt(service["id"], "req_service_work", maker_person_id=maker["id"] if maker else None)
-        media_jobs.create(media_jobs.MediaJob(
-            request_id="req_service_work", job_id="job_service_work", intent="image.generate", workflow="wf.image",
-            status=media_jobs.STATUS_SUCCEEDED, progress=100, app_id=service["id"],
-            assets=[{"asset_id": asset_id, "media_type": "image/png"}],
-        ), path=self.jobs_db)
+        with request_source.acting_as(app_id=service["id"], person_id=maker["id"] if maker else None):
+            media_jobs.create(media_jobs.MediaJob(
+                request_id="req_service_work", job_id="job_service_work", intent="image.generate", workflow="wf.image",
+                status=media_jobs.STATUS_SUCCEEDED, progress=100, app_id=service["id"],
+                assets=[{"asset_id": asset_id, "media_type": "image/png"}],
+            ), path=self.jobs_db)
         return asset_id, "job_service_work"
 
     def test_owning_a_service_app_grants_no_member_work_in_it(self) -> None:
@@ -221,11 +224,12 @@ class MeMediaRouterTests(unittest.TestCase):
         asset_id = "img_" + "8" * 64
         self._write_asset(asset_id, [ownership.principal_key("app", owner_app["id"])], request_id="req_owner_make", created_at=time.time())
         self._receipt(owner_app["id"], "req_owner_make")
-        media_jobs.create(media_jobs.MediaJob(
-            request_id="req_owner_make", job_id="job_owner_make", intent="image.generate", workflow="wf.image",
-            status=media_jobs.STATUS_SUCCEEDED, progress=100, app_id=owner_app["id"],
-            assets=[{"asset_id": asset_id, "media_type": "image/png"}],
-        ), path=self.jobs_db)
+        with request_source.acting_as(app_id=owner_app["id"], person_id=self.owner["id"]):
+            media_jobs.create(media_jobs.MediaJob(
+                request_id="req_owner_make", job_id="job_owner_make", intent="image.generate", workflow="wf.image",
+                status=media_jobs.STATUS_SUCCEEDED, progress=100, app_id=owner_app["id"],
+                assets=[{"asset_id": asset_id, "media_type": "image/png"}],
+            ), path=self.jobs_db)
         self.current_user = self.owner
         self.assertIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
         self.assertEqual(self.client.get("/me/api/jobs/job_owner_make").status_code, 200)
@@ -370,17 +374,21 @@ class MeMediaRouterTests(unittest.TestCase):
         receipt_store.record(receipt, created_at=int(time.time()) if created_at is None else created_at, path=self.receipts_db)
 
     def _job(self, request_id: str, asset_id: str, *, workflow: str = "wf.image", media_type: str = "image/png") -> None:
-        media_jobs.create(
-            media_jobs.MediaJob(
-                request_id=request_id,
-                intent="image.generate",
-                workflow=workflow,
-                status=media_jobs.STATUS_SUCCEEDED,
-                progress=100,
-                assets=[{"asset_id": asset_id, "media_type": media_type}],
-            ),
-            path=self.jobs_db,
-        )
+        # The request that made the job also wrote its receipt, so the job takes that receipt's App and maker.
+        receipt = receipt_store.get(request_id, audience="internal", path=self.receipts_db) or {}
+        with request_source.acting_as(app_id=receipt.get("app_id"), person_id=receipt.get("maker_person_id")):
+            media_jobs.create(
+                media_jobs.MediaJob(
+                    request_id=request_id,
+                    app_id=receipt.get("app_id"),
+                    intent="image.generate",
+                    workflow=workflow,
+                    status=media_jobs.STATUS_SUCCEEDED,
+                    progress=100,
+                    assets=[{"asset_id": asset_id, "media_type": media_type}],
+                ),
+                path=self.jobs_db,
+            )
 
     def test_cache_asset_without_receipt_recovers_its_owned_app_source(self) -> None:
         # The key links this cache item to Alice's App even when no receipt or job exists.
@@ -908,10 +916,11 @@ class MeMediaRouterTests(unittest.TestCase):
     def test_job_with_released_request_id_keeps_its_receipt_link(self) -> None:
         # After a replay release (or erasure of a seeded ID) only the creating request's ID remains.
         self._receipt(self.app_a["id"], "req_parent")
-        media_jobs.create(media_jobs.MediaJob(
-            request_id="", parent_request_id="req_parent", intent="image.generate",
-            status=media_jobs.STATUS_SUCCEEDED, assets=[{"asset_id": "img_" + "7" * 64}],
-        ), path=self.jobs_db)
+        with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+            media_jobs.create(media_jobs.MediaJob(
+                request_id="", parent_request_id="req_parent", intent="image.generate", app_id=self.app_a["id"],
+                status=media_jobs.STATUS_SUCCEEDED, assets=[{"asset_id": "img_" + "7" * 64}],
+            ), path=self.jobs_db)
         assets = self.client.get("/me/api/media").json()["assets"]
         self.assertEqual([item["asset_id"] for item in assets], ["img_" + "7" * 64])
         self.assertEqual(assets[0]["model"], "local-image")
@@ -1842,6 +1851,8 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
                 make_runtime=self.runtime,
             )
         )
+        # The gateway's middleware opens each request's identity record; the make route stamps its job from it.
+        app.add_middleware(request_source.RequestSourceMiddleware)
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
