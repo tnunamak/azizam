@@ -359,9 +359,12 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         assert_authenticated_admin_dashboard(self, self.client)
         users = admin_store.list_users(path=self.db)
         self.assertEqual(len(users), 1)
-        apps = admin_store.list_apps_for_user(users[0]["id"], path=self.db)
+        apps = [app for app in admin_store.list_apps_for_user(users[0]["id"], path=self.db)
+                if not admin_store.is_session_app(app["id"], path=self.db)]
         self.assertEqual(len(apps), 1)
         self.assertEqual(apps[0]["kind"], "personal")
+        session_app = admin_store.get_session_app_for_user(users[0]["id"], path=self.db)
+        self.assertEqual(session_app["access_plan"], admin_store.PERSON_ASSIGNMENT)
 
     def test_oidc_login_trusted_group_grants_admin_session(self) -> None:
         cfg = OIDCConfig(
@@ -479,9 +482,12 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         )
         # No invitation, so no plan (design N3); the personal App is "Same as
         # its person", so it denies until the owner chooses a plan.
-        apps = admin_store.list_apps_for_user(user["id"], path=self.db)
+        apps = [app for app in admin_store.list_apps_for_user(user["id"], path=self.db)
+                if not admin_store.is_session_app(app["id"], path=self.db)]
         self.assertEqual(len(apps), 1)
         self.assertEqual(apps[0]["access_plan"], "person")
+        session_app = admin_store.get_session_app_for_user(user["id"], path=self.db)
+        self.assertEqual(session_app["access_plan"], admin_store.PERSON_ASSIGNMENT)
         self.assertIsNone(admin_store.person_plan_id(user["id"], path=self.db))
 
     def test_status_dashboard_accepts_admin_oidc_session(self) -> None:
