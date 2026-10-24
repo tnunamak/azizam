@@ -1441,6 +1441,30 @@
       "access": "own-account"
     },
     {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.get_generator",
+      "method": "GET",
+      "path": "/me/api/profile/avatar/generator",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.post_generate",
+      "method": "POST",
+      "path": "/me/api/profile/avatar/generate",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.post_generated",
+      "method": "POST",
+      "path": "/me/api/profile/avatar/generated",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.delete_generated",
+      "method": "DELETE",
+      "path": "/me/api/profile/avatar/generated",
+      "access": "own-account"
+    },
+    {
       "handler": "gateway.me_make.add_make_routes.<locals>.cancel_job",
       "method": "POST",
       "path": "/me/api/make/jobs/{job_id}/cancel",
