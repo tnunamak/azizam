@@ -62,15 +62,14 @@ test("owner signs in, opens Connect and copies an address from the recipe", asyn
   }
 });
 
-// An App's menu opens Connect with that App set up, and Back returns to Apps & keys. It only reads, so it runs
-// against the shared seed.
-test("Set up this app opens Connect for that app, and Back returns to Apps & keys", async ({
+// An App's Set up button opens Connect with that App set up, and Back returns to Apps & keys. It only reads, so it
+// runs against the shared seed.
+test("Set up opens Connect for that app, and Back returns to Apps & keys", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/apps/");
-  await page.getByRole("button", { name: /^Actions for / }).first().click();
-  await page.getByRole("menuitem", { name: "Set up this app", exact: true }).click();
+  await page.getByRole("link", { name: /^Set up / }).first().click();
   await expect(page).toHaveURL(/\/connect\/?\?app=/);
   await expect(page.getByRole("heading", { level: 1, name: /^Connect / })).toBeVisible();
   await expect(page.getByRole("group", { name: "Setting up in" })).toBeVisible();
@@ -105,8 +104,7 @@ test("Back and Forward return to the Connect page of each app, and the Apps and 
   await assertNoSeriousAxe(page);
 
   const setUp = async (name: string) => {
-    await page.getByRole("button", { name: `Actions for ${name}` }).click();
-    await page.getByRole("menuitem", { name: "Set up this app", exact: true }).click();
+    await page.getByRole("link", { name: `Set up ${name}`, exact: true }).click();
     await expect(page.getByRole("heading", { level: 1, name: `Connect ${name}` })).toBeVisible();
   };
   await setUp(nameA);
@@ -128,6 +126,59 @@ test("Back and Forward return to the Connect page of each app, and the Apps and 
   await page.goForward();
   await expect(page).toHaveURL(urlB);
   await expect(page.getByRole("heading", { level: 1, name: `Connect ${nameB}` })).toBeVisible();
+});
+
+// An App's Connect page shows the App's access and newest key, then its own client's values with a link to the full
+// steps. Revoking the App's only key leaves it with none: Connect then offers Create key, which opens that App's key
+// flow on Apps & keys. The member is its own principal, so the test changes no shared state.
+test("Connect shows an App's access and key, and Create key on an App with none opens its key flow", async ({
+  isolated,
+}) => {
+  const member = await isolated.member();
+  const { page } = member;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/apps/");
+  await page.getByRole("button", { name: "New app", exact: true }).first().click();
+  const name = isolated.name("OpenWhispr dictation");
+  await page.getByLabel("App name", { exact: true }).fill(name);
+  await page.getByRole("button", { name: "Create app and key", exact: true }).click();
+  await page.getByRole("dialog", { name: /^New key for / }).getByRole("button", { name: "I’ve saved the key" }).click();
+
+  await page.getByRole("link", { name: `Set up ${name}`, exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: `Connect ${name}` })).toBeVisible();
+  const strip = page.getByRole("region", { name: `${name}: access and key` });
+  await expect(strip.getByText(/^Access plan:/)).toBeVisible();
+  await expect(strip.getByText(/^(Last used|Never used)/)).toBeVisible();
+  await expect(strip.getByRole("link", { name: "Rotate key", exact: true })).toBeVisible();
+  // The App's own client is the one open in the picker, and its full steps link to the public docs.
+  const picker = page.getByRole("group", { name: "Setting up in" });
+  await expect(picker.getByRole("button", { name: "OpenWhispr", pressed: true })).toBeVisible();
+  const recipe = page.getByRole("region", { name: "Values for OpenWhispr" });
+  await expect(recipe.getByRole("link", { name: "Full steps for OpenWhispr →" })).toHaveAttribute(
+    "href",
+    "https://azizam.dev/docs/connect/openwhispr/",
+  );
+
+  // Revoke the only key from the App's menu: the App now has none.
+  await page.getByRole("link", { name: "Back to Apps & keys", exact: true }).click();
+  await expect(page).toHaveURL(/\/apps\/?$/);
+  await page.getByRole("button", { name: `Actions for ${name}` }).click();
+  await page.getByRole("menuitem", { name: "Revoke keys", exact: true }).click();
+  await page.getByRole("button", { name: "Revoke keys", exact: true }).click();
+  await expect(page.getByRole("button", { name: `Add key to ${name}` })).toBeVisible();
+
+  await page.getByRole("link", { name: `Set up ${name}`, exact: true }).click();
+  const empty = page.getByRole("region", { name: `${name}: access and key` });
+  await expect(empty.getByText("No keys yet", { exact: true })).toBeVisible();
+  await empty.getByRole("link", { name: "Create key", exact: true }).click();
+
+  // The link opens this App's key flow: the Create key dialog, with the App already named.
+  const create = page.getByRole("dialog", { name: "Create key", exact: true });
+  await expect(create).toBeVisible();
+  await expect(create.getByLabel("App name", { exact: true })).toHaveValue(name);
+  await create.getByRole("button", { name: "Create key", exact: true }).click();
+  await page.getByRole("dialog", { name: /^New key for / }).getByRole("button", { name: "I’ve saved the key" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 /** Serious and critical axe violations in the page fail the test; minor ones are reported by the other suites. */

@@ -7,9 +7,14 @@ import {
   accountApi,
   administratorsToConfirm,
   hasAdministrators,
-  type AdministratorsOnRecord,
   type KeepOptions,
 } from "@/lib/account-api";
+import {
+  listTrustedAddresses,
+  trustedAddressesKey,
+  trustedAddressesPath,
+  type TrustedAddress,
+} from "@/lib/trusted-addresses";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,33 +29,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { KeepConfirmDialog, type KeepConfirmation } from "./keep-confirm";
 
-export interface TrustedAddress {
-  id: string;
-  app_id: string;
-  address: string;
-  note: string | null;
-  created_at: number;
-  /** Null when the address was made before its creator was recorded. */
-  created_by: string | null;
-  /** Present only when the cut-over would remove the address: keep it, or add it again. */
-  cutover?: "keep" | "readd";
-  /** The administrators on record who could also have added it. Keeping it asks the owner to confirm them first. */
-  administrators?: AdministratorsOnRecord;
-  /** The person recorded as its maker, when that is another person. */
-  made_by_name?: string;
-}
-
-const listPath = (appId: string) =>
-  `/admin/api/apps/${encodeURIComponent(appId)}/trusted-addresses`;
-
-/** One app's trusted addresses. The App's section on the Apps page and its dialog share this cache entry. */
-export const trustedAddressesKey = (appId: string) => ["admin", "app-trusted-addresses", appId];
-
-export function listTrustedAddresses(appId: string): Promise<TrustedAddress[]> {
-  return adminFetch<{ trusted_addresses: TrustedAddress[] }>(listPath(appId)).then(
-    (r) => r.trusted_addresses,
-  );
-}
+export type { TrustedAddress };
+export { listTrustedAddresses, trustedAddressesKey };
 
 /** What to show for a failed change: the gateway's words, or the fallback. */
 function messageOf(caught: unknown, fallback: string): string {
@@ -76,6 +56,7 @@ export function TrustedAddressesDialog({
   focusCheck = false,
   onClose,
   onChanged,
+  onCloseAutoFocus,
 }: {
   app: { id: string } | null;
   appName: string;
@@ -84,6 +65,8 @@ export function TrustedAddressesDialog({
   onClose: () => void;
   /** An address was kept or added again: the account's Apps list shows the new count. */
   onChanged: () => void;
+  /** Returns focus to the App's menu when the dialog closes. */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const queryClient = useQueryClient();
   const [address, setAddress] = useState("");
@@ -142,7 +125,7 @@ export function TrustedAddressesDialog({
   async function add(event: FormEvent) {
     event.preventDefault();
     const saved = await change(() =>
-      adminFetch(listPath(appId), {
+      adminFetch(trustedAddressesPath(appId), {
         method: "POST",
         body: { address, note },
       }),
@@ -236,6 +219,7 @@ export function TrustedAddressesDialog({
     >
       <DialogContent
         className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        onCloseAutoFocus={onCloseAutoFocus}
         onOpenAutoFocus={(event) => {
           if (!focusCheck || checkFocused.current) return;
           const row = checkRowOf(data);
@@ -246,7 +230,7 @@ export function TrustedAddressesDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>Trusted addresses for {appName}</DialogTitle>
+          <DialogTitle>Keyless access for {appName}</DialogTitle>
           <DialogDescription>
             A device at a trusted address can use this app with no key. It runs
             with this app&apos;s access plan, and its requests show the address.
@@ -324,7 +308,7 @@ export function TrustedAddressesDialog({
                     aria-label={`Remove ${entry.address}`}
                     onClick={() =>
                       void change(() =>
-                        adminFetch(`${listPath(appId)}/${entry.id}`, {
+                        adminFetch(`${trustedAddressesPath(appId)}/${entry.id}`, {
                           method: "DELETE",
                         }),
                       )

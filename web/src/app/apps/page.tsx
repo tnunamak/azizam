@@ -1,16 +1,18 @@
 "use client";
 
 import {
+  Fragment,
   Suspense,
   useEffect,
   useRef,
   useState,
   type FormEvent,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppWindow, MoreHorizontal, Plus, KeyRound } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { formatAppName } from "@/lib/format";
@@ -38,6 +40,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton, SkeletonRows } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { SignInConnections } from "@/components/product/sign-in-connections";
 import {
   Select,
@@ -58,11 +67,16 @@ import { useUnsavedSecret } from "@/lib/unsaved-work";
 import { api, queryKeys, type AccessPlan, type Credential } from "@/lib/api";
 import { productApi } from "@/lib/product-api";
 import { guideIdForAppName, keyApps, suggestedModel } from "@/lib/app-guides";
+import {
+  listTrustedAddresses,
+  trustedAddressesKey,
+  type TrustedAddress,
+} from "@/lib/trusted-addresses";
 import { useViewer } from "@/components/shell/session";
 import { AppGuide } from "@/components/product/app-guide";
 import { TrustedAddressesDialog } from "./trusted-addresses";
 import { RenameAppDialog, RenameKeysDialog } from "./rename";
-import { AppKeyRows, AppTrustedLine } from "./app-details";
+import { AppKeyRows, KeylessAccessRow } from "./app-details";
 
 const accountKey = ["account", "session"];
 /** "person": the app uses its person's own plan ("Same as you"). */
@@ -99,9 +113,35 @@ function accessPlanSummary(app: AccountApp): string {
   return plan.same_as_person ? `${plan.name} (yours)` : plan.name;
 }
 
-/** The non-empty parts of one line, joined with a middle dot. */
-function joinParts(parts: (string | null)[]): string {
-  return parts.filter((part): part is string => part !== null).join(" · ");
+/** The plan's name, which opens a note on what the plan allows ("Chat and Images. No paid models."). */
+function AccessPlanName({ app }: { app: AccountApp }) {
+  const plan = app.access_plan;
+  if (!plan) return null;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="link" size="sm" className="h-auto px-0">
+          {accessPlanSummary(app)}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start">
+        <PopoverTitle>{plan.name}</PopoverTitle>
+        <PopoverDescription>
+          {plan.summary ?? "This plan has no description."}
+          {plan.same_as_person ? " It is your own plan." : ""}
+        </PopoverDescription>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** A separator between the parts of one line. It is hidden on a phone, so a wrapped line never starts or ends on one. */
+function Separator() {
+  return (
+    <span aria-hidden="true" className="text-muted-foreground max-sm:hidden">
+      ·
+    </span>
+  );
 }
 
 /** Why this app cannot get a key. The API sends only the boolean, so the
@@ -167,7 +207,8 @@ function writeUnfinishedRotations(value: UnfinishedRotations): boolean {
 function AppsContents() {
   const searchParams = useSearchParams();
   const requestedApp = searchParams.get("app");
-  const createFromCommand = searchParams.get("action") === "create-key";
+  // The command palette sends `action=create-key`; Connect sends `?app=<id>` with `create-key` or `rotate`.
+  const requestedAction = searchParams.get("action");
   const commandConsumed = useRef(false);
   const focusedRequest = useRef<string | null>(null);
   const dialogReturnFocus = useRef<HTMLElement | null>(null);
@@ -269,17 +310,32 @@ function AppsContents() {
   const personPlan = accountData?.user?.access_plan ?? null;
   const chosenPlan = (plans ?? []).find((item) => item.id === plan);
 
+  // Opens a flow once per visit: the command palette's New key (no app named), or a key or a rotation for the app
+  // a Connect link names. The app's own flow is the same one its card uses.
   useEffect(() => {
-    if (
-      createFromCommand &&
-      accountData?.authenticated &&
-      !commandConsumed.current
-    ) {
+    if (!requestedAction || !accountData?.authenticated || commandConsumed.current)
+      return;
+    if (!requestedApp) {
+      if (requestedAction !== "create-key") return;
       commandConsumed.current = true;
       dialogReturnFocus.current = newAppButton.current;
       setCreating(true);
+      return;
     }
-  }, [createFromCommand, accountData?.authenticated]);
+    const app = accountData.apps.find((item) => item.id === requestedApp);
+    if (!app || !app.can_mint_keys) return;
+    if (requestedAction === "create-key") {
+      commandConsumed.current = true;
+      startAddKey(app);
+    } else if (requestedAction === "rotate" && app.credentials.length) {
+      commandConsumed.current = true;
+      rememberAppFocus(app.id);
+      setAction({ kind: "rotate", app });
+      setError(null);
+    }
+    // The helpers only set state and refs, and the consumed flag makes this run once per visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedAction, requestedApp, accountData]);
 
   useEffect(() => {
     const stored = readUnfinishedRotations();
@@ -391,6 +447,15 @@ function AppsContents() {
     dialogReturnFocus.current = event.currentTarget;
     dialogReturnApp.current = null;
     resetDraft();
+    setCreating(true);
+  }
+
+  /** A key for one app, from its card: the New app dialog with the app already made, so a failed key can be retried. */
+  function startAddKey(app: AccountApp, opener?: HTMLElement) {
+    rememberAppFocus(app.id, opener);
+    resetDraft();
+    setCreatedApp(app);
+    setName(app.name);
     setCreating(true);
   }
 
@@ -733,6 +798,19 @@ function AppsContents() {
   }
 
   const apps = accountData?.apps ?? [];
+  // Only an owner sees an App's keyless addresses. They are read once here, so each card can tell whether it has
+  // any (its row shows only then) and the hint goes under the first card that does.
+  const owner = accountData?.user?.role === "owner";
+  const keylessQueries = useQueries({
+    queries: owner
+      ? apps.map((app) => ({
+          queryKey: trustedAddressesKey(app.id),
+          queryFn: () => listTrustedAddresses(app.id),
+        }))
+      : [],
+  });
+  const keylessOf = (index: number): TrustedAddress[] => keylessQueries[index]?.data ?? [];
+  const firstKeylessIndex = apps.findIndex((_, index) => keylessOf(index).length > 0);
   const keysApp = apps.find((item) => item.id === renamingKeysOf) ?? null;
   const actionAppName = action
     ? formatAppName(action.app.name, accountData?.user?.email)
@@ -766,12 +844,7 @@ function AppsContents() {
     <div className="space-y-8">
       <PageHeader
         title="Apps & keys"
-        // For an owner the trusted-address rule is explained once, in the About text, not under every app.
-        subtitle={
-          accountData?.user?.role === "owner"
-            ? "Each app has its own keys. About trusted addresses: a device at a trusted address can use an app with no key, at that app's access plan. Add only addresses you control."
-            : "Each app has its own keys."
-        }
+        subtitle="Each app has its own keys."
         primaryAction={
           <Button
             ref={newAppButton}
@@ -837,7 +910,7 @@ function AppsContents() {
         // Each app is one group: its header, then its keys and (for an owner) its trusted addresses, indented under
         // its name. The groups stack with a gap, so the page reads as a list of apps, not one flat list of rows.
         <ul aria-label="Apps" className="flex flex-col gap-3">
-          {apps.map((app) => {
+          {apps.map((app, index) => {
             const appName = formatAppName(app.name, accountData?.user?.email);
             const activeIds = new Set(app.credentials.map((key) => key.id));
             // Old keys from a rotation finished later, still active.
@@ -861,7 +934,7 @@ function AppsContents() {
               : mintBlockedReason(app);
             const minting = mintingAppId === app.id;
             // A notice leads the meta line, so it is read first.
-            const meta = joinParts([
+            const meta: ReactNode[] = [
               oldKeys.length
                 ? "Old keys still work"
                 : needsNewKey && app.can_mint_keys
@@ -869,10 +942,12 @@ function AppsContents() {
                   : null,
               blockedReason ? "Can't create keys" : null,
               `${app.credentials.length} ${app.credentials.length === 1 ? "key" : "keys"}`,
-              accessPlanSummary(app)
-                ? `Access plan: ${accessPlanSummary(app)}`
-                : null,
-            ]);
+              app.access_plan ? (
+                <span key="plan">
+                  Access plan: <AccessPlanName app={app} />
+                </span>
+              ) : null,
+            ].filter((part) => part !== null);
             const metaTitle = oldKeys.length
               ? "Your new key is saved. Some old keys still work."
               : needsNewKey && app.can_mint_keys
@@ -894,20 +969,6 @@ function AppsContents() {
                           onClick={() => void revokeUnfinished(app.id, oldKeys)}
                         >
                           Revoke old keys
-                        </Button>
-                      ) : !app.credentials.length && app.can_mint_keys ? (
-                        <Button
-                          variant="outline"
-                          disabled={busy}
-                          onClick={(event) => {
-                            rememberAppFocus(app.id, event.currentTarget);
-                            resetDraft();
-                            setCreatedApp(app);
-                            setName(app.name);
-                            setCreating(true);
-                          }}
-                        >
-                          Create key
                         </Button>
                       ) : rowReplace !== null ? (
                         <Button
@@ -945,17 +1006,29 @@ function AppsContents() {
                     </h2>
                     <p
                       title={metaTitle}
-                      className="text-muted-foreground text-meta"
+                      className="text-muted-foreground text-meta flex flex-wrap items-center gap-x-2 gap-y-0.5"
                     >
-                      {meta}
+                      {meta.map((part, index) => (
+                        <Fragment key={index}>
+                          {index > 0 ? <Separator /> : null}
+                          {part}
+                        </Fragment>
+                      ))}
                     </p>
                   </div>
-                  {/* On a phone the app's action drops under its name, aligned with it; the menu stays top right. */}
-                  {primary ? (
-                    <div className="flex shrink-0 items-center gap-2 max-sm:order-last max-sm:basis-full max-sm:pl-7">
-                      {primary}
-                    </div>
-                  ) : null}
+                  {/* On a phone the app's actions drop under its name, aligned with it; the menu stays top right. */}
+                  <div className="flex shrink-0 flex-wrap items-center gap-2 max-sm:order-last max-sm:basis-full max-sm:pl-7">
+                    {primary}
+                    <Button asChild variant="outline" size="sm">
+                      <Link
+                        prefetch={false}
+                        href={`/connect/?app=${encodeURIComponent(app.id)}`}
+                        aria-label={`Set up ${appName}`}
+                      >
+                        Set up
+                      </Link>
+                    </Button>
+                  </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -968,19 +1041,6 @@ function AppsContents() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        {blockedReason && (
-                          <p className="text-muted-foreground text-meta max-w-64 px-2 py-1.5">
-                            {blockedReason}
-                          </p>
-                        )}
-                        <DropdownMenuItem asChild>
-                          <Link
-                            prefetch={false}
-                            href={`/connect/?app=${encodeURIComponent(app.id)}`}
-                          >
-                            Set up this app
-                          </Link>
-                        </DropdownMenuItem>
                         <DropdownMenuItem
                           onSelect={() => {
                             rememberAppFocus(app.id);
@@ -1028,6 +1088,16 @@ function AppsContents() {
                         >
                           Revoke keys
                         </DropdownMenuItem>
+                        {owner ? (
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              rememberAppFocus(app.id);
+                              setTrustingApp(app);
+                            }}
+                          >
+                            Manage keyless access
+                          </DropdownMenuItem>
+                        ) : null}
                         {viewer.admin && (
                           <DropdownMenuItem
                             onSelect={() => {
@@ -1062,6 +1132,8 @@ function AppsContents() {
                   app={app}
                   appName={appName}
                   busy={busy}
+                  blockedReason={blockedReason}
+                  onAddKey={(opener) => startAddKey(app, opener)}
                   onRotate={(key) => {
                     rememberAppFocus(app.id);
                     setAction({ kind: "rotate", app, key });
@@ -1073,11 +1145,12 @@ function AppsContents() {
                     setError(null);
                   }}
                 />
-                {accountData?.user?.role === "owner" ? (
-                  <AppTrustedLine
-                    app={app}
+                {owner ? (
+                  <KeylessAccessRow
                     appName={appName}
-                    onManage={() => setTrustingApp(app)}
+                    addresses={keylessOf(index)}
+                    failed={keylessQueries[index]?.isError ?? false}
+                    showHint={index === firstKeylessIndex}
                   />
                 ) : null}
               </li>
@@ -1270,6 +1343,7 @@ function AppsContents() {
           setFocusCheck(false);
         }}
         onChanged={() => void refresh()}
+        onCloseAutoFocus={restoreDialogFocus}
       />
       <RenameAppDialog
         app={renamingApp}

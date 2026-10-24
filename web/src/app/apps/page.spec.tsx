@@ -307,7 +307,7 @@ it("does not claim an existing keyless app was just created when its key fails",
   const row = within(
     (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
   );
-  fireEvent.click(row.getByRole("button", { name: "Create key" }));
+  fireEvent.click(row.getByRole("button", { name: "Add key to My laptop" }));
   fireEvent.click(
     within(screen.getByRole("dialog")).getByRole("button", {
       name: "Create key",
@@ -404,7 +404,7 @@ it("refreshes a partially created app, clears the cancelled draft, and resumes k
   const card = within(
     screen.getByRole("heading", { name: "My laptop" }).closest("li")!,
   );
-  fireEvent.click(card.getByRole("button", { name: "Create key" }));
+  fireEvent.click(card.getByRole("button", { name: "Add key to My laptop" }));
   expect(screen.getByLabelText("App name")).toHaveValue("My laptop");
   vi.mocked(accountApi.mintKey).mockResolvedValueOnce({
     id: "new-key",
@@ -457,7 +457,7 @@ it("keeps a newly created app resumable while the session refresh is still pendi
   const createdCard = within(
     screen.getByRole("heading", { name: "My laptop" }).closest("li")!,
   );
-  fireEvent.click(createdCard.getByRole("button", { name: "Create key" }));
+  fireEvent.click(createdCard.getByRole("button", { name: "Add key to My laptop" }));
   fireEvent.click(
     within(screen.getByRole("dialog")).getByRole("button", {
       name: "Create key",
@@ -511,7 +511,10 @@ it("names an app's access plan on its row instead of showing a bare word", async
   const row = within(
     (await screen.findByRole("heading", { name: "My laptop" })).closest("li")!,
   );
-  expect(row.getByText(/Access plan: Old \(yours\)/)).toBeVisible();
+  expect(row.getByText(/Access plan:/)).toBeVisible();
+  // The plan's name opens a note on what it allows. An app on the person's own plan says so in the note.
+  fireEvent.click(row.getByRole("button", { name: "Old (yours)" }));
+  expect(await screen.findByText(/It is your own plan\./)).toBeVisible();
 });
 
 const unfinishedKey = "azizam:unfinished-key-rotations";
@@ -725,13 +728,13 @@ it("keeps focus inside a modal during refresh and returns it on cancel", async (
   await waitFor(() => expect(opener).toHaveFocus());
 });
 
-it("hands focus to the key reveal and returns to app actions if its opener disappears", async () => {
+it("hands focus to the key reveal, then returns it to the Add key button the key came from", async () => {
   navigation.search = `app=${app.id}`;
   vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, apps: [app] });
   vi.mocked(accountApi.mintKey).mockResolvedValue(mintedKey);
   renderApps();
   await screen.findByRole("heading", { name: app.name });
-  const opener = screen.getByRole("button", { name: "Create key" });
+  const opener = screen.getByRole("button", { name: "Add key to My laptop" });
   opener.focus();
   fireEvent.click(opener);
   vi.mocked(accountApi.session).mockResolvedValue({
@@ -751,7 +754,7 @@ it("hands focus to the key reveal and returns to app actions if its opener disap
   saved.focus();
   fireEvent.click(saved);
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Actions for My laptop" })).toHaveFocus(),
+    expect(screen.getByRole("button", { name: "Add key to My laptop" })).toHaveFocus(),
   );
 });
 
@@ -772,7 +775,7 @@ it("lists the person's sign-in connections apart from their keyed apps, and disc
   ]);
   renderApps();
   const section = (
-    await screen.findByRole("heading", { name: "Connected with sign-in" })
+    await screen.findByRole("heading", { name: "Signed-in apps" })
   ).closest("section")!;
   const list = await within(section).findByRole("list", { name: "Connections" });
   expect(within(list).getByText("ChatGPT")).toBeVisible();

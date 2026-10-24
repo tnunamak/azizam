@@ -1,20 +1,21 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { MoreHorizontal, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { RelativeTime } from "@/components/product/relative-time";
 import type { AccountApp } from "@/lib/account-api";
 import type { Credential } from "@/lib/api";
-import { keyStart } from "./rename";
-import {
-  listTrustedAddresses,
-  trustedAddressesKey,
-  type TrustedAddress,
-} from "./trusted-addresses";
+import { keyStart } from "@/lib/key-hint";
+import type { TrustedAddress } from "@/lib/trusted-addresses";
 
 /*
- * What an app owns, shown inside its group on the Apps page: its keys, and for an owner its trusted addresses.
+ * What an app owns, shown inside its group on the Apps page: its keys, and for an owner its keyless addresses.
  * Both sit under the app's name, indented to line up with it, so each app reads as one block.
  */
 
@@ -23,125 +24,221 @@ const childIndent = "pl-11";
 /** The band that sets a child line apart from the app's header. */
 const childBand = "border-t bg-muted/30";
 
-/** The app's keys, one quiet row each: "Key · name", the masked start, and when it was last used. */
+/**
+ * The app's keys, one row each, then a footer that adds a key. An app with no
+ * keys shows only "No keys yet" and the footer.
+ */
 export function AppKeyRows({
   app,
   appName,
   busy,
+  blockedReason,
+  onAddKey,
   onRotate,
   onRevoke,
 }: {
   app: AccountApp;
   appName: string;
   busy: boolean;
+  /** Why this app cannot get a key, when it cannot. */
+  blockedReason: string | null;
+  /** Opens the key flow. The opener gets focus back when it closes. */
+  onAddKey: (opener: HTMLElement) => void;
   onRotate: (key: Credential) => void;
   onRevoke: (key: Credential) => void;
 }) {
-  if (!app.credentials.length) {
-    return (
-      <p className={`${childBand} ${childIndent} text-muted-foreground text-meta py-2 pr-4`}>
-        No keys yet
-      </p>
-    );
-  }
+  const noKeys = app.credentials.length === 0;
   return (
-    <ul aria-label={`Keys for ${appName}`} className={`${childBand} divide-y`}>
-      {app.credentials.map((key) => (
-        <li
-          key={key.id}
-          className={`${childIndent} flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 pr-4`}
+    <div className={`${childBand} divide-y`}>
+      {noKeys ? null : (
+        <ul aria-label={`Keys for ${appName}`} className="divide-y">
+          {app.credentials.map((key) => (
+            <KeyRow
+              key={key.id}
+              app={app}
+              credential={key}
+              busy={busy}
+              onRotate={onRotate}
+              onRevoke={onRevoke}
+            />
+          ))}
+        </ul>
+      )}
+      <div
+        className={`${childIndent} text-meta flex flex-wrap items-center gap-x-3 gap-y-1 py-2 pr-4`}
+      >
+        {noKeys ? (
+          <>
+            <span className="text-muted-foreground">No keys yet</span>
+            {/* Hidden on a phone, so a wrapped line never starts with a dot. */}
+            <span
+              aria-hidden="true"
+              className="text-muted-foreground max-sm:hidden"
+            >
+              ·
+            </span>
+          </>
+        ) : null}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground"
+          disabled={busy || !app.can_mint_keys}
+          aria-label={`Add key to ${appName}`}
+          onClick={(event) => onAddKey(event.currentTarget)}
         >
-          <div className="min-w-0">
-            <p className="text-body truncate">{`Key · ${key.display_name}`}</p>
-            <p className="text-muted-foreground text-meta">
-              <span className="font-mono">{keyStart(key.prefix)}</span>
-              {" · "}
-              {key.last_used_at != null ? (
-                <>
-                  Last used <RelativeTime ts={key.last_used_at} />
-                </>
-              ) : (
-                "Never used"
-              )}
-            </p>
-          </div>
-          {/* On a phone, when the buttons wrap under the key, their text lines up with the key's name, not inside it. */}
-          <div className="flex shrink-0 items-center gap-1 max-sm:-ml-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              disabled={busy || !app.can_mint_keys}
-              aria-label={`Rotate key ${key.display_name}`}
-              onClick={() => onRotate(key)}
-            >
-              Rotate
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              disabled={busy}
-              aria-label={`Revoke key ${key.display_name}`}
-              onClick={() => onRevoke(key)}
-            >
-              Revoke
-            </Button>
-          </div>
-        </li>
-      ))}
-    </ul>
+          <Plus aria-hidden="true" />
+          Add key
+        </Button>
+        {blockedReason ? (
+          <span className="text-muted-foreground">{blockedReason}</span>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
 /**
- * An owner's trusted addresses on one line under the app's keys: the addresses, or "none", then Manage. The
- * explanation is not repeated here; the page's About text and the Manage dialog give it. A request from one of
- * these addresses, with no key, uses this app's access plan.
+ * One key: its name, its masked start, when it was made and when it was last
+ * used. On a wide screen Rotate and Revoke sit beside it; on a phone they move
+ * into one menu, with 44 px targets.
  */
-export function AppTrustedLine({
+function KeyRow({
   app,
-  appName,
-  onManage,
+  credential,
+  busy,
+  onRotate,
+  onRevoke,
 }: {
   app: AccountApp;
-  appName: string;
-  onManage: () => void;
+  credential: Credential;
+  busy: boolean;
+  onRotate: (key: Credential) => void;
+  onRevoke: (key: Credential) => void;
 }) {
-  const { data, isPending, isError } = useQuery({
-    queryKey: trustedAddressesKey(app.id),
-    queryFn: () => listTrustedAddresses(app.id),
-  });
+  const rotateDisabled = busy || !app.can_mint_keys;
+  return (
+    <li
+      className={`${childIndent} flex items-center justify-between gap-x-3 gap-y-1 py-2 pr-4`}
+    >
+      <div className="min-w-0">
+        <p className="text-body truncate">{credential.display_name}</p>
+        <p className="text-muted-foreground text-meta flex flex-wrap items-center gap-x-3 gap-y-0.5">
+          <span className="font-mono">{keyStart(credential.prefix)}</span>
+          <span>
+            Created <RelativeTime ts={credential.created_at} />
+          </span>
+          <span>
+            {credential.last_used_at != null ? (
+              <>
+                Last used <RelativeTime ts={credential.last_used_at} />
+              </>
+            ) : (
+              "Never used"
+            )}
+          </span>
+        </p>
+      </div>
+      <div className="hidden shrink-0 items-center gap-1 sm:flex">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground"
+          disabled={rotateDisabled}
+          aria-label={`Rotate key ${credential.display_name}`}
+          onClick={() => onRotate(credential)}
+        >
+          Rotate
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-destructive hover:text-destructive"
+          disabled={busy}
+          aria-label={`Revoke key ${credential.display_name}`}
+          onClick={() => onRevoke(credential)}
+        >
+          Revoke
+        </Button>
+      </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="sm:hidden"
+            aria-label={`Options for key ${credential.display_name}`}
+          >
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem
+            disabled={rotateDisabled}
+            onSelect={() => onRotate(credential)}
+            className="max-sm:min-h-11"
+          >
+            Rotate key
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            variant="destructive"
+            disabled={busy}
+            onSelect={() => onRevoke(credential)}
+            className="max-sm:min-h-11"
+          >
+            Revoke key
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </li>
+  );
+}
+
+/**
+ * An owner's keyless addresses for one app: the addresses a request may come
+ * from to use the app with no key. The row shows only when there are some. The
+ * hint that explains them goes under the first app that has the row.
+ */
+export function KeylessAccessRow({
+  appName,
+  addresses,
+  failed,
+  showHint,
+}: {
+  appName: string;
+  addresses: TrustedAddress[];
+  /** The list could not be read; the row says so rather than hiding. */
+  failed: boolean;
+  showHint: boolean;
+}) {
+  if (failed) {
+    return (
+      <p
+        role="alert"
+        className={`${childBand} ${childIndent} text-destructive text-meta py-2 pr-4`}
+      >
+        Keyless access couldn&apos;t be loaded.
+      </p>
+    );
+  }
+  if (addresses.length === 0) return null;
   return (
     <div
-      className={`${childBand} ${childIndent} text-meta flex flex-wrap items-center gap-x-2 gap-y-1 py-2 pr-4`}
+      role="group"
+      aria-label={`Keyless access for ${appName}`}
+      className={`${childBand} ${childIndent} text-meta py-2 pr-4`}
     >
-      <span className="text-muted-foreground">Trusted addresses:</span>
-      {isPending ? (
-        <Skeleton className="h-5 w-28" />
-      ) : isError ? (
-        <span role="alert" className="text-destructive">
-          Could not be loaded.
-        </span>
-      ) : data.length ? (
-        data.map((entry) => <AddressChip key={entry.id} entry={entry} />)
-      ) : (
-        <span>none</span>
-      )}
-      {/* The separator and Manage wrap together, so a line never ends on a dangling dot. */}
-      <span className="inline-flex items-center gap-2 whitespace-nowrap">
-        <span aria-hidden="true" className="text-muted-foreground">
-          ·
-        </span>
-        <Button
-          variant="link"
-          size="sm"
-          aria-label={`Manage trusted addresses for ${appName}`}
-          onClick={onManage}
-        >
-          Manage
-        </Button>
-      </span>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-muted-foreground">Keyless access from:</span>
+        {addresses.map((entry) => (
+          <AddressChip key={entry.id} entry={entry} />
+        ))}
+      </div>
+      {showHint ? (
+        <p className="text-muted-foreground mt-1">
+          Requests from these addresses use this app&apos;s plan without a key.
+        </p>
+      ) : null}
     </div>
   );
 }

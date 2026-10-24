@@ -223,7 +223,7 @@ for (const viewport of viewports) {
       await expect(checkLine).toBeVisible();
       // The line opens the App's trusted addresses on the address that needs a check, which takes focus.
       await checkLine.click();
-      const dialog = page.getByRole("dialog", { name: /^Trusted addresses for / });
+      const dialog = page.getByRole("dialog", { name: /^Keyless access for / });
       await expect(dialog.getByRole("button", { name: /^(Keep|Add) address / })).toBeFocused();
       await expect(dialog.getByText(ADD_AGAIN_NOTICE, { exact: true })).toBeVisible();
       await noSideways(page, "the trusted addresses dialog with the add-again notice");
@@ -371,7 +371,7 @@ for (const viewport of viewports) {
       await expect(checkLine).toBeVisible();
       // The line opens the App's trusted addresses on the address that needs a check, which takes focus.
       await checkLine.click();
-      const dialog = page.getByRole("dialog", { name: /^Trusted addresses for / });
+      const dialog = page.getByRole("dialog", { name: /^Keyless access for / });
       await expect(dialog.getByRole("button", { name: /^(Keep|Add) address / })).toBeFocused();
       await expect(dialog.getByText(ADDRESS_KEEP_NOTICE, { exact: true })).toBeVisible();
 

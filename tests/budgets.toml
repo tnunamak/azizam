@@ -390,7 +390,9 @@ vitest = 3467
 # playwright.config.ts 546 + live-data 3 + household 18 = 567.
 # Apps & keys and Connect round 2: +1 case in e2e/connect.spec.ts (Back and Forward between two Connect pages, with
 # axe on the Apps and Connect pages). Gate lists measured 2026-10-24: playwright.config.ts 547 + live-data 3 + household 18 = 568.
-playwright = 568
+# Apps & keys and Connect round 3, Apps part: +1 case in e2e/connect.spec.ts (an App's access and key, and Create key on
+# an App with none). Gate lists measured 2026-10-24: playwright.config.ts 548 + live-data 3 + household 18 = 569.
+playwright = 569
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
