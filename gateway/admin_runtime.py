@@ -2346,10 +2346,10 @@ def app_key_prompt_memory(app: Mapping[str, Any], credential: Mapping[str, Any])
     return {
         "person_id": person_id,
         "description": (
-            "Prompts sent with this key follow your prompt-memory settings. "
-            "Anyone holding it can access your saved prompts."
+            "Words sent with this key follow your saved words and chats setting. "
+            "Anyone holding it can access your saved words and chats."
             if person_id else
-            "Prompts sent with this key are not remembered. Generated items belong to the App. "
+            "Words sent with this key are not kept. Generated items belong to the App. "
             "Requests to /v1/responses can explicitly ask to save a conversation with store:true until it is explicitly deleted."
         ),
     }

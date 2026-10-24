@@ -3038,7 +3038,7 @@ export default function TryPage() {
                   personViewer &&
                   tab.value !== "speech" ? (
                     <p className="text-muted-foreground text-meta">
-                      Jobs whose prompts aren’t kept cannot resume after a
+                      Jobs whose words aren’t kept cannot resume after a
                       gateway restart.
                     </p>
                   ) : null}
@@ -3190,7 +3190,7 @@ function ResultView({
         ) : result.promptNotSaved ? (
           <p className="text-muted-foreground text-meta flex items-center gap-1.5">
             <EyeOff aria-hidden="true" className="size-4 shrink-0" />
-            Prompt not kept
+            Words not kept
           </p>
         ) : null}
         {result.missing && (
@@ -3492,11 +3492,11 @@ function KeepHistoryControl({
       >
         <EyeOff aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
         <div className="min-w-0 flex-1">
-          <p className="text-body font-medium">Prompts aren’t kept</p>
+          <p className="text-body font-medium">Words aren’t kept</p>
           <p id={`${id}-note`} className="text-muted-foreground text-meta">
             {keepState === "member-off" ? (
               <>
-                You turned off prompt keeping.{" "}
+                You turned off saved words and chats.{" "}
                 <Link prefetch={false}
                   href="/account"
                   className="text-foreground underline underline-offset-4"
@@ -3506,7 +3506,7 @@ function KeepHistoryControl({
               </>
             ) : owner ? (
               <>
-                You turned off prompt keeping for everyone.{" "}
+                You turned off saved words and chats for everyone.{" "}
                 <Link prefetch={false}
                   href="/settings#prompts"
                   className="text-foreground underline underline-offset-4"
@@ -3562,14 +3562,14 @@ function KeepHistoryControl({
         <span className="block">Not saved in your History.</span>
         {memory ? (
           <span className="block">
-            The prompt isn’t kept. The {made} still goes to Library.
+            The words aren’t kept. The {made} still goes to Library.
           </span>
         ) : null}
       </>
     );
   } else if (keepState === "unknown" || history === null) {
     note = memory
-      ? "Couldn't read your prompt settings. Saved prompts are visible only to you."
+      ? "Couldn't read your saved words and chats setting. Saved words are visible only to you."
       : "Couldn’t read your settings. Saved items are visible only to you.";
   } else if (keepState === null || history === undefined) {
     note = "Checking what Azizam keeps…";
@@ -3584,9 +3584,9 @@ function KeepHistoryControl({
         {memory && promptsKept ? (
           <>
             <span className="block">
-              Azizam tries to keep the prompt with the {made}.
+              Azizam tries to keep the words with the {made}.
             </span>
-            <span className="block">Only you can see kept prompts.</span>
+            <span className="block">Only you can see kept words.</span>
           </>
         ) : (
           <span className="block">Only you can see it.</span>
@@ -3595,7 +3595,7 @@ function KeepHistoryControl({
     );
   }
   // With request history off, this switch can only still decide the prompt kept with a picture.
-  const label = history?.keep === false ? "Keep prompts" : "Keep request history";
+  const label = history?.keep === false ? "Keep the words you used to make things" : "Keep request history";
   return (
     <div
       data-slot="keep-history"

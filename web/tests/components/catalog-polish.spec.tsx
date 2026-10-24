@@ -123,7 +123,7 @@ describe("catalog polish", () => {
     await screen.findByRole("button", { name: "fast" });
     // "Fast" only repeats the alias, so it is not shown beside it.
     expect(within(rowOf("fast")).queryByText("Fast")).toBeNull();
-    expect(rowHas("fast", "Local · no provider charge")).toBe(true);
+    expect(rowHas("fast", "Local · no charge")).toBe(true);
     expect(rowHas("image", "$0.04 per image")).toBe(true);
     for (const old of ["Free (your hardware)", "Not measured yet"]) {
       expect(screen.queryByText(old)).toBeNull();

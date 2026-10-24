@@ -615,7 +615,7 @@ def _base_row(
     if timing is not None:
         summary["typical_seconds"] = timing["typical_seconds"]
     if locality == "local":
-        summary["cost_label"] = "Local · no provider charge"
+        summary["cost_label"] = "Local · no charge"
     elif cost["kind"] == "free":
         summary["cost_label"] = "No provider charge"
     elif cost["price"] is not None:

@@ -228,7 +228,7 @@ def test_catalog_summary_omits_unknown_metrics_but_preserves_details():
         service_records={"test": {"name": "Internal service", "description": "Private path debug data", "config": {"base_url": "http://localhost:18001"}}},
     )
     row = catalog["models"][0]
-    assert row["summary"] == {"cost_label": "Local · no provider charge"}
+    assert row["summary"] == {"cost_label": "Local · no charge"}
     assert row["timing"] == {"typical_seconds": None, "source": None}
     assert row["description"] == "A chat model."
 

@@ -14,7 +14,7 @@ export function Money({
   summary = false,
   precise = false,
 }: MoneyProps) {
-  if (local) return <span>Local · no provider charge</span>;
+  if (local) return <span>Local · no charge</span>;
   if (amount == null || !Number.isFinite(amount))
     return summary ? null : (
       <span className="text-muted-foreground">Not measured yet</span>

@@ -15,6 +15,7 @@ Applies to every word in the product UI. Marketing pages (azizam.dev) follow it 
 - A recorded charge: "USD 0.42". A charge under one cent: "Less than USD 0.01".
 - A request that ran locally, where its receipt names a local backend, records no charge, and shows it was served: "Local · no charge". A request that failed before routing is not local: "Cost not recorded".
 - Local requests beside a total, on their own line under it: "N local · no charge".
+- Every surface uses that one label for a local cost: Library, Try, Models, Usage and the money component. Do not write "Local · no provider charge" or "Local: no provider charge".
 - A paid request whose provider did not report its cost: "Cost not reported by the provider".
 - A total that leaves out requests with no reported cost: "Total excludes N requests without a reported cost". Say what it means in one more line: spend adds only reported costs.
 - A missing amount where the gateway cannot say where the request ran: "Cost not recorded" (never "Free", never blank, never "0"). Give it a help line that says why.
@@ -39,11 +40,11 @@ Applies to every word in the product UI. Marketing pages (azizam.dev) follow it 
 | **Person** | Anyone with an account | user, account, principal |
 | **Owner** / **Admin** / **Member** | Roles | operator (in UI), superuser |
 | **Request** | One call an app makes | job (except long media jobs), execution |
-| **Request history** | What your apps sent, kept for a short time so you can check it or run it again. Covers every request kind: chat, images, speech | prompt history, log, audit trail |
+| **Request history** | What your apps sent, kept for a short time so you can check it or run it again. Covers every request kind, such as chat, images or speech | prompt history, log, audit trail |
 | **Receipt** | The record of one request: who, what, outcome, cost, time | log, audit row, trace |
 | **Creation** | One generated image, video or audio file in Library | asset, media item, artifact |
 | **Prompt** | The words a creation was made from, as Library shows and copies them | words (as a label for one creation), input text |
-| **Saved words and chats** | The setting that keeps each creation's prompt, and chats an app asks Azizam to keep. Its name in Settings and Your settings | prompt memory, prompt keeping, prompts (as a setting name) |
+| **Saved words and chats** | The setting that keeps each creation's prompt, and chats an app asks Azizam to keep. Its name in Settings and Your settings. Its switch reads "Keep the words you used to make things". Its states say "words": "Words aren’t kept", "Only you can see kept words" | prompt memory, prompt keeping, prompts or "Keep prompts" (as a setting name) |
 | **Spend** | Money recorded against providers | cost (for totals), billing |
 | **Cap** | A spend limit | quota, budget (in UI) |
 

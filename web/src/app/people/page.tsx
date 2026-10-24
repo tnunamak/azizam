@@ -333,7 +333,7 @@ export default function PeoplePage() {
                       `${formatPersonName(person.name, person.email || "this person")}${person.name && person.email ? ` (${person.email})` : ""}: ` +
                       (person.disabled
                         ? "This person can sign in again. Previously revoked keys stay revoked; create new keys for their apps."
-                        : "This person cannot sign in. Access to their apps is suspended and their keys are permanently revoked. Their saved prompts stay."),
+                        : "This person cannot sign in. Access to their apps is suspended and their keys are permanently revoked. Their saved words and chats stay."),
                     run: () =>
                       peopleApi.change(person.id, {
                         disabled: !person.disabled,
@@ -356,7 +356,7 @@ export default function PeoplePage() {
                     confirmLabel: "Remove person",
                     name: formatPersonName(person.name, "person"),
                     description:
-                      "This permanently removes the account and its saved prompts, and revokes access to its apps and keys.",
+                      "This permanently removes the account and its saved words and chats, and revokes access to its apps and keys.",
                     run: () => peopleApi.remove(person.id),
                   })
                 }

@@ -167,9 +167,9 @@ describe("purgeStatus", () => {
 });
 
 describe("keyPromptNote", () => {
-  it("says a service or someone else's key is not remembered", () => {
+  it("says a service or someone else's key does not keep words", () => {
     expect(keyPromptNote({ person_id: null })).toBe(
-      "Media prompts sent with this key are not remembered. Requests to /v1/responses with store:true can save the conversation until it is explicitly deleted.",
+      "Words sent with this key are not kept. Requests to /v1/responses with store:true can save the conversation until it is explicitly deleted.",
     );
   });
 

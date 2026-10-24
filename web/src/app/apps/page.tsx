@@ -841,7 +841,7 @@ function AppsContents() {
         (action.key ? [action.key] : action.app.credentials).some(
           (key) => key.created_by === null,
         )
-          ? "A new key saves your prompts"
+          ? "A new key saves your words and chats"
           : null,
         action.kind === "rotate"
           ? action.key
@@ -968,7 +968,7 @@ function AppsContents() {
             const metaTitle = oldKeys.length
               ? "Your new key is saved. Some old keys still work."
               : needsNewKey && app.can_mint_keys
-                ? "This app's key doesn't save your prompts. Replace it to use your prompt settings."
+                ? "This app's key doesn't save your words and chats. Replace it to use your saved words and chats setting."
                 : (blockedReason ?? undefined);
               const primary = (
                       minting ? (

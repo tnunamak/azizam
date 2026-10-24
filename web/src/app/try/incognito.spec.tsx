@@ -208,7 +208,7 @@ describe("Keep request history in Try", () => {
     mocks.promptMemory.mockResolvedValue(promptsOff);
     serve("image");
     renderTry();
-    expect(await screen.findByText("Prompts aren’t kept")).toBeVisible();
+    expect(await screen.findByText("Words aren’t kept")).toBeVisible();
     expect(screen.queryByRole("switch", { name: "Keep request history" })).not.toBeInTheDocument();
     await pressRun();
     expect(forgetIn(await sentBody())).toEqual({ mode: "forget" });

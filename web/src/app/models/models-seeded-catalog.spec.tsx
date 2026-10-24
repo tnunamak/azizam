@@ -456,7 +456,7 @@ describe("seeded catalog", () => {
     expect(idsIn("Images")).toEqual(["image", "provider/image-fast"]);
     // Row facts: tags in words, a local price, a remote price, quiet status.
     expect(within(rowOf("chat")).getByTitle(/Uses tools, Thinks through questions, Understands images/)).toBeInTheDocument();
-    expect(rowHas("chat", "Local · no provider charge")).toBe(true);
+    expect(rowHas("chat", "Local · no charge")).toBe(true);
     expect(rowHas("image", "$0.04 per image")).toBe(true);
     expect(rowHas("image", "Busy")).toBe(true);
     expect(rowHas("decide", "Ready to start")).toBe(true);

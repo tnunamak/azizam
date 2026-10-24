@@ -522,7 +522,7 @@ function ModelRow({
   const status = statusWords(row).label;
   const usual = availabilityState(row) === "ready" || status === "Ready to start";
   // A phone has one line for facts: a state that needs attention first, and a
-  // price only when it is not the usual local "no provider charge".
+  // price only when it is not the usual local "no charge".
   const phoneFacts = [
     usual ? null : status,
     ...meta,

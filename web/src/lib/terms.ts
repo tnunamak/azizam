@@ -75,7 +75,7 @@ export const preferredTerms = {
   requestRecord: "Receipt",
   administrativeHistory: "Activity → Changes",
   remoteCharges: "Remote spend (USD)",
-  localPricing: "Local · no provider charge",
+  localPricing: "Local · no charge",
   connectionAddress: "Gateway address",
   requestTest: "Gateway check",
   providerProbe: "Check provider connection",
