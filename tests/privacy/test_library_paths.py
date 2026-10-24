@@ -73,6 +73,10 @@ def library_world():
         case._write_asset(asset_id, [key_hash], prompt=f"private prompt for {name}", request_id=request_id)
         case._receipt(app["id"], request_id)
         case._job(request_id, asset_id)
+        # The finished job is history, not live work: the status feed shows only the running job.
+        with media_jobs._conn(case.jobs_db) as conn:
+            conn.execute("UPDATE media_jobs SET updated_at = 1700000000 WHERE request_id = ?", (request_id,))
+            conn.commit()
         job_id = f"running_{name}"
         with request_source.acting_as(app_id=app["id"], person_id=user["id"]):
             media_jobs.create(media_jobs.MediaJob(

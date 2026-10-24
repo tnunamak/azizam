@@ -81,7 +81,7 @@ class Library:
         ), path=self.receipts)
         with request_source.acting_as(app_id=app["id"], person_id=app["owner_user_id"] if app["kind"] == "personal" else None):
             media_jobs.create(media_jobs.MediaJob(
-                request_id=request_id, intent="image.generate", status=media_jobs.STATUS_SUCCEEDED,
+                request_id=request_id, app_id=app["id"], intent="image.generate", status=media_jobs.STATUS_SUCCEEDED,
                 created_at=created_at, updated_at=created_at, progress=100,
                 assets=[{"asset_id": asset_id, "kind": kind, "model": model}],
             ), path=self.jobs)

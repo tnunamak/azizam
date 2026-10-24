@@ -223,9 +223,11 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "cache")
     monkeypatch.setattr(proxy.media_metadata, "strip_metadata", lambda data, *_a, **_kw: b"clean-video")
     saved_before = prompt_memory.get("video_private", member["id"])
-    internal = asyncio.run(proxy.proxy_graph_video_content(
-        proxy._video_id_from_prompt_id("private"), member_auth, metadata_mode="none", index_library=False,
-    ))
+    with request_source.acting_as(app_id=member_auth.identity.app_id, person_id=member_auth.identity.person_id,
+                                  credential_id=member_auth.identity.key_hash):
+        internal = asyncio.run(proxy.proxy_graph_video_content(
+            proxy._video_id_from_prompt_id("private"), member_auth, metadata_mode="none", index_library=False,
+        ))
     assert internal.status_code == 200, internal.body
     assert internal.body == b"clean-video"
     saved_after = prompt_memory.get("video_private", member["id"])
