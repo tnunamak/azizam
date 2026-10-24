@@ -319,6 +319,8 @@
 # collect-only 16877 -> 16878 (2026-10-23).
 # Train r104: collect-only measured 17215.
 # Try cleanup: +1 case, the ACE-Step denoise help-line check in tests/test_workflows_catalog.py; collect-only 17216.
+# ACE-Step denoise removal: that case became the check that no denoise input is offered, with the same count;
+# collect-only 17216 measured with scripts/run-hermetic-pytest.sh --collect-only -q (2026-10-24).
 pytest = 17216
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
@@ -360,7 +362,11 @@ pytest = 17216
 # Train r103 step 5 (account chooser): 3362 + 89 (3321 - 3232) = 3451, provisional until the final vitest list.
 # Try cleanup: vitest list measured 3468. Adds the chat default, account plan and Try receipt, draft and input-detail cases;
 # the Try header and refresh cases are rewritten as account and absence checks.
-vitest = 3468
+# Try review fixes (2026-10-24): +14 vitest cases. The chat default (+2 unit, +2 page: an embedding row first, and
+# no eligible chat model), receipt lookups (+2: a late answer after a later check, and leaving Try cancels a lookup),
+# the workflow draft guard (+5 in tests/try-workflow-drafts.spec.tsx), and helper text (+3). vitest list measured 3482
+# (base 3468, no case removed).
+vitest = 3482
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
