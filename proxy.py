@@ -2324,7 +2324,9 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
         setattr(request.state, request_history_capture.IDENTITY_STATE_KEY, result)
         if result.identity is not None:
             # Receipts this request makes name the person it ran as, and no one else (REQUEST_RETENTION.md 13.3).
-            note_maker(result.identity.app_id, result.identity.person_id)
+            # A media job it creates is stamped with the same person and the credential or grant that authenticated it.
+            note_maker(result.identity.app_id, result.identity.person_id,
+                       credential_id=result.identity.credential_id, connection_id=result.identity.connection_id)
     return result
 
 

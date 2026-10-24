@@ -5,9 +5,11 @@ an admin, two members, an App key of a service App and an MCP grant, so each act
 """
 from __future__ import annotations
 
+import time
+
 import pytest
 
-from gateway import admin_store, content_makers, record_ownership
+from gateway import admin_store, content_makers, media_jobs, receipt_store, record_ownership, request_source
 from gateway.content_access import (
     ContentOrigin, CreationRecord, Deny, JobRecord, Own, ReceiptRecord, Shared, Share, VoiceRecord,
     Viewer, decide, makers_of,
@@ -135,3 +137,36 @@ def test_owns_record_reads_receipts_by_maker_for_app_keys_grants_and_people(tmp_
     assert owns(other_grant, grant_row) is False
     assert owns(grant, browser_row) is False
     assert record_ownership.owns_record("media_job", {}, viewer=service_key, apps=apps) is False
+
+
+def test_a_released_member_job_keeps_its_maker_and_the_service_key_cannot_read_it(tmp_path, monkeypatch):
+    """A replay releases the old job's request id. The job still names the member who made it (finding 1)."""
+    admin_db, receipts_db, jobs_db = tmp_path / "admin.db", tmp_path / "receipts.db", tmp_path / "jobs.db"
+    admin_store.init_db(admin_db)
+    receipt_store.init_db(receipts_db)
+    media_jobs.init_db(jobs_db)
+    connect = receipt_store._conn
+    monkeypatch.setattr(receipt_store, "_conn", lambda _path, fn=connect: fn(receipts_db))
+    owner = admin_store.upsert_oidc_user("https://example.test", "owner", email="owner@example.test", path=admin_db)
+    alice = admin_store.upsert_oidc_user("https://example.test", "alice", email="alice@example.test", path=admin_db)
+    service = admin_store.create_app("Household", kind="service", owner_user_id=owner["id"],
+                                     access_plan="person", path=admin_db)
+    apps = content_makers.Apps(admin_db)
+    service_key = Viewer(None, service["id"], owner_keys=frozenset({f"app:{service['id']}"}),
+                         auth_kind="service_key", credential_id="key:svc")
+    alice_session = Viewer(alice["id"], auth_kind="session")
+    long_ago = int(time.time()) - media_jobs.REPLAY_WINDOW_S - 3600
+    with request_source.acting_as(app_id=service["id"], person_id=alice["id"], credential_id="key:alice"):
+        receipt_store.record({"request_id": "req_alice", "app_id": service["id"], "maker_person_id": alice["id"]},
+                             created_at=long_ago, path=receipts_db)
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="job_alice", request_id="req_alice", intent="image.generate", app_id=service["id"],
+            status=media_jobs.STATUS_SUCCEEDED, created_at=long_ago, updated_at=long_ago), path=jobs_db)
+    with request_source.acting_as(app_id=service["id"]):
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="job_replay", request_id="req_alice", intent="image.generate", app_id=service["id"]), path=jobs_db)
+    released = media_jobs.get("job_alice", audience="internal", path=jobs_db)
+    assert released is not None
+    assert released["request_id"] in (None, "")
+    assert record_ownership.owns_record("media_job", released, viewer=alice_session, apps=apps) is True
+    assert record_ownership.owns_record("media_job", released, viewer=service_key, apps=apps) is False
