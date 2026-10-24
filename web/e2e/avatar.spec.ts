@@ -120,6 +120,8 @@ for (const view of views) {
           choice: "auto",
           person_id: body.user.id,
           picture_url: "/me/api/profile/avatar/picture?v=1760000000",
+          sign_in_picture_url: "/me/api/profile/avatar/picture?kind=sign-in&v=1760000000",
+          made_picture_url: null,
         };
       await fulfilJson(route, body, { response });
     });
