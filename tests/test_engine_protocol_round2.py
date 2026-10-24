@@ -519,12 +519,20 @@ def test_protocol_issues_reach_the_status_page_existing_health_signal_contract(e
     (tmp_path/'broken.yml').write_text('id: broken\n')
     loader = description.load_registry.__closure__[0].cell_contents
     monkeypatch.setattr(description, 'load_registry', lambda: loader(tmp_path))
-    monkeypatch.setattr(proxy.status_endpoint, 'get_cached_status', AsyncMock(return_value={'backends':[], 'health_sources':{}}))
+    build = AsyncMock(return_value={'backends':[], 'health_sources':{}})
+    monkeypatch.setattr(proxy.status_endpoint, 'build_status_payload', build)
+    monkeypatch.setattr(proxy.status_endpoint, '_SNAPSHOT', {})
+    monkeypatch.setattr(proxy.status_endpoint, '_SNAPSHOT_BUILD', None)
     def no_capabilities(*a, **k):
         raise RuntimeError('capability projection unavailable in this fixture')
     monkeypatch.setattr(proxy, '_gateway_capabilities_for_auth_context', no_capabilities)
     inventory._issues[engine.record['id']] = 'The engine model list is unavailable or invalid.'
-    payload = asyncio.run(proxy._status_payload_with_availability())
+    async def build_once_then_read():
+        # The build adds the protocol issues. The refresher stores that build, and the status page reads it.
+        proxy.status_endpoint._store_snapshot(await proxy._build_status_snapshot())
+        return await proxy._status_payload_with_availability()
+    payload = asyncio.run(build_once_then_read())
+    build.assert_awaited_once()
     health = derive_admin_health_projection(engine.registry, payload, observation_available=True)
     signal = next(row for row in health['signals'] if row['source'] == 'engine_protocol')
     assert signal['tone'] == 'warn'

@@ -477,7 +477,7 @@ def test_cancel_during_preparation_kills_owned_process_group_and_reaps(setup, mo
     process.stdout.readline = process.readline
     spawn = AsyncMock(return_value=process)
     kill = []
-    monkeypatch.setattr(sm.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(sm.off_loop_spawn, "start", spawn)
     def kill_group(pid, sig):
         kill.append((pid, sig))
         if group_already_gone:
@@ -657,16 +657,16 @@ def test_owner_http_cancellation_propagates_through_asgi_request(setup, monkeypa
 
 def test_actual_preparation_process_group_cancellation_closes_descendant_pipe(setup, monkeypatch, tmp_path):
     _, _, _, runner, _ = setup
-    original_spawn = asyncio.create_subprocess_exec
+    original_spawn = sm.off_loop_spawn.start
     processes = []
     # A worker in conversion with a child holding its stdout open. Killing only the
     # worker leaves this pipe open; group ownership must kill the child as well.
     code = "import subprocess,sys,time,json; subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); print(json.dumps({'phase':'Converting','done':1,'total':1}),flush=True); time.sleep(30)"
-    async def spawn(*args, **kwargs):
-        process = await original_spawn(sm.sys.executable, "-c", code, **kwargs)
+    async def spawn(argv, **kwargs):
+        process = await original_spawn([sm.sys.executable, "-c", code], **kwargs)
         processes.append(process)
         return process
-    monkeypatch.setattr(sm.asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(sm.off_loop_spawn, "start", spawn)
     async def scenario():
         job = _job(runner)
         task = asyncio.create_task(runner._prepare(job, sm.stt_samples.load_manifest()[0], tmp_path, {"max_download_bytes": 1000}))
