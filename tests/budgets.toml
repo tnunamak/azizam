@@ -318,7 +318,8 @@
 # registered). The two tests whose arrangement moved to the snapshot build keep their count.
 # collect-only 16877 -> 16878 (2026-10-23).
 # Train r104: collect-only measured 17215.
-pytest = 17215
+# Try cleanup: +1 case, the ACE-Step denoise help-line check in tests/test_workflows_catalog.py; collect-only 17216.
+pytest = 17216
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -357,7 +358,9 @@ pytest = 17215
 # (inert until fresh sign-in is reported), the stale-name notice, the Settings choice, and the session-end and switch
 # expectations. Full run: 223 files, 3321 cases, all passed (2026-10-23).
 # Train r103 step 5 (account chooser): 3362 + 89 (3321 - 3232) = 3451, provisional until the final vitest list.
-vitest = 3451
+# Try cleanup: vitest list measured 3468. Adds the chat default, account plan and Try receipt, draft and input-detail cases;
+# the Try header and refresh cases are rewritten as account and absence checks.
+vitest = 3468
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
