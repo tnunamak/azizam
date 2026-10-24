@@ -263,12 +263,19 @@
 # Slice 5a round-9 fixes: +54 cases in tests/test_request_history_s5a_r9_fixes.py (the token rule for a scheme, prose
 # punctuation after a token segment, and percent-decoded segments). collect-only 16553 -> 16607 (2026-10-23).
 # Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
+# Owner visibility step 3 slice 1: +36 cases in test_library_paths.py, one
+# activity-feed projection case and one client-projection shape case. Focused
+# hermetic run collected affected files; no full-suite collection was run.
+# Total: 16813 + 38 = 16851.
 # Slice 5b1 round 2 (the household switch on the choice, the list preview): +15 cases, 1 in
 # tests/test_request_history_notice.py and 14 in tests/test_request_history_preview.py. The base commit c0402b68e
 # collects 16837: slice 5b1 added cases without moving the ceiling, so this sets the measured count, not the sum.
 # Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 16852 (2026-10-23).
 # Request-history end-to-end matrix adds 140 cases; full hermetic collection measured 16953 on 2026-10-23.
 # Train r101: + tests/test_ownership_cutover_verification.py (35 cases) = 16988.
+# Owner visibility step 3 slice 1 round 2: full hermetic collection measured 16884 on 2026-10-23.
+# A clean worktree at origin/main (3ca403cc5) collects 16823 the same way, so the train r101 figure
+# (16988) above does not reproduce; the ceiling follows the measurement.
 # A4 throttle memo: +3; LTX frame-rate: +1; sign-in write failures: +25 cases.
 # Atomic sign-in failure coverage brings the collection to 16842 (2026-10-23).
 # Sign-in round 2: +16 cases: a session that ends while the person is at the provider still signs them in (+1);
@@ -322,7 +329,22 @@
 # ACE-Step denoise removal: that case became the check that no denoise input is offered, with the same count.
 # ACE-Step extension test: +1 case, a denoise control is refused as an unknown input (tests/test_tangoflux_audio_generate_manifest.py).
 # collect-only 17217 measured with scripts/run-hermetic-pytest.sh --collect-only -q (2026-10-24).
-pytest = 17217
+# OV3 slice 1 round 3, merged with origin/main 89e514766: the stamped job maker, the stamped Library decision, the
+# activity page filled before its limit, the migration test and the tests for each. Full hermetic collection measured
+# 17280 on 2026-10-23.
+# OV3 slice 1 round 4: +10 maker-backfill cases (personal, session, service and parent-link jobs, a receipt that names
+# another job, unresolved jobs, the Library listing, the second run), +4 bounded activity-feed cases (a mostly
+# unreadable table, cursor continuity, page size, a malformed cursor) and +1 Library source-label case.
+# Full hermetic collection measured 17295 on 2026-10-24.
+# OV3 slice 1 round 5: +5 maker-backfill cases (a user-principal job, a service-account job, the next pass on a job
+# the first pass left without a person, a user job the current code stamped, a user job the current code stamped with
+# a connection) and +1 usage-count case. Full hermetic collection measured 17301 on 2026-10-24.
+# OV3 slice 1 round 6: the activity cursor tests grow to 29 cases (+25: the sealed cursor's secrecy, tamper, foreign,
+# expired and malformed refusals, the one-400 check, and the field checks), +2 for a refused cursor at the route and
+# a member's job that stays listed after its receipt is pruned, and +4 for the upsert maker stamp.
+# Full hermetic collection measured 17332 on 2026-10-24.
+# Train r105 (Try cleanup + OV3 slice 1): collect-only 17334 measured on the merged tree (2026-10-24).
+pytest = 17334
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -345,6 +367,9 @@ pytest = 17217
 # administratorsToConfirm). Full run: 217 files, 3230 cases, all passed (2026-10-23).
 # Owner visibility step 2, round 5: account-api.spec.ts +2 cases (administratorsSentence, hasAdministrators; the
 # administratorsToConfirm case now returns the counted shape). Full run: 217 files, 3232 cases, all passed (2026-10-23).
+# Owner visibility step 3 slice 1: replace three maker-display tests with one
+# private-copy check and reduce the owner fetch lifecycle matrix from five to four.
+# Affected-file Vitest run: 147 cases; suite budget: 3232 - 4 = 3228.
 # Walkthrough small fixes (2026-10-23): +14 cases. Library full screen +5, Apps quick-check line +3, the sign-in picture
 # as the default avatar +5 (person-avatar +4, account-avatar +1), the account-menu nav +1, reauth transport +1, account API
 # -1 (keep and replace asks became one routine case; the consent asks are new). Full run: 218 files, 3246 cases, all passed.
@@ -370,13 +395,18 @@ pytest = 17217
 # Try picture baseline (2026-10-24): +5 vitest cases in tests/try-workflow-drafts.spec.tsx: a successful run leaves no
 # unsent picture, a replaced or removed picture after a run is unsent, the picture comes back as it ran, and a picture
 # attached without a run is still unsent. vitest list measured 3487 (base 3482, no case removed).
-vitest = 3487
+# Owner visibility step 3 slice 1 (-4): the feat side replaces three maker-display tests with one and cuts the owner
+# fetch matrix from five cases to four. Main's 3451 less 4 is 3447, measured on 2026-10-24 with `npx vitest list --json`.
+# Train r105: 3451 on main, +36 from the Try cleanup, -4 from OV3 slice 1 (Library chooser cases removed) = 3483.
+vitest = 3483
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
 # playwright.config.ts 496 -> 500; gate lists 521 (500 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 3: keep-binding.spec.ts adds the key and the address confirmations at 1440 and 390 px (+4 cases).
 # playwright.config.ts 500 -> 504; gate lists 525 (504 + live-data 3 + household 18), measured 2026-10-23.
+# Owner visibility step 3 slice 1: the Library owner fetch matrix moves from five
+# cases to four; gate total 525 - 1 = 524.
 # Walkthrough small fixes (2026-10-23): +2 in e2e/step-up.spec.ts (a stale owner's own key, at 1440 and 390 px, in the
 # global-state lane) and +4 in e2e/library-fullscreen.spec.ts (picture full screen and its fallback, at 1440 and 390 px).
 # playwright.config.ts 510, live-data 3, household 18: 531.
@@ -390,7 +420,9 @@ vitest = 3487
 # chooser-states 6 and 2 in the global-state project, signin-shell 10, invite-signin 1, chooser-round-trip 2).
 # Gate lists 554 (533 + live-data 3 + household 18), measured 2026-10-23.
 # Train r103 step 5 (account chooser): 537 + 29 (554 - 525) = 566, provisional until the final Playwright lists.
-playwright = 566
+# Owner visibility step 3 slice 1 (-1): the Library owner fetch matrix moves from five cases to four. 566 less 1 is 565.
+# Measured on 2026-10-24 with `playwright test --list`: playwright.config.ts 544, live-data 3, household 18.
+playwright = 565
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

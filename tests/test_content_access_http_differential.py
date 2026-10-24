@@ -98,9 +98,9 @@ def test_ov_rv_same_requests_same_answers(media_world) -> None:
     self.current_user = self.alice
     mine = self.client.get("/me/api/media").json()["assets"]
     self.current_user = self.owner
-    everyone = self.client.get("/me/api/media?scope=everyone").json()["assets"]
+    removed_scope = self.client.get("/me/api/media?scope=everyone")
     usage = self.client.get("/me/api/usage/summary?person=all").json()["requests"]
-    print(f"OV-RV sizes: alice mine={len(mine)} owner everyone={len(everyone)} owner usage requests={usage}")
+    print(f"OV-RV sizes: alice mine={len(mine)} owner removed-scope={removed_scope.status_code} owner usage requests={usage}")
     with patch.object(me_media, "_job_in_scope", lambda job, scope: True), patch.object(me_media, "_receipt_in_scope", lambda r, scope: True):
         self.current_user = self.alice
         widened = self.client.get("/me/api/media").json()["assets"]

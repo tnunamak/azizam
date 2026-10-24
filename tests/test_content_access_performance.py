@@ -6,7 +6,7 @@ Predicates below are copied from main, independently of the new policy code.
 from timeit import repeat
 
 import gateway.accounts  # match gateway initialization order
-from gateway import me_media, record_ownership
+from gateway import me_media
 from gateway.content_access import CreationRecord, ReceiptRecord, Viewer, decide, project
 from tests.test_owner_projection import seeded_record, NAMES
 
@@ -20,16 +20,6 @@ def _main_receipt_in_scope(receipt, scope):
         return str(receipt["app_id"]) in set(scope.app_ids)
     owner_key = receipt.get("owner_key_hash")
     return isinstance(owner_key, str) and owner_key in (scope.owner_keys or frozenset())
-
-
-def _main_owns_record(kind, record, *, app_id, key_hash=None, owner_keys=()):
-    if kind not in {"receipt", "media_job"}:
-        return False
-    if record.get("app_id"):
-        return bool(app_id and record["app_id"] == app_id)
-    if record.get("owner_key_hash"):
-        return record["owner_key_hash"] in {*owner_keys, *([key_hash] if key_hash else [])}
-    return False
 
 
 def _ms(call, number=10):
@@ -47,11 +37,8 @@ def test_principal_scope_10k_main_comparison():
         assert current() == main()
         old, new = _ms(main), _ms(current)
         print(f"PERF receipt 10k apps={napps}: main={old:.3f} ms current={new:.3f} ms ratio={new / old:.3f}")
-    main = lambda: [_main_owns_record("receipt", row, app_id="app1", owner_keys=("k1",)) for row in rows]
-    current = lambda: [record_ownership.owns_record("receipt", row, app_id="app1", owner_keys=("k1",)) for row in rows]
-    assert current() == main()
-    old, new = _ms(main), _ms(current)
-    print(f"PERF owns_record 10k: main={old:.3f} ms current={new:.3f} ms ratio={new / old:.3f}")
+    # owns_record decides by maker (D51). Owner-key parity with main is the rule this change removes,
+    # so its decisions are pinned in tests/test_content_access_maker.py, not compared here.
 
 
 def test_policy_and_projection_ceilings():

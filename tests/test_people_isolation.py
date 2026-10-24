@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 import proxy
-from gateway import admin_store, media_jobs, receipt_store
+from gateway import admin_store, media_jobs, receipt_store, request_source
 from gateway.admin_oidc import AdminSession
 from gateway.api import create_gateway_router
 from gateway.discovery import WorkflowRegistry
@@ -79,11 +79,12 @@ def people(monkeypatch, tmp_path):
         Image.new("RGB", (2, 2), color).save(output, format="PNG")
         raw = output.getvalue()
         asset_id = proxy.store_image_bytes(raw, owner_key_hash=proxy.hash_api_key(key["api_key"]))
-        job = media_jobs.create(media_jobs.MediaJob(
-            intent="image.generate", request_id=receipt.request_id,
-            parent_request_id=receipt.request_id, api_key_name="Phone",
-            app_profile="default-local", app_id=app["id"], assets=[{"asset_id": asset_id}],
-        ), path=paths["jobs"])
+        with request_source.acting_as(app_id=app["id"], person_id=user["id"]):
+            job = media_jobs.create(media_jobs.MediaJob(
+                intent="image.generate", request_id=receipt.request_id,
+                parent_request_id=receipt.request_id, api_key_name="Phone",
+                app_profile="default-local", app_id=app["id"], assets=[{"asset_id": asset_id}],
+            ), path=paths["jobs"])
         media_jobs.append_event(job.job_id, "queued", {"progress": 0}, path=paths["jobs"])
         members[name] = SimpleNamespace(
             user=user, session=session, app=app, key=key, bearer=bearer,
@@ -143,6 +144,13 @@ def test_member_browser_activity_and_receipt_detail_are_owner_scoped(people):
     assert foreign.json() == missing.json()
 
 
+def test_a_refused_activity_cursor_is_one_400_with_the_error_envelope(people):
+    responses = [people.client.get(f"/me/api/activity?cursor={cursor}", headers=people.alice.browser)
+                 for cursor in ("not-a-cursor", "x" * 2000)]
+    assert [response.status_code for response in responses] == [400, 400]
+    assert {response.json()["error"]["code"] for response in responses} == {"invalid_cursor"}
+
+
 @pytest.mark.parametrize("resource,id_field", [("receipts", "request_id"), ("media/jobs", "job_id")])
 def test_gateway_lists_and_details_do_not_cross_member_boundary(people, resource, id_field):
     alice, bob = people.alice, people.bob
@@ -198,6 +206,34 @@ def test_member_can_read_and_cancel_owned_job(people):
     assert response.status_code == 200, response.text
     assert media_jobs.get(people.alice.job_id)["status"] == media_jobs.STATUS_CANCELED
     assert media_jobs.get(people.bob.job_id)["status"] == media_jobs.STATUS_QUEUED
+
+
+def test_a_member_job_in_another_members_app_stays_listed_after_its_receipt_is_pruned(people):
+    alice, bob = people.alice, people.bob
+    service = admin_store.create_app(
+        "Household", kind="service", owner_user_id=alice.user["id"], access_plan="person", path=people.paths["admin"]
+    )
+    receipt = RouteReceipt(
+        protocol="openai.images", intent="image.generate", app_id=service["id"],
+        app_profile="default-local", api_key_name="Household", status="succeeded",
+    )
+    with request_source.acting_as(app_id=service["id"], person_id=bob.user["id"]):
+        receipt_store.record(receipt, path=people.paths["receipts"])
+        job = media_jobs.create(media_jobs.MediaJob(
+            intent="image.generate", request_id=receipt.request_id, parent_request_id=receipt.request_id,
+            api_key_name="Household", app_profile="default-local", app_id=service["id"],
+        ), path=people.paths["jobs"])
+
+    def listed() -> set[str]:
+        response = people.client.get("/me/api/jobs", headers=bob.browser)
+        assert response.status_code == 200, response.text
+        return {row["job_id"] for row in response.json()["jobs"]}
+
+    assert job.job_id in listed()
+    with receipt_store._conn(people.paths["receipts"]) as connection:
+        connection.execute("DELETE FROM receipts WHERE request_id = ?", (receipt.request_id,))
+        connection.commit()
+    assert job.job_id in listed()
 
 
 def test_owned_job_access_survives_receipt_retention_and_status_updates(people):
@@ -315,8 +351,9 @@ def test_owner_filter_precedes_limit_when_another_member_is_more_active(people, 
     for index in range(5):
         receipt = RouteReceipt(protocol="openai.images", intent="image.generate", app_id=people.bob.app["id"])
         receipt_store.record(receipt)
-        media_jobs.create(media_jobs.MediaJob(intent="image.generate", app_id=people.bob.app["id"],
-                                             request_id=receipt.request_id, updated_at=4_000_000_000 + index))
+        with request_source.acting_as(app_id=people.bob.app["id"], person_id=people.bob.user["id"]):
+            media_jobs.create(media_jobs.MediaJob(intent="image.generate", app_id=people.bob.app["id"],
+                                                 request_id=receipt.request_id, updated_at=4_000_000_000 + index))
     response = people.client.get(f"/gateway/v1/{resource}?limit=1", headers=people.alice.bearer)
     assert response.status_code == 200
     expected = people.alice.receipt_id if resource == "receipts" else people.alice.job_id
@@ -327,7 +364,8 @@ def test_legacy_runtime_key_owns_its_new_queued_jobs_without_app_identity(people
     from gateway.runtime_auth import RuntimeIdentity
     identity = RuntimeIdentity(name="legacy-key", key_hash="a" * 64)
     monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda request: proxy.AuthContext(identity=identity))
-    job = media_jobs.create(media_jobs.MediaJob(intent="image.generate", owner_key_hash=identity.key_hash))
+    with request_source.acting_as(app_id=None, credential_id=identity.key_hash):
+        job = media_jobs.create(media_jobs.MediaJob(intent="image.generate", owner_key_hash=identity.key_hash))
     request = SimpleNamespace()
     assert proxy._gateway_record_authorizer(request, "media_job", job.to_dict("internal"))
     assert "owner_key_hash" not in job.to_dict("client")

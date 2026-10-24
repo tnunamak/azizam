@@ -8,7 +8,7 @@ import pytest
 from PIL import Image, PngImagePlugin
 
 import proxy
-from gateway import media_jobs
+from gateway import media_jobs, request_source
 from tests.test_image_media_jobs import authenticated, _StubJsonRequest
 from tests.test_private_modes import mode, permissive_umask  # noqa: F401
 
@@ -49,10 +49,11 @@ def test_workflow_output_publication_and_content_availability(
         assert "prompt" not in image.info
         assert image.getpixel((0, 0))[3] == (0 if remove_background else 255)
 
-    job = media_jobs.create(media_jobs.MediaJob(
-        app_id="app_test", intent="image.generate", request_id="fixture",
-        status="succeeded", progress=100, assets=[{"asset_id": asset_id}],
-    ), path=database)
+    with request_source.acting_as(app_id="app_test", credential_id="sha256:test"):
+        job = media_jobs.create(media_jobs.MediaJob(
+            app_id="app_test", intent="image.generate", request_id="fixture",
+            status="succeeded", progress=100, assets=[{"asset_id": asset_id}],
+        ), path=database)
     with authenticated():
         response = asyncio.run(proxy.gateway_media_job_content(job.job_id, _StubJsonRequest({})))
         assert response.status_code == 200

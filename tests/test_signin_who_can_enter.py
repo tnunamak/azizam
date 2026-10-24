@@ -1044,6 +1044,7 @@ def test_receipts_and_media_treat_an_app_scoped_owner_grant_as_no_role(gateway, 
     assert me_media._live_role_for_user(user["id"], gateway.path) == "none"
 
     seen = {}
+    monkeypatch.setattr(user_runtime.receipt_store, "count", lambda **kw: 1)  # the feed reads every candidate before its limit
     monkeypatch.setattr(user_runtime.receipt_store, "recent", lambda **kw: seen.update(kw) or [])
     user_runtime.build_user_activity_snapshot(SimpleNamespace(subject=user["id"]), path=gateway.path)
     assert seen["app_ids"] == [app["id"]]  # not None: the feed is limited to their own App

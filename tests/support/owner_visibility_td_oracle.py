@@ -23,28 +23,49 @@ def content_read(v, r, origin):
     return v.delegation is None or own_output(v, r, origin) or v.privacy_permission
 
 
+def maker_read(v, person, app_id, origin):
+    """One maker reads her row (self, with session, permission or the exact origin); an App-less row is read by its App's credential."""
+    if person is None:
+        return (not v.person_id and v.delegation == "app_key" and bool(v.app_id) and app_id == v.app_id)
+    if not (v.person_id and person == v.person_id):
+        return False
+    if v.delegation is None or v.privacy_permission:
+        return True
+    if v.delegation == "mcp_grant":
+        return origin is not None and origin.auth_kind == "mcp_grant" and bool(v.connection_id) and origin.connection_id == v.connection_id
+    if v.delegation == "app_key":
+        return origin is not None and origin.auth_kind == "app_key" and bool(origin.credential_id) and bool(v.app_id) and app_id == v.app_id
+    return False
+
+
+def share_hit_legacy(v, r):
+    return any(s.active and s.share_id and s.maker_person_id and v.person_id and s.recipient_person_id == v.person_id
+               and r.asset_id in (s.asset_id, s.poster_asset_id) for s in r.shares)
+
+
 def expected(v, r, action, origin):
     if not r.available:
         return False
     k = r.kind
     if k in ("creation", "voice", "receipt", "job"):
-        own = bool((v.owner_keys - {""}) & (r.owner_keys - {""}))
+        # D51/D52 maker basis: owning an App is not making its content.
+        makers = tuple(r.maker_person_ids) if k == "creation" else ((r.person_id,) if r.person_id else ())
+        if k == "creation" and len(makers) > 1:
+            return action in ("read", "link") and share_hit_legacy(v, r)
+        read = maker_read(v, makers[0] if makers else None, r.app_id, getattr(r, "origin", None))
         if k == "creation":
-            shared = action in ("read", "link") and any(
-                s.active and s.share_id and s.maker_person_id and v.person_id and s.recipient_person_id == v.person_id
-                and r.asset_id in (s.asset_id, s.poster_asset_id) for s in r.shares)
             if action in ("read", "link"):
-                return own or shared
+                return read or share_hit_legacy(v, r)
             if action in ("delete", "reuse"):
-                return own
+                return read
             if action == "share":
-                return own and bool(v.person_id) and r.maker_person_ids == (v.person_id,)
+                return bool(v.person_id) and makers == (v.person_id,) and (v.delegation is None or v.privacy_permission)
             return False
         if k == "voice":
-            return own and action in ("read", "delete", "reuse")
+            return read and action in ("read", "delete", "reuse")
         if k == "receipt":
-            return own and action == "read"
-        return own and action in ("read", "cancel")
+            return read and action == "read"
+        return read and action in ("read", "cancel")
     if k == "prompt":
         if action == "read":
             share = any(s.active and s.share_id and s.include_prompt and s.maker_person_id and v.person_id

@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import accounts, admin_store  # noqa: E402
+from gateway import accounts, admin_store, content_access  # noqa: E402
 from tests.support.app_keys import accountable_person, issue_app_credential, issue_app_key
 from gateway.admin_api import AdminContext  # noqa: E402
 from tests.support.access import AdminAppFixtures, plan_document, store_plan  # noqa: E402
@@ -1213,6 +1213,133 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             self.assertEqual(anon.status_code, 200)
             self.assertFalse(anon.json()["authenticated"])
             self.assertEqual(anon.json()["receipts"], [])
+        finally:
+            receipt_store.DB_PATH = old_receipts_path
+
+    def test_owner_library_running_feed_is_own(self) -> None:
+        from gateway import mcp_oauth, mcp_oauth_store, receipt_store
+        from gateway.receipts import RouteReceipt
+        from tests.support.access import service_app
+
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="azizam",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            admin_emails=frozenset(),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        seed_rules(self.db, domains=["example.com"])
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+
+        receipts_db = Path(self.tmp.name) / "owner-running-feed.db"
+        old_receipts_path = receipt_store.DB_PATH
+        receipt_store.DB_PATH = receipts_db
+        try:
+            receipt_store.init_db(receipts_db)
+            people = {
+                "member_a": admin_store.upsert_oidc_user(
+                    cfg.issuer, "alice-feed", email="alice@example.com", path=self.db,
+                ),
+                "member_b": admin_store.upsert_oidc_user(
+                    cfg.issuer, "bob-feed", email="bob@example.com", path=self.db,
+                ),
+                "owner": admin_store.upsert_oidc_user(
+                    cfg.issuer, "owner-feed", email="owner@example.com", path=self.db,
+                ),
+                "admin": admin_store.upsert_oidc_user(
+                    cfg.issuer, "admin-feed", email="admin@example.com", path=self.db,
+                ),
+            }
+            admin_store.assign_admin_role(
+                role="owner", subject_kind="user", subject_id=people["owner"]["id"], path=self.db,
+            )
+            admin_store.assign_admin_role(
+                role="admin", subject_kind="user", subject_id=people["admin"]["id"], path=self.db,
+            )
+            apps = {
+                name: admin_store.create_app(
+                    f"{name} app", kind="personal", owner_user_id=person["id"],
+                    access_plan="person", path=self.db,
+                )
+                for name, person in people.items()
+            }
+            for name, app in apps.items():
+                receipt_store.record(
+                    RouteReceipt(
+                        protocol="openai.image", intent="image.generate", app_id=app["id"],
+                        status="running", requested_model=f"private-{name}-model",
+                    ),
+                    path=receipts_db,
+                )
+            service = service_app("Feed service", path=self.db)
+            receipt_store.record(
+                RouteReceipt(protocol="openai.chat", intent="chat.generate", app_id=service["id"], status="running"),
+                path=receipts_db,
+            )
+            receipt_store.record(
+                RouteReceipt(protocol="openai.chat", intent="chat.generate", app_id=None, status="running"),
+                path=receipts_db,
+            )
+
+            def sign_in(name):
+                person = people[name]
+                session = session_from_claims(
+                    {"sub": person["id"], "email": person["email"]}, role="none", cookie=cfg.cookie,
+                )
+                self.client.cookies.clear()
+                self.client.cookies.set(
+                    cfg.cookie.name,
+                    encode_session_cookie(session, signing_key=cfg.signing_key),
+                )
+
+            for name in ("owner", "admin", "member_a", "member_b"):
+                sign_in(name)
+                with patch("gateway.user_runtime.decide", wraps=content_access.decide) as decision:
+                    response = self.client.get("/me/api/activity")
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertTrue(decision.called)
+                self.assertEqual(response.json()["scope"], "me")
+                self.assertEqual(len(response.json()["receipts"]), 1)
+                self.assertEqual(response.json()["receipts"][0]["source"]["app_id"], apps[name]["id"])
+                for foreign in set(people) - {name}:
+                    self.assertNotIn(f"private-{foreign}-model", response.text)
+                self.assertNotIn(service["id"], response.text)
+
+            app_key = issue_app_key(self.db, apps["member_a"]["id"])
+            oauth_store = mcp_oauth_store.Store(lambda: self.db)
+            mcp_client = oauth_store.put_client(
+                client_id="owner-feed-client", kind="registered", name="Owner feed fixture",
+                redirect_uris=["https://client.example/callback"],
+                grant_types=["authorization_code"], auth_method="none", secret_hash=None, metadata={},
+            )
+            grant = oauth_store.create_grant(
+                person_id=people["member_a"]["id"], client=mcp_client,
+                redirect_uri="https://client.example/callback", resource="http://testserver/mcp",
+                scope=mcp_oauth.SCOPE, session=None,
+            )
+            mcp_token = mcp_oauth_store.new_secret(mcp_oauth.ACCESS_TOKEN_PREFIX)
+            oauth_store.save_token(
+                mcp_token, kind="access", grant_id=grant.id, client_id=mcp_client.client_id,
+                scope=mcp_oauth.SCOPE, ttl=3600,
+            )
+            self.client.cookies.clear()
+            for token in (app_key, mcp_token):
+                response = self.client.get(
+                    "/me/api/activity", headers={"authorization": f"Bearer {token}"},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertFalse(response.json()["authenticated"])
+                self.assertEqual(response.json()["receipts"], [])
+                self.assertNotIn("private-", response.text)
         finally:
             receipt_store.DB_PATH = old_receipts_path
 
