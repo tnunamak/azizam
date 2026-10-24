@@ -35,7 +35,7 @@
     {
       "path": "gateway/me_make.py",
       "function": "_submit",
-      "source_sha256": "1b00400013bd622931d21f5ac5938e3aad0d4b5b0a47dca7cef4e0b1ff365bb6",
+      "source_sha256": "655c448fc32be90afae27c0941d825171d64e647f46fe598266d9bcaafce179c",
       "call": "_event",
       "event": "'queued'",
       "access": "content:job:read"
