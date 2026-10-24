@@ -18387,7 +18387,7 @@ def _complete_oidc_signin(
             person_id=person_id, method="sso", issuer=cfg.issuer,
             remember=state.remember, from_tile=bool(state.tile_person_id),
         )
-    admin_store.ensure_session_app_for_user(person_id, name="Azizam", path=path)
+    admin_store.repair_session_app_at_signin(person_id, path=path)
     accounts.invalidate_asset_families()
     return user, session, minted
 

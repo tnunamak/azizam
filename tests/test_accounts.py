@@ -419,6 +419,21 @@ def test_password_sign_in_never_repairs_another_persons_session_app(account_db, 
     assert admin_store.get_app(bobs_app["id"], path=path)["access_plan"] is None
 
 
+def test_a_failed_session_app_repair_does_not_fail_the_sign_in(account_db, account_client, fast_password_work, monkeypatch):
+    path, _ = account_db
+    user, _, _ = invited_member(account_db)
+    client, _ = account_client
+
+    def broken_repair(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(admin_store, "ensure_session_app_for_user", broken_repair)
+    response = client.post("/auth/api/login", json={"email": user["email"], "password": PASSWORD})
+
+    assert response.status_code == 200, response.text
+    assert len(rows(path, "SELECT * FROM account_sessions")) == 1
+
+
 def test_invite_acceptance_repairs_a_null_plan_session_app(account_db, account_client):
     path, plan = account_db
     client, state = account_client

@@ -183,7 +183,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             browser_sessions.end_incoming_in(tx.conn, request, cookie=cookie, signing_key=key, path=path)
             session = browser_sessions.issue_in(tx.conn, {"sub": user["id"], "email": user["email"]}, role=role,
                                                 cookie=cookie, path=path, authenticated_at=authenticated_at)
-        admin_store.ensure_session_app_for_user(str(user["id"]), name="Azizam", path=path)
+        admin_store.repair_session_app_at_signin(str(user["id"]), path=path)
         accounts.invalidate_asset_families()
         response = JSONResponse({"next": "/", "app": app, "credential": credential})
         browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
@@ -247,7 +247,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
                     conn, token=token, person_id=user_id, method="password", issuer=None,
                     remember=body.remember, from_tile=body.tile is not None,
                 )
-            admin_store.ensure_session_app_for_user(user_id, name="Azizam", path=path)
+            admin_store.repair_session_app_at_signin(user_id, path=path)
             accounts.invalidate_asset_families()
             response = JSONResponse({"next": safe_browser_return_to(body.return_to)})
             browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
