@@ -320,7 +320,10 @@
 # Train r104: collect-only measured 17215.
 # Walkthrough A16/A17 (Usage totals and local counts): +5 pytest cases in tests/test_me_media.py for recorded decision costs,
 # unreported remote receipts, served-here requests, pre-routing refusals and the cost rule. collect-only measured 17220 (2026-10-24).
-pytest = 17220
+# Make dispatch receipts: +10 pytest cases in tests/test_image_handler_gaps.py (the image routes' start stamp, with and without
+# a refusal), tests/test_session_make_runtime.py (the Make job's dispatch record, refusals, remote, first dispatch) and
+# tests/test_me_media.py (Usage counts for a completed and a refused Make job). collect-only measured 17230 (2026-10-24).
+pytest = 17230
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
