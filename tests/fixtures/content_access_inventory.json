@@ -35,7 +35,7 @@
     {
       "path": "gateway/me_make.py",
       "function": "_submit",
-      "source_sha256": "c0c3da72fd17262a6125f6a9447e8f1ce6f86f7b1ad9988195ad0705a3d351bc",
+      "source_sha256": "1b00400013bd622931d21f5ac5938e3aad0d4b5b0a47dca7cef4e0b1ff365bb6",
       "call": "_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -1462,7 +1462,7 @@
       "handler": "gateway.me_make.add_make_routes.<locals>.submit",
       "method": "POST",
       "path": "/me/api/make/jobs",
-      "access": "own-account+content:creation:reuse"
+      "access": "own-account+content:creation:reuse+content:job:read"
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.confirm_media_folder",
