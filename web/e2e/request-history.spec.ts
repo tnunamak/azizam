@@ -10,6 +10,16 @@ import { expect, fixtureStateDir, GLOBAL_STATE_TAG, test } from "./fixtures/isol
 const shot = (width: number, name: string) =>
   path.resolve(__dirname, "../test-results/screens", `history-5b1-${width}-${name}.png`);
 
+/**
+ * A whole-page capture. The phone tab bar is fixed to the screen's bottom, so a full-page capture would
+ * paint it over the middle of the page; for the capture it sits in its place at the end (ban 31).
+ */
+async function saveWholePage(page: Page, file: string) {
+  const release = await page.addStyleTag({ content: "nav[aria-label='Phone navigation']{position:static!important}" });
+  await page.screenshot({ path: file, fullPage: true });
+  await release.evaluate((node) => node.remove());
+}
+
 // The Home notice needs a member who predates request history: the row the schema 17 upgrade wrote, with the
 // switch off and no last writer (retention_migration.migrate_group_keys), and no answer to the notice yet. Make the
 // owner that member again, so each width starts from the same state.
@@ -90,7 +100,7 @@ for (const width of [1440, 390]) {
     await expect(rows.first()).toContainText("Fast");
     await expect(rows.first()).toContainText(kept);
     await expect(rows.first()).not.toContainText("/chat/completions");
-    await page.screenshot({ path: shot(width, "list"), fullPage: true });
+    await saveWholePage(page, shot(width, "list"));
 
     // Open it: what was asked and the reply are chat bubbles, the receipt's sentence says what was kept, and the raw
     // record is folded away at the bottom.
@@ -104,7 +114,7 @@ for (const width of [1440, 390]) {
     const technical = detail.locator("details", { hasText: "Technical details" });
     await expect(technical).not.toHaveAttribute("open");
     await expectDrawerFits(page, detail, width);
-    await page.screenshot({ path: shot(width, "detail"), fullPage: true });
+    await saveWholePage(page, shot(width, "detail"));
 
     // Delete it: after the confirm the list is back where it was.
     await detail.getByRole("button", { name: "Delete this request" }).click();
@@ -117,7 +127,7 @@ for (const width of [1440, 390]) {
     await page.goto("/try/?capability=chat");
     await page.getByRole("switch", { name: "Incognito" }).click();
     await expect(page.getByText("Incognito: this isn’t saved.", { exact: true })).toBeVisible();
-    await page.screenshot({ path: shot(width, "try-incognito"), fullPage: true });
+    await saveWholePage(page, shot(width, "try-incognito"));
     await page.getByRole("textbox", { name: "Prompt" }).fill(hidden);
     await page.getByRole("button", { name: "Run" }).click();
     await expect(page.getByRole("heading", { name: "Chat result" })).toBeVisible({ timeout: 60_000 });
@@ -133,7 +143,7 @@ for (const width of [1440, 390]) {
     const notice = page.getByText("Request history is available.");
     await expect(notice).toBeVisible();
     await expect(page.getByText("Look back at what you asked. It’s off for you until you turn it on.")).toBeVisible();
-    await page.screenshot({ path: shot(width, "home-notice"), fullPage: true });
+    await saveWholePage(page, shot(width, "home-notice"));
     if (width === 390) {
       await page.getByRole("button", { name: "Turn on" }).click();
     } else {
@@ -149,6 +159,6 @@ for (const width of [1440, 390]) {
     if (!(await again.isChecked())) await again.click();
     await expect(again).toBeChecked();
     await page.goto("/account/");
-    await page.screenshot({ path: shot(width, "settings"), fullPage: true });
+    await saveWholePage(page, shot(width, "settings"));
   });
 }
