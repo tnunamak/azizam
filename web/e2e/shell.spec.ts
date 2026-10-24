@@ -26,6 +26,7 @@ test("You navigation keeps Workflows right after Models", async ({ page }) => {
     "Home",
     "Library",
     "Try",
+    "History",
     "Apps & keys",
     "Connect",
     "Models",

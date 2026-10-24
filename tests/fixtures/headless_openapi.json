@@ -16632,6 +16632,46 @@
         ]
       }
     },
+    "/gateway/v1/me/retention": {
+      "get": {
+        "operationId": "get_delegated_retention_gateway_v1_me_retention_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Get Delegated Retention Gateway V1 Me Retention Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Delegated Retention",
+        "tags": [
+          "requests"
+        ]
+      },
+      "put": {
+        "operationId": "put_delegated_retention_gateway_v1_me_retention_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Put Delegated Retention Gateway V1 Me Retention Put"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Put Delegated Retention",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
     "/gateway/v1/media/jobs": {
       "get": {
         "operationId": "list_media_jobs_gateway_v1_media_jobs_get",

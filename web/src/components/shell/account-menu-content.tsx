@@ -5,9 +5,9 @@ import { useRef, useState } from "react";
 import {
   ArrowLeftRight,
   ChevronDown,
+  Braces,
   CircleHelp,
   CircleUserRound,
-  KeyRound,
   LogOut,
   UserRoundCog,
 } from "lucide-react";
@@ -147,14 +147,6 @@ export function AccountMenuContent({
                 Change avatar
               </DropdownMenuItem>
             )}
-            {!viewer.serviceAdmin && (
-              <DropdownMenuItem asChild>
-                <Link prefetch={false} href="/apps">
-                  <KeyRound />
-                  Apps & keys
-                </Link>
-              </DropdownMenuItem>
-            )}
             {viewer.authenticated && !viewer.serviceAdmin && (
               <DropdownMenuItem asChild>
                 <Link prefetch={false} href="/account">
@@ -164,9 +156,15 @@ export function AccountMenuContent({
               </DropdownMenuItem>
             )}
             <DropdownMenuItem asChild>
-              <a href="/docs">
+              <a href="https://azizam.dev/docs">
                 <CircleHelp />
                 Help
+              </a>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <a href="/docs">
+                <Braces />
+                API reference
               </a>
             </DropdownMenuItem>
             {!viewer.authenticated && (

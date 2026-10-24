@@ -57,7 +57,7 @@ DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB
 # starts new work, and the old job keeps its history without the request ID.
 REPLAY_WINDOW_S = 14 * 24 * 3600
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
 PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
@@ -365,6 +365,21 @@ CREATE TABLE IF NOT EXISTS media_hidden_assets (
   hidden_at INTEGER NOT NULL,
   PRIMARY KEY (person_id, asset_id, job_id)
 );
+CREATE TABLE IF NOT EXISTS media_job_asset_origins (
+  asset_id TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  origin_id TEXT NOT NULL,
+  PRIMARY KEY (asset_id, job_id),
+  FOREIGN KEY (job_id) REFERENCES media_jobs(job_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS media_job_asset_origins_asset
+  ON media_job_asset_origins(asset_id, origin_id);
+CREATE TABLE IF NOT EXISTS media_library_erasure_fences (
+  person_id TEXT NOT NULL,
+  origin_id TEXT NOT NULL,
+  erased_at INTEGER NOT NULL,
+  PRIMARY KEY (person_id, origin_id)
+);
 CREATE TABLE IF NOT EXISTS media_jobs_schema_version (version INTEGER NOT NULL);
 
 -- Facts are immutable metadata. References can outlive receipts when a kept record survives.
@@ -405,12 +420,13 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
     row = conn.execute("SELECT version FROM media_jobs_schema_version LIMIT 1").fetchone()
+    previous_version = int(row[0]) if row is not None else None
     if row is None:
         conn.execute(
             "INSERT INTO media_jobs_schema_version(version) VALUES (?)",
             (SCHEMA_VERSION,),
         )
-    elif int(row[0]) not in (1, 2, 3, SCHEMA_VERSION):
+    elif previous_version not in (1, 2, 3, 4, SCHEMA_VERSION):
         raise sqlite3.DatabaseError(
             f"media_jobs schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
@@ -428,6 +444,8 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     destination_columns = {r[1] for r in conn.execute("PRAGMA table_info(retention_fact_destinations)")}
     if "created_at" not in destination_columns:
         conn.execute("ALTER TABLE retention_fact_destinations ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
+    if previous_version is None or previous_version < SCHEMA_VERSION:
+        _backfill_asset_origins(conn)
     _repair_event_sequences(conn)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS media_job_event_sequence ON media_job_events(job_id, sequence)")
     # Baseline writers omit sequence. SQLite serializes this with their insert,
@@ -458,6 +476,45 @@ def _repair_event_sequences(conn: sqlite3.Connection, job_id: str | None = None)
         next_sequences[owner_job_id] += 1
         conn.execute("UPDATE media_job_events SET sequence=? WHERE id=?",
                      (next_sequences[owner_job_id], event_id))
+
+
+def _asset_ids(job_data: Mapping[str, Any]) -> set[str]:
+    assets = job_data.get("assets")
+    if not isinstance(assets, list):
+        return set()
+    return {
+        str(asset_id)
+        for asset in assets if isinstance(asset, Mapping)
+        for asset_id in (asset.get("asset_id") or asset.get("id"),)
+        if asset_id
+    }
+
+
+def _backfill_asset_origins(conn: sqlite3.Connection) -> None:
+    """Build the indexed asset-to-creating-request relation for an older store."""
+    pending: list[tuple[str, str, str]] = []
+    for job_id, job_json in conn.execute("SELECT job_id, job_json FROM media_jobs"):
+        try:
+            data = json.loads(job_json)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(data, Mapping):
+            continue
+        origin_id = _receipt_link_candidate(data)
+        if not origin_id:
+            continue
+        pending.extend((asset_id, str(job_id), origin_id) for asset_id in _asset_ids(data))
+        if len(pending) >= 1000:
+            conn.executemany(
+                "INSERT OR IGNORE INTO media_job_asset_origins(asset_id,job_id,origin_id) VALUES(?,?,?)",
+                pending,
+            )
+            pending.clear()
+    if pending:
+        conn.executemany(
+            "INSERT OR IGNORE INTO media_job_asset_origins(asset_id,job_id,origin_id) VALUES(?,?,?)",
+            pending,
+        )
 
 
 def init_db(path: Path = DB_PATH) -> None:
@@ -744,6 +801,12 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
             _job_payload(job),
         ),
     )
+    conn.execute("DELETE FROM media_job_asset_origins WHERE job_id=?", (job.job_id,))
+    if job.creating_receipt_id:
+        conn.executemany(
+            "INSERT INTO media_job_asset_origins(asset_id,job_id,origin_id) VALUES(?,?,?)",
+            [(asset_id, job.job_id, job.creating_receipt_id) for asset_id in sorted(_asset_ids(job.to_dict("internal")))],
+        )
 
 
 def _clear_prompt_derivatives(job: MediaJob) -> None:
@@ -818,6 +881,75 @@ def delete_person_hides_in(conn: sqlite3.Connection, person_id: str) -> int:
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_hidden_assets'").fetchone() is None:
         return 0
     return conn.execute("DELETE FROM media_hidden_assets WHERE person_id=?", (person_id,)).rowcount
+
+
+def request_ids_for_assets_in(conn: sqlite3.Connection, asset_ids: Iterable[str]) -> set[str]:
+    """The creating receipt IDs of jobs that produced these assets, inside the caller's transaction."""
+    ids = sorted({str(asset_id) for asset_id in asset_ids if asset_id})
+    if not ids or conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_job_asset_origins'"
+    ).fetchone() is None:
+        return set()
+    found: set[str] = set()
+    for offset in range(0, len(ids), 500):
+        chunk = ids[offset:offset + 500]
+        marks = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"SELECT DISTINCT origin_id FROM media_job_asset_origins WHERE asset_id IN ({marks})",
+            chunk,
+        ).fetchall()
+        found.update(str(row[0]) for row in rows if row[0])
+    return found
+
+
+def request_ids_for_jobs_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> set[str]:
+    """The creating receipt IDs of these jobs, with a legacy fallback."""
+    ids = sorted({str(job_id) for job_id in job_ids if job_id})
+    if not ids or conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_jobs'"
+    ).fetchone() is None:
+        return set()
+    found: set[str] = set()
+    for offset in range(0, len(ids), 500):
+        chunk = ids[offset:offset + 500]
+        marks = ",".join("?" for _ in chunk)
+        rows = conn.execute(f"SELECT job_json FROM media_jobs WHERE job_id IN ({marks})", chunk).fetchall()
+        for row in rows:
+            try:
+                data = json.loads(row[0])
+            except (TypeError, ValueError):
+                continue
+            if isinstance(data, Mapping):
+                origin_id = _receipt_link_candidate(data)
+                if origin_id:
+                    found.add(origin_id)
+    return found
+
+
+def fence_library_origins_in(
+    conn: sqlite3.Connection, person_id: str, origin_ids: Iterable[str], *, erased_at: int | None = None,
+) -> int:
+    """Persist per-item write fences in the caller's media transaction."""
+    ids = sorted({str(origin_id) for origin_id in origin_ids if origin_id})
+    if not person_id or not ids:
+        return 0
+    timestamp = _now() if erased_at is None else int(erased_at)
+    conn.executemany(
+        "INSERT INTO media_library_erasure_fences(person_id,origin_id,erased_at) VALUES(?,?,?) "
+        "ON CONFLICT(person_id,origin_id) DO UPDATE SET erased_at=MAX(erased_at,excluded.erased_at)",
+        [(person_id, origin_id, timestamp) for origin_id in ids],
+    )
+    return len(ids)
+
+
+def library_origin_erased_in(conn: sqlite3.Connection, person_id: str, origin_id: str) -> bool:
+    """Whether this person's Library deletion already fenced the creating request."""
+    if not person_id or not origin_id:
+        return False
+    return conn.execute(
+        "SELECT 1 FROM media_library_erasure_fences WHERE person_id=? AND origin_id=?",
+        (person_id, origin_id),
+    ).fetchone() is not None
 
 
 # The connection already waits ``busy_timeout`` for a lock; these are the retries after that.

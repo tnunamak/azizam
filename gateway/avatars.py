@@ -135,22 +135,34 @@ def record_sign_in_picture(person_id: str, claim: Any, *, path: Path) -> None:
     """
     if claim is None:
         return
-    url = clean_picture_url(claim)
-    now = int(time.time())
     with admin_store.transaction(path) as tx:
-        conn = tx.conn
-        row = _row(conn, person_id)
-        if url is None:
-            if row is not None and row["picture_url"]:
-                conn.execute(
-                    "UPDATE user_avatars SET picture_url=NULL, picture_set_at=NULL, "
-                    "choice=CASE WHEN choice=? THEN ? ELSE choice END, updated_at=? WHERE user_id=?",
-                    (PICTURE, AUTO, now, person_id),
-                )
-        elif row is None or row["picture_url"] != url:
+        record_sign_in_picture_in(tx.conn, person_id, claim)
+
+
+def record_sign_in_picture_in(
+    conn: sqlite3.Connection,
+    person_id: str,
+    claim: Any,
+    *,
+    now: int | None = None,
+) -> None:
+    """Keep a provider picture inside the caller's transaction."""
+    if claim is None:
+        return
+    url = clean_picture_url(claim)
+    ts = int(time.time()) if now is None else int(now)
+    row = _row(conn, person_id)
+    if url is None:
+        if row is not None and row["picture_url"]:
             conn.execute(
-                "INSERT INTO user_avatars(user_id, choice, picture_url, picture_set_at, updated_at) "
-                "VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET picture_url=excluded.picture_url, "
-                "picture_set_at=excluded.picture_set_at, updated_at=excluded.updated_at",
-                (person_id, AUTO, url, now, now),
+                "UPDATE user_avatars SET picture_url=NULL, picture_set_at=NULL, "
+                "choice=CASE WHEN choice=? THEN ? ELSE choice END, updated_at=? WHERE user_id=?",
+                (PICTURE, AUTO, ts, person_id),
             )
+    elif row is None or row["picture_url"] != url:
+        conn.execute(
+            "INSERT INTO user_avatars(user_id, choice, picture_url, picture_set_at, updated_at) "
+            "VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET picture_url=excluded.picture_url, "
+            "picture_set_at=excluded.picture_set_at, updated_at=excluded.updated_at",
+            (person_id, AUTO, url, ts, ts),
+        )

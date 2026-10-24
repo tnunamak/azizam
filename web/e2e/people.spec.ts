@@ -574,6 +574,7 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
       email: person.email,
       password: "Browser sign in password",
       return_to: "/",
+      remember: true,
     });
     return fulfilJson(route, failed
         ? {

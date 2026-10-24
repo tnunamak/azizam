@@ -14,8 +14,8 @@ import {
   MessageSquare,
   Copy,
   EyeOff,
+  Ghost,
   GitBranch,
-  History,
   Image as ImageIcon,
   Loader2,
   Mic,
@@ -58,11 +58,13 @@ import Link from "next/link";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/cn";
 import {
+  FORGET_EXTENSION,
   tryKeepState,
   withForget,
   type MemberPromptMemory,
   type TryKeepState,
 } from "@/lib/prompt-memory";
+import { periodWords, type RequestHistoryChoice } from "@/lib/request-history";
 import { taskNames } from "@/lib/terms";
 import { modelDisplayName } from "@/lib/model-name";
 import { useUnsavedWork, type UnsavedKind } from "@/lib/unsaved-work";
@@ -82,6 +84,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { takeHomeHandoff, type HomeHandoff } from "@/app/_home/handoff";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader, EmptyState, ErrorState } from "@/components/product";
+import { TechnicalDetails } from "@/components/product/technical-details";
 
 type TryTab =
   | "chat"
@@ -194,6 +197,8 @@ type Result = {
   probabilities?: Array<{ option: string; probability: number | null }>;
   /** The run asked the gateway not to keep its words, or memory was off. */
   promptNotSaved?: boolean;
+  /** The run was sent as Incognito: nothing about it was kept. */
+  incognito?: boolean;
 };
 
 /** Tabs whose words the gateway can keep with what they make. */
@@ -1209,6 +1214,11 @@ export default function TryPage() {
   const [activeTab, setActiveTab] = useState<TryTab>("chat");
   const viewer = useViewer();
   const personViewer = viewer.authenticated && !viewer.serviceAdmin;
+  // Whether this person's requests are kept in History; Incognito's note says what would be.
+  // Undefined while loading, null when it cannot be read.
+  const [historyChoice, setHistoryChoice] = useState<
+    RequestHistoryChoice | null | undefined
+  >(undefined);
   // Prompt memory: whether this person's runs keep their words. Read once;
   // the switch below starts from it and is remembered for the session.
   const [promptMemory, setPromptMemory] = useState<
@@ -1403,6 +1413,10 @@ export default function TryPage() {
       void accountApi.promptMemory().then(
         (response) => live && setPromptMemory(response.prompt_memory),
         () => live && setPromptMemory(null),
+      );
+      void accountApi.requestHistory().then(
+        (choice) => live && setHistoryChoice(choice),
+        () => live && setHistoryChoice(null),
       );
     };
     refresh();
@@ -1982,14 +1996,19 @@ export default function TryPage() {
         // Keep the current run's privacy promise visible after a refresh.
         setForget(true);
       }
-      const forgetRun =
+      // A prompt the member or the household turned off still goes with forget on the tabs that keep prompts,
+      // as before: the request text is what the prompt is, so History must not keep it either. Incognito is
+      // the same control on every tab.
+      const promptsOff =
         MEMORY_TABS.has(tab) &&
-        (forget ||
-          keepState === "member-off" ||
+        (keepState === "member-off" ||
           keepState === "household-off" ||
           refreshedState === "member-off" ||
           refreshedState === "household-off" ||
           (personViewer && refreshedState === "unknown"));
+      // Prompt keeping off sends forget as well, so History keeps nothing of the typed request either. The names of
+      // the two settings and of "forget" are to be reworked (REQUEST_RETENTION.md section 17, slice 5b1, open point 1).
+      const forgetRun = forget || promptsOff;
       const request: RequestInfo = forgetRun
         ? built.multipart
           ? { ...built, form: withForget(built.form ?? {}) }
@@ -2037,6 +2056,8 @@ export default function TryPage() {
           }
           form.set("model", selectedModel.transcribe);
           form.set("file", file);
+          if (forgetRun)
+            form.set("extensions", JSON.stringify({ [FORGET_EXTENSION]: { mode: "forget" } }));
         }
         result = await publicRequest(request.path, runKey.secret, {
           method: "POST",
@@ -2089,6 +2110,7 @@ export default function TryPage() {
           checkingReceipt: tab === "chat",
           runId,
           promptNotSaved,
+          incognito: forget,
         },
       }));
       if (tab === "chat") {
@@ -2807,13 +2829,15 @@ export default function TryPage() {
                       </span>
                     </label>
                   )}
-                  {MEMORY_TABS.has(tab.value) && keepState ? (
-                    <PromptKeepControl
-                      id={`forget-${tab.value}`}
-                      state={keepState}
+                  {personViewer ? (
+                    <IncognitoControl
+                      id={`incognito-${tab.value}`}
+                      keepState={keepState}
+                      history={historyChoice}
                       forget={forget}
                       onForget={setForget}
                       owner={owner}
+                      memory={MEMORY_TABS.has(tab.value)}
                       made={
                         tab.value === "image"
                           ? "picture"
@@ -2975,7 +2999,12 @@ function ResultView({
     <div className="min-w-0 space-y-5">
       <div className="space-y-2">
         <h2 className="font-semibold">{result.title}</h2>
-        {result.promptNotSaved ? (
+        {result.incognito ? (
+          <p className="text-muted-foreground text-meta flex items-center gap-1.5">
+            <Ghost aria-hidden="true" className="size-4 shrink-0" />
+            Incognito: this isn’t saved
+          </p>
+        ) : result.promptNotSaved ? (
           <p className="text-muted-foreground text-meta flex items-center gap-1.5">
             <EyeOff aria-hidden="true" className="size-4 shrink-0" />
             Prompt not kept
@@ -3159,23 +3188,6 @@ function ResultView({
   );
 }
 
-/** Raw answers and status codes, folded away from the normal view (P15). */
-function TechnicalDetails({ text }: { text: string }) {
-  return (
-    <details className="border-t pt-3">
-      <summary className="min-h-11 cursor-pointer text-sm font-medium">
-        Technical details
-      </summary>
-      <pre
-        tabIndex={0}
-        className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
-      >
-        {text}
-      </pre>
-    </details>
-  );
-}
-
 const MEDIA_NOUN = { image: "picture", audio: "audio", video: "video" } as const;
 
 /**
@@ -3265,94 +3277,167 @@ function ResultMedia({
  * to make, so the row says so instead of offering a switch that does
  * nothing.
  */
-function PromptKeepControl({
+/**
+ * Incognito: one switch on every Try tab. On, the request goes with `extensions["com.azizam.prompts"]` set to
+ * forget, so the gateway keeps nothing about it, and it lasts for this browser tab only. Off, the note says what
+ * the gateway would keep, from the member's own settings. Where the prompt setting already decides (a picture,
+ * sound or workflow result with prompt keeping off), the row says so and offers no switch.
+ */
+function IncognitoControl({
   id,
-  state,
   forget,
   onForget,
+  keepState,
+  history,
   owner,
+  memory,
   made,
 }: {
   id: string;
-  state: TryKeepState;
   forget: boolean;
   onForget: (next: boolean) => void;
+  keepState: TryKeepState | null;
+  /** Undefined while loading; null when the setting cannot be read. */
+  history: RequestHistoryChoice | null | undefined;
   owner: boolean;
+  /** The tab keeps its words with what it makes (pictures, audio, workflow results). */
+  memory: boolean;
   made: string;
 }) {
-  const fixed = state === "member-off" || state === "household-off";
-  const notKept = fixed || forget;
-  const Icon = notKept ? EyeOff : History;
-  const label = fixed ? "Prompts aren’t kept" : "Don’t keep this prompt";
-  const description = fixed ? (
-    state === "member-off" ? (
+  const promptsKept = keepState === "choice";
+  if (memory && (keepState === "member-off" || keepState === "household-off")) {
+    return (
+      <div
+        data-slot="prompt-keep"
+        data-state="not-kept"
+        className="rounded-control flex items-center gap-3 border bg-muted px-3 py-2.5"
+      >
+        <EyeOff aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="text-body font-medium">Prompts aren’t kept</p>
+          <p id={`${id}-note`} className="text-muted-foreground text-meta">
+            {keepState === "member-off" ? (
+              <>
+                You turned off prompt keeping.{" "}
+                <Link prefetch={false}
+                  href="/account"
+                  className="text-foreground underline underline-offset-4"
+                >
+                  Change
+                </Link>
+              </>
+            ) : owner ? (
+              <>
+                You turned off prompt keeping for everyone.{" "}
+                <Link prefetch={false}
+                  href="/settings#prompts"
+                  className="text-foreground underline underline-offset-4"
+                >
+                  Settings
+                </Link>
+              </>
+            ) : (
+              "Turned off for everyone on this gateway."
+            )}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  // Nothing at all is kept for this request, so a switch would change nothing: say so instead.
+  if (
+    keepState === "household-off" ||
+    (history != null && !history.keep && !(memory && promptsKept))
+  ) {
+    return (
+      <div
+        data-slot="incognito"
+        data-state="not-kept"
+        className="rounded-control bg-muted flex items-center gap-3 border px-3 py-2.5"
+      >
+        <EyeOff aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="text-body font-medium">Nothing you send is kept</p>
+          <p id={`${id}-note`} className="text-muted-foreground text-meta">
+            {keepState === "household-off" ? (
+              "Turned off for everyone on this gateway."
+            ) : (
+              <>
+                Request history is off for you.{" "}
+                <Link prefetch={false}
+                  href="/account#history"
+                  className="text-foreground underline underline-offset-4"
+                >
+                  Change
+                </Link>
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  let note: ReactNode;
+  if (forget) {
+    note = (
       <>
-        You turned off prompt keeping.{" "}
-        <Link prefetch={false}
-          href="/account"
-          className="text-foreground underline underline-offset-4"
-        >
-          Change
-        </Link>
+        <span className="block">Incognito: this isn’t saved.</span>
+        {memory ? (
+          <span className="block">The {made} still goes to Library.</span>
+        ) : null}
       </>
-    ) : owner ? (
+    );
+  } else if (keepState === "unknown" || history === null) {
+    note = memory
+      ? "Couldn't read your prompt settings. Saved prompts are visible only to you."
+      : "Couldn’t read your settings. Saved items are visible only to you.";
+  } else if (keepState === null || history === undefined) {
+    note = "Checking what Azizam keeps…";
+  } else {
+    note = (
       <>
-        You turned off prompt keeping for everyone.{" "}
-        <Link prefetch={false}
-          href="/settings#prompts"
-          className="text-foreground underline underline-offset-4"
-        >
-          Settings
-        </Link>
+        {history.keep ? (
+          <span className="block">
+            Saved in your History for {periodWords(history.retention)}.
+          </span>
+        ) : null}
+        {memory && promptsKept ? (
+          <>
+            <span className="block">
+              Azizam tries to keep the prompt with the {made}.
+            </span>
+            <span className="block">Only you can see kept prompts.</span>
+          </>
+        ) : (
+          <span className="block">Only you can see it.</span>
+        )}
       </>
-    ) : (
-      "Turned off for everyone on this gateway."
-    )
-  ) : forget ? (
-    `The ${made} still goes to Library.`
-  ) : state === "unknown" ? (
-    "Couldn't read your prompt settings. Saved prompts are visible only to you."
-  ) : (
-    <>
-      <span className="block">
-        Azizam tries to keep the prompt with the {made}.
-      </span>
-      <span className="block">Only you can see kept prompts.</span>
-    </>
-  );
+    );
+  }
   return (
     <div
-      data-slot="prompt-keep"
-      data-state={notKept ? "not-kept" : "kept"}
+      data-slot="incognito"
+      data-state={forget ? "incognito" : "kept"}
       className={cn(
         "rounded-control flex items-center gap-3 border px-3 py-2.5",
-        notKept && "bg-muted",
+        forget && "bg-muted",
       )}
     >
-      <Icon
-        aria-hidden="true"
-        className="text-muted-foreground size-4 shrink-0"
-      />
+      <Ghost aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
       <div className="min-w-0 flex-1">
-        {fixed ? (
-          <p className="text-body font-medium">{label}</p>
-        ) : (
-          <label htmlFor={id} className="text-body block font-medium">
-            {label}
-          </label>
-        )}
+        <label htmlFor={id} className="text-body block font-medium">
+          Incognito
+        </label>
         <p id={`${id}-note`} className="text-muted-foreground text-meta">
-          {description}
+          {note}
         </p>
       </div>
-      {fixed ? null : (
-        <Switch
-          id={id}
-          checked={forget}
-          onCheckedChange={onForget}
-          aria-describedby={`${id}-note`}
-        />
-      )}
+      <Switch
+        id={id}
+        checked={forget}
+        onCheckedChange={onForget}
+        aria-describedby={`${id}-note`}
+      />
     </div>
   );
 }

@@ -57,8 +57,11 @@ ADDED_PATHS: dict[str, str] = {
                                                       "new credential, so no step-up); tests/test_rename_apps_keys.py covers it",
     "/gateway/v1/requests": "the maker's own kept requests: list, read, delete and delete all (REQUEST_RETENTION.md section 10); "
                             "a delegated credential without the privacy permission cannot delete; tests/test_request_history_routes.py covers them",
+    "/gateway/v1/me/retention": "a delegated App key or MCP grant reads the person's request history choice; writes need privacy permission; tests/test_request_history_routes.py covers it",
     "/me/api/retention": "the member's own request history choice, session only (D50: a member can turn history off); "
                          "tests/test_request_history_member_choice.py covers it",
+    "/me/api/credentials/{credential_id}/privacy-permission": "the accountable person changes request-history access for one of their own App keys after step-up; tests/test_request_history_privacy_permission.py covers it",
+    "/me/api/mcp/connections/{grant_id}/privacy-permission": "the signed-in person changes request-history access for one of their own MCP grants after step-up; tests/test_request_history_privacy_permission.py covers it",
 }
 
 # Deliberate additions of one method to a path that was already frozen: (method, path template) -> reason. The path
@@ -159,6 +162,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # The edit transport documents repeated image[] parts for pictures. The sign-in box (Login.remember) is
         # nullable: true keeps a name, false takes it off, null leaves the list alone. The remembered list's entry for
         # the person signed in on the browser carries "you": true.
-        assert route_graph.openapi_digest(proxy.app) == "2dea1f9845d036064fa011094c92aed8f22c44d4b9037454a68b2f05c921602a"
+        assert route_graph.openapi_digest(proxy.app) == "6d565dd03d661d8a7aaa6066d89b54d62da9498a042ebab78e83c42b7296c42d"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

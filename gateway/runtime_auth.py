@@ -78,6 +78,9 @@ class RuntimeIdentity:
     connection_id: str | None = None
     trusted_address: str | None = None
     credential_id: str | None = None
+    # The accountable person may explicitly let this delegated credential read
+    # and delete their request history across Apps and browser sessions.
+    privacy_permission: bool = False
     # Keep derived media bound even if a credential is deleted while work is in flight.
     browser_session: AdminSession | None = field(default=None, repr=False)
     auth_kind: Literal["session", "app_key", "mcp_grant", "trusted_address", "service_key"] = "app_key"

@@ -7,6 +7,7 @@ const account = vi.hoisted(() => ({
   session: vi.fn(),
   tryKey: vi.fn(),
   revokeKey: vi.fn(),
+  requestHistory: vi.fn(),
   params: new URLSearchParams(),
   viewer: { authenticated: true, serviceAdmin: true, admin: false },
 }));
@@ -88,7 +89,17 @@ const json = (body: unknown) =>
     headers: { "content-type": "application/json" },
   });
 
+const HISTORY_ON = {
+  keep: true,
+  retention: "7_days",
+  parts: ["accepted"],
+  choices: ["1_day", "7_days", "30_days"],
+  allowed_parts: ["accepted", "received"],
+  notice_due: false,
+};
+
 beforeEach(() => {
+  account.requestHistory.mockResolvedValue({ ...HISTORY_ON });
   Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
     configurable: true,
     value: () => false,

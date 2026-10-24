@@ -24,6 +24,7 @@ import {
   Play,
   Plug,
   ReceiptText,
+  History,
   Tags,
   CornerDownRight,
   Settings,
@@ -65,6 +66,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { LeaveGuard } from "./leave-guard";
 import { ReauthGate } from "./reauth-gate";
 import { SessionCoverFromStore } from "./session-cover";
 import { ToastGate } from "./toast-gate";
@@ -120,6 +122,7 @@ const icons: Record<string, LucideIcon> = {
   Home: House,
   Library: Images,
   Try: Play,
+  History: History,
   "Apps & keys": KeyRound,
   Connect: Plug,
   Models: Box,
@@ -1143,6 +1146,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Shell>{children}</Shell>
         </SessionBoundary>
         <ReauthGate />
+        <LeaveGuard />
         <ToastGate />
       </QueryClientProvider>
     </ThemeProvider>

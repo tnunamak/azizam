@@ -29,6 +29,7 @@ import {
   leadingBlocker,
   mid,
   NOTHING_TO_SAVE,
+  noFreshWarning,
   personChange,
   PREVIEW_FAILED,
   providerLabel,
@@ -50,6 +51,7 @@ import {
 } from "./form";
 import { RulesEditor } from "./rules-editor";
 import { SaveFooter } from "./save-footer";
+import { SharedComputers } from "./shared-computers";
 import { TestSignIn } from "./test-sign-in";
 import { useDiscovery } from "./use-discovery";
 import { useIsPhone } from "./use-media-query";
@@ -137,15 +139,20 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
     : liveUnchanged || savedTested
       ? snapshot.provider.tested_at
       : null;
+  // What the last passed test found about a fresh sign-in: this session's test, else the saved connection's. The saved
+  // answer counts only once that connection has been tested (the snapshot says false for "not tested" too).
+  const freshLogin: boolean | null = tested
+    ? (test.passed?.freshLogin ?? null)
+    : liveUnchanged || savedTested
+      ? snapshot.provider.tested_at !== null
+        ? snapshot.provider.fresh_login_supported
+        : null
+      : null;
+  const freshWarning = freshLogin === false ? noFreshWarning(label) : null;
 
-  // A turn-on is the intent whenever the provider is off, so the server can ask for the test.
-  const proposal: SignInProposal = {
-    ...form,
-    methods: {
-      password: form.methods.password,
-      provider: live ? form.methods.provider : true,
-    },
-  };
+  // The provider switch is the intent. With it off, a save leaves single sign-on off, and the server asks for no test:
+  // gateway/signin_api.py asks only when single sign-on is on and its connection has changed since a passed test.
+  const proposal: SignInProposal = form;
   const { preview, settled, failed } = usePreview(proposal, testId, !readOnly);
 
   const patchConnection = (change: Partial<ProviderConnection>) =>
@@ -233,7 +240,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
   const blocker = preview ? leadingBlocker(preview.blockers, live) : undefined;
   const verdict = preview?.test_verdict ?? null;
   const unlinked = Boolean(testId) && verdict?.kind === "owner_unlinked";
-  const turnOnIntent = !live && !form.methods.provider;
+  const turnOnIntent = !live && form.methods.provider;
   let caption: string;
   let mobileCaption: string;
   let need = false;
@@ -249,7 +256,13 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
     });
     need = true;
   } else if (!live) {
-    const base = turnOnIntent ? turnOnCaption(label) : APPLY_NEXT;
+    // A passed test for this connection gets the turn-on sentence: the switch above turns it on, and Save leaves it off.
+    const base =
+      turnOnIntent || tested || savedTested
+        ? turnOnCaption(label)
+        : dirty
+          ? APPLY_NEXT
+          : NOTHING_TO_SAVE;
     caption = base + (unlinked ? unlinkedNote(label) : "");
     mobileCaption = base + (unlinked ? unlinkedNoteShort : "");
     need = unlinked;
@@ -262,8 +275,7 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
   } else {
     caption = mobileCaption = NOTHING_TO_SAVE;
   }
-  const canSave =
-    settled && !failed && Boolean(preview) && !blocker && (live ? dirty : true);
+  const canSave = settled && !failed && Boolean(preview) && !blocker && dirty;
 
   const showChanges =
     Boolean(preview) && !readOnly && ((live && dirty) || (!live && (preview?.people.length ?? 0) > 0));
@@ -335,11 +347,13 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
             testedAt,
             liveBefore: live,
             hasConnection: hasSavedConnection(snapshot),
+            freshLogin,
           })}
           hasAddress={
             discovery.state === "ok" || hasSavedConnection(snapshot)
           }
           canTurnOnProvider={tested || liveUnchanged || savedTested}
+          freshWarning={freshWarning}
           owner={snapshot.owner}
           recoveryCommand={snapshot.recovery_command}
           onPassword={(password) =>
@@ -411,6 +425,10 @@ export function SignInEditor({ snapshot }: { snapshot: SignInSnapshot }) {
           phone={phone}
           onChange={setRules}
           onDismissNotice={() => dismiss.mutate()}
+        />
+        <SharedComputers
+          value={form.memory ?? "remember"}
+          onChange={(memory) => setForm((f) => ({ ...f, memory }))}
         />
         {showChanges && preview && (
           <WhatChanges

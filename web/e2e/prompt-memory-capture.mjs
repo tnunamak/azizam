@@ -101,7 +101,7 @@ const shots = {
     go: "/try/?capability=image",
     act: async (page) => {
       await page
-        .getByRole("switch", { name: "Don’t keep this prompt" })
+        .getByRole("switch", { name: "Incognito" })
         .click();
     },
   },

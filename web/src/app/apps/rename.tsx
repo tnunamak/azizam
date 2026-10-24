@@ -277,7 +277,7 @@ function KeyRow({
   // The one remedy the cut-over leaves this key: keep it, or replace it. The gateway decides which.
   const remedy = keyRecord.cutover;
   return (
-    <li className="space-y-2 py-3">
+    <li id={`key-row-${keyRecord.id}`} className="space-y-2 py-3">
       {editing ? (
         <KeyNameForm keyRecord={keyRecord} onSaved={onSaved} onCancel={onCancel} />
       ) : (
@@ -365,6 +365,7 @@ function KeyRow({
 export function RenameKeysDialog({
   app,
   appName,
+  focusCheck = false,
   onSaved,
   onKept,
   onReplaced,
@@ -373,6 +374,8 @@ export function RenameKeysDialog({
 }: {
   app: AccountApp | null;
   appName: string;
+  /** Opened from the page's quick-check line: the first key with a remedy is brought into view and focused. */
+  focusCheck?: boolean;
   onSaved: (key: Credential) => void;
   onKept: (key: Credential) => void;
   /** A key was replaced: the page shows the new key once and takes the old key's row away. */
@@ -470,6 +473,15 @@ export function RenameKeysDialog({
     <Dialog open={app !== null} onOpenChange={(open) => !open && close()}>
       <DialogContent
         className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        onOpenAutoFocus={(event) => {
+          // Replaces the dialog's own first focus, so the row that needs its check takes it instead.
+          const key = focusCheck ? app?.credentials.find((item) => item.cutover !== undefined) : undefined;
+          const row = key ? document.getElementById(`key-row-${key.id}`) : null;
+          if (!row) return;
+          event.preventDefault();
+          row.scrollIntoView({ block: "center" });
+          row.querySelector("button")?.focus();
+        }}
         onCloseAutoFocus={onCloseAutoFocus}
         // Esc leaves a rename first; a second Esc closes the dialog.
         onEscapeKeyDown={(event) => {

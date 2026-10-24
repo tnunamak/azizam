@@ -207,7 +207,7 @@ kinds:
     readers: scope                    # today's person + App/credential rule (section 4)
   request_history:
     purpose: Request history keeps what your apps sent for a short time, so you can check it and run it again.
-    parts: {allowed: [accepted, received], default: [accepted]}
+    parts: {allowed: [accepted, received], default: [accepted, received]}
     max_record_bytes: 1048576
     readers: maker
   debug_capture:                      # no group: opening a window is the choice (section 9)
@@ -1372,9 +1372,10 @@ rules are those of prompt memory. Retention adds no new identity rule.
   The noninterference property (D32 e) is tested on gateway-composed
   output (section 16.2). The engine's success product is excluded (D45b).
 - No engine words reach a non-owner through the Debug window (D45, D44
-  "Limits"). Request history keeps only `accepted` by default, which is the
-  caller's own words. When `received` is kept, it is the trusted engine's
-  success product (D45b). Error replies keep the gateway's composed error
+  "Limits"). Request history keeps `accepted`, the caller's own words, and
+  by default `received` too (D50). `received` is the trusted engine's success
+  product (D45b), and a member who chose sent-only keeps only `accepted`.
+  Error replies keep the gateway's composed error
   (`client_errors`), not the engine's text.
 - Logs never carry content (D43/D44). Retention adds no log line with
   record text. Its log lines use fixed event ids and counts.
@@ -1423,9 +1424,14 @@ queues work. The worker's separate receipt reports the content write. Audio
 and video job submissions currently create no route receipt. A stored receipt
 with a retired retention value remains readable; its invalid entry is omitted
 and the read logs one structural warning. Writes still refuse invalid values.
-The maker sees the full retention entry. In the owner's Home, receipt detail
-and Activity views, another person's entry contains only `kind` and
-`decision`; `reason`, deadline, parts and limit stay with the maker.
+The maker sees the full retention entry. The receipt names its maker when it
+is created: the person the request ran as, from the request's own sign-in
+(section 13.1). Owning the App a request came through never makes a viewer
+the maker. A request that ran as no person has no maker, and its entry shows
+`kind` and `decision` to everyone who can open the receipt, the App's owner
+included. In the owner's Home, receipt detail and Activity views, another
+person's entry contains only `kind` and `decision`; `reason`, deadline, parts
+and limit stay with the maker.
 
 ## 14. AGENTS.md and the extension rung (owner task 11)
 
@@ -2039,6 +2045,31 @@ that they pin now passes with its mark removed. The tests the review did not pin
   - **Round 11 fixes, as built (R11-1, R11-2).** Every character outside `[A-Za-z0-9_.-]` now separates pieces of a decoded path segment, so a token inside encoded brackets is removed; a dot still does not separate (R11-1). Trailing digits in a name are stripped by a backwards scan, as the `\d+$` pattern retried from every digit and cost quadratic time on a long digit run (R11-2). The pytest count went from 16611 to 16613.
     - **What round 9 does not catch.** (1) A secret written straight after a delimiter is read as a scheme, because a delimiter starts a token. `https://a.test/x,<20-character secret>://b.test` keeps the secret, in lower case, as the scheme. Treating a token-shaped scheme (the R8-1 shape) as a value would close this. (2) A segment that decodes to hold a `/`, such as `/<token>%2Fmore`, is checked as one string, so the token is kept. (3) The credential-name check does not decode, so `pass%77ord` is not read as `password`. (4) `*`, `~` and `_` are not prose punctuation here, so `/<token>*` keeps the token.
     - **Consequences to review.** A URL wrapped in markdown emphasis, such as `*https://a.test/x*`, is replaced whole. A `://` with no scheme in prose, such as `Use :// here`, becomes `Use [url removed] here`. A URL with another URL in its query, such as an OAuth `redirect_uri`, loses its host as well as the URL it carries.
+
+**Slice 5b1 as built.** The member's surfaces: the History page, the request history row in Your settings, the one-time notice on Home for a member who predates the feature (D50; section 12, item 3), and one Incognito switch in Try. The readings the build took:
+
+- **The notice (section 12, item 3).** It is due when the member's history row is off and nothing has changed it: `remember` is 0 and `updated_by` is empty, which is what the schema 17 upgrade wrote. A new member's row starts on, so is never told; a member who turned it off wrote `updated_by` and is not told. Turning the switch on or off answers it. Dismissing it ("Not now") writes `request_history_notice_seen` (a row per person, in the admin store), and the choice does not change. `GET /me/api/retention` returns `notice_due`; `POST /me/api/retention/notice-seen` dismisses it, with the same session and write checks as a choice.
+- **Parts and periods are data.** `GET /me/api/retention` returns `allowed_parts` and the offered `choices`, and the screens read both. The period words come from the ids (`7_days` reads "7 days"); no screen names a period.
+- **App name on each row.** The list names the app a row came through (`app_name`, read from the viewer's own apps); a row with no app shows "Browser".
+- **Receipt link on the OpenAI mount (fix).** A chat receipt names the `/v1` route, and a request made through `/openai/v1` is the same route. Before this slice the capture matched the paths exactly, so Try's chat requests kept no receipt id and the detail could not show the receipt's sentence. The match now compares the canonical route.
+- **The maker sees the full entry (fix; superseded in round 3 below).** The receipt names no person, so `GET /me/api/receipts/{id}` takes the maker from the App's owner. The maker of a request made through their App sees the reason, deadline, parts and limit of its `request_history` entry; anyone else who can open the receipt sees the kind and the decision, as section 13.3 says.
+- **The receipt names its maker (round 3, fix).** The receipt carries `maker_person_id`, the person its request ran as, written when the receipt is created from the request's own sign-in. `GET /me/api/receipts/{id}` gives the full entry only to that person. The App's owner is not the maker of a request made through the App, so a request that ran as no person (a trusted address, a shared key) has no maker, and its entry shows `kind` and `decision` to everyone. A receipt written before this change has no maker, so its full entry now shows `kind` and `decision` to everyone, including the person who made the request.
+- **Replies are kept by default (round 3, D50).** `kinds.request_history.parts.default` is `[accepted, received]`. A person with no stored choice keeps the request and what came back. A stored choice wins: a member who chose sent-only keeps sent-only. Every save from the Account screen, and every turn-on from the Home notice, stores the parts the screen shows. So a person who saved before this change holds the old sent-only parts, and keeps them.
+- **The account switch shows the owner's switch (round 3).** When the owner has turned request history off for everyone, the account settings say "History is off on this gateway. Nothing new is kept.", as History does. The switch shows off and cannot be turned on, and the replies and period controls say that the owner has turned it off for everyone.
+- **Incognito is one switch on every Try tab.** On, the request carries `extensions["com.azizam.prompts"] = {"mode": "forget"}` (in the JSON body, or in the `extensions` form field for transcription). Off, the note says what would be kept, from the member's own choice. A picture, sound or workflow request with prompt keeping off still carries forget, as before: the typed request is what History would keep, so the prompt copy ("Azizam doesn't keep what you type") would be false without it. This is a reading to review; see the open points in the slice report.
+- **Not built in 5b1.** The privacy permission, the MCP tools, the Library cascade and debug captures are unchanged from 5a. The notice is not shown to a key session, which has no person to tell.
+
+**Slice 5b1 round 2, as built.** The owner reviewed 5b1 and found the detail drawer showed raw stored JSON with its headers, and was clipped at 1440 px. The readings the round took:
+
+- **The row's preview is kept on the summary (`summary.preview`).** A list row shows what was asked: the first user message, the input, or the prompt, as one line of at most 120 characters, cut when the record is kept from the redacted body. A list still never loads a body. A removed value never shows in it. A record kept before this round has no preview, and its row shows the kind ("Chat", "Picture") in its place.
+- **The summary's model reads a multipart form too.** A transcription or an image edit names its model in its form's `model` field, so `summary.model` is set for it.
+- **The household switch is on the choice (`household_off`).** `GET /me/api/retention` returns `household_off`: the owner's kill switch (`household.never_keep`), which `decide` reads first for every kind. It is off for everyone whatever a member chose. The Home notice is not offered while it is on, and it stays due for the member, so it comes back if the owner turns history on. History says the owner turned it off, and offers no setting to turn it on. The same switch is Try's "household-off" state, so the two read the same setting.
+- **The detail reads by kind.** A conversation (chat, Responses, Messages) is chat bubbles, with each tool call as a labelled line, then the reply. A picture, sound or video is its prompt and main settings as a label and value list, and a link to its Library item when one exists. A transcription is the file's type and size, then the transcript. Embeddings are the input and "N numbers returned". Any other kind is a plain list of its scalar fields. The model's display name is the title, and the time reads "2 minutes ago" with the exact time in the title.
+- **The Library item is found by the request, not stored.** No record links to a Library item (`linked_asset_ids` is always empty). The drawer searches the person's own Library by the first 100 characters of the prompt, and takes the item whose `request_id` is this request's. No match, no link.
+- **Removed details are one quiet line.** When a kept value holds a removed part, the drawer says "Some details weren’t kept (keys and links are never saved)" once. No `[removed]` marker is shown inline.
+- **Raw record under Technical details.** The app, route, status and the record as kept, headers included, sit in a collapsed "Technical details" at the bottom. The default view shows no headers.
+- **The drawer's width is forced.** The Sheet's base classes (`w-3/4`, `sm:max-w-sm`) and the screen's own classes are only joined, not merged, so the one that comes later in the stylesheet wins. The history drawer uses the `!` forms (`!w-full sm:!max-w-lg`), as the workflows page does.
+- **The forget decision (open point 1) stays.** A picture, sound or workflow request with prompt keeping off still carries forget, so History keeps nothing of the typed request either. The names of the two settings and of "forget" are to be reworked. Try marks the spot with a code comment.
 
 ## 18. Tim's three decisions
 

@@ -146,13 +146,18 @@ def test_a_credential_field_inside_tool_call_arguments_is_removed():
     assert CANARY not in json.dumps(kept)
 
 
-@pytest.mark.parametrize("name", ["session_token", "aws_session_token", "private_key", "bearer", "cookie",
+@pytest.mark.parametrize("name", ["session_token", "aws_session_token", "private_key", "bearer",
                                   "hf_token", "github_token", "token", "key"])
 def test_names_rule_8_does_not_cover_today(name):
     """Documents the edge of rule 8 as specified (names only, no plain ``token``). Not a defect of the build; listed
     so a decision to widen the list is visible."""
     kept, _ = request_history.redact_json({name: CANARY})
     assert kept[name] == CANARY
+
+
+def test_cookie_is_a_credential_name():
+    kept, _ = request_history.redact_json({"cookie": CANARY})
+    assert kept["cookie"] == request_history.REMOVED
 
 
 def test_whole_url_and_header_and_query_rules_hold():
@@ -235,9 +240,8 @@ def test_the_owner_and_an_admin_with_personal_keys_see_none_of_a_members_rows(ga
     assert _call("GET", f"/gateway/v1/requests/{record['record_id']}", gateway["maker"].key).status_code == 200
 
 
-def test_the_makers_other_app_cannot_read_and_the_same_apps_second_key_can(gateway):
-    """D52: a delegated key reads what its own App made. A second App of the same person is 'elsewhere'. The
-    check compares the App, not the credential: a second key of the same App reads the row."""
+def test_the_makers_other_app_is_denied_and_second_key_reads_without_permission(gateway):
+    """D52: an App key reads history created on its own App."""
     from gateway.runtime_auth import hash_api_key
 
     db, maker = gateway["db"], gateway["maker"]
@@ -250,12 +254,15 @@ def test_the_makers_other_app_cannot_read_and_the_same_apps_second_key_can(gatew
                                        hash=hash_api_key(other_key), prefix=other_key[:16],
                                        created_by=maker.person, path=db)
     same_app_key = f"opk_again_{maker.app}"
-    admin_store.create_credential_hash(subject_kind="app", subject_id=maker.app, app_id=maker.app,
-                                       hash=hash_api_key(same_app_key), prefix=same_app_key[:16],
-                                       created_by=maker.person, path=db)
+    same_app_credential = admin_store.create_credential_hash(
+        subject_kind="app", subject_id=maker.app, app_id=maker.app,
+        hash=hash_api_key(same_app_key), prefix=same_app_key[:16], created_by=maker.person, path=db)
+    assert same_app_credential["privacy_permission"] is False
     assert _call("GET", f"/gateway/v1/requests/{record['record_id']}", other_key).status_code == 404
     assert _call("GET", "/gateway/v1/requests", other_key).json()["requests"] == []
     assert _call("GET", f"/gateway/v1/requests/{record['record_id']}", same_app_key).status_code == 200
+    listed = _call("GET", "/gateway/v1/requests", same_app_key).json()["requests"]
+    assert [row["record_id"] for row in listed] == [record["record_id"]]
 
 
 def test_a_receipts_request_history_entry_is_masked_for_anyone_but_its_maker(tmp_path):

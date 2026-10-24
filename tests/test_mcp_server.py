@@ -272,8 +272,83 @@ def test_notification_is_202_without_body(env):
 
 def test_legacy_tools_list_has_the_three_meta_tools_and_the_two_rename_tools(env):
     tools = rpc(env, "tools/list", headers={"mcp-protocol-version": "2025-06-18"}).json()["result"]["tools"]
-    assert [t["name"] for t in tools] == ["capabilities", "run", "job", "rename_app", "rename_key"]
+    assert [t["name"] for t in tools] == [
+        "capabilities", "run", "job", "rename_app", "rename_key", "requests", "retention",
+    ]
     assert all(t["inputSchema"]["type"] == "object" for t in tools)
+
+
+def test_request_history_and_retention_tools_have_scoped_schemas(env):
+    tools = {tool["name"]: tool for tool in rpc(env, "tools/list").json()["result"]["tools"]}
+
+    requests = tools["requests"]["inputSchema"]
+    assert requests["properties"]["action"]["enum"] == ["list", "get", "delete", "delete_all"]
+    assert requests["properties"]["record_id"]["type"] == "string"
+    assert requests["additionalProperties"] is False
+
+    retention = tools["retention"]["inputSchema"]
+    assert retention["properties"]["action"]["enum"] == ["mine_get", "mine_set"]
+    assert retention["properties"]["keep"]["type"] == "boolean"
+    assert retention["properties"]["retention"]["type"] == "string"
+    assert retention["properties"]["parts"]["items"]["type"] == "string"
+    assert retention["additionalProperties"] is False
+
+
+def test_requests_tool_dispatches_to_personal_history_routes(env):
+    env.core.routes.update({
+        ("GET", "/gateway/v1/requests"): httpx.Response(
+            200, json={"requests": [{"record_id": "r1"}], "next_cursor": None}),
+        ("GET", "/gateway/v1/requests/r%2F1"): httpx.Response(200, json={"record_id": "r/1"}),
+        ("DELETE", "/gateway/v1/requests/r%2F1"): httpx.Response(204),
+        ("DELETE", "/gateway/v1/requests"): httpx.Response(200, json={"deleted": 1}),
+    })
+
+    listed = call(env, "requests", {"action": "list", "limit": 7, "cursor": "10:r0"})
+    read = call(env, "requests", {"action": "get", "record_id": "r/1"})
+    deleted = call(env, "requests", {"action": "delete", "record_id": "r/1"})
+    deleted_all = call(env, "requests", {"action": "delete_all"})
+
+    assert listed["structuredContent"]["requests"][0]["record_id"] == "r1"
+    assert read["structuredContent"]["record_id"] == "r/1"
+    assert deleted["structuredContent"] == {"deleted": "r/1"}
+    assert deleted_all["structuredContent"]["deleted"] == 1
+    assert env.core.calls == [
+        ("GET", "/gateway/v1/requests", {"params": {"limit": 7, "cursor": "10:r0"}}),
+        ("GET", "/gateway/v1/requests/r%2F1", {}),
+        ("DELETE", "/gateway/v1/requests/r%2F1", {}),
+        ("DELETE", "/gateway/v1/requests", {}),
+    ]
+
+
+def test_retention_tool_dispatches_setting_and_reports_permission_errors(env):
+    env.core.routes[("GET", "/gateway/v1/me/retention")] = httpx.Response(
+        200, json={"keep": True, "retention": "30d", "parts": ["accepted"]})
+    env.core.routes[("PUT", "/gateway/v1/me/retention")] = httpx.Response(
+        200, json={"keep": False, "retention": "30d", "parts": ["accepted"]})
+
+    read = call(env, "retention", {"action": "mine_get"})
+    saved = call(env, "retention", {
+        "action": "mine_set", "keep": False, "retention": "30d", "parts": ["accepted"],
+    })
+    env.core.routes[("PUT", "/gateway/v1/me/retention")] = httpx.Response(
+        403, json={"error": {"code": "privacy_permission_required"}})
+    refused = call(env, "retention", {
+        "action": "mine_set", "keep": False, "retention": "30d", "parts": ["accepted"],
+    })
+
+    assert read["structuredContent"]["keep"] is True
+    assert saved["structuredContent"]["keep"] is False
+    assert refused["isError"] is True
+    assert refused["structuredContent"]["error"]["code"] == "privacy_permission_required"
+    assert env.core.calls == [
+        ("GET", "/gateway/v1/me/retention", {}),
+        ("PUT", "/gateway/v1/me/retention", {"json": {
+            "keep": False, "retention": "30d", "parts": ["accepted"],
+        }}),
+        ("PUT", "/gateway/v1/me/retention", {"json": {
+            "keep": False, "retention": "30d", "parts": ["accepted"],
+        }}),
+    ]
 
 
 def test_owner_only_stt_measurement_tool_is_not_listed_to_nonowners():
@@ -366,7 +441,7 @@ def test_modern_unknown_method_is_404_with_32601(env):
 
 def test_modern_results_carry_result_type_and_cache_hints(env):
     result = rpc(env, "tools/list", modern=True).json()["result"]
-    assert result["resultType"] == "complete" and result["cacheScope"] == "public"
+    assert result["resultType"] == "complete" and result["cacheScope"] == "private"
 
 
 def test_unknown_tool_is_a_protocol_error(env):

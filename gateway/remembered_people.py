@@ -244,6 +244,15 @@ def keep(*, path: Path, token: str | None, person_id: str, method: str, issuer: 
     refreshes the name the list already holds and never adds one. A call that writes also sweeps the names unused for 90
     days, on every browser. Returns a new device token only if it stored a name under it; the caller sets it as the cookie.
     """
+    with accounts.connection(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        return keep_in(conn, token=token, person_id=person_id, method=method, issuer=issuer,
+                       remember=remember, from_tile=from_tile)
+
+
+def keep_in(conn, *, token: str | None, person_id: str, method: str, issuer: str | None,
+            remember: bool | None, from_tile: bool, now_ms: int | None = None) -> str | None:
+    """Apply a successful sign-in to remembered people inside the caller's transaction."""
     if remember is None and not from_tile:
         return None
     fresh = None
@@ -252,26 +261,24 @@ def keep(*, path: Path, token: str | None, person_id: str, method: str, issuer: 
             return None
         fresh = token = new_device_token()
     device = device_key(token)
-    now = _now_ms()
+    now = _now_ms() if now_ms is None else int(now_ms)
     kept = False
-    with accounts.connection(path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute("DELETE FROM remembered_people WHERE last_signed_in_at<?", (now - MAX_AGE_MS,))
-        if remember is False:
-            conn.execute("DELETE FROM remembered_people WHERE device_hash=? AND person_id=?", (device, person_id))
-        elif _memory_mode_in(conn) == REMEMBER:
-            known = conn.execute("SELECT 1 FROM remembered_people WHERE device_hash=? AND person_id=?",
-                                 (device, person_id)).fetchone()
-            if known is not None:
-                conn.execute("UPDATE remembered_people SET method=?, provider_issuer=?, last_signed_in_at=? "
-                             "WHERE device_hash=? AND person_id=?", (method, issuer, now, device, person_id))
-            elif remember and not from_tile:
-                conn.execute("INSERT INTO remembered_people(device_hash, person_id, method, provider_issuer, "
-                             "last_signed_in_at, created_at) VALUES(?,?,?,?,?,?)",
-                             (device, person_id, method, issuer, now, now))
-                kept = True
-                # At most MAX_PEOPLE names: the one used longest ago goes.
-                conn.execute("DELETE FROM remembered_people WHERE device_hash=? AND person_id NOT IN ("
-                             "SELECT person_id FROM remembered_people WHERE device_hash=? "
-                             "ORDER BY last_signed_in_at DESC, rowid DESC LIMIT ?)", (device, device, MAX_PEOPLE))
+    conn.execute("DELETE FROM remembered_people WHERE last_signed_in_at<?", (now - MAX_AGE_MS,))
+    if remember is False:
+        conn.execute("DELETE FROM remembered_people WHERE device_hash=? AND person_id=?", (device, person_id))
+    elif _memory_mode_in(conn) == REMEMBER:
+        known = conn.execute("SELECT 1 FROM remembered_people WHERE device_hash=? AND person_id=?",
+                             (device, person_id)).fetchone()
+        if known is not None:
+            conn.execute("UPDATE remembered_people SET method=?, provider_issuer=?, last_signed_in_at=? "
+                         "WHERE device_hash=? AND person_id=?", (method, issuer, now, device, person_id))
+        elif remember and not from_tile:
+            conn.execute("INSERT INTO remembered_people(device_hash, person_id, method, provider_issuer, "
+                         "last_signed_in_at, created_at) VALUES(?,?,?,?,?,?)",
+                         (device, person_id, method, issuer, now, now))
+            kept = True
+            # At most MAX_PEOPLE names: the one used longest ago goes.
+            conn.execute("DELETE FROM remembered_people WHERE device_hash=? AND person_id NOT IN ("
+                         "SELECT person_id FROM remembered_people WHERE device_hash=? "
+                         "ORDER BY last_signed_in_at DESC, rowid DESC LIMIT ?)", (device, device, MAX_PEOPLE))
     return fresh if kept else None

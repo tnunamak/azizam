@@ -333,6 +333,13 @@
     }
   ],
   "media_jobs": {
+    "media_job_asset_origins": [
+      {
+        "asset_id": "img_d3775d63c1a79f4a9958677d213c516c96447422826e32ba078a32bab902e6a2",
+        "job_id": "<job:1>",
+        "origin_id": "<req:1>"
+      }
+    ],
     "media_job_events": [
       {
         "attempt_number": 1,
@@ -467,7 +474,7 @@
     ],
     "media_jobs_schema_version": [
       {
-        "version": 4
+        "version": 5
       }
     ],
     "retention_fact_destinations": [

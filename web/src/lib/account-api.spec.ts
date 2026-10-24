@@ -110,29 +110,42 @@ it("keepTrustedAddress posts to the entry's adopt route with the same headers", 
   expect(sent[0].headers.get("x-azizam-csrf")).toBe("csrf-1");
 });
 
-it("keepKey asks for a recent sign-in, then sends the keep again once the person confirms", async () => {
-  const kept = { id: "key-1", created_by: "person-1" };
+it("keepKey and replaceKey on your own App are routine: a stale sign-in is not asked", async () => {
+  reply = { status: 200, body: { credential: { id: "key-1", created_by: "person-1" } } };
+  await accountApi.keepKey("key-1");
+  reply = { status: 201, body: { credential: { id: "key-2" }, replaced_credential_id: "key-1" } };
+  await accountApi.replaceKey("key-1");
+  expect(requestReauth).not.toHaveBeenCalled();
+  expect(sent.map((request) => request.path)).toEqual([
+    "/me/api/credentials/key-1/adopt",
+    "/me/api/credentials/key-1/replace",
+  ]);
+});
+
+it("decideMcpConsent asks a stale sign-in to confirm, then sends the decision again once the person confirms", async () => {
+  const decided = { redirect: "https://client.example/callback" };
   reply = reauthRequired;
   vi.mocked(requestReauth).mockImplementation(async () => {
-    reply = { status: 200, body: { credential: kept } };
+    reply = { status: 200, body: decided };
     return true;
   });
-  const key = await accountApi.keepKey("key-1");
-  expect(key).toEqual(kept);
+  const answer = await accountApi.decideMcpConsent("req-1", "allow");
+  expect(answer).toEqual(decided);
   expect(requestReauth).toHaveBeenCalledTimes(1);
   expect(requestReauth).toHaveBeenCalledWith(
     expect.objectContaining({ methods: ["password"], windowSeconds: 900 }),
   );
   expect(sent.map((request) => request.path)).toEqual([
-    "/me/api/credentials/key-1/adopt",
-    "/me/api/credentials/key-1/adopt",
+    "/me/api/mcp/requests/req-1",
+    "/me/api/mcp/requests/req-1",
   ]);
+  expect(sent[1].body).toEqual({ decision: "allow" });
 });
 
-it("keepKey keeps nothing when the person does not confirm, and returns the gateway's words", async () => {
+it("decideMcpConsent decides nothing when the person does not confirm, and returns the gateway's words", async () => {
   reply = reauthRequired;
   vi.mocked(requestReauth).mockResolvedValue(false);
-  const failure = await accountApi.keepKey("key-1").catch((e: unknown) => e);
+  const failure = await accountApi.decideMcpConsent("req-1", "allow").catch((e: unknown) => e);
   expect(failure).toBeInstanceOf(ApiError);
   expect(failure).toMatchObject({
     code: "reauth_required",
@@ -155,38 +168,6 @@ it("replaceKey posts to the key's replace route with the same headers, and retur
   expect(sent[0].body).toBeUndefined();
   expect(sent[0].headers.get("x-azizam-user-action")).toBe("1");
   expect(sent[0].headers.get("x-azizam-csrf")).toBe("csrf-1");
-});
-
-it("replaceKey asks for a recent sign-in, then replaces the key once the person confirms", async () => {
-  const replaced = {
-    credential: { id: "key-new", api_key: "opk_new_secret" },
-    replaced_credential_id: "key-1",
-  };
-  reply = reauthRequired;
-  vi.mocked(requestReauth).mockImplementation(async () => {
-    reply = { status: 201, body: replaced };
-    return true;
-  });
-  const answer = await accountApi.replaceKey("key-1");
-  expect(answer).toEqual(replaced);
-  expect(requestReauth).toHaveBeenCalledTimes(1);
-  expect(sent.map((request) => request.path)).toEqual([
-    "/me/api/credentials/key-1/replace",
-    "/me/api/credentials/key-1/replace",
-  ]);
-});
-
-it("replaceKey replaces nothing when the person does not confirm, and returns the gateway's words", async () => {
-  reply = reauthRequired;
-  vi.mocked(requestReauth).mockResolvedValue(false);
-  const failure = await accountApi.replaceKey("key-1").catch((e: unknown) => e);
-  expect(failure).toBeInstanceOf(ApiError);
-  expect(failure).toMatchObject({
-    code: "reauth_required",
-    message: "Confirm it is you to continue.",
-    status: 401,
-  });
-  expect(sent).toHaveLength(1);
 });
 
 it("replaceKey turns a refusal for a turned-off App into an ApiError with the gateway's code", async () => {

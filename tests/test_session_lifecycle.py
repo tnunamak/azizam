@@ -12,7 +12,7 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from gateway import accounts, admin_store, session_policy, step_up
+from gateway import accounts, admin_store, browser_sessions, session_policy, step_up
 from gateway.admin_runtime import create_admin_service_account_key
 from gateway.admin_oidc import (
     AUTH_TIME_UNKNOWN, AdminSession, CookieConfig, csrf_token_for_session, decode_session_cookie, encode_session_cookie,
@@ -434,8 +434,6 @@ def stale_owner(g, *, authenticated_ago=20 * MINUTE, sid="stale_owner_session_1"
 def asks_again(response) -> bool:
     if response.status_code != 401:
         return False
-    if response.headers.get("content-type", "").startswith("text/html"):
-        return "Sign in again" in response.text           # a form post on the setup page: asked in words
     try:
         return response.json()["error"]["code"] == "reauth_required"
     except (ValueError, KeyError, TypeError):
@@ -466,6 +464,42 @@ def test_the_risky_route_list_names_routes_that_exist(sg):
     missing = [(method, path) for method, path in step_up.SENSITIVE_ROUTES if (method, path) not in templates]
 
     assert missing == []
+
+
+# A person's own keys and addresses on their own Apps, and their first App: routine, so an old sign-in is not
+# asked. The answer is the handler's own (here a missing App or key), never reauth_required.
+OWN_ACCOUNT_ROUTES = (
+    ("POST", "/me/api/apps/*/keys"),
+    ("POST", "/me/api/apps/*/trusted-addresses"),
+    ("POST", "/me/api/apps/*/trusted-addresses/*/adopt"),
+    ("POST", "/me/api/apps/*/trusted-addresses/*/readd"),
+    ("POST", "/me/api/credentials/*/adopt"),
+    ("POST", "/me/api/credentials/*/replace"),
+    ("POST", "/me/api/try-key"),
+    ("POST", "/setup/first-app"),
+    ("POST", "/admin/api/apps/*/keys"),
+    ("POST", "/admin/api/apps/*/trusted-addresses"),
+)
+
+
+@pytest.mark.parametrize("method, route", OWN_ACCOUNT_ROUTES)
+def test_routine_own_account_actions_do_not_ask_a_stale_session(sg, method, route, monkeypatch):
+    async def status(_config):
+        return {"generated_at": 0, "banner": "ok", "errors": {}}
+
+    monkeypatch.setattr(sg.proxy.status_endpoint, "get_cached_status", status)
+    stale = stale_owner(sg)
+
+    answer = stale.request(method, concrete(route), headers={**csrf(stale), "x-azizam-user-action": "1"})
+
+    assert not asks_again(answer), (answer.status_code, answer.text[:200])
+
+
+def test_the_own_account_list_names_routes_that_exist(sg):
+    routes = {(method, route.path) for route in sg.proxy.app.routes for method in getattr(route, "methods", ()) or ()}
+    templates = {(method, re.sub(r"\{[^}]+\}", "*", path).rstrip("/")) for method, path in routes}
+
+    assert [key for key in OWN_ACCOUNT_ROUTES if key not in templates] == []
 
 
 def test_other_owner_routes_are_not_asked_to_confirm(sg):
@@ -596,17 +630,19 @@ def test_a_non_admin_is_refused_by_the_route_not_asked_to_confirm(sg):
 
 # -- confirming with the identity provider -----------------------------------
 
-def through_provider(g, client, *, reauth=True, sub="owner", email=OWNER, auth_time="now"):
+def through_provider(g, client, *, reauth=True, sub="owner", email=OWNER, auth_time="now", between=None):
     """Run the provider sign-in the browser would: /login (with reauth=1 for step-up), then the callback.
 
     The provider says the person signed in just now, as Keycloak does. ``auth_time=None`` is a provider whose
-    ID token carries no ``auth_time``."""
+    ID token carries no ``auth_time``. ``between`` runs after /login, while the person is at the provider."""
     if auth_time == "now":
         auth_time = int(time.time())
     params = {"return_to": "/settings/", **({"reauth": "1"} if reauth else {})}
     login = client.get("/login", params=params, follow_redirects=False)
     if "redirect_uri=" not in login.headers["location"]:
         login = client.get(login.headers["location"], follow_redirects=False)
+    if between is not None:
+        between()
     state, record = list(g.proxy.ADMIN_OIDC_STATES.items())[-1]
 
     async def exchange(code, *, config, pkce):
@@ -715,6 +751,22 @@ def test_a_person_with_no_recent_time_confirms_with_a_password_and_is_recent_aft
 
     assert confirmed.status_code == 200, confirmed.text
     assert not asks_again(client.get("/admin/api/settings/effective/export"))
+
+
+def test_a_session_that_ends_while_the_person_is_at_the_provider_still_gets_a_new_session(sg):
+    """The provider has just proved who the person is, so a re-authentication whose session ended meanwhile
+    still signs them in: a fresh session and a redirect to the return address, as before sign-ins were atomic.
+    The ended session is not revived."""
+    client = owner_client(sg)
+    ended = cookie_session(client)
+
+    _, callback = through_provider(sg, client, reauth=True, auth_time=int(time.time()),
+                                   between=lambda: browser_sessions.end(ended, path=sg.path))
+
+    assert callback.status_code == 302 and callback.headers["location"] == "/settings/"
+    assert session_cookies(callback)
+    assert cookie_session(client).session_id != ended.session_id
+    assert signed_in_state(client)
 
 
 def test_a_person_with_no_recent_time_confirms_through_a_provider_that_reports_the_time(sg):
@@ -912,17 +964,22 @@ def _sign_in_through_the_provider(g, client, watch):
     return g.sign_in(client, sub="trusted", email="trusted@example.test", groups=["/Trusted"])
 
 
-@pytest.mark.parametrize("sign_in", [
-    _claim_with_an_admin_key, _sign_in_as_a_local_owner, _sign_in_through_the_provider,
+@pytest.mark.parametrize(("sign_in", "write_names"), [
+    (_claim_with_an_admin_key, ["end_incoming", "issue"]),
+    (_sign_in_as_a_local_owner, ["end_incoming_in", "issue_in"]),
+    (_sign_in_through_the_provider, ["end_incoming_in", "issue_in"]),
 ], ids=["setup claim", "local login", "provider callback"])
-def test_a_sign_in_writes_the_session_database_off_the_event_loop(sg, monkeypatch, sign_in):
-    """end_incoming and issue open and write SQLite. Both must leave the event loop.
+def test_a_sign_in_writes_the_session_database_off_the_event_loop(sg, monkeypatch, sign_in, write_names):
+    """Session issue and incoming-family writes must leave the event loop.
 
     An fsync on the loop stalls every request behind it, so the two writes run in a thread, in
-    this order: end the incoming session, then issue the new one.
+    this order: end the incoming session, then issue the new one. Local password and OIDC sign-ins
+    use the transaction-aware variants so both writes share the sign-in transaction.
     """
     from gateway import browser_sessions
-    real = {name: getattr(browser_sessions, name) for name in ("end_incoming", "issue")}
+    real = {name: getattr(browser_sessions, name) for name in (
+        "end_incoming", "issue", "end_incoming_in", "issue_in",
+    )}
     watch = _LoopWatch()
 
     def recording(name):
@@ -941,7 +998,7 @@ def test_a_sign_in_writes_the_session_database_off_the_event_loop(sg, monkeypatc
         client.close()
 
     assert response.status_code in (302, 303), response.text
-    assert [name for name, _, _ in watch.writes] == ["end_incoming", "issue"], (
+    assert [name for name, _, _ in watch.writes] == write_names, (
         "a sign-in must end the incoming session before it issues the new one")
     assert all(index >= 0 for _, _, index in watch.writes), "a session write ran outside a request"
     on_loop = [name for name, thread, index in watch.writes if thread == watch.loop_threads[index]]

@@ -24,6 +24,7 @@ import { RelativeTime } from "@/components/product/relative-time";
 import { capabilityMeta, SectionHeading } from "@/components/product/readiness";
 import { homeApi, type HomeCapability, type HomeSnapshot } from "./home-api";
 import { HomeComposer, selectedRow } from "./home-composer";
+import { RequestHistoryNotice } from "./request-history-notice";
 import { Recent } from "./home-recent";
 import { OwnerPanel } from "./home-owner-panel";
 import {
@@ -447,6 +448,10 @@ export default function HomePage() {
           {composer}
         </div>
       </section>
+      {/* A one-time notice (r103) sits between the hero and the person's work, on the column's edges. */}
+      <div className="mt-10 empty:hidden">
+        <RequestHistoryNotice />
+      </div>
       <div
         className={cn(
           "min-w-0 space-y-10",

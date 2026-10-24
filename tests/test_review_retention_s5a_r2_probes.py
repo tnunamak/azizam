@@ -13,7 +13,7 @@ import time
 import pytest
 from starlette.responses import JSONResponse
 
-from gateway import admin_store, request_history, request_history_capture, request_history_slot
+from gateway import admin_store, request_history, request_history_capture, request_history_slot, retention
 from gateway.request_history_capture import IDENTITY_STATE_KEY, RequestHistoryMiddleware
 from tests.test_prompt_memory_responses import responses_gateway  # noqa: F401 - fixture
 from tests.test_review_retention_s5a_probes import CANARY, SENTENCE, _drive, _identity, _kept, member_db  # noqa: F401
@@ -232,14 +232,17 @@ def test_a_history_write_survives_a_concurrent_library_prompt_write(member_db, m
     owner = RequestHistoryMiddleware(None, admin_path=lambda: db, media_path=lambda: media)
     identity = _identity(person)
     capture = request_history_capture._Capture(owner, state={IDENTITY_STATE_KEY: identity}, headers={},
-                                               header_forget=False, limit=1 << 20, route="/v1/responses")
+                                               header_forget=False, limit=1 << 20, route="/v1/responses",
+                                               media_path=media)
     now = int(time.time())
     decision = owner.decide(identity.identity, forget=False, now=now)
     record = {"record_id": request_history.new_record_id(), "request_id": None, "person_id": person,
               "app_id": "app_probe", "origin_kind": "app_key", "origin_id": "cred_probe", "created_at": now,
               "parts": {"accepted": {"headers": {}, "body": {"model": "m"}}}, "omissions": [], "policy_version": 1,
               "summary": {"route": "/v1/responses", "model": "m", "status": 200, "latency_ms": 1}}
-    writer = threading.Thread(target=capture._write, args=(decision, record, None))
+    # The same call _finish makes for a keep decision: the record, its creation time, no Library prompts, no receipt.
+    writer = threading.Thread(target=capture._write_media_capture, args=(
+        decision, record, capture.started, [], None, retention.WriteOutcome(False, "write_failed")))
     writer.start()
     assert held.wait(5)
     started = time.monotonic()

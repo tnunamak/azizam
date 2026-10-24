@@ -46,6 +46,22 @@ def connection_for(app_id: str | None) -> str | None:
     return None
 
 
+def note_maker(app_id: str | None, person_id: str | None) -> None:
+    """Record the person this request ran as under ``app_id``. None when the request resolved no person."""
+    holder = _trusted_address.get()
+    if holder is not None:
+        holder.update(maker_app_id=app_id, maker_person_id=person_id)
+
+
+def maker_for(app_id: str | None) -> str | None:
+    """The person this request ran as, when it ran as ``app_id``. Never the App's owner: a request that resolved no
+    person has no maker, whoever owns the App it came through."""
+    holder = _trusted_address.get()
+    if app_id and holder and holder.get("maker_app_id") == app_id:
+        return holder.get("maker_person_id")
+    return None
+
+
 def current_gateway_ui() -> bool:
     return _gateway_ui.get()
 

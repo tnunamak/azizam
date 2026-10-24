@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
+import { CircleAlert } from "lucide-react";
 import { CopyField } from "@/components/product/copy-field";
 import { SettingRow } from "@/components/product/setting-row";
 import { Button } from "@/components/ui/button";
@@ -31,6 +32,7 @@ export function WaysToSignIn({
   providerStatus,
   hasAddress,
   canTurnOnProvider,
+  freshWarning,
   owner,
   recoveryCommand,
   onPassword,
@@ -44,6 +46,8 @@ export function WaysToSignIn({
   hasAddress: boolean;
   /** A test passed for this connection, or it is already on. */
   canTurnOnProvider: boolean;
+  /** Under the provider row, when the last passed test found the provider does not ask for a password every time. */
+  freshWarning: string | null;
   owner: SignInSnapshot["owner"];
   recoveryCommand: string;
   onPassword: (on: boolean) => void;
@@ -126,6 +130,12 @@ export function WaysToSignIn({
             </>
           }
         />
+        {freshWarning && (
+          <div className="text-warning text-meta flex items-start gap-2 px-4 py-2.5">
+            <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+            <span>{freshWarning}</span>
+          </div>
+        )}
         <Recovery
           label={label}
           owner={owner}
