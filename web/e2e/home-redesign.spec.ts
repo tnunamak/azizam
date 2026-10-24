@@ -323,6 +323,37 @@ for (const colorScheme of ["light", "dark"] as const) {
   });
 }
 
+// A first visit's cards read as controls: a hover lifts the face and shows "Try", and keyboard focus rings the face.
+// The name a screen reader hears and the order focus moves through are the same as before the verb and the rings.
+test("a first visit's cards lift and say Try on hover, ring on keyboard focus, and keep their names and focus order", async ({ isolated }) => {
+  const member = await isolated.member();
+  const { page } = member;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+  await seedFirstVisitMember(page, member.context.request);
+  await page.goto("/");
+  const group = page.getByRole("region", { name: "What you can make here" }).getByRole("group", { name: "What to make" });
+  const chat = group.getByRole("button", { name: /^Chat .+ · no charge$/ });
+  const face = chat.locator("span").first();
+  await chat.hover();
+  await expect(chat.getByText("Try", { exact: true })).toHaveCSS("opacity", "1");
+  // Tailwind moves a lift through the `translate` property, so that is the one to read.
+  expect(await face.evaluate((node) => getComputedStyle(node).translate)).not.toBe("none");
+  // Keyboard focus reaches the Chat card, rings its face inside the card, and shows the verb.
+  await page.locator("#home-prompt").focus();
+  for (let step = 0; step < 10 && !(await chat.evaluate((node) => node === document.activeElement)); step += 1) {
+    await page.keyboard.press("Tab");
+  }
+  await expect(chat).toBeFocused();
+  await expect(chat.locator("span.absolute.inset-0")).toHaveCSS("box-shadow", /inset/);
+  await expect(chat.getByText("Try", { exact: true })).toHaveCSS("opacity", "1");
+  // The stops after the Chat card: Images, Voice, its sample, Music, its sample. The verb and rings add none.
+  for (const stop of [/^Images /, /^Voice /, "Play a Voice sample", /^Music /, "Play a Music sample"]) {
+    await page.keyboard.press("Tab");
+    await expect(group.getByRole("button", { name: stop })).toBeFocused();
+  }
+});
+
 test("at 768 px a first visit's chosen ring stays inside its card, and every caption ends on one line", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;

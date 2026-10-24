@@ -270,16 +270,26 @@ function FirstVisitList({
                   onChoose(kind);
                   window.requestAnimationFrame(() => document.getElementById("home-prompt")?.focus());
                 }}
-                className="group block w-full min-w-0 text-left"
+                className="group block w-full min-w-0 text-left focus-visible:outline-none"
               >
-                {/* The face is a sample, not the card's name: a screen reader hears "Chat" and its facts. */}
-                <span aria-hidden="true" className="bg-muted rounded-media relative block aspect-4/3 overflow-hidden">
+                {/*
+                 * The face is a sample, not the card's name: a screen reader hears "Chat" and its facts. It lifts on
+                 * hover, and its rings and the "Try" verb are aria-hidden, so the card's name and its focus order
+                 * are the same as before.
+                 */}
+                <span
+                  aria-hidden="true"
+                  className="bg-muted rounded-media relative block aspect-4/3 overflow-hidden transition-[translate,box-shadow] duration-(--motion-fast) group-hover:-translate-y-0.5 group-hover:shadow-md"
+                >
                   <SampleFace row={row} />
-                  {/* The chosen ring is drawn inside the face, so it never hangs outside the grid. */}
+                  {/* The hover, focus and chosen rings are drawn inside the face, so they never hang outside the grid. */}
                   <span
                     aria-hidden="true"
-                    className="rounded-media group-hover:shadow-[inset_0_0_0_2px_var(--color-border)] group-aria-pressed:shadow-[inset_0_0_0_2px_var(--color-ring)] pointer-events-none absolute inset-0 transition-shadow duration-(--motion-fast)"
+                    className="rounded-media group-hover:shadow-[inset_0_0_0_2px_var(--color-border)] group-focus-visible:shadow-[inset_0_0_0_2px_var(--color-ring)] group-aria-pressed:shadow-[inset_0_0_0_2px_var(--color-ring)] pointer-events-none absolute inset-0 transition-shadow duration-(--motion-fast)"
                   />
+                  <span className="text-foreground text-badge bg-background pointer-events-none absolute right-2 bottom-2 rounded-full px-2.5 py-1 font-medium opacity-0 shadow-sm transition-opacity duration-(--motion-fast) group-hover:opacity-100 group-focus-visible:opacity-100">
+                    Try
+                  </span>
                 </span>
                 <span className="text-foreground text-meta mt-3 flex items-center gap-1.5 font-medium">
                   <Icon aria-hidden="true" className={cn("size-4 shrink-0", tone)} />
