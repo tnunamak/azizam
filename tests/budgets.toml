@@ -318,9 +318,10 @@
 # registered). The two tests whose arrangement moved to the snapshot build keep their count.
 # collect-only 16877 -> 16878 (2026-10-23).
 # Train r104: collect-only measured 17215.
-# Sign-in front door: +1 case (tests/test_accounts.py, the options name the owner only by a clean display name). This branch,
-# which carries the Home branch's cases on top of main r104, collects 17241 (measured 2026-10-23).
-pytest = 17241
+# Sign-in privacy round: +1 case (tests/test_accounts.py, the invite answer names the owner by role, not by name; the
+# options case is renamed). This branch, which carries the Home branch's cases on top of main r104, collects 17242
+# (measured 2026-10-23, collect-only through scripts/run-hermetic-pytest.sh).
+pytest = 17242
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -371,7 +372,10 @@ pytest = 17241
 # Sign-in front door: +11 cases (sign-in/page.spec.tsx +5 for the owner line, the reset line and Email focus; app/page.spec.tsx
 # +4, new, for the root's three states; components/shell/sign-in-frame.spec.tsx +2, new). Full run 231 files, 3434 cases,
 # all passed (2026-10-23). Measured value.
-vitest = 3434
+# Sign-in privacy round: the owner-line cases become three (none names the owner, and the reset line is one copy for
+# everyone), and one case checks the name box sits under the provider button. Full run 231 files, 3433 cases, all
+# passed (2026-10-23). Measured value.
+vitest = 3433
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -409,7 +413,10 @@ vitest = 3434
 # Sign-in front door: +6 cases in e2e/signin-built.spec.ts, the built sign-in captures (skipped unless SIGNIN_SHOTS_DIR is
 # set). S1-S4 and S6 in home-redesign.spec.ts were test.fixme and are real cases now, so the count does not move for them.
 # --list: playwright.config.ts 587, live-data 3, household 18: 608, measured 2026-10-23.
-playwright = 608
+# Sign-in privacy round: +1 case in e2e/home-redesign.spec.ts, the column's centring on a desktop and the 72 px start on a
+# phone. S1 to S4 and S6 gained assertions, not cases. --list: playwright.config.ts 588, live-data 3, household 18: 609,
+# measured 2026-10-23.
+playwright = 609
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
