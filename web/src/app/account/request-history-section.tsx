@@ -200,7 +200,7 @@ export function RequestHistorySection() {
         />
       </SettingsSection>
       <p className="text-muted-foreground text-meta mt-3">
-        Only you can see your request history. To keep one request out of it, turn on Incognito in Try.
+        Only you can see your request history. To keep one request out of it, turn off Keep request history in Try.
       </p>
       <ConfirmDialog
         open={pending !== null}

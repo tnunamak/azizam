@@ -191,10 +191,9 @@ def test_continuation_and_full_metadata_have_their_distinct_actions():
             assert "content:prompt:reuse" in row["access"]
 
 
-def test_usage_and_library_owner_exceptions_are_marked():
+def test_usage_owner_exceptions_are_marked():
     import inspect
     from gateway import me_media
-    assert 'OWNER_VISIBILITY_STEP3' in inspect.getsource(me_media._media_scope).split('return _member_media_scope(person,')[0].split('audit_everyone=True)')[-1]
     assert 'OWNER_VISIBILITY_STEP3' in inspect.getsource(me_media._usage_app_scope)
     summary = inspect.getsource(me_media._usage_summary)
     assert 'OWNER_VISIBILITY_STEP3' in summary.split('sources = _usage_sources')[0][-220:]

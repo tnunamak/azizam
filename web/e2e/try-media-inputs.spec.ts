@@ -1,4 +1,21 @@
 import { expect, test } from "./fixtures/isolation";
+import type { Locator } from "@playwright/test";
+
+/**
+ * The text a person reads. An owner also sees each input's technical detail
+ * (data-slot="input-detail"), which is for owners, so it is left out here.
+ */
+async function plainText(locator: Locator) {
+  return locator.evaluate((node) => {
+    const detail = [...node.querySelectorAll<HTMLElement>('[data-slot="input-detail"]')];
+    const shown = detail.map((element) => element.style.display);
+    detail.forEach((element) => (element.style.display = "none"));
+    const text = (node as HTMLElement).innerText;
+    detail.forEach((element, index) => (element.style.display = shown[index]));
+    return text;
+  });
+}
+
 
 // Every workflow manifest that takes a picture or video, through the
 // gateway's real catalog (no mocks): each media input gets exactly one picker
@@ -59,7 +76,7 @@ test("every picture and video input on Try is one picker, in plain words", async
       await expect(
         form.getByRole("button", { name: "Choose a file" }),
       ).toHaveCount(media.length);
-      const text = (await form.innerText()).replace(/\s+/g, " ");
+      const text = (await plainText(form)).replace(/\s+/g, " ");
       expect(text, workflow.id).not.toMatch(/\.\/[\w-]+\.\w+|\.bin\b/);
       // A raw field name ("source_image") is never the label.
       for (const input of media.filter((item) => item.name.includes("_"))) {

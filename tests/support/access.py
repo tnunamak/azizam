@@ -134,12 +134,19 @@ class authenticated:
 
     def start(self) -> RuntimeIdentity:
         import proxy
+        from gateway import request_source
 
         resolved = self.identity
 
         def authenticate(request, request_path):
             if proxy.is_public_path(request_path):
                 return proxy.NO_AUTH_CONTEXT
+            # The step proxy.authenticate_request takes for a real key. A media job the request creates is stamped
+            # with this maker, and a job with no maker is readable by no one.
+            request_source.note_maker(
+                resolved.app_id, resolved.person_id,
+                credential_id=resolved.credential_id or resolved.key_hash or None, connection_id=resolved.connection_id,
+            )
             return proxy.AuthContext(identity=resolved)
 
         self._patches = [

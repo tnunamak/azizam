@@ -35,7 +35,7 @@
     {
       "path": "gateway/me_make.py",
       "function": "_submit",
-      "source_sha256": "c0c3da72fd17262a6125f6a9447e8f1ce6f86f7b1ad9988195ad0705a3d351bc",
+      "source_sha256": "1b00400013bd622931d21f5ac5938e3aad0d4b5b0a47dca7cef4e0b1ff365bb6",
       "call": "_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -1268,7 +1268,8 @@
       "handler": "gateway.home_api.create_home_router.<locals>.home",
       "method": "GET",
       "path": "/me/api/home",
-      "access": "content:receipt:read"
+      "access": "content:receipt:read",
+      "note": "Home receipts are limited to the signed-in user's own Apps for every role."
     },
     {
       "handler": "gateway.home_api.create_home_router.<locals>.member_status",
@@ -1461,7 +1462,7 @@
       "handler": "gateway.me_make.add_make_routes.<locals>.submit",
       "method": "POST",
       "path": "/me/api/make/jobs",
-      "access": "own-account+content:creation:reuse"
+      "access": "own-account+content:creation:reuse+content:job:read"
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.confirm_media_folder",
@@ -1479,34 +1480,36 @@
       "handler": "gateway.me_media.create_me_media_router.<locals>.job_detail",
       "method": "GET",
       "path": "/me/api/jobs/{job_id}",
-      "access": "content:job:read"
+      "access": "content:job:read",
+      "note": "Job status is limited to the signed-in user's own Apps for every role."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.list_jobs",
       "method": "GET",
       "path": "/me/api/jobs",
-      "access": "content:job:read"
+      "access": "content:job:read",
+      "note": "Job status is limited to the signed-in user's own Apps for every role."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.list_media",
       "method": "GET",
       "path": "/me/api/media",
       "access": "content:creation:read+content:creation:link+content:prompt:read",
-      "note": "Prompt inclusion is a separate decision from creation visibility."
+      "note": "Library reads are limited to the signed-in user's own scope for every role; prompt inclusion is a separate decision from creation visibility."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.media_detail",
       "method": "GET",
       "path": "/me/api/media/{asset_id}",
       "access": "content:creation:read+content:creation:link+content:prompt:read",
-      "note": "Prompt inclusion is a separate decision from creation visibility."
+      "note": "Library reads are limited to the signed-in user's own scope for every role; prompt inclusion is a separate decision from creation visibility."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.media_download",
       "method": "GET",
       "path": "/me/api/media/{asset_id}/download",
       "access": "content:creation:link+content:prompt:reuse",
-      "note": "metadata=full additionally requires the viewer's saved prompt."
+      "note": "Library downloads are limited to the signed-in user's own scope for every role; metadata=full additionally requires the viewer's saved prompt."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.remove_missing_media",
@@ -3085,7 +3088,8 @@
       "handler": "proxy.user_portal_activity",
       "method": "GET",
       "path": "/me/api/activity",
-      "access": "content:receipt:read"
+      "access": "content:receipt:read",
+      "note": "Activity receipts are limited to the signed-in user's own Apps for every role."
     },
     {
       "handler": "proxy.user_portal_create_app",

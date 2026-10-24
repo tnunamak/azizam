@@ -113,7 +113,7 @@ it("does not reveal missing-prompt history or load settings for another maker", 
   try {
     await user.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Picture, ") }));
     await waitFor(() => expect(
-      fixture.client.getQueryState(["library", "download", "image", false]),
+      fixture.client.getQueryState(["library", "download", "image"]),
     ).toMatchObject({ status: "success", fetchStatus: "idle" }));
     const dialog = screen.getByRole("dialog", { name: "Picture" });
     expect(within(dialog).queryByText(/No saved prompt|turned off prompt keeping/)).toBeNull();

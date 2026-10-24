@@ -5,12 +5,11 @@ import { fulfilJson } from "./fixtures/intercept";
 test("signed audio plays and seeks through the gateway delivery route", async ({
   page,
 }) => {
-  const { local_asset } = JSON.parse(
+  // The owner's own clip: a keyless LAN clip has no maker, so no one reads it (OWNER_VISIBILITY).
+  const { owner_audio } = JSON.parse(
     await readFile("test-results/live-data-manifest.json", "utf8"),
   );
-  const response = await page.request.get(
-    `/me/api/media/${local_asset}/download?scope=everyone`,
-  );
+  const response = await page.request.get(`/me/api/media/${owner_audio}/download`);
   expect(response.status()).toBe(200);
   const { download_url } = await response.json();
   const chunk = await page.request.get(download_url, {
@@ -40,9 +39,8 @@ test("signed audio plays and seeks through the gateway delivery route", async ({
   );
   await page.goto("/library/");
   await (await firstList).finished();
-  // This playback fixture is keyless legacy media, available only after choosing Everyone.
-  await page.getByRole("combobox", { name: "Person", exact: true }).click();
-  await page.getByRole("option", { name: "Everyone", exact: true }).click();
+  // The owner's own clip is listed as it is; the owner's Library has no person choice (OWNER_VISIBILITY).
+  await expect(page.getByRole("combobox", { name: "Person", exact: true })).toHaveCount(0);
   const refreshed = page.waitForResponse((candidate) =>
     candidate.url().includes("kind=audio"),
   );

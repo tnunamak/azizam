@@ -404,6 +404,9 @@
           "input_hash": "<digest>",
           "intent": "video.generate",
           "job_id": "<job:1>",
+          "maker_connection_id": null,
+          "maker_credential_id": "app:app_test",
+          "maker_person_id": null,
           "metadata": {
             "mode": "sync_video_delivery"
           },
@@ -421,6 +424,9 @@
           "upstream_http_status": null,
           "workflow": "video.generate.video-ltx-2.5-t2v"
         },
+        "maker_connection_id": null,
+        "maker_credential_id": "app:app_test",
+        "maker_person_id": null,
         "parent_request_id": null,
         "progress": 100,
         "request_id": "video_p1",
@@ -437,7 +443,7 @@
     ],
     "media_jobs_schema_version": [
       {
-        "version": 5
+        "version": 6
       }
     ],
     "retention_fact_destinations": [

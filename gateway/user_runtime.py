@@ -9,20 +9,29 @@ ownership remain admin-plane actions.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
 import stat
 import tempfile
+from collections import deque
+from collections.abc import Callable, Iterator
 from functools import lru_cache
 import time
 from pathlib import Path
 from typing import Any, Mapping
 
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from gateway import admin_store, avatars, session_guard, session_policy, trusted_addresses
 from gateway import receipt_store
+from gateway.content_access import Own, ReceiptRecord, Viewer, decide
+from gateway import content_makers
 from gateway.receipt_context import person_label, receipt_context
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import app_key_prompt_memory, generate_app_api_key
@@ -46,8 +55,8 @@ __all__ = [
 
 
 @lru_cache(maxsize=128)
-def _session_view_key(path: Path) -> bytes:
-    """A dedicated persistent key, purpose-separated once per process/store.
+def _server_secret(path: Path) -> bytes:
+    """The store's dedicated persistent 32-byte secret. Each purpose key is derived from it under its own label.
 
     Publish a complete private file without replacing a concurrent winner.
     Never follow a leaf symlink, including dangling links.
@@ -72,14 +81,24 @@ def _session_view_key(path: Path) -> bytes:
         key = handle.read(33)
     if len(key) != 32:
         raise ValueError("session view key must contain 32 bytes")
-    return hmac.new(key, b"azizam.session-view.v1", hashlib.sha256).digest()
+    return key
+
+
+def _session_view_key(path: Path) -> bytes:
+    """The key that makes session view ids: the secret at ``path``, derived under the session-view label."""
+    return hmac.new(_server_secret(path), b"azizam.session-view.v1", hashlib.sha256).digest()
+
+
+def _session_view_secret_path(admin_path: Path) -> Path:
+    """The secret file beside the admin store. The session-view and activity-cursor keys both derive from it."""
+    return admin_path.parent / ".session_view_secret"
 
 
 def session_view_key_problem(path: Path) -> str | None:
     """Why the session view key cannot be used right now, or None when it can. A key that cannot be read is not
     cached, so the next call reads the file again and a repaired file takes effect on the next request."""
     try:
-        _session_view_key(path.parent / ".session_view_secret")
+        _session_view_key(_session_view_secret_path(path))
     except (OSError, ValueError) as exc:
         return exc.__class__.__name__
     return None
@@ -90,7 +109,7 @@ def _session_view_field(session: AdminSession, path: Path) -> dict[str, str]:
     sessions included: the browser's pages compare it with the sign-in they show (web/src/lib/session-end.ts).
     When it cannot be made, the account is unavailable (503) rather than signed in without one."""
     try:
-        key = _session_view_key(path.parent / ".session_view_secret")
+        key = _session_view_key(_session_view_secret_path(path))
     except (OSError, ValueError):
         logging.getLogger(__name__).error("Session view id unavailable: dedicated key cannot be read")
         raise UserPortalError("session_view_unavailable",
@@ -368,6 +387,10 @@ def build_user_portal_snapshot(
 # admin concern.
 USER_ACTIVITY_DEFAULT_LIMIT = 20
 USER_ACTIVITY_MAX_LIMIT = 100
+# Receipts one feed request may read, whether or not they make the page. A page of rows the person may not read ends
+# here, with a cursor for the next request, so no request scans the whole receipt store.
+USER_ACTIVITY_SCAN_LIMIT = 1000
+_ACTIVITY_BATCH = 50
 
 
 def _owned_app_ids(user_id: str, *, path: Path) -> list[str]:
@@ -391,12 +414,14 @@ def build_user_activity_snapshot(
     limit: int = USER_ACTIVITY_DEFAULT_LIMIT,
     path: Path = admin_store.DB_PATH,
     receipts_path: Path = receipt_store.DB_PATH,
+    cursor: str | None = None,
 ) -> dict[str, Any]:
-    """Return recent API-call receipts for the signed-in Home page.
+    """Return the recent receipts the signed-in person made (D51).
 
-    Members are scoped server-side to their owned Apps. Owners see the
-    instance-level feed by default, including service apps and no-key local
-    network receipts.
+    Owning an App does not make its requests the owner's. The candidates are the Apps the person owns and the
+    receipts the person made, through any App. Each row is then read by its maker. Candidates are read newest first
+    in batches, each authorized before it counts toward the page. ``cursor`` is a previous page's ``next_cursor``;
+    one this person was not issued, or one that is malformed or expired, is refused with a 400.
     """
     if session is None:
         return {"authenticated": False, "receipts": []}
@@ -410,25 +435,189 @@ def build_user_activity_snapshot(
         }
 
     safe_limit = max(1, min(int(limit or USER_ACTIVITY_DEFAULT_LIMIT), USER_ACTIVITY_MAX_LIMIT))
-    owned = _owned_app_ids(str(user["id"]), path=path)
-    owner_roles = admin_store.effective_admin_roles("user", str(user["id"]), path=path)
-    owner = bool(owner_roles & {"owner", "superadmin"})
-    receipts = receipt_store.recent(
-        limit=safe_limit,
-        audience="client",
-        viewer_person_id=str(user["id"]),
-        # OWNER_VISIBILITY_STEP3: remove owner-everyone activity scope.
-        app_ids=None if owner else owned,
-        path=receipts_path,
-    )
+    user_id = str(user["id"])
+    before = _open_activity_cursor(cursor, viewer_id=user_id, admin_path=path) if cursor else None
+    owned = _owned_app_ids(user_id, path=path)
+    viewer = Viewer(person_id=user_id, auth_kind="session")
+    sources = [_newest_receipts(receipts_path, app_ids=owned)] if owned else []
+    sources.append(_newest_receipts(receipts_path, maker_person_id=user_id))
+    scan = _ActivityScan(sources, before=before)
+    apps = content_makers.Apps(path)
+    allowed: list[str] = []
+    # A row this person may not read is passed over without taking a place on the page.
+    for row in scan:
+        app_id = str(row.get("app_id") or "") or None
+        makers = content_makers.row_makers(
+            explicit=[str(row.get("maker_person_id") or "")], app_id=app_id,
+            owner_keys=[str(row.get("owner_key_hash") or "")], apps=apps,
+        )
+        record = ReceiptRecord(person_id=makers[0] if len(makers) == 1 else None, app_id=app_id)
+        if isinstance(decide(viewer, record, "read"), Own):
+            allowed.append(str(row["request_id"]))
+            if len(allowed) == safe_limit:
+                break
+    has_more = scan.pending()
+    visible = receipt_store.get_many(allowed, audience="client", viewer_person_id=user_id, path=receipts_path)
     return {
         "authenticated": True,
         # No fabricated rows: an empty list means the user has made no
         # attributable calls yet (or none in the retention window).
-        "receipts": receipts,
+        "receipts": [visible[request_id] for request_id in allowed if request_id in visible],
         "scoped_app_count": len(owned),
-        "scope": "instance" if owner else "me",
+        "scope": "me",
+        # A page ends at its size or at the scan limit. The cursor resumes after the last receipt read.
+        "has_more": has_more,
+        "next_cursor": (_seal_activity_cursor(scan.last_key, viewer_id=user_id, admin_path=path)
+                        if has_more and scan.last_key else None),
     }
+
+
+# An activity cursor is sealed with AES-GCM under a key derived from the store's secret, and it is bound to the person it
+# was issued to. The client cannot read the position it names, cannot take it to another person's feed, and cannot use
+# it after ACTIVITY_CURSOR_TTL_SECONDS. Every refused cursor gets the same 400.
+ACTIVITY_CURSOR_TTL_SECONDS = 60 * 60
+_ACTIVITY_CURSOR_LABEL = b"azizam.activity-cursor.v1"
+_ACTIVITY_CURSOR_NONCE_BYTES = 12
+_ACTIVITY_CURSOR_MAX_CHARS = 1024
+_ACTIVITY_CURSOR_ID_MAX_CHARS = 128
+# SQLite stores an integer in 64 bits. A position outside that range would fail inside the query, not at the client.
+_SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2**63), 2**63 - 1
+
+
+def _activity_now() -> int:
+    return int(time.time())
+
+
+def _is_sqlite_int(value: object) -> bool:
+    # ``type(...) is int`` also refuses bool, and a float such as the JSON number 1e999 (infinity).
+    return type(value) is int and _SQLITE_INT_MIN <= value <= _SQLITE_INT_MAX
+
+
+def _activity_cursor_aad(viewer_id: str) -> bytes:
+    return _ACTIVITY_CURSOR_LABEL + b"\0" + viewer_id.encode("utf-8")
+
+
+def _activity_cursor_key(admin_path: Path) -> bytes:
+    secret = _server_secret(_session_view_secret_path(admin_path))
+    return hmac.new(secret, _ACTIVITY_CURSOR_LABEL, hashlib.sha256).digest()
+
+
+def _activity_cursor_key_or_unavailable(admin_path: Path) -> bytes:
+    try:
+        return _activity_cursor_key(admin_path)
+    except (OSError, ValueError):
+        logging.getLogger(__name__).error("Activity cursor unavailable: dedicated key cannot be read")
+        raise UserPortalError("activity_unavailable", "Your activity cannot be loaded right now. Try again.",
+                              status_code=503) from None
+
+
+def _seal_activity_cursor(position: tuple[int, str], *, viewer_id: str, admin_path: Path) -> str:
+    plaintext = json.dumps(
+        {"created_at": position[0], "exp": _activity_now() + ACTIVITY_CURSOR_TTL_SECONDS, "request_id": position[1]},
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    nonce = secrets.token_bytes(_ACTIVITY_CURSOR_NONCE_BYTES)
+    key = _activity_cursor_key_or_unavailable(admin_path)
+    sealed = AESGCM(key).encrypt(nonce, plaintext, _activity_cursor_aad(viewer_id))
+    return base64.urlsafe_b64encode(nonce + sealed).decode("ascii").rstrip("=")
+
+
+def _open_activity_cursor(cursor: str, *, viewer_id: str, admin_path: Path) -> tuple[int, str]:
+    """The feed position a cursor names. A cursor that is malformed, altered, issued to someone else or expired gets the
+    same 400, so the answer does not say which check failed."""
+    key = _activity_cursor_key_or_unavailable(admin_path)
+    refused = UserPortalError("invalid_cursor", "This page of activity is no longer valid. Load the newest page again.",
+                              status_code=400)
+    if len(cursor) > _ACTIVITY_CURSOR_MAX_CHARS:
+        raise refused
+    try:
+        blob = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+    except ValueError:
+        raise refused from None
+    # Only the spelling this server writes is accepted, so a cursor that decodes to the same bytes is refused too.
+    if base64.urlsafe_b64encode(blob).decode("ascii").rstrip("=") != cursor:
+        raise refused
+    try:
+        plaintext = AESGCM(key).decrypt(blob[:_ACTIVITY_CURSOR_NONCE_BYTES], blob[_ACTIVITY_CURSOR_NONCE_BYTES:],
+                                        _activity_cursor_aad(viewer_id))
+        data = json.loads(plaintext)
+    except (ValueError, InvalidTag):
+        raise refused from None
+    # The seal proves this server wrote the cursor, but its fields still reach a query, so they are checked too.
+    if not isinstance(data, dict) or set(data) != {"created_at", "exp", "request_id"}:
+        raise refused
+    created_at, request_id, expires_at = data["created_at"], data["request_id"], data["exp"]
+    if not (_is_sqlite_int(created_at) and _is_sqlite_int(expires_at)) or expires_at < _activity_now():
+        raise refused
+    if type(request_id) is not str or not 0 < len(request_id) <= _ACTIVITY_CURSOR_ID_MAX_CHARS:
+        raise refused
+    return created_at, request_id
+
+
+def _newest_receipts(receipts_path: Path, **filters: Any) -> Callable[[tuple[int, str] | None, int], list[dict[str, Any]]]:
+    """One source of candidate receipts: the newest page after a cursor, read with the same filters each time."""
+    def read(before: tuple[int, str] | None, limit: int) -> list[dict[str, Any]]:
+        return receipt_store.recent(limit=limit, audience="internal", before=before, path=receipts_path, **filters)
+    return read
+
+
+class _ActivityScan:
+    """Candidate receipts from several sources, newest first, each once, read in batches.
+
+    A source is read only when its next row is needed, and no request reads past ``USER_ACTIVITY_SCAN_LIMIT`` rows.
+    When the limit stops the scan, rows already read are still returned, and nothing newer than ``last_key`` is left
+    unread, so a cursor made from ``last_key`` resumes without a gap.
+    """
+
+    def __init__(self, sources: list[Callable[[tuple[int, str] | None, int], list[dict[str, Any]]]],
+                 *, before: tuple[int, str] | None) -> None:
+        self._sources = sources
+        self._fetch_after = [before] * len(sources)
+        self._queues: list[deque[dict[str, Any]]] = [deque() for _ in sources]
+        self._exhausted = [False] * len(sources)
+        self._read = 0
+        self._seen: set[str] = set()
+        self.last_key: tuple[int, str] | None = None
+
+    @staticmethod
+    def _key(row: Mapping[str, Any]) -> tuple[int, str]:
+        return int(row.get("_stored_at") or 0), str(row["request_id"])
+
+    def _fill(self, index: int) -> None:
+        if self._queues[index] or self._exhausted[index]:
+            return
+        want = min(_ACTIVITY_BATCH, USER_ACTIVITY_SCAN_LIMIT - self._read)
+        if want <= 0:
+            return
+        rows = self._sources[index](self._fetch_after[index], want)
+        self._read += len(rows)
+        self._exhausted[index] = len(rows) < want
+        if rows:
+            self._fetch_after[index] = self._key(rows[-1])
+        self._queues[index].extend(rows)
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        while True:
+            for index in range(len(self._sources)):
+                self._fill(index)
+            if any(not queue and not self._exhausted[index] for index, queue in enumerate(self._queues)):
+                # The limit stopped a source whose next row is unknown, so a newer row may be unread. Stop here.
+                return
+            heads = [(self._key(queue[0]), index) for index, queue in enumerate(self._queues) if queue]
+            if not heads:
+                return
+            _, index = max(heads)
+            row = self._queues[index].popleft()
+            self.last_key = self._key(row)
+            request_id = str(row["request_id"])
+            if request_id in self._seen:
+                continue
+            self._seen.add(request_id)
+            yield row
+
+    def pending(self) -> bool:
+        """Whether a later request may find more candidates after the rows this scan has read."""
+        return any(self._queues) or not all(self._exhausted)
 
 
 def get_user_receipt(
@@ -438,35 +627,31 @@ def get_user_receipt(
     path: Path = admin_store.DB_PATH,
     receipts_path: Path = receipt_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Return one client-safe receipt visible to the signed-in user.
+    """Return one client-safe receipt the signed-in person made.
 
-    It carries the person, App and time the Activity list shows
-    (``receipt_context``).
-
-    Owners can open the same instance-scoped receipts shown on Home and each
-    access is audited. Members stay limited to their own Apps; receipts for
-    other Apps or no App are reported as not found so existence is not disclosed.
+    It carries the person, App and time the Activity list shows (``receipt_context``). Owning an App does
+    not let its owner open a member's receipt (D51). An absent receipt and one the person may not read get
+    the same 404, so existence is not disclosed.
     """
     if session is None:
         raise UserPortalError(
             "not_authenticated", "Sign in to view this receipt", status_code=401
         )
     user = _user_from_session(session, path=path)
-
-    owner_check = receipt_store.get(
-        request_id, audience="internal", path=receipts_path
-    )
+    user_id = str(user["id"])
     not_found = UserPortalError(
         "receipt_not_found", "Receipt not found for this account", status_code=404
     )
-    if owner_check is None:
+    stored = receipt_store.get(request_id, audience="internal", path=receipts_path)
+    if stored is None:
         raise not_found
-    receipt_app_id = owner_check.get("app_id")
-    owned_app_ids = set(_owned_app_ids(str(user["id"]), path=path))
-    owner_roles = admin_store.effective_admin_roles("user", str(user["id"]), path=path)
-    owner = bool(owner_roles & {"owner", "superadmin"})
-    # OWNER_VISIBILITY_STEP3: delete the owner receipt-detail bypass.
-    if not owner and (not receipt_app_id or receipt_app_id not in owned_app_ids):
+    app_id = str(stored.get("app_id") or "") or None
+    makers = content_makers.row_makers(
+        explicit=[str(stored.get("maker_person_id") or "")], app_id=app_id,
+        owner_keys=[str(stored.get("owner_key_hash") or "")], apps=content_makers.Apps(path),
+    )
+    record = ReceiptRecord(person_id=makers[0] if len(makers) == 1 else None, app_id=app_id)
+    if not isinstance(decide(Viewer(person_id=user_id, auth_kind="session"), record, "read"), Own):
         raise not_found
 
     # The full request-history entry goes only to the maker the receipt names. Owning its App does not make a viewer
@@ -477,26 +662,16 @@ def get_user_receipt(
     if found is None:
         raise not_found
     detail, created_at = found
-    app = admin_store.get_app(receipt_app_id, path=path) if receipt_app_id else None
+    app = admin_store.get_app(app_id, path=path) if app_id else None
     app = app or {}
-    person = admin_store.get_user(str(app["owner_user_id"]), path=path) if app.get("owner_user_id") else None
+    maker = makers[0] if len(makers) == 1 else None
+    person = admin_store.get_user(maker, path=path) if maker else None
     context = receipt_context(
         detail, created_at, app=app,
         person_labels={person["id"]: person_label(person)} if person else {},
+        person_id=maker,
     )
-    detail = {**detail, **{key: context[key] for key in ("created_at", "person_label", "app_label")}}
-    if owner:
-        admin_store.record_audit(
-            "receipt.detail.instance",
-            actor_kind="user",
-            actor_id=str(user["id"]),
-            actor_label=str(user.get("email") or user.get("display_name") or user["id"]),
-            target_kind="receipt",
-            target_id=request_id,
-            metadata={"scope": "instance", "app_id": receipt_app_id},
-            path=path,
-        )
-    return detail
+    return {**detail, **{key: context[key] for key in ("created_at", "person_label", "app_label")}}
 
 
 def mint_user_app_key(

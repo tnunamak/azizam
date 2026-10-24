@@ -25,10 +25,11 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
-from gateway.content_access import Viewer, decide_own, viewer_from_auth
+from gateway.content_access import CreationRecord, JobRecord, Own, Viewer, decide, decide_own, viewer_from_auth
+from gateway.content_makers import job_receipt_ids as _job_receipt_ids
 from gateway.runtime_auth import RuntimeIdentity
 
-from gateway import directory_index, admin_store, mcp_oauth_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
+from gateway import content_makers, directory_index, admin_store, mcp_oauth_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, record_ownership, sqlite_startup
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
 from gateway.public_failure import PublicFailure
@@ -132,9 +133,11 @@ def create_me_media_router(
     def list_jobs(request: Request) -> JSONResponse:
         try:
             admin_path = _resolve_path(admin_db_path)
+            jobs_path = _resolve_path(media_jobs_path)
             actor = _actor_from_request(request, session_provider, admin_path)
-            # Even owners receive only their own jobs. Scope before pagination.
+            # Even owners receive only the jobs they made (D51). Scope before pagination.
             scope = _member_media_scope(actor.user_id, admin_path)
+            apps = _Apps(admin_path)
             polled_at = int(time.time())
             watch = request.query_params.get("watch") == "1"
             since = request.query_params.get("since")
@@ -142,16 +145,34 @@ def create_me_media_router(
                 raise PublicFailure("invalid_since", 400, param="since", expected="Unix timestamp")
             # Inclusive seconds replay ties; capture the watermark before reading.
             updated_since = (int(since) if since is not None else polled_at) if watch else None
-            rows = media_jobs.recent(
-                101, app_ids=scope.app_ids, owner_key_hashes=list(scope.owner_keys or ()),
-                before=_decode_cursor(request.query_params.get("cursor")),
-                updated_since=updated_since, include_active=watch and since is None,
-                path=_resolve_path(media_jobs_path),
-            )
+            include_active = watch and since is None
+            cursor = _decode_cursor(request.query_params.get("cursor"))
+            rows = []
+            scan_cursor = cursor
+            while len(rows) <= 100:
+                batch = media_jobs.recent(
+                    101, app_ids=scope.app_ids, owner_key_hashes=list(scope.owner_keys or ()),
+                    before=scan_cursor,
+                    updated_since=updated_since, include_active=include_active,
+                    path=jobs_path,
+                )
+                if not batch:
+                    break
+                rows.extend(job for job in batch if _job_in_library(job, scope))
+                scan_cursor = (batch[-1]["updated_at"], batch[-1]["job_id"])
+                if len(batch) < 101:
+                    break
+            # The viewer's own jobs made through an App they do not own are found by the maker stamp on each job (D51).
+            listed = {job["job_id"] for job in rows}
+            made = _maker_jobs(scope, jobs_path=jobs_path, before=cursor,
+                               updated_since=updated_since, include_active=include_active)
+            if made:
+                rows.extend(job for job in made if job["job_id"] not in listed and _job_in_library(job, scope))
+                rows.sort(key=lambda job: (job["updated_at"], job["job_id"]), reverse=True)
             page = rows[:100]
-            cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
+            next_cursor = _encode_cursor(page[-1]["updated_at"], page[-1]["job_id"]) if len(rows) > 100 else None
             return _json({"jobs": [me_make._client_view(job, asset_path_resolver=asset_path_resolver) for job in page],
-                          "next_cursor": cursor, **({"polled_at": polled_at} if watch else {})})
+                          "next_cursor": next_cursor, **({"polled_at": polled_at} if watch else {})})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
 
@@ -162,7 +183,9 @@ def create_me_media_router(
             actor = _actor_from_request(request, session_provider, admin_path)
             scope = _member_media_scope(actor.user_id, admin_path)
             job = media_jobs.get(job_id, path=_resolve_path(media_jobs_path))
-            if job is None or not _job_in_scope(job, scope):
+            if job is None:
+                raise PublicFailure("job_not_found", 404, job_id=job_id)
+            if not _job_in_library(job, scope):
                 raise PublicFailure("job_not_found", 404, job_id=job_id)
             return _json({"job": me_make._client_view(job, asset_path_resolver=asset_path_resolver)})
         except (PublicFailure, UserPortalError) as exc:
@@ -204,8 +227,6 @@ def create_me_media_router(
                 receipts_path=receipt_path,
                 prompt_memory_path=prompt_path,
             )
-            if scope.audit_everyone:
-                _audit_everyone(actor, "media.library.everyone", admin_path)
             return _json(result)
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
@@ -235,8 +256,6 @@ def create_me_media_router(
             )
             if item is None:
                 raise PublicFailure("asset_not_found", 404, asset_id=asset_id)
-            if scope.audit_everyone:
-                _audit_everyone(actor, "media.detail.everyone", admin_path)
             return _json({"asset": item})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
@@ -425,8 +444,6 @@ def create_me_media_router(
                 raise PublicFailure("invalid_metadata", 400, param="metadata", accepted=["none", "full"])
             if mode == "full" and not item.get("workflow_download_url"):
                 raise PublicFailure("prompt_not_accessible", 403, asset_id=asset_id)
-            if scope.audit_everyone:
-                _audit_everyone(actor, "media.download.everyone", admin_path)
             return _json({"asset_id": asset_id, "download_url": signed_url_builder(request, asset_id, mode)})
         except (PublicFailure, UserPortalError) as exc:
             return _error_response(exc)
@@ -789,30 +806,10 @@ def _owned_app_ids(user_id: str, path: Path) -> list[str]:
 
 
 def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _MediaScope:
-    raw_scope = request.query_params.get("scope") or request.query_params.get("owner")
-    person = request.query_params.get("person")
-    if person:
-        if person in {"self", actor.user_id}:
-            return _member_media_scope(actor.user_id, admin_db_path, person_id=actor.user_id)
-        if not actor.owner:
-            raise PublicFailure("owner_required", 403, param="person")
-        if person == "all":
-            # OWNER_VISIBILITY_STEP3: remove the owner-everyone selector.
-            return _MediaScope(app_ids=None, person_id="all", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
-        # OWNER_VISIBILITY_STEP3: remove the owner other-person Library selector.
-        return _member_media_scope(person, admin_db_path, person_id=person, viewer_person_id=actor.user_id)
-    # Everyone starts with their own work; "everyone" is an explicit owner choice.
-    scope = str(raw_scope or "me")
-    if scope == "everyone":
-        # OWNER_VISIBILITY_STEP3: remove the owner-everyone selector.
-        if not actor.owner:
-            raise PublicFailure("owner_required", 403, param="scope")
-        return _MediaScope(app_ids=None, viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
+    for name in ("scope", "owner", "person"):
+        if name in request.query_params:
+            raise PublicFailure("param_not_supported", 400, copy="unsupported_field", param=name)
     return _member_media_scope(actor.user_id, admin_db_path)
-
-
-def _scope_requested(request: Request) -> bool:
-    return any(request.query_params.get(name) for name in ("scope", "owner", "person"))
 
 
 def _member_media_scope(user_id: str, admin_db_path: Path, *, person_id: str | None = None, viewer_person_id: str | None = None) -> _MediaScope:
@@ -879,8 +876,8 @@ def _list_media(
     return {
         "schema_version": 1,
         "authenticated": True,
-        "scope": "everyone" if scope.app_ids is None else "me",
-        "default_scope": "explicit" if _scope_requested(request) else "self",
+        "scope": "me",
+        "default_scope": "self",
         "source": source_filter,
         "sources": sources,
         "assets": assets,
@@ -988,18 +985,12 @@ def _embedded_provenance_cached(path: Path | None, *, probe: bool) -> dict[str, 
     return value
 
 
-class _Apps:
+class _Apps(content_makers.Apps):
     """Apps and credential-to-app links, read once for a whole listing."""
 
     def __init__(self, admin_db_path: Path) -> None:
-        self._path = admin_db_path
-        self._by_id: dict[str, dict[str, Any]] | None = None
+        super().__init__(admin_db_path)
         self._by_hash: dict[str, dict[str, Any]] | None = None
-
-    def get(self, app_id: str) -> dict[str, Any] | None:
-        if self._by_id is None:
-            self._by_id = {str(app["id"]): app for app in admin_store.list_apps(path=self._path) if app.get("id")}
-        return self._by_id.get(app_id)
 
     def by_hash(self) -> dict[str, dict[str, Any]]:
         if self._by_hash is None:
@@ -1033,10 +1024,81 @@ def _media_items(**kwargs: Any) -> list[dict[str, Any]]:
     return [entry.build(True) for entry in _media_entries(**kwargs)]
 
 
+def _library_viewer(scope: _MediaScope) -> Viewer:
+    """The Library reads as the signed-in person. Owning an App gives this person nothing (D51)."""
+    return Viewer(person_id=scope.viewer_person_id, auth_kind="session")
+
+
+def _receipt_of(job: Mapping[str, Any], receipts: Mapping[str, Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """The receipt that describes the job. Parent and legacy links are only lookups for this."""
+    return next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
+
+
+def _label_receipt(receipt: Mapping[str, Any] | None, viewer: Viewer, apps: _Apps) -> Mapping[str, Any] | None:
+    """The receipt that may describe a job's item. A job's lookup can reach a receipt through the parent link its
+    client chose, so the receipt describes the item only when the viewer may read it (D51). Otherwise the item takes
+    the neutral source its job records, never the source of another person's request. The Library and the usage
+    summary both check it this way.
+    """
+    if receipt is None or record_ownership.owns_record("receipt", receipt, viewer=viewer, apps=apps):
+        return receipt
+    return None
+
+
+def _job_in_library(job: Mapping[str, Any], scope: _MediaScope) -> bool:
+    """Whether the viewer may read this job and its items, by the maker stamped on the job when it was made.
+
+    A receipt or a parent link names no maker here: a client chooses its parent, so a parent link would let it claim
+    another person's job. Unscoped totals skip the decision.
+    """
+    if scope.app_ids is None:
+        return True
+    record = JobRecord(
+        person_id=str(job.get("maker_person_id") or "") or None,
+        app_id=str(job.get("app_id") or "") or None,
+        credential_id=str(job.get("maker_credential_id") or "") or None,
+    )
+    return isinstance(decide(_library_viewer(scope), record, "read"), Own)
+
+
+def _cache_in_library(
+    asset_id: str, metadata: Mapping[str, Any], receipt: Mapping[str, Any] | None, scope: _MediaScope, apps: _Apps,
+) -> bool:
+    """Whether the viewer may read a cached item. Its recorded makers come first, then its receipt's maker."""
+    owners = {str(value) for value in metadata.get("owner_key_hashes") or [] if isinstance(value, str)}
+    recorded = [str(value) for value in metadata.get("maker_person_ids") or [] if isinstance(value, str)]
+    app_id = str((receipt or {}).get("app_id") or "") or None
+    makers = content_makers.row_makers(
+        explicit=recorded or [str((receipt or {}).get("maker_person_id") or "")], app_id=app_id,
+        owner_keys=sorted(owners), apps=apps,
+    )
+    record = CreationRecord(asset_id, owner_keys=frozenset(owners), maker_person_ids=makers, app_id=app_id)
+    return isinstance(decide(_library_viewer(scope), record, "read"), Own)
+
+
+def _maker_jobs(
+    scope: _MediaScope, *, jobs_path: Path, before: tuple[int, str] | None,
+    updated_since: int | None, include_active: bool,
+) -> list[dict[str, Any]]:
+    """The jobs the viewer made, found by the maker stamp on each job and filtered as the job list filters.
+
+    The stamp lives on the job, so a job stays listed after its receipt is pruned. These can sit in an App the viewer
+    does not own, which the App-scoped query never reads. One page and one more is enough: the caller merges the two
+    lists and cuts the page.
+    """
+    person_id = scope.viewer_person_id
+    if not person_id:
+        return []
+    return media_jobs.recent(
+        101, maker_person_ids=[person_id], before=before, updated_since=updated_since,
+        include_active=include_active, path=jobs_path,
+    )
+
+
 def _scoped_jobs(
     scope: _MediaScope, *, jobs_path: Path, receipts_path: Path,
 ) -> list[tuple[dict[str, Any], Mapping[str, Any] | None]]:
-    """Every finished job in scope, newest first, with its receipt. Reads the jobs in one query and their receipts in a few."""
+    """Every finished job the viewer may read, newest first, with its receipt. Reads the jobs in one query and their receipts in a few."""
     jobs = media_jobs.recent(
         limit=media_jobs.count(path=jobs_path),
         audience="internal",
@@ -1049,12 +1111,8 @@ def _scoped_jobs(
     )
     scoped = []
     for job in jobs:
-        receipt = next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
-        if receipt is not None and not _receipt_in_scope(receipt, scope):
-            continue
-        if receipt is None and not _job_in_scope(job, scope):
-            continue
-        scoped.append((job, receipt))
+        if _job_in_library(job, scope):
+            scoped.append((job, _receipt_of(job, receipts)))
     return scoped
 
 
@@ -1084,6 +1142,7 @@ def _media_entries(
     deleted = _deleted_asset_ids(scope, admin_db_path)
     hidden = media_jobs.hidden_assets(scope.user_ids, path=media_jobs_path) if scope.user_ids else set()
     for job, receipt in _scoped_jobs(scope, jobs_path=media_jobs_path, receipts_path=receipts_path):
+        receipt = _label_receipt(receipt, _library_viewer(scope), apps)
         job_source = None
         for asset in _iter_job_assets(job):
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")
@@ -1112,21 +1171,22 @@ def _media_entries(
                 ),
             ))
     if asset_catalog_provider is not None and asset_metadata_reader is not None:
-        credential_hashes = _credential_hashes_for_scope(scope, admin_db_path)
         for asset_id in asset_catalog_provider():
             asset_id = str(asset_id or "")
             if not asset_id or asset_id in seen or asset_id in deleted:
                 continue
             metadata = dict(asset_metadata_reader(asset_id) or {})
             owners = {str(value) for value in metadata.get("owner_key_hashes") or [] if isinstance(value, str)}
-            if credential_hashes is not None and not (owners & credential_hashes):
+            recorded = {str(value) for value in metadata.get("maker_person_ids") or [] if isinstance(value, str)}
+            # A cheap candidate test before any file is read. The grant is the maker decision below.
+            if scope.viewer_person_id not in recorded and not decide_own(scope._key_viewer, owners):
                 continue
             path = asset_path_resolver(asset_id)
             if path is None or not path.exists():
                 continue
             embedded = _embedded_provenance_cached(path, probe=False)
             receipt = _receipt_for_embedded_cache_asset(embedded, receipts_path)
-            if not _receipt_in_scope(receipt, scope) and receipt is not None:
+            if not _cache_in_library(asset_id, metadata, receipt, scope, apps):
                 continue
             kind = _asset_kind(asset_id, metadata)
             created_at = _asset_created_at(path, {}, None, embedded)
@@ -1283,18 +1343,6 @@ def _build_cache_item(
     }
 
 
-def _job_receipt_ids(job: Mapping[str, Any]) -> list[str]:
-    """Try immutable creating provenance first, then legacy lookup candidates.
-
-    Request IDs can be derived or reused; none is a receipt until lookup finds
-    it. The durable creating link survives replay release and prompt erasure.
-    """
-    ids = [str(job.get(name) or "") for name in
-           ("creating_receipt_id", "parent_request_id", "request_id")]
-    return [value for index, value in enumerate(ids)
-            if value and not value.startswith("imgjob_seeded_") and value not in ids[:index]]
-
-
 def _receipts_by_request_id(request_ids: Iterable[str], *, path: Path) -> dict[str, Mapping[str, Any]]:
     out: dict[str, Mapping[str, Any]] = {}
     for request_id in {value for value in request_ids if value}:
@@ -1425,8 +1473,9 @@ def _embedded_provenance(path: Path | None) -> dict[str, Any]:
 
 
 def _receipt_in_scope(record: Mapping[str, Any] | None, scope: _MediaScope) -> bool:
+    # OV3 slice 2 owns this: Usage still admits receipts through App ownership until that slice replaces it.
     if scope.app_ids is None:
-        # OWNER_VISIBILITY_STEP3: delete owner-everyone / unscoped collection access.
+        # Unscoped callers use this only to compute aggregate operational totals.
         return True
     if record is None:
         return False
@@ -1772,6 +1821,8 @@ def _usage_summary(
     _reject_forbidden_source_filter(source_filter, app_ids, sources, scoped_users)
     connections = {str(source["connection_id"]): source for source in sources if source.get("kind") == "connection"}
     apps = _Apps(admin_db_path)  # apps and credential links, read once for the whole summary
+    # The usage page reads a job's receipt as the signed-in person, as the Library does (D51).
+    viewer = Viewer(person_id=actor.user_id, auth_kind="session")
     now = datetime.now(timezone.utc)
     start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
     # The unary plus keeps SQLite on the created_at index: with it the planner reads every top-level receipt.
@@ -1888,6 +1939,8 @@ def _usage_summary(
                     _annotate_receipt_source(job_receipt, sources, admin_db_path, apps, connections)
             if job_receipt is not None:
                 break
+        # A parent link can reach a receipt this viewer may not read. It then decides nothing about the job.
+        job_receipt = _label_receipt(job_receipt, viewer, apps)
         if job_receipt is not None:
             job_in_scope = _receipt_in_scope(job_receipt, media_scope)
             if job_in_scope:

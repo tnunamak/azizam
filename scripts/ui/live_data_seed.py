@@ -196,6 +196,8 @@ def seed(state: Path, port: int) -> dict[str, object]:
     owner_asset = _sha_asset(cache, _png_rgb(50, 120, 200), ".png", [owner_hash], "req_owner_media")
     local_asset = _sha_asset(cache, _wav_bytes(), ".wav", [], "req_local_media")
     member_asset = _sha_asset(cache, PNG_1X1 + b"member", ".png", [member_hash], "req_member_media")
+    owner_audio = _sha_asset(cache, _wav_bytes(seconds=3.5), ".wav", [owner_hash], "req_owner_audio")
+    owner_service_asset = _sha_asset(cache, _png_rgb(200, 90, 40), ".png", [], "req_owner_service_media")
 
     now_ms = int(time.time() * 1000)
     for request_id, app_id, intent, path, model in [
@@ -212,10 +214,14 @@ def seed(state: Path, port: int) -> dict[str, object]:
             receipt.source_label = "Local network · no key"
             receipt.client_hint = "Open WebUI"
         receipt_store.record(receipt, created_at=now_ms // 1000, path=receipts_path)
-    media_jobs.create(media_jobs.MediaJob(request_id="req_service_media", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": service_asset, "media_type": "image/png"}], app_id=service_app["id"]), path=jobs_path)
-    media_jobs.create(media_jobs.MediaJob(request_id="req_owner_media", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": owner_asset, "media_type": "image/png"}], app_id=owner_app["id"]), path=jobs_path)
+    # Each job names the maker its request ran as. The seed writes no request, so maker_from_request=False keeps
+    # these stamps: a person's work is theirs alone (OWNER_VISIBILITY), and the keyless LAN clip has no maker at all.
+    media_jobs.create(media_jobs.MediaJob(request_id="req_service_media", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": service_asset, "media_type": "image/png"}], app_id=service_app["id"], maker_person_id=member["id"]), path=jobs_path, maker_from_request=False)
+    media_jobs.create(media_jobs.MediaJob(request_id="req_owner_media", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": owner_asset, "media_type": "image/png"}], app_id=owner_app["id"], maker_person_id=owner["id"], maker_credential_id=owner_hash), path=jobs_path, maker_from_request=False)
     media_jobs.create(media_jobs.MediaJob(request_id="req_local_media", intent="audio.speech", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": local_asset, "media_type": "audio/wav"}]), path=jobs_path)
-    media_jobs.create(media_jobs.MediaJob(request_id="req_member_media", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": member_asset, "media_type": "image/png"}], app_id=member_app["id"]), path=jobs_path)
+    media_jobs.create(media_jobs.MediaJob(request_id="req_member_media", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": member_asset, "media_type": "image/png"}], app_id=member_app["id"], maker_person_id=member["id"], maker_credential_id=member_hash), path=jobs_path, maker_from_request=False)
+    media_jobs.create(media_jobs.MediaJob(request_id="req_owner_audio", intent="audio.speech", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": owner_audio, "media_type": "audio/wav"}], app_id=owner_app["id"], maker_person_id=owner["id"], maker_credential_id=owner_hash), path=jobs_path, maker_from_request=False)
+    media_jobs.create(media_jobs.MediaJob(request_id="req_owner_service_media", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": owner_service_asset, "media_type": "image/png"}], app_id=service_app["id"], maker_person_id=owner["id"]), path=jobs_path, maker_from_request=False)
 
     manifest = {
         "base_url": f"http://127.0.0.1:{port}",
@@ -224,6 +230,8 @@ def seed(state: Path, port: int) -> dict[str, object]:
         "password": PASSWORD,
         "service_asset": service_asset,
         "owner_asset": owner_asset,
+        "owner_audio": owner_audio,
+        "owner_service_asset": owner_service_asset,
         "local_asset": local_asset,
         "member_asset": member_asset,
         "service_app_id": service_app["id"],

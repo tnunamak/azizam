@@ -48,7 +48,7 @@ async function expectDrawerFits(page: Page, drawer: Locator, width: number) {
 }
 
 for (const width of [1440, 390]) {
-  test(`a request is kept in History, read as a conversation, opened and deleted, and an Incognito request is not kept, at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({
+  test(`a request is kept in History, read as a conversation, opened and deleted, and a request with keep request history off is not kept, at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({
     page,
     baseURL,
   }) => {
@@ -75,10 +75,10 @@ for (const width of [1440, 390]) {
     await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
     const before = await rows.count();
 
-    // Try: a chat request, with Incognito off, is kept.
+    // Try: a chat request, with keep request history on (the default), is kept.
     const kept = `History journey ${width} ${Date.now()}`;
     await page.goto("/try/?capability=chat");
-    await expect(page.getByRole("switch", { name: "Incognito" })).not.toBeChecked();
+    await expect(page.getByRole("switch", { name: "Keep request history" })).toBeChecked();
     await page.getByRole("textbox", { name: "Prompt" }).fill(kept);
     await page.getByRole("button", { name: "Run" }).click();
     await expect(page.getByRole("heading", { name: "Chat result" })).toBeVisible({ timeout: 60_000 });
@@ -112,16 +112,16 @@ for (const width of [1440, 390]) {
     await expect(rows).toHaveCount(before, { timeout: 15_000 });
     await expect(page.getByText(kept)).toHaveCount(0);
 
-    // Incognito: the same request, with the switch on, is not kept, and the result says so.
-    const hidden = `Incognito journey ${width} ${Date.now()}`;
+    // Keep request history off: the same request is not kept, and the result says so.
+    const hidden = `Keep history off journey ${width} ${Date.now()}`;
     await page.goto("/try/?capability=chat");
-    await page.getByRole("switch", { name: "Incognito" }).click();
-    await expect(page.getByText("Incognito: this isn’t saved.", { exact: true })).toBeVisible();
-    await page.screenshot({ path: shot(width, "try-incognito"), fullPage: true });
+    await page.getByRole("switch", { name: "Keep request history" }).click();
+    await expect(page.getByText("Not saved in your History.", { exact: true })).toBeVisible();
+    await page.screenshot({ path: shot(width, "try-keep-history-off"), fullPage: true });
     await page.getByRole("textbox", { name: "Prompt" }).fill(hidden);
     await page.getByRole("button", { name: "Run" }).click();
     await expect(page.getByRole("heading", { name: "Chat result" })).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText("Incognito: this isn’t saved", { exact: true })).toBeVisible();
+    await expect(page.getByText("Not saved in your History", { exact: true })).toBeVisible();
     await page.goto("/history/");
     await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
     await expect(rows).toHaveCount(before);

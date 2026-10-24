@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from gateway import admin_store, media_jobs, me_media, prompt_memory, receipt_store
 from gateway.public_failure import PublicFailure
+from gateway import request_source
 from tests import test_me_media as base
 
 REMOVE = "/me/api/media/remove-missing"
@@ -99,10 +100,11 @@ class RemoveMissingTests(unittest.TestCase):
         self._job("req_a", asset("A"))
         self._job("req_b", asset("B"))
         self._job("req_e", asset("E"))
-        media_jobs.create(media_jobs.MediaJob(
-            request_id="req_cd", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
-            assets=[{"asset_id": asset("C"), "media_type": "image/png"},
-                    {"asset_id": asset("D"), "media_type": "image/png"}]), path=self.jobs_db)
+        with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+            media_jobs.create(media_jobs.MediaJob(app_id=self.app_a["id"],
+                request_id="req_cd", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                assets=[{"asset_id": asset("C"), "media_type": "image/png"},
+                        {"asset_id": asset("D"), "media_type": "image/png"}]), path=self.jobs_db)
 
     def empty_the_folder(self) -> None:
         """Every stored file is gone: the folder is readable and holds no media."""
@@ -304,20 +306,23 @@ class RemoveMissingTests(unittest.TestCase):
         signed_out = self.make_client(self._asset_path, session_provider=lambda request: None)
         self.assertEqual(signed_out.get("/me/api/media?folder_state=1").status_code, 401)
 
-    def test_owner_everyone_plan_only_counts_owners_items_and_cursor_has_no_plan(self) -> None:
+    def test_owner_removal_plan_stays_operational_and_scope_free(self) -> None:
         self.seed()
         owner_app = admin_store.create_app(
             "Owner", kind="personal", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db,
         )
         self._receipt(owner_app["id"], "owner_missing")
         self._job("owner_missing", asset("f"))
+        self._write_asset(asset("g"), ["sha256:owner"], prompt="owner stored", request_id="owner_stored")
+        self._receipt(owner_app["id"], "owner_stored")
+        self._job("owner_stored", asset("g"))
         self.current_user = self.owner
-        plan = self.client.get("/me/api/media?folder_state=1&scope=everyone&removal_plan=1").json()
+        plan = self.client.get("/me/api/media?folder_state=1&removal_plan=1").json()
         self.assertEqual(plan["removal_plan"], {"missing_items": 1})
-        page = self.client.get("/me/api/media?scope=everyone&limit=1").json()
+        page = self.client.get("/me/api/media?limit=1").json()
         self.assertIsNotNone(page["next_cursor"])
         with patch("gateway.me_media._viewer_removal", side_effect=AssertionError("cursor plan")):
-            response = self.client.get("/me/api/media?scope=everyone&removal_plan=1&cursor=" + page["next_cursor"])
+            response = self.client.get("/me/api/media?removal_plan=1&cursor=" + page["next_cursor"])
         self.assertEqual(response.status_code, 200, response.text)
         self.assertNotIn("removal_plan", response.json())
 
@@ -573,9 +578,10 @@ class RemoveMissingTests(unittest.TestCase):
         self.seed()
         self.unconfirm_folder()
         self._receipt(self.app_a["id"], "req_legacy")
-        media_jobs.create(media_jobs.MediaJob(
-            request_id="req_legacy", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
-            assets=[{"asset_id": "img_legacy123", "media_type": "image/png"}]), path=self.jobs_db)
+        with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+            media_jobs.create(media_jobs.MediaJob(app_id=self.app_a["id"],
+                request_id="req_legacy", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                assets=[{"asset_id": "img_legacy123", "media_type": "image/png"}]), path=self.jobs_db)
         self.current_user = self.owner
         self.assertEqual(self.media_folder(), {
             "state": "unconfirmed", "path": str(self.cache), "library_items": 5, "items_here": 2,
@@ -589,9 +595,10 @@ class RemoveMissingTests(unittest.TestCase):
         self.unconfirm_folder()
         self.assertEqual(os.listdir(self.cache), [])
         self._receipt(self.app_a["id"], "req_legacy")
-        media_jobs.create(media_jobs.MediaJob(
-            request_id="req_legacy", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
-            assets=[{"asset_id": "img_legacy123", "media_type": "image/png"}]), path=self.jobs_db)
+        with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+            media_jobs.create(media_jobs.MediaJob(app_id=self.app_a["id"],
+                request_id="req_legacy", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                assets=[{"asset_id": "img_legacy123", "media_type": "image/png"}]), path=self.jobs_db)
         self.current_user = self.owner
         self.assertEqual(self.media_folder(), {
             "state": "unconfirmed", "path": str(self.cache), "library_items": 0, "items_here": 0,
@@ -1059,10 +1066,11 @@ class RemoveMissingTests(unittest.TestCase):
         (self.cache / ("2" * 64 + ".webp")).write_bytes(b"RIFF....WEBP")
         for index, (asset_id, media_type) in enumerate(((gif, "image/gif"), (webp, "image/webp"))):
             self._receipt(self.app_a["id"], f"req_odd{index}")
-            media_jobs.create(media_jobs.MediaJob(
-                request_id=f"req_odd{index}", intent="video.generate", status=media_jobs.STATUS_SUCCEEDED,
-                progress=100, assets=[{"asset_id": asset_id, "media_type": media_type,
-                                       "filename": f"out.{media_type.split('/')[1]}"}]), path=self.jobs_db)
+            with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+                media_jobs.create(media_jobs.MediaJob(app_id=self.app_a["id"],
+                    request_id=f"req_odd{index}", intent="video.generate", status=media_jobs.STATUS_SUCCEEDED,
+                    progress=100, assets=[{"asset_id": asset_id, "media_type": media_type,
+                                           "filename": f"out.{media_type.split('/')[1]}"}]), path=self.jobs_db)
         response = self.remove_missing()
         self.assertEqual(response.json(), {"removed_assets": 2, "removed_jobs": 1})
         self.assertEqual(len(self.job_ids("req_odd0")), 1)
@@ -1110,10 +1118,11 @@ class RemoveMissingTests(unittest.TestCase):
         self._write_asset(present, ["sha256:alice", "sha256:bob"], prompt="shared")
         prompt_memory.put(gone, self.alice["id"], "gone", kept_until=None, path=self.prompt_db)
         self._receipt(self.app_a["id"], "req_pg")
-        media_jobs.create(media_jobs.MediaJob(
-            request_id="req_pg", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
-            assets=[{"asset_id": present, "media_type": "image/png"},
-                    {"asset_id": gone, "media_type": "image/png"}]), path=self.jobs_db)
+        with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+            media_jobs.create(media_jobs.MediaJob(app_id=self.app_a["id"],
+                request_id="req_pg", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                assets=[{"asset_id": present, "media_type": "image/png"},
+                        {"asset_id": gone, "media_type": "image/png"}]), path=self.jobs_db)
         deleted = self.client.delete(f"/me/api/media/{present}", headers=VALID)
         self.assertEqual(deleted.status_code, 200, deleted.text)
         self.assertEqual(self.library(), {gone: False})
@@ -1126,9 +1135,10 @@ class RemoveMissingTests(unittest.TestCase):
         self._write_asset(present, ["sha256:alice"], prompt="present")
         for name, assets in (("one", [gone]), ("two", [gone]), ("pone", [present]), ("ptwo", [present, other])):
             self._receipt(self.app_a["id"], f"req_{name}")
-            media_jobs.create(media_jobs.MediaJob(
-                request_id=f"req_{name}", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
-                assets=[{"asset_id": asset_id, "media_type": "image/png"} for asset_id in assets]), path=self.jobs_db)
+            with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+                media_jobs.create(media_jobs.MediaJob(app_id=self.app_a["id"],
+                    request_id=f"req_{name}", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                    assets=[{"asset_id": asset_id, "media_type": "image/png"} for asset_id in assets]), path=self.jobs_db)
         response = self.remove_missing()
         # The gone output is gone in both jobs that name it: both go. The present one keeps its jobs.
         self.assertEqual(response.json(), {"removed_assets": 2, "removed_jobs": 2})
@@ -1141,10 +1151,11 @@ class RemoveMissingTests(unittest.TestCase):
         """A hide belongs to an asset in one job, not to the content hash for ever."""
         again, stored = "img_" + "1" * 64, "img_" + "2" * 64
         self._receipt(self.app_a["id"], "req_one")
-        media_jobs.create(media_jobs.MediaJob(
-            request_id="req_one", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
-            assets=[{"asset_id": again, "media_type": "image/png"},
-                    {"asset_id": stored, "media_type": "image/png"}]), path=self.jobs_db)
+        with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+            media_jobs.create(media_jobs.MediaJob(app_id=self.app_a["id"],
+                request_id="req_one", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                assets=[{"asset_id": again, "media_type": "image/png"},
+                        {"asset_id": stored, "media_type": "image/png"}]), path=self.jobs_db)
         self._write_asset(stored, ["sha256:alice"])
         self.assertEqual(self.remove_missing().json(), {"removed_assets": 1, "removed_jobs": 0})
         self.assertEqual(self.library(), {stored: True})

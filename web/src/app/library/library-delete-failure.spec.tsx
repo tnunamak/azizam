@@ -156,7 +156,7 @@ describe("Library delete failure boundaries", () => {
           return new Response(null, { status: 204 });
         }
         if (path.startsWith("/me/api/media?")) return list(deleted ? [] : [asset]);
-        if (path.includes("/download?")) return Response.json({ download_url: asset.download_url });
+        if (path.includes("/download")) return Response.json({ download_url: asset.download_url });
         return Response.json({});
       }));
       const view = renderLibrary();

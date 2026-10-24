@@ -86,28 +86,18 @@ const alexsKept = () =>
     (a) => a.owner === "alex" && a.kind === "image" && a.prompt_kept,
   )!;
 
-async function media(request: APIRequestContext, id: string, everyone = false) {
-  const response = await request.get(
-    `/me/api/media/${encodeURIComponent(id)}${everyone ? "?scope=everyone" : ""}`,
-  );
+async function media(request: APIRequestContext, id: string) {
+  const response = await request.get(`/me/api/media/${encodeURIComponent(id)}`);
   return {
     status: response.status(),
     body: response.ok() ? await response.json() : null,
   };
 }
 
-// The Library starts every viewer on Mine, so a deep link reaches only the
-// viewer's own creations. An owner reaches another person's creation by
-// choosing Everyone, then opening its tile.
-async function openViewer(page: Page, id: string, everyone = false) {
-  if (everyone) {
-    await page.goto("/library/");
-    await page.getByRole("combobox", { name: "Person", exact: true }).click();
-    await page.getByRole("option", { name: "Everyone", exact: true }).click();
-    await page.locator(`[data-asset-open="${id}"]`).click();
-  } else {
-    await page.goto(`/library/?asset=${encodeURIComponent(id)}`);
-  }
+// The Library shows a viewer only its own creations: a deep link to anyone
+// else's creation opens nothing (OWNER_VISIBILITY).
+async function openViewer(page: Page, id: string) {
+  await page.goto(`/library/?asset=${encodeURIComponent(id)}`);
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   // The facts load with the viewer; wait for them before reading its text.
@@ -143,7 +133,7 @@ test.describe("Accessibility of the prompt screens", () => {
           await expect(
             page
               .locator(
-                "[data-slot=setting-row], [data-slot=prompt-keep], [data-slot=incognito], [role=dialog]",
+                "[data-slot=setting-row], [data-slot=prompt-keep], [data-slot=keep-history], [role=dialog]",
               )
               .first(),
           ).toBeVisible();
@@ -206,7 +196,7 @@ test.describe("Library: the prompt is the maker's alone", () => {
       page.getByRole("menuitem", { name: "Download with details" }),
     ).toBeVisible();
     const full = await page.request.get(
-      `/me/api/media/${robinsKept().asset_id}/download?scope=me&metadata=full`,
+      `/me/api/media/${robinsKept().asset_id}/download?metadata=full`,
     );
     expect(full.status()).toBe(200);
     await ctx.close();
@@ -228,38 +218,29 @@ test.describe("Library: the prompt is the maker's alone", () => {
     await ctx.close();
   });
 
-  test("the owner sees a member's creation with no prompt and no hint of one", async ({
+  test("the owner cannot reach a member's creation, with or without its prompt", async ({
     browser,
     baseURL,
   }) => {
     const { ctx, page } = await as(browser, seed.owner_email, baseURL!);
     const id = robinsKept().asset_id;
-    const { body } = await media(page.request, id, true);
-    expect(body.asset.prompt).toBeNull();
-    expect(body.asset.provenance?.prompt ?? null).toBeNull();
-    expect(body.asset.workflow_download_url).toBeNull();
-    expect(body.asset.title).toMatch(/^Picture by Robin/);
-    const full = await page.request.get(
-      `/me/api/media/${id}/download?scope=everyone&metadata=full`,
-    );
-    expect(full.status()).toBe(403);
+    // OWNER_VISIBILITY: an owner reads what they made, not another person's creation, so the item and its
+    // details download are not found, and its prompt is never offered.
+    expect((await media(page.request, id)).status).toBe(404);
+    const full = await page.request.get(`/me/api/media/${id}/download?metadata=full`);
+    expect(full.status()).toBe(404);
     // Prompt search runs over the viewer's own prompts only.
     const robinsWords = "backyard raised vegetable";
     const search = await (
-      await page.request.get(
-        `/me/api/media?scope=everyone&q=${encodeURIComponent(robinsWords)}`,
-      )
+      await page.request.get(`/me/api/media?q=${encodeURIComponent(robinsWords)}`)
     ).json();
     expect(
       search.assets.map((a: { asset_id: string }) => a.asset_id),
     ).not.toContain(id);
 
-    const dialog = await openViewer(page, id, true);
-    await expect(dialog).toContainText("Robin");
-    await expect(dialog).not.toContainText(/prompt/i);
-    await expect(
-      dialog.getByRole("button", { name: /^Actions for / }),
-    ).toHaveCount(0);
+    await page.goto("/library/");
+    await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^Open Picture by Robin/ })).toHaveCount(0);
     await ctx.close();
   });
 
@@ -285,14 +266,13 @@ type AudioItem = { asset_id: string; prompt: string | null };
 type AudioPage = { assets: AudioItem[]; next_cursor: string | null };
 async function allAudioPages(
   request: import("@playwright/test").APIRequestContext,
-  scope: "me" | "everyone",
 ): Promise<AudioItem[]> {
   const assets: AudioItem[] = [];
   let cursor: string | null = null;
   do {
     const query: string = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
     const response = await request.get(
-      `/me/api/media?scope=${scope}&kind=audio&limit=100${query}`,
+      `/me/api/media?kind=audio&limit=100${query}`,
     );
     const body: AudioPage = await response.json();
     assets.push(...body.assets);
@@ -301,7 +281,7 @@ async function allAudioPages(
   return assets;
 }
 
-test.describe("Try: Don't keep this prompt", () => {
+test.describe("Try: keep request history off", () => {
   // Read text aloud: the household's picture jobs cannot deliver content in
   // this fixture (the job content route has no route policy without a
   // ComfyUI backend in the base config, HTTP 500), and speech is kept the
@@ -313,13 +293,13 @@ test.describe("Try: Don't keep this prompt", () => {
     baseURL,
   }) => {
     const { ctx, page } = await as(browser, seed.member_email, baseURL!);
-    const allAudio = () => allAudioPages(page.request, "me");
+    const allAudio = () => allAudioPages(page.request);
     const audioIds = async () =>
       new Set<string>((await allAudio()).map((a) => a.asset_id));
     const before = await audioIds();
     await page.goto("/try/?capability=speech");
-    const toggle = page.getByRole("switch", { name: "Incognito" });
-    await expect(toggle).not.toBeChecked();
+    const toggle = page.getByRole("switch", { name: "Keep request history" });
+    await expect(toggle).toBeChecked();
     await expect(
       page.getByText("Azizam tries to keep the prompt with the audio."),
     ).toBeVisible();
@@ -342,7 +322,7 @@ test.describe("Try: Don't keep this prompt", () => {
 
     await toggle.click();
     await expect(
-      page.getByText("The audio still goes to Library."),
+      page.getByText("The prompt isn’t kept. The audio still goes to Library."),
     ).toBeVisible();
     const forgotten = `A lantern glows in the fog ${Date.now()}`;
     await page.getByRole("textbox", { name: "Prompt" }).fill(forgotten);
@@ -354,7 +334,7 @@ test.describe("Try: Don't keep this prompt", () => {
     expect((await forgetSubmit).postDataJSON().extensions).toEqual({
       "com.azizam.prompts": { mode: "forget" },
     });
-    await expect(page.getByText("Incognito: this isn’t saved", { exact: true })).toBeVisible({
+    await expect(page.getByText("Not saved in your History", { exact: true })).toBeVisible({
       timeout: 60_000,
     });
 
@@ -380,14 +360,14 @@ test.describe("Try: Don't keep this prompt", () => {
     await expect(dialog.getByText("No saved prompt")).toBeVisible();
     await ctx.close();
 
-    // The owner sees Robin's clips without their words.
+    // The owner does not see Robin's clips, with or without their words (OWNER_VISIBILITY).
     const owner = await as(browser, seed.owner_email, baseURL!);
-    const everyone = { assets: await allAudioPages(owner.page.request, "everyone") };
-    const ids = everyone.assets.map((a: { asset_id: string }) => a.asset_id);
-    expect(ids).toContain(keptItem!.asset_id);
-    expect(ids).toContain(newest!.asset_id);
-    expect(JSON.stringify(everyone)).not.toContain(kept);
-    expect(JSON.stringify(everyone)).not.toContain(forgotten);
+    const ownerAudio = await allAudioPages(owner.page.request);
+    const ids = ownerAudio.map((a: { asset_id: string }) => a.asset_id);
+    expect(ids).not.toContain(keptItem!.asset_id);
+    expect(ids).not.toContain(newest!.asset_id);
+    expect(JSON.stringify(ownerAudio)).not.toContain(kept);
+    expect(JSON.stringify(ownerAudio)).not.toContain(forgotten);
     await owner.ctx.close();
   });
 });
@@ -442,7 +422,7 @@ test.describe("Your settings", () => {
   }) => {
     const { ctx, page } = await as(browser, seed.restricted_email, baseURL!);
     const before = await (
-      await page.request.get("/me/api/media?scope=me&limit=50")
+      await page.request.get("/me/api/media?limit=50")
     ).json();
     await page.goto("/");
     await page
@@ -465,7 +445,7 @@ test.describe("Your settings", () => {
       ),
     ).toBeVisible();
     const after = await (
-      await page.request.get("/me/api/media?scope=me&limit=50")
+      await page.request.get("/me/api/media?limit=50")
     ).json();
     expect(after.assets.length).toBe(before.assets.length);
     expect(
@@ -552,7 +532,7 @@ test.describe("Settings: the household's rules", () => {
       member.page.getByText("Sam turned this off for everyone."),
     ).toBeVisible();
     const robin = await (
-      await member.page.request.get("/me/api/media?scope=me&limit=50")
+      await member.page.request.get("/me/api/media?limit=50")
     ).json();
     expect(
       robin.assets.every((a: { prompt: string | null }) => a.prompt === null),
@@ -608,7 +588,7 @@ test("Try sends forget for a stale off snapshot even after the backend turns on"
     page.getByText("The audio still goes to Library."),
   ).toBeVisible();
   const media = await (
-    await page.request.get("/me/api/media?scope=me&limit=50")
+    await page.request.get("/me/api/media?limit=50")
   ).json();
   expect(JSON.stringify(media)).not.toContain(text);
   await page.goto("/account/");

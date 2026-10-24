@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TryPage from "./page";
 import { ViewerContext } from "@/components/shell/session";
 
-// Incognito is one switch on every Try tab. On, each request carries the forget control; off, none does. The
-// request history choice and the prompt setting say what would be kept when it is off.
+// Keep request history is one switch on every Try tab. On (the default), each request is kept as the person's
+// settings say; off, each request carries the forget control. The request history choice and the prompt setting
+// say what would be kept when it is off.
 const mocks = vi.hoisted(() => ({
   params: new URLSearchParams(),
   session: vi.fn(),
@@ -127,6 +128,10 @@ function forgetIn(body: Record<string, unknown>) {
 }
 
 async function pressRun() {
+  // A person who has not written a prompt takes the tab's example first.
+  const example = screen.queryByRole("button", { name: "Try an example" });
+  const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+  if (example && promptBox?.value === "") fireEvent.click(example);
   const run = await screen.findByRole("button", { name: "Run" });
   await waitFor(() => expect(run).toBeEnabled());
   fireEvent.click(run);
@@ -158,38 +163,38 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-describe("Incognito in Try", () => {
-  it("is off by default, and says what Azizam keeps for this person", async () => {
+describe("Keep request history in Try", () => {
+  it("is on by default, and says what Azizam keeps for this person", async () => {
     serve("chat");
     renderTry();
-    const incognito = await screen.findByRole("switch", { name: "Incognito" });
-    expect(incognito).not.toBeChecked();
+    const keep = await screen.findByRole("switch", { name: "Keep request history" });
+    expect(keep).toBeChecked();
     expect(await screen.findByText("Saved in your History for 7 days.")).toBeVisible();
   });
 
-  it("when on, says this isn’t saved, and the request carries the forget control", async () => {
+  it("when off, says it isn’t saved in History, and the request carries the forget control", async () => {
     serve("chat");
     renderTry();
-    await userEvent.click(await screen.findByRole("switch", { name: "Incognito" }));
-    expect(await screen.findByText("Incognito: this isn’t saved.")).toBeVisible();
+    await userEvent.click(await screen.findByRole("switch", { name: "Keep request history" }));
+    expect(await screen.findByText("Not saved in your History.")).toBeVisible();
     await pressRun();
     expect(forgetIn(await sentBody())).toEqual({ mode: "forget" });
   });
 
-  it("a request with Incognito off carries no forget control", async () => {
+  it("a request with keep request history on carries no forget control", async () => {
     serve("chat");
     renderTry();
-    await screen.findByRole("switch", { name: "Incognito" });
+    await screen.findByRole("switch", { name: "Keep request history" });
     await pressRun();
     expect(forgetIn(await sentBody())).toBeUndefined();
   });
 
   it.each(["chat", "image", "speech", "transcribe", "decide", "embed", "workflow"])(
-    "every %s request carries the forget control once Incognito is on",
+    "every %s request carries the forget control once keep request history is off",
     async (tab) => {
       serve(tab);
       renderTry();
-      await userEvent.click(await screen.findByRole("switch", { name: "Incognito" }));
+      await userEvent.click(await screen.findByRole("switch", { name: "Keep request history" }));
       if (tab === "transcribe") {
         const input = await screen.findByLabelText("Audio file");
         await userEvent.upload(input, new File(["sound"], "clip.m4a", { type: "audio/mp4" }));
@@ -204,7 +209,7 @@ describe("Incognito in Try", () => {
     serve("image");
     renderTry();
     expect(await screen.findByText("Prompts aren’t kept")).toBeVisible();
-    expect(screen.queryByRole("switch", { name: "Incognito" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Keep request history" })).not.toBeInTheDocument();
     await pressRun();
     expect(forgetIn(await sentBody())).toEqual({ mode: "forget" });
   });
@@ -215,17 +220,17 @@ describe("Incognito in Try", () => {
     serve("chat");
     renderTry();
     expect(await screen.findByText("Nothing you send is kept")).toBeVisible();
-    expect(screen.queryByRole("switch", { name: "Incognito" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Keep request history" })).not.toBeInTheDocument();
   });
 
-  it("stays on for this browser tab only, and starts off in a new session", async () => {
+  it("stays off for this browser tab only, and is back on in a new session", async () => {
     serve("chat");
     const first = renderTry();
-    await userEvent.click(await screen.findByRole("switch", { name: "Incognito" }));
+    await userEvent.click(await screen.findByRole("switch", { name: "Keep request history" }));
     expect(sessionStorage.getItem("azizam.try.forget")).toBe("1");
     first.unmount();
 
     renderTry();
-    expect(await screen.findByRole("switch", { name: "Incognito" })).toBeChecked();
+    expect(await screen.findByRole("switch", { name: "Keep request history" })).not.toBeChecked();
   });
 });

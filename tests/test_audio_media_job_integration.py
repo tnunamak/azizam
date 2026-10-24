@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from tests.support.access import authenticated, access_context  # noqa: E402
-from gateway import media_jobs  # noqa: E402
+from gateway import media_jobs, request_source  # noqa: E402
 
 
 class _StubJsonRequest:
@@ -290,7 +290,8 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             }],
             metadata={"mode": "async_audio_generation"},
         )
-        media_jobs.create(job, path=self.db)
+        with request_source.acting_as(app_id="app_test", credential_id="sha256:test"):
+            media_jobs.create(job, path=self.db)
         request = _StubJsonRequest(
             {},
             headers={

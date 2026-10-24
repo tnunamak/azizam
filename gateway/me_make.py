@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Callable, Mapping, Protocol
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from gateway import admin_store, media_jobs, ownership, prompt_memory, receipt_store
+from gateway import admin_store, media_jobs, ownership, prompt_memory, receipt_store, request_source
 from gateway.admin_oidc import AdminSession
 from gateway.public_failure import PublicFailure, describe, project_job
 from gateway import output_availability
@@ -355,6 +355,8 @@ def _submit(
         metadata={"mode": JOB_MODE, "requested_model": model[:160],
                   **({"source_asset_id": source_asset_id} if source_asset_id else {})},
     )
+    # The session names the person the job is for. The job is stamped with that person, never with the App's owner.
+    request_source.note_maker(app_id, user_id)
     try:
         created = media_jobs.create(job, outstanding_limits=_outstanding_limits(app_id, runtime.limits),
                                     input_data=backend_body, path=jobs_path)

@@ -194,7 +194,7 @@ from gateway.local_owner import (
     load_or_create_signing_key as local_load_signing_key,
 )
 from gateway.setup_render import render_setup_page
-from gateway import signin_admin, signin_rules_migration
+from gateway import maker_stamp_migration, signin_admin, signin_rules_migration
 from gateway.signin_api import create_signin_api
 from gateway.admin_runtime import (
     ADMIN_CONTROL_ROLES,
@@ -2324,7 +2324,11 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
         setattr(request.state, request_history_capture.IDENTITY_STATE_KEY, result)
         if result.identity is not None:
             # Receipts this request makes name the person it ran as, and no one else (REQUEST_RETENTION.md 13.3).
-            note_maker(result.identity.app_id, result.identity.person_id)
+            # A media job it creates is stamped with the same person and the credential or grant that authenticated it.
+            # An App-less legacy key has no credential row, so its key hash is the credential that made the job (D52).
+            note_maker(result.identity.app_id, result.identity.person_id,
+                       credential_id=result.identity.credential_id or result.identity.key_hash or None,
+                       connection_id=result.identity.connection_id)
     return result
 
 
@@ -12852,6 +12856,22 @@ async def _initialize_stores() -> None:
     await asyncio.to_thread(providers.recover_provider_spend, path=ADMIN_DB_PATH.parent / "provider_spend.db")
 
 
+def _backfill_media_job_makers_at_startup() -> None:
+    """Give legacy media jobs the maker their creation-time evidence names, once (OV3 slice 1).
+
+    A failure leaves those jobs unstamped, so they stay unread until a start completes the pass. The start itself goes on.
+    """
+    try:
+        counts = maker_stamp_migration.backfill(
+            media_jobs.DB_PATH, receipts_path=receipt_store.DB_PATH, admin_path=ADMIN_DB_PATH,
+        )
+    except Exception as exc:  # noqa: BLE001 - a start must not fail over a backfill; unresolved jobs stay unread
+        print(f"[proxy] WARNING: media job maker backfill did not finish: {type(exc).__name__}", flush=True)
+        return
+    if counts is not None:
+        print(f"[proxy] media job makers backfilled from creation-time evidence: {counts}", flush=True)
+
+
 def _migrate_host_command_permission() -> None:
     """Decision D13: installs that already declare command lifecycles keep them working."""
     registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
@@ -12921,6 +12941,7 @@ async def _serve(app: FastAPI):
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    await asyncio.to_thread(_backfill_media_job_makers_at_startup)
     await asyncio.to_thread(_report_session_view_key_problem)
     await asyncio.to_thread(prompt_memory.require_resolvable_periods, admin_path=ADMIN_DB_PATH)
     await asyncio.to_thread(STT_MEASUREMENTS.startup_cleanup)
@@ -14251,13 +14272,18 @@ def _gateway_record_scope(request: Request) -> dict[str, Any]:
 
 
 def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str, Any]) -> bool:
+    from gateway import content_makers
+    from gateway.content_access import viewer_from_auth
     from gateway.record_ownership import owns_record
     auth_context = _auth_context_from_scope(request)
-    identity = auth_context.identity
-    return owns_record(
-        kind, record, app_id=identity.app_id if identity else None,
-        owner_keys=_asset_read_owner_keys(auth_context),
-    )
+    # One App reader per request: the authorizer runs once per row of a page.
+    state = getattr(request, "state", None)
+    apps = getattr(state, "record_apps", None)
+    if apps is None:
+        apps = content_makers.Apps(ADMIN_STORE.path)
+        if state is not None:
+            state.record_apps = apps
+    return owns_record(kind, record, viewer=viewer_from_auth(auth_context, owner_keys=()), apps=apps)
 
 
 async def _gateway_media_job_submitter(
@@ -16675,13 +16701,17 @@ async def user_portal_activity(request: Request):
         limit = int(request.query_params.get("limit") or 0) or None
     except (TypeError, ValueError):
         limit = None
-    snapshot = await asyncio.to_thread(
-        build_user_activity_snapshot,
-        session,
-        limit=limit if limit else 20,
-        path=ADMIN_STORE.path,
-        receipts_path=receipt_store.DB_PATH,
-    )
+    try:
+        snapshot = await asyncio.to_thread(
+            build_user_activity_snapshot,
+            session,
+            limit=limit if limit else 20,
+            path=ADMIN_STORE.path,
+            receipts_path=receipt_store.DB_PATH,
+            cursor=request.query_params.get("cursor"),
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
     return JSONResponse(
         status_code=200,
         content=snapshot,

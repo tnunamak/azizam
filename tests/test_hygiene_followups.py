@@ -9,7 +9,7 @@ import pytest
 
 import proxy
 import firehose_metrics
-from gateway import media_jobs, private_io, prompt_metadata_migration, output_availability
+from gateway import media_jobs, private_io, prompt_metadata_migration, output_availability, request_source
 from tests.test_image_media_jobs import authenticated, _StubJsonRequest
 
 
@@ -83,9 +83,11 @@ def test_output_content_distinguishes_missing_and_retryable(tmp_path, monkeypatc
     database = tmp_path / "jobs.db"
     media_jobs.init_db(database)
     monkeypatch.setattr(media_jobs, "DB_PATH", database)
-    job = media_jobs.create(media_jobs.MediaJob(app_id="app_test", intent="image.generate",
-        request_id="fixture", status="succeeded", progress=100,
-        assets=[{"asset_id": "img_" + "f" * 64}]), path=database)
+    # Made by the test identity, as a request authenticated with its key would stamp the job (see tests/support/access.py).
+    with request_source.acting_as(app_id="app_test", credential_id="sha256:test"):
+        job = media_jobs.create(media_jobs.MediaJob(app_id="app_test", intent="image.generate",
+            request_id="fixture", status="succeeded", progress=100,
+            assets=[{"asset_id": "img_" + "f" * 64}]), path=database)
     def unavailable(_):
         raise OSError(error, "fixture")
     monkeypatch.setattr(proxy, "asset_cache_path", unavailable)

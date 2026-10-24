@@ -54,12 +54,17 @@ def index_sync_assets(
     api_key_name: str | None = None,
     metadata: Mapping[str, Any] | None = None,
     path=None,
+    maker_person_id: str | None = None,
+    maker_credential_id: str | None = None,
+    maker_from_request: bool = True,
 ) -> media_jobs.MediaJob | None:
     """Create the succeeded media-job row for a synchronous media response.
 
     Returns ``None`` when no valid asset handles are present. The metadata bag
     must stay safe for ``media_jobs``: no prompts, request bodies, or media
-    bytes.
+    bytes. The job's maker is the request's own maker, unless ``maker_from_request`` is False: then it is
+    ``maker_person_id`` and ``maker_credential_id``, the creator of the stored output, which a different
+    requester may index.
     """
     safe_assets = [_normalize_asset(asset) for asset in assets]
     safe_assets = [asset for asset in safe_assets if asset is not None]
@@ -67,7 +72,8 @@ def index_sync_assets(
         return None
     try:
         return _create_indexed(request_id, intent, safe_assets, workflow, backend, app_profile,
-                               app_id, owner_key_hash, api_key_name, metadata, path)
+                               app_id, owner_key_hash, api_key_name, metadata, path,
+                               maker_person_id, maker_credential_id, maker_from_request)
     except media_jobs.IdempotencyConflict:
         # The request id is server-made per response, so a second index of it
         # is a retry of the same response: the first record wins.
@@ -77,7 +83,8 @@ def index_sync_assets(
 
 
 def _create_indexed(request_id, intent, safe_assets, workflow, backend, app_profile,
-                    app_id, owner_key_hash, api_key_name, metadata, path) -> media_jobs.MediaJob:
+                    app_id, owner_key_hash, api_key_name, metadata, path,
+                    maker_person_id, maker_credential_id, maker_from_request) -> media_jobs.MediaJob:
     return media_jobs.create(
         media_jobs.MediaJob(
             request_id=request_id,
@@ -92,8 +99,11 @@ def _create_indexed(request_id, intent, safe_assets, workflow, backend, app_prof
             owner_key_hash=owner_key_hash,
             api_key_name=api_key_name,
             metadata=dict(metadata or {}),
+            maker_person_id=maker_person_id,
+            maker_credential_id=maker_credential_id,
         ),
         path=media_jobs.DB_PATH if path is None else path,
+        maker_from_request=maker_from_request,
     )
 
 
@@ -207,6 +217,8 @@ def index_video_delivery(
     """Index a synchronous public video content delivery as a Library asset."""
     safe_record = record if isinstance(record, Mapping) else {}
     workflow = _safe_video_workflow(safe_record)
+    person_id = _safe_string(safe_record.get("person_id"))
+    owner_key_hash = _safe_string(safe_record.get("owner_key_hash"))
     job = index_sync_assets(
         request_id=video_id,
         intent="video.generate",
@@ -220,10 +232,16 @@ def index_video_delivery(
         backend=_safe_video_backend(safe_record),
         app_profile=_safe_string(safe_record.get("app_profile")),
         app_id=_safe_string(safe_record.get("app_id")),
-        owner_key_hash=_safe_string(safe_record.get("owner_key_hash")),
+        owner_key_hash=owner_key_hash,
         api_key_name=_safe_string(safe_record.get("api_key_name")),
         metadata={"mode": "sync_video_delivery"},
         path=media_jobs.DB_PATH,
+        # The video's creator is its maker. The request that delivers it may belong to someone else.
+        maker_person_id=person_id,
+        # A service App's key makes a video with no person. Its App principal then stands as the maker, so the App's
+        # own keys read it.
+        maker_credential_id=None if person_id else _app_principal(owner_key_hash),
+        maker_from_request=False,
     )
     return job
 
@@ -252,6 +270,12 @@ def _safe_video_workflow(record: Mapping[str, Any]) -> str | None:
 
 def _safe_string(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _app_principal(owner_key_hash: str | None) -> str | None:
+    """The App principal (``app:<app_id>``) that a stored owner key names, or None for any other owner."""
+    kind, _, subject = (owner_key_hash or "").partition(":")
+    return owner_key_hash if kind == "app" and subject else None
 
 
 def store_audio_response(

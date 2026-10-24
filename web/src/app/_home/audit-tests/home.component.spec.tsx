@@ -328,7 +328,7 @@ describe("Home audit component behavior", () => {
         download_url: "/fox.mp4",
         poster_asset_id: "delayed-poster",
       }] });
-      if (path === "/me/api/media/delayed-poster/download?scope=me") return posterResponse;
+      if (path === "/me/api/media/delayed-poster/download") return posterResponse;
       return Response.json({});
     }));
     renderHome();
@@ -451,7 +451,7 @@ describe("Home audit component behavior", () => {
               },
             ],
           });
-        if (path === "/me/api/media/poster-1/download?scope=me")
+        if (path === "/me/api/media/poster-1/download")
           return Response.json({
             download_url: "https://media.example/poster.jpg",
           });

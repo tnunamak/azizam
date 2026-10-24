@@ -21,6 +21,7 @@ from gateway.api import create_gateway_router
 from gateway.discovery import WorkflowRegistry
 from gateway.receipts import RouteReceipt
 from gateway.voice_audio import SampleLimits
+from gateway import request_source
 
 
 @pytest.fixture
@@ -126,8 +127,10 @@ def test_rotation_media_and_record_http_scopes(owners, monkeypatch):
     receipts = owners.root / "receipts.db"
     media_jobs.init_db(db)
     receipt_store.init_db(receipts)
-    job = media_ingestion.index_sync_assets(request_id="azizam-new", intent="image.generate", app_id=owners.first["id"],
-        owner_key_hash=owners.credentials[0]["hash"], assets=[{"asset_id": asset}], path=db)
+    with request_source.acting_as(app_id=owners.first["id"], person_id=owners.user["id"],
+                                  credential_id=owners.credentials[0]["hash"]):
+        job = media_ingestion.index_sync_assets(request_id="azizam-new", intent="image.generate", app_id=owners.first["id"],
+            owner_key_hash=owners.credentials[0]["hash"], assets=[{"asset_id": asset}], path=db)
     assert job.owner_key_hash == principal
     receipt = RouteReceipt(request_id="azizam-new", protocol="openai.images", intent="image.generate", app_id=owners.first["id"], owner_key_hash=owners.credentials[0]["hash"])
     receipt_store.begin(receipt, path=receipts)
@@ -156,9 +159,11 @@ def test_rotation_media_and_record_http_scopes(owners, monkeypatch):
     app.include_router(create_gateway_router(WorkflowRegistry(), media_job_store_path=db, receipt_store_path=receipts,
         record_scope_provider=proxy._gateway_record_scope, record_authorizer=proxy._gateway_record_authorizer))
     client = TestClient(app)
-    for owned in (job, legacy_job):
-        assert client.get(f"/gateway/v1/media/jobs/{owned.job_id}").status_code == 200
-    assert len(client.get("/gateway/v1/media/jobs").json()["jobs"]) == 2
+    # The App's job, made by a request its credential authenticated, reads through the rotated key. The legacy job has
+    # no stamped maker, so no one reads it (fail closed, OV3 round 3): it is a 404 and absent from the list.
+    assert client.get(f"/gateway/v1/media/jobs/{job.job_id}").status_code == 200
+    assert client.get(f"/gateway/v1/media/jobs/{legacy_job.job_id}").status_code == 404
+    assert len(client.get("/gateway/v1/media/jobs").json()["jobs"]) == 1
     assert client.get("/gateway/v1/receipts/azizam-new").status_code == 200
     active[0] = other
     for owned in (job, legacy_job):

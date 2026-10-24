@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from tests.support.access import authenticated, access_context  # noqa: E402
-from gateway import media_jobs  # noqa: E402
+from gateway import media_jobs, request_source  # noqa: E402
 
 
 class _StubJsonRequest:
@@ -653,7 +653,8 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             }],
             metadata={"mode": "async_image_generation"},
         )
-        media_jobs.create(job, path=self.db)
+        with request_source.acting_as(app_id="app_test", credential_id="sha256:test"):
+            media_jobs.create(job, path=self.db)
 
         output = self.db.with_suffix(".png")
         output.write_bytes(b"fixture output")
@@ -671,11 +672,12 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_content_route_reports_missing_outputs_instead_of_signing_broken_links(self) -> None:
         for number, (intent, prefix) in enumerate((("image.generate", "img"),
                                                  ("audio.generate", "aud"), ("video.generate", "vid"))):
-            job = media_jobs.create(media_jobs.MediaJob(
-                app_id="app_test", intent=intent, request_id=f"req_missing_{number}",
-                status=media_jobs.STATUS_SUCCEEDED, progress=100,
-                assets=[{"asset_id": prefix + "_" + "f" * 64,
-                         "url": "https://fixture.invalid/missing"}]), path=self.db)
+            with request_source.acting_as(app_id="app_test", credential_id="sha256:test"):
+                job = media_jobs.create(media_jobs.MediaJob(
+                    app_id="app_test", intent=intent, request_id=f"req_missing_{number}",
+                    status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                    assets=[{"asset_id": prefix + "_" + "f" * 64,
+                             "url": "https://fixture.invalid/missing"}]), path=self.db)
             with authenticated(), patch.object(proxy, "asset_cache_path", return_value=None):
                 response = await proxy.gateway_media_job_content(job.job_id, _StubJsonRequest({}))
             payload = json.loads(response.body)

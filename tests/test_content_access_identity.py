@@ -55,7 +55,9 @@ def test_viewers_from_real_session_app_key_and_trusted_address_auth(tmp_path):
         assert (trusted.person_id, trusted.trusted_address, trusted.key_hash, trusted.credential_id) == (None, address, None, None)
         assert isinstance(decide(trusted, ChatRecord(None, app["id"]), "read"), Own)
         assert isinstance(decide(browser, ChatRecord(None, app["id"]), "read"), Deny)
-    assert isinstance(decide(browser, CreationRecord("asset", frozenset({f"app:{service['id']}"})), "read"), Own)
+    # A service App's creation with no maker is read by no session; the same creation made by this person is.
+    assert isinstance(decide(browser, CreationRecord("asset", frozenset({f"app:{service['id']}"})), "read"), Deny)
+    assert isinstance(decide(browser, CreationRecord("asset", frozenset({f"app:{service['id']}"}), (browser.person_id,)), "read"), Own)
     row = ChatRecord(person, personal["id"], origin=ContentOrigin("session"))
     assert isinstance(decide(key, row, "read"), Deny)
     assert isinstance(decide(key, replace(row, origin=ContentOrigin("app_key", credential_id=cred["id"])), "read"), Own)
@@ -116,7 +118,7 @@ def test_viewer_preserves_legacy_hash_only_content_scopes():
     viewer = viewer_from_auth(auth, owner_keys=("synthetic-owner",))
     assert viewer.person_id is viewer.app_id is viewer.credential_id is None
     assert not viewer.privacy_permission
-    assert isinstance(decide(viewer, ReceiptRecord(frozenset({"synthetic-owner"})), "read"), Own)
+    assert isinstance(decide(viewer, ReceiptRecord(owner_key_hash="synthetic-owner"), "read"), Own)
 
 
 def test_asset_and_video_lists_build_one_viewer_per_request():
