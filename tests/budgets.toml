@@ -377,7 +377,9 @@
 # tests/test_engine_admin_routes.py; collect-only measured 17421 (scripts/run-hermetic-pytest.sh --collect-only -q).
 # Voice and kinds on every save (2026-10-24): +2 cases in tests/test_registered_model_kinds.py and +6 cases in
 # tests/test_generic_service_model_kinds.py; collect-only measured 17429 (scripts/run-hermetic-pytest.sh --collect-only -q).
-pytest = 17429
+# Kinds on a whole-registry save and a package import: +6 cases in tests/test_generic_service_model_kinds.py;
+# collect-only measured 17435 (scripts/run-hermetic-pytest.sh --collect-only -q).
+pytest = 17435
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
