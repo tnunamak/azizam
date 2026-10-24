@@ -37,7 +37,7 @@ import {
 } from "../parts/capabilities";
 import { FindingCard } from "../parts/finding-card";
 import { FormField, Note, Tag, focusFirstInvalid } from "../parts/form";
-import { ModelsBlock, draftsFromCheck, duplicateNames, modelsBody, type ModelDraft } from "../parts/models-block";
+import { ModelsBlock, draftsFromCheck, duplicateNames, kindRefusal, modelsBody, type ModelDraft } from "../parts/models-block";
 import { AccessAsk, accessModels } from "../parts/access-answer";
 import { addedMessage, fieldOf, keptOffMessage, looksLikeAddress, trimAddress } from "./draft";
 import { ConnectionFields, SummaryLine, type ConnectionDraft, type FieldErrors } from "./step-address";
@@ -162,6 +162,8 @@ function Wizard({
   const [nameTouched, setNameTouched] = useState(false);
   const [createFinding, setCreateFinding] = useState<Finding | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  /** The server refused one model's kind. Its message shows under that model's Capability control on the models step. */
+  const [kindError, setKindError] = useState<{ index: number; message: string } | null>(null);
   const [creating, setCreating] = useState(false);
 
   const { announce, bodyRef } = useContext(Chrome);
@@ -357,6 +359,7 @@ function Wizard({
     }
     setCreating(true);
     setCreateError(null);
+    setKindError(null);
     const before = queryClient.getQueryData<ServiceRegistry>(queryKeys.serviceRegistry);
     try {
       const { registry, serviceId } = await enginesApi.create(body);
@@ -371,6 +374,7 @@ function Wizard({
       const refused = checkFromError(error);
       const first = refused?.findings.find((f) => f.severity === "error") ?? refused?.findings[0];
       const field = fieldFromError(error);
+      const refusedKind = kindRefusal(field, error instanceof Error ? error.message : "");
       if (first && (first.code === "dup" || first.severity === "warning")) {
         setCreateFinding(first);
         if (step !== "address") setStep("name");
@@ -380,6 +384,10 @@ function Wizard({
         setFinding(first);
         focusInvalid();
         setStep("address");
+      } else if (refusedKind) {
+        setKindError(refusedKind);
+        setStep("detail");
+        focusInvalid();
       } else if (field && ["address", "api_key", "api_key_env"].includes(field)) {
         setErrors({ [field]: error instanceof Error ? error.message : "" });
         focusInvalid();
@@ -713,7 +721,17 @@ function Wizard({
             know better.
           </Note>
         )}
-        <ModelsBlock models={models} onChange={setModels} emptyText="The server listed no models. Add a model by name below." />
+        <ModelsBlock
+          models={models}
+          onChange={(next) => {
+            setModels(next);
+            setKindError(null);
+          }}
+          emptyText="The server listed no models. Add a model by name below."
+          kinds={definitionsData.model_kinds ?? []}
+          offeredKinds={def.capabilities.filter((c) => ticked.has(c.id)).flatMap((c) => c.kinds)}
+          kindError={kindError ?? undefined}
+        />
       </Frame>
     );
   }

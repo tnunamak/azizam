@@ -14,11 +14,11 @@ export function costFrom(
     const amount = Number(reported);
     if (Number.isFinite(amount) && amount >= 0 && !(amount === 0 && locality === "Local" && positivePayload)) {
       if (amount === 0 && locality === "Local")
-        return "Local · no provider charge";
+        return "Local · no charge";
       return `$${amount.toFixed(amount < 0.01 && amount > 0 ? 6 : 2)}`;
     }
   }
-  if (locality === "Local" && !positivePayload) return "Local · no provider charge";
+  if (locality === "Local" && !positivePayload) return "Local · no charge";
   if (typeof payload !== "object" || payload === null) return undefined;
   if (typeof cost === "object" && cost !== null) {
     const amount = (cost as { amount_usd?: unknown }).amount_usd;

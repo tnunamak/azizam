@@ -643,7 +643,7 @@ test("a finished audio result shows before its receipt is looked up", async () =
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Voice model"));
   await takeExampleIfEmpty();
   fireEvent.click(screen.getByRole("button", { name: "Run" }));
-  expect(await screen.findByRole("heading", { name: "Speech result" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "Voice result" })).toBeVisible();
   expect(screen.getByLabelText("Generated audio")).toBeInTheDocument();
   expect(screen.getByText("Checking receipt...")).toBeVisible();
   restoreUrls();

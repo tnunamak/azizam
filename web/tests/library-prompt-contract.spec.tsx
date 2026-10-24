@@ -116,7 +116,7 @@ it("does not reveal missing-prompt history or load settings for another maker", 
       fixture.client.getQueryState(["library", "download", "image"]),
     ).toMatchObject({ status: "success", fetchStatus: "idle" }));
     const dialog = screen.getByRole("dialog", { name: "Picture" });
-    expect(within(dialog).queryByText(/No saved prompt|turned off prompt keeping/)).toBeNull();
+    expect(within(dialog).queryByText(/No saved prompt|turned off keeping words and chats/)).toBeNull();
     expect(fixture.fetchMock.mock.calls.filter(([input]) =>
       new URL(String(input), "https://fixture.invalid").pathname === "/me/api/prompt-memory",
     )).toHaveLength(0);

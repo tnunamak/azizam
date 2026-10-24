@@ -269,7 +269,7 @@ describe("the list of model names", () => {
       // "future-task" has no section of its own, so it stays under Chat.
       "Chat2",
       "Images1",
-      "Speech1",
+      "Voice1",
       "Audio1",
       "Transcription1",
       "Choose an option1",
@@ -326,7 +326,7 @@ describe("the list of model names", () => {
           engine_label: "provider-a",
           description: "D6.",
         }),
-        task("tts", "speech", { title: "Speech", description: "D7." }),
+        task("tts", "speech", { title: "Voice", description: "D7." }),
         task("tts-two", "speech", { title: "Supertonic", description: "D8." }),
       ]),
     );
@@ -367,14 +367,14 @@ describe("the list of model names", () => {
     expect(phone("paid-busy")).toBe("Busy · via Example provider · $1 per request");
     // The usual local price and a ready state are left out of a phone line,
     // which falls back to the price when nothing else is left to say.
-    expect(phone("home")).toBe("Local · no provider charge");
+    expect(phone("home")).toBe("Local · no charge");
   });
 });
 
 describe("price and status", () => {
   const cases: [string, Partial<CatalogRow>, string][] = [
-    ["a local row with an unknown cost", { cost: { kind: "unknown", price: null } }, "Local · no provider charge"],
-    ["a local free row", {}, "Local · no provider charge"],
+    ["a local row with an unknown cost", { cost: { kind: "unknown", price: null } }, "Local · no charge"],
+    ["a local free row", {}, "Local · no charge"],
     ["a remote free row", { locality: "remote" }, "No provider charge"],
     ["a remote paid row", { locality: "remote", cost: { kind: "paid", price: "$0.04 per image" } }, "$0.04 per image"],
     ["a remote paid row with no price", { locality: "remote", cost: { kind: "paid", price: null } }, "Paid · price not recorded"],
@@ -626,7 +626,7 @@ describe("Details mutation regressions", () => {
   it("keeps the local no-provider-charge price in Details for unrecorded costs", async () => {
     renderModels(catalog([row({ id: "local-price", locality: "local", cost: { kind: "unknown", price: null } })]));
     fireEvent.click(await screen.findByRole("button", { name: "local-price" }));
-    expect(fact("Price")).toBe("Local · no provider charge");
+    expect(fact("Price")).toBe("Local · no charge");
   });
 
   it("keeps the paid numeric price in Details even on local equipment", async () => {

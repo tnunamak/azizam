@@ -164,7 +164,7 @@ const seededCatalog = {
         {
           capability: "speech",
           intent: "speech.synthesis",
-          label: "Speech",
+          label: "Voice",
           input_modalities: ["text"],
           output_modalities: ["audio"],
           available: true,

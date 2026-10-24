@@ -60,7 +60,8 @@ export interface EngineDefinition {
   fields: EngineField[];
   check_rows: string[];
   check_request: { method: "GET" | "POST"; path: string; from: "origin" | "address" };
-  capabilities: { id: string; label: string }[];
+  /** What the engine can do. `kinds` are the model kinds that work serves: a model's Capability can only be one of them. */
+  capabilities: { id: string; label: string; kinds: string[] }[];
   models_note?: string;
 }
 
@@ -68,6 +69,8 @@ export interface EngineDefinitions {
   format_version: number;
   definitions: EngineDefinition[];
   real_tests: Record<string, { sent: string; cost: string }>;
+  /** The kinds a model may be given, as the gateway lists them, with their builder labels. */
+  model_kinds?: { id: string; label: string }[];
 }
 
 export interface FindingAction {
@@ -117,6 +120,8 @@ export interface DetectedModel {
   public_name: string;
   context_window: number | null;
   use: string;
+  /** The kind the server's own answer names for this model, when it names exactly one. */
+  kind?: string | null;
 }
 
 export interface CheckResult {
@@ -265,7 +270,7 @@ export interface EngineView {
   values: EngineValues;
   key: { state: "none" | "configured"; source?: "stored" | "env"; env_name?: string; origin?: string; entry_id?: string; availability?: "available" | "unavailable" | "unknown" };
   capabilities: string[];
-  models: { id: string; public_name: string; context_window: number | null; enabled: boolean; use?: string }[];
+  models: { id: string; public_name: string; context_window: number | null; enabled: boolean; use?: string; kind?: string | null }[];
   tests: Record<string, StoredTest>;
   check: {
     status?: "ok" | "failed" | "not_started";
@@ -414,7 +419,7 @@ export interface CreateEngineBody {
   name: string;
   values: EngineValues;
   capabilities?: string[];
-  models?: { id: string; public_name: string; context_window?: number | null; enabled?: boolean }[];
+  models?: { id: string; public_name: string; context_window?: number | null; enabled?: boolean; kind?: string | null }[];
   tests?: Record<string, { ok: boolean; at: number; seconds?: number; evidence_token?: string }>;
   acknowledge_warnings?: boolean;
   disabled?: boolean;

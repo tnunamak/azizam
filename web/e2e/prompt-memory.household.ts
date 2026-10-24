@@ -301,9 +301,9 @@ test.describe("Try: keep request history off", () => {
     const toggle = page.getByRole("switch", { name: "Keep request history" });
     await expect(toggle).toBeChecked();
     await expect(
-      page.getByText("Azizam tries to keep the prompt with the audio."),
+      page.getByText("Azizam tries to keep the words with the audio."),
     ).toBeVisible();
-    await expect(page.getByText("Only you can see kept prompts.")).toBeVisible();
+    await expect(page.getByText("Only you can see kept words.")).toBeVisible();
 
     const kept = `The paper boat is on the puddle ${Date.now()}`;
     await page.getByRole("textbox", { name: "Prompt" }).fill(kept);
@@ -314,15 +314,15 @@ test.describe("Try: keep request history off", () => {
     await page.getByRole("button", { name: "Run" }).click();
     expect((await submit).postDataJSON().extensions).toBeUndefined();
     await expect(
-      page.getByRole("heading", { name: "Speech result" }),
+      page.getByRole("heading", { name: "Voice result" }),
     ).toBeVisible({
       timeout: 60_000,
     });
-    await expect(page.getByText("Prompt not kept")).toHaveCount(0);
+    await expect(page.getByText("Words not kept")).toHaveCount(0);
 
     await toggle.click();
     await expect(
-      page.getByText("The prompt isn’t kept. The audio still goes to Library."),
+      page.getByText("The words aren’t kept. The audio still goes to Library."),
     ).toBeVisible();
     const forgotten = `A lantern glows in the fog ${Date.now()}`;
     await page.getByRole("textbox", { name: "Prompt" }).fill(forgotten);
@@ -384,7 +384,7 @@ test.describe("Keys", () => {
     await page.getByRole("button", { name: "Create app and key" }).click();
     await expect(
       page.getByText(
-        "Prompts sent with this key follow your prompt-memory settings. Anyone holding it can access your saved prompts.",
+        "Words sent with this key follow your saved words and chats setting. Anyone holding it can access your saved words and chats.",
       ),
     ).toBeVisible();
     await ctx.close();
@@ -473,7 +473,7 @@ test.describe("Your settings", () => {
     ).json();
     expect(memory.prompt_memory.effective_remember).toBe(false);
     await page.goto("/try/?capability=image");
-    await expect(page.getByText("Prompts aren’t kept", { exact: true })).toBeVisible();
+    await expect(page.getByText("Words aren’t kept", { exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "Change" })).toHaveAttribute(
       "href",
       "/account/",
@@ -570,7 +570,7 @@ test("Try sends forget for a stale off snapshot even after the backend turns on"
   };
   await setMemory(false);
   await page.goto("/try/?capability=speech");
-  await expect(page.getByText("Prompts aren’t kept", { exact: true })).toBeVisible();
+  await expect(page.getByText("Words aren’t kept", { exact: true })).toBeVisible();
   await setMemory(true);
   const text = "stale off snapshot sentinel " + Date.now();
   await page.getByRole("textbox", { name: "Prompt" }).fill(text);
@@ -581,7 +581,7 @@ test("Try sends forget for a stale off snapshot even after the backend turns on"
   expect((await submitted).postDataJSON().extensions).toEqual({
     "com.azizam.prompts": { mode: "forget" },
   });
-  await expect(page.getByText("Prompt not kept")).toBeVisible({
+  await expect(page.getByText("Words not kept")).toBeVisible({
     timeout: 60_000,
   });
   await expect(

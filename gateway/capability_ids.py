@@ -4,11 +4,24 @@ A leaf module: the catalog (``model_presentation``) and the access-plan
 evaluator (``access_plans``) both read it, so neither imports the other.
 """
 
+from collections.abc import Iterable
+
 CAPABILITY_LABELS = {
-    "chat": "Chat", "image": "Images", "video": "Video", "speech": "Speech",
+    "chat": "Chat", "image": "Images", "video": "Video", "speech": "Voice",
     "transcribe": "Transcription", "music": "Music", "sfx": "Sound effects",
     "audio": "Audio", "decide": "Decisions", "embed": "Document search", "rerank": "Rerank",
 }
+# The kinds a registered model may declare: the one capability it serves, with
+# its builder label. The kinds they share with the catalog take the catalog's
+# word; engine pages say "Embeddings" where the catalog says "Document search".
+# The catalog binds a kinded model only the capabilities of its kind. A model
+# with no kind, or a kind not listed here, keeps every capability its engine
+# offers. These are the families registered models bind.
+MODEL_KIND_LABELS = {
+    "chat": CAPABILITY_LABELS["chat"], "embed": "Embeddings",
+    "speech": CAPABILITY_LABELS["speech"], "transcribe": CAPABILITY_LABELS["transcribe"],
+}
+MODEL_KINDS = tuple(MODEL_KIND_LABELS)
 PROTOCOL_CAPABILITIES = {
     "llm.execution": "chat", "typesafe-systemone": "decide",
     "chat": "chat", "completions": "chat", "chat.completions": "chat", "vision": "chat",
@@ -52,3 +65,13 @@ INTENT_CAPABILITIES = {
     "audio.translations": "transcribe",
     "videos.generate": "video",
 }
+
+
+def offered_model_kinds(words: Iterable[str]) -> list[str]:
+    """The kinds that an engine's record capability words serve, in MODEL_KINDS order.
+
+    One mapping from an engine's own words to a kind, so the definitions answer,
+    the save check and the probe's suggestion read the engine the same way.
+    """
+    served = {PROTOCOL_CAPABILITIES.get(word) for word in words}
+    return [kind for kind in MODEL_KINDS if kind in served]

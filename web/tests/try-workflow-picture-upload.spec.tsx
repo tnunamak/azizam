@@ -192,7 +192,7 @@ describe("a picture-edit workflow on Try", () => {
   it("asks the gateway not to keep the prompt when the member turned memory off", async () => {
     account.promptMemory.mockResolvedValue(promptMemory(false));
     await openWorkflow();
-    await screen.findByText("Prompts aren’t kept");
+    await screen.findByText("Words aren’t kept");
     fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture|^Description/ }), {
       target: { value: "Make the sky purple" },
     });

@@ -17,6 +17,8 @@ from typing import Any, Mapping
 
 import jsonschema
 
+from gateway.capability_ids import MODEL_KIND_LABELS, offered_model_kinds
+
 _REGISTRY_DIR = Path(__file__).resolve().parent.parent / "registry"
 DEFINITIONS_PATH = _REGISTRY_DIR / "engine_definitions.json"
 SCHEMA_PATH = _REGISTRY_DIR / "engine_definitions.schema.json"
@@ -73,15 +75,20 @@ class EngineCatalog:
             item["fields"] = sorted(item["fields"], key=lambda field: field.get("order", 0))
             primary = row["probes"]["primary"]
             item["check_request"] = {"method": primary["method"], "path": primary["path"], "from": primary["from"]}
+            # A capability names the kinds it serves, so the form offers only what the ticked capabilities serve.
             item["capabilities"] = [
-                {"id": cap_id, "label": capabilities[cap_id]["label"]} for cap_id in row["capabilities"]
+                {"id": cap_id, "label": capabilities[cap_id]["label"],
+                 "kinds": offered_model_kinds(capabilities[cap_id]["record_capabilities"])}
+                for cap_id in row["capabilities"]
             ]
             out.append(item)
         tests = {
             test_id: {"sent": test["sent"], "cost": test["cost"]}
             for test_id, test in self.data["real_tests"].items()
         }
-        return {"format_version": self.data["format_version"], "definitions": out, "real_tests": tests}
+        model_kinds = [{"id": kind, "label": label} for kind, label in MODEL_KIND_LABELS.items()]
+        return {"format_version": self.data["format_version"], "definitions": out, "real_tests": tests,
+                "model_kinds": model_kinds}
 
 
 def _where(path: Any) -> str:

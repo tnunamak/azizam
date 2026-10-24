@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway.capabilities import Capability
 from gateway.availability import project_service
+from gateway.capability_ids import MODEL_KINDS
 from gateway.local_capabilities import build_local_capabilities
 from gateway.model_presentation import (CAPABILITY_LABELS, LISTED_METADATA_KEY, RECOMMENDED_ALIASES, capability_presentation, product_capability,
     declared_health_success, engine_label, model_locality, service_health_endpoint, starts_on_demand, CAPABILITY_ICON_KEYS)
@@ -129,9 +130,17 @@ def registered_model_capabilities(service_records: Mapping[str, Any]) -> list[Ca
             if not model_id:
                 continue
             availability = model_file_availability(model, model_records, service=service)
+            bound = _capabilities_for_kind(capabilities, model.get("kind"))
             out.extend(replace(capability, model=str(model_id), availability=availability)
-                       for capability in capabilities if capability.model is None)
+                       for capability in bound if capability.model is None)
     return out
+
+
+def _capabilities_for_kind(capabilities: Sequence[Capability], kind: Any) -> list[Capability]:
+    """A model's kind is the one capability it serves. No kind, or one this gateway does not list, keeps them all."""
+    if kind not in MODEL_KINDS:
+        return list(capabilities)
+    return [capability for capability in capabilities if product_capability(capability) == kind]
 
 
 def build_models_catalog(
@@ -615,7 +624,7 @@ def _base_row(
     if timing is not None:
         summary["typical_seconds"] = timing["typical_seconds"]
     if locality == "local":
-        summary["cost_label"] = "Local · no provider charge"
+        summary["cost_label"] = "Local · no charge"
     elif cost["kind"] == "free":
         summary["cost_label"] = "No provider charge"
     elif cost["price"] is not None:

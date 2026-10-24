@@ -335,7 +335,7 @@ export function purgeStatus(
   return `Removing copies from older files in the background.${count}`;
 }
 
-/** The note shown with a new key: whether prompts sent with it are kept. */
+/** The note shown with a new key: whether words sent with it are kept. */
 export function keyPromptNote(
   promptMemory:
     | { person_id?: string | null; description?: string }
@@ -345,8 +345,8 @@ export function keyPromptNote(
   if (!promptMemory) return null;
   if (promptMemory.description) return promptMemory.description;
   return promptMemory.person_id
-    ? "This key acts as you. Anyone who has it can see the prompts you saved."
-    : "Media prompts sent with this key are not remembered. Requests to /v1/responses with store:true can save the conversation until it is explicitly deleted.";
+    ? "This key acts as you. Anyone who has it can see your saved words and chats."
+    : "Words sent with this key are not kept. Requests to /v1/responses with store:true can save the conversation until it is explicitly deleted.";
 }
 
 /**

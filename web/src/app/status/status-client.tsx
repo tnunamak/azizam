@@ -192,11 +192,9 @@ function enginesFrom(
         backend,
         name: displayName(engineDisplayName(service, display)),
         shortName: displayName(engineShortName(service, display)),
-        // People's names for capabilities (VOICE glossary): Speech is Voice.
         label:
           display?.capability_labels
             ?.filter((label) => !/\((?:speech|transcription)\)/i.test(label))
-            .map((label) => (label === "Speech" ? "Voice" : label))
             .join(", ") || "",
         role: titleize(service.role || h?.role || service.kind || "engine"),
         state: healthPresentation.label,

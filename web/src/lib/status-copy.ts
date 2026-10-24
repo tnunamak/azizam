@@ -35,7 +35,7 @@ const capabilityLabel: Record<string, string> = {
   chat: "Chat",
   image: "Images",
   video: "Video",
-  speech: "Speech",
+  speech: "Voice",
   transcribe: "Transcription",
   music: "Music",
   sfx: "Sound effects",

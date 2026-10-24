@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, engine_admin, engine_check, secret_store, service_registry, transforms
 from gateway.compat import positive_int_env
+from gateway.models_catalog import registered_model_capabilities
 from gateway.litellm_substrate import compile_litellm_config_from_registry
 from gateway.provider_sidecar import provider_secret_env_map_from_registry, provider_secret_origin_map_from_registry
 from tests.support.engine_dns import use_fake_engine_dns
@@ -481,6 +482,82 @@ def test_an_older_record_keeps_its_key_reference_and_its_start_driver_through_th
     assert after["config"]["api_key_env"] == "OLDER_KEY"
     assert after["lifecycle"]["driver"] == "systemd" and after["lifecycle"]["driver_config"] == lifecycle["driver_config"]
     assert "definition" not in after["config"], "a rename preserves the inferred legacy record"
+
+
+def test_a_model_kind_is_saved_shown_and_bound_to_its_own_capability(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    _silent(fake_upstreams, "kind.fk.test")
+    created = _create(owner, {"definition": "openai-compatible", "name": "Kind Engine", "disabled": True,
+                              "values": {"address": "http://kind.fk.test/v1"}, "capabilities": ["chat", "embeddings"],
+                              "models": [{"id": "chat-up", "public_name": "chat-model", "kind": "chat"},
+                                         {"id": "embed-up", "public_name": "embed-model", "kind": "embed"},
+                                         {"id": "plain-up", "public_name": "plain-model"}]})
+    assert created.status_code == 201, created.text
+    view = owner.get("/admin/api/engines/kind-engine").json()["engine"]
+    assert {row["public_name"]: row.get("kind") for row in view["models"]} == {
+        "chat-model": "chat", "embed-model": "embed", "plain-model": None}
+    # The create kept the engine off; the binding is for a live engine, so read the same record switched on.
+    live = {sid: {**record, "enabled": True} for sid, record in _registry(gateway)["services"].items()}
+    bound: dict[str, set[str]] = {}
+    for capability in registered_model_capabilities({"services": live}):
+        bound.setdefault(capability.model, set()).add(capability.intent)
+    assert bound["chat-model"] == {"chat.completions", "text.completions"}
+    assert bound["embed-model"] == {"text.embeddings"}
+    assert bound["plain-model"] == {"chat.completions", "text.completions", "text.embeddings"}
+
+
+def test_a_model_kind_the_engine_does_not_offer_is_refused_and_nothing_is_saved(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    _silent(fake_upstreams, "chat-only.fk.test")
+    before = set(_registry(gateway)["services"])
+    refused = _create(owner, {"definition": "openai-compatible", "name": "Chat Only", "disabled": True,
+                              "values": {"address": "http://chat-only.fk.test/v1"}, "capabilities": ["chat"],
+                              "models": [{"id": "chat-up", "public_name": "chat-model", "kind": "chat"},
+                                         {"id": "voice-up", "public_name": "voice-model", "kind": "speech"}]})
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["field"] == "models.1.kind", "the error names the model's Capability control"
+    assert refused.json()["error"]["message"] == "This engine doesn’t offer Voice."
+    assert set(_registry(gateway)["services"]) == before, "a refused save leaves no engine behind"
+
+
+def test_a_capability_cannot_be_unticked_while_a_model_is_kinded_for_it(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    _silent(fake_upstreams, "embed-engine.fk.test")
+    created = _create(owner, {"definition": "openai-compatible", "name": "Embed Engine", "disabled": True,
+                              "values": {"address": "http://embed-engine.fk.test/v1"}, "capabilities": ["chat", "embeddings"],
+                              "models": [{"id": "embed-up", "public_name": "embed-model", "kind": "embed"}]})
+    assert created.status_code == 201, created.text
+    # The engine form saves with its definition and values; a body without them is the generic service edit.
+    refused = _edit(owner, "embed-engine", {"definition": "openai-compatible", "values": {"address": "http://embed-engine.fk.test/v1"},
+                                            "capabilities": ["chat"]})
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["field"] == "models.0.kind"
+    view = owner.get("/admin/api/engines/embed-engine").json()["engine"]
+    assert {row["public_name"]: row.get("kind") for row in view["models"]} == {"embed-model": "embed"}
+
+
+def _store_model_kind(gateway, service_id, kind):
+    """Store a model kind the way a save from before the check did: straight into the registry, unchecked."""
+    registry = _registry(gateway)
+    registry["services"][service_id]["config"]["models"][0]["kind"] = kind
+    _put_registry(gateway, registry)
+
+
+def test_an_engine_rename_keeps_a_stored_kind_it_does_not_offer_and_is_saved(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    _silent(fake_upstreams, "legacy-kind.fk.test")
+    created = _create(owner, {"definition": "openai-compatible", "name": "Legacy Kind", "disabled": True,
+                              "values": {"address": "http://legacy-kind.fk.test/v1"}, "capabilities": ["chat"],
+                              "models": [{"id": "chat-up", "public_name": "chat-model", "kind": "chat"}]})
+    assert created.status_code == 201, created.text
+    _store_model_kind(gateway, "legacy-kind", "speech")
+
+    saved = _edit(owner, "legacy-kind", {"definition": "openai-compatible", "name": "Renamed Kind",
+                                         "values": {"address": "http://legacy-kind.fk.test/v1"}})
+
+    assert saved.status_code == 200, saved.text
+    assert _record(gateway, "legacy-kind")["name"] == "Renamed Kind"
+    assert _record(gateway, "legacy-kind")["config"]["models"][0]["kind"] == "speech"
 
 
 def test_create_answers_with_the_new_engine_id(gateway, fake_upstreams):

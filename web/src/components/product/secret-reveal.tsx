@@ -9,8 +9,8 @@ export interface SecretRevealProps {
   secret: string | null;
   label?: string;
   onSaved?: () => void;
-  /** One line about what the key carries, e.g. whether its prompts are
-   * remembered (`keyPromptNote`). */
+  /** One line about what the key carries, e.g. whether its words are
+   * kept (`keyPromptNote`). */
   note?: string | null;
 }
 /** For newly issued secrets only: confirmation permanently removes the value from this view. */
