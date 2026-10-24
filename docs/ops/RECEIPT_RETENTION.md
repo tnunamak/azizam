@@ -42,7 +42,11 @@ Request totals aggregate retained top-level receipts. They exclude child receipt
 A media job is one request. Its submit receipt is the request, and the work receipts
 that carry the job's `job_id` fold into it: their costs are summed, and the backend,
 start, remote flag and outcome come from them. Work receipts are not counted apart
-from their job. A job with no work receipt keeps its submit receipt's own facts.
+from their job. The Try page's image submit receipt carries its job's `job_id`, so the
+pair stays linked after the job record is removed. A submit receipt written before that
+carries no `job_id` and is linked only while its job record exists. A job with no work
+receipt keeps its submit receipt's own facts, except that a job record showing the job
+failed makes the request failed; the record counts only when the viewer may read it.
 Folding deletes no receipt.
 The embedded `receipts` list contains at most the 50 most recent selected requests,
 one row per request.
