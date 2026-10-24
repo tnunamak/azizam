@@ -150,12 +150,19 @@ function signInHref(returnPath: string): string {
   return `/sign-in/?return_to=${encodeURIComponent(returnPath)}`;
 }
 
+/** Nothing to subscribe to: the page's hydration state never changes once it has happened. */
+const subscribeNever = () => () => {};
+
 function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
   const { resolvedTheme, setTheme } = useTheme();
+  // The static export draws this button before the browser knows the theme, and React keeps an attribute it drew at
+  // hydration even when the theme differs. So the name waits for the hydrated page: the server and the hydration render
+  // both say "Change theme", and the name that states the press follows once the page has hydrated.
+  const hydrated = useSyncExternalStore(subscribeNever, () => true, () => false);
   // The name says what a press does ("Switch to dark"), and the tooltip shows the same words. The icon is the mode a
   // press switches to: the moon in light, the sun in dark.
   const next = resolvedTheme === "dark" ? "light" : "dark";
-  const label = `Switch to ${next}`;
+  const label = hydrated ? `Switch to ${next}` : "Change theme";
   const toggle = () => setTheme(next);
   const icons = (
     <>
