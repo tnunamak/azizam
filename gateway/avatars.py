@@ -211,21 +211,24 @@ def _write_copy(person_id: str, data: bytes, *, path: Path) -> None:
 def store_generated(person_id: str, data: bytes, *, path: Path) -> dict[str, Any]:
     """Keep a copy of a picture the gateway made, and show it as the person's avatar.
 
-    A person who keeps one has settled their default: the automatic picture is never made for them after this.
+    A person who keeps one has settled their default: the automatic picture is never made for them after this, and
+    a default still being made publishes nothing.
     """
     if image_type(data) is None or len(data) > MAX_GENERATED_BYTES:
         raise AvatarError("invalid_generated_picture", "That picture cannot be kept as an avatar.")
     if admin_store.get_user(person_id, path=path) is None:
         raise AvatarError("person_not_found", "This account was not found.", 404)
-    _write_copy(person_id, data, path=path)
     now = int(time.time())
     with admin_store.transaction(path) as tx:
+        # The copy is written inside the transaction, so a default that settles at the same time waits for this keep.
+        _write_copy(person_id, data, path=path)
         tx.conn.execute(
             "INSERT INTO user_avatars(user_id, choice, generated_template, generated_at, default_attempted_at, updated_at) "
             "VALUES(?,?,?,?,?,?) "
             "ON CONFLICT(user_id) DO UPDATE SET choice=excluded.choice, generated_template=excluded.generated_template, "
             "generated_at=excluded.generated_at, updated_at=excluded.updated_at, "
-            "default_attempted_at=COALESCE(user_avatars.default_attempted_at, excluded.default_attempted_at)",
+            "default_attempted_at=COALESCE(user_avatars.default_attempted_at, excluded.default_attempted_at), "
+            "default_job_id=NULL",
             (person_id, GENERATED, TEMPLATE_VERSION, now, now, now),
         )
     return get(person_id, path=path)
@@ -237,18 +240,22 @@ def clear_generated(person_id: str, *, path: Path) -> dict[str, Any]:
     The made picture's metadata always goes, so no preview of a missing file is offered. A person who showed the
     made picture falls back in order: their sign-in picture if they have one, else the palette. That is the
     automatic choice (AUTO). Their other choices (their sign-in picture, or a palette colour) stay as they are.
+    Removing also settles the automatic default, so a default still being made publishes nothing.
     """
     now = int(time.time())
     with admin_store.transaction(path) as tx:
         row = _row(tx.conn, person_id)
-        if row is not None:
-            fallback = AUTO if row["choice"] == GENERATED else row["choice"]
-            tx.conn.execute(
-                "UPDATE user_avatars SET choice=?, generated_template=NULL, generated_at=NULL, updated_at=? "
-                "WHERE user_id=?",
-                (fallback, now, person_id),
-            )
-    remove_generated_files(person_id, path=path)
+        fallback = AUTO if row is None or row["choice"] == GENERATED else row["choice"]
+        # Selecting from users means a person who has been removed gets no record back.
+        tx.conn.execute(
+            "INSERT INTO user_avatars(user_id, choice, default_attempted_at, updated_at) "
+            "SELECT id, ?, ?, ? FROM users WHERE id=? "
+            "ON CONFLICT(user_id) DO UPDATE SET choice=excluded.choice, generated_template=NULL, generated_at=NULL, "
+            "default_attempted_at=COALESCE(user_avatars.default_attempted_at, excluded.default_attempted_at), "
+            "default_job_id=NULL, updated_at=excluded.updated_at",
+            (fallback, now, now, person_id),
+        )
+        remove_generated_files(person_id, path=path)
     return get(person_id, path=path)
 
 
@@ -291,6 +298,8 @@ def finish_default(person_id: str, job_id: str, data: bytes | None, *, path: Pat
 
     The picture becomes the person's avatar only while they still have the automatic choice and no sign-in
     picture. Otherwise it is kept for them to choose later. A job that is no longer the current one changes nothing.
+    Every choice the person makes (a keep, a pick or a Remove) forgets the job, so a default that finishes after one
+    publishes nothing and overwrites nothing.
     """
     now = int(time.time())
     with admin_store.transaction(path) as tx:
@@ -330,10 +339,13 @@ def set_choice(person_id: str, choice: Any, *, path: Path) -> dict[str, Any]:
             raise AvatarError("picture_unavailable", "Your sign-in provider has not shared a picture.", 409)
         if choice == GENERATED and not _has_current_copy(person_id, row, path=path):
             raise AvatarError("generated_unavailable", "Make an avatar first.", 409)
+        # Any choice settles the automatic default, and forgets a job that is still making it.
         conn.execute(
-            "INSERT INTO user_avatars(user_id, choice, updated_at) VALUES(?,?,?) "
-            "ON CONFLICT(user_id) DO UPDATE SET choice=excluded.choice, updated_at=excluded.updated_at",
-            (person_id, choice, now),
+            "INSERT INTO user_avatars(user_id, choice, default_attempted_at, updated_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET choice=excluded.choice, updated_at=excluded.updated_at, "
+            "default_attempted_at=COALESCE(user_avatars.default_attempted_at, excluded.default_attempted_at), "
+            "default_job_id=NULL",
+            (person_id, choice, now, now),
         )
     return get(person_id, path=path)
 
