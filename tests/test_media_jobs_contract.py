@@ -30,7 +30,8 @@ def make(db, **kw):
 def test_stored_constants_are_the_documented_values():
     assert mj.REPLAY_WINDOW_S == 14 * 24 * 3600 and mj.SCHEMA_VERSION == 6
     assert mj.ADMIN_ONLY_FIELDS == {"workflow", "backend", "app_profile", "app_id", "api_key_name"}
-    assert mj.INTERNAL_ONLY_FIELDS == {"metadata", "owner_key_hash", "owner_scope", "input_hash", "creating_receipt_id"}
+    assert mj.INTERNAL_ONLY_FIELDS == {"metadata", "owner_key_hash", "owner_scope", "input_hash", "creating_receipt_id",
+                                        "maker_person_id", "maker_credential_id", "maker_connection_id"}
     assert mj.PHASE_FIELDS == ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
 
 

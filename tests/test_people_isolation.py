@@ -329,7 +329,7 @@ def test_legacy_runtime_key_owns_its_new_queued_jobs_without_app_identity(people
     from gateway.runtime_auth import RuntimeIdentity
     identity = RuntimeIdentity(name="legacy-key", key_hash="a" * 64)
     monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda request: proxy.AuthContext(identity=identity))
-    with request_source.acting_as(credential_id=identity.key_hash):
+    with request_source.acting_as(app_id=None, credential_id=identity.key_hash):
         job = media_jobs.create(media_jobs.MediaJob(intent="image.generate", owner_key_hash=identity.key_hash))
     request = SimpleNamespace()
     assert proxy._gateway_record_authorizer(request, "media_job", job.to_dict("internal"))

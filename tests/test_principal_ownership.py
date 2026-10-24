@@ -159,9 +159,11 @@ def test_rotation_media_and_record_http_scopes(owners, monkeypatch):
     app.include_router(create_gateway_router(WorkflowRegistry(), media_job_store_path=db, receipt_store_path=receipts,
         record_scope_provider=proxy._gateway_record_scope, record_authorizer=proxy._gateway_record_authorizer))
     client = TestClient(app)
-    for owned in (job, legacy_job):
-        assert client.get(f"/gateway/v1/media/jobs/{owned.job_id}").status_code == 200
-    assert len(client.get("/gateway/v1/media/jobs").json()["jobs"]) == 2
+    # The App's job, made by a request its credential authenticated, reads through the rotated key. The legacy job has
+    # no stamped maker, so no one reads it (fail closed, OV3 round 3): it is a 404 and absent from the list.
+    assert client.get(f"/gateway/v1/media/jobs/{job.job_id}").status_code == 200
+    assert client.get(f"/gateway/v1/media/jobs/{legacy_job.job_id}").status_code == 404
+    assert len(client.get("/gateway/v1/media/jobs").json()["jobs"]) == 1
     assert client.get("/gateway/v1/receipts/azizam-new").status_code == 200
     active[0] = other
     for owned in (job, legacy_job):

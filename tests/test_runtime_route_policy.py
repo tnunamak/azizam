@@ -550,6 +550,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "job_id": "job_runtime_policy",
             "intent": "image.generate",
             "status": proxy.media_jobs.STATUS_SUCCEEDED,
+            "app_id": "app_runtime_policy",
             "owner_key_hash": proxy.hash_api_key(RAW_KEY),
             "maker_credential_id": proxy.hash_api_key(RAW_KEY),
         }
@@ -580,7 +581,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "job_id": "job_audio_policy",
             "intent": "music.generate",
             "status": proxy.media_jobs.STATUS_SUCCEEDED,
+            "app_id": "app_runtime_policy",
             "owner_key_hash": proxy.hash_api_key(RAW_KEY),
+            "maker_credential_id": proxy.hash_api_key(RAW_KEY),
             "assets": [{
                 "asset_id": "aud_" + "a" * 64,
                 "media_type": "audio/mpeg",
@@ -608,7 +611,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "job_id": "job_audio_policy",
             "intent": "music.generate",
             "status": proxy.media_jobs.STATUS_SUCCEEDED,
+            "app_id": "app_runtime_policy",
             "owner_key_hash": proxy.hash_api_key(RAW_KEY),
+            "maker_credential_id": proxy.hash_api_key(RAW_KEY),
             "assets": [{"asset_id": "aud_" + "a" * 64}],
         }
 
