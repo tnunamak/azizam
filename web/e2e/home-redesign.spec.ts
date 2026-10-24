@@ -484,7 +484,7 @@ test("S1 signed out at / with single sign-on only, one primary control links str
       await page.route("**/auth/api/options*", (route) => answerSignInOptions(route));
       await page.goto("/");
       // The href is the options' provider address plus the name box's answer (the chooser's remember flag).
-      const primary = page.locator("main [data-variant='default']");
+      const primary = page.locator("main [data-slot='button'][data-variant='make']");
       await expect(primary).toHaveCount(1);
       await expect(primary).toHaveAttribute("href", "/login?return_to=%2F&remember=1");
       const button = await primary.boundingBox();
@@ -572,10 +572,10 @@ test("S3 owner password reveals the form in place, with focus on Email", async (
     await expect(page.getByLabel("Email", { exact: true })).toBeFocused();
     expect(page.url()).toBe(url);
     expect(navigations).toBe(0);
-    // The form opens below the name box, which stays under the single sign-on button.
+    // Once the form is open, the name box sits after its Sign in, so it covers both ways in (DESIGN.md 4.9).
     const box = await page.getByRole("checkbox", { name: "Show my name on this browser next time" }).boundingBox();
-    const email = await page.getByLabel("Email", { exact: true }).boundingBox();
-    expect(box!.y).toBeLessThan(email!.y);
+    const signIn = await page.getByRole("button", { name: "Sign in", exact: true }).boundingBox();
+    expect(box!.y).toBeGreaterThan(signIn!.y);
   } finally {
     await context.close();
   }
