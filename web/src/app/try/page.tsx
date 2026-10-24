@@ -143,7 +143,7 @@ type CatalogOption = {
   order: number;
   /** Takes pictures as input, so it is a vision model rather than an ordinary chat model. */
   pictures: boolean;
-  /** Makes embeddings rather than chat replies. */
+  /** This option is the embedding capability. A row that also chats keeps its chat option, which is not embedding. */
   embedding: boolean;
 };
 type WorkflowOption = {
@@ -950,7 +950,7 @@ function groupCatalog(payload: unknown) {
         id,
         order,
         pictures: takesPictures(record),
-        embedding: makesEmbeddings(record),
+        embedding: makesEmbeddingsAs(record, capability),
         label: modelDisplayName(id, {
           models: [
             {
@@ -1252,11 +1252,14 @@ function takesPictures(record: Record<string, unknown>) {
   });
 }
 
-/** A model that makes embeddings: an embedding intent, or an embedding output. */
-function makesEmbeddings(record: Record<string, unknown>) {
-  return capabilitySummaries(record).some((item) => {
+/**
+ * Whether one catalog option of a row is an embedding model: its capability is embedding, or a capability
+ * of the same kind lists an embedding output. A row that also chats keeps its chat option, which is not.
+ */
+function makesEmbeddingsAs(record: Record<string, unknown>, capability: TryTab) {
+  return capability === "embed" || capabilitySummaries(record).some((item) => {
     const output = Array.isArray(item.output_modalities) ? item.output_modalities : [];
-    return capabilityTab(item.intent) === "embed" || output.includes("embedding");
+    return capabilityTab(item.intent) === capability && output.includes("embedding");
   });
 }
 

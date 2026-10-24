@@ -401,7 +401,10 @@ pytest = 17338
 # fetch matrix from five cases to four. Main's 3451 less 4 is 3447, measured on 2026-10-24 with `npx vitest list --json`.
 # Train r105: 3451 on main, +36 from the Try cleanup, -4 from OV3 slice 1 (Library chooser cases removed) = 3483.
 # Try default with unknown capability fields: +3 vitest cases (one unit, two page). vitest list measured 3486 (base 3483, no case removed).
-vitest = 3486
+# Try default counts each option's embedding flag, not the row's: +2 vitest cases (a row that only embeds is never the
+# default; a chat option whose own capability lists an embedding output is never the default). Two existing dual-row
+# page tests now expect the chat option. vitest list measured 3488 (base 3486, no case removed).
+vitest = 3488
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).

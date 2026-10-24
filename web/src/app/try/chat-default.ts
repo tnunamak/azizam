@@ -13,7 +13,7 @@ export type ChatCandidate = {
   order: number;
   /** Takes pictures as input. */
   pictures: boolean;
-  /** Makes embeddings rather than chat replies. */
+  /** This option is an embedding model, not a chat choice. */
   embedding: boolean;
 };
 
@@ -27,7 +27,8 @@ function earliest<T extends ChatCandidate>(candidates: readonly T[]) {
 /**
  * The default chat choice: the catalog's recommendation when it is an
  * ordinary chat model, else the first ordinary one in catalog order. An
- * embedding model is never the default, even when it can also chat. When
+ * embedding option is never the default. A row that both chats and embeds
+ * offers a chat option, and that option is an ordinary chat choice. When
  * every chat model takes pictures, the first of those still stands, so Run
  * stays possible and the picker shows a choice. With no chat model at all,
  * there is no default.

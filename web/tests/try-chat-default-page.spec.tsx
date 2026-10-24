@@ -131,8 +131,8 @@ const dualRow = {
   ],
 };
 
-describe("Chat never starts on an embedding model", () => {
-  it("skips the embedding row that sits first and starts on the only other chat model", async () => {
+describe("Chat takes a row that also makes embeddings, and never a row that only makes embeddings", () => {
+  it("takes the chat option of a row that also makes embeddings, ahead of a vision model", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) =>
@@ -145,12 +145,12 @@ describe("Chat never starts on an embedding model", () => {
     );
     render(<TryPage />);
     await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Vision model B"),
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Dual embedding model"),
     );
-    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("Dual embedding model");
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("Vision model B");
   });
 
-  it("starts with no model chosen when every chat row makes embeddings, and says to choose one", async () => {
+  it("starts on the only chat row when that row also makes embeddings", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) =>
@@ -159,11 +159,62 @@ describe("Chat never starts on an embedding model", () => {
     );
     render(<TryPage />);
     await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Dual embedding model"),
+    );
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("Choose a model");
+  });
+
+  it("never starts on a row that only makes embeddings, and so offers no chat model", async () => {
+    const embedderRow = {
+      id: "embedder",
+      name: "Embedding model",
+      display_name: "Embedding model",
+      capability: "embed",
+      alias: false,
+      use_names: ["embedder"],
+      locality: "local",
+      capabilities: [
+        { intent: "text.embeddings", capability: "embed", input_modalities: ["text"], output_modalities: ["embedding"] },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        json(url.includes("workflows") ? { workflows: [] } : { aliases: [], models: [embedderRow] }),
+      ),
+    );
+    render(<TryPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("No options available"),
+    );
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("Embedding model");
+  });
+
+  it("never starts on a chat option whose own capability lists an embedding output", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        json(
+          url.includes("workflows")
+            ? { workflows: [] }
+            : {
+                aliases: [],
+                models: [
+                  bareChat("odd", "Odd output model", {
+                    capabilities: [
+                      { intent: "chat.completions", capability: "chat", input_modalities: ["text"], output_modalities: ["embedding"] },
+                    ],
+                  }),
+                ],
+              },
+        ),
+      ),
+    );
+    render(<TryPage />);
+    await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Choose a model"),
     );
-    const model = screen.getByRole("combobox", { name: "Model" });
-    expect(model).not.toHaveTextContent("Dual embedding model");
-    expect(model).not.toHaveTextContent("No options available");
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("Odd output model");
   });
 });
 
