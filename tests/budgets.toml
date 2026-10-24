@@ -329,7 +329,11 @@
 # Walkthrough A16/A17 round 5 (Usage finds a media job's submit receipt by its job id): +4 pytest cases in tests/test_me_media.py
 # for a picture that still counts once after its job record is removed, an older submit receipt left unlinked, a job record
 # another app owns, and an audio job after its record is removed. collect-only measured 17242 (2026-10-24).
-pytest = 17242
+# Usage review fixes (media job folding, replays and start times): +7 pytest cases in tests/test_me_media.py for a success
+# with no start time, a success stored before start times, a chat named only as a job's parent, a same-key replay of a
+# failed picture, a picture row's model, an unpriced remote attempt, and a same-key replay of a failed image job through
+# the real image route. collect-only measured 17249 (2026-10-24).
+pytest = 17249
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
