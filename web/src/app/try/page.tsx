@@ -2621,10 +2621,10 @@ export default function TryPage() {
     }
     if (tab === "speech") {
       if (!(payload instanceof Blob) || !payload.size)
-        return nothing("Speech result", "audio");
+        return nothing("Voice result", "audio");
       const audioUrl = URL.createObjectURL(payload);
       objectUrls.current.push(audioUrl);
-      return { title: "Speech result", body: "Audio generated.", audioUrl, ...common };
+      return { title: "Voice result", body: "Audio generated.", audioUrl, ...common };
     }
     if (tab === "transcribe") {
       const text = (payload as { text?: unknown } | null)?.text;

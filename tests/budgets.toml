@@ -482,8 +482,8 @@ pytest = 17429
 # Train r106 (2026-10-24): vitest list is 3530 cases on the merged tree (vitest list --root web).
 # Per-model kinds (2026-10-24): +4 models-block cases, +1 wizard case, +1 Try guard case; vitest list measured 3536.
 # Refused kinds (2026-10-24): +4 models-block cases, +2 wizard cases and +2 record-page cases; vitest list measured 3544.
-# Refused kinds (2026-10-24): +4 models-block cases, +2 wizard cases and +2 record-page cases; vitest list measured 3544.
-vitest = 3544
+# Voice label (2026-10-24): +1 case in web/src/lib/terms.spec.ts; vitest list measured 3545.
+vitest = 3545
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).

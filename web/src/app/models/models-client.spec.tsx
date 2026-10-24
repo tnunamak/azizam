@@ -269,7 +269,7 @@ describe("the list of model names", () => {
       // "future-task" has no section of its own, so it stays under Chat.
       "Chat2",
       "Images1",
-      "Speech1",
+      "Voice1",
       "Audio1",
       "Transcription1",
       "Choose an option1",
@@ -326,7 +326,7 @@ describe("the list of model names", () => {
           engine_label: "provider-a",
           description: "D6.",
         }),
-        task("tts", "speech", { title: "Speech", description: "D7." }),
+        task("tts", "speech", { title: "Voice", description: "D7." }),
         task("tts-two", "speech", { title: "Supertonic", description: "D8." }),
       ]),
     );

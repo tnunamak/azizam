@@ -3,7 +3,7 @@ export const capabilityLabels = {
   chat: "Chat",
   image: "Images",
   video: "Video",
-  speech: "Speech",
+  speech: "Voice",
   transcribe: "Transcription",
   music: "Music",
   sound_effects: "Sound effects",

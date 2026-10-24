@@ -153,7 +153,7 @@ function letters(value: string): string {
 /**
  * The model's own name when it adds something to the model name: "Supertonic"
  * for `tts`, but nothing for `coder-q5` ("Coder Q5") or a title that only
- * names the task ("Speech" for `tts`).
+ * names the task ("Voice" for `tts`).
  */
 export function modelTitle(row: CatalogRow): string | undefined {
   const id = letters(row.id);

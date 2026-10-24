@@ -210,7 +210,7 @@ const seededCatalog = {
         {
           capability: "speech",
           intent: "speech.synthesis",
-          label: "Speech",
+          label: "Voice",
           input_modalities: ["text"],
           output_modalities: ["audio"],
           available: true,
@@ -451,7 +451,7 @@ describe("seeded catalog", () => {
     await screen.findByRole("button", { name: "chat" });
     expect(
       screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
-    ).toEqual(["Chat2", "Images2", "Speech1", "Choose an option1"]);
+    ).toEqual(["Chat2", "Images2", "Voice1", "Choose an option1"]);
     expect(idsIn("Chat")).toEqual(["chat", "demo-chat"]);
     expect(idsIn("Images")).toEqual(["image", "provider/image-fast"]);
     // Row facts: tags in words, a local price, a remote price, quiet status.
@@ -567,7 +567,7 @@ describe("each task lists only its own names", () => {
         peer("default", "chat.completions", "chat", "Chat"),
         peer("image", "image.generate", "image", "Images"),
         peer("decide", "decision.systemone", "decide", "Decisions"),
-        peer("tts", "speech.synthesis", "speech", "Speech"),
+        peer("tts", "speech.synthesis", "speech", "Voice"),
         peer("chat-peer", "chat.completions", "chat", "Chat"),
         peer("image-peer", "image.generate", "image", "Images"),
       ]),
@@ -576,6 +576,6 @@ describe("each task lists only its own names", () => {
     expect(idsIn("Chat")).toEqual(["default", "chat-peer"]);
     expect(idsIn("Images")).toEqual(["image", "image-peer"]);
     expect(idsIn("Choose an option")).toEqual(["decide"]);
-    expect(idsIn("Speech")).toEqual(["tts"]);
+    expect(idsIn("Voice")).toEqual(["tts"]);
   });
 });

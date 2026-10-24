@@ -32,7 +32,7 @@ function row(id: string, intent: string, paid = false) {
   const label = {
     chat: "Chat",
     image: "Images",
-    speech: "Speech",
+    speech: "Voice",
     transcribe: "Transcription",
     embed: "Embeddings",
   }[capability];
@@ -157,7 +157,7 @@ describe("catalog polish", () => {
     // The sections use the capability names the API and Try use.
     expect(
       screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
-    ).toEqual(["Speech1", "Transcription1"]);
+    ).toEqual(["Voice1", "Transcription1"]);
   });
 
   it("names embeddings by the plain task name Try uses, not member jargon", async () => {

@@ -234,7 +234,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   );
   await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Speech result", { exact: true })).toBeVisible();
+  await expect(page.getByText("Voice result", { exact: true })).toBeVisible();
 
   await page.getByRole("tab", { name: "Transcribe a recording" }).click();
   await page.setInputFiles("input[type=file]", {

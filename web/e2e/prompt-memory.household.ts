@@ -314,7 +314,7 @@ test.describe("Try: keep request history off", () => {
     await page.getByRole("button", { name: "Run" }).click();
     expect((await submit).postDataJSON().extensions).toBeUndefined();
     await expect(
-      page.getByRole("heading", { name: "Speech result" }),
+      page.getByRole("heading", { name: "Voice result" }),
     ).toBeVisible({
       timeout: 60_000,
     });
