@@ -39,7 +39,7 @@ from gateway import log_scrub
 from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, stt_chunking, transforms, url_binding
 from gateway.compat import positive_int_env
 from gateway.access_plans import PlanError, plan_from_document
-from gateway.capability_ids import MODEL_KIND_LABELS, MODEL_KINDS, offered_model_kinds
+from gateway.capability_ids import MODEL_KINDS
 from gateway.engine_access import who_can_use
 from gateway.engine_check import (
     SECRET_MASK,
@@ -473,15 +473,6 @@ def _models_config(definition: Mapping[str, Any], values: Mapping[str, Any], mod
     return out
 
 
-def _refuse_unoffered_kinds(models_config: Iterable[Mapping[str, Any]], record_caps: Iterable[str]) -> None:
-    """A model's kind must be one the engine's own capabilities serve. Otherwise the catalog binds the model to nothing."""
-    offered = offered_model_kinds(record_caps)
-    for index, row in enumerate(models_config):
-        kind = row.get("kind")
-        if kind and kind not in offered:
-            raise DraftError(f"This engine doesn’t offer {MODEL_KIND_LABELS[kind]}.", field=f"models.{index}.kind")
-
-
 # The config keys each optional field owns. A definition without the field leaves them as stored.
 _FIELD_CONFIG_KEYS = {
     "path_prefix": ("path_prefix",),
@@ -571,7 +562,7 @@ def build_raw(
         else:
             raw.pop("headers", None)
     models_config = _models_config(definition, values, models, stored_models)
-    _refuse_unoffered_kinds(models_config, record_caps)
+    service_registry.refuse_unoffered_kinds(models_config, record_caps)
     if models_config:
         raw["models"] = models_config
         raw.setdefault("model_policy_schema_version", service_registry.MODEL_POLICY_SCHEMA_VERSION)

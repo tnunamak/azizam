@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import capability_ids, engine_admin, engine_check  # noqa: E402
+from gateway import capability_ids, engine_admin, engine_check, service_registry  # noqa: E402
 from gateway.engine_definitions import load_engine_catalog  # noqa: E402
 from gateway.models_catalog import build_models_catalog, registered_model_capabilities  # noqa: E402
 
@@ -110,13 +110,25 @@ class KindOfferTests(unittest.TestCase):
     def test_the_form_refuses_a_kind_no_capability_of_the_engine_serves(self) -> None:
         rows = [{"model_group": "chat-model", "kind": "chat"}, {"model_group": "voice-model", "kind": "speech"}]
         with self.assertRaises(engine_check.DraftError) as raised:
-            engine_admin._refuse_unoffered_kinds(rows, ["chat", "completions"])
+            service_registry.refuse_unoffered_kinds(rows, ["chat", "completions"])
         self.assertEqual(raised.exception.field, "models.1.kind")
         self.assertEqual(str(raised.exception), "This engine doesn’t offer Voice.")
 
     def test_a_kind_the_engine_serves_and_a_model_without_one_are_accepted(self) -> None:
-        engine_admin._refuse_unoffered_kinds(
+        service_registry.refuse_unoffered_kinds(
             [{"model_group": "chat-model", "kind": "chat"}, {"model_group": "plain-model"}], ["chat", "completions"])
+
+    def test_a_kind_outside_the_vocabulary_is_refused_at_its_row(self) -> None:
+        with self.assertRaises(engine_check.DraftError) as raised:
+            service_registry.refuse_unoffered_kinds(
+                [{"model_group": "odd-model", "kind": "video"}], ["chat", "completions", "embeddings"])
+        self.assertEqual(raised.exception.field, "models.0.kind")
+        self.assertEqual(str(raised.exception), "The capability of “odd-model” is not one of the choices.")
+
+    def test_the_catalog_and_the_builder_name_the_shared_kinds_alike(self) -> None:
+        for kind in ("chat", "speech", "transcribe"):
+            self.assertEqual(capability_ids.MODEL_KIND_LABELS[kind], capability_ids.CAPABILITY_LABELS[kind])
+        self.assertEqual(capability_ids.CAPABILITY_LABELS["speech"], "Voice")
 
 
 if __name__ == "__main__":

@@ -81,7 +81,7 @@ def test_media_technical_description_stays_in_details(kind, expected):
     assert row["technical_description"] == technical
 
 
-@pytest.mark.parametrize("kind,title,expected", [("speech", "TTS", "Speech"), ("transcribe", "STT", "Transcription")])
+@pytest.mark.parametrize("kind,title,expected", [("speech", "TTS", "Voice"), ("transcribe", "STT", "Transcription")])
 def test_speech_protocol_acronyms_use_friendly_titles(kind, title, expected):
     from gateway.model_presentation import capability_presentation
     row = capability_presentation(_kind_capability(kind, backend="one", title=title))
@@ -304,7 +304,7 @@ def test_alias_does_not_hide_same_model_on_another_backend():
 
 
 @pytest.mark.parametrize("name, capabilities, engine, expected", [
-    ("Audio & Speech (provider)", ["audio", "speech"], "Chatterbox", "Chatterbox (speech)"),
+    ("Audio & Speech (provider)", ["audio", "speech"], "Chatterbox", "Chatterbox (voice)"),
     ("Image (Provider)", ["images", "videos"], "ComfyUI", "ComfyUI (images & video)"),
     ("ComfyUI (Image + Video Generation)", ["images", "videos"], None, "ComfyUI (images & video)"),
     ("Canary", ["transcriptions"], None, "Canary (transcription)"),
@@ -594,7 +594,7 @@ def test_owner_transcription_uses_same_taxonomy_even_without_live_observation():
 @pytest.mark.parametrize("name,capabilities,expected", [
     ("Local llama.cpp server (official; Bee rollback available)", ["openai", "chat", "completions"], "llama.cpp (chat)"),
     ("canary-stt", ["audio", "transcriptions"], "Canary (transcription)"),
-    ("chatterbox-tts", ["audio", "speech"], "Chatterbox (speech)"),
+    ("chatterbox-tts", ["audio", "speech"], "Chatterbox (voice)"),
 ])
 def test_legacy_seed_names_keep_identity_and_drop_deployment_notes(name, capabilities, expected):
     assert engine_label({"name": name, "capabilities": capabilities}, "internal") == expected

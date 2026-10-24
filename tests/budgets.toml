@@ -375,7 +375,9 @@
 # tests/test_engine_admin_routes.py; collect-only measured 17414 (scripts/run-hermetic-pytest.sh --collect-only -q).
 # Refused kinds (2026-10-24): +5 cases in tests/test_registered_model_kinds.py and +2 route cases in
 # tests/test_engine_admin_routes.py; collect-only measured 17421 (scripts/run-hermetic-pytest.sh --collect-only -q).
-pytest = 17421
+# Voice and kinds on every save (2026-10-24): +2 cases in tests/test_registered_model_kinds.py and +6 cases in
+# tests/test_generic_service_model_kinds.py; collect-only measured 17429 (scripts/run-hermetic-pytest.sh --collect-only -q).
+pytest = 17429
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -479,6 +481,7 @@ pytest = 17421
 # `vitest list` measured 3457 on 2026-10-24.
 # Train r106 (2026-10-24): vitest list is 3530 cases on the merged tree (vitest list --root web).
 # Per-model kinds (2026-10-24): +4 models-block cases, +1 wizard case, +1 Try guard case; vitest list measured 3536.
+# Refused kinds (2026-10-24): +4 models-block cases, +2 wizard cases and +2 record-page cases; vitest list measured 3544.
 # Refused kinds (2026-10-24): +4 models-block cases, +2 wizard cases and +2 record-page cases; vitest list measured 3544.
 vitest = 3544
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;

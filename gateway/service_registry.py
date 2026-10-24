@@ -35,6 +35,7 @@ from gateway import admin_store, engine_check, native_lane, projection, record_c
 from gateway import secret_refs as _refs
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
+from gateway.capability_ids import MODEL_KIND_LABELS, offered_model_kinds
 from gateway.discovery import WorkflowRecord, summarize_workflow
 from gateway.manifests import manifest_identity, validate_manifest
 
@@ -1914,6 +1915,25 @@ _PROTOCOL_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+def refuse_unoffered_kinds(models: Iterable[Any], record_capabilities: Iterable[str]) -> None:
+    """A model's kind must be one its record's capabilities serve. Otherwise the catalog binds the model to nothing.
+
+    Every save of a service record runs this, from the engine page and the generic service API alike, so a
+    refusal names the same row and field whichever form made the record.
+    """
+    offered = offered_model_kinds(record_capabilities)
+    for index, row in enumerate(models):
+        kind = row.get("kind") if isinstance(row, Mapping) else None
+        if not kind:
+            continue
+        field = f"models.{index}.kind"
+        if kind not in MODEL_KIND_LABELS:
+            name = row.get("model_group") or row.get("upstream_model") or ""
+            raise engine_check.DraftError(f"The capability of “{name}” is not one of the choices.", field=field)
+        if kind not in offered:
+            raise engine_check.DraftError(f"This engine doesn’t offer {MODEL_KIND_LABELS[kind]}.", field=field)
+
+
 def upsert_service_in_registry(
     registry: Mapping[str, Any],
     *,
@@ -1993,6 +2013,8 @@ def upsert_service_in_registry(
             )
         except ValueError as exc:
             raise ValueError(f"service {sid!r} config.retention_facts: {exc}") from None
+    models = record["config"].get("models")
+    refuse_unoffered_kinds(models if isinstance(models, list) else [], record["capabilities"])
     out["services"][sid] = record
     out["updated_at"] = int(time.time())
     out = normalize_service_registry(out)
