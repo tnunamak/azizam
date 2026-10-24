@@ -127,7 +127,8 @@ def signin_options(path, oidc: dict) -> dict:
             # keeps its refused-sign-in screen off (web/src/app/sign-in/page.tsx).
             "fresh_sign_in": False,
             "oidc_url": "/login?return_to=%2Finvite%2F", "instance_name": "Azizam",
-            "owner_name": "The gateway owner"}
+            # The sign-in page says who shares the gateway. Empty when no owner has a name the page may show.
+            "owner_name": admin_store.owner_display_name(path=path) or ""}
     return result
 
 

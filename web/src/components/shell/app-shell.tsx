@@ -69,6 +69,7 @@ import {
 import { LeaveGuard } from "./leave-guard";
 import { ReauthGate } from "./reauth-gate";
 import { SessionCoverFromStore } from "./session-cover";
+import { SignInFrame } from "./sign-in-frame";
 import { ToastGate } from "./toast-gate";
 import {
   checkPageShown,
@@ -752,6 +753,8 @@ function Shell({ children }: { children: React.ReactNode }) {
     !((pageName === undefined || pageName === "") && viewer?.authenticated);
   const showPublicShell =
     publicPage || sessionPending || sessionError || !viewer?.authenticated;
+  // The sign-in page is one surface, at /sign-in/ and at a signed-out "/". It has its own frame and no header.
+  const signInSurface = pageName === "sign-in" || (pageName === "" && !viewer?.authenticated);
   const currentPath = canonicalDestinationPath(pathname);
   const returnPath = signInReturnPath(pathname, "");
   const privateSignInHref = signInHref(returnPath);
@@ -866,7 +869,9 @@ function Shell({ children }: { children: React.ReactNode }) {
         >
           Skip to content
         </a>
-        {showPublicShell ? (
+        {showPublicShell && signInSurface ? (
+          <SignInFrame themeToggle={<ThemeToggle />}>{content}</SignInFrame>
+        ) : showPublicShell ? (
           <div className="min-h-dvh">
             <header className="flex items-center justify-between px-5 py-4 sm:px-8">
               <Link prefetch={false}

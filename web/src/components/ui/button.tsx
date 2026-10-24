@@ -33,6 +33,8 @@ const buttonVariants = cva(
         md: "h-10 px-4 text-body has-[>svg]:px-3.5",
         // Large actions use the form height on desktop; 44 is phone-only.
         lg: "h-10 max-sm:h-11 px-5 text-body has-[>svg]:px-4",
+        // The one primary action of a page that has nothing else to do (the sign-in page): 48 at every width.
+        xl: "h-12 px-6 text-lg has-[>svg]:px-5",
         icon: "size-8",
         "icon-xs": "size-8 [&_svg:not([class*='size-'])]:size-3.5",
         "icon-sm": "size-8",

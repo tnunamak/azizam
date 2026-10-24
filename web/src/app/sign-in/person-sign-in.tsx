@@ -72,7 +72,7 @@ export function NotFreshScreen({
         ref={headingRef}
         tabIndex={-1}
         id="sign-in-title"
-        className="text-title font-semibold tracking-tight outline-none"
+        className="text-3xl font-semibold tracking-[-0.02em] outline-none"
       >
         {copy.title}
       </h1>
@@ -83,13 +83,13 @@ export function NotFreshScreen({
           </p>
         ))}
       </div>
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+      <div className="mt-8 flex flex-col gap-3 sm:flex-row">
         {signOut ? (
-          <Button className="h-auto min-h-11 w-full py-2 whitespace-normal! sm:w-auto" asChild>
+          <Button size="xl" className="w-full whitespace-normal sm:w-auto" asChild>
             <a href="/login/provider-sign-out">Sign out of {provider}</a>
           </Button>
         ) : (
-          <Button className="h-auto min-h-11 w-full py-2 whitespace-normal! sm:w-auto" asChild>
+          <Button size="xl" className="w-full whitespace-normal sm:w-auto" asChild>
             <a href={signInAgain}>Sign in again</a>
           </Button>
         )}
@@ -139,8 +139,8 @@ export function withRemember(url: string, remember: boolean): string {
 }
 
 /**
- * The plain sign-in form (S9): email and password, or single sign-on, and the reset form for a reset link.
- * This is the form the page has always shown, with the name box (remember) added under the heading.
+ * The plain sign-in form (S9): single sign-on, email and password, or the reset form for a reset link. The name box
+ * (remember) sits under the heading, above both ways to sign in (DESIGN.md 4.9).
  */
 export function PlainSignIn({
   data,
@@ -166,12 +166,17 @@ export function PlainSignIn({
   const [ownerForm, setOwnerForm] = useState(false);
   const [remember, setRemember] = useState(true);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const rememberId = useId();
   const rememberHelpId = useId();
   useEffect(() => {
     headingRef.current?.focus();
   }, []);
+  // The owner's password form opens in place, and its first field takes the focus (S3).
+  useEffect(() => {
+    if (ownerForm) emailRef.current?.focus();
+  }, [ownerForm]);
   const login = useMutation({
     mutationFn: () =>
       reset
@@ -194,6 +199,7 @@ export function PlainSignIn({
     if (login.isError) errorRef.current?.focus();
   }, [login.isError, login.error]);
   const instanceName = data?.instance_name?.trim();
+  const owner = data?.owner_name?.trim();
   const provider = data?.oidc_label?.trim();
   const hasProvider = data?.oidc && !reset;
   const providerLabel =
@@ -222,51 +228,49 @@ export function PlainSignIn({
         ref={headingRef}
         tabIndex={-1}
         id="sign-in-title"
-        className="text-title font-semibold tracking-tight outline-none"
+        className="text-3xl font-semibold tracking-[-0.02em] outline-none"
       >
         {reset
           ? "Choose a new password"
           : `Sign in to ${instanceName || PRODUCT_NAME}`}
       </h1>
-      {nameBoxShown && (
-        <div className="mt-6 space-y-2">
-          <div className="flex items-center gap-3">
-            {/* A 44 px target around the 16 px box: every control on this page is at least 44 by 44. */}
-            <button
-              type="button"
-              role="checkbox"
-              id={rememberId}
-              aria-checked={remember}
-              aria-describedby={rememberHelpId}
-              onClick={() => setRemember((value) => !value)}
-              className="focus-visible:ring-ring/50 flex size-11 shrink-0 items-center justify-center rounded-control outline-none focus-visible:ring-[3px]"
-            >
-              <span
-                aria-hidden
-                className={cn(
-                  "flex size-4 items-center justify-center rounded-sm border",
-                  remember ? "bg-primary border-primary text-primary-foreground" : "border-input",
-                )}
-              >
-                {remember && <Check className="size-3.5" />}
-              </span>
-            </button>
-            <Label htmlFor={rememberId} className="text-body font-medium">
-              Show my name on this browser next time
-            </Label>
-          </div>
-          <p id={rememberHelpId} className="text-muted-foreground text-meta pl-7">
-            Turn this off on a public computer.
-          </p>
-        </div>
-      )}
+      {!reset && owner && <p className="text-muted-foreground text-lg mt-2">Shared by {owner}.</p>}
       <div className="mt-8">
+        {nameBoxShown && (
+          <div className="mb-6 space-y-2">
+            <div className="flex items-center gap-3">
+              {/* A 44 px target around the 16 px box: every control on this page is at least 44 by 44. */}
+              <button
+                type="button"
+                role="checkbox"
+                id={rememberId}
+                aria-checked={remember}
+                aria-describedby={rememberHelpId}
+                onClick={() => setRemember((value) => !value)}
+                className="focus-visible:ring-ring/50 flex size-11 shrink-0 items-center justify-center rounded-control outline-none focus-visible:ring-[3px]"
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    "flex size-4 items-center justify-center rounded-sm border",
+                    remember ? "bg-primary border-primary text-primary-foreground" : "border-input",
+                  )}
+                >
+                  {remember && <Check className="size-3.5" />}
+                </span>
+              </button>
+              <Label htmlFor={rememberId} className="text-body font-medium">
+                Show my name on this browser next time
+              </Label>
+            </div>
+            <p id={rememberHelpId} className="text-muted-foreground text-meta pl-7">
+              Turn this off on a public computer.
+            </p>
+          </div>
+        )}
         <ProviderNotices error={providerError} />
         {hasProvider && (
-          <Button
-            className="h-auto min-h-11 w-full py-2 whitespace-normal!"
-            asChild
-          >
+          <Button size="xl" className="w-full whitespace-normal" asChild>
             <a href={withRemember(data.oidc_url, rememberOn && remember)}>
               {providerLabel}
             </a>
@@ -280,15 +284,13 @@ export function PlainSignIn({
           </div>
         )}
         {hasProvider && ownerCanUsePassword && !ownerForm && (
-          <p className="text-muted-foreground text-meta mt-6">
-            <button
-              type="button"
-              className="text-link min-h-11 underline underline-offset-4"
-              onClick={() => setOwnerForm(true)}
-            >
-              Owner? Sign in with your password
-            </button>
-          </p>
+          <button
+            type="button"
+            className="text-link text-meta mt-3 flex min-h-11 items-center font-medium"
+            onClick={() => setOwnerForm(true)}
+          >
+            Owner? Sign in with your password
+          </button>
         )}
         {showForm && (
           <form
@@ -303,14 +305,15 @@ export function PlainSignIn({
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
+                  ref={emailRef}
                   id="email"
                   type="email"
+                  size="lg"
                   autoComplete="username"
                   required
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   disabled={login.isPending}
-                  className="min-h-11"
                 />
               </div>
             )}
@@ -321,12 +324,12 @@ export function PlainSignIn({
               <Input
                 id="password"
                 type="password"
+                size="lg"
                 autoComplete={reset ? "new-password" : "current-password"}
                 required
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 disabled={login.isPending}
-                className="min-h-11"
               />
             </div>
             {login.isError && (
@@ -341,8 +344,9 @@ export function PlainSignIn({
             )}
             <Button
               type="submit"
+              size="xl"
               variant={hasProvider ? "outline" : "default"}
-              className="h-auto min-h-11 w-full py-2 whitespace-normal!"
+              className="w-full whitespace-normal"
               disabled={login.isPending}
             >
               {login.isPending
@@ -355,8 +359,9 @@ export function PlainSignIn({
             </Button>
             {!reset && (
               <p className="text-muted-foreground text-meta">
-                Forgot your password? Ask the person who invited you for a
-                reset link.
+                {owner
+                  ? `Forgot your password? Ask ${owner} for a reset link.`
+                  : "Forgot your password? Ask the person who runs Azizam for a reset link."}
               </p>
             )}
           </form>
@@ -402,10 +407,13 @@ function passwordFailure(error: unknown): PasswordFailure {
 /** One remembered person's password screen (S6): their name is the heading, and the password is the only task. */
 export function PersonPassword({
   person,
+  owner,
   onBack,
   onGone,
 }: {
   person: RememberedPerson;
+  /** The owner's name for the reset line, or empty when the gateway has none. */
+  owner: string;
   onBack: () => void;
   /** The gateway no longer knows this name on this browser (S10). */
   onGone: (tile: string) => void;
@@ -457,7 +465,7 @@ export function PersonPassword({
         <h1
           tabIndex={-1}
           id="sign-in-title"
-          className="text-title font-semibold tracking-tight outline-none"
+          className="text-3xl font-semibold tracking-[-0.02em] outline-none"
         >
           {person.name}
         </h1>
@@ -471,7 +479,7 @@ export function PersonPassword({
         Not you? Choose someone else
       </button>
       <form
-        className="mt-6 space-y-5"
+        className="mt-8 space-y-5"
         aria-busy={attempt.isPending}
         onSubmit={(event) => {
           event.preventDefault();
@@ -484,6 +492,7 @@ export function PersonPassword({
             id={`${helpId}-password`}
             ref={passwordRef}
             type="password"
+            size="lg"
             autoComplete="current-password"
             required
             aria-label={`Password for ${person.name}`}
@@ -493,7 +502,7 @@ export function PersonPassword({
             onChange={(event) => setPassword(event.target.value)}
             disabled={attempt.isPending}
             // On an invalid field the focus ring takes the error colour, so the error stays visible while typing.
-            className="min-h-11 aria-invalid:focus-visible:border-destructive aria-invalid:focus-visible:ring-destructive/30"
+            className="aria-invalid:focus-visible:border-destructive aria-invalid:focus-visible:ring-destructive/30"
           />
         </div>
         <p id={helpId} className="text-muted-foreground text-meta">
@@ -516,13 +525,16 @@ export function PersonPassword({
         )}
         <Button
           type="submit"
-          className="h-auto min-h-11 w-full py-2 whitespace-normal!"
+          size="xl"
+          className="w-full whitespace-normal"
           disabled={attempt.isPending || tooMany}
         >
           {attempt.isPending ? "Signing in…" : "Sign in"}
         </Button>
         <p className="text-muted-foreground text-meta">
-          Forgot your password? Ask the person who invited you for a reset link.
+          {owner
+            ? `Forgot your password? Ask ${owner} for a reset link.`
+            : "Forgot your password? Ask the person who runs Azizam for a reset link."}
         </p>
       </form>
     </>
@@ -549,18 +561,18 @@ export function GoneNotice({
         ref={headingRef}
         tabIndex={-1}
         id="sign-in-title"
-        className="text-title font-semibold tracking-tight outline-none"
+        className="text-3xl font-semibold tracking-[-0.02em] outline-none"
       >
         {name} can’t sign in from this list
       </h1>
       <p className="text-body mt-4">
         Try another way to sign in, or ask the person who invited you for help.
       </p>
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-        <Button className="min-h-11" onClick={onAnotherWay}>
+      <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+        <Button size="xl" className="w-full sm:w-auto" onClick={onAnotherWay}>
           Sign in another way
         </Button>
-        <Button className="min-h-11" variant="outline" onClick={onBack}>
+        <Button size="xl" className="w-full sm:w-auto" variant="outline" onClick={onBack}>
           Back to the list
         </Button>
       </div>

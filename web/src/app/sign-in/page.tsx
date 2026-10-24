@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { BrandMark } from "@/components/product/brand-mark";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { navigate } from "@/lib/navigate";
 import { isNetworkFailure } from "@/lib/network-error";
 import { PRODUCT_NAME } from "@/lib/product";
@@ -72,6 +74,33 @@ function leavingTileFromRecord(): string | null {
   }
 }
 
+/**
+ * Reads the address and this browser's record. It runs on the first render in the browser, not in an effect, so the
+ * options and setup requests start in that same render. The server has no address and renders the loading state,
+ * which reads nothing from it, so the two renders agree.
+ */
+function readArrival(): Arrival | null {
+  if (typeof window === "undefined") return null;
+  const address = window.location.search;
+  const params = new URLSearchParams(address);
+  const after = afterFrom(address);
+  const error = params.get("error");
+  return {
+    after,
+    leaving: after === "switch" || after === "sign-out" ? leavingTileFromRecord() : null,
+    signedOut: readHandoff()?.state === "SIGNED_OUT",
+    // "/" is the sign-in page as well: a person who signs in there comes back to that same address.
+    requestedReturn:
+      params.get("return_to") ?? (window.location.pathname === "/" ? `${window.location.pathname}${address}` : null),
+    providerError:
+      error === "provider" || error === "no_sign_in_time" || error === "not_fresh" || error === "tile_unknown"
+        ? error
+        : null,
+    providerSignOut: params.get("provider_sign_out") === "1",
+    reset: new URLSearchParams(window.location.hash.slice(1)).get("reset") || "",
+  };
+}
+
 /** A view the list or forget mode cannot show with the names left (two for the list, one for forget mode). */
 function fitView(view: View, count: number): View {
   if (view.kind === "list" && count < 2) return { kind: "plain", fromList: false };
@@ -97,38 +126,20 @@ function titleFor(view: View, heading: { reset: boolean; firstRun: boolean }, na
 }
 
 export default function SignInPage() {
-  const [arrival, setArrival] = useState<Arrival | null>(null);
+  const [arrival, setArrival] = useState<Arrival | null>(readArrival);
   const [view, setView] = useState<View | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(() => (arrival?.after ? { kind: "after" } : null));
   const [removed, setRemoved] = useState<Set<string>>(() => new Set());
   const [opening, setOpening] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
-    const address = window.location.search;
-    const params = new URLSearchParams(address);
-    const after = afterFrom(address);
-    const error = params.get("error");
-    setArrival({
-      after,
-      leaving: after === "switch" || after === "sign-out" ? leavingTileFromRecord() : null,
-      signedOut: readHandoff()?.state === "SIGNED_OUT",
-      requestedReturn: params.get("return_to"),
-      providerError:
-        error === "provider" || error === "no_sign_in_time" || error === "not_fresh" || error === "tile_unknown"
-          ? error
-          : null,
-      providerSignOut: params.get("provider_sign_out") === "1",
-      reset: new URLSearchParams(window.location.hash.slice(1)).get("reset") || "",
-    });
-    setNotice(after ? { kind: "after" } : null);
-    if (after) {
-      // The ending is said once: a reload, or the next action, shows no line.
-      const url = new URL(window.location.href);
-      url.searchParams.delete("after");
-      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-    }
-  }, []);
+    if (!arrival?.after) return;
+    // The ending is said once: a reload, or the next action, shows no line.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("after");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [arrival]);
 
   // A link from an earlier person's page is dropped after a switch or a sign-out (DESIGN.md 4.10).
   const returnTo = arrival
@@ -286,31 +297,39 @@ export default function SignInPage() {
     window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
   }
 
-  const card = (content: ReactNode) => (
-    <section aria-labelledby="sign-in-title" className="mx-auto w-full max-w-md py-6 sm:py-12">
-      <div className="bg-card rounded-panel border p-6 sm:p-8">{content}</div>
+  // The column every state shares: the mark, then the state's own heading and content. The frame around it is
+  // SignInFrame (components/shell); this page is the same whether it is reached at /sign-in/ or at "/".
+  const column = (content: ReactNode) => (
+    <section aria-labelledby="sign-in-title" className="w-full max-w-[400px]">
+      <BrandMark className="mb-6 size-11!" />
+      {content}
     </section>
   );
 
   if (arrival === null || loading) {
-    return card(
+    // The same frame as the loaded page, so nothing moves when the options arrive. The heading text is fixed: the
+    // address may name a different page, and the server render has no address.
+    return column(
       <>
-        <h1 id="sign-in-title" className="text-title font-semibold tracking-tight">
-          {heading}
+        <h1 id="sign-in-title" className="sr-only">
+          Sign in
         </h1>
-        <div className="mt-8">
-          <p role="status" className="text-muted-foreground text-body">
-            Getting sign-in ready…
-          </p>
+        <div aria-hidden="true" className="space-y-3">
+          <Skeleton className="h-9 w-72 max-w-full" />
+          <Skeleton className="h-6 w-44" />
         </div>
+        <Skeleton className="mt-8 h-12 w-full" />
+        <p role="status" className="sr-only">
+          Getting sign-in ready…
+        </p>
       </>,
     );
   }
 
   if (unavailable || listUnreachable) {
-    return card(
+    return column(
       <>
-        <h1 id="sign-in-title" className="text-title font-semibold tracking-tight">
+        <h1 id="sign-in-title" className="text-3xl font-semibold tracking-[-0.02em]">
           {heading}
         </h1>
         <div className="mt-8 space-y-4">
@@ -328,7 +347,7 @@ export default function SignInPage() {
   }
 
   if (refusedNotFresh) {
-    return card(
+    return column(
       <NotFreshScreen
         provider={providerName}
         signOut={arrival.providerSignOut}
@@ -339,9 +358,9 @@ export default function SignInPage() {
   }
 
   if (firstRun) {
-    return card(
+    return column(
       <>
-        <h1 id="sign-in-title" className="text-title font-semibold tracking-tight">
+        <h1 id="sign-in-title" className="text-3xl font-semibold tracking-[-0.02em]">
           {heading}
         </h1>
         <div className="mt-8 space-y-6">
@@ -349,7 +368,7 @@ export default function SignInPage() {
             Create the first owner account to get started. If you were
             invited, ask your host to finish setup.
           </p>
-          <Button className="h-auto min-h-11 w-full py-2 whitespace-normal!" asChild>
+          <Button size="xl" className="w-full whitespace-normal" asChild>
             <a href="/setup/">Set up your gateway</a>
           </Button>
         </div>
@@ -378,11 +397,11 @@ export default function SignInPage() {
     />
   );
 
-  if (reset) return card(plain(false));
+  if (reset) return column(plain(false));
 
   switch (current.kind) {
     case "list":
-      return card(
+      return column(
         <Chooser
           people={ordered}
           providerName={providerName}
@@ -414,7 +433,7 @@ export default function SignInPage() {
       );
     case "forget": {
       const forgot = notice?.kind === "forgot" ? statusFor("forgot", { name: notice.name }) : null;
-      return card(
+      return column(
         <ForgetList
           people={people}
           providerName={providerName}
@@ -431,10 +450,11 @@ export default function SignInPage() {
     }
     case "person": {
       const who = people.find((person) => person.tile === current.tile);
-      if (!who) return card(plain(false));
-      return card(
+      if (!who) return column(plain(false));
+      return column(
         <PersonPassword
           person={who}
+          owner={options?.owner_name?.trim() ?? ""}
           onBack={() => {
             setNotice(null);
             setView(null);
@@ -444,7 +464,7 @@ export default function SignInPage() {
       );
     }
     case "gone":
-      return card(
+      return column(
         <GoneNotice
           name={nameOf(current.tile)}
           onAnotherWay={() => setView({ kind: "plain", fromList: true })}
@@ -452,7 +472,7 @@ export default function SignInPage() {
         />,
       );
     case "plain":
-      return card(
+      return column(
         <>
           {statusLine}
           {plain(current.fromList)}

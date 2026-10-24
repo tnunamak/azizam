@@ -105,7 +105,7 @@ export function Chooser({
         ref={headingRef}
         tabIndex={-1}
         id="sign-in-title"
-        className="text-title font-semibold tracking-tight outline-none"
+        className="text-3xl font-semibold tracking-[-0.02em] outline-none"
       >
         Who’s signing in?
       </h1>
@@ -236,7 +236,7 @@ export function ForgetList({ people, providerName, notice, error, onForget, onDo
         ref={headingRef}
         tabIndex={-1}
         id="sign-in-title"
-        className="text-title font-semibold tracking-tight outline-none"
+        className="text-3xl font-semibold tracking-[-0.02em] outline-none"
       >
         Forget someone on this browser
       </h1>
