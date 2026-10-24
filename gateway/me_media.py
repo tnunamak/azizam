@@ -1473,6 +1473,7 @@ def _embedded_provenance(path: Path | None) -> dict[str, Any]:
 
 
 def _receipt_in_scope(record: Mapping[str, Any] | None, scope: _MediaScope) -> bool:
+    # OV3 slice 2 owns this: Usage still admits receipts through App ownership until that slice replaces it.
     if scope.app_ids is None:
         # Unscoped callers use this only to compute aggregate operational totals.
         return True
