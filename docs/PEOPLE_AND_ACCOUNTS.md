@@ -77,15 +77,15 @@ picture the identity provider shared) or `generated` (a picture the gateway made
 
 | Endpoint | Result / request |
 | --- | --- |
-| `GET /me/api/profile/avatar` | `{choice, person_id, picture_url, sign_in_picture_url, made_picture_url, generating}`. `picture_url` is the gateway path of the picture shown, or `null`. The two preview paths are for the person only, and are `null` when there is no such picture. `generating` (the person only) is `true` while their automatic picture is being made. None is the provider's address. A read first keeps the automatic picture if its job has finished |
+| `GET /me/api/profile/avatar` | `{choice, person_id, picture_url, sign_in_picture_url, made_picture_url, generating, default_due}`. `picture_url` is the gateway path of the picture shown, or `null`. The two preview paths are for the person only, and are `null` when there is no such picture. `generating` (the person only) is `true` while their automatic picture is being made. `default_due` (the person only) is `true` while the automatic picture is still due and an image route exists for them now; the page asks for the picture only then. The session snapshot carries the same fields. None is the provider's address. A read first keeps the automatic picture if its job has finished |
 | `PUT /me/api/profile/avatar` | `{choice}` and nothing else, with the same user-action header and CSRF token as other `/me` writes. Any other word, extra key or URL is `400 invalid_avatar_choice`; `picture` with no stored picture is `409 picture_unavailable`; `generated` with no kept picture is `409 generated_unavailable` |
 | `GET /me/api/profile/avatars` | `{people: {id: {choice, picture_url}}}`: the caller's own; an owner or admin also gets everyone's (People and Library draw their marks from it). Another person's `picture_url` is shown only when that person chose `picture` or `generated` |
 | `GET /me/api/profile/avatar/picture[?person=id]` | The picture shown, as `image/png`, `image/jpeg`, `image/webp` or `image/gif`, or `404`. `?kind=generated` or `?kind=sign-in` gives one of the person's own pictures whichever avatar they show (the person only) |
-| `GET /me/api/profile/avatar/generator` | `{available}`: whether an image route exists that the person may use to make an avatar. The picker shows its make button only then |
+| `GET /me/api/profile/avatar/generator` | `{available}`: whether an image route exists that the person may use to make an avatar. The picker shows its make button only then. It only reads: the person's session App is made when a make job starts, not here |
 | `POST /me/api/profile/avatar/generate` | Starts one attempt: a make job for `image.generate` on that route, with a new seed. Answers `202 {job}`, or `503 generator_unavailable` |
 | `POST /me/api/profile/avatar/generated` | `{asset_id}`: keeps one of the person's own Library pictures as the avatar. Anything else, or a picture not in their Library, is `404 generated_not_found` |
 | `DELETE /me/api/profile/avatar/generated` | Removes the kept picture. The avatar returns to the sign-in picture when there is one, and to the palette when there is not. Its metadata goes whichever avatar was shown |
-| `POST /me/api/profile/avatar/default` | The automatic picture (below): called on a signed-in load where the avatar shows. Answers the person's avatar view. A second call, or a call for a person who has a sign-in picture or a chosen avatar, starts nothing |
+| `POST /me/api/profile/avatar/default` | The automatic picture (below): called on a signed-in load only when the session's `default_due` is `true`. Answers the person's avatar view. A second call, or a call for a person who has a sign-in picture or a chosen avatar, starts nothing |
 
 The `picture` claim of the ID token is read at sign-in, only for a person who is let in. It is kept only when it is
 an `https` URL of at most 2048 characters with no credentials, and it is stored on the person (`user_avatars`),
@@ -100,7 +100,11 @@ version. Others see that picture only when the person chose it. Removing it dele
 person deletes it too. Schema 19 rebuilds `user_avatars` once to add the word `generated`.
 
 **The automatic picture.** A person with no sign-in picture and no chosen avatar (`auto`) gets one picture made for
-them, once. The page asks on their first signed-in load where the avatar shows (`POST .../avatar/default`). One
+them, once. The page asks (`POST .../avatar/default`) only when the session says the picture is due: `default_due`
+is true while the person has no sign-in picture, no chosen avatar and no attempt yet, and an image route exists for
+them now. The gateway reads that without creating anything. The page asks at most once per page load, and at most
+once in five minutes in a tab, so a deferred ask is retried later and not on every navigation. Once the attempt is
+recorded, `default_due` is false and a normal load costs no extra request. One
 default starts at a time, and only when an image route exists and no other picture job is queued or running. A load
 that finds the slot taken, picture work busy, or a start refused for capacity (HTTP 429 or 503) starts nothing and
 uses no attempt, so a later load tries again. The attempt (`default_attempted_at`) is recorded once the job has
