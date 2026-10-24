@@ -134,7 +134,6 @@ def create_me_media_router(
         try:
             admin_path = _resolve_path(admin_db_path)
             jobs_path = _resolve_path(media_jobs_path)
-            receipt_path = _resolve_path(receipts_path)
             actor = _actor_from_request(request, session_provider, admin_path)
             # Even owners receive only the jobs they made (D51). Scope before pagination.
             scope = _member_media_scope(actor.user_id, admin_path)
@@ -165,7 +164,7 @@ def create_me_media_router(
                     break
             # The viewer's own jobs made through an App they do not own are found by their receipts (D51).
             listed = {job["job_id"] for job in rows}
-            made = _maker_jobs(scope, jobs_path=jobs_path, receipts_path=receipt_path, before=cursor,
+            made = _maker_jobs(scope, jobs_path=jobs_path, before=cursor,
                                updated_since=updated_since, include_active=include_active)
             if made:
                 rows.extend(job for job in made if job["job_id"] not in listed and _job_in_library(job, scope))
@@ -1077,38 +1076,23 @@ def _cache_in_library(
     return isinstance(decide(_library_viewer(scope), record, "read"), Own)
 
 
-_JOB_ID_CHUNK = 500
-
-
 def _maker_jobs(
-    scope: _MediaScope, *, jobs_path: Path, receipts_path: Path, before: tuple[int, str] | None,
+    scope: _MediaScope, *, jobs_path: Path, before: tuple[int, str] | None,
     updated_since: int | None, include_active: bool,
 ) -> list[dict[str, Any]]:
-    """The jobs whose receipts name the viewer as maker, filtered as the job list filters.
+    """The jobs the viewer made, found by the maker stamp on each job and filtered as the job list filters.
 
-    These can sit in an App the viewer does not own, which the App-scoped query never reads.
+    The stamp lives on the job, so a job stays listed after its receipt is pruned. These can sit in an App the viewer
+    does not own, which the App-scoped query never reads. One page and one more is enough: the caller merges the two
+    lists and cuts the page.
     """
     person_id = scope.viewer_person_id
     if not person_id:
         return []
-    receipt_rows = receipt_store.recent(
-        limit=receipt_store.count(path=receipts_path, outer_only=False) or 1, audience="internal",
-        maker_person_id=person_id, outer_only=False, path=receipts_path,
+    return media_jobs.recent(
+        101, maker_person_ids=[person_id], before=before, updated_since=updated_since,
+        include_active=include_active, path=jobs_path,
     )
-    job_ids = sorted({str(row["job_id"]) for row in receipt_rows if row.get("job_id")})
-    request_ids = sorted({str(row["request_id"]) for row in receipt_rows if row.get("request_id")})
-    out: dict[str, dict[str, Any]] = {}
-    for start in range(0, len(job_ids), _JOB_ID_CHUNK):
-        chunk = job_ids[start:start + _JOB_ID_CHUNK]
-        for job in media_jobs.recent(len(chunk), job_ids=chunk, before=before, updated_since=updated_since,
-                                     include_active=include_active, path=jobs_path):
-            out[str(job["job_id"])] = job
-    for start in range(0, len(request_ids), _JOB_ID_CHUNK):
-        chunk = request_ids[start:start + _JOB_ID_CHUNK]
-        for job in media_jobs.recent(len(chunk), request_ids=chunk, before=before, updated_since=updated_since,
-                                     include_active=include_active, path=jobs_path):
-            out.setdefault(str(job["job_id"]), job)
-    return list(out.values())
 
 
 def _scoped_jobs(

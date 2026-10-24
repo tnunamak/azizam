@@ -208,6 +208,34 @@ def test_member_can_read_and_cancel_owned_job(people):
     assert media_jobs.get(people.bob.job_id)["status"] == media_jobs.STATUS_QUEUED
 
 
+def test_a_member_job_in_another_members_app_stays_listed_after_its_receipt_is_pruned(people):
+    alice, bob = people.alice, people.bob
+    service = admin_store.create_app(
+        "Household", kind="service", owner_user_id=alice.user["id"], access_plan="person", path=people.paths["admin"]
+    )
+    receipt = RouteReceipt(
+        protocol="openai.images", intent="image.generate", app_id=service["id"],
+        app_profile="default-local", api_key_name="Household", status="succeeded",
+    )
+    with request_source.acting_as(app_id=service["id"], person_id=bob.user["id"]):
+        receipt_store.record(receipt, path=people.paths["receipts"])
+        job = media_jobs.create(media_jobs.MediaJob(
+            intent="image.generate", request_id=receipt.request_id, parent_request_id=receipt.request_id,
+            api_key_name="Household", app_profile="default-local", app_id=service["id"],
+        ), path=people.paths["jobs"])
+
+    def listed() -> set[str]:
+        response = people.client.get("/me/api/jobs", headers=bob.browser)
+        assert response.status_code == 200, response.text
+        return {row["job_id"] for row in response.json()["jobs"]}
+
+    assert job.job_id in listed()
+    with receipt_store._conn(people.paths["receipts"]) as connection:
+        connection.execute("DELETE FROM receipts WHERE request_id = ?", (receipt.request_id,))
+        connection.commit()
+    assert job.job_id in listed()
+
+
 def test_owned_job_access_survives_receipt_retention_and_status_updates(people):
     media_jobs.update_status(people.alice.job_id, media_jobs.STATUS_RUNNING)
     with receipt_store._conn(people.paths["receipts"]) as connection:

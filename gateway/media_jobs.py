@@ -460,6 +460,8 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     for column in ("maker_person_id", "maker_credential_id", "maker_connection_id"):
         if column not in job_columns:
             conn.execute(f"ALTER TABLE media_jobs ADD COLUMN {column} TEXT")
+    # Read a person's jobs by their maker stamp as a range, not a table scan. Created after the columns exist.
+    conn.execute("CREATE INDEX IF NOT EXISTS media_jobs_maker_person ON media_jobs(maker_person_id, updated_at, job_id)")
     if previous_version is None or previous_version < SCHEMA_VERSION:
         _backfill_asset_origins(conn)
     _repair_event_sequences(conn)
@@ -1167,9 +1169,11 @@ def recent(
     before: tuple[int, str] | None = None,
     job_ids: list[str] | None = None,
     request_ids: list[str] | None = None,
+    maker_person_ids: list[str] | None = None,
     path: Path = DB_PATH,
 ) -> list[dict[str, Any]]:
-    """Return up to ``limit`` most-recently-updated jobs, newest first. ``job_ids`` and ``request_ids`` are positive allow-lists."""
+    """Return up to ``limit`` most-recently-updated jobs, newest first. ``job_ids``, ``request_ids`` and
+    ``maker_person_ids`` are positive allow-lists."""
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
     if limit <= 0:
@@ -1186,6 +1190,12 @@ def recent(
                 ownership.append(f"json_extract(job_json, '$.{field}') IN ({','.join('?' for _ in values)})")
                 params.extend(values)
         clauses.append("(" + " OR ".join(ownership) + ")")
+    if maker_person_ids is not None:
+        # The durable maker stamp, read from its own indexed column. An empty list matches nothing.
+        if not maker_person_ids:
+            return []
+        clauses.append(f"maker_person_id IN ({','.join('?' for _ in maker_person_ids)})")
+        params.extend(maker_person_ids)
     if app_profile is not None:
         clauses.append("app_profile = ?")
         params.append(app_profile)
