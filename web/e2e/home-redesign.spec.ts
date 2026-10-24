@@ -361,7 +361,7 @@ test("at 768 px a first visit's chosen ring stays inside its card, and every cap
   await seedFirstVisitMember(page, member.context.request);
   await page.goto("/");
   const group = page.getByRole("region", { name: "What you can make here" }).getByRole("group", { name: "What to make" });
-  const chat = group.getByRole("button", { name: /^Chat Starts in/ });
+  const chat = group.getByRole("button", { name: "Chat About 1 s · no charge" });
   await chat.click();
   await expect(chat).toHaveAttribute("aria-pressed", "true");
   const shape = await group.evaluate((node) => {

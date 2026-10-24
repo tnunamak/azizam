@@ -75,7 +75,7 @@ describe("H4 facts under the composer", () => {
 
   it("lists the wait first, in lower case for the cost", () => {
     expect(listFacts(row({ icon_key: "voice" as never, typical_seconds: 3 }))).toBe("About 3 s · no charge");
-    expect(listFacts(row({ icon_key: "chat", typical_seconds: 1 }))).toBe("Starts in about 1 s · no charge");
+    expect(listFacts(row({ icon_key: "chat", typical_seconds: 1 }))).toBe("About 1 s · no charge");
   });
 });
 

@@ -92,15 +92,17 @@ export function runFacts(row: HomeCapability): string {
   return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
-/** The line in "What you can make here": the wait first, and the cost in lower case. */
+/**
+ * The line under a card in "What you can make here": the wait, then the cost in lower case. Every kind has the same
+ * shape ("About 1 s · no charge"), so no caption wraps at 768 px; the composer's facts line keeps "starts in".
+ */
 export function listFacts(row: HomeCapability): string {
   const wait = formatWait(row.typical_seconds);
-  const waitText = wait && kindOf(row) === "chat" ? `starts in ${wait}` : wait;
   const cost = row.cost_hint?.kind === "free" ? "no charge" : row.cost_hint?.kind === "paid" ? "paid model" : null;
   const amount = row.cost_hint?.kind === "paid" && row.cost_hint.price_usd != null
     ? `about USD ${formatUsd(row.cost_hint.price_usd)}`
     : null;
-  const line = [waitText, cost, amount].filter(Boolean).join(" · ");
+  const line = [wait, cost, amount].filter(Boolean).join(" · ");
   return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
