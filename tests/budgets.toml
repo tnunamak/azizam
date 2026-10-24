@@ -318,7 +318,9 @@
 # registered). The two tests whose arrangement moved to the snapshot build keep their count.
 # collect-only 16877 -> 16878 (2026-10-23).
 # Train r104: collect-only measured 17215.
-pytest = 17215
+# Sign-in front door: +1 case (tests/test_accounts.py, the options name the owner only by a clean display name). This branch,
+# which carries the Home branch's cases on top of main r104, collects 17241 (measured 2026-10-23).
+pytest = 17241
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
