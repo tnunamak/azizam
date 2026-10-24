@@ -346,9 +346,9 @@ class WorkflowsCatalogTests(unittest.TestCase):
         self.assertEqual(image["technical_notes"], "Test image workflow.")
         self.assertIsNone(image["purpose"])
 
-    def test_ace_step_denoise_has_its_own_help_line_in_the_catalog(self) -> None:
-        # The catalog row is the form's one source. A settable input with no help line showed only its
-        # technical name in the Try details, beside a control labelled otherwise: it read as an input with no input.
+    def test_ace_step_offers_no_denoise_because_its_graphs_start_from_an_empty_latent(self) -> None:
+        # Text to music starts from an empty latent with no source audio, so a denoise below 1 would change nothing.
+        # The manifests do not offer the setting, and each graph keeps its sampler at denoise 1.
         manifest_root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
         registry = WorkflowRegistry.from_directory(manifest_root)
         self.assertEqual(registry.errors, [])
@@ -363,9 +363,15 @@ class WorkflowsCatalogTests(unittest.TestCase):
         )
         self.assertEqual(len(payload["workflows"]), 2)
         for row in payload["workflows"]:
-            denoise = next(item for item in row["inputs"] if item["name"] == "denoise")
-            self.assertTrue(denoise["accepted"] and not denoise["ignored"], row["id"])
-            self.assertTrue(denoise.get("help"), f"{row['id']}: denoise needs a plain help line")
+            self.assertNotIn("denoise", [item["name"] for item in row["inputs"]], row["id"])
+        for record in records:
+            graph_path = Path(__file__).resolve().parents[1] / record.manifest["bindings"]["comfyui"]["workflow"]
+            graph = json.loads(graph_path.read_text())
+            sampler = next(
+                node for node in graph.values()
+                if isinstance(node, dict) and node.get("class_type") == "KSampler"
+            )
+            self.assertEqual(sampler["inputs"]["denoise"], 1, record.id)
 
     def test_every_exposed_builtin_workflow_has_a_distinct_short_purpose(self) -> None:
         manifest_root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
