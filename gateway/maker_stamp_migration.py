@@ -13,15 +13,20 @@ owner of a service App.
 - Person, from the job's own receipt. The receipt must share the job's request id and name this job's id, so a
   reused request id cannot lend another request's maker. The receipt's request-time maker is the person.
 - Person, from the owner the job was stored under (``owner_key_hash``, as written at creation):
-  a session App (a signed-in person's own work) names its person; a personal App names its owner, the fallback
-  D51 keeps for personal Apps. Any other owner, including a service App, a user or service-account principal, or
-  an unknown key, names no person.
+  a user principal (a session job with no App) names that user, whom the server recorded at authentication; a session
+  App (a signed-in person's own work) names its person; a personal App names its owner, the fallback D51 keeps for
+  personal Apps. Any other owner, including a service App, a service-account principal, or an unknown key, names no
+  person.
 - Credential: the stored owner key, unless it names a user or service account. A legacy job keeps no key id, so for
   an App-keyed job this is the App principal, and for an App-less legacy key it is the key hash.
 
 A job with neither a person nor a credential stays unstamped, and no one reads it. Each legacy job gets the three
 keys written (null when nothing resolved), so a later pass skips it. A finished pass is recorded in
 ``media_jobs_migrations``. The log counts the evidence used; no per-row column records it.
+
+Version 2 exists because version 1 named no person for a user principal and was already recorded as finished on some
+instances. Its rows keep the three keys, null, so the legacy selection skips them. Version 2 therefore also selects a
+user-principal job with no person, and a second run finds none left.
 """
 from __future__ import annotations
 
@@ -35,9 +40,13 @@ from typing import Any
 
 from gateway import media_jobs, sqlite_startup
 
-MIGRATION_NAME = "maker_stamp_backfill_v1"
+# v2: v1 named no person for a user principal and still recorded itself as finished, so v2 runs again and re-checks those.
+MIGRATION_NAME = "maker_stamp_backfill_v2"
 BATCH_SIZE = 500
 _NO_CREDENTIAL_PREFIXES = ("user:", "service_account:")
+# A job the pass still has to stamp: a legacy row with no maker keys, or a user-principal row that has no person.
+_UNSTAMPED = ("(json_type(job_json, '$.maker_person_id') IS NULL OR (json_extract(job_json, '$.maker_person_id') IS NULL "
+              "AND json_extract(job_json, '$.owner_key_hash') GLOB 'user:*'))")
 _MIGRATIONS_DDL = ("CREATE TABLE IF NOT EXISTS media_jobs_migrations ("
                    "name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)")
 
@@ -87,6 +96,9 @@ def _resolve(
     receipt_job, receipt_maker = receipts.get(request_id or "", (None, None))
     if receipt_maker and receipt_job == job_id:
         return receipt_maker, credential, "receipt"
+    user_id = owner[len("user:"):] if owner and owner.startswith("user:") else ""
+    if user_id:
+        return user_id, credential, "user_owner"
     if owner and owner.startswith("app:"):
         app_id = owner[len("app:"):]
         if app_id in session_apps:
@@ -103,7 +115,7 @@ def _already_applied(conn: sqlite3.Connection) -> bool:
 def backfill(
     path: Path = media_jobs.DB_PATH, *, receipts_path: Path, admin_path: Path,
 ) -> dict[str, int] | None:
-    """Stamp every legacy job once. Returns the count per evidence source, or None when a pass already ran."""
+    """Stamp each job in ``_UNSTAMPED`` once. Returns the count per evidence source, or None when this pass already ran."""
     with media_jobs._conn(path) as conn:
         conn.execute(_MIGRATIONS_DDL)
         conn.commit()
@@ -115,8 +127,8 @@ def backfill(
     while True:
         with media_jobs._conn(path) as conn:
             rows = conn.execute(
-                "SELECT job_id, request_id, job_json FROM media_jobs "
-                "WHERE job_id > ? AND json_type(job_json, '$.maker_person_id') IS NULL ORDER BY job_id LIMIT ?",
+                f"SELECT job_id, request_id, job_json FROM media_jobs WHERE job_id > ? AND {_UNSTAMPED} "
+                "ORDER BY job_id LIMIT ?",
                 (last_job_id, BATCH_SIZE),
             ).fetchall()
         if not rows:
@@ -137,7 +149,7 @@ def backfill(
                 data.update(maker_person_id=person, maker_credential_id=credential, maker_connection_id=None)
                 conn.execute(
                     "UPDATE media_jobs SET maker_person_id = ?, maker_credential_id = ?, maker_connection_id = NULL, "
-                    "job_json = ? WHERE job_id = ? AND json_type(job_json, '$.maker_person_id') IS NULL",
+                    f"job_json = ? WHERE job_id = ? AND {_UNSTAMPED}",
                     (person, credential, json.dumps(data, ensure_ascii=False, sort_keys=True), job_id),
                 )
                 counts[evidence] += 1

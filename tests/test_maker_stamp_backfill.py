@@ -1,10 +1,12 @@
 """The one-time maker backfill for media jobs written before schema 6 (OV3 slice 1).
 
 A legacy job gets the maker its own creation-time evidence names: its own receipt, then the owner it was stored under.
-Nothing else counts: a parent link, a client-supplied field, or the owner of a service App.
+A user principal (a session job with no App) names that user. Nothing else counts: a parent link, a client-supplied
+field, or the owner of a service App. A service-account principal names no one.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -12,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from gateway import admin_store, content_makers, maker_stamp_migration, me_media, media_jobs, receipt_store, record_ownership
+from gateway import admin_store, content_makers, maker_stamp_migration, me_media, media_jobs, receipt_store, record_ownership, request_source
 from gateway.content_access import Viewer
 from gateway.media_jobs import MediaJob
 
@@ -82,6 +84,26 @@ def _session(stores, name: str) -> Viewer:
     return Viewer(person_id=stores["people"][name], auth_kind="session")
 
 
+def _listed(stores, name: str) -> set[str]:
+    """The job ids the person's Library lists, as the Library selects them."""
+    scope = me_media._member_media_scope(stores["people"][name], stores["admin"])
+    return {job["job_id"] for job, _ in me_media._scoped_jobs(
+        scope, jobs_path=stores["jobs"], receipts_path=stores["receipts"])}
+
+
+def _leave_as_the_first_pass_did(stores, job_id: str) -> None:
+    """Write a legacy job as the first pass (v1) left it when no person resolved: the three maker keys present and
+    null, and v1 recorded as finished."""
+    with closing(sqlite3.connect(stores["jobs"])) as conn:
+        data = json.loads(conn.execute("SELECT job_json FROM media_jobs WHERE job_id = ?", (job_id,)).fetchone()[0])
+        data.update(maker_person_id=None, maker_credential_id=None, maker_connection_id=None)
+        conn.execute("UPDATE media_jobs SET job_json = ? WHERE job_id = ?",
+                     (json.dumps(data, ensure_ascii=False, sort_keys=True), job_id))
+        conn.execute("CREATE TABLE IF NOT EXISTS media_jobs_migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)")
+        conn.execute("INSERT INTO media_jobs_migrations(name, applied_at) VALUES ('maker_stamp_backfill_v1', 1)")
+        conn.commit()
+
+
 def test_a_legacy_personal_key_job_is_visible_to_its_maker_after_the_backfill(stores):
     _job(stores, "job_personal", request_id="req_personal", app_id=stores["personal_app"],
          owner=f"app:{stores['personal_app']}")
@@ -114,15 +136,55 @@ def test_a_legacy_personal_key_job_is_listed_in_its_makers_library_after_the_bac
          owner=f"app:{stores['personal_app']}")
     _make_legacy(stores, "job_listed")
 
-    def listed(name: str) -> set[str]:
-        scope = me_media._member_media_scope(stores["people"][name], stores["admin"])
-        return {job["job_id"] for job, _receipt in me_media._scoped_jobs(
-            scope, jobs_path=stores["jobs"], receipts_path=stores["receipts"])}
-
-    assert "job_listed" not in listed("alice")
+    assert "job_listed" not in _listed(stores, "alice")
     _backfill(stores)
-    assert "job_listed" in listed("alice")
-    assert "job_listed" not in listed("bob")
+    assert "job_listed" in _listed(stores, "alice")
+    assert "job_listed" not in _listed(stores, "bob")
+
+
+def test_a_legacy_session_job_with_no_app_is_visible_to_the_user_it_was_made_by(stores):
+    # A session job has no App. Its owner is the user principal the server recorded at authentication, so that user made it.
+    alice = stores["people"]["alice"]
+    _job(stores, "job_session", request_id="req_session_user", owner=f"user:{alice}")
+    _make_legacy(stores, "job_session")
+    assert not _reads(stores, "job_session", _session(stores, "alice"))
+
+    counts = _backfill(stores)
+
+    assert counts == {"user_owner": 1}
+    row = _row(stores, "job_session")
+    assert row["maker_person_id"] == alice and row["maker_credential_id"] is None
+    assert _reads(stores, "job_session", _session(stores, "alice"))
+    assert not _reads(stores, "job_session", _session(stores, "bob"))
+    assert "job_session" in _listed(stores, "alice")
+    assert "job_session" not in _listed(stores, "bob")
+
+
+def test_a_legacy_service_account_job_names_no_person(stores):
+    # A service account is a principal, not a person, so the job names no maker and no session reads it.
+    _job(stores, "job_robot", request_id="req_robot", owner="service_account:svc_daisy")
+    _make_legacy(stores, "job_robot")
+
+    counts = _backfill(stores)
+
+    assert counts == {"unresolved": 1}
+    row = _row(stores, "job_robot")
+    assert row["maker_person_id"] is None and row["maker_credential_id"] is None
+    for name in ("alice", "ops"):
+        assert not _reads(stores, "job_robot", _session(stores, name))
+
+
+def test_the_next_pass_gives_a_user_job_its_person_when_the_first_pass_left_it_without_one(stores):
+    alice = stores["people"]["alice"]
+    _job(stores, "job_first_pass", request_id="req_first_pass", owner=f"user:{alice}")
+    _make_legacy(stores, "job_first_pass")
+    _leave_as_the_first_pass_did(stores, "job_first_pass")
+    assert not _reads(stores, "job_first_pass", _session(stores, "alice"))
+
+    assert _backfill(stores) == {"user_owner": 1}
+
+    assert _row(stores, "job_first_pass")["maker_person_id"] == alice
+    assert _reads(stores, "job_first_pass", _session(stores, "alice"))
 
 
 def test_a_legacy_service_app_job_with_a_recorded_maker_goes_to_that_maker(stores):
@@ -179,7 +241,8 @@ def test_a_receipt_that_names_another_job_does_not_lend_its_maker(stores):
 
 
 def test_an_unresolvable_legacy_job_stays_unstamped_and_unread(stores):
-    _job(stores, "job_unknown", request_id="req_unknown", owner="user:not-a-person")
+    # No owner was stored, so no evidence names a maker.
+    _job(stores, "job_unknown", request_id="req_unknown", owner=None)
     _make_legacy(stores, "job_unknown")
 
     counts = _backfill(stores)
@@ -194,8 +257,9 @@ def test_an_unresolvable_legacy_job_stays_unstamped_and_unread(stores):
 def test_running_the_backfill_twice_changes_nothing(stores):
     _job(stores, "job_personal", request_id="req_p", app_id=stores["personal_app"], owner=f"app:{stores['personal_app']}")
     _job(stores, "job_svc", request_id="req_s", app_id=stores["service_app"], owner=f"app:{stores['service_app']}")
-    _job(stores, "job_unknown", request_id="req_u", owner="user:not-a-person")
-    for job_id in ("job_personal", "job_svc", "job_unknown"):
+    _job(stores, "job_user", request_id="req_user", owner=f"user:{stores['people']['alice']}")
+    _job(stores, "job_unknown", request_id="req_u", owner="service_account:svc_daisy")
+    for job_id in ("job_personal", "job_svc", "job_user", "job_unknown"):
         _make_legacy(stores, job_id)
     _backfill(stores)
     with closing(sqlite3.connect(stores["jobs"])) as conn:
@@ -222,3 +286,17 @@ def test_a_job_written_after_the_schema_upgrade_is_not_rewritten(stores):
 
     assert counts == {}
     assert _row(stores, "job_new")["maker_person_id"] is None
+
+
+def test_a_user_job_the_current_code_stamped_is_not_rewritten(stores):
+    # The current code stamps the person it authenticated, so that stamp is decided and the pass leaves it alone.
+    alice = stores["people"]["alice"]
+    with request_source.acting_as(app_id=None, person_id=alice):
+        media_jobs.create(media_jobs.MediaJob(
+            intent="image.generate", workflow="demo.image", backend="comfyui.local", request_id="req_current",
+            job_id="job_current", owner_key_hash=f"user:{alice}", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+            metadata={"mode": "make"},
+        ), path=stores["jobs"])
+
+    assert _backfill(stores) == {}
+    assert _row(stores, "job_current")["maker_person_id"] == alice
