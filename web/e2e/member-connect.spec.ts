@@ -107,8 +107,9 @@ test("an invited member connects an app with copied settings and the receipt nam
       .getByRole("link", { name: "Connect", exact: true })
       .click();
     await expect(mine.getByRole("heading", { level: 1, name: "Connect" })).toBeVisible();
-    const baseUrl = await copyAndRead(mine, mine.getByRole("button", { name: "Copy URL", exact: true }));
-    const model = await copyAndRead(mine, mine.getByRole("button", { name: "Copy Model IDs", exact: true }));
+    const recipe = mine.getByRole("region", { name: "Values for Any OpenAI-compatible app" });
+    const baseUrl = await copyAndRead(mine, recipe.getByRole("button", { name: "Copy Gateway address", exact: true }));
+    const model = await copyAndRead(mine, recipe.getByRole("button", { name: "Copy Model", exact: true }));
     expect(baseUrl).toBe(`${baseURL}/openai/v1`);
     expect(model.trim(), "the copied model name").not.toBe("");
 

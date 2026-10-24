@@ -37,7 +37,7 @@ test("owner signs in, opens Connect and copies an address from the recipe", asyn
     const picker = page.getByRole("group", { name: /^(Clients|Setting up: )/ });
     await expect(picker.getByRole("button", { pressed: true })).toHaveCount(0);
     // Only the client toggles carry aria-pressed; "More clients" does not.
-    expect(await picker.locator("button[aria-pressed]").count()).toBe(6);
+    await expect(picker.locator("button[aria-pressed]")).toHaveCount(6);
     await expect(picker.getByRole("button", { name: "More clients" })).toBeVisible();
     const recipe = page.getByRole("region", { name: "Values for Any OpenAI-compatible app" });
     await expect(recipe.getByLabel("Gateway address", { exact: true })).toHaveValue(`${baseURL}/openai/v1`);

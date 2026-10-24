@@ -70,6 +70,8 @@ async function fixture(
     fulfilJson(route, {
         ...home,
         user,
+        // Recent chats come from the shared gateway, which earlier tests write to. These tests are about media.
+        recent_chats: [],
         // The server chooses one recommendation per permitted capability.
         capabilities: aliases.map((alias) => {
           const presentation = {
@@ -177,6 +179,7 @@ test("Home recent media carries content while requests stay in receipts", async 
   await page.route("**/me/api/home", (route) =>
     fulfilJson(route, {
         ...home,
+        recent_chats: [],
         receipts: [
           {
             request_id: "polish-image-receipt",
