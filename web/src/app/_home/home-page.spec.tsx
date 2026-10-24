@@ -325,6 +325,30 @@ describe("H8 with no work, Home offers what can be made", () => {
   });
 });
 
+describe("H8 a first visit's audio cards", () => {
+  it("give speech and music a sample to play from the face, and a kind with no sample no play button", async () => {
+    const audio = { output_modalities: ["audio"] };
+    stubFetch({
+      "/me/api/home": () =>
+        homePayload({ capabilities: [capability("chat"), capability("speech", audio), capability("music", audio), capability("sfx", audio)] }),
+      "/me/api/media": () => ({ assets: [] }),
+    });
+    renderHome();
+    const group = within(await screen.findByRole("region", { name: "What you can make here" }));
+    expect(group.getByRole("button", { name: "Play a Voice sample" })).toBeVisible();
+    expect(group.getByRole("button", { name: "Play a Music sample" })).toBeVisible();
+    expect(group.getAllByRole("button", { name: /^Play a / })).toHaveLength(2);
+  });
+
+  it("with one kind to make, shows no cards: the composer keeps its single chip", async () => {
+    stubFetch({ "/me/api/home": () => homePayload({ capabilities: [capability("chat")] }), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    expect(await screen.findByRole("heading", { name: "Welcome, Robin" })).toBeVisible();
+    await waitFor(() => expect(screen.getAllByRole("group", { name: "What to make" })).toHaveLength(1));
+    expect(screen.queryByRole("region", { name: "What you can make here" })).toBeNull();
+  });
+});
+
 describe("H9 the owner panel holds operations, never content", () => {
   it("shows the engine that is down with one action, and no prompts or titles", async () => {
     stubFetch({

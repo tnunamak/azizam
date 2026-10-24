@@ -172,12 +172,12 @@ function audioWell(kind: string): string {
   return "bg-linear-to-br from-capability-voice/22 to-capability-video/18 dark:from-capability-video/22 dark:to-capability-voice/12";
 }
 
-/** The sample a card's play disc plays: only speech has one the web app ships (home-sample-voice.mp3). */
+/** The sample a card's play disc plays: the web app ships one for speech and one for music (home-sample-*.mp3). */
 function sampleAudio(row: HomeCapability): string | null {
+  if (!(row.output_modalities ?? []).includes("audio")) return null;
   const kind = kindOf(row);
-  return (row.output_modalities ?? []).includes("audio") && (kind === "speech" || kind === "voice")
-    ? "/home-sample-voice.mp3"
-    : null;
+  if (kind === "speech" || kind === "voice") return "/home-sample-voice.mp3";
+  return kind === "music" ? "/home-sample-music.mp3" : null;
 }
 
 /**
