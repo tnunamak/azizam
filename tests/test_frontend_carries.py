@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import frontend_loss, frontend_mount, route_registry
+from gateway import frontend_loss, frontend_mount, operation_security, route_registry
 from gateway.protocols import anthropic, ollama
 
 SEED = {record["id"]: record for record in route_registry.protocol_frontend_records(proxy_config=proxy.config)}
@@ -302,7 +302,7 @@ def _mount(seen: Seen, *, strictness: str, carries: list[str] | None, body: str 
     app = FastAPI()
     translators = frontend_mount.Translators({
         "vendor-v1": {"chat.completions": frontend_mount.Operation(seen.handler, frozenset({"POST"}),
-                                                                   self_authenticates=True)},
+                                                                   self_authenticates=True, auth=operation_security.APP_KEY)},
     })
     route = {"methods": ["POST"], "canonical": "/vendor/v1/chat", "intent": "chat.completions",
              "translator": "vendor-v1", "body": body}
@@ -395,7 +395,7 @@ def test_a_multipart_row_declares_it_is_not_loss_checked_and_the_response_says_s
 
     app = FastAPI()
     translators = frontend_mount.Translators({
-        "vendor-v1": {"images.edit": frontend_mount.Operation(handler, frozenset({"POST"}), self_authenticates=True)},
+        "vendor-v1": {"images.edit": frontend_mount.Operation(handler, frozenset({"POST"}), self_authenticates=True, auth=operation_security.APP_KEY)},
     })
     rows = frontend_mount.rows_from_frontends([{
         "id": "vendor", "enabled": True, "source": "builtin", "strictness": "exact",

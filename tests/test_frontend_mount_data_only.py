@@ -16,7 +16,7 @@ import pytest
 from fastapi import FastAPI, Request
 
 import proxy
-from gateway import frontend_mount, receipt_store, route_registry
+from gateway import frontend_mount, operation_security, receipt_store, route_registry
 from gateway.service_registry import service_from_backend_config
 from gateway.engine_admin import build_raw, clean_values
 from gateway.engine_definitions import load_engine_catalog
@@ -165,8 +165,8 @@ def _echo(request: Request) -> None:
 def _translators() -> frontend_mount.Translators:
     return frontend_mount.Translators({
         "identity": {
-            "chat.completions": frontend_mount.Operation(_echo, methods=frozenset({"POST"}), self_authenticates=True),
-            "models.list": frontend_mount.Operation(_echo, methods=frozenset({"GET"}), self_authenticates=True),
+            "chat.completions": frontend_mount.Operation(_echo, methods=frozenset({"POST"}), self_authenticates=True, auth=operation_security.APP_KEY),
+            "models.list": frontend_mount.Operation(_echo, methods=frozenset({"GET"}), self_authenticates=True, auth=operation_security.APP_KEY),
         },
     })
 
