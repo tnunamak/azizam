@@ -335,7 +335,11 @@
 # OV3 slice 1 round 5: +5 maker-backfill cases (a user-principal job, a service-account job, the next pass on a job
 # the first pass left without a person, a user job the current code stamped, a user job the current code stamped with
 # a connection) and +1 usage-count case. Full hermetic collection measured 17301 on 2026-10-24.
-pytest = 17301
+# OV3 slice 1 round 6: the activity cursor tests grow to 29 cases (+25: the sealed cursor's secrecy, tamper, foreign,
+# expired and malformed refusals, the one-400 check, and the field checks), +2 for a refused cursor at the route and
+# a member's job that stays listed after its receipt is pruned, and +4 for the upsert maker stamp.
+# Full hermetic collection measured 17332 on 2026-10-24.
+pytest = 17332
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
