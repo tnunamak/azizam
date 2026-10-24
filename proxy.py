@@ -5324,6 +5324,8 @@ async def proxy_stt_request(
                 elif streams:
                     receipt.metadata["status_code"] = 200
 
+            # The engine call starts here. Recording the start now lets Usage count a success of this route as served.
+            owner.mark_phase("started_at_ms")
             reply = await _stt_adapter(execution.backend_config).invoke(
                 _stt_connection(execution),
                 "stt.translate" if operation == "translations" else "stt.transcribe",

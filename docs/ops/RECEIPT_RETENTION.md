@@ -31,8 +31,10 @@ receipt's `cost.usd`. It does not reconcile the provider ledger.
 A zero `remote_spend` with `remote_spend_available=false` means no usable cost
 was recorded. It does not mean that service was free.
 `local_requests` counts requests whose receipt names a backend, records no charge,
-and shows the request was served (it succeeded, or it reached the backend). A
-request that failed before routing is not counted there; it has no recorded cost.
+and shows the request was served: it reached the backend, which its start time
+(`started_at_ms`) records. Receipts written before start times were recorded have no
+`started_at_ms` key, so for them a success is the only evidence the request was served.
+A request that failed before routing is not counted there; it has no recorded cost.
 Check `spend_measured_requests`, `spend_total_requests` and
 `unknown_paid_requests` as well as the total. Retaining all receipts does not
 guarantee that every provider charge has a recorded receipt cost.

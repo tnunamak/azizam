@@ -2248,14 +2248,17 @@ def _receipt_served_locally(receipt: Mapping[str, Any]) -> bool:
     """Whether the receipt positively shows the request ran on this machine.
 
     ``remote: false`` alone is the default, so it is not enough. The receipt must also name
-    a backend, must not record a charge, and must show the request was served: it succeeded,
-    or it reached the backend. A request that failed before routing never reached one, so it
-    is not counted local and reads as a cost not recorded.
+    a backend, must not record a charge, and must show the request was served: it reached the
+    backend, which its ``started_at_ms`` records. A request that failed before routing never
+    reached one, so it is not counted local and reads as a cost not recorded.
     """
     backend = receipt.get("backend")
     if receipt.get("remote") is not False or not isinstance(backend, str) or not backend.strip():
         return False
-    served = receipt.get("status") == "succeeded" or receipt.get("started_at_ms") is not None
+    # Receipts written before start times were recorded have no started_at_ms key, so a success is their only
+    # evidence. Every receipt written since carries the key, so a success without a start time is not local.
+    before_start_times = "started_at_ms" not in receipt and receipt.get("status") == "succeeded"
+    served = receipt.get("started_at_ms") is not None or before_start_times
     return served and _receipt_cost(receipt) in (None, 0)
 
 
