@@ -258,36 +258,32 @@ def _default_due(record: Mapping[str, Any]) -> bool:
 
 
 def default_due(person_id: str, *, path: Path) -> bool:
-    """Whether the automatic default is still to be made. It does not record an attempt; ``begin_default`` does."""
+    """Whether the automatic default is still to be made. It does not record an attempt; ``claim_default`` does."""
     return _default_due(get(person_id, path=path))
 
 
-def begin_default(person_id: str, *, path: Path) -> bool:
-    """Record the one automatic attempt, if it is still due. True when this call made it due and it is ours to start.
+def claim_default(person_id: str, job_id: str | None, *, path: Path) -> bool:
+    """Record the one automatic attempt, with the job it started, if the person has not chosen an avatar since.
 
-    The check and the record share one write transaction, so two page loads cannot both start the job. The
-    attempt is recorded before the job starts, so a job that fails to start is never retried.
+    ``job_id`` is the job the default started. ``None`` records a start that failed for good, so the attempt is used
+    up and never repeated. The check and the record share one write transaction. The call returns True when it
+    recorded the attempt. It returns False, and records nothing, when the person is gone or already has an attempt
+    or a choice of another kind.
     """
     now = int(time.time())
     with admin_store.transaction(path) as tx:
         if tx.conn.execute("SELECT 1 FROM users WHERE id=?", (person_id,)).fetchone() is None:
             return False
         row = _row(tx.conn, person_id)
-        if row is not None and not _default_due(_record(row)):
+        if row is not None and (row["default_attempted_at"] is not None or row["choice"] != AUTO):
             return False
         tx.conn.execute(
-            "INSERT INTO user_avatars(user_id, choice, default_attempted_at, updated_at) VALUES(?,?,?,?) "
-            "ON CONFLICT(user_id) DO UPDATE SET default_attempted_at=excluded.default_attempted_at, "
-            "updated_at=excluded.updated_at",
-            (person_id, AUTO, now, now),
+            "INSERT INTO user_avatars(user_id, choice, default_attempted_at, default_job_id, updated_at) "
+            "VALUES(?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET default_attempted_at=excluded.default_attempted_at, "
+            "default_job_id=excluded.default_job_id, updated_at=excluded.updated_at",
+            (person_id, AUTO, now, job_id, now),
         )
     return True
-
-
-def set_default_job(person_id: str, job_id: str, *, path: Path) -> None:
-    with admin_store.transaction(path) as tx:
-        tx.conn.execute("UPDATE user_avatars SET default_job_id=?, updated_at=? WHERE user_id=?",
-                        (job_id, int(time.time()), person_id))
 
 
 def finish_default(person_id: str, job_id: str, data: bytes | None, *, path: Path) -> None:

@@ -11,8 +11,10 @@ route exists, ``POST .../avatar/generate`` starts a make job, ``POST .../avatar/
 person's own results, and ``DELETE .../avatar/generated`` removes it (gateway/avatar_generation.py).
 
 A person with no sign-in picture and no chosen avatar also gets one picture made for them, once:
-``POST .../avatar/default`` starts it on their first signed-in page load. ``GET`` and ``POST`` keep the picture
-once its job has stopped, so the page sees it on its next read. The attempt is never repeated.
+``POST .../avatar/default`` starts it on a signed-in page load that finds it due. Only one starts at a time, and
+none while other picture work is busy. A load that finds either, or a start refused for capacity, starts nothing
+and uses no attempt, so a later load tries again. ``GET`` and ``POST`` keep the picture once its job has stopped,
+so the page sees it on its next read. Once the attempt is used, the default is never repeated.
 """
 from __future__ import annotations
 
@@ -40,6 +42,8 @@ log = logging.getLogger(__name__)
 # The make job states after which it makes no more pictures.
 JOB_STOPPED = frozenset({"succeeded", "failed", "canceled", "cancelled"})
 JOB_SUCCEEDED = "succeeded"
+# A start refused with one of these statuses is busy work or no capacity: a later load tries again.
+RETRY_LATER_STATUS = frozenset({429, 503})
 
 MAX_PICTURE_BYTES = 1024 * 1024
 FETCH_TIMEOUT_SECONDS = 8.0
@@ -135,6 +139,28 @@ class AvatarGeneration:
     busy: Callable[[], bool] = lambda: False
 
 
+class _DefaultSlot:
+    """Lets one automatic default start at a time, and only while no other picture work is busy.
+
+    ``reserve`` checks ``busy`` and takes the slot in one synchronous step on the event loop, so two loads cannot both
+    pass it. The slot is held across the awaits that follow, until the job has started or been refused. A started job
+    counts as busy as soon as it is scheduled, so once the slot is free, a second default must still wait.
+    """
+
+    def __init__(self, busy: Callable[[], bool]) -> None:
+        self._busy = busy
+        self._held = False
+
+    def reserve(self) -> bool:
+        if self._held or self._busy():
+            return False
+        self._held = True
+        return True
+
+    def release(self) -> None:
+        self._held = False
+
+
 def _error(code: str, message: str, status: int) -> JSONResponse:
     return JSONResponse({"error": {"code": code, "message": message}}, status_code=status,
                         headers={"Cache-Control": "no-store"})
@@ -174,6 +200,7 @@ def create_me_avatar_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/me/api/profile", tags=["me"])
     kept = cache if cache is not None else PictureCache()
+    default_slot = _DefaultSlot(generation.busy if generation is not None else (lambda: False))
 
     def db() -> Path:
         # A callable follows the gateway's store when it moves (a reload, a test).
@@ -225,26 +252,42 @@ def create_me_avatar_router(
             data = await asyncio.to_thread(_own_picture_bytes, generation, person_id, str(job["asset_ids"][0]))
         await asyncio.to_thread(avatars.finish_default, person_id, job_id, data, path=db())
 
+    async def _fail_default(person_id: str, reason: str) -> None:
+        """The default's start failed for good: the attempt is used up, so the picture is never retried."""
+        log.warning("automatic avatar for a person did not start: %s", reason)
+        await asyncio.to_thread(avatars.claim_default, person_id, None, path=db())
+
     async def _start_default(request: Request, person_id: str) -> None:
-        """Start the person's default picture: once, at low priority, and only when an image route exists."""
-        if generation is None or not await asyncio.to_thread(avatars.default_due, person_id, path=db()):
+        """Start the person's default picture: once, at low priority, and only when an image route exists.
+
+        The slot is reserved before anything is awaited, so loads that arrive together cannot all start one. A load
+        that finds picture work busy, another default starting, no route, or a capacity refusal starts nothing and
+        records no attempt: the default is still due on a later load. The attempt is recorded once a job has started,
+        or when the start fails for good.
+        """
+        if generation is None or not default_slot.reserve():
             return
-        # Other picture work comes first. Waiting here uses no attempt: the default is still due later.
-        if await asyncio.to_thread(generation.busy):
-            return
-        model = await asyncio.to_thread(generation.model_for, person_id)
-        if model is None:
-            return
-        # The attempt is recorded before the job starts, so a default that fails to start is never retried.
-        if not await asyncio.to_thread(avatars.begin_default, person_id, path=db()):
-            return
-        prompt = avatar_generation.build_prompt(avatar_generation.new_seed())
         try:
-            job = generation.start(request, person_id, model, prompt)
-        except Exception as exc:  # noqa: BLE001 - the page shows the palette; the attempt is already recorded
-            log.warning("automatic avatar for a person did not start: %s", type(exc).__name__)
-            return
-        await asyncio.to_thread(avatars.set_default_job, person_id, str(job["job_id"]), path=db())
+            if not await asyncio.to_thread(avatars.default_due, person_id, path=db()):
+                return
+            model = await asyncio.to_thread(generation.model_for, person_id)
+            if model is None:
+                return
+            prompt = avatar_generation.build_prompt(avatar_generation.new_seed())
+            try:
+                job = generation.start(request, person_id, model, prompt)
+            except PublicFailure as exc:
+                if exc.status_code in RETRY_LATER_STATUS:
+                    return  # Busy or at capacity: a later load starts it, and the attempt is kept.
+                await _fail_default(person_id, exc.code)
+                return
+            except Exception as exc:  # noqa: BLE001 - the page shows the palette; the attempt is used up
+                await _fail_default(person_id, type(exc).__name__)
+                return
+            if not await asyncio.to_thread(avatars.claim_default, person_id, str(job["job_id"]), path=db()):
+                log.info("automatic avatar job started after the person chose an avatar: its picture is not kept")
+        finally:
+            default_slot.release()
 
     @router.get("/avatar", include_in_schema=False)
     async def get_avatar(request: Request) -> JSONResponse:
