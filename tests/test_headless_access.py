@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from starlette.routing import Mount, Route, WebSocketRoute
 
 import proxy
-from gateway import accounts, admin_store, metrics_writer, providers, receipt_store, runtime_auth
+from gateway import accounts, admin_store, frontend_mount, metrics_writer, operation_security, providers, receipt_store, runtime_auth
 from tests.support.app_keys import issue_app_key
 from gateway.admin_api import _require_admin
 from gateway.admin_oidc import CookieConfig, csrf_token_for_session, encode_session_cookie, session_from_claims
@@ -205,7 +205,7 @@ def test_openapi_snapshot_and_security():
         method, path = key.split(" ", 1)
         operation = schema["paths"][path][method.lower()]
         assert operation["security"] == [{"OwnerBearer": []}]
-        assert operation["tags"] == [metadata["tag"]]
+        assert operation["tags"] == [metadata["tag"], "Owner only"]
         path_names = set(re.findall(r"\{([^}]+)\}", path))
         assert path_names == {parameter["name"] for parameter in operation["parameters"]
                               if parameter["in"] == "path"}
@@ -240,6 +240,113 @@ def test_unsigned_reference_lists_every_path_of_the_schema():
             assert f"<code>{escape(path)}</code>" in response.text, path
 
 
+def _operations(schema):
+    for path, item in schema["paths"].items():
+        for method, operation in item.items():
+            yield path, method, operation
+
+
+def _concrete(path):
+    return re.sub(r"\{[^}]+\}", "missing-fixture-id", path)
+
+
+def _operations_by_endpoint():
+    """Every operation a frontend row mounts, keyed by the handler its route serves."""
+    by_endpoint = {}
+    for translator in proxy.FRONTEND_TRANSLATORS.ids():
+        for operation in proxy.FRONTEND_TRANSLATORS.operations(translator).values():
+            by_endpoint.setdefault(operation.endpoint, []).append(operation)
+    return by_endpoint
+
+
+def test_every_operation_in_the_reference_declares_its_security():
+    missing = [f"{method.upper()} {path}" for path, method, operation in _operations(proxy.app.openapi())
+               if "security" not in operation]
+    assert not missing, missing
+
+
+def test_every_self_authenticating_operation_declares_how_it_checks_its_caller():
+    undeclared = []
+    for translator in proxy.FRONTEND_TRANSLATORS.ids():
+        for intent, operation in proxy.FRONTEND_TRANSLATORS.operations(translator).items():
+            if operation.self_authenticates and getattr(operation, "auth", None) not in operation_security.SELF_AUTH_MODES:
+                undeclared.append(f"{translator}/{intent}")
+    assert not undeclared, undeclared
+
+
+def test_every_mounted_operation_has_the_security_its_mount_predicate_implies():
+    schema = proxy.app.openapi()
+    by_endpoint = _operations_by_endpoint()
+    checked = 0
+    for route in proxy.app.routes:
+        if not isinstance(route, APIRoute) or not route.include_in_schema:
+            continue
+        for method in sorted(route.methods):
+            matching = [op for op in by_endpoint.get(route.endpoint, []) if method in op.methods]
+            if not matching or method.lower() not in schema["paths"].get(route.path, {}):
+                continue
+            modes = {frontend_mount.operation_mode(op) for op in matching}
+            assert len(modes) == 1, (method, route.path, modes)
+            expected = [] if proxy.is_public_path(route.path) else operation_security.security_for(modes.pop())
+            actual = schema["paths"][route.path][method.lower()].get("security")
+            assert actual == expected, (method, route.path, actual)
+            checked += 1
+    assert checked >= 100, checked
+
+
+def test_each_self_authenticating_operation_refuses_a_call_without_credentials(principals):
+    client = principals.client
+    client.cookies.clear()
+    by_endpoint = _operations_by_endpoint()
+    probed = []
+    for route in proxy.app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for method in sorted(route.methods):
+            selfauth = [op for op in by_endpoint.get(route.endpoint, [])
+                        if method in op.methods and op.self_authenticates]
+            if not selfauth:
+                continue
+            mode = selfauth[0].auth
+            response = client.request(method, _concrete(route.path), json={} if method in {"POST", "PUT", "PATCH"} else None,
+                                      follow_redirects=False)
+            # An App key is refused with 401 or 403. A signed URL is refused without its signature (400 or 403), never served.
+            refused = {operation_security.APP_KEY: {401, 403}, operation_security.SIGNED_URL: {400, 403}}[mode]
+            assert response.status_code in refused, (method, route.path, mode, response.status_code)
+            probed.append(f"{method} {route.path}")
+    assert len(probed) >= 100, len(probed)
+
+
+def test_every_owner_operation_is_tagged_and_opens_with_the_owner_note():
+    owner = [(path, method, operation) for path, method, operation in _operations(proxy.app.openapi())
+             if operation.get("security") == [{"OwnerBearer": []}]]
+    assert len(owner) >= len(OWNER_OPERATIONS)
+    for path, method, operation in owner:
+        assert "Owner only" in operation["tags"], (method, path)
+        assert operation["description"].startswith("Owner only: needs the owner's sign-in."), (method, path)
+
+
+def test_every_scheme_a_requirement_names_is_declared_in_components():
+    schema = proxy.app.openapi()
+    declared = set(schema["components"]["securitySchemes"])
+    used = {name for _, _, operation in _operations(schema) for requirement in operation.get("security", [])
+            for name in requirement}
+    assert used <= declared, sorted(used - declared)
+    assert {"AppKeyBearer", "AppKeyApiKey", "AppKeyXApiKey", "OwnerBearer", "BrowserSession"} <= used
+
+
+def test_public_paths_and_the_gateway_key_layer_have_the_security_the_gateway_enforces():
+    for path, method, operation in _operations(proxy.app.openapi()):
+        if proxy.is_public_path(path):
+            assert operation["security"] == [], (method, path)
+        elif path.startswith(proxy.KEY_LAYER_PREFIXES):
+            assert operation["security"] == operation_security.security_for(operation_security.APP_KEY), (method, path)
+
+
+def test_account_routes_under_me_stay_out_of_the_reference():
+    assert not [path for path in proxy.app.openapi()["paths"] if path.startswith("/me/")]
+
+
 def _digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
@@ -250,6 +357,10 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     baseline = json.loads((FIXTURES / "headless_data_plane_hashes.json").read_text())
     for path, expected in baseline["paths"].items():
         operation = copy.deepcopy(schema["paths"][path])
+        for method_operation in operation.values():
+            # Each operation's security is checked by its own tests (API reference security), not by this digest.
+            if isinstance(method_operation, dict):
+                method_operation.pop("security", None)
         if path == "/gateway/v1/media/jobs/{job_id}/events":
             # The per-job cursor is an additive opt-in; the legacy query and
             # every other part of the original operation remain unchanged.
