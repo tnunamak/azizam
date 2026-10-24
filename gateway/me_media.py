@@ -162,7 +162,7 @@ def create_me_media_router(
                 scan_cursor = (batch[-1]["updated_at"], batch[-1]["job_id"])
                 if len(batch) < 101:
                     break
-            # The viewer's own jobs made through an App they do not own are found by their receipts (D51).
+            # The viewer's own jobs made through an App they do not own are found by the maker stamp on each job (D51).
             listed = {job["job_id"] for job in rows}
             made = _maker_jobs(scope, jobs_path=jobs_path, before=cursor,
                                updated_since=updated_since, include_active=include_active)
