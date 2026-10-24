@@ -373,7 +373,9 @@
 # Train r106 after merging A17 round 7 (+2 Usage fold cases): 17401 + 2 = 17403.
 # Generated avatars (2026-10-24): +28 cases in tests/test_avatar_generation.py. collect-only on this branch measures 17271,
 # 158 below the merged-tree figure above, so the ceiling moves by the new cases only: 17403 + 28 = 17431.
-pytest = 17431
+# Generated avatars round 2 (2026-10-24): collect-only on this branch measures 17287 (17271 before round 2), so the
+# ceiling moves by that change: 17431 + 16 = 17447.
+pytest = 17447
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -478,7 +480,9 @@ pytest = 17431
 # Train r106 (2026-10-24): vitest list is 3530 cases on the merged tree (vitest list --root web).
 # Generated avatars (2026-10-24): +13 cases, src/components/product/person-avatar.spec.tsx (+10) and
 # src/components/shell/account-avatar.spec.tsx (+3). vitest list measured 3543 (--root web).
-vitest = 3543
+# Generated avatars round 2 (2026-10-24): the picker and account specs follow the sources and the automatic picture
+# (asked once; never for a sign-in picture). vitest list measured 3547 (--root web), up 4 from 3543.
+vitest = 3547
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -547,7 +551,9 @@ vitest = 3543
 # Train r106 (2026-10-24): playwright.config.ts 635 + live-data 3 + household 18 = 656 (playwright test --list).
 # Generated avatars (2026-10-24): e2e/avatar-generated.spec.ts adds 16 chromium cases (four states at four sizes).
 # playwright.config.ts 651 (was 635) + live-data 3 + household 18 = 672 (playwright test --list).
-playwright = 672
+# Generated avatars round 2 (2026-10-24): seven states at four sizes, 28 chromium cases (was 16).
+# playwright.config.ts 663 + live-data 3 + household 18 = 684 (playwright test --list).
+playwright = 684
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
