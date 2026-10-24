@@ -278,6 +278,16 @@ function startWords(tab: TryTab): string {
   return tab === "decide" ? JSON.stringify(["", "", ""]) : DEFAULTS[tab].prompt;
 }
 
+/** Whether a picture or other file is attached to any of a workflow's inputs. */
+function attachesFiles(files: Record<string, File | null>) {
+  return Object.values(files).some(Boolean);
+}
+
+/** A workflow left behind is unsent when its words differ from what it last ran with, or a file is attached. */
+function draftIsUnsent(draft: WorkflowDraft) {
+  return draft.json !== (draft.base ?? startWords("workflow")) || attachesFiles(draft.files);
+}
+
 /** The kind of work a running request makes: a picture, audio or video, or else the answer it waits for. */
 function madeKind(tab: TryTab | null, capability: string | undefined): Exclude<UnsavedKind, "form"> {
   // A workflow makes what its catalog capability says; the other tabs make what their names say.
@@ -1366,6 +1376,8 @@ export default function TryPage() {
   const [workflowFiles, setWorkflowFiles] = useState<
     Record<string, File | null>
   >({});
+  // What a person typed or attached for each workflow, kept while Try shows another one.
+  const [workflowDrafts, setWorkflowDrafts] = useState<Record<string, WorkflowDraft>>({});
   // Run was pressed with something missing: show each field's message.
   const [workflowChecked, setWorkflowChecked] = useState(false);
   const formRefs = useRef<Partial<Record<TryTab, HTMLFormElement | null>>>({});
@@ -1421,8 +1433,18 @@ export default function TryPage() {
       workflowChoices.find((option) => option.id === model.workflow)?.workflow,
     [workflowChoices, model.workflow],
   );
-  const unsentTabs = TRY_TABS.filter(
-    (tab) => wordsNow(tab) !== (baseWords[tab] ?? startWords(tab)),
+  // The workflow tab is unsent while the workflow on screen has changed words or a picture, and also while a
+  // workflow left behind has either: those drafts are shown again only when that workflow is opened.
+  const workflowUnsent =
+    wordsNow("workflow") !== (baseWords.workflow ?? startWords("workflow")) ||
+    attachesFiles(workflowFiles) ||
+    Object.entries(workflowDrafts).some(
+      ([id, draft]) => id !== selectedWorkflow?.id && draftIsUnsent(draft),
+    );
+  const unsentTabs = TRY_TABS.filter((tab) =>
+    tab === "workflow"
+      ? workflowUnsent
+      : wordsNow(tab) !== (baseWords[tab] ?? startWords(tab)),
   );
   useUnsavedWork({ kind: "try-draft", count: unsentTabs.length, active: unsentTabs.length > 0 });
   useUnsavedWork({
@@ -1540,8 +1562,6 @@ export default function TryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedCapabilityKey, requestedWorkflow]);
 
-  // What a person typed or attached for each workflow, kept while Try shows another one.
-  const [workflowDrafts, setWorkflowDrafts] = useState<Record<string, WorkflowDraft>>({});
   useEffect(() => {
     // The values read here are the ones shown when the workflow changed: the workflow being left.
     const previous = initializedWorkflowId.current;
