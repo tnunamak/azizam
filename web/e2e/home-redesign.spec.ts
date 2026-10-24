@@ -591,6 +591,25 @@ test("at 390 px the chooser row snaps by proximity from a 20 px edge, shows a wo
   await expect(fade).toHaveCount(0);
 });
 
+test("at 1440 px the request history notice is the composer's 760 px, centred under the chips", async ({ isolated }) => {
+  const member = await isolated.member();
+  const { page } = member;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await seedReturningMember(page, member.context.request);
+  await seedHistoryNoticeDue(page, member.context.request);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Request history is available." })).toBeVisible();
+  const notice = (await page.getByRole("region", { name: "Request history is available." }).boundingBox())!;
+  const composer = (await page.locator("[data-slot='composer']").boundingBox())!;
+  const chips = (await page.getByRole("group", { name: "What to make" }).boundingBox())!;
+  expect(Math.round(notice.width)).toBe(760);
+  expect(Math.abs(notice.x - composer.x)).toBeLessThanOrEqual(1);
+  // The notice and the chips share one centre line, which is the composer's.
+  const centre = composer.x + composer.width / 2;
+  expect(Math.abs(notice.x + notice.width / 2 - centre)).toBeLessThanOrEqual(1);
+  expect(Math.abs(chips.x + chips.width / 2 - centre)).toBeLessThanOrEqual(1);
+});
+
 test("at 390 px the phone tab bar never covers the end of Home, with the request history notice showing", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;

@@ -50,11 +50,12 @@ export function RequestHistoryNotice() {
   const busy = turnOn.isPending || dismiss.isPending;
   return (
     // A slim one-line banner on the page tint, not a card (judge round 2): it asks once, and Make stays the
-    // page's one primary action, so Turn on is an outline button and Not now a text button. On a phone the
-    // sentence keeps the width and the two answers wrap under it; the dismiss button stays in the corner.
+    // page's one primary action, so Turn on is an outline button and Not now a text button. It is the composer's
+    // 760 px, centred under the chips, so its edges line up with them. On a phone the sentence keeps the width and
+    // the two answers wrap under it; the dismiss button stays in the corner.
     <section
       aria-labelledby="history-notice-title"
-      className="bg-muted rounded-panel relative flex min-h-12 flex-wrap items-center gap-x-3 gap-y-1 py-1.5 pr-1.5 pl-4 max-sm:items-start max-sm:py-3 max-sm:pr-12"
+      className="bg-muted rounded-panel relative mx-auto flex min-h-12 w-full max-w-(--content-composer) flex-wrap items-center gap-x-3 gap-y-1 py-1.5 pr-1.5 pl-4 max-sm:items-start max-sm:py-3 max-sm:pr-12"
     >
       <Info aria-hidden="true" className="text-info size-4 shrink-0 max-sm:mt-0.5" />
       <p className="text-meta min-w-0 flex-1 max-sm:basis-[calc(100%-1.75rem)]">
