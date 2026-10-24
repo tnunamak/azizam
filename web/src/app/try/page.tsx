@@ -278,14 +278,21 @@ function startWords(tab: TryTab): string {
   return tab === "decide" ? JSON.stringify(["", "", ""]) : DEFAULTS[tab].prompt;
 }
 
-/** Whether a picture or other file is attached to any of a workflow's inputs. */
-function attachesFiles(files: Record<string, File | null>) {
-  return Object.values(files).some(Boolean);
+/** A picture's identity for the unsent check. The same picture chosen again is not a change. */
+function fileIdentity(file: File | null | undefined) {
+  return file ? JSON.stringify([file.name, file.size, file.lastModified]) : "";
 }
 
-/** A workflow left behind is unsent when its words differ from what it last ran with, or a file is attached. */
-function draftIsUnsent(draft: WorkflowDraft) {
-  return draft.json !== (draft.base ?? startWords("workflow")) || attachesFiles(draft.files);
+/** Whether any of a workflow's inputs holds a different picture from the one it last ran with. */
+function filesDiffer(files: Record<string, File | null>, base: Record<string, File | null>) {
+  return Object.keys({ ...files, ...base }).some(
+    (name) => fileIdentity(files[name]) !== fileIdentity(base[name]),
+  );
+}
+
+/** A workflow left behind is unsent when its words differ from what it last ran with, or a picture differs from its last run. */
+function draftIsUnsent(draft: WorkflowDraft, lastRun: Record<string, File | null>) {
+  return draft.json !== (draft.base ?? startWords("workflow")) || filesDiffer(draft.files, lastRun);
 }
 
 /** The kind of work a running request makes: a picture, audio or video, or else the answer it waits for. */
@@ -1376,6 +1383,8 @@ export default function TryPage() {
   const [workflowFiles, setWorkflowFiles] = useState<
     Record<string, File | null>
   >({});
+  // The pictures each workflow's last run sent, by workflow. A picture that differs from its last run is unsent.
+  const [lastRunFiles, setLastRunFiles] = useState<Record<string, Record<string, File | null>>>({});
   // What a person typed or attached for each workflow, kept while Try shows another one.
   const [workflowDrafts, setWorkflowDrafts] = useState<Record<string, WorkflowDraft>>({});
   // Run was pressed with something missing: show each field's message.
@@ -1433,13 +1442,14 @@ export default function TryPage() {
       workflowChoices.find((option) => option.id === model.workflow)?.workflow,
     [workflowChoices, model.workflow],
   );
-  // The workflow tab is unsent while the workflow on screen has changed words or a picture, and also while a
-  // workflow left behind has either: those drafts are shown again only when that workflow is opened.
+  const shownLastRun = selectedWorkflow ? (lastRunFiles[selectedWorkflow.id] ?? {}) : {};
+  // The workflow tab is unsent while the workflow on screen has changed words or a picture since its last run, and also
+  // while a workflow left behind has either: those drafts are shown again only when that workflow is opened.
   const workflowUnsent =
     wordsNow("workflow") !== (baseWords.workflow ?? startWords("workflow")) ||
-    attachesFiles(workflowFiles) ||
+    filesDiffer(workflowFiles, shownLastRun) ||
     Object.entries(workflowDrafts).some(
-      ([id, draft]) => id !== selectedWorkflow?.id && draftIsUnsent(draft),
+      ([id, draft]) => id !== selectedWorkflow?.id && draftIsUnsent(draft, lastRunFiles[id] ?? {}),
     );
   const unsentTabs = TRY_TABS.filter((tab) =>
     tab === "workflow"
@@ -2109,6 +2119,9 @@ export default function TryPage() {
     }
     setRunning(tab);
     setBaseWords((current) => ({ ...current, [tab]: wordsNow(tab) }));
+    if (tab === "workflow" && runWorkflow) {
+      setLastRunFiles((current) => ({ ...current, [runWorkflow.id]: workflowFiles }));
+    }
     if (tab === "workflow") setJobError(null);
     setErrors((current) => ({ ...current, [tab]: undefined }));
     try {
