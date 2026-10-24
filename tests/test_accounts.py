@@ -48,6 +48,13 @@ def rows(path, sql, values=()):
         return [dict(row) for row in conn.execute(sql, values).fetchall()]
 
 
+def session_app_without_plan(path, user_id):
+    app = admin_store.ensure_session_app_for_user(user_id, name="Azizam", path=path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE apps SET access_plan=NULL WHERE id=?", (app["id"],))
+    return app
+
+
 def expect_error(code, operation):
     with pytest.raises(accounts.AccountError) as caught:
         operation()
@@ -365,6 +372,74 @@ def test_builtin_invite_login_session_cookie_and_no_store(account_db, account_cl
     assert login.status_code == 200
     assert "set-cookie" in login.headers
     assert len(rows(path, "SELECT * FROM account_sessions")) == 1
+
+
+def test_password_sign_in_repairs_a_null_plan_session_app(account_db, account_client, fast_password_work):
+    path, _ = account_db
+    user, _, _ = invited_member(account_db)
+    app = session_app_without_plan(path, user["id"])
+    client, _ = account_client
+
+    response = client.post("/auth/api/login", json={"email": user["email"], "password": PASSWORD})
+
+    assert response.status_code == 200, response.text
+    repaired = admin_store.get_app(app["id"], path=path)
+    assert repaired["access_plan"] == admin_store.PERSON_ASSIGNMENT
+
+
+def test_password_sign_in_does_not_update_a_healthy_session_app(account_db, account_client, fast_password_work):
+    path, _ = account_db
+    user, _, _ = invited_member(account_db)
+    app = admin_store.ensure_session_app_for_user(user["id"], name="Azizam", path=path)
+    quoted_app_id = str(app["id"]).replace("'", "''")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TRIGGER protect_healthy_session_app BEFORE UPDATE ON apps "
+            f"WHEN OLD.id='{quoted_app_id}' BEGIN SELECT RAISE(ABORT, 'healthy session App was updated'); END"
+        )
+    client, _ = account_client
+
+    response = client.post("/auth/api/login", json={"email": user["email"], "password": PASSWORD})
+
+    assert response.status_code == 200, response.text
+    assert admin_store.get_app(app["id"], path=path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
+
+
+def test_password_sign_in_never_repairs_another_persons_session_app(account_db, account_client, fast_password_work):
+    path, _ = account_db
+    alice, _, _ = invited_member(account_db, "alice@example.test")
+    bob, _, _ = invited_member(account_db, "bob@example.test")
+    bobs_app = session_app_without_plan(path, bob["id"])
+    client, _ = account_client
+
+    response = client.post("/auth/api/login", json={"email": alice["email"], "password": PASSWORD})
+
+    assert response.status_code == 200, response.text
+    assert admin_store.get_session_app_for_user(alice["id"], path=path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
+    assert admin_store.get_app(bobs_app["id"], path=path)["access_plan"] is None
+
+
+def test_invite_acceptance_repairs_a_null_plan_session_app(account_db, account_client):
+    path, plan = account_db
+    client, state = account_client
+    user = admin_store.upsert_oidc_user(
+        "https://identity.example", "subject-one", email="person@example.test", path=path,
+    )
+    accounts.record_oidc_verification(user["id"], True, path=path)
+    app = session_app_without_plan(path, user["id"])
+    session = session_from_claims(
+        {"sub": user["id"], "email": user["email"]}, role="none", cookie=CookieConfig(secure=False),
+    )
+    state["session"] = session
+    _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], email=user["email"], path=path)
+    csrf = {"x-azizam-csrf": csrf_token_for_session(session, signing_key=SIGNING_KEY)}
+
+    response = client.post(
+        "/auth/api/invite/accept", json={"token": token, "email": user["email"], "name": "Person"}, headers=csrf,
+    )
+
+    assert response.status_code == 200, response.text
+    assert admin_store.get_app(app["id"], path=path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
 
 
 @pytest.mark.parametrize("password", ["", "x" * 1025])
