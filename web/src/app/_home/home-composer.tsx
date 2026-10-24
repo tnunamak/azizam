@@ -181,13 +181,13 @@ export function HomeComposer({
   const [prompt, setPrompt] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const usesCatalog = pickerOpen || (model !== null && model !== recommended);
-  const catalog = useQuery({
+  const { data: catalogData } = useQuery({
     queryKey: ["home", "model-catalog"],
     queryFn: () => productApi.models(),
     enabled: usesCatalog && !loading,
     staleTime: 60_000,
   });
-  const catalogRows: CatalogRow[] = [...(catalog.data?.models ?? []), ...(catalog.data?.aliases ?? [])];
+  const catalogRows: CatalogRow[] = [...(catalogData?.models ?? []), ...(catalogData?.aliases ?? [])];
   const catalogRowFor = (name: string | null) =>
     name ? catalogRows.find((row) => row.id === name || row.use_names?.includes(name)) ?? null : null;
 

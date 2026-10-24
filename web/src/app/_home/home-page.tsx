@@ -403,11 +403,21 @@ export default function HomePage() {
     home?.authenticated && OWNER_ROLES.includes(home.user.role) && viewer.admin,
   );
   const model = useCapabilityViews(isOwner);
-  const media = useQuery({ ...recentMediaQuery, enabled: signedIn });
+  const {
+    data: recentMedia,
+    isError: mediaFailed,
+    isFetching: mediaFetching,
+    isPending: mediaPending,
+    refetch: retryMedia,
+  } = useQuery({ ...recentMediaQuery, enabled: signedIn });
   const [kind, setKind] = useState<string | null>(null);
 
   // Owner facts come from the same cached reads the shell's owner alert uses, so they add no request.
-  const status = useQuery({ queryKey: queryKeys.status, queryFn: api.status, enabled: isOwner });
+  const { data: ownerStatus, isError: statusFailed } = useQuery({
+    queryKey: queryKeys.status,
+    queryFn: api.status,
+    enabled: isOwner,
+  });
   const registry = useQuery({
     queryKey: queryKeys.serviceRegistry,
     queryFn: api.services.registry,
@@ -421,12 +431,12 @@ export default function HomePage() {
   const items = home?.authenticated
     ? recentItems({
         receipts: home.receipts ?? [],
-        media: media.data?.assets ?? [],
+        media: recentMedia?.assets ?? [],
         chats: home.recent_chats ?? [],
         rows: home.capabilities,
       })
     : [];
-  const mediaState = media.isError ? "error" : media.isPending ? "pending" : "ready";
+  const mediaState = mediaFailed ? "error" : mediaPending ? "pending" : "ready";
   const firstVisit = signedIn && mediaState === "ready" && items.length === 0;
   const refusal = activeCapRefusal(model.requests);
   const ownerName = home?.authenticated ? (home.gateway?.owner_name?.trim() || null) : null;
@@ -436,7 +446,7 @@ export default function HomePage() {
   const viewerName = viewer.name && viewer.name !== DEFAULT_VIEWER_NAME ? viewer.name : null;
   const firstName = firstNameOf(home?.authenticated ? home.user.name : viewerName);
   const greeting = greetingParts(new Date(), firstName, firstVisit);
-  const engineFault = isOwner && !status.isError ? ownerEngineAlert(status.data?.current_health, registry) : null;
+  const engineFault = isOwner && !statusFailed ? ownerEngineAlert(ownerStatus?.current_health, registry) : null;
   const providerFault =
     isOwner && providers.state === "ready" ? ownerProviderAlert(providers.providers) : null;
   const noEngine =
@@ -567,8 +577,8 @@ export default function HomePage() {
               views={model.views}
               owner={isOwner}
               mediaState={mediaState}
-              onRetry={() => void media.refetch()}
-              retrying={media.isFetching}
+              onRetry={() => void retryMedia()}
+              retrying={mediaFetching}
             />
           )}
           {home?.authenticated ? <YourApps home={home} /> : null}
