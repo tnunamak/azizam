@@ -634,11 +634,12 @@ def test_the_session_snapshot_offers_the_automatic_picture_only_where_a_route_ex
 
     def offered(route) -> bool:
         snapshot = user_runtime.build_user_portal_snapshot(session, path=db, avatar_route=route)
-        return snapshot["user"]["avatar"]["default_due"] is True
+        return snapshot["user"]["avatar"].get("default_due") is True
 
     assert offered(lambda _person_id: "picture-route") is True
     assert offered(lambda _person_id: None) is False
-    assert offered(None) is False
+    # A snapshot that does not answer the cue (Home, status, the catalogs) leaves the key out.
+    assert "default_due" not in user_runtime.build_user_portal_snapshot(session, path=db)["user"]["avatar"]
     assert admin_store.get_session_app_for_user(alice, path=db) is None
 
 

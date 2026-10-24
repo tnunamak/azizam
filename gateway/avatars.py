@@ -163,13 +163,14 @@ def picture_path(person_id: str, record: Mapping[str, Any], *, viewer_id: str) -
     return f"/me/api/profile/avatar/picture?{query}"
 
 
-def public_view(person_id: str, record: Mapping[str, Any], *, viewer_id: str, default_due_now: bool = False) -> dict[str, Any]:
+def public_view(person_id: str, record: Mapping[str, Any], *, viewer_id: str, default_due_now: bool | None = None) -> dict[str, Any]:
     """What the browser may see: the choice and a gateway path for the picture shown.
 
     For the person, it also gives a preview path for each picture they have (None when there is none), so the
     picker can show both whichever one is chosen. ``default_due`` is the page's cue to ask for the automatic picture:
     the caller passes True only when that picture is due and an image route exists for the person now. It stays
-    True after a deferred ask, and is False once the attempt is recorded or the person chooses anything.
+    True after a deferred ask, and is False once the attempt is recorded or the person chooses anything. A caller
+    that does not answer the cue passes None, and the view leaves the key out.
     """
     view: dict[str, Any] = {"choice": record["choice"], "person_id": person_id,
                             "picture_url": picture_path(person_id, record, viewer_id=viewer_id)}

@@ -360,9 +360,10 @@ def build_user_portal_snapshot(
 
     person_id = str(user["id"])
     avatar_record = avatars.get(person_id, path=path)
-    # The page asks for the automatic picture only when it is still due and an image route exists for the person now.
-    default_due_now = (avatar_route is not None and avatars.is_default_due(avatar_record)
-                       and avatar_route(person_id) is not None)
+    # Only the session answers the automatic picture's cue: the shell reads its viewer from there. The page asks for the
+    # picture only when it is still due and an image route exists for the person now. Elsewhere the cue is left out.
+    default_due_now = None if avatar_route is None else (
+        avatars.is_default_due(avatar_record) and avatar_route(person_id) is not None)
     return {
         "authenticated": True,
         # Public per-sign-in epoch, stable across renewal, distinct from every credential.

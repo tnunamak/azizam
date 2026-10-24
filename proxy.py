@@ -16431,7 +16431,6 @@ app.include_router(create_home_router(
     status_provider=_status_payload_with_availability,
     admin_auth=ADMIN_AUTH,
     spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
-    avatar_route=_avatar_picture_model,
     availability_services=_workflow_availability_services,
     workflow_records=GATEWAY_WORKFLOW_REGISTRY.records,
     recent_chats=lambda person_id: request_history_api.recent_chats(
@@ -16570,8 +16569,7 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
             "Sign in to view the models catalog",
             status_code=401,
         )
-    user_snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path,
-                                            avatar_route=_avatar_picture_model)
+    user_snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
     if not user_snapshot.get("authenticated"):
         raise UserPortalError(
             "not_authenticated",
@@ -16727,8 +16725,7 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
             "Sign in to view the workflows catalog",
             status_code=401,
         )
-    user_snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path,
-                                            avatar_route=_avatar_picture_model)
+    user_snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
     if not user_snapshot.get("authenticated"):
         raise UserPortalError(
             "not_authenticated",
