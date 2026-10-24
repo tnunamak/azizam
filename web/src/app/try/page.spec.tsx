@@ -285,6 +285,7 @@ test.each(["unknown", "speech"])(
     await userEvent.click(screen.getByRole("combobox", { name: "Model" }));
     await userEvent.click(screen.getByRole("option", { name: "Second chat" }));
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Second chat");
+    await takeExampleIfEmpty();
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled());
     expect(fetchMock.mock.calls.some(([url]) => url === "/openai/v1/chat/completions")).toBe(false);
@@ -324,6 +325,7 @@ test("speech refresh uses the replacement model and its discovered voice", async
   render(<TryPage />);
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("First voice model"));
   expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Voice" }).value).toBe("novel-a");
+  await takeExampleIfEmpty();
   fireEvent.click(screen.getByRole("button", { name: "Run" }));
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/openai/v1/audio/speech")).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => url === "/openai/v1/audio/speech");
@@ -585,6 +587,7 @@ test("receipt lookup times out after ten seconds and can be retried", async () =
   await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
   vi.useFakeTimers();
   try {
+    await takeExampleIfEmpty();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Run" })));
     expect(screen.getByText("Ready answer")).toBeVisible();
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
@@ -660,7 +663,15 @@ test("a workflow removed during key refresh never posts its stale request", asyn
   await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
   expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
 });
+/** A person who has not written a prompt takes the tab's example first. Written words are never replaced. */
+async function takeExampleIfEmpty() {
+  const box = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ });
+  if (box && (box as HTMLTextAreaElement).value === "") {
+    fireEvent.click(screen.getByRole("button", { name: "Try an example" }));
+  }
+}
 async function pressRun() {
+  await takeExampleIfEmpty();
   const run = await screen.findByRole("button", { name: "Run" });
   await waitFor(() => expect(run).toBeEnabled());
   fireEvent.click(run);
@@ -1059,7 +1070,8 @@ test.each(["", "   \n\t"])("empty chat prompt %j is refused with a clear message
   render(<TryPage />);
   await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
   fireEvent.change(screen.getByRole("textbox", { name: "Prompt" }), { target: { value: prompt } });
-  await pressRun();
+  // Run as a person would with the box empty: no example is filled in for them.
+  fireEvent.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText("Enter a prompt before running chat.")).toBeVisible();
   expect(mocks.tryKey).not.toHaveBeenCalled();
   expect(fetchMock.mock.calls.filter(([url]) => url === "/openai/v1/chat/completions")).toHaveLength(0);

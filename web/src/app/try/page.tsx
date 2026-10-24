@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -41,6 +42,7 @@ import {
 } from "./workflow-media";
 import { outputKindOf } from "./workflow-input-meta";
 import { costFrom } from "./result-cost";
+import { chatDefaultChoice } from "./chat-default";
 import { runImageJob } from "./image-job";
 import { isNetworkFailure, networkFetch } from "@/lib/network-error";
 import { sessionIsClosed } from "@/lib/session-end";
@@ -137,6 +139,12 @@ type CatalogOption = {
   unavailableMessage?: string;
   /** Other ids that name the same model (an alias and its target). */
   alsoKnownAs?: string[];
+  /** Where the catalog lists it (aliases first). The chat default follows this order. */
+  order: number;
+  /** Takes pictures as input, so it is a vision model rather than an ordinary chat model. */
+  pictures: boolean;
+  /** Makes embeddings rather than chat replies. */
+  embedding: boolean;
 };
 type WorkflowOption = {
   id: string;
@@ -215,35 +223,53 @@ function forgetStoredTryKey() {
   }
 }
 
+// Prompt boxes start empty, with a placeholder. A workflow starts from its own example inputs.
 const DEFAULTS: Record<TryTab, { model: string; prompt: string }> = {
-  chat: { model: "", prompt: "Reply with one short sentence." },
-  image: { model: "", prompt: "A calm teal fish mark on a white card." },
-  speech: { model: "", prompt: "The gateway is ready." },
+  chat: { model: "", prompt: "" },
+  image: { model: "", prompt: "" },
+  speech: { model: "", prompt: "" },
   transcribe: { model: "", prompt: "" },
-  // Everyday examples: a member reads these, so no gateway test words.
-  decide: {
-    model: "",
-    prompt: "What should I do?",
-  },
-  embed: {
-    model: "",
-    prompt: "Pancakes need flour, eggs and milk.",
-  },
-  workflow: {
-    model: "",
-    prompt: "{}",
-  },
+  decide: { model: "", prompt: "" },
+  embed: { model: "", prompt: "" },
+  workflow: { model: "", prompt: "{}" },
 };
 const TRY_TABS = Object.keys(DEFAULTS) as TryTab[];
-/** The decide tab's other two fields start with these. */
+/**
+ * "Try an example" fills a tab with sample words for its mode. A member reads
+ * these, so they carry no gateway test words.
+ */
+const EXAMPLES: Partial<Record<TryTab, string>> = {
+  chat: "Reply with one short sentence.",
+  image: "A calm teal fish mark on a white card.",
+  speech: "The gateway is ready.",
+  decide: "What should I do?",
+  embed: "Pancakes need flour, eggs and milk.",
+};
+/** The decide tab's other two boxes, filled by its example. */
 const DECIDE_STATE_EXAMPLE = "It is raining and the bus is 20 minutes late.";
 const DECIDE_OPTIONS_EXAMPLE = "Take a taxi\nWait for the bus";
+const DECIDE_STATE_PLACEHOLDER = "Describe what is happening";
+const DECIDE_OPTIONS_PLACEHOLDER = "One option per line";
+/** What an empty prompt box says it is for. */
+const PLACEHOLDERS: Partial<Record<TryTab, string>> = {
+  chat: "Ask a question or give a task",
+  image: "Describe the picture you want",
+  speech: "Type the words to hear spoken",
+  decide: "What do you need to decide?",
+  embed: "Type the text to turn into numbers",
+};
+/** Run says so when a tab's prompt is empty, instead of sending it. */
+const EMPTY_PROMPT_MESSAGE: Partial<Record<TryTab, string>> = {
+  chat: "Enter a prompt before running chat.",
+  image: "Describe the picture before running it.",
+  speech: "Type the words to speak before running it.",
+  decide: "Enter a question before running it.",
+  embed: "Enter some text before running it.",
+};
 
 /** The words a tab starts with. Words that differ from these, or from what the tab last ran with, are unsent. */
 function startWords(tab: TryTab): string {
-  return tab === "decide"
-    ? JSON.stringify([DEFAULTS.decide.prompt, DECIDE_STATE_EXAMPLE, DECIDE_OPTIONS_EXAMPLE])
-    : DEFAULTS[tab].prompt;
+  return tab === "decide" ? JSON.stringify(["", "", ""]) : DEFAULTS[tab].prompt;
 }
 
 /** The kind of work a running request makes: a picture, audio or video, or else the answer it waits for. */
@@ -847,7 +873,7 @@ function groupCatalog(payload: unknown) {
   // A stable alias ("image") and the model it points at ("krea2-turbo") are
   // one choice, not two. The alias stays; the model's id still selects it.
   const aliasTargets: Partial<Record<TryTab, Map<string, CatalogOption>>> = {};
-  for (const value of records) {
+  for (const [order, value] of records.entries()) {
     if (typeof value !== "object" || value === null) continue;
     const record = value as Record<string, unknown>;
     const id =
@@ -861,6 +887,9 @@ function groupCatalog(payload: unknown) {
     for (const capability of capabilities) {
       const option: CatalogOption = {
         id,
+        order,
+        pictures: takesPictures(record),
+        embedding: makesEmbeddings(record),
         label: modelDisplayName(id, {
           models: [
             {
@@ -977,6 +1006,9 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
       capability: "workflow" as const,
       price: "",
       locality: "Workflow manifest",
+      order: options.length,
+      pictures: false,
+      embedding: false,
       workflow,
     });
   }
@@ -1133,6 +1165,40 @@ function makesPicturesFromText(record: Record<string, unknown>) {
   });
 }
 
+/** The capability summaries a catalog row lists, each with its intent and modalities. */
+function capabilitySummaries(record: Record<string, unknown>): Array<Record<string, unknown>> {
+  return Array.isArray(record.capabilities)
+    ? record.capabilities.filter(
+        (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
+      )
+    : [];
+}
+
+function capabilityTab(intent: unknown): TryTab | undefined {
+  if (typeof intent !== "string") return undefined;
+  const key = intent.toLowerCase().trim();
+  return CAPABILITY_TABS[key] ?? INTENT_TABS[key];
+}
+
+/**
+ * A chat model that takes a picture as input is a vision model, and the chat
+ * default is never one. The catalog's input modalities say which.
+ */
+function takesPictures(record: Record<string, unknown>) {
+  return capabilitySummaries(record).some((item) => {
+    const input = Array.isArray(item.input_modalities) ? item.input_modalities : [];
+    return capabilityTab(item.intent) === "chat" && input.includes("image");
+  });
+}
+
+/** A model that makes embeddings: an embedding intent, or an embedding output. */
+function makesEmbeddings(record: Record<string, unknown>) {
+  return capabilitySummaries(record).some((item) => {
+    const output = Array.isArray(item.output_modalities) ? item.output_modalities : [];
+    return capabilityTab(item.intent) === "embed" || output.includes("embedding");
+  });
+}
+
 function costLabel(value: unknown) {
   if (typeof value !== "object" || value === null) return "";
   const cost = value as { kind?: unknown; price?: unknown };
@@ -1168,6 +1234,7 @@ function selectedOrDefaultModel(
   current: string,
   options: CatalogOption[],
   explicit: boolean,
+  defaultChoice: (options: CatalogOption[]) => CatalogOption | undefined,
 ) {
   if (!options.length) return explicit ? current : "";
   // A model that an alias stands for is selected through the alias.
@@ -1177,10 +1244,17 @@ function selectedOrDefaultModel(
   if (standIn) return standIn.id;
   if (explicit) return current;
   if (options.some((option) => option.id === current)) return current;
-  return options.find((option) => option.recommended)?.id ?? options[0].id;
+  return (defaultChoice(options) ?? options[0]).id;
+}
+
+/** Most tabs start on the catalog's recommendation, else the first option. */
+function recommendedChoice(options: CatalogOption[]) {
+  return options.find((option) => option.recommended);
 }
 
 export default function TryPage() {
+  // Prefix for element ids, so two Try pages on one document never share one.
+  const idBase = useId();
   const searchParams = useSearchParams();
   const requestedWorkflow = searchParams.get("workflow");
   const requestedCapability = searchParams.get("capability");
@@ -1237,8 +1311,8 @@ export default function TryPage() {
       ) as Record<TryTab, string>,
   );
   const [voicesByModel, setVoicesByModel] = useState<Record<string, string>>({});
-  const [decisionState, setDecisionState] = useState(DECIDE_STATE_EXAMPLE);
-  const [options, setOptions] = useState(DECIDE_OPTIONS_EXAMPLE);
+  const [decisionState, setDecisionState] = useState("");
+  const [options, setOptions] = useState("");
   // The words each tab last ran with, or a workflow's loaded example. Only tabs whose words differ are unsent.
   const [baseWords, setBaseWords] = useState<Partial<Record<TryTab, string>>>({});
   const wordsNow = (tab: TryTab) =>
@@ -1474,6 +1548,18 @@ export default function TryPage() {
     if (requestedKind?.untryable) setKindCleared(true);
   }
 
+  /** "Try an example" fills a tab's boxes with sample words for its mode. */
+  function fillExample(tab: TryTab) {
+    if (tab === "decide") {
+      setPrompt((current) => ({ ...current, decide: EXAMPLES.decide ?? "" }));
+      setDecisionState(DECIDE_STATE_EXAMPLE);
+      setOptions(DECIDE_OPTIONS_EXAMPLE);
+      return;
+    }
+    const sample = EXAMPLES[tab];
+    if (sample !== undefined) setPrompt((current) => ({ ...current, [tab]: sample }));
+  }
+
   async function retryCatalog(section: CatalogSection) {
     const loaded = await loadCatalogSection(section, key?.secret);
     // Without a key only the account catalog can be read. Run is off until
@@ -1629,6 +1715,7 @@ export default function TryPage() {
         next[tab.value],
         options,
         explicitModelTabs.current.has(tab.value),
+        tab.value === "chat" ? chatDefaultChoice : recommendedChoice,
       );
     }
     if (
@@ -1842,13 +1929,22 @@ export default function TryPage() {
     };
   }
 
+  /** What a tab needs written before Run sends anything, or null when it has it. */
+  function missingWordsMessage(tab: TryTab): string | null {
+    if (tab === "decide") {
+      if (!prompt.decide.trim()) return EMPTY_PROMPT_MESSAGE.decide ?? null;
+      return parsedOptions.length ? null : "Add at least one option before running it.";
+    }
+    const message = EMPTY_PROMPT_MESSAGE[tab];
+    return message && !prompt[tab].trim() ? message : null;
+  }
+
   async function run(tab: TryTab, event: FormEvent) {
     event.preventDefault();
-    if (tab === "chat" && !prompt.chat.trim()) {
-      setErrors((current) => ({
-        ...current,
-        chat: { message: "Enter a prompt before running chat." },
-      }));
+    // Checked before a key is prepared, so an empty box never mints one.
+    const missing = missingWordsMessage(tab);
+    if (missing) {
+      setErrors((current) => ({ ...current, [tab]: { message: missing } }));
       return;
     }
     // A sign-out or unmount (both advance keyGeneration) ends the identity
@@ -2605,6 +2701,7 @@ export default function TryPage() {
                         What is happening?
                       </span>
                       <Textarea
+                        placeholder={DECIDE_STATE_PLACEHOLDER}
                         value={decisionState}
                         onChange={(event) =>
                           setDecisionState(event.target.value)
@@ -2659,11 +2756,27 @@ export default function TryPage() {
                     </details>
                   )}
                   {tab.value !== "transcribe" && tab.value !== "workflow" && (
-                    <label className="block space-y-2">
-                      <span className="text-sm font-medium">
-                        {tab.value === "decide" ? "Question" : "Prompt"}
-                      </span>
+                    <div className="space-y-2">
+                      <div className="flex min-h-8 items-center justify-between gap-3">
+                        <label
+                          htmlFor={`${idBase}-prompt-${tab.value}`}
+                          className="text-sm font-medium"
+                        >
+                          {tab.value === "decide" ? "Question" : "Prompt"}
+                        </label>
+                        {EXAMPLES[tab.value] !== undefined && (
+                          <button
+                            type="button"
+                            className="text-muted-foreground hover:text-foreground text-meta min-h-11 underline underline-offset-4"
+                            onClick={() => fillExample(tab.value)}
+                          >
+                            Try an example
+                          </button>
+                        )}
+                      </div>
                       <Textarea
+                        id={`${idBase}-prompt-${tab.value}`}
+                        placeholder={PLACEHOLDERS[tab.value]}
                         value={prompt[tab.value]}
                         onChange={(event) =>
                           setPrompt((current) => ({
@@ -2672,7 +2785,7 @@ export default function TryPage() {
                           }))
                         }
                       />
-                    </label>
+                    </div>
                   )}
                   {tab.value === "speech" && (
                     <VoicePicker
@@ -2735,6 +2848,7 @@ export default function TryPage() {
                     <label className="block space-y-2">
                       <span className="text-sm font-medium">Options</span>
                       <Textarea
+                        placeholder={DECIDE_OPTIONS_PLACEHOLDER}
                         value={options}
                         onChange={(event) => setOptions(event.target.value)}
                         aria-describedby="options-help"

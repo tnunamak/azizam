@@ -151,6 +151,9 @@ describe("Try: Incognito and prompt keeping", () => {
         "Azizam tries to keep the prompt with the picture.",
       ),
     ).toBeVisible();
+    const example = screen.queryByRole("button", { name: "Try an example" });
+    const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (example && promptBox?.value === "") await user.click(example);
     await user.click(screen.getByRole("button", { name: "Run" }));
     await screen.findByAltText("Generated result", {}, { timeout: 15000 });
     expect(submittedBody().extensions).toBeUndefined();
@@ -168,6 +171,9 @@ describe("Try: Incognito and prompt keeping", () => {
       screen.getByText("The picture still goes to Library."),
     ).toBeVisible();
     expect(sessionStorage.getItem("azizam.try.forget")).toBe("1");
+    const example = screen.queryByRole("button", { name: "Try an example" });
+    const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (example && promptBox?.value === "") await user.click(example);
     await user.click(screen.getByRole("button", { name: "Run" }));
     await screen.findByAltText("Generated result", {}, { timeout: 15000 });
     expect(submittedBody().extensions).toEqual({
@@ -205,6 +211,9 @@ describe("Try: Incognito and prompt keeping", () => {
         "Jobs whose prompts aren’t kept cannot resume after a gateway restart.",
       ),
     ).toBeVisible();
+    const example = screen.queryByRole("button", { name: "Try an example" });
+    const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (example && promptBox?.value === "") await user.click(example);
     await user.click(screen.getByRole("button", { name: "Run" }));
     await screen.findByAltText("Generated result", {}, { timeout: 15000 });
     expect(submittedBody().extensions).toEqual({
@@ -254,6 +263,9 @@ it("honors the displayed off snapshot when Run refresh finds memory on", async (
   renderTry();
   await ready();
   await screen.findByText("Prompts aren’t kept");
+  const example = screen.queryByRole("button", { name: "Try an example" });
+  const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+  if (example && promptBox?.value === "") await user.click(example);
   await user.click(screen.getByRole("button", { name: "Run" }));
   await screen.findByAltText("Generated result", {}, { timeout: 15000 });
   expect(
@@ -359,6 +371,9 @@ it.each(["sign-out", "unmount"] as const)(
           .toHaveTextContent("Fixture speech"),
       );
       await screen.findByRole("switch", { name: "Incognito" });
+      const example = screen.queryByRole("button", { name: "Try an example" });
+      const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+      if (example && promptBox?.value === "") await userEvent.setup().click(example);
       await userEvent.setup().click(screen.getByRole("button", { name: "Run" }));
       await waitFor(() => expect(account.promptMemory).toHaveBeenCalledTimes(2));
       expect(account.tryKey).toHaveBeenCalledTimes(1);

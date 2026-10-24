@@ -127,6 +127,10 @@ function forgetIn(body: Record<string, unknown>) {
 }
 
 async function pressRun() {
+  // A person who has not written a prompt takes the tab's example first.
+  const example = screen.queryByRole("button", { name: "Try an example" });
+  const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+  if (example && promptBox?.value === "") fireEvent.click(example);
   const run = await screen.findByRole("button", { name: "Run" });
   await waitFor(() => expect(run).toBeEnabled());
   fireEvent.click(run);

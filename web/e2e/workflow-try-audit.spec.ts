@@ -3,6 +3,15 @@ import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import { fulfilJson } from "./fixtures/intercept";
 
+/** A person who has not written a prompt takes the tab's example first. Written words are never replaced. */
+async function takeExampleIfEmpty(page: import("@playwright/test").Page) {
+  const example = page.getByRole("button", { name: "Try an example" });
+  if (!(await example.count())) return;
+  const box = page.getByRole("textbox", { name: /^(Prompt|Question)$/ });
+  if ((await box.count()) && (await box.inputValue()) === "") await example.click();
+}
+
+
 
 // Try mints one key per sign-in and revokes the session's older Try keys
 // (gateway/user_runtime.py ensure_try_session_key). Cases that open Try share the
@@ -134,6 +143,7 @@ for (const [theme, width] of [
     await page
       .getByRole("textbox", { name: /^prompt Required$/i })
       .fill("A teal poster.");
+    await takeExampleIfEmpty(page);
     await page.getByRole("button", { name: "Run", exact: true }).click();
     await expect(page.getByAltText("Generated result")).toBeVisible();
     await expect(page.getByText("Key details")).toBeVisible();
@@ -142,6 +152,7 @@ for (const [theme, width] of [
     await page.route("**/v1/images/generations", (route) =>
       fulfilJson(route, { error: { message: "This key cannot use poster." } }, { status: 403 }),
     );
+    await takeExampleIfEmpty(page);
     await page.getByRole("button", { name: "Run", exact: true }).click();
     await expect(page.getByText("This key cannot use poster.", { exact: true })).toBeVisible();
     await checkState(page, `workflow-try-error-${theme}-${width}.png`);

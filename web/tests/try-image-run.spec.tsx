@@ -78,6 +78,8 @@ async function startRun(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Picture model"),
   );
+  const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+  if (promptBox && promptBox.value === "") await user.click(screen.getByRole("button", { name: "Try an example" }));
   await user.click(screen.getByRole("button", { name: "Run" }));
 }
 
@@ -252,6 +254,8 @@ describe("a dropped connection on any tab", () => {
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(/model/i),
     );
+    const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (promptBox && promptBox.value === "") await user.click(screen.getByRole("button", { name: "Try an example" }));
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(await screen.findByText("The connection dropped")).toBeVisible();
     expect(document.body.textContent).not.toMatch(/Failed to fetch/i);

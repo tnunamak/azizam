@@ -67,6 +67,9 @@ async function run(capability = "chat", ready = "Chat model") {
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(ready),
   );
+  // A person who has not written a prompt takes the tab's example first.
+  const box = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+  if (box && box.value === "") await user.click(screen.getByRole("button", { name: "Try an example" }));
   await user.click(screen.getByRole("button", { name: "Run" }));
   return user;
 }
@@ -123,6 +126,7 @@ describe("PF-007 an answer with nothing in it says what is missing", () => {
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Decision model"),
     );
+    await user.type(screen.getByRole("textbox", { name: "Question" }), "Which one?");
     await user.type(screen.getByRole("textbox", { name: /Options/ }), "yes{enter}no");
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(await screen.findByText("No answer was returned.")).toBeVisible();
