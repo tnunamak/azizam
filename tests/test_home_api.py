@@ -107,6 +107,11 @@ def home_case(tmp_path):
     case.http.close()
 
 
+def alias_rows(data):
+    """The person's own alias rows: Home lists aliases as capability rows now, not as a separate list."""
+    return [row for row in data["capabilities"] if "alias" in row.get("tags", [])]
+
+
 def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
     c = home_case
     for i in range(7):
@@ -117,10 +122,10 @@ def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
     data = response.json()
     assert len(data["receipts"]) == 5
     assert {row["request_id"] for row in data["receipts"]} == {f"mine-{i}" for i in range(2, 7)}
-    assert [row["id"] for row in data["aliases"]] == ["fast"]
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
     assert all(row["status"] == "ready" for row in data["capabilities"])
     assert data["api_base_url"] == "https://gateway.example/v1"
-    assert data["creations"] is None
+    assert not {"aliases", "credential_aliases", "new_app_aliases", "creations"} & data.keys()
     TypeAdapter(list[HomeCapability]).validate_python(data["capabilities"])
     TypeAdapter(HomeProjection).validate_python(data)
     assert c.key not in response.text and "sha256:" not in response.text
@@ -191,7 +196,7 @@ def test_home_unknown_health_is_not_green(home_case):
     home_case.health = {"backends": []}
     data = home_case.http.get("/me/api/home").json()
     assert data["status"]["state"] == "unknown"
-    assert not data["aliases"][0]["available"]
+    assert not alias_rows(data)[0]["available"]
     assert data["capabilities"][0]["reason_code"] == "unknown"
 
 
@@ -200,7 +205,7 @@ def test_home_and_member_status_preserve_observed_state(home_case, state):
     home_case.health = {"backends": [{"key": "service", "live_status": state}]}
     data = home_case.http.get("/me/api/home").json()
     assert data["status"]["state"] == state
-    assert data["aliases"][0]["status"] == state
+    assert alias_rows(data)[0]["status"] == state
     assert not data["capabilities"][0]["available"]
     member = home_case.http.get("/me/api/status").json()
     TypeAdapter(MemberStatus).validate_python(member)
@@ -442,7 +447,7 @@ def test_member_status_contains_only_allowed_capabilities_and_owned_receipts(hom
     assert c.http.get("/me/api/status").status_code == 401
 
 
-def test_home_and_connection_use_the_apps_own_access_plan(home_case):
+def test_home_lists_the_persons_access_while_connection_checks_use_the_keys_access(home_case):
     c = home_case
     no_chat = store_plan("no-chat", path=c.db, caps=())
     admin_store.disable_app(c.personal["id"], path=c.db)
@@ -450,9 +455,9 @@ def test_home_and_connection_use_the_apps_own_access_plan(home_case):
     restricted = admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("restricted-key"), prefix="masked", path=c.db, created_by=accountable_person(c.db, c.client_app["id"]))
     c.give_app(c.client_app, no_chat)
     data = c.http.get("/me/api/home").json()
-    assert data["credential_aliases"][restricted["id"]] == []
-    # What a new App of this person could use is still listed.
-    assert [alias["id"] for alias in data["new_app_aliases"]] == ["fast"]
+    # Home lists what the person may use. A key's narrower access is the connection check's concern.
+    assert "credential_aliases" not in data
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
     result = c.http.post("/me/api/connection-test", json={"api_key": "restricted-key"}, headers=c.headers).json()
     assert result["path"] == "/v1/models" and result["model"] is None
     assert [call[0] for call in c.calls] == ["/v1/models"]
@@ -462,7 +467,7 @@ def test_home_and_connection_follow_the_persons_plan_for_same_as_person_apps(hom
     c = home_case
     c.give_person(store_plan("no-chat", path=c.db, caps=()))
     data = c.http.get("/me/api/home").json()
-    assert data["capabilities"] == [] and data["aliases"] == []
+    assert data["capabilities"] == []
     result = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).json()
     assert result["path"] == "/v1/models"
 
@@ -474,7 +479,7 @@ def test_person_without_a_plan_gets_nothing_on_home_and_is_told_so(home_case):
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["has_access_plan"] is False
-    assert data["capabilities"] == [] and data["aliases"] == [] and data["new_app_aliases"] == []
+    assert data["capabilities"] == [] and alias_rows(data) == []
     assert c.http.get("/me/api/status").json()["capabilities"] == []
     response = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers)
     assert response.status_code == 200, response.text
@@ -554,7 +559,7 @@ def test_connection_alias_precedence_never_uses_same_named_local_model(home_case
     assert result["ok"] and result["path"] == "/v1/models"
     assert [call[0] for call in c.calls] == ["/v1/models"]
     data = c.http.get("/me/api/home").json()
-    assert not data["aliases"][0]["available"]  # The healthy same-named local model is shadowed.
+    assert not alias_rows(data)[0]["available"]  # The healthy same-named local model is shadowed.
 
 
 def test_workflow_and_service_aliases_preserve_permissions():
@@ -575,26 +580,21 @@ def test_workflow_and_service_aliases_preserve_permissions():
     assert not any(cap.policy_available for cap in _resolved_capabilities(denied, lambda _identity: denied_raw, registry) if "alias" in cap.tags)
 
 
-def test_recipe_aliases_are_app_scoped_and_new_app_follows_the_persons_plan(home_case):
-    c = home_case
-    narrow_app = admin_store.create_app("Narrow", kind="personal", owner_user_id=c.user["id"], access_plan="person", path=c.db)
-    narrow = admin_store.create_credential_hash(subject_kind="app", subject_id=narrow_app["id"], hash=hash_api_key("narrow-key"), prefix="masked", path=c.db, created_by=accountable_person(c.db, narrow_app["id"]))
-    c.give_app(narrow_app, store_plan("no-chat", path=c.db, caps=()))
-    data = c.http.get("/me/api/home").json()
-    assert [alias["id"] for alias in data["aliases"]] == ["fast"]
-    assert [alias["id"] for alias in data["credential_aliases"][c.cred["id"]]] == ["fast"]
-    assert data["credential_aliases"][narrow["id"]] == []
-    assert [alias["id"] for alias in data["new_app_aliases"]] == ["fast"]
-    assert c.other_cred["id"] not in data["credential_aliases"]
-
-
-def test_capability_union_includes_what_a_new_app_could_use(home_case):
+def test_recipe_aliases_follow_the_persons_plan_on_home(home_case):
     c = home_case
     c.give_app(c.client_app, store_plan("no-chat", path=c.db, caps=()))
     data = c.http.get("/me/api/home").json()
-    assert data["credential_aliases"][c.cred["id"]] == []
-    assert [alias["id"] for alias in data["new_app_aliases"]] == ["fast"]
-    assert data["capabilities"] and data["aliases"]
+    # An App's narrower key does not narrow what Home offers the person (Home uses the person's access).
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
+    assert "credential_aliases" not in data
+
+
+def test_home_lists_what_the_person_could_use(home_case):
+    c = home_case
+    c.give_app(c.client_app, store_plan("no-chat", path=c.db, caps=()))
+    data = c.http.get("/me/api/home").json()
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
+    assert data["capabilities"]
 
 
 def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(fake_upstreams, monkeypatch, tmp_path):
@@ -654,7 +654,7 @@ def test_chat_only_model_plan_cannot_advertise_ready_generic_image_targets(home_
             intent=cap.intent, model=cap.model, workflow=cap.workflow, backend=cap.backend)) for cap in raw]
     c.capabilities_override = provider
     data = c.http.get("/me/api/home").json()
-    assert [row["id"] for row in data["aliases"]] == ["fast"]
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
     assert not any(row["capability"] == "image" for row in data["capabilities"])
     assert any(row["capability"] == "chat" and row["available"] for row in data["capabilities"])
 
@@ -715,8 +715,7 @@ def test_home_and_member_status_preserve_upstream_remote_alias_permission(home_c
         assert any(row.get("model") == "fast" for row in data["capabilities"]) == (restriction == "allowed_canonical_grant")
         if path.endswith("home"):
             expected_aliases = ["fast"] if restriction == "allowed_canonical_grant" else []
-            assert [row["id"] for row in data["aliases"]] == expected_aliases
-            assert [row["id"] for row in data["new_app_aliases"]] == expected_aliases
+            assert [row["use_name"] for row in alias_rows(data)] == expected_aliases
 
 
 def test_disabled_remote_model_cannot_be_resolved_by_registry_alias_fallback(home_case):
@@ -813,7 +812,7 @@ def test_service_selected_remote_alias_obeys_canonical_provider_permission(home_
         data = response.json()
         assert any(row.get("model") == "voice" for row in data["capabilities"]) is expected
         if path.endswith("home"):
-            assert [row["id"] for row in data["aliases"]] == (["voice"] if expected else [])
+            assert [row["use_name"] for row in alias_rows(data)] == (["voice"] if expected else [])
 
 
 # A receipt without a recorded source is not proof (see the legacy test above).
@@ -907,17 +906,17 @@ def test_recipe_alias_local_provenance_excludes_remote_and_unknown(home_case):
     c = home_case
     response = c.http.get("/me/api/home")
     assert response.status_code == 200
-    assert response.json()["credential_aliases"][c.cred["id"]][0]["local"] is True
+    assert alias_rows(response.json())[0]["backend_kind"] == "local"
 
     c.registry["services"]["service"]["config"] = {}
     response = c.http.get("/me/api/home")
-    assert response.json()["credential_aliases"][c.cred["id"]][0]["local"] is False
+    assert alias_rows(response.json())[0].get("backend_kind") != "local"
 
     c.registry["services"]["service"]["config"] = {
         "gateway_lifecycle": True, "cost_class": "paid-remote",
     }
     response = c.http.get("/me/api/home")
-    assert response.json()["credential_aliases"][c.cred["id"]][0]["local"] is False
+    assert alias_rows(response.json())[0].get("backend_kind") != "local"
 
 
 def test_member_status_capabilities_carry_home_evidence_source_and_check_time(home_case):

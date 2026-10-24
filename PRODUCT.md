@@ -49,6 +49,13 @@ A self-hosted gateway that speaks the vendors' own protocols exactly, so existin
 - Binding visual authority, per the owner: the designer handoff in `docs/design/assets/reference-ui/` ("the absolute authority on look and feel and UX best practices"). Its visual grammar is binding input to the direction round; its marketing copy and metrics are illustrative only (see that folder's README).
 - **Open (checkpoint T1):** the visual world. The shipped cream-and-serif look diverges from the designer handoff's dark, deep-water grammar; the owner picks between rendered directions.
 
+## Glossary
+
+Full table: `docs/design/VOICE.md`. Two terms here need a line of their own, because one name must mean one thing.
+
+- **Client:** the program you set up (for example Open WebUI). Connect and the setup picker name a client; a client takes the gateway's addresses and a key.
+- **App:** anything that connects to this gateway: a chat app, a script, a phone. Each app has its own keys and plan. Apps & keys lists them.
+
 ## Evidence on Hand
 
 - Designer handoff: 7 PNGs in `docs/design/assets/reference-ui/` (desktop admin overview, status, apps and access; mobile portal overview).

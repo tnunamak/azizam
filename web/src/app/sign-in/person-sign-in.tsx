@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useId, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronLeft, CircleAlert } from "lucide-react";
+import { Check, ChevronLeft, CircleAlert, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,7 @@ import { isNetworkFailure } from "@/lib/network-error";
 import { PRODUCT_NAME } from "@/lib/product";
 import type { RememberedPerson } from "@/lib/remembered-people";
 import { PersonAvatar, generatedAvatarPalettes } from "@/components/product/person-avatar";
+import { useReportSignInBusy } from "@/components/shell/sign-in-frame";
 import { authFetch, continueTo, type SignInOptions } from "./auth-api";
 import { notFreshFor } from "./sign-in-status";
 
@@ -72,7 +73,7 @@ export function NotFreshScreen({
         ref={headingRef}
         tabIndex={-1}
         id="sign-in-title"
-        className="text-title font-semibold tracking-tight outline-none"
+        className="text-3xl font-semibold tracking-[-0.02em] outline-none"
       >
         {copy.title}
       </h1>
@@ -83,13 +84,13 @@ export function NotFreshScreen({
           </p>
         ))}
       </div>
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+      <div className="mt-8 flex flex-col gap-3 sm:flex-row">
         {signOut ? (
-          <Button className="h-auto min-h-11 w-full py-2 whitespace-normal! sm:w-auto" asChild>
+          <Button size="xl" className="w-full whitespace-normal! sm:w-auto" asChild>
             <a href="/login/provider-sign-out">Sign out of {provider}</a>
           </Button>
         ) : (
-          <Button className="h-auto min-h-11 w-full py-2 whitespace-normal! sm:w-auto" asChild>
+          <Button size="xl" className="w-full whitespace-normal! sm:w-auto" asChild>
             <a href={signInAgain}>Sign in again</a>
           </Button>
         )}
@@ -139,8 +140,9 @@ export function withRemember(url: string, remember: boolean): string {
 }
 
 /**
- * The plain sign-in form (S9): email and password, or single sign-on, and the reset form for a reset link.
- * This is the form the page has always shown, with the name box (remember) added under the heading.
+ * The plain sign-in form (S9): single sign-on, email and password, or the reset form for a reset link. The name box
+ * (remember) sits under the single sign-on button when there is one, and after the form's Sign in when there is only a
+ * form (DESIGN.md 4.9).
  */
 export function PlainSignIn({
   data,
@@ -150,6 +152,8 @@ export function PlainSignIn({
   fromList,
   onBack,
   providerError,
+  openOwnerForm = false,
+  onOpening,
 }: {
   data: SignInOptions | undefined;
   reset: string;
@@ -160,18 +164,30 @@ export function PlainSignIn({
   fromList: boolean;
   onBack: () => void;
   providerError: ProviderError;
+  /** True to open the owner's password form at once (the list's owner link), instead of behind the link. */
+  openOwnerForm?: boolean;
+  /** Called when the provider's button starts its trip, so the page can drop any line from the last action. */
+  onOpening?: () => void;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [ownerForm, setOwnerForm] = useState(false);
+  const [ownerForm, setOwnerForm] = useState(openOwnerForm);
   const [remember, setRemember] = useState(true);
+  // True once the provider's button has been pressed: the page is leaving, so its controls wait.
+  const [opening, setOpening] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const errorRef = useRef<HTMLParagraphElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const errorId = useId();
   const rememberId = useId();
   const rememberHelpId = useId();
   useEffect(() => {
     headingRef.current?.focus();
   }, []);
+  // The owner's password form opens in place, and its first field takes the focus (S3).
+  useEffect(() => {
+    if (ownerForm) emailRef.current?.focus();
+  }, [ownerForm]);
   const login = useMutation({
     mutationFn: () =>
       reset
@@ -190,9 +206,16 @@ export function PlainSignIn({
       continueTo(data.next);
     },
   });
+  // A refused sign-in is said once, in the alert. The focus goes to the password field, where the next try starts; a
+  // refused password keeps its text selected, so the next try replaces it. Both fields name the alert (aria-describedby).
+  const refused = login.isError && login.error instanceof ApiError && login.error.code === "invalid_login";
+  const busy = login.isPending || opening;
+  useReportSignInBusy(busy);
   useEffect(() => {
-    if (login.isError) errorRef.current?.focus();
-  }, [login.isError, login.error]);
+    if (!login.isError) return;
+    passwordRef.current?.focus();
+    if (refused) passwordRef.current?.select();
+  }, [login.isError, login.error, refused]);
   const instanceName = data?.instance_name?.trim();
   const provider = data?.oidc_label?.trim();
   const hasProvider = data?.oidc && !reset;
@@ -205,13 +228,55 @@ export function PlainSignIn({
     Boolean(data) && !data?.built_in && data?.owner_password !== false && !reset;
   const showForm = Boolean(data?.built_in) || Boolean(reset) || ownerForm;
   const nameBoxShown = rememberOn && !reset;
+  // The primary beside single sign-on is an outline until either field has text, then the ink pill: the form is in use.
+  const filled = email !== "" || password !== "";
+  // The name box is one row on the column's left edge (DESIGN.md 4.9). It sits directly under the single sign-on button
+  // whenever there is one, above the divider, so it never sits below the main action. With no provider it sits after the
+  // form's Sign in. It keeps the name for this browser's list only, and the session is not changed.
+  // The 44 px target keeps every control at least 44 by 44; its vertical margins are -14 px, so it takes 16 px of
+  // height, and its 14 px overhang puts the box on the column's edge. The label tucks 4 px into the target's clear
+  // space, which leaves 10 px between the box and the label. The helper is indented by the box plus those 10 px.
+  const nameBox = nameBoxShown ? (
+    <div>
+      <div className="flex items-center">
+        <button
+          type="button"
+          role="checkbox"
+          id={rememberId}
+          aria-checked={remember}
+          aria-describedby={rememberHelpId}
+          disabled={busy}
+          onClick={() => setRemember((value) => !value)}
+          className="group -my-3.5 -ml-3.5 flex size-11 shrink-0 items-center justify-center rounded-control outline-none disabled:opacity-50"
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "flex size-4 items-center justify-center rounded-sm border group-focus-visible:outline-2 group-focus-visible:outline-offset-2 group-focus-visible:outline-solid group-focus-visible:outline-ring",
+              remember ? "bg-primary border-primary text-primary-foreground" : "border-input",
+            )}
+          >
+            {remember && <Check className="size-3.5" />}
+          </span>
+        </button>
+        <Label htmlFor={rememberId} className="-ml-1 text-body font-medium">
+          Remember my name on this browser
+        </Label>
+      </div>
+      {/* 26 px: the 16 px box and the 10 px gap, so the helper starts where the label does. */}
+      <p id={rememberHelpId} className="text-muted-foreground text-meta text-pretty mt-0.5 pl-[26px]">
+        Show my name here next time. Turn off on a shared computer.
+      </p>
+    </div>
+  ) : null;
 
   return (
     <>
       {fromList && !reset && (
         <button
           type="button"
-          className="text-link text-meta mb-4 flex min-h-11 items-center gap-1 underline underline-offset-4"
+          className="text-link text-meta mb-4 -mx-1.5 flex min-h-11 items-center gap-1 rounded-md px-1.5 underline underline-offset-4 disabled:opacity-50"
+          disabled={busy}
           onClick={onBack}
         >
           <ChevronLeft aria-hidden className="size-4" />
@@ -222,57 +287,50 @@ export function PlainSignIn({
         ref={headingRef}
         tabIndex={-1}
         id="sign-in-title"
-        className="text-title font-semibold tracking-tight outline-none"
+        className="text-3xl font-semibold tracking-[-0.02em] break-words outline-none"
       >
         {reset
           ? "Choose a new password"
           : `Sign in to ${instanceName || PRODUCT_NAME}`}
       </h1>
-      {nameBoxShown && (
-        <div className="mt-6 space-y-2">
-          <div className="flex items-center gap-3">
-            {/* A 44 px target around the 16 px box: every control on this page is at least 44 by 44. */}
-            <button
-              type="button"
-              role="checkbox"
-              id={rememberId}
-              aria-checked={remember}
-              aria-describedby={rememberHelpId}
-              onClick={() => setRemember((value) => !value)}
-              className="focus-visible:ring-ring/50 flex size-11 shrink-0 items-center justify-center rounded-control outline-none focus-visible:ring-[3px]"
-            >
-              <span
-                aria-hidden
-                className={cn(
-                  "flex size-4 items-center justify-center rounded-sm border",
-                  remember ? "bg-primary border-primary text-primary-foreground" : "border-input",
-                )}
-              >
-                {remember && <Check className="size-3.5" />}
-              </span>
-            </button>
-            <Label htmlFor={rememberId} className="text-body font-medium">
-              Show my name on this browser next time
-            </Label>
-          </div>
-          <p id={rememberHelpId} className="text-muted-foreground text-meta pl-7">
-            Turn this off on a public computer.
-          </p>
-        </div>
-      )}
       <div className="mt-8">
         <ProviderNotices error={providerError} />
         {hasProvider && (
-          <Button
-            className="h-auto min-h-11 w-full py-2 whitespace-normal!"
-            asChild
-          >
-            <a href={withRemember(data.oidc_url, rememberOn && remember)}>
-              {providerLabel}
-            </a>
-          </Button>
+          <>
+            <Button
+              size="xl"
+              variant="make"
+              className="w-full whitespace-normal!"
+              aria-disabled={busy || undefined}
+              tabIndex={busy ? -1 : undefined}
+              asChild
+            >
+              <a
+                href={withRemember(data.oidc_url, rememberOn && remember)}
+                onClick={(event) => {
+                  if (busy) {
+                    event.preventDefault();
+                    return;
+                  }
+                  // A modified click opens the provider elsewhere, and this page stays as it is.
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                  setOpening(true);
+                  onOpening?.();
+                }}
+              >
+                {opening && <Loader2 aria-hidden className="motion-safe:animate-spin motion-reduce:hidden" />}
+                {opening ? `Opening ${providerNameFor(provider)}…` : providerLabel}
+              </a>
+            </Button>
+            {opening && (
+              <p role="status" className="sr-only">
+                Opening {providerNameFor(provider)}
+              </p>
+            )}
+          </>
         )}
-        {hasProvider && (data.built_in || ownerForm) && (
+        {hasProvider && nameBox && <div className="mt-4">{nameBox}</div>}
+        {hasProvider && showForm && (
           <div className="text-muted-foreground text-meta my-6 flex items-center gap-4">
             <span className="flex-1 border-t" />
             <span>or use your email</span>
@@ -280,15 +338,14 @@ export function PlainSignIn({
           </div>
         )}
         {hasProvider && ownerCanUsePassword && !ownerForm && (
-          <p className="text-muted-foreground text-meta mt-6">
-            <button
-              type="button"
-              className="text-link min-h-11 underline underline-offset-4"
-              onClick={() => setOwnerForm(true)}
-            >
-              Owner? Sign in with your password
-            </button>
-          </p>
+          <button
+            type="button"
+            className="text-link text-meta mt-3 -mx-1.5 flex min-h-11 items-center rounded-md px-1.5 font-medium disabled:opacity-50"
+            disabled={busy}
+            onClick={() => setOwnerForm(true)}
+          >
+            Owner? Sign in with your password
+          </button>
         )}
         {showForm && (
           <form
@@ -303,14 +360,18 @@ export function PlainSignIn({
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
+                  ref={emailRef}
                   id="email"
                   type="email"
+                  size="lg"
                   autoComplete="username"
                   required
+                  aria-invalid={refused || undefined}
+                  aria-describedby={login.isError ? errorId : undefined}
+                  className="aria-invalid:focus-visible:border-destructive aria-invalid:focus-visible:outline-destructive"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
-                  disabled={login.isPending}
-                  className="min-h-11"
+                  disabled={busy}
                 />
               </div>
             )}
@@ -319,32 +380,37 @@ export function PlainSignIn({
                 {reset ? "New password" : "Password"}
               </Label>
               <Input
+                ref={passwordRef}
                 id="password"
                 type="password"
+                size="lg"
                 autoComplete={reset ? "new-password" : "current-password"}
                 required
+                aria-invalid={refused || undefined}
+                aria-describedby={login.isError ? errorId : undefined}
+                className="aria-invalid:focus-visible:border-destructive aria-invalid:focus-visible:outline-destructive"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                disabled={login.isPending}
-                className="min-h-11"
+                disabled={busy}
               />
             </div>
             {login.isError && (
-              <p
-                ref={errorRef}
-                tabIndex={-1}
-                role="alert"
-                className="text-danger text-body rounded-control"
-              >
+              <p id={errorId} role="alert" className="text-danger text-body rounded-control">
                 {signInError(login.error)}
               </p>
             )}
             <Button
               type="submit"
-              variant={hasProvider ? "outline" : "default"}
-              className="h-auto min-h-11 w-full py-2 whitespace-normal!"
-              disabled={login.isPending}
+              size="xl"
+              variant={hasProvider && !filled ? "outline" : "make"}
+              className={cn(
+                "w-full whitespace-normal!",
+                // The outline's edge is ink at 60%, so it reads as an edge in both themes (3:1 or more on the page).
+                hasProvider && !filled && "rounded-full! border-foreground/60!",
+              )}
+              disabled={busy}
             >
+              {login.isPending && <Loader2 aria-hidden className="motion-safe:animate-spin motion-reduce:hidden" />}
               {login.isPending
                 ? reset
                   ? "Saving password…"
@@ -353,10 +419,10 @@ export function PlainSignIn({
                   ? "Save password"
                   : "Sign in"}
             </Button>
+            {!hasProvider && nameBox}
             {!reset && (
-              <p className="text-muted-foreground text-meta">
-                Forgot your password? Ask the person who invited you for a
-                reset link.
+              <p className="text-muted-foreground text-meta text-pretty">
+                Forgot your password? Ask the person who set up {instanceName || PRODUCT_NAME} for a reset link.
               </p>
             )}
           </form>
@@ -402,10 +468,13 @@ function passwordFailure(error: unknown): PasswordFailure {
 /** One remembered person's password screen (S6): their name is the heading, and the password is the only task. */
 export function PersonPassword({
   person,
+  instanceName,
   onBack,
   onGone,
 }: {
   person: RememberedPerson;
+  /** The instance's name, for the reset line. The product's name when none is set. */
+  instanceName: string;
   onBack: () => void;
   /** The gateway no longer knows this name on this browser (S10). */
   onGone: (tile: string) => void;
@@ -442,6 +511,7 @@ export function PersonPassword({
     passwordRef.current?.focus();
     if (failure?.kind === "wrong") passwordRef.current?.select();
   }, [attempt.isError, attempt.error, failure]);
+  useReportSignInBusy(attempt.isPending);
   const tooMany = failure?.kind === "too-many";
   const wrong = failure?.kind === "wrong";
 
@@ -457,21 +527,22 @@ export function PersonPassword({
         <h1
           tabIndex={-1}
           id="sign-in-title"
-          className="text-title font-semibold tracking-tight outline-none"
+          className="text-3xl font-semibold tracking-[-0.02em] outline-none"
         >
           {person.name}
         </h1>
       </div>
       <button
         type="button"
-        className="text-link text-meta mt-3 flex min-h-11 items-center gap-1 underline underline-offset-4"
+        className="text-link text-meta mt-3 -mx-1.5 flex min-h-11 items-center gap-1 rounded-md px-1.5 underline underline-offset-4 disabled:opacity-50"
+        disabled={attempt.isPending}
         onClick={onBack}
       >
         <ChevronLeft aria-hidden className="size-4" />
         Not you? Choose someone else
       </button>
       <form
-        className="mt-6 space-y-5"
+        className="mt-8 space-y-5"
         aria-busy={attempt.isPending}
         onSubmit={(event) => {
           event.preventDefault();
@@ -484,6 +555,7 @@ export function PersonPassword({
             id={`${helpId}-password`}
             ref={passwordRef}
             type="password"
+            size="lg"
             autoComplete="current-password"
             required
             aria-label={`Password for ${person.name}`}
@@ -493,7 +565,7 @@ export function PersonPassword({
             onChange={(event) => setPassword(event.target.value)}
             disabled={attempt.isPending}
             // On an invalid field the focus ring takes the error colour, so the error stays visible while typing.
-            className="min-h-11 aria-invalid:focus-visible:border-destructive aria-invalid:focus-visible:ring-destructive/30"
+            className="aria-invalid:focus-visible:border-destructive aria-invalid:focus-visible:outline-destructive"
           />
         </div>
         <p id={helpId} className="text-muted-foreground text-meta">
@@ -516,13 +588,16 @@ export function PersonPassword({
         )}
         <Button
           type="submit"
-          className="h-auto min-h-11 w-full py-2 whitespace-normal!"
+          size="xl"
+          variant="make"
+          className="w-full whitespace-normal!"
           disabled={attempt.isPending || tooMany}
         >
+          {attempt.isPending && <Loader2 aria-hidden className="motion-safe:animate-spin motion-reduce:hidden" />}
           {attempt.isPending ? "Signing in…" : "Sign in"}
         </Button>
-        <p className="text-muted-foreground text-meta">
-          Forgot your password? Ask the person who invited you for a reset link.
+        <p className="text-muted-foreground text-meta text-pretty">
+          Forgot your password? Ask the person who set up {instanceName} for a reset link.
         </p>
       </form>
     </>
@@ -549,18 +624,18 @@ export function GoneNotice({
         ref={headingRef}
         tabIndex={-1}
         id="sign-in-title"
-        className="text-title font-semibold tracking-tight outline-none"
+        className="text-3xl font-semibold tracking-[-0.02em] outline-none"
       >
         {name} can’t sign in from this list
       </h1>
       <p className="text-body mt-4">
         Try another way to sign in, or ask the person who invited you for help.
       </p>
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-        <Button className="min-h-11" onClick={onAnotherWay}>
+      <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+        <Button size="xl" className="w-full sm:w-auto" onClick={onAnotherWay}>
           Sign in another way
         </Button>
-        <Button className="min-h-11" variant="outline" onClick={onBack}>
+        <Button size="xl" className="w-full sm:w-auto" variant="outline" onClick={onBack}>
           Back to the list
         </Button>
       </div>

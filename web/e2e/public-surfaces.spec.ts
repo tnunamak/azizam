@@ -8,7 +8,6 @@ const builtInOptions = {
   oidc_label: "",
   oidc_url: "/login?return_to=/",
   instance_name: "Browser test gateway",
-  owner_name: "Gateway owner",
 };
 
 // Display states, copy and form wiring for these two pages are asserted in

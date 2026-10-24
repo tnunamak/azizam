@@ -1494,6 +1494,11 @@ def _job_in_scope(job: Mapping[str, Any], scope: _MediaScope) -> bool:
     return _receipt_in_scope(job, scope)
 
 
+def _has_own_scope(record: Mapping[str, Any]) -> bool:
+    """Whether a record names the App or owner that decides who may read it, as ``_receipt_in_scope`` reads it."""
+    return bool(record.get("app_id")) or isinstance(record.get("owner_key_hash"), str)
+
+
 # Nothing recorded where the request came from.
 _UNKNOWN_SOURCE = {"kind": "unknown", "label": "Source unknown", "profile": None, "client_hint": None}
 
@@ -1804,6 +1809,135 @@ def _matches_media_filters(item: Mapping[str, Any], request: Request) -> bool:
     return True
 
 
+def _attempt_order(receipt: Mapping[str, Any]) -> tuple[int, int, str]:
+    """Oldest first: the attempt number, then when the receipt was stored, then its id."""
+    attempt = receipt.get("attempt_number")
+    return (attempt if isinstance(attempt, int) else 0, int(receipt.get("_stored_at") or 0), str(receipt["request_id"]))
+
+
+# The Try page's image job submit route. Its receipt names the job it created; the worker's attempt receipts are on another route.
+_IMAGE_JOB_SUBMIT_PATH = "/gateway/v1/media/jobs/image-generations"
+
+
+def _is_submit_route(receipt: Mapping[str, Any]) -> bool:
+    return receipt.get("path") == _IMAGE_JOB_SUBMIT_PATH
+
+
+def _fold_media_jobs(
+    receipts: list[dict[str, Any]], jobs: Mapping[str, Mapping[str, Any]], job_scope: _MediaScope,
+) -> list[dict[str, Any]]:
+    """Count each media job once, as its submit receipt, with the outcome its attempts recorded.
+
+    The Try image route writes the job's ``job_id`` on its submit receipt, so the pair stays linked after
+    the job record is erased. An older submit receipt has no ``job_id``; the job names it by its creating
+    receipt while the record exists (the first of the job's ids, see ``_job_receipt_ids``). The worker writes
+    the job's ``job_id`` on every attempt's receipt, and a Make receipt carries it too. Only ``receipts`` the
+    viewer can read take part, so no folded value comes from a receipt they cannot read. A job record the
+    viewer cannot read is dropped before any lookup, so its provenance cannot change their counts. A same-key
+    replay of a submit belongs to its job but is neither work nor a second request. When the submit receipt
+    is not among the readable receipts, the job's earliest receipt stands for it. A job with no attempt
+    receipt takes the failure its record shows, when the viewer can read that record. Receipts outside any
+    job pass through unchanged.
+    """
+    # A record that names an App or owner the viewer cannot read is ignored, with every link it names. A record
+    # that names neither takes its receipt's scope instead: only readable receipts can stand for it.
+    readable = {
+        job_id: job for job_id, job in jobs.items() if _job_in_scope(job, job_scope) or not _has_own_scope(job)
+    }
+    by_request_id = {receipt["request_id"]: receipt for receipt in receipts}
+    members_by_job: dict[str, list[dict[str, Any]]] = {}
+    for receipt in receipts:
+        if receipt.get("job_id"):
+            members_by_job.setdefault(str(receipt["job_id"]), []).append(receipt)
+    folded: dict[str, dict[str, Any]] = {}  # request_id of the receipt that stands for each job
+    in_jobs: set[str] = set()
+    for job_id, members in members_by_job.items():
+        job = readable.get(job_id)
+        submit = _submit_receipt(job_id, members, job, by_request_id, folded)
+        if submit is not None and all(member is not submit for member in members):
+            members = [submit, *members]
+        # A same-key replay of a submit is part of its job, but it is neither work nor an attempt.
+        replays = [member for member in members if member is not submit and _is_submit_route(member)]
+        counted = [member for member in members if all(member is not replay for replay in replays)]
+        display = submit if submit is not None else min(counted, key=_attempt_order)
+        attempts = [member for member in counted if member is not submit]
+        # ``job`` is set only when the viewer can read the record, by the same rule as ``readable``, so a failure
+        # takes the same decision as every other lookup of the job.
+        failed = (submit is not None and not attempts and job is not None
+                  and job.get("status") == media_jobs.STATUS_FAILED)
+        folded[display["request_id"]] = _job_request(display, counted, submit=submit is not None, failed=failed)
+        in_jobs.update(member["request_id"] for member in members)
+    return [
+        folded[receipt["request_id"]] if receipt["request_id"] in folded else receipt
+        for receipt in receipts
+        if receipt["request_id"] in folded or receipt["request_id"] not in in_jobs
+    ]
+
+
+def _submit_receipt(
+    job_id: str,
+    members: list[dict[str, Any]],
+    job: Mapping[str, Any] | None,
+    by_request_id: Mapping[str, dict[str, Any]],
+    folded: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """The receipt that is the job's request, when the viewer can read it.
+
+    A submit receipt is the job's request when it carries the job's ``job_id`` and the submit route, so the
+    job record is not needed to find it. Failing that, the job record's creating receipt is the request, when
+    the viewer can read it and it does not name another job.
+    """
+    submits = [member for member in members if _is_submit_route(member)]
+    if submits:
+        return min(submits, key=_attempt_order)
+    creating = next(iter(_job_receipt_ids(job)), None) if job is not None else None
+    candidate = by_request_id.get(creating) if creating is not None else None
+    if (candidate is not None and candidate["request_id"] not in folded
+            and str(candidate.get("job_id") or job_id) == job_id):
+        return candidate
+    return None
+
+
+def _job_request(
+    display: Mapping[str, Any], members: list[dict[str, Any]], *, submit: bool, failed: bool,
+) -> dict[str, Any]:
+    """One job's request: the receipt that stands for it, with the outcome, backend, start and cost its work recorded.
+
+    A job with several work receipts, such as retries, is one request, and its cost is the sum of their
+    recorded costs. A job with no work receipt keeps the standing receipt's own facts, except that
+    ``failed`` (its job record shows the job failed) makes the outcome failed.
+    """
+    work = [member for member in members if member is not display] if submit else members
+    # With no work receipt yet, the submit or standing receipt is the work itself.
+    work_or_display = work or [display]
+    newest = sorted(work_or_display, key=_attempt_order, reverse=True)
+    started = [member["started_at_ms"] for member in work if isinstance(member.get("started_at_ms"), int)]
+    costs = [cost for cost in (_receipt_cost(member) for member in members) if cost is not None]
+    request = {
+        **display,
+        "status": "failed" if failed else newest[0].get("status"),
+        "backend": _string_first(*(member.get("backend") for member in newest), display.get("backend")),
+        "remote": any(_receipt_is_paid_remote(member) for member in members),
+        "cost": {"usd": sum(costs)} if costs else None,
+        # One paid remote attempt reported no cost, so the summed cost above is only the known part of the request.
+        # The submit copies no cost and is not an attempt, so it is checked only when it is the work itself.
+        "_unpriced_remote": any(
+            _receipt_is_paid_remote(member) and _receipt_cost(member) is None for member in work_or_display
+        ),
+        "_outcome_request_id": newest[0]["request_id"],
+    }
+    # Set only when work recorded a start: a display without the key keeps its meaning as a pre-start-time receipt.
+    if started:
+        request["started_at_ms"] = min(started)
+    for key in ("requested_model", "resolved_model"):
+        request[key] = _string_first(display.get(key), *(member.get(key) for member in newest))
+    metadata = display.get("metadata")
+    if isinstance(metadata, Mapping) and "litellm" in metadata:
+        # The summed cost above is the request's cost; the receipt's own provider figure must not be read instead.
+        request["metadata"] = {key: value for key, value in metadata.items() if key != "litellm"}
+    return request
+
+
 def _usage_summary(
     request: Request, *, actor: _Actor, admin_db_path: Path,
     media_jobs_path: Path, receipts_path: Path,
@@ -1856,22 +1990,26 @@ def _usage_summary(
             "SELECT receipt_json, created_at FROM receipts WHERE " + " AND ".join(clauses)
             + " ORDER BY created_at DESC, request_id DESC", params,
         ).fetchall()
+    scoped: list[dict[str, Any]] = []
+    for raw, stored_at in rows:
+        value = json.loads(raw)
+        if isinstance(value, dict) and _receipt_in_scope(value, media_scope):
+            value["_stored_at"] = stored_at
+            _annotate_receipt_source(value, sources, admin_db_path, apps, connections)
+            scoped.append(value)
+    # One request per media job, so its work receipts are not counted beside its submit receipt.
+    job_ids = {str(value["job_id"]) for value in scoped if value.get("job_id")}
     receipts = []
     # Requests per source across the whole scope, so the Source picker can rank
     # sources by activity whichever source is currently selected.
     source_requests: dict[str, int] = {}
-    for raw, stored_at in rows:
-        value = json.loads(raw)
-        if isinstance(value, dict):
-            if not _receipt_in_scope(value, media_scope):
-                continue
-            value["_stored_at"] = stored_at
-            _annotate_receipt_source(value, sources, admin_db_path, apps, connections)
-            tallied = _source_id(value.get("source"))
-            if tallied:
-                source_requests[tallied] = source_requests.get(tallied, 0) + 1
-            if _source_matches_filter(value.get("source"), source_filter):
-                receipts.append(value)
+    for entry in _fold_media_jobs(scoped, media_jobs.get_many(job_ids, path=media_jobs_path) if job_ids else {},
+                                  media_scope):
+        tallied = _source_id(entry.get("source"))
+        if tallied:
+            source_requests[tallied] = source_requests.get(tallied, 0) + 1
+        if _source_matches_filter(entry.get("source"), source_filter):
+            receipts.append(entry)
     for source_row in sources:
         source_row["requests"] = source_requests.get(str(source_row.get("id")), 0)
     # A disconnected connection stays listed only while it has requests to show.
@@ -1882,6 +2020,7 @@ def _usage_summary(
     measured = 0
     paid_requests = 0
     unknown_paid_requests = 0
+    local_requests = 0
     failed_requests = 0
     outcomes_known = True
     for receipt in receipts:
@@ -1902,7 +2041,7 @@ def _usage_summary(
         model = _usage_model(receipt)
         row = by_model.setdefault((model, capability), {"model": model, "requests": 0, "remote_spend": None,
                                           "capability": capability, "paid_requests": 0,
-                                          "unknown_paid_requests": 0})
+                                          "unknown_paid_requests": 0, "local_requests": 0})
         row["requests"] += 1
         cost = _receipt_cost(receipt)
         if cost is not None:
@@ -1912,16 +2051,22 @@ def _usage_summary(
             if _receipt_is_paid_remote(receipt) or cost > 0:
                 paid_requests += 1
                 row["paid_requests"] += 1
-        elif _receipt_is_paid_remote(receipt):
+        # A paid remote request with no reported cost is unknown. So is one whose known cost leaves out an attempt.
+        if (cost is None and _receipt_is_paid_remote(receipt)) or receipt.get("_unpriced_remote"):
             unknown_paid_requests += 1
             row["unknown_paid_requests"] += 1
+        if _receipt_served_locally(receipt):
+            local_requests += 1
+            row["local_requests"] += 1
     hashes = owner_keys
     made: set[str] = set()
     # Retain first-match semantics without scanning the month's receipts per job.
     receipts_by_id: dict[str, Mapping[str, Any]] = {}
     for receipt in receipts:
         receipts_by_id.setdefault(str(receipt["request_id"]), receipt)
-    jobs = succeeded_jobs.result()
+    # A job record that names an App or owner the viewer cannot read is dropped here, before any lookup, so it cannot
+    # change their counts. A record that names neither is decided by its receipt, below.
+    jobs = [job for job in succeeded_jobs.result() if _job_in_scope(job, media_scope) or not _has_own_scope(job)]
     # Receipts older than the month (or out of the month's scope) in one read, not one per job.
     older = receipt_store.get_many(
         [request_id for job in jobs for request_id in _job_receipt_ids(job) if request_id not in receipts_by_id],
@@ -1981,14 +2126,22 @@ def _usage_summary(
     receipt_list = []
     shown = receipts[:USAGE_RECEIPT_LIMIT]
     visible_receipts = receipt_store.get_many(
-        [internal["request_id"] for internal in shown], audience="client",
-        viewer_person_id=actor.user_id, path=receipts_path,
+        [internal["request_id"] for internal in shown],
+        audience="client", viewer_person_id=actor.user_id, path=receipts_path,
     )
     for internal in shown:
         visible = visible_receipts.get(internal["request_id"])
         if visible:
             visible["remote_spend"] = _receipt_cost(internal)
+            # The row reads the same rule as the totals; a client never sees the backend name.
+            visible["served_locally"] = _receipt_served_locally(internal)
+            # A media job's row shows the status and remote flag the fold counted, which may be the job's failure.
+            if internal.get("_outcome_request_id"):
+                visible["status"] = internal.get("status")
+                visible["remote"] = internal.get("remote")
             visible["capability"] = _capability(internal)
+            # The model the by-model totals count. A picture's submit receipt names no model; its work receipts do.
+            visible["model"] = _usage_model(internal)
             visible["source"] = internal.get("source")
             if isinstance(internal.get("source"), Mapping):
                 visible["source_label"] = internal["source"].get("label")
@@ -2014,6 +2167,7 @@ def _usage_summary(
         "remote_spend_coverage": "This total includes recorded request costs only; other charges may be missing.",
         "spend_measured_requests": measured, "spend_total_requests": len(receipts),
         "paid_requests": paid_requests, "unknown_paid_requests": unknown_paid_requests,
+        "local_requests": local_requests,
         "retention_days": retention_days,
         "coverage_start": datetime.fromtimestamp(coverage_start, timezone.utc).isoformat(),
         "coverage_note": coverage_note,
@@ -2137,7 +2291,18 @@ def _annotate_receipt_source(
 
 
 def _receipt_cost(receipt: Mapping[str, Any]) -> float | None:
-    value = _nested(receipt, "metadata", "litellm", "response_cost")
+    """What a receipt says the request cost: the provider's reported figure, else the recorded cost.
+
+    The Usage row and the totals both read this, so a request counts the same way in each.
+    """
+    for value in (_nested(receipt, "metadata", "litellm", "response_cost"), _nested(receipt, "cost", "usd")):
+        cost = _reported_amount(value)
+        if cost is not None:
+            return cost
+    return None
+
+
+def _reported_amount(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     try:
@@ -2145,6 +2310,24 @@ def _receipt_cost(receipt: Mapping[str, Any]) -> float | None:
         return parsed if math.isfinite(parsed) and parsed >= 0 else None
     except (TypeError, ValueError):
         return None
+
+
+def _receipt_served_locally(receipt: Mapping[str, Any]) -> bool:
+    """Whether the receipt positively shows the request ran on this machine.
+
+    ``remote: false`` alone is the default, so it is not enough. The receipt must also name
+    a backend, must not record a charge, and must show the request was served: it reached the
+    backend, which its ``started_at_ms`` records. A request that failed before routing never
+    reached one, so it is not counted local and reads as a cost not recorded.
+    """
+    backend = receipt.get("backend")
+    if receipt.get("remote") is not False or not isinstance(backend, str) or not backend.strip():
+        return False
+    # Receipts written before start times were recorded have no started_at_ms key, so a success is their only
+    # evidence. Every receipt written since carries the key, so a success without a start time is not local.
+    before_start_times = "started_at_ms" not in receipt and receipt.get("status") == "succeeded"
+    served = receipt.get("started_at_ms") is not None or before_start_times
+    return served and _receipt_cost(receipt) in (None, 0)
 
 
 def _capability(receipt: Mapping[str, Any]) -> str:

@@ -109,6 +109,8 @@ async function load(browser, context, profile, label) {
     label, error, content_ms: p.meaningful == null ? null : Math.round(p.meaningful), ready_ms: Math.round(p.lastMain ?? 0), fcp_ms: Math.round(p.fcp ?? 0), lcp_ms: Math.round(p.lcp ?? 0),
     html_ms: Math.round(nav.html_ms ?? 0), load_ms: Math.round(nav.load ?? 0), long_tasks: (p.long ?? []).length, long_task_ms: Math.round(sum(p.long ?? [])),
     requests: list.length, wire_kb: Math.round(sum(list.map((r) => r.wire ?? 0)) / 1024),
+    // The member API and data-plane calls one load makes: the budget for a member's cold Home (DESIGN.md section 6).
+    member_api_requests: list.filter((r) => /^\/(me\/api|gateway\/v1)\//.test(new URL(r.url).pathname)).length,
     js_requests: scripts.length, js_wire_kb: Math.round(sum(scripts.map((r) => r.wire ?? 0)) / 1024), js_decoded_kb: Math.round(sum(scripts.map((r) => r.decoded ?? 0)) / 1024),
     js_uncompressed: scripts.filter((r) => r.enc === "none" && (r.wire ?? 0) > 20000).length, css_kb: Math.round(sum(list.filter((r) => r.type === "Stylesheet").map((r) => r.wire ?? 0)) / 1024),
     script_ms: Math.round((m1.ScriptDuration - m0.ScriptDuration) * 1000), task_ms: Math.round((m1.TaskDuration - m0.TaskDuration) * 1000),

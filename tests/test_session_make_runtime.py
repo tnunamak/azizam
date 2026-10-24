@@ -18,8 +18,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import accounts, admin_store, me_make, media_delivery, media_jobs, prompt_memory, receipt_store  # noqa: E402
+from gateway import accounts, admin_store, me_make, me_media, media_delivery, media_jobs, prompt_memory, receipt_store  # noqa: E402
 from gateway import request_source
+from gateway.receipts import RouteReceipt  # noqa: E402
 from tests.support.access import store_plan  # noqa: E402
 
 PNG = b"\x89PNG\r\n\x1a\n-source-picture-bytes"
@@ -576,6 +577,91 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         self.runtime.keep_payload("mj_keep", self._payload())
         proxy._EPHEMERAL_MEDIA_JOB_PAYLOADS.clear()
         self.assertEqual(self.runtime.load_payload("mj_keep")["auth"]["app_id"], self.app["id"])
+
+    def _make_job(self, job_id: str = "mj_runtime", request_id: str = "req_make_runtime") -> None:
+        """A make job and its submit receipt, as the submit route writes them."""
+        media_jobs.create(media_jobs.MediaJob(job_id=job_id, intent="image.generate", request_id=request_id,
+                                              app_id=self.app["id"], metadata={"mode": me_make.JOB_MODE}),
+                          path=media_jobs.DB_PATH)
+        receipt_store.record(RouteReceipt(protocol="azizam.make", intent="image.generate", path=me_make.ROUTE_PATH,
+                                          request_id=request_id, app_id=self.app["id"], api_key_name=me_make.APP_NAME,
+                                          requested_model="image", job_id=job_id, status="accepted"),
+                             path=receipt_store.DB_PATH)
+
+    def _stored(self, request_id: str) -> dict:
+        return receipt_store.get(request_id, audience="internal", path=receipt_store.DB_PATH)
+
+    def test_a_dispatched_make_job_records_where_its_work_ran_on_its_own_receipt(self) -> None:
+        self._make_job()
+        seen = {}
+
+        async def dispatching_route(request, auth_context, receipt=None):
+            seen["receipt"] = receipt
+            proxy._mark_backend_started(receipt)  # What the image route does when it hands the work over.
+            return self._ok()
+
+        with patch.object(proxy, "proxy_graph_image_request", dispatching_route):
+            asyncio.run(self.runtime.execute(self._payload("image.generate")))
+        # The picture's receipt is read from memory: the image route writes it to a store path
+        # bound at import time, which these tests do not patch.
+        picture = seen["receipt"]
+        make = self._stored("req_make_runtime")
+        self.assertTrue(picture.backend)
+        self.assertIsNotNone(picture.started_at_ms)
+        self.assertEqual((make["backend"], make["started_at_ms"]), (picture.backend, picture.started_at_ms))
+        self.assertFalse(make["remote"])
+        self.assertTrue(me_media._receipt_served_locally(make))
+        self.assertTrue(me_media._receipt_served_locally(picture.to_dict()))
+
+    def test_a_make_job_refused_before_its_backend_runs_records_no_dispatch(self) -> None:
+        self._make_job()
+
+        async def never(request, auth_context, receipt=None):
+            raise AssertionError("a refused job never reaches the backend")
+
+        denial = proxy.PolicyDecision(decision="denied", sources=("app_profile",),
+                                      reasons=("images are off for this app",))
+        with self.subTest("policy denial"), \
+                patch.object(proxy, "_apply_image_route_policy", return_value=denial), \
+                patch.object(proxy, "proxy_graph_image_request", never):
+            with self.assertRaises(me_make.MakeBackendError):
+                asyncio.run(self.runtime.execute(self._payload("image.generate")))
+        with self.subTest("operator admission"), patch.object(proxy, "proxy_graph_image_request", never):
+            self._admission(disabled_intents=["image.generate"])
+            with self.assertRaises(me_make.MakeBackendError):
+                asyncio.run(self.runtime.execute(self._payload("image.generate")))
+        make = self._stored("req_make_runtime")
+        self.assertIsNone(make["backend"])
+        self.assertIsNone(make["started_at_ms"])
+        self.assertFalse(me_media._receipt_served_locally(make))
+
+    def test_a_remote_dispatch_keeps_the_make_receipt_remote(self) -> None:
+        self._make_job()
+
+        async def remote_route(request, auth_context, receipt=None):
+            receipt.remote = True  # A provider-served request is remote and never counted local.
+            proxy._mark_backend_started(receipt)
+            return self._ok()
+
+        with patch.object(proxy, "proxy_graph_image_request", remote_route):
+            asyncio.run(self.runtime.execute(self._payload("image.generate")))
+        make = self._stored("req_make_runtime")
+        self.assertIsNotNone(make["started_at_ms"])
+        self.assertTrue(make["remote"])
+        self.assertFalse(me_media._receipt_served_locally(make))
+
+    def test_the_first_recorded_dispatch_is_kept(self) -> None:
+        self._make_job()
+        paths = {"jobs_path": media_jobs.DB_PATH, "receipts_path": receipt_store.DB_PATH}
+        self.assertTrue(me_make.record_dispatch("mj_runtime", backend="local-engine",
+                                                started_at_ms=1_700_000_000_500, remote=False, **paths))
+        self.assertFalse(me_make.record_dispatch("mj_runtime", backend="other-engine",
+                                                 started_at_ms=1_700_000_900_000, remote=True, **paths))
+        self.assertFalse(me_make.record_dispatch("mj_missing", backend="local-engine",
+                                                 started_at_ms=1_700_000_500, remote=False, **paths))
+        make = self._stored("req_make_runtime")
+        self.assertEqual((make["backend"], make["started_at_ms"], make["remote"]),
+                         ("local-engine", 1_700_000_000_500, False))
 
 
 class SessionAppStoreTests(unittest.TestCase):

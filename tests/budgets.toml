@@ -348,7 +348,30 @@
 # and the full hermetic run passed 17334 with 3 skipped and 1 xfailed (2026-10-24).
 # Train r105 video maker stamp: +2 cases, one for the stamp rule of a sync-delivered video and one for the four readers
 # of a service App's video through the gateway route. Collect-only 17340 measured at 2e07a5b20 (2026-10-24).
-pytest = 17340
+# Sign-in privacy round: +1 case (tests/test_accounts.py, the invite answer names the owner by role, not by name; the
+# options case is renamed). This branch, which carries the Home branch's cases on top of main r104, collects 17242
+# (measured 2026-10-23, collect-only through scripts/run-hermetic-pytest.sh).
+# Walkthrough A16/A17 (Usage totals and local counts): +5 pytest cases in tests/test_me_media.py for recorded decision costs,
+# unreported remote receipts, served-here requests, pre-routing refusals and the cost rule. collect-only measured 17220 (2026-10-24).
+# Make dispatch receipts: +10 pytest cases in tests/test_image_handler_gaps.py (the image routes' start stamp, with and without
+# a refusal), tests/test_session_make_runtime.py (the Make job's dispatch record, refusals, remote, first dispatch) and
+# tests/test_me_media.py (Usage counts for a completed and a refused Make job). collect-only measured 17230 (2026-10-24).
+# Walkthrough A16/A17 (Usage counts a media job once): +8 pytest cases in tests/test_me_media.py for a picture made through a
+# job, two attempts, a failed picture, a refusal before dispatch, a request outside any job, a work receipt the viewer cannot
+# read, a submit receipt from last month, and audio or video jobs. collect-only measured 17238 (2026-10-24).
+# Walkthrough A16/A17 round 5 (Usage finds a media job's submit receipt by its job id): +4 pytest cases in tests/test_me_media.py
+# for a picture that still counts once after its job record is removed, an older submit receipt left unlinked, a job record
+# another app owns, and an audio job after its record is removed. collect-only measured 17242 (2026-10-24).
+# Usage review fixes (media job folding, replays and start times): +7 pytest cases in tests/test_me_media.py for a success
+# with no start time, a success stored before start times, a chat named only as a job's parent, a same-key replay of a
+# failed picture, a picture row's model, an unpriced remote attempt, and a same-key replay of a failed image job through
+# the real image route. collect-only measured 17249 (2026-10-24).
+# Train r106 (2026-10-24): full hermetic collection is 17401 on the merged tree (scripts/run-hermetic-pytest.sh --collect-only -q).
+# Usage review P2 fixes (unpriced cost from work attempts, legacy job failure): +2 pytest cases in tests/test_me_media.py for a
+# dispatch-stamped submit beside a priced remote attempt, and a legacy job that names its readable creator and has failed.
+# collect-only measured 17251 (2026-10-24).
+# Train r106 after merging A17 round 7 (+2 Usage fold cases): 17401 + 2 = 17403.
+pytest = 17403
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -406,7 +429,52 @@ pytest = 17340
 # Try default counts each option's embedding flag, not the row's: +2 vitest cases (a row that only embeds is never the
 # default; a chat option whose own capability lists an embedding output is never the default). Two existing dual-row
 # page tests now expect the chat option. vitest list measured 3488 (base 3486, no case removed).
-vitest = 3488
+# Home redesign round 2 (on the rebase onto fix/home-speed-and-qd-status): +cases in web/src/app/_home (the facts line's
+# known and unknown parts, the owner's needs and quiet line, the off words in the chooser). Full run on this branch: 212
+# files, 3192 cases, all passed (2026-10-23). The ceiling stays at 3232, the figure recorded above, which is not exceeded.
+# Home visual round 3, merged with main at r103: full run 229 files, 3420 cases, all passed (2026-10-23). Measured
+# value; it replaces the provisional 3451.
+# Home visual round 4 (feat/home-visual-3): the first visit's audio discs and its one-kind case, the slim history
+# notice. Full run 229 files, 3423 cases, all passed (2026-10-23). Measured value.
+# Home visual round 5: no vitest case added or removed (one Home case renamed); full run 229 files, 3423 cases, all
+# passed (2026-10-23). The ceiling stays at the measured value.
+# Sign-in front door: +11 cases (sign-in/page.spec.tsx +5 for the owner line, the reset line and Email focus; app/page.spec.tsx
+# +4, new, for the root's three states; components/shell/sign-in-frame.spec.tsx +2, new). Full run 231 files, 3434 cases,
+# all passed (2026-10-23). Measured value.
+# Sign-in privacy round: the owner-line cases become three (none names the owner, and the reset line is one copy for
+# everyone), and one case checks the name box sits under the provider button. Full run 231 files, 3433 cases, all
+# passed (2026-10-23). Measured value.
+# Sign-in round 3: the round before added six cases after this ceiling was set (page.spec.tsx +1, chooser.spec.tsx +5).
+# This round adds none. `vitest list`: 231 files, 3439 cases (measured 2026-10-23).
+# Sign-in round 4 (2026-10-24): the round-3 commits after the 3439 measure added six more (page.spec.tsx +4,
+# chooser.spec.tsx +2), and this round adds three: page.spec.tsx +1 (focus on the password field after a refusal) and
+# components/shell/sign-in-frame.spec.tsx +2 (the footer waits while the page is busy). Full run: 231 files, 3448 cases,
+# all passed.
+# Sign-in round 5 (2026-10-24): page.spec.tsx +4 (the reset line names the instance, two cases; Sign in fills with ink once a
+# field has text; Sign in shows a spinner while it is checked) and chooser.spec.tsx +3 (the chooser's names come only from
+# this browser's remembered list; the password screen's reset line; its spinner). `vitest list`: 231 files, 3457 cases;
+# the full run passes 3455 of them (measured 2026-10-24). The ceiling takes the larger count.
+# Apps & keys model (slice 1): +1 case in src/app/apps/trusted-addresses.spec.tsx (the App's trusted-address section).
+# vitest list measured 3452 (2026-10-24).
+# Set up this app (slice 2): +3 Connect cases for ?app=<id> (set up, unknown app, plain visit) and +1 rename case
+# (the menu's Set up this app link). vitest list measured 3456 (2026-10-24).
+# Apps & keys and Connect round 2: trusted-address cases (one replaced, two added: +2), an App-grouping case (+1)
+# and a Connect disclosure case (+1). vitest list measured 3460 (2026-10-24).
+# Apps & keys and Connect round 3, Connect part: connect/page.spec.tsx goes from 18 to 20 cases (the App strip and
+# the keyless and local-address cases replace the removed tools and notes cases), +3 in lib/private-address.spec.ts
+# and +2 in lib/docs.spec.ts. vitest list measured 3467 (2026-10-24, 235 files).
+# Apps & keys and Connect round 4: connect/page.spec.tsx gains the no-preselection, More clients, generic-recipe and
+# missing-model cases; apps/page.spec.tsx gains the Key 2 and Revoke cases; lib/private-address.spec.ts gains the
+# reach cases (+13 net).
+# No Playwright case was added or removed, so the playwright ceiling stays at 569.
+# vitest list measured 3480 (2026-10-24).
+# Walkthrough A17 (Usage cost labels): +1 vitest case in src/app/usage/page.spec.tsx for the four cost states
+# on one page. `vitest list` measured 3452 on 2026-10-24. Playwright stays at 566 (545 + 3 + 18), measured the same day.
+# Walkthrough A16/A17 (Usage local counts): +5 vitest cases in src/app/usage/page.spec.tsx for local-only months, local
+# requests beside paid totals, a no-paid month with local requests, a pre-routing failure and the CSV zero rule.
+# `vitest list` measured 3457 on 2026-10-24.
+# Train r106 (2026-10-24): vitest list is 3530 cases on the merged tree (vitest list --root web).
+vitest = 3530
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -430,12 +498,56 @@ vitest = 3488
 # Train r103 step 5 (account chooser): 537 + 29 (554 - 525) = 566, provisional until the final Playwright lists.
 # Owner visibility step 3 slice 1 (-1): the Library owner fetch matrix moves from five cases to four. 566 less 1 is 565.
 # Measured on 2026-10-24 with `playwright test --list`: playwright.config.ts 544, live-data 3, household 18.
-playwright = 565
+# Home redesign round 2: +8 cases in e2e/home-redesign.spec.ts (five tiles fill the row at 1440 px; the facts line's
+# cost and wait; the chooser's options at 1440, 768 and 390 px in light and dark, with no overlap). Measured on this
+# branch: playwright.config.ts 521; gate lists 542 (521 + live-data 3 + household 18), 2026-10-23.
+# Home visual pass: +1 case in e2e/home-redesign.spec.ts (at 1440 px the composer's edges meet the outer tile edges
+# of Recent, so the hero and the sections share one column). Measured on this branch: playwright.config.ts 522; gate
+# lists 543 (522 + live-data 3 + household 18), 2026-10-23. Vitest on this branch: 212 files, 3196 cases; its ceiling
+# stays at 3232, the figure main records, which this branch does not exceed.
+# Home visual round 3, merged with main at r103: playwright.config.ts 563, live-data 3, household 18: 584, measured
+# 2026-10-23 (it matches 566 + 18, the Home branch's cases over the 525 base).
+# Home visual round 4 (feat/home-visual-3): the first visit's edges, ring and one-kind cases, the owner's quiet
+# panel, the phone layout, and the notice saved at 768 px. --list: playwright.config.ts 574, live-data 3,
+# household 18: 595, measured 2026-10-23.
+# Home visual round 5 (feat/home-visual-3): +7 cases in e2e/home-redesign.spec.ts: the phone chooser row, two play-disc
+# cases (light and dark), the first visit's card focus and Try, the 760 px notice, the 72 px gap and the 16 px prompt.
+# --list: playwright.config.ts 581, live-data 3, household 18: 602, measured 2026-10-23.
+# Sign-in front door: +6 cases in e2e/signin-built.spec.ts, the built sign-in captures (skipped unless SIGNIN_SHOTS_DIR is
+# set). S1-S4 and S6 in home-redesign.spec.ts were test.fixme and are real cases now, so the count does not move for them.
+# --list: playwright.config.ts 587, live-data 3, household 18: 608, measured 2026-10-23.
+# Sign-in privacy round: +1 case in e2e/home-redesign.spec.ts, the column's centring on a desktop and the 72 px start on a
+# phone. S1 to S4 and S6 gained assertions, not cases. --list: playwright.config.ts 588, live-data 3, household 18: 609,
+# measured 2026-10-23.
+# Sign-in round 3: +8 cases in e2e/signin-shell.spec.ts (the primary's type and colour, the dark edge, the remember gaps and
+# the 44 px targets, and a 40-character name, at 1440 and 390 px) and +9 in e2e/signin-built.spec.ts (the round-3 captures,
+# skipped unless SIGNIN_SHOTS_DIR is set). --list: playwright.config.ts 605, live-data 3, household 18: 626, measured
+# 2026-10-23.
+# Sign-in round 4 (2026-10-24): +12 cases in e2e/signin-shell.spec.ts (focus rings on Email, the remember checkbox and the
+# owner's link, in light and dark; the forget link beside the owner's link; the theme switch's icon; the loading column at
+# 1440 and 390 px; the footer's wait while a provider opens and while a password sign-in runs) and +4 in
+# e2e/signin-built.spec.ts (the password form while it signs in, and the focus rings on Email, the remember checkbox and
+# the owner's link). --list: playwright.config.ts 621, live-data 3, household 18: 642, measured 2026-10-24.
+# Sign-in round 5 (2026-10-24): +7 cases in e2e/signin-shell.spec.ts (the both-methods Sign in is a 48 px pill with a 3:1 edge,
+# in both themes at both widths, replacing the dark-only check: +2; a refused password's ring is red, in both themes: +2;
+# the spinner beside single sign-on, the text link's focus padding, and the footer in view at 390 px: +3) and +5 in
+# e2e/signin-built.spec.ts (single sign-on while it opens, the password step for a remembered account, the both-methods
+# Sign in while it signs in, the remember checkbox beside single sign-on, and the edge-contrast record; skipped unless
+# SIGNIN_SHOTS_DIR is set). --list: playwright.config.ts 633, live-data 3, household 18: 654, measured 2026-10-24.
+# Set up this app (slice 2): +1 case in e2e/connect.spec.ts (chromium project). Gate lists measured 2026-10-24:
+# playwright.config.ts 546 + live-data 3 + household 18 = 567.
+# Apps & keys and Connect round 2: +1 case in e2e/connect.spec.ts (Back and Forward between two Connect pages, with
+# axe on the Apps and Connect pages). Gate lists measured 2026-10-24: playwright.config.ts 547 + live-data 3 + household 18 = 568.
+# Apps & keys and Connect round 3, Apps part: +1 case in e2e/connect.spec.ts (an App's access and key, and Create key on
+# an App with none). Gate lists measured 2026-10-24: playwright.config.ts 548 + live-data 3 + household 18 = 569.
+# Train r106 (2026-10-24): playwright.config.ts 635 + live-data 3 + household 18 = 656 (playwright test --list).
+playwright = 656
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
 # cases. The 20 showcase cases are gone with the /showcase site, so the node
 # ceiling falls by 20 (107 -> 87).
+# Train r106 (2026-10-24): node:test 5 compatibility + 82 Pi = 87, unchanged (no node test file changed on this train).
 node = 87  # -20: tests/showcase/core.test.mjs is deleted with the /showcase site. Earlier: +3: pi store-lock tests (orphan reclaimed, live holder kept, fresh orphan degrades)
 
 # Test files that fake an HTTP upstream on their own (tests/test_fake_ratchet.py;

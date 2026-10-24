@@ -39,9 +39,9 @@ const householdKey = ["settings", "prompt-memory"] as const;
 type Pending = { kind: "never-keep" } | { kind: "cap"; value: Retention };
 
 /**
- * The household's prompt rules on the owner's Settings: the kill switch,
- * the starting choice for new people, and the longest time anyone's prompts
- * are kept. Self-contained, so the Settings page only places it.
+ * The household's words-and-chats rules on the owner's Settings: the kill
+ * switch, the starting choice for new people, and the longest time anyone's
+ * words and chats are kept. Self-contained, so the Settings page only places it.
  */
 export function HouseholdPromptsSection() {
   const queryClient = useQueryClient();
@@ -79,13 +79,13 @@ export function HouseholdPromptsSection() {
     <div>
       <SettingsSection
         id="prompts"
-        title="Prompts"
-        description="Each person’s prompts are visible only to them."
+        title="Saved words and chats"
+        description="Each person’s words and chats are visible only to them."
       >
         {isPending ? (
           <div
             role="status"
-            aria-label="Loading prompt settings"
+            aria-label="Loading saved words and chats settings"
             aria-busy="true"
             className="space-y-2 p-4"
           >
@@ -99,7 +99,7 @@ export function HouseholdPromptsSection() {
         ) : isError || !data?.prompt_memory ? (
           <div className="p-4">
             <ErrorState
-              heading="Couldn’t load prompt settings"
+              heading="Couldn’t load these settings"
               error={error}
               viewerRole="owner"
               onRetry={() => void refetch()}
@@ -118,7 +118,7 @@ export function HouseholdPromptsSection() {
         )}
       </SettingsSection>
       <p className="text-muted-foreground text-meta mt-3">
-        No Azizam screen shows anyone’s prompts to anyone else, you included.
+        No Azizam screen shows anyone’s words or chats to anyone else, you included.
         You run this gateway, so you could still read its files. Your own choice
         is in{" "}
         <Link
@@ -136,18 +136,18 @@ export function HouseholdPromptsSection() {
           onOpenChange={(open) => !open && setPending(null)}
           title={
             pending?.kind === "cap"
-              ? `Keep prompts for at most ${capLabel(pending.value).toLowerCase()}?`
-              : "Never keep prompts on this gateway?"
+              ? `Keep words and chats for at most ${capLabel(pending.value).toLowerCase()}?`
+              : "Never keep words or chats on this gateway?"
           }
           description={
             pending?.kind === "cap"
-              ? `Everyone’s prompts older than ${capLabel(pending.value).toLowerCase()} are deleted now. Pictures, audio and video stay in Library.`
-              : "Nothing new will be kept. Deletion of everyone’s saved prompts may continue in the background. Turning this off later can’t bring them back. Pictures, audio and video stay in Library. Azizam cannot erase an engine’s own history, external output folders, backups, or downloaded copies."
+              ? `Everyone’s words and chats older than ${capLabel(pending.value).toLowerCase()} are deleted now. Pictures, audio and video stay in Library.`
+              : "Nothing new will be kept. Deletion of everyone’s saved words and chats may continue in the background. Turning this off later can’t bring them back. Pictures, audio and video stay in Library. Azizam cannot erase an engine’s own history, external output folders, backups, or downloaded copies."
           }
           confirmLabel={
             pending?.kind === "cap"
-              ? "Delete older prompts"
-              : "Never keep prompts"
+              ? "Delete older words and chats"
+              : "Never keep words or chats"
           }
           onConfirm={async () => {
             if (!pending) return;
@@ -185,9 +185,9 @@ function Rows({
   return (
     <>
       <SettingRow
-        label="Never keep prompts"
+        label="Never keep words or chats"
         htmlFor="never-keep-prompts"
-        description="Deletes saved prompts and wins over everyone’s own choice."
+        description="Deletes saved words and chats and wins over everyone’s own choice."
         control={
           <Switch
             id="never-keep-prompts"
@@ -202,7 +202,7 @@ function Rows({
         }
       />
       <SettingRow
-        label="Remember prompts for new people"
+        label="Keep words and chats for new people"
         htmlFor="default-remember-prompts"
         description="They can change it later."
         control={
@@ -217,7 +217,7 @@ function Rows({
         }
       />
       <SettingRow
-        label="Keep prompts for"
+        label="Longest time to keep them"
         // One line on a phone too: the label truncates before the
         // control wraps under it (DESIGN: phone rows are 64).
         className="max-sm:flex-nowrap"
@@ -235,7 +235,7 @@ function Rows({
           >
             <SelectTrigger
               size="sm"
-              aria-label="Keep prompts for"
+              aria-label="Longest time to keep them"
               className="sm:min-w-32"
             >
               <SelectValue>{capLabel(cap)}</SelectValue>

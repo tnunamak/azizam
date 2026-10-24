@@ -33,7 +33,7 @@ for (const viewport of viewports) {
     await page.getByRole("button", { name: "New app", exact: true }).first().click();
     await page.getByLabel("App name", { exact: true }).fill(firstName);
     await page.getByRole("button", { name: "Create app and key", exact: true }).click();
-    const reveal = page.getByRole("dialog", { name: `Connect ${firstName}` });
+    const reveal = page.getByRole("dialog", { name: `New key for ${firstName}` });
     await expect(reveal).toBeVisible();
     await reveal.getByRole("button", { name: "I’ve saved the key" }).click();
     await expect(reveal).not.toBeVisible();
@@ -109,7 +109,7 @@ test("a refused rename shows the gateway's words and keeps the name editable", a
     await page.getByRole("button", { name: "New app", exact: true }).first().click();
     await page.getByLabel("App name", { exact: true }).fill(name);
     await page.getByRole("button", { name: "Create app and key", exact: true }).click();
-    const reveal = page.getByRole("dialog", { name: `Connect ${name}` });
+    const reveal = page.getByRole("dialog", { name: `New key for ${name}` });
     await expect(reveal).toBeVisible();
     await reveal.getByRole("button", { name: "I’ve saved the key" }).click();
     await expect(reveal).not.toBeVisible();

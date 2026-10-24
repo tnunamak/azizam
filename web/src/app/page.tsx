@@ -1,47 +1,27 @@
 "use client";
 
 import { useViewerQuery } from "@/components/shell/session";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { EmptyState, ErrorState, PageHeader } from "@/components/product";
+import { ErrorState } from "@/components/product";
 import HomePage from "./_home/home-page";
+import SignInPage from "./sign-in/page";
 
-// "/" is a public page (gateway/ui_pages.json): signed-out visitors see how to
-// start, signed-in people get Home. No redirect between the two.
+// "/" is Home for a signed-in person and the sign-in page for anyone else (gateway/ui_pages.json). No redirect
+// between them. Nothing shows while the session is checked, so the sign-in page never flashes at a signed-in person,
+// and a failed check is not read as "signed out".
 export default function RootPage() {
   const viewer = useViewerQuery();
   if (viewer.data?.authenticated) return <HomePage />;
-  return (
-    <div className="space-y-8">
-      <PageHeader title="Home" answer="Here’s how to use your AI." />
-      {viewer.isPending ? (
-        <div role="status" aria-label="Loading Home" aria-busy="true">
-          <Skeleton className="h-48 w-full" />
-        </div>
-      ) : viewer.isError ? (
-        // Same copy as the shell's session failure on every other page.
-        <ErrorState
-          heading="Couldn’t load your account"
-          message="We couldn't tell why your account didn't load. Try again."
-          onRetry={() => void viewer.refetch()}
-          retrying={viewer.isFetching}
-        />
-      ) : (
-        <EmptyState
-          title="Your own AI, in the apps you use"
-          description="Sign in to get your gateway address, create a key, and connect your first app."
-          // Rendered only after the session check, so window exists.
-          action={
-            <Button asChild>
-              <a
-                href={`/sign-in/?return_to=${encodeURIComponent(window.location.pathname + window.location.search + window.location.hash)}`}
-              >
-                Sign in
-              </a>
-            </Button>
-          }
-        />
-      )}
-    </div>
-  );
+  if (viewer.isPending) return null;
+  if (viewer.isError) {
+    // Same copy as the shell's session failure on every other page.
+    return (
+      <ErrorState
+        heading="Couldn’t load your account"
+        message="We couldn't tell why your account didn't load. Try again."
+        onRetry={() => void viewer.refetch()}
+        retrying={viewer.isFetching}
+      />
+    );
+  }
+  return <SignInPage />;
 }

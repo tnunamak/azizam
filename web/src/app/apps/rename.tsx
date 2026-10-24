@@ -10,6 +10,7 @@ import {
   type ReplacedKey,
 } from "@/lib/account-api";
 import type { Credential } from "@/lib/api";
+import { keyStart } from "@/lib/key-hint";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -36,11 +37,6 @@ function nameToSave(draft: string, saved: string): string | null {
   const trimmed = draft.trim();
   if (!trimmed || trimmed.length > NAME_LIMIT || trimmed === saved) return null;
   return trimmed;
-}
-
-/** First characters of a key, enough to tell keys apart and never enough to use one. */
-function keyStart(prefix: string): string {
-  return `${prefix.slice(0, 8)}…`;
 }
 
 function RenameAppForm({

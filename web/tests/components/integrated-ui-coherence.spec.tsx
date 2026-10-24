@@ -6,6 +6,12 @@ import HomePage from "@/app/_home/home-page";
 import ProvidersPage from "@/app/providers/page";
 import { canonicalDestinationPath } from "@/lib/product";
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn(), prefetch: vi.fn() }),
+  usePathname: () => "/",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 function renderWithQuery(ui: React.ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -233,15 +239,12 @@ describe("integrated UI coherence", () => {
             public_base_url: "https://gateway.example",
             api_base_url: "https://gateway.example/openai/v1",
             capabilities: [],
-            aliases: [],
-            credential_aliases: {},
-            new_app_aliases: [],
             status: { state: "ready", reason: "All systems ready." },
             receipts: [],
-            creations: null,
+            recent_chats: [],
           });
         }
-        if (url === "/me/api/media?limit=12") {
+        if (url === "/me/api/media?limit=8") {
           return Response.json({
             assets: [
               {
@@ -267,9 +270,9 @@ describe("integrated UI coherence", () => {
       await screen.findByRole("img", { name: "A quiet gateway" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("link", { name: /A quiet gateway/ }),
-    ).toHaveAttribute("href", "/library?asset=img_recent");
-    expect(requested).toContain("/me/api/media?limit=12");
+      screen.getByRole("link", { name: /A quiet gateway/ }).getAttribute("href"),
+    ).toMatch(/^\/library\/?\?asset=img_recent$/);
+    expect(requested).toContain("/me/api/media?limit=8");
     expect(requested.some((url) => url.includes("scope=everyone"))).toBe(false);
   });
 
@@ -294,15 +297,12 @@ describe("integrated UI coherence", () => {
             public_base_url: "https://gateway.example",
             api_base_url: "https://gateway.example/openai/v1",
             capabilities: [],
-            aliases: [],
-            credential_aliases: {},
-            new_app_aliases: [],
             status: { state: "ready", reason: "All systems ready." },
             receipts: [],
-            creations: null,
+            recent_chats: [],
           });
         }
-        if (url === "/me/api/media?limit=12") {
+        if (url === "/me/api/media?limit=8") {
           return Response.json(
             { error: { message: "Library unavailable" } },
             { status: 503 },
@@ -313,12 +313,10 @@ describe("integrated UI coherence", () => {
     );
     renderWithQuery(<HomePage />);
     expect(
-      await screen.findByText(
-        "We couldn't tell why your recent creations didn't load. Try again.",
-      ),
+      await screen.findByText("Couldn’t load your recent work."),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
-    expect(requested).toContain("/me/api/media?limit=12");
+    expect(requested).toContain("/me/api/media?limit=8");
     expect(requested.some((url) => url.includes("scope=everyone"))).toBe(false);
   });
 });

@@ -544,6 +544,54 @@ def update_cost(
         return True
 
 
+def record_dispatch(
+    request_id: str,
+    *,
+    backend: str | None,
+    started_at_ms: int,
+    remote: bool,
+    path: Path = DB_PATH,
+) -> bool:
+    """Record where a stored receipt's work ran and when it began. The first dispatch wins.
+
+    ``remote`` can only turn on, so a request a provider served stays remote. The cost is
+    not copied: the receipt that recorded it keeps it, so one request's spend is not counted twice.
+    """
+    if not request_id:
+        raise ValueError("request_id is required")
+    if not path.exists():
+        return False
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT receipt_json FROM receipts WHERE request_id = ?",
+            (request_id,),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return False
+        data = _safe_loads(row[0])
+        if not isinstance(data, Mapping):
+            conn.rollback()
+            raise ValueError("cannot update malformed stored receipt")
+        if data.get("started_at_ms") is not None:
+            conn.rollback()
+            return False
+        updated = {
+            **data,
+            "backend": backend,
+            "started_at_ms": int(started_at_ms),
+            "remote": bool(data.get("remote")) or bool(remote),
+        }
+        _assert_safe(updated)
+        conn.execute(
+            "UPDATE receipts SET receipt_json = ? WHERE request_id = ?",
+            (json.dumps(updated, ensure_ascii=False, sort_keys=True), request_id),
+        )
+        conn.commit()
+        return True
+
+
 def _with_cost(data: Mapping[str, Any], cost: Mapping[str, Any]) -> dict[str, Any]:
     """Copy ``data`` with a reconciled cost block; only cost-owned fields change."""
     updated = dict(data)

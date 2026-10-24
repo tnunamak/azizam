@@ -198,6 +198,19 @@ def test_there_is_no_way_to_keep_a_copy() -> None:
     assert "scratch_owner.sweep" in text and "rmtree(state" in text
 
 
+def test_a_member_home_over_its_request_budget_is_a_violation() -> None:
+    report = _home()
+    report["who"] = "member"
+    report["profiles"]["desktop"]["cold"]["member_api_requests"] = BUDGETS["home"]["member_api_requests"] + 1
+    assert [v["metric"] for v in check.home_violations(report, BUDGETS["home"])] == ["member_api_requests"]
+
+
+def test_an_owner_home_is_not_judged_on_member_requests() -> None:
+    report = _home()
+    report["who"] = "owner"
+    assert check.home_violations(report, BUDGETS["home"]) == []
+
+
 def test_the_budget_table_has_no_route_exceptions() -> None:
     """Every route meets the defaults in [api]. A route with its own limits hides a slow route, so the table stays empty."""
     assert BUDGETS["api"].get("routes", {}) == {}

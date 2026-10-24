@@ -365,7 +365,7 @@
           ],
           "source_kind": "app",
           "source_label": "test-app",
-          "started_at_ms": null,
+          "started_at_ms": "<time>",
           "status": "succeeded",
           "stream": true,
           "updated_at_ms": "<time>",

@@ -64,7 +64,9 @@ test("a status line is one tinted box, and its Forget offer sits on its own line
   const sentenceBox = await sentence.boundingBox();
   const offerBox = await offer.boundingBox();
   expect(offerBox!.y).toBeGreaterThanOrEqual(sentenceBox!.y + sentenceBox!.height);
-  expect(Math.round(offerBox!.x)).toBe(Math.round(sentenceBox!.x));
+  // The offer's focus padding sits in its negative margin, so its words start where the sentence's words do.
+  const offerPadding = await offer.evaluate((element) => parseFloat(getComputedStyle(element).paddingLeft));
+  expect(Math.round(offerBox!.x + offerPadding)).toBe(Math.round(sentenceBox!.x));
   expect(offerBox!.height).toBeGreaterThanOrEqual(44);
   expect(await offer.evaluate((element) => getComputedStyle(element).textAlign)).toBe("left");
 

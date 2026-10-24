@@ -60,6 +60,345 @@ framework = "pytest"
 case = "tests/test_fresh_instance_bootstrap.py::TestFreshInstanceBootstrap::test_harness_db_is_not_live_db"
 reason = "the sandbox hides the live database by design"
 
+# Design captures (train r106): each saves built pages for a side-by-side check, and skips unless its
+# screenshot directory variable is set (the test.skip in the file names it). The gate never sets it.
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the first-visit member Home at 1440"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the first-visit member Home at 1440-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the first-visit member Home at 390"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the first-visit member Home at 390-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the first-visit member Home at 768"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the first-visit member Home at 768-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the owner Home at 1440"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the owner Home at 1440-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the owner Home at 390"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the owner Home at 390-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the owner Home at 768"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the owner Home at 768-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with the request history notice at 1440"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with the request history notice at 1440-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with the request history notice at 390"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with the request history notice at 390-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with the request history notice at 768"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with the request history notice at 768-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with work in Recent at 1440"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with work in Recent at 1440-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with work in Recent at 390"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with work in Recent at 390-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with work in Recent at 768"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/home-redesign.spec.ts > built pages for the design side-by-side check > saves the returning member Home with work in Recent at 768-dark"
+reason = "design capture: saves the built Home pages for the side-by-side check; runs only when HOME_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > records the edge contrast of the both-methods Sign in, in both themes at both widths"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves a long instance name, with spaces, in the chooser"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves a long instance name, with spaces, on the plain page"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves a long instance name, without spaces, on the plain page"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the both sign-in at 1440 and 390, light and dark"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the both sign-in with remembered people at 1440 and 390, light and dark"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the focus ring on Email"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the focus ring on a text link, the owner's"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the focus ring on single sign-on"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the focus ring on the password form's Sign in"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the focus ring on the remember checkbox"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the focus ring on the remember checkbox beside single sign-on"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the form beside single sign-on after a wrong password"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the form beside single sign-on while it signs in"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the loading page, before the options arrive"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the password form after a wrong password"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the password form while it signs in"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the password step for a remembered account, with its account above the field"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the password-only sign-in at 1440 and 390, light and dark"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the password-only sign-in with remembered people at 1440 and 390, light and dark"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the provider opening, from the list"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the single sign-on button while its provider opens"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the sso-only sign-in at 1440 and 390, light and dark"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
+[[skip]]
+framework = "playwright"
+config = "playwright.config.ts"
+project = "chromium"
+case = "web/e2e/signin-built.spec.ts > built sign-in pages for the design side-by-side check > saves the sso-only sign-in with remembered people at 1440 and 390, light and dark"
+reason = "design capture: saves the built sign-in pages for the side-by-side check; runs only when SIGNIN_SHOTS_DIR is set"
+
 # Gate cases that xfail. A new xfail fails the gate.
 [[xfail]]
 framework = "pytest"

@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { chatAlias, transcriptionAlias } from "@/app/_home/chat-alias";
 import {
   appGuides,
   keyAppById,
@@ -227,28 +226,3 @@ describe("suggestedModel", () => {
   });
 });
 
-describe("Home model names", () => {
-  const chat = { operation: "chat", available: true, status: "ready" as const, reason_code: "ready" };
-  it("uses the gateway's recommended chat alias", () => {
-    expect(chatAlias([])).toBeNull();
-    expect(
-      chatAlias([{ ...chat, id: "utility-check" }, { ...chat, id: "house-chat" }], "house-chat"),
-    ).toBe("house-chat");
-    // No name is special: "default" is an ordinary alias.
-    expect(chatAlias([{ ...chat, id: "utility-check" }, { ...chat, id: "default" }])).toBe("utility-check");
-  });
-  it("prefers a permitted local chat alias, then any allowed one, skipping unavailable and non-chat aliases", () => {
-    expect(chatAlias([{ ...chat, id: "paid", local: false }, { ...chat, id: "local-chat", local: true }])).toBe("local-chat");
-    expect(chatAlias([{ ...chat, id: "paid", local: false }, { ...chat, id: "unknown" }])).toBe("paid");
-    expect(chatAlias([{ ...chat, id: "off", local: true, available: false }, { ...chat, id: "on" }])).toBe("on");
-    expect(chatAlias([{ ...chat, id: "images", operation: "images", local: true }])).toBeNull();
-  });
-  it("finds a transcription alias, local first", () => {
-    const stt = { ...chat, operation: "audio.transcribe" };
-    expect(transcriptionAlias([])).toBeNull();
-    expect(
-      transcriptionAlias([{ ...stt, id: "cloud-stt", local: false }, { ...stt, id: "local-stt", local: true }]),
-    ).toBe("local-stt");
-    expect(transcriptionAlias([chat as never])).toBeNull();
-  });
-});

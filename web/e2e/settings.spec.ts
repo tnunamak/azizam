@@ -234,7 +234,7 @@ for (const [state, theme, width] of [
           "Instance",
           "Sign-in",
           "People and access",
-          "Prompts",
+          "Saved words and chats",
           "Receipts",
           "Media admission",
           "Extensions",
@@ -435,7 +435,7 @@ test("new visitors use the saved default theme and personal choices persist", as
   );
   await page.goto(`${baseURL}/sign-in/`);
   await expect(page.locator("html")).toHaveClass(/dark/);
-  await page.getByRole("button", { name: "Toggle theme" }).click();
+  await page.getByRole("button", { name: "Switch to light" }).click();
   await expect(page.locator("html")).not.toHaveClass(/dark/);
   await page.reload();
   await expect(page.locator("html")).not.toHaveClass(/dark/);

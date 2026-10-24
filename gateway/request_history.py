@@ -923,6 +923,58 @@ def get_row(record_id: str, *, path: Path | None = None) -> dict[str, Any] | Non
     return rows[0] if rows else None
 
 
+def chats_for_person(person_id: str, *, after: int, now: int, limit: int, path: Path | None = None) -> list[dict[str, Any]]:
+    """The person's newest kept chat completions, with their kept bodies, in one read.
+
+    Only the chat route is cut in SQL, and only the rows returned are read. A row whose body was not kept has no
+    accepted part, so ``first_user_text`` reads no title from it.
+    """
+    return _rows(
+        f"SELECT {_METADATA}, parts_json FROM kept_requests "
+        "WHERE person_id=? AND kind=? AND created_at>? AND (kept_until IS NULL OR kept_until>?) "
+        "AND json_extract(summary_json, '$.route') LIKE '%/chat/completions' "
+        "ORDER BY created_at DESC, record_id DESC LIMIT ?",
+        (person_id, KIND, after, now, int(limit)), path=path)
+
+
+#: The characters of a chat's first user message that a conversation title keeps.
+TITLE_CHARS = 80
+
+
+def _message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(part["text"] for part in content
+                        if isinstance(part, Mapping) and isinstance(part.get("text"), str))
+    return ""
+
+
+def first_user_text(parts_json: str | None) -> str | None:
+    """A kept chat's first user message as one line of text, or None when the kept body holds none.
+
+    The title is read from the body each time it is shown; nothing stores it, so erasing the record erases it.
+    """
+    if not parts_json:
+        return None
+    try:
+        parts = json.loads(parts_json)
+    except ValueError:
+        return None
+    accepted = parts.get("accepted") if isinstance(parts, Mapping) else None
+    body = accepted.get("body") if isinstance(accepted, Mapping) else None
+    messages = body.get("messages") if isinstance(body, Mapping) else None
+    if not isinstance(messages, list):
+        return None
+    for message in messages:
+        if not isinstance(message, Mapping) or message.get("role") != "user":
+            continue
+        text = " ".join(_message_text(message.get("content")).split())
+        if text:
+            return text[:TITLE_CHARS]
+    return None
+
+
 def delete_row(record_id: str, *, path: Path | None = None) -> bool:
     conn = connect(path)
     try:

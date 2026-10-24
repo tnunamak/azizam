@@ -126,8 +126,9 @@ def signin_options(path, oidc: dict) -> dict:
             # True once single sign-on from this page is always fresh (account switcher A2). Until then the sign-in page
             # keeps its refused-sign-in screen off (web/src/app/sign-in/page.tsx).
             "fresh_sign_in": False,
-            "oidc_url": "/login?return_to=%2Finvite%2F", "instance_name": "Azizam",
-            "owner_name": "The gateway owner"}
+            # No person's name in this answer: anyone on the internet can read the sign-in page's options. The page
+            # names the instance only.
+            "oidc_url": "/login?return_to=%2Finvite%2F", "instance_name": "Azizam"}
     return result
 
 

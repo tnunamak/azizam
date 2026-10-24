@@ -279,24 +279,48 @@ def _capability_rows(capabilities, evidence, registry=None, alias_views=None, wo
         product_availability["reason_code"] = reason
         rows.append({**summary, **capability_presentation(cap, metadata),
                      "status": state, "available": state in {"ready", "idle"}, "reason_code": reason,
-                     "availability": product_availability})
+                     "availability": product_availability,
+                     "typical_seconds": _typical_seconds(cap, registry, workflow_records),
+                     "cost_hint": _cost_hint(summary.get("backend_kind"), cap, registry)})
     return rows
 
 
-def _alias_rows(rows, views) -> list[dict[str, Any]]:
-    aliases = []
-    for operation, view in views.items():
-        for alias in view.get("stable", []):
-            matches = [row for row in rows if row.get("model") == alias.get("alias")
-                       and "alias" in row.get("tags", [])
-                       and f"resolves_to:{alias.get('resolves_to')}" in row.get("tags", [])
-                       and row.get("intent") == _OPERATION_INTENTS.get(operation, operation)]
-            if matches:
-                best = next((row for row in matches if row["available"]), matches[0])
-                aliases.append({"id": alias["alias"], "operation": operation,
-                                "available": best["available"], "status": best["status"], "reason_code": best["reason_code"],
-                                "local": best.get("backend_kind") == "local"})
-    return aliases
+def _typical_seconds(cap: Capability, registry: Mapping[str, Any] | None, workflow_records) -> float | None:
+    """How long this capability usually takes, from catalog data only: a workflow's manifest, else configured timing.
+
+    Receipt medians are not read here; the model catalog keeps them, and Home does not scan receipts.
+    """
+    seconds = None
+    if cap.workflow:
+        record = next((item for item in workflow_records if item.id == cap.workflow), None)
+        seconds = (record.manifest or {}).get("typical_seconds") if record is not None else None
+    if seconds is None:
+        service = ((registry or {}).get("services") or {}).get(cap.backend) or {}
+        config = service.get("config") or {}
+        target = next((tag.removeprefix("resolves_to:") for tag in cap.tags if tag.startswith("resolves_to:")), cap.model)
+        models = [row for row in service_model_records(config) if target in {row.get("id"), row.get("model_group")}]
+        seconds = next((source.get("typical_seconds") for source in (*models, config, service)
+                        if isinstance(source, Mapping) and source.get("typical_seconds") is not None), None)
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
+        return None
+    return float(seconds)
+
+
+def _cost_hint(backend_kind: str | None, cap: Capability, registry: Mapping[str, Any] | None) -> dict[str, Any]:
+    """What a run costs before it starts: free for a local model, a paid model otherwise.
+
+    An amount appears only when the service declares a numeric price; it is never estimated.
+    """
+    if backend_kind == "local":
+        return {"kind": "free", "price_usd": None}
+    if backend_kind != "remote":
+        return {"kind": "unknown", "price_usd": None}
+    service = ((registry or {}).get("services") or {}).get(cap.backend) or {}
+    config = service.get("config") or {}
+    price = next((source.get("price") for source in (service, config)
+                  if isinstance(source, Mapping) and isinstance(source.get("price"), (int, float))
+                  and not isinstance(source.get("price"), bool)), None)
+    return {"kind": "paid", "price_usd": float(price) if price is not None else None}
 
 
 def create_home_router(*, store, receipts_path: Callable[[], Path], require_session,
@@ -304,12 +328,14 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                        aliases, public_base_url, status_provider, admin_auth,
                        spend_ledger_path: Callable[[], Path | None] = lambda: None,
                        availability_services: Callable[[Mapping[str, Any]], Mapping[str, Any]] = lambda registry: registry,
-                       workflow_records: Callable[[], Any] = lambda: ()) -> APIRouter:
+                       workflow_records: Callable[[], Any] = lambda: (),
+                       recent_chats: Callable[[str], list[dict[str, Any]]] = lambda person_id: []) -> APIRouter:
     """Register session discovery, connection checks and owner setup evidence.
 
     ``availability_services`` adds engines that only composed workflows use
     (such as the face sidecar) to the registry view availability reads;
     ``workflow_records`` lets those workflows project from their engines.
+    ``recent_chats`` returns the person's kept chats with titles read at read time.
 
     ``spend_ledger_path`` returns the provider spend ledger that cap
     enforcement uses; without it, spend against a cap is reported as unknown.
@@ -362,37 +388,11 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             alias_views = aliases()
             rows_registry = availability_services(registry)
             records = tuple(workflow_records())
-            allowed: dict[tuple[str, str | None, str | None, str], Capability] = {}
-            credential_aliases: dict[str, list[dict[str, Any]]] = {}
-            # OWNER_VISIBILITY_STEP3: content scope includes accountable service Apps (O6); person content still needs Self.
-            owned_apps = [app for app in admin_store.list_apps_for_user(session.subject, path=store.path)
-                          if not app.get("disabled_at")]
-            # Keys and access rows for every app are read in one query each, so
-            # the number of statements does not grow with the number of apps or keys.
-            credentials_by_app = admin_store.list_active_credentials_for_apps(
-                [str(app["id"]) for app in owned_apps], path=store.path)
-            with admin_store.runtime_auth_connection(store.path) as conn:
-                access_rows = admin_store.runtime_access_rows(conn, [str(app["id"]) for app in owned_apps])
-            for app in owned_apps:
-                credentials = credentials_by_app.get(str(app["id"]), [])
-                for credential in credentials or [None]:
-                    identity = _identity(app, credential, store.path, person_id=session.subject, rows=access_rows)
-                    if identity is None:
-                        continue
-                    scoped = _resolved_capabilities(identity, capabilities, registry)
-                    if credential is not None:
-                        credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, availability_evidence, rows_registry, alias_views, records), alias_views)
-                    for cap in scoped:
-                        if cap.policy_available:
-                            allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
+            # Home offers what the person may make with their own signed-in access. Each App's key
+            # has its own access, which Apps shows; Home does not resolve it per key.
             new_identity = _new_app_identity(store.path, person_id=session.subject)
             new_caps = _resolved_capabilities(new_identity, capabilities, registry)
-            new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, rows_registry, alias_views, records), alias_views)
-            for cap in new_caps:
-                if cap.policy_available:
-                    allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-            rows = _capability_rows(allowed.values(), availability_evidence, rows_registry, alias_views, records)
-            alias_rows = _alias_rows(rows, alias_views)
+            rows = _capability_rows(new_caps, availability_evidence, rows_registry, alias_views, records)
             rows = group_product_capabilities(rows)
             summary = product_status_summary(rows)
             base = (public_base_url(request) or "").rstrip("/")
@@ -408,9 +408,8 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                           "has_access_plan": new_identity.access.complete,
                           "csrf_token": csrf_token(session), "public_base_url": base,
                           "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
-                          "aliases": alias_rows, "credential_aliases": credential_aliases,
-                          "new_app_aliases": new_app_aliases, "status": summary,
-                          "receipts": activity["receipts"], "creations": None})
+                          "status": summary, "receipts": activity["receipts"],
+                          "recent_chats": recent_chats(session.subject)})
 
         return await asyncio.to_thread(build_home)
 
@@ -594,8 +593,8 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             steps = [
                 {"id": "claim_owner", "done": True, "optional": False, "reason": "The owner account is claimed.", "href": "/setup"},
                 {"id": "connect_service", "done": connected, "optional": False, "reason": "A connected service is healthy." if connected else "Connect a service and check its health.", "href": "/engines/"},
-                {"id": "test_request", "done": succeeded, "optional": False, "reason": "A request has succeeded." if succeeded else "Run a test request with your key.", "href": "/#connect"},
-                {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "A successful request from an app key or the local network was observed." if external_client["recorded"] else "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "An older request may have come from another app. Confirm that your app works." if unattributed_use else "Use your key in an external client, then confirm that it works.", "href": "/#connect"},
+                {"id": "test_request", "done": succeeded, "optional": False, "reason": "A request has succeeded." if succeeded else "Run a test request with your key.", "href": "/apps/"},
+                {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "A successful request from an app key or the local network was observed." if external_client["recorded"] else "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "An older request may have come from another app. Confirm that your app works." if unattributed_use else "Use your key in an external client, then confirm that it works.", "href": "/connect/"},
                 {"id": "invite_someone", "done": invited, "optional": True, "reason": "An invitation has been created." if invited else "Invite someone to use your gateway.", "href": "/people/"},
             ]
             dismissed = "checklist_dismissed" in evidence
@@ -611,10 +610,6 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
 
     return router
 
-
-_OPERATION_INTENTS = {"chat": "chat.completions", "embeddings": "text.embeddings", "images": "image.generate",
-                      "image_edits": "image.edit", "videos": "video.generate", "speech": "speech.synthesis",
-                      "transcriptions": "speech.transcription", "audio_generate": "audio.generate", "rerank": "rerank"}
 
 _PROTOCOLS = {"chat": "openai.chat", "embed": "openai.embeddings", "image": "openai.images",
               "video": "openai.video", "speech": "openai.audio", "transcribe": "openai.audio", "audio": "openai.audio",

@@ -63,27 +63,34 @@ afterEach(() => {
 describe("the one-time request history notice on Home", () => {
   it("tells a member who predates request history that it is available and off for them", async () => {
     renderNotice();
-    expect(await screen.findByText("Request history is available")).toBeVisible();
-    expect(
-      screen.getByText(
-        "Azizam can now keep your request history so you can look back at what you asked. It’s off for you until you turn it on.",
-      ),
-    ).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Request history is available." })).toBeVisible();
+    expect(screen.getByText("Look back at what you asked. It’s off for you until you turn it on.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Turn on" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Not now" })).toBeEnabled();
+    // Make stays Home's one primary action: Turn on is an outline button, Not now a text button.
+    expect(screen.getByRole("button", { name: "Turn on" })).toHaveAttribute("data-variant", "outline");
+    expect(screen.getByRole("button", { name: "Not now" })).toHaveAttribute("data-variant", "ghost");
   });
 
   it("is not shown when the notice is not due", async () => {
     mocks.requestHistory.mockResolvedValue(choice({ notice_due: false, keep: true }));
     renderNotice();
     await waitFor(() => expect(mocks.requestHistory).toHaveBeenCalled());
-    expect(screen.queryByText("Request history is available")).not.toBeInTheDocument();
+    expect(screen.queryByText("Request history is available.")).not.toBeInTheDocument();
+  });
+
+  it("goes away on the dismiss button too, the same answer as Not now", async () => {
+    renderNotice();
+    await userEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(screen.queryByText("Request history is available.")).not.toBeInTheDocument());
+    expect(mocks.dismissRequestHistoryNotice).toHaveBeenCalledTimes(1);
+    expect(mocks.saveRequestHistory).not.toHaveBeenCalled();
   });
 
   it("goes away on Not now, and dismissing does not change the choice", async () => {
     renderNotice();
     await userEvent.click(await screen.findByRole("button", { name: "Not now" }));
-    await waitFor(() => expect(screen.queryByText("Request history is available")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Request history is available.")).not.toBeInTheDocument());
     expect(mocks.dismissRequestHistoryNotice).toHaveBeenCalledTimes(1);
     expect(mocks.saveRequestHistory).not.toHaveBeenCalled();
   });
@@ -94,7 +101,7 @@ describe("the one-time request history notice on Home", () => {
     await waitFor(() =>
       expect(mocks.saveRequestHistory).toHaveBeenCalledWith({ keep: true, retention: "7_days", parts: ["accepted"] }),
     );
-    await waitFor(() => expect(screen.queryByText("Request history is available")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Request history is available.")).not.toBeInTheDocument());
     expect(mocks.dismissRequestHistoryNotice).not.toHaveBeenCalled();
   });
 
@@ -105,21 +112,21 @@ describe("the one-time request history notice on Home", () => {
     await waitFor(() =>
       expect(mocks.toast.error).toHaveBeenCalledWith("Request history wasn’t turned on. Try again."),
     );
-    expect(screen.getByText("Request history is available")).toBeVisible();
+    expect(screen.getByText("Request history is available.")).toBeVisible();
   });
 
   it("is never asked of a key session, which has no person to tell", async () => {
     mocks.viewer = { authenticated: true, serviceAdmin: true };
     renderNotice();
     expect(mocks.requestHistory).not.toHaveBeenCalled();
-    expect(screen.queryByText("Request history is available")).not.toBeInTheDocument();
+    expect(screen.queryByText("Request history is available.")).not.toBeInTheDocument();
   });
 
   it("is not offered while the owner has turned request history off for everyone, so there is no Turn on", async () => {
     mocks.requestHistory.mockResolvedValue(choice({ household_off: true }));
     renderNotice();
     await waitFor(() => expect(mocks.requestHistory).toHaveBeenCalled());
-    expect(screen.queryByText("Request history is available")).not.toBeInTheDocument();
+    expect(screen.queryByText("Request history is available.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Turn on" })).not.toBeInTheDocument();
   });
 
@@ -127,11 +134,11 @@ describe("the one-time request history notice on Home", () => {
     mocks.requestHistory.mockResolvedValue(choice({ household_off: true }));
     const view = renderNotice();
     await waitFor(() => expect(mocks.requestHistory).toHaveBeenCalled());
-    expect(screen.queryByText("Request history is available")).not.toBeInTheDocument();
+    expect(screen.queryByText("Request history is available.")).not.toBeInTheDocument();
     view.unmount();
 
     mocks.requestHistory.mockResolvedValue(choice({ household_off: false }));
     renderNotice();
-    expect(await screen.findByText("Request history is available")).toBeVisible();
+    expect(await screen.findByText("Request history is available.")).toBeVisible();
   });
 });

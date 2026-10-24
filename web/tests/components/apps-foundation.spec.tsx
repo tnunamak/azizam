@@ -23,7 +23,7 @@ const app = {
   created_at: 1,
   can_mint_keys: true,
   profile: { name: "Local access" },
-  credentials: [{ id: "old-key", last_used_at: null }],
+  credentials: [{ id: "old-key", prefix: "opk_OldKeyPrefix", display_name: "Old laptop key", last_used_at: null }],
 };
 function show() {
   const client = new QueryClient({

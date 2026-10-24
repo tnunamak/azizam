@@ -6,7 +6,8 @@ import { useFieldContext } from "./field";
 
 /**
  * `md` (40, `text-body`) in forms, the default; `sm` (32, `text-meta`) in
- * toolbars and rows, beside 32 px buttons. Both are 44 below 640 px. The edge stays `--input` (3:1,
+ * toolbars and rows, beside 32 px buttons. Both are 44 below 640 px. `lg` (44 at every width, 16 px text) is the
+ * sign-in page's field: 16 px stops a phone browser from zooming in on focus. The edge stays `--input` (3:1,
  * DESIGN "Field edge").
  */
 function Input({
@@ -14,7 +15,7 @@ function Input({
   type,
   size = "md",
   ...props
-}: Omit<React.ComponentProps<"input">, "size"> & { size?: "sm" | "md" }) {
+}: Omit<React.ComponentProps<"input">, "size"> & { size?: "sm" | "md" | "lg" }) {
   const field = useFieldContext();
   const invalid =
     field?.invalid ||
@@ -35,8 +36,8 @@ function Input({
       data-size={size}
       className={cn(
         "border-input bg-card file:text-foreground placeholder:text-muted-foreground w-full min-w-0 rounded-control border px-3 py-1 transition-colors file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-meta file:font-medium disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 max-sm:h-11",
-        size === "sm" ? "sm:h-8" : "sm:h-10",
-        size === "sm" ? "text-meta" : "text-body",
+        size === "sm" ? "sm:h-8" : size === "lg" ? "h-11" : "sm:h-10",
+        size === "sm" ? "text-meta" : size === "lg" ? "text-lg" : "text-body",
         "focus-visible:border-ring",
         "aria-invalid:border-destructive",
         callerClasses,

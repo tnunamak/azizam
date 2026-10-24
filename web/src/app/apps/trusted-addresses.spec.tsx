@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AppsPage from "./page";
@@ -98,27 +99,77 @@ function openMenu() {
   fireEvent.keyDown(trigger, { key: "Enter" });
 }
 
-it("offers Trusted addresses to the owner only", async () => {
+/** The owner's keyless access sits in the App's own menu, which opens the dialog that changes it. */
+async function openTrustedAddresses() {
+  openMenu();
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Allow keyless access…" }));
+}
+
+it("offers keyless access to the owner only", async () => {
   vi.mocked(accountApi.session).mockResolvedValue(snapshot("none"));
   renderApps();
   await screen.findByRole("heading", { name: "Living room display" });
   openMenu();
   await screen.findByRole("menuitem", { name: "Remove app" });
-  expect(
-    screen.queryByRole("menuitem", { name: "Trusted addresses" }),
-  ).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Allow keyless access…" })).toBeNull();
+  expect(screen.queryByText("Keyless access from:")).toBeNull();
+});
+
+it("shows the app's keyless addresses as chips on its row, and Allow keyless access… in its menu", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  entries = [
+    {
+      id: "tad_1",
+      app_id: "display",
+      address: "192.168.1.0/24",
+      note: "Hall",
+      created_at: 1,
+    },
+  ];
+  renderApps();
+  expect(await screen.findByText("192.168.1.0/24")).toBeVisible();
+  expect(screen.getByText("Keyless access from:")).toBeVisible();
+  openMenu();
+  expect(await screen.findByRole("menuitem", { name: "Allow keyless access…" })).toBeVisible();
+});
+
+it("drops the keyless row for an app with none, and keeps Allow keyless access… in its menu", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  renderApps();
+  await screen.findByRole("heading", { name: "Living room display" });
+  await waitFor(() => expect(adminFetch).toHaveBeenCalled());
+  expect(screen.queryByText("Keyless access from:")).toBeNull();
+  expect(screen.queryByText("none")).toBeNull();
+  openMenu();
+  expect(await screen.findByRole("menuitem", { name: "Allow keyless access…" })).toBeVisible();
+});
+
+it("shows the keyless hint once, under the App that has addresses", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  entries = [
+    {
+      id: "tad_1",
+      app_id: "display",
+      address: "192.168.1.0/24",
+      note: "Hall",
+      created_at: 1,
+    },
+  ];
+  renderApps();
+  await screen.findByText("192.168.1.0/24");
+  const row = screen.getByRole("group", { name: "Keyless access for Living room display" });
+  expect(within(row).getByText("Requests from these addresses use this app's plan without a key.")).toBeVisible();
+  expect(screen.getAllByText(/Requests from these addresses/)).toHaveLength(1);
+  expect(screen.queryByText(/About trusted addresses/)).toBeNull();
 });
 
 it("starts empty, adds an address with a note, and removes it", async () => {
   vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
   renderApps();
   await screen.findByRole("heading", { name: "Living room display" });
-  openMenu();
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Trusted addresses" }),
-  );
+  await openTrustedAddresses();
   expect(
-    await screen.findByText(/No address is trusted for this app/),
+    await screen.findByText(/Until you add an address, every request to this app needs a key/),
   ).toBeVisible();
 
   fireEvent.change(screen.getByLabelText("IP address or range"), {
@@ -128,15 +179,17 @@ it("starts empty, adds an address with a note, and removes it", async () => {
     target: { value: "Display" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Trust address" }));
-  expect(await screen.findByText("192.168.1.0/24")).toBeVisible();
-  expect(screen.getByText("Display")).toBeVisible();
+  // The App's section lists the same addresses behind the dialog, so the dialog's own list is queried.
+  const dialog = screen.getByRole("dialog", { name: "Keyless access for Living room display" });
+  expect(await within(dialog).findByText("192.168.1.0/24")).toBeVisible();
+  expect(within(dialog).getByText("Display")).toBeVisible();
 
   fireEvent.click(
     screen.getByRole("button", { name: "Remove 192.168.1.0/24" }),
   );
   await waitFor(() =>
     expect(
-      screen.getByText(/No address is trusted for this app/),
+      screen.getByText(/Until you add an address, every request to this app needs a key/),
     ).toBeVisible(),
   );
 });
@@ -145,11 +198,8 @@ it("shows the gateway's sentence when an address is refused", async () => {
   vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
   renderApps();
   await screen.findByRole("heading", { name: "Living room display" });
-  openMenu();
-  fireEvent.click(
-    await screen.findByRole("menuitem", { name: "Trusted addresses" }),
-  );
-  await screen.findByText(/No address is trusted/);
+  await openTrustedAddresses();
+  await screen.findByText(/Until you add an address, every request to this app needs a key/);
   vi.mocked(adminFetch).mockRejectedValueOnce(
     new Error("A range of every address would trust the whole internet."),
   );
@@ -166,9 +216,8 @@ it("preserves the refused address and note until a successful retry", async () =
   vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
   renderApps();
   await screen.findByRole("heading", { name: "Living room display" });
-  openMenu();
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Trusted addresses" }));
-  await screen.findByText(/No address is trusted/);
+  await openTrustedAddresses();
+  await screen.findByText(/Until you add an address, every request to this app needs a key/);
   const address = screen.getByLabelText("IP address or range");
   const note = screen.getByLabelText("Note (optional)");
   const submit = screen.getByRole("button", { name: "Trust address" });
@@ -189,8 +238,9 @@ it("preserves the refused address and note until a successful retry", async () =
   expect(note).toHaveValue("Keep my display note");
   expect(entries).toEqual([]);
   fireEvent.click(submit);
-  expect(await screen.findByText("192.168.1.0/24")).toBeVisible();
-  expect(screen.getByText("Keep my display note")).toBeVisible();
+  const dialog = screen.getByRole("dialog", { name: "Keyless access for Living room display" });
+  expect(await within(dialog).findByText("192.168.1.0/24")).toBeVisible();
+  expect(within(dialog).getByText("Keep my display note")).toBeVisible();
   expect(address).toHaveValue("");
   expect(note).toHaveValue("");
   expect(screen.queryByRole("alert")).toBeNull();
