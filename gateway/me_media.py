@@ -1812,8 +1812,10 @@ def _fold_media_jobs(
         counted = [member for member in members if all(member is not replay for replay in replays)]
         display = submit if submit is not None else min(counted, key=_attempt_order)
         attempts = [member for member in counted if member is not submit]
+        # ``job`` is set only when the viewer can read the record, by the same rule as ``readable``, so a failure
+        # takes the same decision as every other lookup of the job.
         failed = (submit is not None and not attempts and job is not None
-                  and job.get("status") == media_jobs.STATUS_FAILED and _job_in_scope(job, job_scope))
+                  and job.get("status") == media_jobs.STATUS_FAILED)
         folded[display["request_id"]] = _job_request(display, counted, submit=submit is not None, failed=failed)
         in_jobs.update(member["request_id"] for member in members)
     return [
