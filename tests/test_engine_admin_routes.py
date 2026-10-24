@@ -527,7 +527,9 @@ def test_a_capability_cannot_be_unticked_while_a_model_is_kinded_for_it(gateway,
                               "values": {"address": "http://embed-engine.fk.test/v1"}, "capabilities": ["chat", "embeddings"],
                               "models": [{"id": "embed-up", "public_name": "embed-model", "kind": "embed"}]})
     assert created.status_code == 201, created.text
-    refused = _edit(owner, "embed-engine", {"capabilities": ["chat"]})
+    # The engine form saves with its definition and values; a body without them is the generic service edit.
+    refused = _edit(owner, "embed-engine", {"definition": "openai-compatible", "values": {"address": "http://embed-engine.fk.test/v1"},
+                                            "capabilities": ["chat"]})
     assert refused.status_code == 400, refused.text
     assert refused.json()["error"]["field"] == "models.0.kind"
     view = owner.get("/admin/api/engines/embed-engine").json()["engine"]
