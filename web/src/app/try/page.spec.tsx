@@ -106,12 +106,11 @@ test("names the page with exactly one level-one heading", async () => {
   expect(screen.getByRole("heading", { level: 1, name: "Try" })).toBeVisible();
 });
 
-test("Try names the signed-in account's plan, ignores a plan in the URL, and refreshes access", async () => {
+test("Try has no account header: no signed-in name, plan, plan check or refresh", async () => {
   mocks.params = new URLSearchParams("plan=plan-other");
-  let planName = "Family";
   fetchMock.mockImplementation(async (url: string) => response(
     url.includes("workflows") ? workflows : {
-      ...models, access_plan: { id: "plan-account", name: planName },
+      ...models, access_plan: { id: "plan-account", name: "Family" },
     },
   ));
   render(
@@ -119,31 +118,14 @@ test("Try names the signed-in account's plan, ignores a plan in the URL, and ref
       <TryPage />
     </ViewerContext.Provider>,
   );
-  expect(await screen.findByText("Your access plan: Family.")).toBeVisible();
-  expect(screen.getByText("Signed in as River.")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Check another plan" })).toHaveAttribute("href", "/people?tab=plans");
-  expect(screen.getByText(/Checking another plan does not change your access here/)).toBeVisible();
-  planName = "Everything and categories";
-  fireEvent.click(screen.getByRole("button", { name: "Refresh access" }));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(
-    "Your access plan: Everything and categories. Access refresh complete.",
-  ));
-  expect(mocks.tryKey).not.toHaveBeenCalled();
-});
-
-test.each([null, undefined])("Try distinguishes no assigned plan from an unconfirmed plan (%s)", async (plan) => {
-  fetchMock.mockImplementation(async (url: string) => response(
-    url.includes("workflows") ? workflows : { ...models, ...(plan === null ? { access_plan: null } : {}) },
-  ));
-  render(
-    <ViewerContext.Provider value={{ authenticated: true, name: "River", email: null, role: "member", admin: false }}>
-      <TryPage />
-    </ViewerContext.Provider>,
-  );
-  expect(await screen.findByText(plan === null
-    ? "No access plan is assigned to your account. Ask the owner."
-    : "Your access plan could not be confirmed.")).toBeVisible();
+  // The model list has loaded once its loading notice is gone; the header, if it still existed, was drawn at once.
+  await waitFor(() => expect(screen.queryByRole("status", { name: "Loading models" })).toBeNull());
+  expect(screen.queryByText(/Signed in as/)).toBeNull();
+  expect(screen.queryByText(/access plan/i)).toBeNull();
+  expect(screen.queryByRole("group", { name: "Try access" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Check another plan" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Refresh access" })).toBeNull();
+  expect(mocks.tryKey).not.toHaveBeenCalled();
 });
 
 test.each([false, true])(
