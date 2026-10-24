@@ -520,7 +520,12 @@ test.describe("built pages for the design side-by-side check", () => {
         await page.evaluate(() => document.fonts.ready);
         // The shell's own checks start a moment after the page; wait for their answer, as a person would see it.
         await expect(page.getByText("Checking", { exact: true })).toHaveCount(0, { timeout: 10_000 }).catch(() => undefined);
-        await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+        // Every picture loaded and decoded, the lazy ones too, so the whole-page capture has no blanks.
+        await page.evaluate(async () => {
+          const images = Array.from(document.images);
+          for (const image of images) image.loading = "eager";
+          await Promise.all(images.map((image) => image.decode().catch(() => undefined)));
+        });
         await page.screenshot({ path: path.join(SHOTS!, `${name}-${suffix}-fold.png`) });
         await page.addStyleTag({ content: "nav[aria-label='Phone navigation']{position:static!important}" });
         await page.screenshot({ path: path.join(SHOTS!, `${name}-${suffix}.png`), fullPage: true });
