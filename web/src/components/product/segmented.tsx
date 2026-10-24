@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode, Ref } from "react";
+import { useEffect, useRef, useState, type ReactNode, type Ref, type RefObject } from "react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -12,6 +12,32 @@ export interface SegmentOption<T extends string> {
   icon?: LucideIcon;
   /** A short state word drawn after the label (for example a capability that is down). */
   badge?: ReactNode;
+}
+
+/** Which of a scrolling pill row's segments are not wholly in view (none outside a pill row). */
+function usePartlyHidden(rowRef: RefObject<HTMLDivElement | null>, active: boolean, count: number): Set<number> {
+  const [partial, setPartial] = useState<Set<number>>(() => new Set());
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!active || !row || typeof IntersectionObserver === "undefined") return;
+    const segments = Array.from(row.querySelectorAll<HTMLElement>(":scope > button"));
+    const observer = new IntersectionObserver(
+      (entries) =>
+        setPartial((current) => {
+          const next = new Set(current);
+          for (const entry of entries) {
+            const index = segments.indexOf(entry.target as HTMLElement);
+            if (entry.intersectionRatio < 0.98) next.add(index);
+            else next.delete(index);
+          }
+          return next;
+        }),
+      { root: row, threshold: [0, 0.5, 0.98, 1] },
+    );
+    segments.forEach((segment) => observer.observe(segment));
+    return () => observer.disconnect();
+  }, [rowRef, active, count]);
+  return partial;
 }
 
 /**
@@ -28,7 +54,8 @@ export interface SegmentOption<T extends string> {
  *
  * `pill` draws each segment as an outlined pill (Home's chooser under the composer, like Claude's
  * starters). On a phone the row snaps chip by chip, and each chip is at least 92 px, so at 390 px
- * three and a half chips show: the half chip says the row goes on.
+ * three and a half chips show: the half chip says the row goes on. A chip that is not wholly in view
+ * hides its word (it stays in the accessible name), so the row never shows a word cut in half.
  */
 export function Segmented<T extends string>({
   label,
@@ -49,9 +76,15 @@ export function Segmented<T extends string>({
   pill?: boolean;
   ref?: Ref<HTMLDivElement>;
 }) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const partial = usePartlyHidden(rowRef, pill, options.length);
   return (
     <div
-      ref={ref}
+      ref={(node) => {
+        rowRef.current = node;
+        if (typeof ref === "function") ref(node);
+        else if (ref) (ref as RefObject<HTMLDivElement | null>).current = node;
+      }}
       role="group"
       aria-label={label}
       className={cn(
@@ -60,7 +93,7 @@ export function Segmented<T extends string>({
         className,
       )}
     >
-      {options.map((option) => {
+      {options.map((option, index) => {
         const Icon = option.icon;
         return (
           <button
@@ -83,7 +116,9 @@ export function Segmented<T extends string>({
                 className={cn("size-4 shrink-0", !scroll && !pill && "max-sm:hidden")}
               />
             ) : null}
-            {option.label}
+            <span className={cn("transition-opacity duration-(--motion-fast)", partial.has(index) && "opacity-0")}>
+              {option.label}
+            </span>
             {option.badge ? <span className="text-badge font-medium">{option.badge}</span> : null}
             {typeof option.count === "number" ? (
               <span className="figures text-muted-foreground text-badge font-normal">

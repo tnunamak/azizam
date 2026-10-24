@@ -128,27 +128,34 @@ function YourApps({ home }: { home: HomeSnapshot }) {
 
 /**
  * Columns by how many cards there are, so no row ends with one card beside empty cells: four sit two by
- * two, then in one row once Home's column is at its full width.
+ * two on a phone and in one row from 640 px, at about the size of Recent's tiles.
  */
 const STARTER_COLUMNS = [
   "",
   "",
   "grid-cols-2",
   "grid-cols-2 sm:grid-cols-3",
-  "grid-cols-2 xl:grid-cols-4",
+  "grid-cols-2 sm:grid-cols-4",
   "grid-cols-2 lg:grid-cols-3",
 ];
 
 /** A first visit's sample chat reply: the shape of what Chat gives back. */
 const SAMPLE_REPLY = "Day one: take the 9:10 coastal train to Seacliff, then ride the shore path to the meadow for lunch.";
 
-/** Bars for a sample waveform, the same on every render: speech comes in bursts, music in a steady swell. */
+/**
+ * Bars for a sample waveform, the same on every render. Speech comes in word-sized bursts with short
+ * pauses between them; anything else (music, sound) is one continuous swell.
+ */
 function samplePeaks(kind: string): number[] {
-  const seed = [...kind].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const speech = kind === "speech" || kind === "voice";
   return Array.from({ length: 36 }, (_, index) => {
-    const swell = 0.55 + 0.35 * Math.sin((index + seed) / 3.1);
-    const burst = Math.abs(Math.sin((index * (seed % 7 + 3)) / 4.3));
-    return Math.max(0.12, Math.min(1, swell * (0.45 + 0.55 * burst)));
+    if (speech) {
+      const inWord = index % 7;
+      if (inWord >= 5) return 0.08;
+      return 0.35 + 0.6 * Math.abs(Math.sin(index * 1.7));
+    }
+    const swell = Math.sin((Math.PI * index) / 35);
+    return 0.2 + 0.75 * swell * (0.7 + 0.3 * Math.abs(Math.sin(index * 0.9)));
   });
 }
 

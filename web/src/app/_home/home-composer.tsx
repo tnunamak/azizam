@@ -107,12 +107,12 @@ function useMoreToRight(ref: RefObject<HTMLElement | null>, count: number): bool
 
 /**
  * A capability that is not working: a small dot after its name, and its word for screen readers. Choosing
- * it explains the fault in the composer. On a phone the owner's gateway row is the one place the fault
- * shows, so the owner's dot stays off there.
+ * it explains the fault in the composer. Below 1024 px the owner's one-row gateway banner is the one place
+ * the fault shows, so the owner's dot stays off there.
  */
-function StateNote({ state, word, phoneQuiet }: { state: CapabilityStateKey; word: string; phoneQuiet: boolean }) {
+function StateNote({ state, word, ownerQuiet }: { state: CapabilityStateKey; word: string; ownerQuiet: boolean }) {
   return (
-    <span className={cn("inline-flex items-center", phoneQuiet && "max-sm:hidden")}>
+    <span className={cn("inline-flex items-center", ownerQuiet && "max-lg:hidden")}>
       <span
         aria-hidden="true"
         className={cn("size-1.5 shrink-0 rounded-full", state === "down" ? "bg-destructive" : "bg-muted-foreground/60")}
@@ -210,7 +210,7 @@ export function HomeComposer({
       value: kindOf(row),
       label: capabilityLabel(row),
       icon: capabilityMeta(kindOf(row)).icon,
-      badge: state && !USABLE.has(state.state) ? <StateNote state={state.state} word={state.word} phoneQuiet={owner} /> : null,
+      badge: state && !USABLE.has(state.state) ? <StateNote state={state.state} word={state.word} ownerQuiet={owner} /> : null,
     };
   });
   const shown = options.slice(0, CHOOSER_SHOWN);
