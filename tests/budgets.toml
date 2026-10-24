@@ -375,7 +375,11 @@
 # 158 below the merged-tree figure above, so the ceiling moves by the new cases only: 17403 + 28 = 17431.
 # Generated avatars round 2 (2026-10-24): collect-only on this branch measures 17287 (17271 before round 2), so the
 # ceiling moves by that change: 17431 + 16 = 17447.
-pytest = 17447
+# Generated avatars round 3 (2026-10-24): the automatic default's admission and manual-choice races. In
+# tests/test_avatar_generation.py, 14 cases are added and 2 replaced: a net of +12. The feature tip before this round
+# measured 17452 (scripts/run-hermetic-pytest.sh --collect-only -q), already 5 over round 2's ceiling, so the ceiling is
+# set to this round's measured count.
+pytest = 17464
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
