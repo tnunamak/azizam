@@ -376,7 +376,10 @@
 # API reference security (2026-10-24): +8 pytest cases in tests/test_headless_access.py, for each operation's security,
 # the mount predicate, the refusal probes, the owner note, the schemes, the public and key-layer paths, and /me.
 # collect-only measured 17413 (2026-10-24).
-pytest = 17413
+# API reference audience and signed links (2026-10-24): +14 pytest cases in tests/test_headless_access.py, seven for
+# the declared-mode probes (one per mode) and seven for the request history (refused without credentials, admitted to
+# the maker's own session). collect-only measured 17427 (2026-10-24).
+pytest = 17427
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
