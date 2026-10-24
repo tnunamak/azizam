@@ -13887,11 +13887,15 @@ def _service_row_key(row: Mapping[str, Any]) -> str:
 
 
 async def _probe_service_rows(services: dict[str, Any], started: float) -> list[dict[str, Any]]:
+    owner = asyncio.current_task()
     try:
         rows = await status_endpoint._backend_grid({"backends": services})
     finally:
+        # Unregister only the entries this task registered. A fallback probe registers none, so a newer probe for the
+        # same service may still be in flight when it finishes.
         for key in services:
-            _SERVICE_ROW_PROBES.pop(key, None)
+            if _SERVICE_ROW_PROBES.get(key) is owner:
+                _SERVICE_ROW_PROBES.pop(key)
     checked_at = int(time.time())
     for row in rows:
         row.setdefault("observed_at_s", checked_at)
