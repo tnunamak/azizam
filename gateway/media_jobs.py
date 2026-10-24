@@ -613,6 +613,7 @@ def upsert(
     job: MediaJob | Mapping[str, Any],
     *,
     path: Path = DB_PATH,
+    maker_from_request: bool = True,
 ) -> MediaJob:
     """Insert a job row or update the row with the same ``job_id``.
 
@@ -621,8 +622,15 @@ def upsert(
     held by a different job raises ``sqlite3.IntegrityError`` and changes
     nothing; callers should look up by ``request_id`` first. An existing
     row's request ID is never restored after it was cleared.
+
+    The maker follows ``create``: a job written under an authenticated request takes that request's maker, and
+    ``maker_from_request=False`` keeps the maker the job carries. A row that already exists keeps the maker it was
+    stamped with, whoever writes it again.
     """
     record = _coerce_to_job(job)
+    if maker_from_request:
+        record.maker_person_id, record.maker_credential_id, record.maker_connection_id = (
+            request_source.job_maker(record.app_id))
     with _conn(path) as conn:
         _write_job(conn, record)
         conn.commit()
