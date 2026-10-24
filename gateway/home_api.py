@@ -327,6 +327,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                        require_action, csrf_token, capabilities,
                        aliases, public_base_url, status_provider, admin_auth,
                        spend_ledger_path: Callable[[], Path | None] = lambda: None,
+                       avatar_route: Callable[[str], str | None] | None = None,
                        availability_services: Callable[[Mapping[str, Any]], Mapping[str, Any]] = lambda registry: registry,
                        workflow_records: Callable[[], Any] = lambda: (),
                        recent_chats: Callable[[str], list[dict[str, Any]]] = lambda person_id: []) -> APIRouter:
@@ -364,7 +365,8 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     async def home(request: Request):
         try:
             session = (await asyncio.to_thread(require_session, request))
-            account = await asyncio.to_thread(build_user_portal_snapshot, session, path=store.path)
+            account = await asyncio.to_thread(build_user_portal_snapshot, session, path=store.path,
+                                              avatar_route=avatar_route)
             if not account.get("authenticated"):
                 raise UserPortalError("login_required", "Sign in to view Home.", status_code=401)
         except UserPortalError as exc:

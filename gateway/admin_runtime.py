@@ -2484,6 +2484,26 @@ def runtime_identity_for_session_app(
     ), auth_kind="session")
 
 
+def runtime_identity_for_new_session_app(
+    person_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> RuntimeIdentity | None:
+    """Return the identity a person's session App has, or would have, without creating the App.
+
+    A read that asks what a person may use (the avatar's make route) must not write. Until a make job starts, the
+    session App does not exist, and this gives the identity it will have: the same plan and the same denials, with no
+    App id. Nothing is written with it, and no App key can match it.
+    """
+    with admin_store.runtime_auth_connection(path) as connection:
+        row = admin_store.runtime_access_row_for_new_session_app(connection, person_id)
+    if row is None:
+        return None
+    return replace(identity_from_access_row(
+        row, key_hash="", name="the person's session App", person_id=person_id,
+    ), auth_kind="session")
+
+
 def runtime_identity_for_trusted_address(
     client: Any,
     *,

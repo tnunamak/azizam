@@ -163,11 +163,13 @@ def picture_path(person_id: str, record: Mapping[str, Any], *, viewer_id: str) -
     return f"/me/api/profile/avatar/picture?{query}"
 
 
-def public_view(person_id: str, record: Mapping[str, Any], *, viewer_id: str) -> dict[str, Any]:
+def public_view(person_id: str, record: Mapping[str, Any], *, viewer_id: str, default_due_now: bool = False) -> dict[str, Any]:
     """What the browser may see: the choice and a gateway path for the picture shown.
 
     For the person, it also gives a preview path for each picture they have (None when there is none), so the
-    picker can show both whichever one is chosen.
+    picker can show both whichever one is chosen. ``default_due`` is the page's cue to ask for the automatic picture:
+    the caller passes True only when that picture is due and an image route exists for the person now. It stays
+    True after a deferred ask, and is False once the attempt is recorded or the person chooses anything.
     """
     view: dict[str, Any] = {"choice": record["choice"], "person_id": person_id,
                             "picture_url": picture_path(person_id, record, viewer_id=viewer_id)}
@@ -176,6 +178,7 @@ def public_view(person_id: str, record: Mapping[str, Any], *, viewer_id: str) ->
         view["made_picture_url"] = _preview_path(SHOWN_GENERATED, record["generated_at"]) if has_current_copy(record) else None
         # The automatic default is being made: the page shows that until its picture is kept or it fails.
         view["generating"] = record["default_job_id"] is not None
+        view["default_due"] = default_due_now
     return view
 
 
@@ -259,14 +262,14 @@ def clear_generated(person_id: str, *, path: Path) -> dict[str, Any]:
     return get(person_id, path=path)
 
 
-def _default_due(record: Mapping[str, Any]) -> bool:
+def is_default_due(record: Mapping[str, Any]) -> bool:
     """A person with no sign-in picture and no chosen avatar, who has not had the one automatic attempt yet."""
     return record["default_attempted_at"] is None and record["choice"] == AUTO and not record["picture_url"]
 
 
 def default_due(person_id: str, *, path: Path) -> bool:
     """Whether the automatic default is still to be made. It does not record an attempt; ``claim_default`` does."""
-    return _default_due(get(person_id, path=path))
+    return is_default_due(get(person_id, path=path))
 
 
 def claim_default(person_id: str, job_id: str | None, *, path: Path) -> bool:

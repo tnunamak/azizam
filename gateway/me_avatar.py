@@ -222,6 +222,14 @@ def create_me_avatar_router(
             error.headers["Cache-Control"] = "no-store"
         return error
 
+    async def _person_view(person_id: str, record: Mapping[str, Any]) -> JSONResponse:
+        """The person's own avatar. ``default_due`` tells the page to ask for the automatic picture: it is still due,
+        and an image route exists for the person now. The check reads only, so answering it creates nothing."""
+        due = (avatars.is_default_due(record) and generation is not None
+               and await asyncio.to_thread(generation.model_for, person_id) is not None)
+        return JSONResponse(avatars.public_view(person_id, record, viewer_id=person_id, default_due_now=due),
+                            headers={"Cache-Control": "no-store"})
+
     def _is_admin(person_id: str) -> bool:
         return bool(ADMIN_ROLES & set(admin_store.effective_admin_roles("user", person_id, path=db())))
 
@@ -301,8 +309,7 @@ def create_me_avatar_router(
         person_id = str(session.subject)
         await _settle_default(person_id)
         record = await asyncio.to_thread(avatars.get, person_id, path=db())
-        return JSONResponse(avatars.public_view(person_id, record, viewer_id=person_id),
-                            headers={"Cache-Control": "no-store"})
+        return await _person_view(person_id, record)
 
     @router.put("/avatar", include_in_schema=False)
     async def put_avatar(request: Request) -> JSONResponse:
@@ -324,8 +331,7 @@ def create_me_avatar_router(
             record = await asyncio.to_thread(avatars.set_choice, person_id, body["choice"], path=db())
         except avatars.AvatarError as exc:
             return _error(exc.code, exc.message, exc.status)
-        return JSONResponse(avatars.public_view(person_id, record, viewer_id=person_id),
-                            headers={"Cache-Control": "no-store"})
+        return await _person_view(person_id, record)
 
     @router.get("/avatars", include_in_schema=False)
     async def list_avatars(request: Request) -> JSONResponse:
@@ -456,8 +462,7 @@ def create_me_avatar_router(
         await _settle_default(person_id)
         await _start_default(request, person_id)
         record = await asyncio.to_thread(avatars.get, person_id, path=db())
-        return JSONResponse(avatars.public_view(person_id, record, viewer_id=person_id),
-                            headers={"Cache-Control": "no-store"})
+        return await _person_view(person_id, record)
 
     @router.post("/avatar/generated", include_in_schema=False)
     async def post_generated(request: Request) -> JSONResponse:
@@ -489,8 +494,7 @@ def create_me_avatar_router(
             record = await asyncio.to_thread(avatars.store_generated, person_id, data, path=db())
         except avatars.AvatarError as exc:
             return _error(exc.code, exc.message, exc.status)
-        return JSONResponse(avatars.public_view(person_id, record, viewer_id=person_id),
-                            headers={"Cache-Control": "no-store"})
+        return await _person_view(person_id, record)
 
     @router.delete("/avatar/generated", include_in_schema=False)
     async def delete_generated(request: Request) -> JSONResponse:
@@ -503,7 +507,6 @@ def create_me_avatar_router(
             return error
         person_id = str(session.subject)
         record = await asyncio.to_thread(avatars.clear_generated, person_id, path=db())
-        return JSONResponse(avatars.public_view(person_id, record, viewer_id=person_id),
-                            headers={"Cache-Control": "no-store"})
+        return await _person_view(person_id, record)
 
     return router

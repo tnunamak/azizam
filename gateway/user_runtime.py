@@ -307,11 +307,13 @@ def build_user_portal_snapshot(
     *,
     auto_create_personal_app: bool = False,
     path: Path = admin_store.DB_PATH,
+    avatar_route: Callable[[str], str | None] | None = None,
 ) -> dict[str, Any]:
     """Return the account data safe to embed in ``/me``.
 
     Missing or invalid sessions are represented as an unauthenticated snapshot
-    so the HTML page can still serve the paste-a-key flow.
+    so the HTML page can still serve the paste-a-key flow. ``avatar_route`` answers, read only, the image route a
+    person's avatar would be made with; it tells the page whether the automatic picture is due on this load.
     """
     if session is None:
         return {"authenticated": False, "apps": []}
@@ -357,6 +359,10 @@ def build_user_portal_snapshot(
     ]
 
     person_id = str(user["id"])
+    avatar_record = avatars.get(person_id, path=path)
+    # The page asks for the automatic picture only when it is still due and an image route exists for the person now.
+    default_due_now = (avatar_route is not None and avatars.is_default_due(avatar_record)
+                       and avatar_route(person_id) is not None)
     return {
         "authenticated": True,
         # Public per-sign-in epoch, stable across renewal, distinct from every credential.
@@ -366,7 +372,7 @@ def build_user_portal_snapshot(
             # The stable id the generated avatar is drawn from (a rename keeps the colour), and the
             # choice. The picture URL is a gateway path, never the identity provider's address.
             "person_id": person_id,
-            "avatar": avatars.public_view(person_id, avatars.get(person_id, path=path), viewer_id=person_id),
+            "avatar": avatars.public_view(person_id, avatar_record, viewer_id=person_id, default_due_now=default_due_now),
             "email": user.get("email") or session.email,
             "name": user.get("display_name") or user.get("email") or session.email,
             "role": role,

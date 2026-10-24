@@ -209,6 +209,7 @@ from gateway.admin_runtime import (
     is_human_user_record,
     person_for_app_credential,
     runtime_identity_for_app_credential_hash,
+    runtime_identity_for_new_session_app,
     runtime_identity_for_session_app,
     runtime_identity_for_trusted_address,
     runtime_identity_for_trusted_app,
@@ -14756,11 +14757,18 @@ app.include_router(
 )
 
 def _avatar_picture_model(person_id: str) -> str | None:
-    """The image route a person's avatar is made with: the first one their own App may use, while media jobs are admitted."""
+    """The image route a person's avatar is made with: the first one their own App may use, while media jobs are admitted.
+
+    A read: it creates nothing. The session App is made when a make job starts (me_make._submit), so until one exists
+    the route is read from the identity that App will have.
+    """
     if _SESSION_MAKE_RUNTIME.admission(avatar_generation.IMAGE_INTENT) is not None:
         return None
-    app = admin_store.ensure_session_app_for_user(person_id, name=me_make.APP_NAME, path=ADMIN_STORE.path)
-    identity = runtime_identity_for_session_app(str(app["id"]), person_id, path=ADMIN_STORE.path)
+    app = admin_store.get_session_app_for_user(person_id, path=ADMIN_STORE.path)
+    identity = (
+        runtime_identity_for_session_app(str(app["id"]), person_id, path=ADMIN_STORE.path) if app is not None
+        else runtime_identity_for_new_session_app(person_id, path=ADMIN_STORE.path)
+    )
     if identity is None or identity.denial:
         return None
     return avatar_generation.pick_route(_gateway_capabilities_for_auth_context(AuthContext(identity=identity)))
@@ -16423,6 +16431,7 @@ app.include_router(create_home_router(
     status_provider=_status_payload_with_availability,
     admin_auth=ADMIN_AUTH,
     spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
+    avatar_route=_avatar_picture_model,
     availability_services=_workflow_availability_services,
     workflow_records=GATEWAY_WORKFLOW_REGISTRY.records,
     recent_chats=lambda person_id: request_history_api.recent_chats(
@@ -16434,7 +16443,8 @@ app.include_router(create_home_router(
 async def user_portal_session(request: Request):
     session = (await asyncio.to_thread(_oidc_session_from_request, request))
     try:
-        snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
+        snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path,
+                                           avatar_route=_avatar_picture_model)
     except UserPortalError as exc:
         # The sign-in cannot be identified right now (for example its view key is unreadable): say so, and send
         # nothing that could be taken for a signed-in person. The CSRF token still goes: a sign-out needs only the
@@ -16560,7 +16570,8 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
             "Sign in to view the models catalog",
             status_code=401,
         )
-    user_snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
+    user_snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path,
+                                            avatar_route=_avatar_picture_model)
     if not user_snapshot.get("authenticated"):
         raise UserPortalError(
             "not_authenticated",
@@ -16716,7 +16727,8 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
             "Sign in to view the workflows catalog",
             status_code=401,
         )
-    user_snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
+    user_snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path,
+                                            avatar_route=_avatar_picture_model)
     if not user_snapshot.get("authenticated"):
         raise UserPortalError(
             "not_authenticated",

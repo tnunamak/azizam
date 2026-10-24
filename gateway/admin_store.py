@@ -3169,6 +3169,38 @@ def runtime_access_row(
     return data
 
 
+# The person's own account state and plans, without an App: the half of _RUNTIME_ACCESS_SELECT that a session App
+# takes from its person.
+_PERSON_ACCESS_SELECT = """
+SELECT u.id AS person_row, u.issuer AS person_issuer,
+       acc.user_id AS access_row, acc.disabled_at AS person_disabled_at,
+       acc.removed_at AS person_removed_at, acc.plan_id AS person_plan_id,
+       EXISTS(SELECT 1 FROM account_signin_refusals r WHERE r.user_id = u.id) AS person_signin_refused,
+       pp.plan_json AS person_plan_json
+FROM users u
+LEFT JOIN account_access acc ON acc.user_id = u.id
+LEFT JOIN access_plans pp ON pp.id = acc.plan_id
+WHERE u.id = ?
+"""
+
+
+def runtime_access_row_for_new_session_app(conn: sqlite3.Connection, person_id: str) -> dict[str, Any] | None:
+    """The access row a person's session App has, or would have, read without creating the App.
+
+    ``ensure_session_app_for_user`` creates a session App on the person's own plan (``access_plan = 'person'``) and
+    never disabled. So its access, and its only denials, are the person's. ``app_id`` is empty because the App has no
+    id yet; access decisions do not read it.
+    """
+    row = conn.execute(_PERSON_ACCESS_SELECT, (person_id,)).fetchone()
+    if row is None:
+        return None
+    data = {k: row[k] for k in row.keys()}
+    data.update({"app_id": "", "app_name": None, "app_kind": "personal", "owner_user_id": person_id,
+                 "app_disabled_at": None, "access_plan": PERSON_ASSIGNMENT, "app_plan_json": None,
+                 "on_session_app": True})
+    return data
+
+
 def runtime_access_rows(conn: sqlite3.Connection, app_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
     """``{app_id: row}`` as ``runtime_access_row`` reads it, for many Apps in one query per 500 ids."""
     ids = sorted({str(value) for value in app_ids if value})

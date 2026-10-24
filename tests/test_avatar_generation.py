@@ -588,6 +588,60 @@ def test_other_picture_work_defers_the_default_without_using_its_attempt(rig: Ri
     assert len(generation.started) == 1
 
 
+# --- The page's cue to ask for the automatic picture: due now, and an image route exists -----------
+
+def _offered(client) -> bool:
+    return client.get("/me/api/profile/avatar").json()["default_due"] is True
+
+
+def test_the_page_is_offered_the_automatic_picture_only_where_a_route_exists(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    generation.model = None
+    assert _offered(client) is False
+    generation.model = "picture-route"
+    assert _offered(client) is True
+
+
+def test_a_deferred_default_stays_offered_and_a_started_one_is_not(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    generation.busy = True
+    assert _default(client).json()["default_due"] is True
+    assert _offered(client) is True
+    generation.busy = False
+    assert _default(client).json()["default_due"] is False
+    assert _offered(client) is False
+    assert len(generation.started) == 1
+
+
+def test_a_chosen_avatar_is_not_offered_the_automatic_picture(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    assert client.put("/me/api/profile/avatar", json={"choice": "v2"}, headers=ACTION).status_code == 200
+    assert _offered(client) is False
+    assert _default(client).json()["default_due"] is False
+    assert generation.started == []
+
+
+def test_the_session_snapshot_offers_the_automatic_picture_only_where_a_route_exists(real_make) -> None:
+    """The shell reads its avatar from the session snapshot, so the same cue must come from there, read only."""
+    from gateway import user_runtime
+
+    _proxy, db, alice, _jobs = real_make
+    session = AdminSession(subject=alice, email="alice@example.test", role="none",
+                           issued_at=time.time(), expires_at=time.time() + 3600)
+
+    def offered(route) -> bool:
+        snapshot = user_runtime.build_user_portal_snapshot(session, path=db, avatar_route=route)
+        return snapshot["user"]["avatar"]["default_due"] is True
+
+    assert offered(lambda _person_id: "picture-route") is True
+    assert offered(lambda _person_id: None) is False
+    assert offered(None) is False
+    assert admin_store.get_session_app_for_user(alice, path=db) is None
+
+
 def _as(person_id: str) -> dict[str, str]:
     """The action header and the person a request is for: the app in ``_anyone_app`` serves whoever is named."""
     return {**ACTION, "x-test-person": person_id}
