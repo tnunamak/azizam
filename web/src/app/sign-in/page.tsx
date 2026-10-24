@@ -416,6 +416,8 @@ export default function SignInPage() {
       }}
       providerError={arrival.providerError}
       openOwnerForm={owner}
+      // The provider's trip replaces the page's last line, so only one status region is on screen.
+      onOpening={() => setNotice(null)}
     />
   );
   const statusLine = status && (

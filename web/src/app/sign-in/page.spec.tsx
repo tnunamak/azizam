@@ -86,7 +86,7 @@ it.each([
           ? `Continue with ${label}`
           : "Continue with single sign-on",
     });
-    // The sign-in primary is the Home's Make colour (`--make`), the same token as the Home's Make button.
+    // The sign-in primary is the Home's resting Make (`--make-rest`, an ink pill): the same fill as the Home's Make button.
     expect(provider).toHaveAttribute("data-variant", "make");
     // The name box is on by default, so the single sign-on start says so: remember=1 (Addendum 2).
     expect(provider).toHaveAttribute("href", `${options.oidc_url}&remember=1`);
@@ -235,7 +235,7 @@ it.each([
     "Couldn’t sign you in.",
   ],
 ])(
-  "explains %s and focuses the error without losing the fields",
+  "explains %s and moves focus to the password without losing the fields",
   async (code, status, message, expected) => {
     const original = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation((input, init) =>
@@ -247,7 +247,7 @@ it.each([
     await submit();
     const error = await screen.findByRole("alert");
     expect(error).toHaveTextContent(expected);
-    expect(error).toHaveFocus();
+    expect(screen.getByLabelText("Password")).toHaveFocus();
     expect(screen.getByLabelText("Email")).toHaveValue("member@example.test");
     expect(screen.getByLabelText("Password")).toHaveValue(
       "A long test password",
@@ -535,7 +535,9 @@ it("names the instance only: no shared-by line, and no person's name, even if th
 it("gives the reset line one copy for everyone, with no name in it", async () => {
   Object.assign(options, { owner_name: "Sam Okafor" });
   mount();
-  expect(await screen.findByText("Forgot your password? Ask whoever set this up for a reset link.")).toBeVisible();
+  const reset = await screen.findByText("Forgot your password? Ask the person who runs this gateway for a reset link.");
+  expect(reset).toBeVisible();
+  expect(reset).toHaveClass("text-pretty");
   expect(screen.queryByText(/Sam Okafor/)).toBeNull();
 });
 
@@ -545,7 +547,7 @@ it("puts the name box under the single sign-on button, and its helper is its des
   options.oidc_label = "Okafor ID";
   mount();
   const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
-  const box = screen.getByRole("checkbox", { name: "Show my name on this browser next time" });
+  const box = screen.getByRole("checkbox", { name: "Remember me on this browser" });
   expect(provider.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(box).toHaveAccessibleDescription("Turn this off on a public computer.");
 });
@@ -557,7 +559,7 @@ it("puts the name box after the form's Sign in when both ways in are on, so it c
   mount();
   const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
   const signIn = screen.getByRole("button", { name: "Sign in" });
-  const box = screen.getByRole("checkbox", { name: "Show my name on this browser next time" });
+  const box = screen.getByRole("checkbox", { name: "Remember me on this browser" });
   expect(provider.compareDocumentPosition(signIn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(signIn.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
@@ -570,4 +572,77 @@ it("moves focus to Email when the owner's password form opens in place", async (
   mount();
   await user.click(await screen.findByRole("button", { name: "Owner? Sign in with your password" }));
   expect(await screen.findByLabelText("Email")).toHaveFocus();
+});
+
+it("marks both fields invalid when the password is refused, and names the refusal in each", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input) === "/auth/api/login"
+      ? json({ error: { code: "invalid_login", message: "Wrong" } }, 401)
+      : original(input, init),
+  );
+  mount();
+  await submit();
+  await screen.findByRole("alert");
+  for (const field of [screen.getByLabelText("Email"), screen.getByLabelText("Password")]) {
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription("Email or password is incorrect. Check both and try again.");
+  }
+});
+
+it("does not flag the fields for a refusal that is not about the password", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input) === "/auth/api/login"
+      ? json({ error: { code: "account_disabled", message: "This account is disabled." } }, 403)
+      : original(input, init),
+  );
+  mount();
+  await submit();
+  await screen.findByRole("alert");
+  expect(screen.getByLabelText("Email")).not.toHaveAttribute("aria-invalid");
+  expect(screen.getByLabelText("Password")).not.toHaveAttribute("aria-invalid");
+});
+
+it("says the provider is opening, once, and holds the other controls while the page leaves", async () => {
+  options.built_in = true;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  mount();
+  const user = userEvent.setup();
+  const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
+  // jsdom cannot leave the page: stop the link's navigation here, as the browser would start it.
+  const stop = (event: MouseEvent) => event.preventDefault();
+  window.addEventListener("click", stop);
+  try {
+    await user.click(provider);
+  } finally {
+    window.removeEventListener("click", stop);
+  }
+  expect(provider).toHaveTextContent("Opening Okafor ID…");
+  expect(provider).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("status")).toHaveTextContent("Opening Okafor ID");
+  expect(screen.getByLabelText("Email")).toBeDisabled();
+  expect(screen.getByLabelText("Password")).toBeDisabled();
+  expect(screen.getByRole("checkbox")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeDisabled();
+});
+
+it("applies the name box to single sign-on as well as to the password", async () => {
+  options.built_in = true;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  mount();
+  const user = userEvent.setup();
+  const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
+  expect(provider).toHaveAttribute("href", `${options.oidc_url}&remember=1`);
+  await user.click(screen.getByRole("checkbox", { name: "Remember me on this browser" }));
+  expect(provider).toHaveAttribute("href", `${options.oidc_url}&remember=0`);
+  await user.type(screen.getByLabelText("Email"), "member@example.test");
+  await user.type(screen.getByLabelText("Password"), "A long test password");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  await waitFor(() => {
+    const login = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/auth/api/login");
+    expect(JSON.parse(String(login?.[1]?.body))).toMatchObject({ remember: false });
+  });
 });

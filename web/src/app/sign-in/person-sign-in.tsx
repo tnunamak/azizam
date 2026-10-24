@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useId, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronLeft, CircleAlert } from "lucide-react";
+import { Check, ChevronLeft, CircleAlert, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -151,6 +151,7 @@ export function PlainSignIn({
   onBack,
   providerError,
   openOwnerForm = false,
+  onOpening,
 }: {
   data: SignInOptions | undefined;
   reset: string;
@@ -163,14 +164,19 @@ export function PlainSignIn({
   providerError: ProviderError;
   /** True to open the owner's password form at once (the list's owner link), instead of behind the link. */
   openOwnerForm?: boolean;
+  /** Called when the provider's button starts its trip, so the page can drop any line from the last action. */
+  onOpening?: () => void;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [ownerForm, setOwnerForm] = useState(openOwnerForm);
   const [remember, setRemember] = useState(true);
+  // True once the provider's button has been pressed: the page is leaving, so its controls wait.
+  const [opening, setOpening] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
-  const errorRef = useRef<HTMLParagraphElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const errorId = useId();
   const rememberId = useId();
   const rememberHelpId = useId();
   useEffect(() => {
@@ -198,9 +204,15 @@ export function PlainSignIn({
       continueTo(data.next);
     },
   });
+  // A refused sign-in is said once, in the alert. The focus goes to the password field, where the next try starts; a
+  // refused password keeps its text selected, so the next try replaces it. Both fields name the alert (aria-describedby).
+  const refused = login.isError && login.error instanceof ApiError && login.error.code === "invalid_login";
+  const busy = login.isPending || opening;
   useEffect(() => {
-    if (login.isError) errorRef.current?.focus();
-  }, [login.isError, login.error]);
+    if (!login.isError) return;
+    passwordRef.current?.focus();
+    if (refused) passwordRef.current?.select();
+  }, [login.isError, login.error, refused]);
   const instanceName = data?.instance_name?.trim();
   const provider = data?.oidc_label?.trim();
   const hasProvider = data?.oidc && !reset;
@@ -227,13 +239,14 @@ export function PlainSignIn({
           id={rememberId}
           aria-checked={remember}
           aria-describedby={rememberHelpId}
+          disabled={busy}
           onClick={() => setRemember((value) => !value)}
-          className="focus-visible:ring-ring/50 -my-3.5 -ml-3.5 flex size-11 shrink-0 items-center justify-center rounded-control outline-none focus-visible:ring-[3px]"
+          className="group -my-3.5 -ml-3.5 flex size-11 shrink-0 items-center justify-center rounded-control outline-none disabled:opacity-50"
         >
           <span
             aria-hidden
             className={cn(
-              "flex size-4 items-center justify-center rounded-sm border",
+              "flex size-4 items-center justify-center rounded-sm border group-focus-visible:outline-2 group-focus-visible:outline-offset-2 group-focus-visible:outline-solid group-focus-visible:outline-ring",
               remember ? "bg-primary border-primary text-primary-foreground" : "border-input",
             )}
           >
@@ -241,7 +254,7 @@ export function PlainSignIn({
           </span>
         </button>
         <Label htmlFor={rememberId} className="-ml-1 text-body font-medium">
-          Show my name on this browser next time
+          Remember me on this browser
         </Label>
       </div>
       {/* 26 px: the 16 px box and the 10 px gap, so the helper starts where the label does. */}
@@ -256,7 +269,8 @@ export function PlainSignIn({
       {fromList && !reset && (
         <button
           type="button"
-          className="text-link text-meta mb-4 flex min-h-11 items-center gap-1 underline underline-offset-4"
+          className="text-link text-meta mb-4 flex min-h-11 items-center gap-1 underline underline-offset-4 disabled:opacity-50"
+          disabled={busy}
           onClick={onBack}
         >
           <ChevronLeft aria-hidden className="size-4" />
@@ -276,11 +290,38 @@ export function PlainSignIn({
       <div className="mt-8">
         <ProviderNotices error={providerError} />
         {hasProvider && (
-          <Button size="xl" variant="make" className="w-full whitespace-normal!" asChild>
-            <a href={withRemember(data.oidc_url, rememberOn && remember)}>
-              {providerLabel}
-            </a>
-          </Button>
+          <>
+            <Button
+              size="xl"
+              variant="make"
+              className="w-full whitespace-normal!"
+              aria-disabled={busy || undefined}
+              tabIndex={busy ? -1 : undefined}
+              asChild
+            >
+              <a
+                href={withRemember(data.oidc_url, rememberOn && remember)}
+                onClick={(event) => {
+                  if (busy) {
+                    event.preventDefault();
+                    return;
+                  }
+                  // A modified click opens the provider elsewhere, and this page stays as it is.
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                  setOpening(true);
+                  onOpening?.();
+                }}
+              >
+                {opening && <Loader2 aria-hidden className="motion-safe:animate-spin motion-reduce:hidden" />}
+                {opening ? `Opening ${providerNameFor(provider)}…` : providerLabel}
+              </a>
+            </Button>
+            {opening && (
+              <p role="status" className="sr-only">
+                Opening {providerNameFor(provider)}
+              </p>
+            )}
+          </>
         )}
         {hasProvider && !showForm && nameBox && <div className="mt-4">{nameBox}</div>}
         {hasProvider && showForm && (
@@ -293,7 +334,8 @@ export function PlainSignIn({
         {hasProvider && ownerCanUsePassword && !ownerForm && (
           <button
             type="button"
-            className="text-link text-meta mt-3 flex min-h-11 items-center font-medium"
+            className="text-link text-meta mt-3 flex min-h-11 items-center font-medium disabled:opacity-50"
+            disabled={busy}
             onClick={() => setOwnerForm(true)}
           >
             Owner? Sign in with your password
@@ -318,9 +360,12 @@ export function PlainSignIn({
                   size="lg"
                   autoComplete="username"
                   required
+                  aria-invalid={refused || undefined}
+                  aria-describedby={login.isError ? errorId : undefined}
+                  className="aria-invalid:focus-visible:border-destructive"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
-                  disabled={login.isPending}
+                  disabled={busy}
                 />
               </div>
             )}
@@ -329,23 +374,22 @@ export function PlainSignIn({
                 {reset ? "New password" : "Password"}
               </Label>
               <Input
+                ref={passwordRef}
                 id="password"
                 type="password"
                 size="lg"
                 autoComplete={reset ? "new-password" : "current-password"}
                 required
+                aria-invalid={refused || undefined}
+                aria-describedby={login.isError ? errorId : undefined}
+                className="aria-invalid:focus-visible:border-destructive"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                disabled={login.isPending}
+                disabled={busy}
               />
             </div>
             {login.isError && (
-              <p
-                ref={errorRef}
-                tabIndex={-1}
-                role="alert"
-                className="text-danger text-body rounded-control"
-              >
+              <p id={errorId} role="alert" className="text-danger text-body rounded-control">
                 {signInError(login.error)}
               </p>
             )}
@@ -354,7 +398,7 @@ export function PlainSignIn({
               size="xl"
               variant={hasProvider ? "outline" : "make"}
               className="w-full whitespace-normal!"
-              disabled={login.isPending}
+              disabled={busy}
             >
               {login.isPending
                 ? reset
@@ -366,8 +410,8 @@ export function PlainSignIn({
             </Button>
             {nameBox}
             {!reset && (
-              <p className="text-muted-foreground text-meta">
-                Forgot your password? Ask whoever set this up for a reset link.
+              <p className="text-muted-foreground text-meta text-pretty">
+                Forgot your password? Ask the person who runs this gateway for a reset link.
               </p>
             )}
           </form>
@@ -475,7 +519,8 @@ export function PersonPassword({
       </div>
       <button
         type="button"
-        className="text-link text-meta mt-3 flex min-h-11 items-center gap-1 underline underline-offset-4"
+        className="text-link text-meta mt-3 flex min-h-11 items-center gap-1 underline underline-offset-4 disabled:opacity-50"
+        disabled={attempt.isPending}
         onClick={onBack}
       >
         <ChevronLeft aria-hidden className="size-4" />
@@ -535,8 +580,8 @@ export function PersonPassword({
         >
           {attempt.isPending ? "Signing in…" : "Sign in"}
         </Button>
-        <p className="text-muted-foreground text-meta">
-          Forgot your password? Ask whoever set this up for a reset link.
+        <p className="text-muted-foreground text-meta text-pretty">
+          Forgot your password? Ask the person who runs this gateway for a reset link.
         </p>
       </form>
     </>
