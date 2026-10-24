@@ -414,16 +414,18 @@ def build_user_activity_snapshot(
     user_id = str(user["id"])
     owned = _owned_app_ids(user_id, path=path)
     viewer = Viewer(person_id=user_id, auth_kind="session")
+    # Every candidate is read before the limit applies, so rows this person may not read never take a place on the page.
+    every = receipt_store.count(path=receipts_path) or 1
     candidates: dict[str, dict[str, Any]] = {}
     if owned:
-        for row in receipt_store.recent(limit=safe_limit, audience="internal", app_ids=owned, path=receipts_path):
+        for row in receipt_store.recent(limit=every, audience="internal", app_ids=owned, path=receipts_path):
             candidates[str(row["request_id"])] = row
-    for row in receipt_store.recent(limit=safe_limit, audience="internal", maker_person_id=user_id, path=receipts_path):
+    for row in receipt_store.recent(limit=every, audience="internal", maker_person_id=user_id, path=receipts_path):
         candidates[str(row["request_id"])] = row
     newest = sorted(candidates.values(), key=lambda row: (row.get("_stored_at") or 0, str(row["request_id"])), reverse=True)
     apps = content_makers.Apps(path)
     allowed: list[str] = []
-    for row in newest[:safe_limit]:
+    for row in newest:
         app_id = str(row.get("app_id") or "") or None
         makers = content_makers.row_makers(
             explicit=[str(row.get("maker_person_id") or "")], app_id=app_id,
@@ -432,6 +434,8 @@ def build_user_activity_snapshot(
         record = ReceiptRecord(person_id=makers[0] if len(makers) == 1 else None, app_id=app_id)
         if isinstance(decide(viewer, record, "read"), Own):
             allowed.append(str(row["request_id"]))
+            if len(allowed) == safe_limit:
+                break
     visible = receipt_store.get_many(allowed, audience="client", viewer_person_id=user_id, path=receipts_path)
     return {
         "authenticated": True,
