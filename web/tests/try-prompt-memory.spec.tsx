@@ -137,7 +137,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("Try: keep request history and prompt keeping", () => {
+describe("Try: keep request history and saved words and chats", () => {
   it("shows what happens to the prompt before Run, and keeps it by default", async () => {
     const user = userEvent.setup();
     renderTry();
@@ -148,7 +148,7 @@ describe("Try: keep request history and prompt keeping", () => {
     expect(toggle).toBeChecked();
     expect(
       screen.getByText(
-        "Azizam tries to keep the prompt with the picture.",
+        "Azizam tries to keep the words with the picture.",
       ),
     ).toBeVisible();
     const example = screen.queryByRole("button", { name: "Try an example" });
@@ -157,7 +157,7 @@ describe("Try: keep request history and prompt keeping", () => {
     await user.click(screen.getByRole("button", { name: "Run" }));
     await screen.findByAltText("Generated result", {}, { timeout: 15000 });
     expect(submittedBody().extensions).toBeUndefined();
-    expect(screen.queryByText("Prompt not kept")).toBeNull();
+    expect(screen.queryByText("Words not kept")).toBeNull();
   });
 
   it("sends the forget control, says so on the result and remembers it for the session", async () => {
@@ -168,7 +168,7 @@ describe("Try: keep request history and prompt keeping", () => {
       await screen.findByRole("switch", { name: "Keep request history" }),
     );
     expect(
-      screen.getByText("The prompt isn’t kept. The picture still goes to Library."),
+      screen.getByText("The words aren’t kept. The picture still goes to Library."),
     ).toBeVisible();
     expect(sessionStorage.getItem("azizam.try.forget")).toBe("1");
     const example = screen.queryByRole("button", { name: "Try an example" });
@@ -180,7 +180,7 @@ describe("Try: keep request history and prompt keeping", () => {
       "com.azizam.prompts": { mode: "forget" },
     });
     expect(screen.getByText("Not saved in your History")).toBeVisible();
-    expect(screen.queryByText("Prompt not kept")).toBeNull();
+    expect(screen.queryByText("Words not kept")).toBeNull();
 
     cleanup();
     renderTry();
@@ -197,10 +197,10 @@ describe("Try: keep request history and prompt keeping", () => {
     );
     renderTry();
     await ready();
-    const row = (await screen.findByText("Prompts aren’t kept")).closest(
+    const row = (await screen.findByText("Words aren’t kept")).closest(
       "[data-slot=prompt-keep]",
     ) as HTMLElement;
-    expect(within(row).getByText(/You turned off prompt keeping/)).toBeVisible();
+    expect(within(row).getByText(/You turned off saved words and chats/)).toBeVisible();
     expect(within(row).getByRole("link", { name: "Change" })).toHaveAttribute(
       "href",
       "/account",
@@ -208,7 +208,7 @@ describe("Try: keep request history and prompt keeping", () => {
     expect(screen.queryByRole("switch")).toBeNull();
     expect(
       screen.getByText(
-        "Jobs whose prompts aren’t kept cannot resume after a gateway restart.",
+        "Jobs whose words aren’t kept cannot resume after a gateway restart.",
       ),
     ).toBeVisible();
     const example = screen.queryByRole("button", { name: "Try an example" });
@@ -219,7 +219,7 @@ describe("Try: keep request history and prompt keeping", () => {
     expect(submittedBody().extensions).toEqual({
       "com.azizam.prompts": { mode: "forget" },
     });
-    expect(screen.getByText("Prompt not kept")).toBeVisible();
+    expect(screen.getByText("Words not kept")).toBeVisible();
   });
 
   it("names the household's switch-off for a member, and links the owner to Settings", async () => {
@@ -262,42 +262,42 @@ it("honors the displayed off snapshot when Run refresh finds memory on", async (
     .mockResolvedValue(memory());
   renderTry();
   await ready();
-  await screen.findByText("Prompts aren’t kept");
+  await screen.findByText("Words aren’t kept");
   const example = screen.queryByRole("button", { name: "Try an example" });
   const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
   if (example && promptBox?.value === "") await user.click(example);
   await user.click(screen.getByRole("button", { name: "Run" }));
   await screen.findByAltText("Generated result", {}, { timeout: 15000 });
   expect(
-    screen.getByText("The prompt isn’t kept. The picture still goes to Library."),
+    screen.getByText("The words aren’t kept. The picture still goes to Library."),
   ).toBeVisible();
   expect(account.promptMemory).toHaveBeenCalledTimes(2);
   expect(submittedBody().extensions).toEqual({
     "com.azizam.prompts": { mode: "forget" },
   });
-  expect(screen.getByText("Prompt not kept")).toBeVisible();
+  expect(screen.getByText("Words not kept")).toBeVisible();
 });
 
-it("refreshes prompt settings on window focus", async () => {
+it("refreshes saved words and chats on window focus", async () => {
   renderTry();
   await ready();
   await screen.findByText(
-    "Azizam tries to keep the prompt with the picture.",
+    "Azizam tries to keep the words with the picture.",
   );
   account.promptMemory.mockResolvedValue(
     memory({ effective_remember: false }, { never_keep: true }),
   );
   window.dispatchEvent(new Event("focus"));
-  expect(await screen.findByText("Prompts aren’t kept")).toBeVisible();
+  expect(await screen.findByText("Words aren’t kept")).toBeVisible();
 });
 
-it("explains unreadable prompt settings while preserving the privacy fact", async () => {
+it("explains an unreadable saved words and chats setting while preserving the privacy fact", async () => {
   account.promptMemory.mockRejectedValue(new Error("Unavailable"));
   renderTry();
   await ready();
   expect(
     await screen.findByText(
-      "Couldn't read your prompt settings. Saved prompts are visible only to you.",
+      "Couldn't read your saved words and chats setting. Saved words are visible only to you.",
     ),
   ).toBeVisible();
   expect(
@@ -309,9 +309,9 @@ it("puts keeping and privacy facts on separate short lines", async () => {
   renderTry();
   await ready();
   const keeping = await screen.findByText(
-    "Azizam tries to keep the prompt with the picture.",
+    "Azizam tries to keep the words with the picture.",
   );
-  const privacy = screen.getByText("Only you can see kept prompts.");
+  const privacy = screen.getByText("Only you can see kept words.");
   expect(keeping).toBeVisible();
   expect(privacy).toBeVisible();
   expect(keeping).toHaveClass("block");
@@ -319,14 +319,14 @@ it("puts keeping and privacy facts on separate short lines", async () => {
   expect(keeping.parentElement).toBe(privacy.parentElement);
 });
 
-it("names prompt keeping when the owner turned it off for everyone", async () => {
+it("names saved words and chats when the owner turned it off for everyone", async () => {
   account.promptMemory.mockResolvedValue(
     memory({ effective_remember: false }, { never_keep: true }),
   );
   renderTry({ ...member, role: "owner", admin: true });
   await ready();
   expect(
-    await screen.findByText(/You turned off prompt keeping for everyone\./),
+    await screen.findByText(/You turned off saved words and chats for everyone\./),
   ).toBeVisible();
   expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
     "href",

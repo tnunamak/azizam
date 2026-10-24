@@ -264,3 +264,33 @@ describe("a chat model with unknown capability fields is an ordinary chat choice
     );
   });
 });
+
+describe("Embeddings offers the rows the catalog says embed, and no chat-kind model", () => {
+  it("a model the catalog gives only chat is not offered for embeddings beside one that embeds", async () => {
+    const chatKind = chatRow("chat-kind", "Chat-kind model", ["text"]);
+    const embedder = {
+      id: "embedder",
+      name: "Embedding model",
+      display_name: "Embedding model",
+      capability: "embed",
+      alias: false,
+      use_names: ["embedder"],
+      locality: "local",
+      capabilities: [
+        { intent: "text.embeddings", capability: "embed", input_modalities: ["text"], output_modalities: ["embedding"] },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        json(url.includes("workflows") ? { workflows: [] } : { aliases: [], models: [chatKind, embedder] }),
+      ),
+    );
+    render(<TryPage />);
+    await userEvent.selectOptions(await screen.findByRole("combobox", { name: "Task" }), "embed");
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Embedding model"),
+    );
+    expect(screen.getByRole("combobox", { name: "Model" })).not.toHaveTextContent("Chat-kind model");
+  });
+});

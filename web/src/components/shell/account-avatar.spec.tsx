@@ -42,7 +42,16 @@ type Snapshot = {
   apps: unknown[];
 };
 
-function snapshot(avatar: { choice: string; picture_url: string | null }, name = "Alex Owner"): Snapshot {
+function snapshot(
+  avatar: {
+    choice: string;
+    picture_url: string | null;
+    sign_in_picture_url?: string | null;
+    made_picture_url?: string | null;
+    default_due?: boolean;
+  },
+  name = "Alex Owner",
+): Snapshot {
   return {
     authenticated: true,
     csrf_token: "csrf-token",
@@ -68,10 +77,18 @@ let saveResponse: (choice: string) => Promise<Response>;
 beforeEach(() => {
   clients.forEach((client) => client.clear());
   resetSessionCache();
+  // A tab remembers its last automatic-picture ask; each case starts with a tab that has not asked.
+  window.sessionStorage.clear();
   current = snapshot({ choice: "auto", picture_url: null });
   saves = [];
   saveResponse = (choice) =>
-    json({ choice, person_id: PERSON, picture_url: choice === "picture" ? PICTURE : null });
+    json({
+      choice,
+      person_id: PERSON,
+      picture_url: choice === "picture" ? PICTURE : null,
+      sign_in_picture_url: PICTURE,
+      made_picture_url: null,
+    });
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     value: vi.fn().mockImplementation((query: string) => ({
@@ -100,6 +117,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -113,11 +131,18 @@ async function openAvatarDialog(name = "Alex Owner") {
 
 describe("the viewer", () => {
   it("carries the person id and the avatar from the session", async () => {
-    current = snapshot({ choice: "v3", picture_url: PICTURE });
+    current = snapshot({ choice: "v3", picture_url: null, sign_in_picture_url: PICTURE });
     vi.mocked(fetch);
     const viewer = await fetchViewer();
     expect(viewer.id).toBe(PERSON);
-    expect(viewer.avatar).toEqual({ choice: "v3", picture_url: PICTURE });
+    expect(viewer.avatar).toEqual({
+      choice: "v3",
+      picture_url: null,
+      sign_in_picture_url: PICTURE,
+      made_picture_url: null,
+      generating: false,
+      default_due: false,
+    });
   });
 
   it("has no avatar when the session sends none (an older gateway)", async () => {
@@ -152,9 +177,11 @@ describe("account menu avatar", () => {
     const { dialog } = await openAvatarDialog();
     expect(within(dialog).getByText("Choose how you appear to other people.")).toBeVisible();
     expect(within(dialog).getByRole("group", { name: "Choose your avatar" })).toBeVisible();
-    expect(within(dialog).getAllByRole("radio")).toHaveLength(8);
+    // Without a sign-in picture the sources are Initials alone, and the eight colours sit under it.
+    expect(within(dialog).getByRole("radio", { name: "Initials" })).toBeVisible();
+    expect(within(dialog).getAllByRole("radio")).toHaveLength(9);
     expect(within(dialog).getByRole("button", { name: "Done" })).toBeVisible();
-    expect(within(dialog).queryByRole("radio", { name: /sign-in picture/ })).toBeNull();
+    expect(within(dialog).queryByRole("radio", { name: /Sign-in picture/ })).toBeNull();
   });
 
   it("saves the chosen avatar with the user-action header and the CSRF token, then shows it", async () => {
@@ -171,37 +198,39 @@ describe("account menu avatar", () => {
   });
 
   it("shows the sign-in picture as the default when the provider shared one, with nothing to save", async () => {
-    current = snapshot({ choice: "auto", picture_url: PICTURE });
+    current = snapshot({ choice: "auto", picture_url: PICTURE, sign_in_picture_url: PICTURE });
     const { dialog } = await openAvatarDialog();
-    expect(within(dialog).getByRole("radio", { name: "Use my sign-in picture" })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: /Sign-in picture/ })).toHaveAttribute("aria-checked", "true");
     expect(saves).toEqual([]);
   });
 
   it("saves the picture as the word picture when the person picks it over a generated avatar", async () => {
-    current = snapshot({ choice: "v3", picture_url: PICTURE });
+    current = snapshot({ choice: "v3", picture_url: null, sign_in_picture_url: PICTURE });
     const { user, dialog } = await openAvatarDialog();
-    await user.click(within(dialog).getByRole("radio", { name: "Use my sign-in picture" }));
+    await user.click(within(dialog).getByRole("radio", { name: /Sign-in picture/ }));
     await waitFor(() => expect(saves).toEqual([expect.objectContaining({ body: { choice: "picture" } })]));
-    await waitFor(() => expect(within(dialog).getByRole("radio", { name: "Use my sign-in picture" })).toBeChecked());
+    await waitFor(() =>
+      expect(within(dialog).getByRole("radio", { name: /Sign-in picture/ })).toHaveAttribute("aria-checked", "true"),
+    );
   });
 
   it("says plainly when it could not save, and keeps the old choice", async () => {
     saveResponse = () => json({ error: { code: "x", message: "internal detail" } }, 500);
     const { user, dialog } = await openAvatarDialog();
-    const before = within(dialog).getAllByRole("radio").find((radio) => (radio as HTMLInputElement).checked)!;
-    const other = within(dialog).getAllByRole("radio").find((radio) => radio !== before)!;
-    await user.click(other);
+    const before = within(dialog).getByRole("radio", { name: "Initials" });
+    const target = generatedAvatarPalettes.find((palette) => palette.id !== getGeneratedAvatar(PERSON).id)!;
+    await user.click(within(dialog).getByRole("radio", { name: target.label }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("We couldn't save your avatar. Try again.");
     expect(within(dialog).queryByText(/internal detail/)).toBeNull();
-    expect(before).toBeChecked();
+    expect(before).toHaveAttribute("aria-checked", "true");
   });
 
   it("shows the gateway's own sentence when the picture is no longer available", async () => {
-    current = snapshot({ choice: "v3", picture_url: PICTURE });
+    current = snapshot({ choice: "v3", picture_url: null, sign_in_picture_url: PICTURE });
     saveResponse = () =>
       json({ error: { code: "picture_unavailable", message: "Your sign-in provider has not shared a picture." } }, 409);
     const { user, dialog } = await openAvatarDialog();
-    await user.click(within(dialog).getByRole("radio", { name: "Use my sign-in picture" }));
+    await user.click(within(dialog).getByRole("radio", { name: /Sign-in picture/ }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Your sign-in provider has not shared a picture.");
   });
 
@@ -228,5 +257,187 @@ describe("account menu avatar", () => {
     await user.click((await screen.findAllByRole("button", { name: "Account menu: ops-key" }))[0]);
     await screen.findByRole("menuitem", { name: "Help" });
     expect(screen.queryByRole("menuitem", { name: "Change avatar" })).toBeNull();
+  });
+});
+
+// Answer some requests the way a gateway would, and the rest as the default fetch does.
+function answer(routes: Record<string, (init?: RequestInit) => Promise<Response>>) {
+  const base = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input), "http://gateway.test");
+    const route = routes[`${init?.method ?? "GET"} ${url.pathname}`];
+    return route ? route(init) : base(input, init);
+  });
+}
+
+describe("making a picture of yourself", () => {
+  const MADE = `${AVATAR_PICTURE_PATH}?kind=generated&v=1760000100`;
+
+  it("is not offered when the gateway has no image route, and asks only when the picker opens", async () => {
+    let asked = 0;
+    answer({
+      "GET /me/api/profile/avatar/generator": () => {
+        asked += 1;
+        return json({ available: false });
+      },
+    });
+    const { dialog } = await openAvatarDialog();
+    await waitFor(() => expect(asked).toBe(1));
+    expect(within(dialog).queryByRole("button", { name: "Make an avatar" })).toBeNull();
+  });
+
+  it("keeps the initial while the picture is made, then keeps the one the person picks", async () => {
+    const saved: { body: unknown; headers: Headers }[] = [];
+    let polls = 0;
+    answer({
+      "GET /me/api/profile/avatar/generator": () => json({ available: true }),
+      "POST /me/api/profile/avatar/generate": (init) => {
+        expect(new Headers(init?.headers).get("x-azizam-user-action")).toBe("1");
+        return json({ job: { job_id: "job_1", status: "queued" } }, 202);
+      },
+      "GET /me/api/make/jobs/job_1": () => {
+        polls += 1;
+        return json({
+          job: polls === 1
+            ? { job_id: "job_1", status: "running" }
+            : { job_id: "job_1", status: "succeeded", assets: [{ asset_id: "img_1", media_type: "image/png" }] },
+        });
+      },
+      "GET /me/api/media/img_1/download": () =>
+        json({ asset_id: "img_1", download_url: "/me/api/media/img_1/file?sig=abc" }),
+      "POST /me/api/profile/avatar/generated": (init) => {
+        saved.push({ body: JSON.parse(String(init?.body)), headers: new Headers(init?.headers) });
+        return json({
+          choice: "generated",
+          person_id: PERSON,
+          picture_url: MADE,
+          sign_in_picture_url: null,
+          made_picture_url: MADE,
+        });
+      },
+    });
+    const { user, dialog } = await openAvatarDialog();
+    await user.click(await within(dialog).findByRole("button", { name: "Make an avatar" }));
+    expect(await within(dialog).findByRole("status")).toHaveTextContent("Making your avatar");
+    // While it is made, the avatar on show is still the initial, not a picture.
+    expect(dialog.querySelector("[data-slot='person-avatar'] img")).toBeNull();
+    expect(dialog.querySelector("[data-slot='person-avatar'] > span")!.textContent).toBe("A");
+    await user.click(await within(dialog).findByRole("button", { name: "Use this" }, { timeout: 4000 }));
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(saved[0].body).toEqual({ asset_id: "img_1" });
+    expect(saved[0].headers.get("x-azizam-csrf")).toBe("csrf-token");
+    await waitFor(() => expect(within(dialog).getByRole("radio", { name: "Generated" })).toHaveAttribute("aria-checked", "true"));
+    expect(within(dialog).getByRole("button", { name: "Delete generated avatar" })).toBeVisible();
+  });
+
+  it("removes the picture and shows the sign-in picture again, when the person has one", async () => {
+    current = snapshot({
+      choice: "generated",
+      picture_url: MADE,
+      sign_in_picture_url: PICTURE,
+      made_picture_url: MADE,
+    });
+    const removals: string[] = [];
+    answer({
+      "GET /me/api/profile/avatar/generator": () => json({ available: true }),
+      "DELETE /me/api/profile/avatar/generated": () => {
+        removals.push("removed");
+        return json({
+          choice: "auto",
+          person_id: PERSON,
+          picture_url: PICTURE,
+          sign_in_picture_url: PICTURE,
+          made_picture_url: null,
+        });
+      },
+    });
+    const { user, dialog } = await openAvatarDialog();
+    await user.click(await within(dialog).findByRole("button", { name: "Delete generated avatar" }));
+    await waitFor(() => expect(removals).toEqual(["removed"]));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("radio", { name: /Sign-in picture/ })).toHaveAttribute("aria-checked", "true"),
+    );
+    // The row stays, with a new picture to make, and it is not chosen.
+    expect(within(dialog).getByRole("radio", { name: "Generated" })).toBeDisabled();
+  });
+
+  it("asks the gateway for the automatic picture on a signed-in load with no picture, and shows it while it is made", async () => {
+    current = snapshot({ choice: "auto", picture_url: null, default_due: true });
+    const asks: string[] = [];
+    const making = {
+      choice: "auto", person_id: PERSON, picture_url: null, sign_in_picture_url: null, made_picture_url: null,
+      generating: true,
+    };
+    answer({
+      // The automatic picture is only made where an image route exists.
+      "GET /me/api/profile/avatar/generator": () => json({ available: true }),
+      "POST /me/api/profile/avatar/default": () => {
+        asks.push("asked");
+        return json(making);
+      },
+      "GET /me/api/profile/avatar": () => json(making),
+    });
+    const { dialog } = await openAvatarDialog();
+    await waitFor(() => expect(asks).toEqual(["asked"]));
+    expect(await within(dialog).findByRole("status")).toHaveTextContent("Making your avatar");
+  });
+
+  it("never asks for the automatic picture of a person who has a sign-in picture", async () => {
+    current = snapshot({ choice: "auto", picture_url: PICTURE, sign_in_picture_url: PICTURE });
+    const asks: string[] = [];
+    answer({
+      "POST /me/api/profile/avatar/default": () => {
+        asks.push("asked");
+        return json({ choice: "auto", person_id: PERSON, picture_url: PICTURE, sign_in_picture_url: PICTURE });
+      },
+    });
+    await openAvatarDialog();
+    expect(asks).toEqual([]);
+  });
+
+  it("does not ask for the automatic picture when the session says it is not due", async () => {
+    current = snapshot({ choice: "auto", picture_url: null, default_due: false });
+    const asks: string[] = [];
+    answer({
+      "POST /me/api/profile/avatar/default": () => {
+        asks.push("asked");
+        return json({ choice: "auto", person_id: PERSON, picture_url: null, default_due: false });
+      },
+    });
+    await openAvatarDialog();
+    expect(asks).toEqual([]);
+  });
+
+  it("asks at most once in five minutes in a tab, and a deferred ask stays due for a later load", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-24T12:00:00Z"));
+    current = snapshot({ choice: "auto", picture_url: null, default_due: true });
+    const asks: string[] = [];
+    answer({
+      "GET /me/api/profile/avatar/generator": () => json({ available: true }),
+      "POST /me/api/profile/avatar/default": () => {
+        asks.push("asked");
+        // Busy: nothing starts and no attempt is recorded, so the picture is still due.
+        return json({ choice: "auto", person_id: PERSON, picture_url: null, sign_in_picture_url: null,
+          made_picture_url: null, generating: false, default_due: true });
+      },
+    });
+    const firstLoad = render(<AppShell><h1>Home</h1></AppShell>);
+    await waitFor(() => expect(asks).toEqual(["asked"]));
+    firstLoad.unmount();
+
+    // Another page load in the same tab, a minute later: the tab asked a minute ago, so it does not ask again.
+    vi.setSystemTime(new Date("2026-10-24T12:01:00Z"));
+    render(<AppShell><h1>Home</h1></AppShell>);
+    await screen.findAllByRole("button", { name: "Account menu: Alex Owner" });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(asks).toEqual(["asked"]);
+
+    // Five minutes after the first ask, the tab may ask again.
+    cleanup();
+    vi.setSystemTime(new Date("2026-10-24T12:05:01Z"));
+    render(<AppShell><h1>Home</h1></AppShell>);
+    await waitFor(() => expect(asks).toEqual(["asked", "asked"]));
+    vi.useRealTimers();
   });
 });

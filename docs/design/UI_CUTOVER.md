@@ -105,7 +105,7 @@ restore the prior committed Python handlers and matching `/ui` export.
 The UI spec's audience amendment keeps Home focused on connecting an app.
 Home labels route verification “Gateway check”; a client recipe without an
 observed client version is labelled “Untested recipe.” Local execution means
-“Local · no provider charge.” Owner claim and the first App key form the
+“Local · no charge.” Owner claim and the first App key form the
 initial setup milestone; connecting an engine, making a request, copying
 client settings and seeing its receipt form the Home milestone.
 

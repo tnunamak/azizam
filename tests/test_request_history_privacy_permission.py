@@ -112,7 +112,7 @@ def test_existing_app_keys_gain_a_privacy_permission_column_defaulted_off(tmp_pa
 
     admin_store.init_db(db)
 
-    assert admin_store.schema_version(db) == admin_store.SCHEMA_VERSION == 18
+    assert admin_store.schema_version(db) == admin_store.SCHEMA_VERSION >= 18
     assert admin_store.get_credential(key["id"], path=db)["privacy_permission"] is False
 
 

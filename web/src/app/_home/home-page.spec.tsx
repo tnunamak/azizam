@@ -19,7 +19,7 @@ function capability(kind: string, overrides: Record<string, unknown> = {}) {
   return {
     capability: kind,
     icon_key: kind,
-    capability_title: { image: "Images", chat: "Chat", video: "Video", speech: "Speech" }[kind] ?? kind,
+    capability_title: { image: "Images", chat: "Chat", video: "Video", speech: "Voice" }[kind] ?? kind,
     title: overrides.title ?? `${kind} model`,
     use_name: overrides.use_name ?? `${kind}-model`,
     use_names: overrides.use_names ?? [`${kind}-model`],

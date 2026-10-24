@@ -86,7 +86,7 @@ def test_service_app_key_has_no_person_or_prompt_memory(hh):
     svc = service_app("Home Assistant", path=hh.admin)
     result = hh.store.create_credential(app_id=svc["id"], data={}, actor=_person_for(hh.admin, svc["id"]))
     assert result["prompt_memory"]["person_id"] is None
-    assert "not remembered" in result["prompt_memory"]["description"]
+    assert "are not kept" in result["prompt_memory"]["description"]
     assert "explicitly ask to save a conversation" in result["prompt_memory"]["description"]
     key = result["api_key"]
     auth = _ctx_for(key, hh.admin)
@@ -259,6 +259,6 @@ def test_own_personal_key_warns_about_prompt_access(hh, self_service):
         result = hh.store.create_credential(app_id=app["id"], data={}, actor=_person_for(hh.admin, app["id"]))
         person = hh.owner["id"]
     assert result["prompt_memory"]["person_id"] == person
-    assert "follow your prompt-memory settings" in result["prompt_memory"]["description"]
-    assert "Anyone holding it can access your saved prompts" in result["prompt_memory"]["description"]
+    assert "follow your saved words and chats setting" in result["prompt_memory"]["description"]
+    assert "Anyone holding it can access your saved words and chats" in result["prompt_memory"]["description"]
     assert _ctx_for(result["api_key"], hh.admin).identity.person_id == person

@@ -104,7 +104,7 @@ def test_a_model_only_the_plan_can_see_is_allowed_beside_its_blocked_alias():
 def test_entries_follow_the_models_page_group_order():
     rows = [_row("v", ["image.generate"], kind="video", label="Video"),
             _row("c", ["chat.completions"]),
-            _row("s", ["audio.speech"], kind="speech", label="Speech"),
+            _row("s", ["audio.speech"], kind="speech", label="Voice"),
             _row("m", ["music.generate"], kind="music", label="Music")]
     entries = build_access_preview(offered=_catalog(*rows), permitted=_catalog(*rows), denied=[])["entries"]
     assert [e["group"] for e in entries] == ["chat", "video", "music", "speech"]

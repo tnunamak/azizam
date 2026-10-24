@@ -17,6 +17,7 @@ Features:
 
 from gateway.compat import get_env
 from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
+from gateway.public_failure import PublicFailure
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
@@ -25,7 +26,6 @@ import asyncio
 import shutil
 import base64
 import copy
-import functools
 import json
 import math
 import os
@@ -76,6 +76,7 @@ from gateway import (
     admin_store,
     audio_media_jobs,
     browser_sessions,
+    avatar_generation,
     avatars,
     remembered_people,
     frontend_mount,
@@ -208,6 +209,7 @@ from gateway.admin_runtime import (
     is_human_user_record,
     person_for_app_credential,
     runtime_identity_for_app_credential_hash,
+    runtime_identity_for_new_session_app,
     runtime_identity_for_session_app,
     runtime_identity_for_trusted_address,
     runtime_identity_for_trusted_app,
@@ -318,6 +320,8 @@ from gateway.toolcall_detection import (
 )
 from gateway.discovery import WorkflowRegistry
 from gateway.video_limits import limits_for_workflow, video_limits
+from gateway.app_key_openapi import augment_app_key_openapi
+from gateway import operation_security
 from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
 from gateway.workflow_openapi import advertised_inputs_schema, workflow_catalog
 from gateway.discovery_metadata import (
@@ -405,6 +409,7 @@ from gateway.policy import (
 from gateway.receipts import (ReceiptLifecycleOwner, RouteReceipt, new_request_id,
                               configure_retention_fact_capture, record_retention_fact_failure, run_receipt_write)
 from gateway.runtime_auth import (
+    CLIENT_KEY_HEADERS,
     RuntimeIdentity,
     discovery_allows,
     discovery_audience_for_access,
@@ -2076,7 +2081,7 @@ def get_client_api_key_from_headers(headers) -> str:
     if auth_header.lower().startswith("bearer "):
         parts = auth_header.split(None, 1)
         return parts[1].strip() if len(parts) == 2 else ""
-    for header_name in ("x-api-key", "api-key"):
+    for header_name in CLIENT_KEY_HEADERS:
         api_key = headers.get(header_name, "")
         if api_key and api_key.strip():
             return api_key.strip()
@@ -14361,8 +14366,7 @@ async def _maker_browser_session_request(request: Request) -> bool:
     the session cookie and no Authorization header, so the key layer does not gate it; the router reads the session
     and checks the user-action header and CSRF token on every write.
     """
-    path = request.url.path
-    if path != "/gateway/v1/requests" and not path.startswith("/gateway/v1/requests/"):
+    if not operation_security.session_passes_key_layer(request.url.path):
         return False
     # Any credential the key layer would read, in any form it reads one, keeps the call on that layer: a key
     # presented with a session cookie is judged as the key, never as the session.
@@ -14372,10 +14376,16 @@ async def _maker_browser_session_request(request: Request) -> bool:
     return await asyncio.to_thread(_oidc_session_from_request, request) is not None
 
 
+# The paths whose every operation passes the App key layer before its handler runs, whether or not the handler
+# checks the caller itself. The API reference gives these operations the App key security (fill_security), and on
+# operation_security.SESSION_KEY_LAYER_PATHS a browser session as well.
+KEY_LAYER_PREFIXES = ("/gateway/v1", "/native/")
+
+
 @app.middleware("http")
 async def _gateway_auth_middleware(request: Request, call_next):
     """Gate gateway-native discovery/receipt APIs, and the per-engine native lane, behind the proxy key layer."""
-    if request.url.path.startswith(("/gateway/v1", "/native/")):
+    if request.url.path.startswith(KEY_LAYER_PREFIXES):
         if await _maker_browser_session_request(request):
             return await call_next(request)
         refusal = await _authenticate_mounted_route(request)
@@ -14539,6 +14549,8 @@ class _SessionMakeRuntime:
     def schedule(self, job_id: str, run: Callable[[], Awaitable[None]]) -> None:
         if job_id in _image_media_job_scheduled:
             return
+        # The owning loop comes first: called off it, this raises before any marker or gate is kept.
+        loop = asyncio.get_running_loop()
         _image_media_job_scheduled.add(job_id)
         gate = self._gates.setdefault(job_id, _MakePublishGate())
 
@@ -14572,11 +14584,16 @@ class _SessionMakeRuntime:
             finally:
                 semaphore.release()
 
-        loop = asyncio.get_running_loop()
         # A cancel while the job waits for a turn ends the wait at once, so
         # only queued or running jobs hold a task and a gate.
         gate.loop, gate.stop_waiting = loop, asyncio.Event()
-        task = loop.create_task(bounded())
+        try:
+            task = loop.create_task(bounded())
+        except BaseException:
+            # No task will run the job, so give back its marker and its gate.
+            _image_media_job_scheduled.discard(job_id)
+            self._gates.pop(job_id, None)
+            raise
         _image_media_job_tasks.add(task)
 
         def _done(done_task: asyncio.Task) -> None:
@@ -14739,11 +14756,79 @@ app.include_router(
     )
 )
 
+def _avatar_picture_model(person_id: str) -> str | None:
+    """The image route a person's avatar is made with: the first one their own App may use, while media jobs are admitted.
+
+    A read: it creates nothing. The session App is made when a make job starts (me_make._submit), so until one exists
+    the route is read from the identity that App will have.
+    """
+    if _SESSION_MAKE_RUNTIME.admission(avatar_generation.IMAGE_INTENT) is not None:
+        return None
+    app = admin_store.get_session_app_for_user(person_id, path=ADMIN_STORE.path)
+    identity = (
+        runtime_identity_for_session_app(str(app["id"]), person_id, path=ADMIN_STORE.path) if app is not None
+        else runtime_identity_for_new_session_app(person_id, path=ADMIN_STORE.path)
+    )
+    if identity is None or identity.denial:
+        return None
+    return avatar_generation.pick_route(_gateway_capabilities_for_auth_context(AuthContext(identity=identity)))
+
+
+def _avatar_start_job(request: Request, person_id: str, model: str, prompt: str) -> dict[str, Any]:
+    user = admin_store.get_user(person_id, path=ADMIN_STORE.path)
+    if user is None:
+        raise PublicFailure("session_user_not_found", 401)
+    return me_make.start_person_job(
+        request,
+        {
+            "intent": avatar_generation.IMAGE_INTENT,
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            # The prompt is the gateway's template, not the person's words, so it is not kept in their prompt memory.
+            "extensions": {prompt_memory.NAMESPACE: {"mode": "forget"}},
+        },
+        user=user,
+        runtime=_SESSION_MAKE_RUNTIME,
+        find_owned_asset=lambda request, user_id, asset_id: me_media.owned_library_asset(
+            user_id, asset_id, **_PERSON_LIBRARY),
+        admin_path=ADMIN_STORE.path,
+        jobs_path=media_jobs.DB_PATH,
+        receipts_path=receipt_store.DB_PATH,
+    )
+
+
+def _avatar_own_picture_file(person_id: str, asset_id: str) -> Path | None:
+    """The file of a picture in the person's own Library, or None. The Library decides whose job made it."""
+    item = me_media.owned_library_asset(person_id, asset_id, **_PERSON_LIBRARY)
+    if item is None or item.get("available") is False:
+        return None
+    path = asset_cache_path(asset_id)
+    return path if path is not None and path.is_file() else None
+
+
+def _avatar_job_state(person_id: str, job_id: str) -> dict[str, Any] | None:
+    """The person's own make job, as the automatic default reads it, or None when it is not theirs."""
+    return me_make.person_job_state(job_id, person_id, admin_path=ADMIN_STORE.path, jobs_path=media_jobs.DB_PATH)
+
+
+def _avatar_picture_work_busy() -> bool:
+    """Whether any picture job is queued or running here. The automatic default waits for the queue to clear."""
+    return bool(_image_media_job_scheduled)
+
+
 app.include_router(
     me_avatar.create_me_avatar_router(
         session_provider=lambda request: _oidc_session_from_request(request),
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
         admin_db_path=lambda: ADMIN_STORE.path,
+        generation=me_avatar.AvatarGeneration(
+            model_for=_avatar_picture_model,
+            start=_avatar_start_job,
+            own_picture_file=_avatar_own_picture_file,
+            job_state=_avatar_job_state,
+            busy=_avatar_picture_work_busy,
+        ),
     )
 )
 
@@ -16357,7 +16442,8 @@ app.include_router(create_home_router(
 async def user_portal_session(request: Request):
     session = (await asyncio.to_thread(_oidc_session_from_request, request))
     try:
-        snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
+        snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path,
+                                           avatar_route=_avatar_picture_model)
     except UserPortalError as exc:
         # The sign-in cannot be identified right now (for example its view key is unreadable): say so, and send
         # nothing that could be taken for a signed-in person. The CSRF token still goes: a sign-out needs only the
@@ -24265,7 +24351,8 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
     )
 
 
-@app.get("/v1/assets/{asset_id}/thumbnail", openapi_extra=SIGNED_THUMBNAIL_OPENAPI, response_class=Response)
+@app.get("/v1/assets/{asset_id}/thumbnail", response_class=Response,
+         openapi_extra={**SIGNED_THUMBNAIL_OPENAPI, **operation_security.openapi_extra(operation_security.SIGNED_URL)})
 async def assets_thumbnail(asset_id: str, request: Request):
     """Serve a small WebP preview of an asset named by a signed thumbnail URL."""
     return await asyncio.to_thread(_signed_asset_thumbnail_response, asset_id, request)
@@ -26370,9 +26457,9 @@ async def list_models(request: Request):
     )
 
 
-@app.get("/v1/status")
+@app.get("/v1/status", openapi_extra=operation_security.openapi_extra(operation_security.OWNER))
 async def v1_status(request: Request):
-    """Consolidated admin-only status JSON for the dashboard."""
+    """Consolidated status JSON for the dashboard."""
     try:
         (await asyncio.to_thread(ADMIN_AUTH, request))
     except AdminAuthError as exc:
@@ -26657,7 +26744,7 @@ def _protocol_loopback_source_headers(request: Request) -> dict[str, str]:
     headers = {
         key: value
         for key, value in request.headers.items()
-        if key.lower() not in {"authorization", "x-api-key", "api-key"}
+        if key.lower() not in {"authorization", *CLIENT_KEY_HEADERS}
     }
     api_key = _resolve_client_api_key(request)
     if api_key:
@@ -31640,84 +31727,87 @@ async def _ui_admin_page_guard(request: Request, name: str) -> Response | None:
 Op = frontend_mount.Operation
 # These handlers check the caller themselves, in the error shape of their protocol. An Op the mount
 # authenticates (no ``self_authenticates``) is checked before its handler runs, on any path prefix.
-SelfAuthOp = functools.partial(frontend_mount.Operation, self_authenticates=True)
+def SelfAuthOp(endpoint, methods, *, auth, **options):
+    """An operation that checks its caller itself. ``auth`` declares how: ``operation_security.APP_KEY``, or
+    ``operation_security.SIGNED_URL`` for a link whose query signature is the credential."""
+    return frontend_mount.Operation(endpoint, methods, self_authenticates=True, auth=auth, **options)
 FRONTEND_TRANSLATORS.register("identity", {
-    "models.list": SelfAuthOp(list_models, frozenset({"GET"})),
-    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"})),
-    "voices.list": SelfAuthOp(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI),
+    "models.list": SelfAuthOp(list_models, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "voices.list": SelfAuthOp(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI, auth=operation_security.APP_KEY),
     "audio.speech": SelfAuthOp(audio_speech, frozenset({"POST"}), openapi_extra=AUDIO_SPEECH_OPENAPI,
-                               response_class=Response),
+                               response_class=Response, auth=operation_security.APP_KEY),
     "audio.transcriptions": SelfAuthOp(audio_transcriptions, frozenset({"POST"}),
-                                       openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI),
-    "audio.translations": SelfAuthOp(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI),
-    "audio.generate": SelfAuthOp(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI),
-    "audio.models": SelfAuthOp(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI),
-    "images.generate": SelfAuthOp(images_generations, frozenset({"POST"}), openapi_extra=IMAGES_GENERATIONS_OPENAPI),
-    "images.variations": SelfAuthOp(images_variations, frozenset({"POST"}), openapi_extra=IMAGES_VARIATIONS_OPENAPI),
-    "images.edit": SelfAuthOp(images_edits, frozenset({"POST"}), openapi_extra=IMAGES_EDITS_OPENAPI),
+                                       openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "audio.translations": SelfAuthOp(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "audio.generate": SelfAuthOp(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI, auth=operation_security.APP_KEY),
+    "audio.models": SelfAuthOp(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI, auth=operation_security.APP_KEY),
+    "images.generate": SelfAuthOp(images_generations, frozenset({"POST"}), openapi_extra=IMAGES_GENERATIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "images.variations": SelfAuthOp(images_variations, frozenset({"POST"}), openapi_extra=IMAGES_VARIATIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "images.edit": SelfAuthOp(images_edits, frozenset({"POST"}), openapi_extra=IMAGES_EDITS_OPENAPI, auth=operation_security.APP_KEY),
     "images.content": SelfAuthOp(images_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
-                                 response_class=Response),
+                                 response_class=Response, auth=operation_security.SIGNED_URL),
     "assets.content": SelfAuthOp(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
-                                 response_class=Response),
-    "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI),
-    "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI),
+                                 response_class=Response, auth=operation_security.SIGNED_URL),
+    "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI, auth=operation_security.APP_KEY),
     "videos.content": SelfAuthOp(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,
-                                 response_class=Response),
-    "videos.list": SelfAuthOp(videos_list, frozenset({"GET"}), openapi_extra=VIDEOS_LIST_OPENAPI),
-    "videos.delete": SelfAuthOp(videos_delete, frozenset({"DELETE"}), openapi_extra=VIDEOS_DELETE_OPENAPI),
-    "videos.remix": SelfAuthOp(videos_remix, frozenset({"POST"}), openapi_extra=VIDEOS_REMIX_OPENAPI),
-    "videos.edit": SelfAuthOp(videos_edit, frozenset({"POST"}), openapi_extra=VIDEOS_EDIT_OPENAPI),
-    "videos.extend": SelfAuthOp(videos_extend, frozenset({"POST"}), openapi_extra=VIDEOS_EXTEND_OPENAPI),
-    "rerank": SelfAuthOp(rerank_v1, frozenset({"POST"})),
-    "rerank.v2": SelfAuthOp(rerank_v2, frozenset({"POST"})),
-    "rerank.root": SelfAuthOp(rerank_root, frozenset({"POST"})),
-    "responses.create": SelfAuthOp(create_response, frozenset({"POST"})),
-    "responses.retrieve": SelfAuthOp(retrieve_response, frozenset({"GET"})),
-    "responses.input_items": SelfAuthOp(list_response_input_items, frozenset({"GET"})),
-    "responses.input_tokens": SelfAuthOp(count_response_input_tokens, frozenset({"POST"})),
-    "responses.cancel": SelfAuthOp(cancel_response, frozenset({"POST"})),
-    "responses.delete": SelfAuthOp(delete_response, frozenset({"DELETE"})),
-    "chat.completions": SelfAuthOp(chat_completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
-    "text.completions": SelfAuthOp(completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
-    "text.embeddings": SelfAuthOp(embeddings, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+                                 response_class=Response, auth=operation_security.APP_KEY),
+    "videos.list": SelfAuthOp(videos_list, frozenset({"GET"}), openapi_extra=VIDEOS_LIST_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.delete": SelfAuthOp(videos_delete, frozenset({"DELETE"}), openapi_extra=VIDEOS_DELETE_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.remix": SelfAuthOp(videos_remix, frozenset({"POST"}), openapi_extra=VIDEOS_REMIX_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.edit": SelfAuthOp(videos_edit, frozenset({"POST"}), openapi_extra=VIDEOS_EDIT_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.extend": SelfAuthOp(videos_extend, frozenset({"POST"}), openapi_extra=VIDEOS_EXTEND_OPENAPI, auth=operation_security.APP_KEY),
+    "rerank": SelfAuthOp(rerank_v1, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "rerank.v2": SelfAuthOp(rerank_v2, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "rerank.root": SelfAuthOp(rerank_root, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.create": SelfAuthOp(create_response, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.retrieve": SelfAuthOp(retrieve_response, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "responses.input_items": SelfAuthOp(list_response_input_items, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "responses.input_tokens": SelfAuthOp(count_response_input_tokens, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.cancel": SelfAuthOp(cancel_response, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.delete": SelfAuthOp(delete_response, frozenset({"DELETE"}), auth=operation_security.APP_KEY),
+    "chat.completions": SelfAuthOp(chat_completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI, auth=operation_security.APP_KEY),
+    "text.completions": SelfAuthOp(completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI, auth=operation_security.APP_KEY),
+    "text.embeddings": SelfAuthOp(embeddings, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI, auth=operation_security.APP_KEY),
     "unsupported.assistants": SelfAuthOp(openai_assistants_unsupported,
-                                         frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"}), include_in_schema=False),
+                                         frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"}), include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.files": SelfAuthOp(openai_files_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                            include_in_schema=False),
+                            include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.batches": SelfAuthOp(openai_batches_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                              include_in_schema=False),
+                              include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.fine_tuning": SelfAuthOp(openai_fine_tuning_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                                  include_in_schema=False),
+                                  include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.realtime": SelfAuthOp(openai_realtime_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                               include_in_schema=False),
+                               include_in_schema=False, auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("anthropic", {
-    "chat.completions": SelfAuthOp(anthropic_messages, frozenset({"POST"})),
-    "tokens.count": SelfAuthOp(anthropic_count_tokens, frozenset({"POST"})),
-    "models.list": SelfAuthOp(anthropic_models, frozenset({"GET"})),
-    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"})),
+    "chat.completions": SelfAuthOp(anthropic_messages, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "tokens.count": SelfAuthOp(anthropic_count_tokens, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.list": SelfAuthOp(anthropic_models, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("ollama", {
-    "chat.completions": SelfAuthOp(ollama_chat, frozenset({"POST"})),
-    "text.completions": SelfAuthOp(ollama_generate, frozenset({"POST"})),
-    "text.embeddings": SelfAuthOp(ollama_embed, frozenset({"POST"})),
-    "text.embeddings.prompt": SelfAuthOp(ollama_embeddings, frozenset({"POST"})),
-    "models.tags": SelfAuthOp(ollama_tags, frozenset({"GET"})),
-    "models.show": SelfAuthOp(ollama_show, frozenset({"POST"})),
-    "models.ps": SelfAuthOp(ollama_ps, frozenset({"GET"})),
-    "version": SelfAuthOp(ollama_version, frozenset({"GET"})),
-    "models.create": SelfAuthOp(ollama_create, frozenset({"POST"})),
-    "models.copy": SelfAuthOp(ollama_copy, frozenset({"POST"})),
-    "models.pull": SelfAuthOp(ollama_pull, frozenset({"POST"})),
-    "models.push": SelfAuthOp(ollama_push, frozenset({"POST"})),
-    "blobs": SelfAuthOp(ollama_blobs, frozenset({"HEAD", "POST"})),
-    "models.delete": SelfAuthOp(ollama_delete, frozenset({"DELETE"})),
+    "chat.completions": SelfAuthOp(ollama_chat, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "text.completions": SelfAuthOp(ollama_generate, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "text.embeddings": SelfAuthOp(ollama_embed, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "text.embeddings.prompt": SelfAuthOp(ollama_embeddings, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.tags": SelfAuthOp(ollama_tags, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.show": SelfAuthOp(ollama_show, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.ps": SelfAuthOp(ollama_ps, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "version": SelfAuthOp(ollama_version, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.create": SelfAuthOp(ollama_create, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.copy": SelfAuthOp(ollama_copy, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.pull": SelfAuthOp(ollama_pull, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.push": SelfAuthOp(ollama_push, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "blobs": SelfAuthOp(ollama_blobs, frozenset({"HEAD", "POST"}), auth=operation_security.APP_KEY),
+    "models.delete": SelfAuthOp(ollama_delete, frozenset({"DELETE"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("realtime", {
-    "realtime.session": SelfAuthOp(realtime_v1, frozenset({"WEBSOCKET"})),
+    "realtime.session": SelfAuthOp(realtime_v1, frozenset({"WEBSOCKET"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("gateway", {
-    "media.job.content": SelfAuthOp(gateway_media_job_content, frozenset({"GET"})),
+    "media.job.content": SelfAuthOp(gateway_media_job_content, frozenset({"GET"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("provider-native", {
     "provider.list": Op(provider_native_list, frozenset({"GET"})),
@@ -31831,6 +31921,10 @@ def _gateway_openapi() -> dict[str, Any]:
     )
     from gateway.owner_openapi import augment_owner_openapi
     augment_owner_openapi(schema, app.routes)
+    augment_app_key_openapi(schema)
+    operation_security.augment_schemes(schema, cookie_name=ADMIN_AUTH.cookie.name)
+    operation_security.augment_signed_links(schema)
+    operation_security.fill_security(schema, is_public=is_public_path, key_layer_prefixes=KEY_LAYER_PREFIXES)
     app.openapi_schema = schema
     return schema
 

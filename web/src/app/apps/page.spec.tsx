@@ -472,7 +472,7 @@ it("keeps a newly created app resumable while the session refresh is still pendi
   finishRefresh({ ...snapshot, apps: [previousApp, app] });
 });
 
-it("says what a new key does with prompts, from the gateway's answer", async () => {
+it("says what a new key does with saved words and chats, from the gateway's answer", async () => {
   renderApps();
   await screen.findByText("Connect your first app");
   fireEvent.click(screen.getAllByRole("button", { name: "New app" })[0]);
@@ -497,7 +497,7 @@ it("says what a new key does with prompts, from the gateway's answer", async () 
   fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
   expect(
     await screen.findByText(
-      "This key acts as you. Anyone who has it can see the prompts you saved.",
+      "This key acts as you. Anyone who has it can see your saved words and chats.",
     ),
   ).toBeVisible();
 });

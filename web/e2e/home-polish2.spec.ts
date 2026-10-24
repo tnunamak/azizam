@@ -101,9 +101,9 @@ async function fixture(
             },
             speech: {
               capability: "speech",
-              capability_title: "Speech",
+              capability_title: "Voice",
               icon_key: "speech",
-              recommended_model: "Speech model",
+              recommended_model: "Voice model",
               intent: "speech.synthesize",
               summary: "Turn text into spoken audio.",
             },

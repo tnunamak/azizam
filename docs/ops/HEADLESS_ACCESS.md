@@ -481,6 +481,11 @@ Selected successful workflows are exercised separately.
 | `PUT /me/api/profile/avatar` | session-only | denied | `gateway.me_avatar.put_avatar`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/profile/avatars` | session-only | denied | `gateway.me_avatar.list_avatars`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/profile/avatar/picture` | session-only | denied | `gateway.me_avatar.get_picture`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/profile/avatar/default` | session-only | denied | `gateway.me_avatar.post_default`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/profile/avatar/generate` | session-only | denied | `gateway.me_avatar.post_generate`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/profile/avatar/generated` | session-only | denied | `gateway.me_avatar.post_generated`; Browser session; mutations require CSRF/action header | hidden |
+| `DELETE /me/api/profile/avatar/generated` | session-only | denied | `gateway.me_avatar.delete_generated`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/profile/avatar/generator` | session-only | denied | `gateway.me_avatar.get_generator`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/prompt-memory` | session-only | denied | `gateway.me_prompt_memory.get_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
 | `PUT /me/api/prompt-memory` | session-only | denied | `gateway.me_prompt_memory.put_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/retention` | session-only | denied | `gateway.request_history_api.get_my_retention`; Browser session; mutations require CSRF/action header | hidden |

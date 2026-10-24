@@ -54,9 +54,11 @@ test("H1 H12 a member's cold load makes at most five Home requests, and typing w
   await expect(page.getByRole("button", { name: /^(Make|Send)$/ })).toBeEnabled();
   await expect(box).toHaveValue("A lake at dawn");
   const counted = paths.filter((item) => item.startsWith("/me/api/") || item.startsWith("/gateway/v1/"));
-  // Four for Home itself, and the request history notice's own read of /me/api/retention (r103).
+  // Four for Home itself, and the request history notice's own read of /me/api/retention (r103). The automatic avatar
+  // asks only while its picture is due (the session says so), so a load that is not due adds nothing.
   expect(counted.length).toBeLessThanOrEqual(5);
   expect(counted.filter((item) => item.startsWith("/me/api/home")).length).toBe(1);
+  expect(counted.filter((item) => item.startsWith("/me/api/profile/avatar/default")).length).toBeLessThanOrEqual(1);
   expect(counted.filter((item) => item.startsWith("/gateway/v1/"))).toEqual([]);
 });
 

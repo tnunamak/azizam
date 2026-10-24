@@ -1635,7 +1635,7 @@ function costText(receipt: ReceiptCost): string {
   if (Number.isFinite(usd) && usd > 0)
     return usd < 0.01 ? "Less than USD 0.01" : `USD ${usd.toFixed(2)}`;
   if (receipt.remote === false && receipt.cost?.cost_class === "local")
-    return "Local · no provider charge";
+    return "Local · no charge";
   // A recorded zero is a fact; a missing amount is not zero.
   if (usd === 0) return "USD 0.00";
   return "Cost not recorded";
@@ -2101,7 +2101,7 @@ function CreationViewer({
                 ) : null}
               </div>
               {receiptFailed ? <p role="status">We couldn’t load the receipt. <Button variant="link" disabled={receiptFetching} onClick={() => void retryReceipt()}>{receiptFetching ? "Loading…" : "Retry receipt"}</Button></p> : null}
-              {maker && !prompt ? <QueryFeedback label="prompt settings" query={{ isError: promptMemoryError, isFetching: promptMemoryFetching, refetch: refetchPromptMemory }} /> : null}
+              {maker && !prompt ? <QueryFeedback label="saved words and chats"query={{ isError: promptMemoryError, isFetching: promptMemoryFetching, refetch: refetchPromptMemory }} /> : null}
               <KeyValueList
                 className="figures"
                 items={presentFacts([

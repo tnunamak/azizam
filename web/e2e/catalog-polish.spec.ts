@@ -6,7 +6,7 @@ import { fulfilJson } from "./fixtures/intercept";
 const aliases = [
   ["fast", "chat.completions", "Chat", "chat", "Fast"],
   ["image", "image.generate", "Images", "image", "Images"],
-  ["speech", "speech.synthesis", "Speech", "speech", "Speech"],
+  ["speech", "speech.synthesis", "Voice", "speech", "Voice"],
 ].map(([id, intent, label, capability, title]) => ({
   id,
   object: "model_catalog.alias",

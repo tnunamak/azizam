@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import frontend_mount, route_registry
+from gateway import frontend_mount, operation_security, route_registry
 from gateway.admin_api import derive_admin_attention
 from tests.registry_test_helpers import write_service_registry_for_test
 from tests.support.gateway import gateway_client, use_admin_db
@@ -28,8 +28,8 @@ async def _served(request: Request) -> dict:
 def _translators() -> frontend_mount.Translators:
     return frontend_mount.Translators({
         "identity": {
-            "models.list": frontend_mount.Operation(_served, frozenset({"GET"}), self_authenticates=True),
-            "chat.completions": frontend_mount.Operation(_served, frozenset({"POST"}), self_authenticates=True),
+            "models.list": frontend_mount.Operation(_served, frozenset({"GET"}), self_authenticates=True, auth=operation_security.APP_KEY),
+            "chat.completions": frontend_mount.Operation(_served, frozenset({"POST"}), self_authenticates=True, auth=operation_security.APP_KEY),
         },
     })
 

@@ -863,12 +863,15 @@ class AdminSQLiteStore:
         try:
             if section == "services" and isinstance(record, Mapping) and service_registry.is_litellm_service_record(held.id, record):
                 raise ValueError(f"service {held.id!r} is a managed substrate; remove it and the gateway restores its own")
-            candidate = copy.deepcopy(self.get_service_registry())
+            current = self.get_service_registry()
+            candidate = copy.deepcopy(current)
             candidate[section] = {**(candidate.get(section) or {}), held.key: record}
             try:
                 registry = service_registry.normalize_service_registry(candidate)
             except ValueError as error:
                 raise ValueError(projection.scrub_text(str(error)[:600], record_carriers.legacy_secret_texts(record))) from None
+            # A left-out record is not in ``current``, so it is checked as new; the others only if they change.
+            service_registry.refuse_unoffered_kinds_in_registry(registry, before=current)
             saved = self._persist_service_registry(
                 registry,
                 action="operator.service.updated",
@@ -2346,10 +2349,10 @@ def app_key_prompt_memory(app: Mapping[str, Any], credential: Mapping[str, Any])
     return {
         "person_id": person_id,
         "description": (
-            "Prompts sent with this key follow your prompt-memory settings. "
-            "Anyone holding it can access your saved prompts."
+            "Words sent with this key follow your saved words and chats setting. "
+            "Anyone holding it can access your saved words and chats."
             if person_id else
-            "Prompts sent with this key are not remembered. Generated items belong to the App. "
+            "Words sent with this key are not kept. Generated items belong to the App. "
             "Requests to /v1/responses can explicitly ask to save a conversation with store:true until it is explicitly deleted."
         ),
     }
@@ -2478,6 +2481,26 @@ def runtime_identity_for_session_app(
         return None
     return replace(identity_from_access_row(
         row, key_hash=f"app:{app_id}", name=str(row.get("app_name") or app_id), person_id=person_id,
+    ), auth_kind="session")
+
+
+def runtime_identity_for_new_session_app(
+    person_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> RuntimeIdentity | None:
+    """Return the identity a person's session App has, or would have, without creating the App.
+
+    A read that asks what a person may use (the avatar's make route) must not write. Until a make job starts, the
+    session App does not exist, and this gives the identity it will have: the same plan and the same denials, with no
+    App id. Nothing is written with it, and no App key can match it.
+    """
+    with admin_store.runtime_auth_connection(path) as connection:
+        row = admin_store.runtime_access_row_for_new_session_app(connection, person_id)
+    if row is None:
+        return None
+    return replace(identity_from_access_row(
+        row, key_hash="", name="the person's session App", person_id=person_id,
     ), auth_kind="session")
 
 

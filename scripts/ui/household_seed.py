@@ -318,7 +318,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
     if scenario not in SCENARIOS:
         raise ValueError(f"unknown household scenario {scenario!r}; use one of {SCENARIOS}")
     import metrics_store
-    from gateway import accounts, admin_store, media_jobs, providers, receipt_store
+    from gateway import accounts, admin_store, avatars, media_jobs, providers, receipt_store
     from gateway.local_owner import hash_password
     from gateway.receipts import RouteReceipt
     from gateway.runtime_auth import hash_api_key
@@ -407,6 +407,10 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             now=now, path=paths["admin"],
         )
         people[slug] = user
+        if slug == "robin":
+            # A person with no avatar choice gets an automatic picture, a make job whose picture joins their Library.
+            # Robin keeps a palette avatar, so the Library that web/e2e/library-pick.household.ts counts is the seeded one.
+            avatars.set_choice(user["id"], "v1", path=paths["admin"])
         admin_store.set_local_password_verifier(
             user["id"], hash_password(PASSWORD), path=paths["admin"]
         )

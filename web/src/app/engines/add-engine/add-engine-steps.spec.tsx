@@ -173,6 +173,84 @@ describe("g, h: models, name and create", () => {
     });
   });
 
+  it("h2: a model the server names by kind is created with that kind, and an unnamed one is not given one", async () => {
+    const user = userEvent.setup();
+    const probed = check("oai_ok");
+    vi.spyOn(enginesApi, "check").mockResolvedValue({
+      ...probed,
+      models: probed.models.map((m) => (m.id.startsWith("nomic") ? { ...m, kind: "embed" } : m.id.startsWith("qwen") ? { ...m, kind: "chat" } : m)),
+    });
+    mount();
+    await user.click(await screen.findByRole("button", { name: /Any OpenAI-compatible server/ }));
+    const dialog = screen.getByRole("dialog", { name: "Add engine" });
+    await user.type(within(dialog).getByLabelText(/^Address/), "http://192.168.1.50:8080/v1");
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+    await within(dialog).findByText(/^Step 3 of 5/);
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+    const name = within(dialog).getByLabelText(/^Name/);
+    await user.clear(name);
+    await user.type(name, "garage-gpu");
+    const create = vi.spyOn(enginesApi, "create").mockResolvedValue(registryWith("garage-gpu", "garage-gpu"));
+    await user.click(within(dialog).getByRole("button", { name: "Add engine" }));
+    await waitFor(() => expect(onAdded).toHaveBeenCalled());
+    expect(create.mock.calls[0][0].models).toEqual([
+      { id: "qwen3-32b-instruct-q4_k_m", public_name: "qwen3-32b", context_window: 40960, enabled: true, kind: "chat" },
+      { id: "gemma-3-12b-it", public_name: "gemma-3-12b", context_window: 131072, enabled: true },
+      { id: "nomic-embed-text-v1.5", public_name: "nomic-embed-text-v1.5", context_window: 8192, enabled: true, kind: "embed" },
+    ]);
+  });
+
+  it("h2b: the Capability pick-list offers only the kinds of the capabilities ticked for this engine", async () => {
+    const user = userEvent.setup();
+    const dialog = await toStep3(user, /Any OpenAI-compatible server/, "oai_ok", "http://192.168.1.50:8080/v1");
+    await user.click(within(within(dialog).getByRole("group", { name: "What this server can do" })).getByRole("checkbox", { name: "Embeddings" }));
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+    const picks = await within(dialog).findAllByLabelText("Capability");
+    expect(picks).toHaveLength(3);
+    for (const pick of picks) {
+      expect(within(pick).getAllByRole("option").map((option) => option.textContent)).toEqual(["All the engine offers", "Chat"]);
+    }
+  });
+
+  it("h2c: a refused kind lands on that model's Capability control, on the models step", async () => {
+    const user = userEvent.setup();
+    const probed = check("oai_ok");
+    vi.spyOn(enginesApi, "check").mockResolvedValue({
+      ...probed,
+      models: probed.models.map((m) => (m.id.startsWith("nomic") ? { ...m, kind: "embed" } : m)),
+    });
+    mount();
+    await user.click(await screen.findByRole("button", { name: /Any OpenAI-compatible server/ }));
+    const dialog = screen.getByRole("dialog", { name: "Add engine" });
+    await user.type(within(dialog).getByLabelText(/^Address/), "http://192.168.1.50:8080/v1");
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+    await within(dialog).findByText(/^Step 3 of 5/);
+    await user.click(within(within(dialog).getByRole("group", { name: "What this server can do" })).getByRole("checkbox", { name: "Embeddings" }));
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+    // The probed embedding model keeps its kind, so the pick-list shows what the form sends.
+    const picks = await within(dialog).findAllByLabelText("Capability");
+    expect(picks[2]).toHaveValue("embed");
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+    const name = within(dialog).getByLabelText(/^Name/);
+    await user.clear(name);
+    await user.type(name, "garage-gpu");
+    const create = vi
+      .spyOn(enginesApi, "create")
+      .mockRejectedValue(
+        new ApiError("invalid_engine", "This engine doesn’t offer Embeddings.", 400, {
+          error: { code: "invalid_engine", message: "This engine doesn’t offer Embeddings.", field: "models.2.kind" },
+        }),
+      );
+    await user.click(within(dialog).getByRole("button", { name: "Add engine" }));
+    await waitFor(() => expect(create).toHaveBeenCalled());
+    const refused = await within(dialog).findAllByLabelText("Capability");
+    expect(refused[2]).toHaveAttribute("aria-invalid", "true");
+    expect(refused[0]).not.toHaveAttribute("aria-invalid");
+    expect(within(dialog).getAllByText("This engine doesn’t offer Embeddings.")).toHaveLength(1);
+    expect(onAdded).not.toHaveBeenCalled();
+  });
+
   it("h3: the Name step asks who can use the models, with the ticked capabilities and public names, before Add engine", async () => {
     const user = userEvent.setup();
     const dialog = await toStep3(user, /Any OpenAI-compatible server/, "oai_ok", "http://192.168.1.50:8080/v1");

@@ -35,6 +35,7 @@ import httpcore
 import httpx
 
 from gateway import transforms
+from gateway.capability_ids import offered_model_kinds
 from gateway.engine_definitions import EngineCatalog
 
 DEFAULT_CAP_BYTES = 64 * 1024
@@ -800,6 +801,16 @@ def _unique(name: str, taken: set[str]) -> str:
     return candidate
 
 
+def suggested_model_kind(capabilities: Iterable[str], catalog: EngineCatalog) -> str | None:
+    """The one kind a probed model's capabilities name, or None when they name none or more than one.
+
+    The engine's own words for its work (its record capabilities) map to the
+    gateway's kinds through offered_model_kinds, so no engine name is needed.
+    """
+    kinds = offered_model_kinds(word for cap_id in capabilities for word in catalog.capability(cap_id)["record_capabilities"])
+    return kinds[0] if len(kinds) == 1 else None
+
+
 def _model_caps(entry: Mapping[str, Any], rules: Iterable[Mapping[str, Any]]) -> list[str]:
     found: list[str] = []
     for rule in rules:
@@ -1014,13 +1025,18 @@ async def _run_check(
         taken: set[str] = set()
         for item in entries:
             model_caps = _model_caps(item["entry"], data["model_rules"])
-            models.append({
+            row = {
                 "id": item["id"],
                 "public_name": _unique(public_name(item["id"], data.get("public_name_rules") or ()), taken),
                 "context_window": _context_window(item["entry"], data.get("context_window_keys") or ()),
                 "capabilities": model_caps,
                 "use": ", ".join(catalog.capability(c)["label"] for c in model_caps if c in data["capabilities"]) or "Not known yet",
-            })
+            }
+            # The kind is suggested only when the server's answer names exactly one; otherwise the row is as before.
+            kind = suggested_model_kind(model_caps, catalog)
+            if kind:
+                row["kind"] = kind
+            models.append(row)
         result["shapes"].append(probe["id"])
     elif probe["kind"] == "model_list" and primary.status is not None and primary.status != 200:
         obs["shape"] = "none"

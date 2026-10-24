@@ -50,7 +50,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 20
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
 _ACCESS_PLANS_VERSION = 7
@@ -78,6 +78,12 @@ _STT_CHUNKING_VERSION = 15
 # REQUEST_RETENTION.md section 12). The layout is what decides whether the rebuild runs, so it is idempotent.
 # Schema 18 adds the per-credential request-history privacy permission, default off (D52).
 _RETENTION_GROUPS_VERSION = 17
+# Schema 19 lets a person keep a picture the gateway made for them (gateway/avatars.py). The avatar choice gains a
+# word, and SQLite cannot widen a CHECK in place, so _rebuild_user_avatars rebuilds the table.
+_GENERATED_AVATAR_VERSION = 19
+# Schema 20 keeps the automatic default for a person with no picture (gateway/avatars.py): the make job it started,
+# and when the one automatic attempt was made. Two plain columns, so an ALTER is enough.
+_AVATAR_DEFAULT_VERSION = 20
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -365,9 +371,13 @@ CREATE TABLE IF NOT EXISTS account_login_limits (
 CREATE TABLE IF NOT EXISTS user_avatars (
  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
  choice TEXT NOT NULL DEFAULT 'auto'
-  CHECK (choice IN ('auto','picture','v1','v2','v3','v4','v5','v6','v7','v8')),
+  CHECK (choice IN ('auto','picture','generated','v1','v2','v3','v4','v5','v6','v7','v8')),
  picture_url TEXT CHECK (picture_url IS NULL OR (length(picture_url) <= 2048 AND picture_url LIKE 'https://%')),
  picture_set_at INTEGER,
+ generated_template TEXT,
+ generated_at INTEGER,
+ default_job_id TEXT,
+ default_attempted_at INTEGER,
  updated_at INTEGER NOT NULL
 );
 -- The names a browser keeps for its sign-in list (gateway.remembered_people). ``device_hash`` is the SHA-256 of the
@@ -585,6 +595,10 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         from gateway import stt_chunking_upgrade
 
         stt_chunking_upgrade.migrate_registry(conn)
+    if row is not None and int(row[0]) < _GENERATED_AVATAR_VERSION:
+        _rebuild_user_avatars(conn)
+    if row is not None and int(row[0]) < _AVATAR_DEFAULT_VERSION:
+        _add_avatar_default_columns(conn)
     if row is not None and _ACCESS_PLANS_VERSION <= int(row[0]) < SCHEMA_VERSION:
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
@@ -605,6 +619,39 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         app_binding_guard.install(conn)
     else:
         print(app_binding_guard.PENDING_NOTICE, flush=True)
+
+
+def _rebuild_user_avatars(conn: sqlite3.Connection) -> None:
+    """Schema 19: copy the avatar rows into a table whose choice list includes ``generated``.
+
+    The columns and the CHECK match ``ACCOUNT_SCHEMA``; keep the two in step. Runs inside the caller's transaction.
+    """
+    conn.execute(
+        "CREATE TABLE user_avatars_schema19 ("
+        " user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,"
+        " choice TEXT NOT NULL DEFAULT 'auto'"
+        "  CHECK (choice IN ('auto','picture','generated','v1','v2','v3','v4','v5','v6','v7','v8')),"
+        " picture_url TEXT CHECK (picture_url IS NULL OR (length(picture_url) <= 2048 AND picture_url LIKE 'https://%')),"
+        " picture_set_at INTEGER,"
+        " generated_template TEXT,"
+        " generated_at INTEGER,"
+        " updated_at INTEGER NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO user_avatars_schema19(user_id, choice, picture_url, picture_set_at, updated_at) "
+        "SELECT user_id, choice, picture_url, picture_set_at, updated_at FROM user_avatars"
+    )
+    conn.execute("DROP TABLE user_avatars")
+    conn.execute("ALTER TABLE user_avatars_schema19 RENAME TO user_avatars")
+
+
+def _add_avatar_default_columns(conn: sqlite3.Connection) -> None:
+    """Schema 20: the automatic default's job and attempt columns. ``ACCOUNT_SCHEMA`` has them for a fresh database."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(user_avatars)").fetchall()}
+    if "default_job_id" not in columns:
+        conn.execute("ALTER TABLE user_avatars ADD COLUMN default_job_id TEXT")
+    if "default_attempted_at" not in columns:
+        conn.execute("ALTER TABLE user_avatars ADD COLUMN default_attempted_at INTEGER")
 
 
 def access_plans_backup_path(path: Path) -> Path:
@@ -3119,6 +3166,34 @@ def runtime_access_row(
         return None
     data = {k: row[k] for k in row.keys()}
     data["on_session_app"] = bool(data["on_session_app"])
+    return data
+
+
+def runtime_access_row_for_new_session_app(conn: sqlite3.Connection, person_id: str) -> dict[str, Any] | None:
+    """The access row a person's session App has, or would have, read without creating the App.
+
+    ``ensure_session_app_for_user`` creates a session App on the person's own plan (``access_plan = 'person'``) and
+    never disabled. So its access, and its only denials, are the person's, and this reads only the person's columns
+    of ``_RUNTIME_ACCESS_SELECT``. ``app_id`` is empty because the App has no id yet; access decisions do not read it.
+    """
+    row = conn.execute(
+        "SELECT u.id AS person_row, u.issuer AS person_issuer, "
+        "acc.user_id AS access_row, acc.disabled_at AS person_disabled_at, "
+        "acc.removed_at AS person_removed_at, acc.plan_id AS person_plan_id, "
+        "EXISTS(SELECT 1 FROM account_signin_refusals r WHERE r.user_id = u.id) AS person_signin_refused, "
+        "pp.plan_json AS person_plan_json "
+        "FROM users u "
+        "LEFT JOIN account_access acc ON acc.user_id = u.id "
+        "LEFT JOIN access_plans pp ON pp.id = acc.plan_id "
+        "WHERE u.id = ?",
+        (person_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    data = {k: row[k] for k in row.keys()}
+    data.update({"app_id": "", "app_name": None, "app_kind": "personal", "owner_user_id": person_id,
+                 "app_disabled_at": None, "access_plan": PERSON_ASSIGNMENT, "app_plan_json": None,
+                 "on_session_app": True})
     return data
 
 

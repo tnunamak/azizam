@@ -52,7 +52,22 @@ export type TrySessionKey = Credential & {
 export interface AvatarSetting {
   choice: string;
   person_id: string;
+  /** The picture the avatar shows now: the sign-in picture, or the one the gateway made. */
   picture_url: string | null;
+  /** The person's own previews of each picture they have (absent for anyone else). */
+  sign_in_picture_url?: string | null;
+  made_picture_url?: string | null;
+  /** The automatic picture is being made for the person (their own view only). */
+  generating?: boolean;
+  /** The automatic picture is still due and an image route exists, so the page may ask for it (their own view only). */
+  default_due?: boolean;
+}
+
+/** A make job as the make page reads it: its state, and its pictures once it has succeeded. */
+export interface MakeJob {
+  job_id: string;
+  status: string;
+  assets?: Array<{ asset_id: string; media_type?: string | null }>;
 }
 export interface AccountSnapshot {
   authenticated: boolean;
@@ -351,12 +366,37 @@ export const accountApi = {
     ),
   /** The signed-in person's avatar choice. */
   avatar: () => accountRequest<AvatarSetting>("/me/api/profile/avatar"),
-  /** `choice`: auto, v1 to v8, or picture. The gateway refuses anything else. */
+  /** `choice`: auto, v1 to v8, picture, or generated (only once a picture is kept). The gateway refuses anything else. */
   saveAvatar: (choice: string) =>
     accountRequest<AvatarSetting>("/me/api/profile/avatar", {
       method: "PUT",
       body: { choice },
     }),
+  /** Whether this gateway has an image route to make the person's avatar with. */
+  avatarGenerator: () => accountRequest<{ available: boolean }>("/me/api/profile/avatar/generator"),
+  /** The automatic picture for a person with no sign-in picture and no chosen avatar. The gateway makes it once. */
+  startDefaultAvatar: () =>
+    accountRequest<AvatarSetting>("/me/api/profile/avatar/default", { method: "POST" }),
+  /** Start one attempt at a picture: a make job, with a new seed each time. */
+  startAvatarGeneration: () =>
+    accountRequest<{ job: MakeJob }>("/me/api/profile/avatar/generate", { method: "POST" }),
+  /** A make job the person started, with its pictures once it has succeeded. */
+  makeJob: (jobId: string) =>
+    accountRequest<{ job: MakeJob }>(`/me/api/make/jobs/${encodeURIComponent(jobId)}`),
+  /** A signed link that shows one of the person's own pictures. */
+  mediaDownloadUrl: (assetId: string) =>
+    accountRequest<{ download_url?: string | null }>(
+      `/me/api/media/${encodeURIComponent(assetId)}/download`,
+    ).then((link) => link.download_url ?? null),
+  /** Keep one of the person's own pictures as their avatar. */
+  keepGeneratedAvatar: (assetId: string) =>
+    accountRequest<AvatarSetting>("/me/api/profile/avatar/generated", {
+      method: "POST",
+      body: { asset_id: assetId },
+    }),
+  /** Remove the picture the gateway made. */
+  removeGeneratedAvatar: () =>
+    accountRequest<AvatarSetting>("/me/api/profile/avatar/generated", { method: "DELETE" }),
   /** Avatar choices the viewer may see: their own, and everyone's for an owner or admin. */
   avatars: () =>
     accountRequest<{

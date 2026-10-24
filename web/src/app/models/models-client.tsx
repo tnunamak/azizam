@@ -153,7 +153,7 @@ function letters(value: string): string {
 /**
  * The model's own name when it adds something to the model name: "Supertonic"
  * for `tts`, but nothing for `coder-q5` ("Coder Q5") or a title that only
- * names the task ("Speech" for `tts`).
+ * names the task ("Voice" for `tts`).
  */
 export function modelTitle(row: CatalogRow): string | undefined {
   const id = letters(row.id);
@@ -522,7 +522,7 @@ function ModelRow({
   const status = statusWords(row).label;
   const usual = availabilityState(row) === "ready" || status === "Ready to start";
   // A phone has one line for facts: a state that needs attention first, and a
-  // price only when it is not the usual local "no provider charge".
+  // price only when it is not the usual local "no charge".
   const phoneFacts = [
     usual ? null : status,
     ...meta,
