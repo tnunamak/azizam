@@ -346,12 +346,8 @@ export function AvatarPicker({
                   decorative
                 />
               ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={AVATAR_STYLE_SAMPLE_PATH}
-                  alt=""
-                  className="size-8 shrink-0 rounded-full object-cover"
-                />
+                // Nothing made yet: an empty disc. The style sample is beside the make button, not here.
+                <span aria-hidden className="bg-muted size-8 shrink-0 rounded-full" />
               )}
               <span className="font-medium">Generated</span>
               {madeAvailable && <CheckMark />}

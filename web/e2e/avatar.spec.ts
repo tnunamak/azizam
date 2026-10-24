@@ -46,9 +46,12 @@ test("a person changes their avatar from the account menu and it sticks", { tag:
     // The colours show under Initials, which is the source this person has. Auto can already check Plum for them;
     // choosing the colour that is checked sends no change event.
     const colours = dialog.getByRole("radiogroup", { name: "Colour of your initials" });
-    const currentColour = (await colours.locator("[role='radio'][aria-checked='true']").innerText()).trim();
+    // Each colour's value is its stored word, so the checked one is read from it, not from its text.
+    const checkedColour = colours.locator("[role='radio'][aria-checked='true']");
+    await expect(checkedColour).toHaveCount(1);
+    const currentWord = await checkedColour.getAttribute("value");
     const selection =
-      currentColour === "Plum"
+      currentWord === "v7"
         ? {
             label: "Fern",
             choice: "v2",
