@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fulfilJson } from "./fixtures/intercept";
+import type { Locator, Page } from "@playwright/test";
 
 const options = {
   built_in: true,
@@ -380,3 +381,128 @@ test("a new gateway offers setup before asking for a password", async ({
   await page.getByRole("link", { name: "Set up your gateway" }).click();
   await expect(page).toHaveURL(/\/setup\/$/);
 });
+
+// Sign-in round 3: the primary's size and colour, the dark edge of an outline button, the remember row's gaps, the 44 px
+// targets, and a 40-character instance name with no spaces (the case that used to break the page).
+const UNBROKEN_NAME = "Okaforfamilygatewayforthewholehome2026xx";
+const TWO_SSO_PEOPLE = ["Robin Okafor", "June Okafor"].map((name, index) => ({
+  tile: `tile-${index}`,
+  name,
+  avatar: { variant: "v1", initial: name[0] },
+  hint: null,
+  provider: "Household accounts",
+  method: "sso",
+}));
+
+/** Answers the sign-in options and the remembered people, as the gateway does for these methods. */
+async function answerSignIn(
+  page: Page,
+  methods: Record<string, unknown>,
+  people: unknown[] = [],
+) {
+  await page.route("**/auth/api/options*", (route) =>
+    fulfilJson(route, { ...options, ...methods }),
+  );
+  await page.route("**/auth/api/remembered", (route) =>
+    fulfilJson(route, { remember: true, people }),
+  );
+}
+
+/** A design token's colour in the page's current theme, in the same form the browser reports for a background. */
+async function tokenColour(page: Page, token: string) {
+  return page.evaluate((name) => {
+    const probe = document.createElement("div");
+    probe.style.backgroundColor = `var(--${name})`;
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return colour;
+  }, token);
+}
+
+/** Where a run of text starts, so a gap is measured between words and not between 44 px targets. */
+async function textTop(locator: Locator) {
+  return locator.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    return range.getBoundingClientRect().top;
+  });
+}
+
+function bottomOf(box: { y: number; height: number } | null) {
+  if (!box) throw new Error("no bounding box");
+  return box.y + box.height;
+}
+
+for (const width of [1440, 390] as const) {
+  const height = width === 390 ? 844 : 900;
+
+  test(`sign-in round 3: the primary is 16 px semibold in the Home's Make colour at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await page.addInitScript((value) => localStorage.setItem("theme", value), "light");
+    await answerSignIn(page, { built_in: false, oidc: true });
+    await page.goto("/");
+    const primary = page.getByRole("link", { name: "Continue with Household accounts" });
+    await expect(primary).toBeVisible();
+    await expect(primary).toHaveCSS("font-size", "16px");
+    await expect(primary).toHaveCSS("font-weight", "600");
+    await expect(primary).toHaveCSS("background-color", await tokenColour(page, "make"));
+  });
+
+  test(`sign-in round 3: an outline button's edge is the field edge in dark at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+    await page.addInitScript((value) => localStorage.setItem("theme", value), "dark");
+    await answerSignIn(page, { built_in: true, oidc: true });
+    await page.goto("/");
+    const signIn = page.getByRole("button", { name: "Sign in", exact: true });
+    await expect(signIn).toHaveAttribute("data-variant", "outline");
+    await expect(signIn).toHaveCSS("border-top-color", await tokenColour(page, "input"));
+  });
+
+  test(`sign-in round 3: the remember row keeps its gaps, and the controls keep 44 px targets, at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await page.addInitScript((value) => localStorage.setItem("theme", value), "light");
+    // Single sign-on, with the owner's password one link below the remember row: about 24 px from the text above it.
+    await answerSignIn(page, { built_in: false, oidc: true });
+    await page.goto("/");
+    const helper = page.getByText("Turn this off on a public computer.");
+    const owner = page.getByRole("button", { name: "Owner? Sign in with your password" });
+    await expect(owner).toBeVisible();
+    const gapToOwner = (await textTop(owner)) - bottomOf(await helper.boundingBox());
+    expect(gapToOwner).toBeGreaterThanOrEqual(20);
+    expect(gapToOwner).toBeLessThanOrEqual(28);
+    for (const control of [owner, page.getByRole("link", { name: "About Azizam" }), page.getByRole("button", { name: /^Switch to (dark|light)$/ })]) {
+      const box = await control.boundingBox();
+      expect(box?.height).toBeGreaterThanOrEqual(44);
+      expect(box?.width).toBeGreaterThanOrEqual(44);
+    }
+    // Both ways in: the remember row sits after the form's Sign in, and at least 16 px above the reset line.
+    await page.unroute("**/auth/api/options*");
+    await answerSignIn(page, { built_in: true, oidc: true });
+    await page.reload();
+    const forgot = page.getByText(/^Forgot your password\?/);
+    await expect(forgot).toBeVisible();
+    const gapToForgot = (await forgot.boundingBox())!.y - bottomOf(await helper.boundingBox());
+    expect(gapToForgot).toBeGreaterThanOrEqual(16);
+  });
+
+  test(`sign-in round 3: a 40-character instance name without spaces fits at ${width} px, on the plain page and in the chooser`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await answerSignIn(page, { built_in: false, oidc: true, instance_name: UNBROKEN_NAME });
+    await page.goto("/");
+    const heading = page.getByRole("heading", { level: 1 });
+    await expect(heading).toHaveText(`Sign in to ${UNBROKEN_NAME}`);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(await heading.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await page.unroute("**/auth/api/options*");
+    await answerSignIn(page, { built_in: false, oidc: true, instance_name: UNBROKEN_NAME }, TWO_SSO_PEOPLE);
+    await page.reload();
+    await expect(heading).toHaveText(`Who’s signing in to ${UNBROKEN_NAME}?`);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    expect(await heading.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  });
+}
