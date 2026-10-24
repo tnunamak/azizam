@@ -115,7 +115,7 @@ it("the Connect guide opens in a new tab, and the new key stays on screen and he
 
   const guide = within(reveal).getByRole("link", { name: "Connect" });
   // Next's Link may drop the trailing slash, so either form is the Connect page.
-  expect(guide.getAttribute("href")).toMatch(/^\/connect\/?$/);
+  expect(guide.getAttribute("href")).toMatch(/^\/connect\/?\?app=saved-app$/);
   expect(guide).toHaveAttribute("target", "_blank");
   expect(guide).toHaveAttribute("rel", "noopener");
   clickWithoutFollowing(guide);

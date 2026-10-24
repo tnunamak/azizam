@@ -763,7 +763,7 @@ function AppsContents() {
     <div className="space-y-8">
       <PageHeader
         title="Apps & keys"
-        subtitle="Each app has its own keys and one access plan."
+        subtitle="Each app has its own keys."
         primaryAction={
           <Button
             ref={newAppButton}
@@ -967,6 +967,14 @@ function AppsContents() {
                             {blockedReason}
                           </p>
                         )}
+                        <DropdownMenuItem asChild>
+                          <Link
+                            prefetch={false}
+                            href={`/connect/?app=${encodeURIComponent(app.id)}`}
+                          >
+                            Set up this app
+                          </Link>
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           onSelect={() => {
                             rememberAppFocus(app.id);
@@ -1339,7 +1347,7 @@ function AppsContents() {
                   The full guide opens on{" "}
                   <Link
                     prefetch={false}
-                    href="/connect/"
+                    href={`/connect/?app=${encodeURIComponent(reveal.appId)}`}
                     target="_blank"
                     rel="noopener"
                     className="underline underline-offset-4"

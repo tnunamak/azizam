@@ -137,12 +137,11 @@ describe("Connect", () => {
     expect(screen.getByLabelText("MCP server address")).toHaveValue(
       "https://gw.example/mcp",
     );
-    // Connect creates no key: the key is made in Apps & keys, which the key section links to.
+    // A plain visit sends the person to Apps & keys to choose an app; Connect creates no key.
+    expect(
+      screen.getByRole("link", { name: "choose the app in Apps & keys" }),
+    ).toHaveAttribute("href", "/apps/");
     expect(screen.queryByRole("link", { name: "Create a key" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Apps & keys" })).toHaveAttribute(
-      "href",
-      "/apps/",
-    );
     // The snippet carries the address from discovery and a placeholder, never a key.
     const json = screen.getByText(/"mcpServers"/);
     expect(json.textContent).toContain("https://gw.example/mcp");
@@ -312,5 +311,68 @@ describe("Connect", () => {
     expect(screen.queryByRole("list", { name: "Connections" })).toBeNull();
     expect(screen.queryByText("Connected with sign-in")).toBeNull();
     expect(screen.queryByText("Hosted Chat")).toBeNull();
+  });
+
+  describe("with ?app=<id>", () => {
+    const savedApp = {
+      id: "saved-app",
+      name: "OpenWhispr laptop",
+      kind: "personal",
+      disabled_at: null,
+      created_at: 1_800_000_000,
+      access_plan: null,
+      can_mint_keys: true,
+      credentials: [],
+    };
+    const sessionWith = (apps: unknown[]) =>
+      vi.spyOn(accountApi, "session").mockResolvedValue({
+        authenticated: true,
+        csrf_token: "test",
+        user: { id: "u", email: "sam@example.test", name: "Sam", role: "member" },
+        apps,
+      } as never);
+
+    afterEach(() => {
+      window.history.replaceState({}, "", "/");
+    });
+
+    test("sets up that app: its name, its client guide, and a way back to Apps & keys", async () => {
+      window.history.replaceState({}, "", "/connect/?app=saved-app");
+      vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+      sessionWith([savedApp]);
+      renderPage(member);
+      expect(
+        await screen.findByText("For OpenWhispr laptop. Where to click and what to paste."),
+      ).toBeVisible();
+      expect(screen.getByRole("link", { name: "Back to Apps & keys" })).toHaveAttribute(
+        "href",
+        "/apps/",
+      );
+      expect(screen.getByRole("combobox", { name: "Your app" })).toHaveTextContent(
+        "OpenWhispr",
+      );
+      // A guide can name the key in more than one field; each says where the key goes.
+      expect(screen.getAllByText("Paste the key you saved for this app.")[0]).toBeVisible();
+    });
+
+    test("says so when the app is not in the list, and the page still works", async () => {
+      window.history.replaceState({}, "", "/connect/?app=gone");
+      vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+      sessionWith([savedApp]);
+      renderPage(member);
+      expect(await screen.findByText(/That app isn't in your list/)).toBeVisible();
+      expect(screen.getByLabelText("OpenAI-compatible address")).toHaveValue(
+        "https://gw.example/openai/v1",
+      );
+    });
+
+    test("a plain visit names no app and loads no session", async () => {
+      vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+      const session = vi.spyOn(accountApi, "session");
+      renderPage(member);
+      expect(await screen.findByLabelText("OpenAI-compatible address")).toBeTruthy();
+      expect(screen.queryByRole("link", { name: "Back to Apps & keys" })).toBeNull();
+      expect(session).not.toHaveBeenCalled();
+    });
   });
 });

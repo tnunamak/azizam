@@ -922,7 +922,7 @@ it.each([
   expect(values.length).toBeGreaterThan(0);
   expect(values).not.toContain("test-key-only");
   expect(guide.textContent).not.toContain("test-key-only");
-  expect(dialog.getByRole("link", { name: "Connect" })).toHaveAttribute("href", expect.stringMatching(/^\/connect\/?$/));
+  expect(dialog.getByRole("link", { name: "Connect" })).toHaveAttribute("href", expect.stringMatching(/^\/connect\/?\?app=/));
   expect(dialog.getByRole("link", { name: `${appName} documentation` })).toHaveAttribute(
     "href",
     expect.stringMatching(/^https:\/\//),

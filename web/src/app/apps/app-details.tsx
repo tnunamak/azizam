@@ -36,7 +36,8 @@ export function AppKeyRows({
       key={key.id}
       lines={2}
       titleAs="h3"
-      className={childRowClass}
+      // On a phone the actions move under the key's name and its last-used line, so neither is cut off.
+      className={`${childRowClass} max-sm:flex-wrap max-sm:[&_[data-slot=list-row-trailing]]:w-full max-sm:[&_[data-slot=list-row-trailing]]:pl-7`}
       leading={<KeyRound aria-hidden="true" />}
       title={`Key · ${key.display_name}`}
       meta={[
@@ -98,11 +99,16 @@ export function AppTrustedRows({
   const indent = <span aria-hidden="true" className="block size-4 shrink-0" />;
   return (
     <>
-      <li className={`${childRowClass} flex items-start gap-3 px-4 py-3`}>
+      <li className={`${childRowClass} flex items-start gap-3 px-4 py-2`}>
         {indent}
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-body font-medium">Trusted addresses (keyless access)</h3>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <h3 className="text-body font-medium">Trusted addresses (keyless access)</h3>
+              {data?.length === 0 ? (
+                <span className="text-muted-foreground text-meta">None yet</span>
+              ) : null}
+            </div>
             <Button
               variant="outline"
               size="sm"
@@ -130,7 +136,7 @@ export function AppTrustedRows({
             The trusted addresses could not be loaded.
           </p>
         </li>
-      ) : data.length ? (
+      ) : (
         data.map((entry) => (
           <li
             key={entry.id}
@@ -148,13 +154,6 @@ export function AppTrustedRows({
             </p>
           </li>
         ))
-      ) : (
-        <li className={`${childRowClass} flex items-center gap-3 px-4 py-2`}>
-          {indent}
-          <p className="text-muted-foreground text-meta">
-            None yet. Requests without a key are refused.
-          </p>
-        </li>
       )}
     </>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useViewer } from "@/components/shell/session";
 import { PageHeader } from "@/components/product/page-header";
@@ -19,10 +19,15 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { accountApi, type GatewayDiscovery } from "@/lib/account-api";
+import {
+  accountApi,
+  type AccountApp,
+  type GatewayDiscovery,
+} from "@/lib/account-api";
 import { productApi } from "@/lib/product-api";
 import {
   appGuides,
+  guideIdForAppName,
   keyApps,
   mcpApps,
   resolveMcpGuide,
@@ -32,6 +37,7 @@ import {
 } from "@/lib/app-guides";
 import { AppGuide } from "@/components/product/app-guide";
 import { PRODUCT_NAME } from "@/lib/product";
+import { formatAppName } from "@/lib/format";
 
 const KEY_PLACEHOLDER = "<your key>";
 
@@ -41,6 +47,19 @@ function absolute(address: string, origin: string): string {
   if (address.includes("{base_url}"))
     return address.replace("{base_url}", origin);
   return address.startsWith("/") ? `${origin}${address}` : address;
+}
+
+/** The app a link names (`?app=<id>`). Read after mount, as navigation context only: an id is never a credential. */
+function useRequestedAppId(): string | null {
+  const [appId, setAppId] = useState<string | null>(null);
+  useEffect(() => {
+    const read = () =>
+      setAppId(new URLSearchParams(window.location.search).get("app") || null);
+    read();
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
+  }, []);
+  return appId;
 }
 
 function mcpSnippets(url: string) {
@@ -90,7 +109,8 @@ function ConnectSkeleton() {
 /**
  * How to use this gateway from other apps: the addresses, the setup steps for
  * each app, and the MCP server with the tools it lists. Everything comes from
- * /.well-known/azizam, so the page cannot drift from the server.
+ * /.well-known/azizam, so the page cannot drift from the server. With
+ * `?app=<id>` it sets up one app from Apps & keys and links back to it.
  */
 export default function ConnectPage() {
   const viewer = useViewer();
@@ -104,14 +124,46 @@ export default function ConnectPage() {
     queryFn: accountApi.discovery,
   });
   const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const requestedAppId = useRequestedAppId();
+  const { data: session } = useQuery({
+    queryKey: ["account", "session"],
+    queryFn: accountApi.session,
+    enabled: viewer.authenticated && requestedAppId !== null,
+  });
+  const setupApp: AccountApp | null =
+    session?.apps.find((app) => app.id === requestedAppId) ?? null;
+  const notFound = requestedAppId !== null && session !== undefined && !setupApp;
+  const setupName = setupApp
+    ? formatAppName(setupApp.name, session?.user?.email)
+    : "";
 
   return (
     <div className="page-read">
       <PageHeader
         title="Connect"
-        subtitle="Use this gateway from other apps and AI agents."
+        subtitle={
+          setupApp
+            ? `Set up ${setupName} with its key.`
+            : "Use this gateway from other apps and AI agents."
+        }
       />
       <div className="page-stack">
+        {requestedAppId !== null ? (
+          <p className="text-meta">
+            <Link prefetch={false} href="/apps/" className="underline">
+              Back to Apps &amp; keys
+            </Link>
+            {notFound ? " · That app isn't in your list." : null}
+          </p>
+        ) : viewer.authenticated ? (
+          <p className="text-meta">
+            Each app has its own key. To set one up,{" "}
+            <Link prefetch={false} href="/apps/" className="underline">
+              choose the app in Apps &amp; keys
+            </Link>
+            .
+          </p>
+        ) : null}
         {!viewer.authenticated ? (
           <EmptyState
             title="Sign in to connect your apps"
@@ -131,9 +183,12 @@ export default function ConnectPage() {
           />
         ) : (
           <ConnectDetails
+            key={setupApp?.id ?? "any-app"}
             discovery={discovery}
             origin={origin}
             admin={viewer.admin}
+            app={setupApp}
+            appName={setupName}
           />
         )}
       </div>
@@ -145,17 +200,25 @@ function ConnectDetails({
   discovery,
   origin,
   admin,
+  app,
+  appName,
 }: {
   discovery: GatewayDiscovery;
   origin: string;
   admin: boolean;
+  /** The app this page sets up, when the link named one. */
+  app: AccountApp | null;
+  appName: string;
 }) {
   const address = (id: string, fallback: string) =>
     absolute(discovery.recipes[id]?.canonical_base_url ?? fallback, origin);
   const mcpUrl = absolute(discovery.mcp?.url ?? "/mcp", origin);
   const tools = discovery.mcp?.tools ?? [];
   const signIn = discovery.mcp?.sign_in ?? false;
-  const [guideApp, setGuideApp] = useState(keyApps[0].id);
+  // The client the person picks. Until they pick one, it is the guide the app's name points at.
+  const [pickedGuide, setPickedGuide] = useState<string | null>(null);
+  const guideApp =
+    pickedGuide ?? (app ? guideIdForAppName(app.name) : keyApps[0].id);
   const { data: catalog, isPending: catalogPending } = useQuery({
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
@@ -185,12 +248,16 @@ function ConnectDetails({
       </SettingsSection>
       <SettingsSection
         title="Set up an app"
-        description="Where to click and what to paste, for each app."
+        description={
+          app
+            ? `For ${appName}. Where to click and what to paste.`
+            : "Where to click and what to paste, for each app."
+        }
       >
         <div className="p-4">
           <AppGuide
             appId={guideApp}
-            onAppChange={setGuideApp}
+            onAppChange={setPickedGuide}
             values={{
               openai_url: address("openai", "/openai/v1"),
               anthropic_url: address("anthropic", "/anthropic"),
@@ -198,7 +265,11 @@ function ConnectDetails({
               chat_model: suggestedModel(catalogRows, "chat"),
               transcription_model: suggestedModel(catalogRows, "transcribe"),
             }}
-            keyHint="Paste a key from Apps & keys."
+            keyHint={
+              app
+                ? "Paste the key you saved for this app."
+                : "Paste a key from Apps & keys."
+            }
             loading={catalogPending}
           />
         </div>

@@ -53,7 +53,8 @@ for (const viewport of viewports) {
       page.waitForEvent("popup"),
       reveal.getByRole("link", { name: "Connect" }).click(),
     ]);
-    await guide.waitForURL(/\/connect\/?$/);
+    // The link names the new key's app, so the guide opens with that app set up.
+    await guide.waitForURL(/\/connect\/?\?app=/);
     await guide.close();
     await expect(key).toHaveValue(/^opk_/);
 

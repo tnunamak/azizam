@@ -147,7 +147,7 @@ const refusals = [
   ["app_name_reserved", 409, "The name Try belongs to the Try page."],
 ] as const;
 
-it("puts Rename app first in the actions menu", async () => {
+it("puts Set up this app, then Rename app, first in the actions menu", async () => {
   renderApps();
   const trigger = await screen.findByRole("button", {
     name: "Actions for My laptop",
@@ -155,11 +155,23 @@ it("puts Rename app first in the actions menu", async () => {
   trigger.focus();
   fireEvent.keyDown(trigger, { key: "Enter" });
   const items = await screen.findAllByRole("menuitem");
-  expect(items.map((item) => item.textContent).slice(0, 3)).toEqual([
+  expect(items.map((item) => item.textContent).slice(0, 4)).toEqual([
+    "Set up this app",
     "Rename app",
     "Rename keys",
     "Create another key",
   ]);
+});
+
+it("sets up the app from its menu: the link opens Connect with the app named, and no key", async () => {
+  renderApps();
+  const trigger = await screen.findByRole("button", {
+    name: "Actions for My laptop",
+  });
+  trigger.focus();
+  fireEvent.keyDown(trigger, { key: "Enter" });
+  const link = await screen.findByRole("menuitem", { name: "Set up this app" });
+  expect(link.getAttribute("href")).toMatch(/^\/connect\/?\?app=saved-app$/);
 });
 
 it("renames an app with the trimmed name and shows the name the gateway saved", async () => {

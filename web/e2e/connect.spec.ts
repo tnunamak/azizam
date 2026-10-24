@@ -59,3 +59,19 @@ test("owner signs in, opens Connect and copies the MCP config", async ({
     await context.close();
   }
 });
+
+// An App's menu opens Connect with that App set up, and Back returns to Apps & keys. It only reads, so it runs
+// against the shared seed.
+test("Set up this app opens Connect for that app, and Back returns to Apps & keys", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/apps/");
+  await page.getByRole("button", { name: /^Actions for / }).first().click();
+  await page.getByRole("menuitem", { name: "Set up this app", exact: true }).click();
+  await expect(page).toHaveURL(/\/connect\/?\?app=/);
+  await expect(page.getByText(/^Set up .+ with its key\.$/)).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Your app" })).toBeVisible();
+  await page.getByRole("link", { name: "Back to Apps & keys", exact: true }).click();
+  await expect(page).toHaveURL(/\/apps\/?$/);
+});
