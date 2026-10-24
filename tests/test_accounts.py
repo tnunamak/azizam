@@ -446,20 +446,35 @@ def test_both_with_no_provider_turned_on_reads_as_built_in_only(account_db, acco
     assert options["built_in"] is True and options["oidc"] is False
 
 
-def test_options_name_the_owner_only_by_a_clean_display_name(account_db, account_client):
-    # The sign-in page says who shares the gateway. An email is an identity, never a name to publish; with no clean name
-    # the answer is empty, and the page leaves the line out instead of printing a placeholder.
+def test_options_never_name_the_owner_to_an_anonymous_caller(account_db, account_client):
+    # The sign-in page is public, so anyone can read its options. An owner with a clean display name is still not
+    # published there: the answer carries no owner name at all, and the page names the instance only.
     path, _ = account_db
     client, _ = account_client
-    assert client.get("/auth/api/options").json()["owner_name"] == ""
-    emailed = admin_store.upsert_oidc_user("https://idp.example.test", "emailed", email="sam@example.test",
-                                           display_name="sam@example.test", path=path)
-    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=emailed["id"], now=10**10, path=path)
-    assert client.get("/auth/api/options").json()["owner_name"] == ""
     named = admin_store.upsert_oidc_user("https://idp.example.test", "named", email="robin@example.test",
                                          display_name=" Sam Okafor ", path=path)
-    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=named["id"], now=10**10 + 1, path=path)
-    assert client.get("/auth/api/options").json()["owner_name"] == "Sam Okafor"
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=named["id"], now=10**10, path=path)
+    assert admin_store.owner_display_name(path=path) == "Sam Okafor"
+    answer = client.get("/auth/api/options")
+    assert answer.status_code == 200
+    assert "owner_name" not in answer.json()
+    assert "Sam Okafor" not in answer.text
+    assert "robin@example.test" not in answer.text
+
+
+def test_invite_page_names_the_owner_by_role_not_by_name(account_db, account_client):
+    # The invite page is public too: an invitee reads "The gateway owner invited you", never the owner's own name.
+    path, plan = account_db
+    client, _ = account_client
+    owner = admin_store.upsert_oidc_user("https://idp.example.test", "owner", email="robin@example.test",
+                                         display_name="Sam Okafor", path=path)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], now=10**10, path=path)
+    body = client.post("/admin/api/invites", headers=OWNER_HEADERS,
+                       json={"access_plan": plan["id"], "email": "person@example.test", "expires_in": 60}).json()
+    public = client.post("/auth/api/invite", json={"token": body["url"].split("token=", 1)[1]})
+    assert public.status_code == 200
+    assert public.json()["owner_name"] == "The gateway owner"
+    assert "Sam Okafor" not in public.text
 
 
 def test_options_do_not_report_fresh_sign_in_until_account_switcher_a2_ships(account_client):
