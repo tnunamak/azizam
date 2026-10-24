@@ -243,20 +243,37 @@ def test_keeping_refuses_anything_but_one_picture_id(rig: Rig, generation: FakeG
     assert avatars.get(alice, path=rig.db)["choice"] == "auto"
 
 
-def test_others_see_a_generated_picture_only_when_its_owner_chose_it(rig: Rig, generation: FakeGeneration) -> None:
+def _make_owner(db: Path, person_id: str) -> None:
+    app = admin_store.ensure_personal_app_for_user(person_id, path=db)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=person_id,
+                                  scope_app_id=app["id"], path=db)
+
+
+def test_an_admin_sees_a_generated_picture_only_when_its_owner_chose_it(rig: Rig, generation: FakeGeneration) -> None:
     alice = rig.person("alice")
-    bob = rig.person("bob")
+    admin = rig.person("ada")
+    _make_owner(rig.db, admin)
     generation.add_job_picture(alice, "img_alice1")
     rig.as_(alice).client.post("/me/api/profile/avatar/generated", json={"asset_id": "img_alice1"}, headers=ACTION)
     rig.as_(alice).client.put("/me/api/profile/avatar", json={"choice": "v3"}, headers=ACTION)
-    assert rig.as_(bob).client.get(f"/me/api/profile/avatar/picture?person={alice}").status_code == 404
-    assert alice not in rig.as_(bob).client.get("/me/api/profile/avatars").json()["people"]
+    assert rig.as_(admin).client.get(f"/me/api/profile/avatar/picture?person={alice}").status_code == 404
+    assert rig.as_(admin).client.get("/me/api/profile/avatars").json()["people"][alice]["picture_url"] is None
     rig.as_(alice).client.put("/me/api/profile/avatar", json={"choice": "generated"}, headers=ACTION)
-    shown = rig.as_(bob).client.get(f"/me/api/profile/avatar/picture?person={alice}")
+    shown = rig.as_(admin).client.get(f"/me/api/profile/avatar/picture?person={alice}")
     assert shown.status_code == 200 and shown.content == PNG
-    listed = rig.as_(bob).client.get("/me/api/profile/avatars").json()["people"][alice]
+    listed = rig.as_(admin).client.get("/me/api/profile/avatars").json()["people"][alice]
     assert listed["choice"] == "generated"
     assert listed["picture_url"].startswith(f"/me/api/profile/avatar/picture?person={alice}&v=")
+
+
+def test_a_member_never_sees_another_persons_picture_even_when_chosen(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    bob = rig.person("bob")
+    generation.add_job_picture(alice, "img_alice1")
+    client = rig.as_(alice).client
+    client.post("/me/api/profile/avatar/generated", json={"asset_id": "img_alice1"}, headers=ACTION)
+    assert rig.as_(bob).client.get(f"/me/api/profile/avatar/picture?person={alice}").status_code == 404
+    assert alice not in rig.as_(bob).client.get("/me/api/profile/avatars").json()["people"]
 
 
 def test_choosing_a_generated_picture_needs_one_to_be_stored(rig: Rig) -> None:

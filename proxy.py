@@ -17,6 +17,7 @@ Features:
 
 from gateway.compat import get_env
 from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
+from gateway.public_failure import PublicFailure
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
@@ -76,6 +77,7 @@ from gateway import (
     admin_store,
     audio_media_jobs,
     browser_sessions,
+    avatar_generation,
     avatars,
     remembered_people,
     frontend_mount,
@@ -14739,11 +14741,53 @@ app.include_router(
     )
 )
 
+def _avatar_picture_model(person_id: str) -> str | None:
+    """The image route a person's avatar is made with: the first one their own App may use, while media jobs are admitted."""
+    if _SESSION_MAKE_RUNTIME.admission(avatar_generation.IMAGE_INTENT) is not None:
+        return None
+    app = admin_store.ensure_session_app_for_user(person_id, name=me_make.APP_NAME, path=ADMIN_STORE.path)
+    identity = runtime_identity_for_session_app(str(app["id"]), person_id, path=ADMIN_STORE.path)
+    if identity is None or identity.denial:
+        return None
+    return avatar_generation.pick_route(_gateway_capabilities_for_auth_context(AuthContext(identity=identity)))
+
+
+def _avatar_start_job(request: Request, person_id: str, model: str, prompt: str) -> dict[str, Any]:
+    user = admin_store.get_user(person_id, path=ADMIN_STORE.path)
+    if user is None:
+        raise PublicFailure("session_user_not_found", 401)
+    return me_make.start_person_job(
+        request,
+        {"intent": avatar_generation.IMAGE_INTENT, "model": model, "prompt": prompt, "n": 1},
+        user=user,
+        runtime=_SESSION_MAKE_RUNTIME,
+        find_owned_asset=lambda request, user_id, asset_id: me_media.owned_library_asset(
+            user_id, asset_id, **_PERSON_LIBRARY),
+        admin_path=ADMIN_STORE.path,
+        jobs_path=media_jobs.DB_PATH,
+        receipts_path=receipt_store.DB_PATH,
+    )
+
+
+def _avatar_own_picture_file(person_id: str, asset_id: str) -> Path | None:
+    """The file of a picture in the person's own Library, or None. The Library decides whose job made it."""
+    item = me_media.owned_library_asset(person_id, asset_id, **_PERSON_LIBRARY)
+    if item is None or item.get("available") is False:
+        return None
+    path = asset_cache_path(asset_id)
+    return path if path is not None and path.is_file() else None
+
+
 app.include_router(
     me_avatar.create_me_avatar_router(
         session_provider=lambda request: _oidc_session_from_request(request),
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
         admin_db_path=lambda: ADMIN_STORE.path,
+        generation=me_avatar.AvatarGeneration(
+            model_for=_avatar_picture_model,
+            start=_avatar_start_job,
+            own_picture_file=_avatar_own_picture_file,
+        ),
     )
 )
 

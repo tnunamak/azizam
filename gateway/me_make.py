@@ -326,6 +326,32 @@ def record_dispatch(
         return False
 
 
+def start_person_job(
+    request: Request,
+    body: Mapping[str, Any],
+    *,
+    user: Mapping[str, Any],
+    runtime: MakeRuntime,
+    find_owned_asset: OwnedAssetFinder,
+    admin_path: Path,
+    jobs_path: Path,
+    receipts_path: Path,
+) -> dict[str, Any]:
+    """Start a make job for a person from inside the gateway, on the same path a make page request takes.
+
+    The gateway uses it for work the person asked for indirectly, such as their avatar. The job is stamped with
+    the person as its maker, so it shows in their Library. Raises PublicFailure when the job cannot start.
+    """
+    try:
+        _status, job = _submit(
+            request, dict(body), user=user, runtime=runtime, find_owned_asset=find_owned_asset,
+            idempotency_key=None, admin_path=admin_path, jobs_path=jobs_path, receipts_path=receipts_path,
+        )
+    except _AdmissionRefused:
+        raise PublicFailure("make_unavailable", 503) from None
+    return job
+
+
 def _submit(
     request: Request,
     body: Any,

@@ -1,4 +1,4 @@
-"""A person's avatar choice, and the sign-in picture the identity provider shared.
+"""A person's avatar choice, the sign-in picture the identity provider shared, and a picture the gateway made.
 
 The table lives in the account schema (``admin_store.ACCOUNT_SCHEMA``): it is created
 with ``CREATE TABLE IF NOT EXISTS``, so an upgrade and a second start both leave it as it is.
@@ -8,30 +8,63 @@ It is a table of its own, not columns of ``users``, because the admin people lis
 The choice is one word from a fixed list. No URL ever comes from a request: the only URL
 kept is the ``picture`` claim of a verified ID token, and only when it is https and short.
 The browser never loads that URL. ``gateway.me_avatar`` fetches it on the server.
+
+A picture the gateway made is not a URL either. It is a copy of one of the person's own job pictures, kept
+in the avatar cache beside the admin database: one directory per person, one file per template version.
 """
 from __future__ import annotations
 
+import hashlib
 import re
+import shutil
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit
 
-from gateway import admin_store
+from gateway import admin_store, private_io
+from gateway.avatar_generation import TEMPLATE_VERSION
 
 AUTO = "auto"
 PICTURE = "picture"
+GENERATED = "generated"
 VARIANTS = tuple(f"v{number}" for number in range(1, 9))
-CHOICES = frozenset({AUTO, PICTURE, *VARIANTS})
+CHOICES = frozenset({AUTO, PICTURE, GENERATED, *VARIANTS})
+# Which picture a person shows: the sign-in picture, the one the gateway made, or none (the palette).
+SHOWN_SIGN_IN = "sign-in"
+SHOWN_GENERATED = "generated"
+# Others (admins, in practice) see a person's picture only when the person chose it.
+SHOWN_TO_OTHERS = frozenset({PICTURE, GENERATED})
 MAX_PICTURE_URL_CHARS = 2048
+MAX_GENERATED_BYTES = 16 * 1024 * 1024
+GENERATED_CACHE_DIR = "avatar-cache"
 _UNSAFE_URL_CHARS = re.compile(r"[\s\x00-\x1f\x7f\\]")
+_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+_COLUMNS = "choice, picture_url, picture_set_at, generated_template, generated_at"
+_DEFAULT = {"choice": AUTO, "picture_url": None, "picture_set_at": None,
+            "generated_template": None, "generated_at": None}
 
 
 class AvatarError(ValueError):
     def __init__(self, code: str, message: str, status: int = 400) -> None:
         super().__init__(message)
         self.code, self.message, self.status = code, message, status
+
+
+def image_type(data: bytes) -> str | None:
+    """The image type the bytes start as, from the file signature; None if it is not an image this gateway serves."""
+    for prefix, content_type in _SIGNATURES:
+        if data.startswith(prefix):
+            return content_type
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 def clean_picture_url(value: Any) -> str | None:
@@ -51,19 +84,20 @@ def clean_picture_url(value: Any) -> str | None:
     return value
 
 
+def _record(row: sqlite3.Row) -> dict[str, Any]:
+    return {"choice": row["choice"], "picture_url": row["picture_url"], "picture_set_at": row["picture_set_at"],
+            "generated_template": row["generated_template"], "generated_at": row["generated_at"]}
+
+
 def _row(conn: sqlite3.Connection, person_id: str) -> sqlite3.Row | None:
-    return conn.execute(
-        "SELECT choice, picture_url, picture_set_at FROM user_avatars WHERE user_id=?", (person_id,),
-    ).fetchone()
+    return conn.execute(f"SELECT {_COLUMNS} FROM user_avatars WHERE user_id=?", (person_id,)).fetchone()
 
 
 def get(person_id: str, *, path: Path) -> dict[str, Any]:
-    """``{choice, picture_url, picture_set_at}`` with the stored upstream URL. Server-side use only."""
+    """The stored record, with the upstream URL. Server-side use only."""
     with admin_store._conn(path) as conn:
         row = _row(conn, person_id)
-    if row is None:
-        return {"choice": AUTO, "picture_url": None, "picture_set_at": None}
-    return {"choice": row["choice"], "picture_url": row["picture_url"], "picture_set_at": row["picture_set_at"]}
+    return dict(_DEFAULT) if row is None else _record(row)
 
 
 def get_many(person_ids: Iterable[str], *, path: Path) -> dict[str, dict[str, Any]]:
@@ -73,39 +107,107 @@ def get_many(person_ids: Iterable[str], *, path: Path) -> dict[str, dict[str, An
         for start in range(0, len(ids), 500):
             chunk = ids[start:start + 500]
             for row in conn.execute(
-                "SELECT user_id, choice, picture_url, picture_set_at FROM user_avatars "
+                f"SELECT user_id, {_COLUMNS} FROM user_avatars "
                 f"WHERE user_id IN ({','.join('?' for _ in chunk)})", chunk,
             ).fetchall():
-                found[row["user_id"]] = {
-                    "choice": row["choice"], "picture_url": row["picture_url"],
-                    "picture_set_at": row["picture_set_at"],
-                }
-    return {person_id: found.get(person_id) or {"choice": AUTO, "picture_url": None, "picture_set_at": None}
-            for person_id in ids}
+                found[row["user_id"]] = _record(row)
+    return {person_id: found.get(person_id) or dict(_DEFAULT) for person_id in ids}
 
 
 def list_stored(*, path: Path) -> dict[str, dict[str, Any]]:
     """Every person who has chosen something or has a picture; the rest are ``auto`` without one."""
     with admin_store._conn(path) as conn:
-        rows = conn.execute("SELECT user_id, choice, picture_url, picture_set_at FROM user_avatars").fetchall()
-    return {row["user_id"]: {"choice": row["choice"], "picture_url": row["picture_url"],
-                             "picture_set_at": row["picture_set_at"]} for row in rows}
+        rows = conn.execute(f"SELECT user_id, {_COLUMNS} FROM user_avatars").fetchall()
+    return {row["user_id"]: _record(row) for row in rows}
 
 
-def picture_path(person_id: str, record: dict[str, Any], *, viewer_id: str) -> str | None:
-    """The gateway path of the picture, or None. Never the provider's URL."""
-    if not record.get("picture_url"):
+def shown_kind(record: Mapping[str, Any]) -> str | None:
+    """The picture the person's avatar shows: the one they had made, the sign-in picture, or None (the palette)."""
+    choice = record["choice"]
+    if choice == GENERATED:
+        current = record["generated_template"] == TEMPLATE_VERSION and record["generated_at"] is not None
+        return SHOWN_GENERATED if current else None
+    if choice in VARIANTS:
         return None
-    query = f"v={int(record.get('picture_set_at') or 0)}"
+    return SHOWN_SIGN_IN if record["picture_url"] else None
+
+
+def picture_path(person_id: str, record: Mapping[str, Any], *, viewer_id: str) -> str | None:
+    """The gateway path of the picture shown, or None. Never the provider's URL."""
+    kind = shown_kind(record)
+    if kind is None:
+        return None
+    stamp = record["generated_at"] if kind == SHOWN_GENERATED else record["picture_set_at"]
+    query = f"v={int(stamp or 0)}"
     if person_id != viewer_id:
         query = f"person={person_id}&{query}"
     return f"/me/api/profile/avatar/picture?{query}"
 
 
-def public_view(person_id: str, record: dict[str, Any], *, viewer_id: str) -> dict[str, Any]:
-    """What the browser may see: the choice and a gateway path for the picture."""
-    return {"choice": record["choice"], "person_id": person_id,
-            "picture_url": picture_path(person_id, record, viewer_id=viewer_id)}
+def public_view(person_id: str, record: Mapping[str, Any], *, viewer_id: str) -> dict[str, Any]:
+    """What the browser may see: the choice, a gateway path for the picture shown, and for the person
+    whether a sign-in picture is on file (the picker offers it only then)."""
+    view: dict[str, Any] = {"choice": record["choice"], "person_id": person_id,
+                            "picture_url": picture_path(person_id, record, viewer_id=viewer_id)}
+    if person_id == viewer_id:
+        view["sign_in_available"] = bool(record["picture_url"])
+    return view
+
+
+def generated_dir(person_id: str, *, path: Path) -> Path:
+    """Where a person's copy lives: the avatar cache beside the admin database, named by a hash of the person id."""
+    digest = hashlib.sha256(person_id.encode()).hexdigest()[:40]
+    return path.parent / GENERATED_CACHE_DIR / digest
+
+
+def read_generated(person_id: str, *, path: Path) -> bytes | None:
+    """The copy kept for the current template, or None."""
+    try:
+        return (generated_dir(person_id, path=path) / TEMPLATE_VERSION).read_bytes()
+    except FileNotFoundError:
+        return None
+
+
+def remove_generated_files(person_id: str, *, path: Path) -> None:
+    shutil.rmtree(generated_dir(person_id, path=path), ignore_errors=True)
+
+
+def store_generated(person_id: str, data: bytes, *, path: Path) -> dict[str, Any]:
+    """Keep a copy of a picture the gateway made, and show it as the person's avatar."""
+    if image_type(data) is None or len(data) > MAX_GENERATED_BYTES:
+        raise AvatarError("invalid_generated_picture", "That picture cannot be kept as an avatar.")
+    if admin_store.get_user(person_id, path=path) is None:
+        raise AvatarError("person_not_found", "This account was not found.", 404)
+    directory = generated_dir(person_id, path=path)
+    target = directory / TEMPLATE_VERSION
+    private_io.ensure_private_dir(directory)
+    private_io.atomic_write_bytes(target, data)
+    now = int(time.time())
+    with admin_store.transaction(path) as tx:
+        tx.conn.execute(
+            "INSERT INTO user_avatars(user_id, choice, generated_template, generated_at, updated_at) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET choice=excluded.choice, generated_template=excluded.generated_template, "
+            "generated_at=excluded.generated_at, updated_at=excluded.updated_at",
+            (person_id, GENERATED, TEMPLATE_VERSION, now, now),
+        )
+    # Only the copy for the current template stays.
+    for entry in directory.iterdir():
+        if entry != target:
+            entry.unlink(missing_ok=True)
+    return get(person_id, path=path)
+
+
+def clear_generated(person_id: str, *, path: Path) -> dict[str, Any]:
+    """Remove the picture the gateway made. The person then shows their sign-in picture, or the palette."""
+    now = int(time.time())
+    with admin_store.transaction(path) as tx:
+        tx.conn.execute(
+            "UPDATE user_avatars SET choice=?, generated_template=NULL, generated_at=NULL, updated_at=? "
+            "WHERE user_id=? AND choice=?",
+            (AUTO, now, person_id, GENERATED),
+        )
+    remove_generated_files(person_id, path=path)
+    return get(person_id, path=path)
 
 
 def set_choice(person_id: str, choice: Any, *, path: Path) -> dict[str, Any]:
@@ -119,12 +221,20 @@ def set_choice(person_id: str, choice: Any, *, path: Path) -> dict[str, Any]:
         row = _row(conn, person_id)
         if choice == PICTURE and (row is None or not row["picture_url"]):
             raise AvatarError("picture_unavailable", "Your sign-in provider has not shared a picture.", 409)
+        if choice == GENERATED and not _has_current_copy(person_id, row, path=path):
+            raise AvatarError("generated_unavailable", "Make an avatar first.", 409)
         conn.execute(
             "INSERT INTO user_avatars(user_id, choice, updated_at) VALUES(?,?,?) "
             "ON CONFLICT(user_id) DO UPDATE SET choice=excluded.choice, updated_at=excluded.updated_at",
             (person_id, choice, now),
         )
     return get(person_id, path=path)
+
+
+def _has_current_copy(person_id: str, row: sqlite3.Row | None, *, path: Path) -> bool:
+    if row is None or row["generated_at"] is None or row["generated_template"] != TEMPLATE_VERSION:
+        return False
+    return (generated_dir(person_id, path=path) / TEMPLATE_VERSION).is_file()
 
 
 def record_sign_in_picture(person_id: str, claim: Any, *, path: Path) -> None:

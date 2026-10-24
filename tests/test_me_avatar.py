@@ -89,7 +89,7 @@ def rig(tmp_path: Path) -> Rig:
 def test_default_is_auto_with_the_person_id_and_no_picture(rig: Rig) -> None:
     alice = rig.person("alice")
     body = rig.as_(alice).client.get("/me/api/profile/avatar").json()
-    assert body == {"choice": "auto", "person_id": alice, "picture_url": None}
+    assert body == {"choice": "auto", "person_id": alice, "picture_url": None, "sign_in_available": False}
 
 
 def test_signed_out_is_401(rig: Rig) -> None:
@@ -106,7 +106,7 @@ def test_put_needs_the_user_action_header_like_other_member_writes(rig: Rig) -> 
     assert avatars.get(alice, path=rig.db)["choice"] == "auto"
     saved = client.put("/me/api/profile/avatar", json={"choice": "v3"}, headers=ACTION)
     assert saved.status_code == 200
-    assert saved.json() == {"choice": "v3", "person_id": alice, "picture_url": None}
+    assert saved.json() == {"choice": "v3", "person_id": alice, "picture_url": None, "sign_in_available": False}
     assert client.get("/me/api/profile/avatar").json()["choice"] == "v3"
 
 
@@ -244,7 +244,8 @@ def test_an_older_database_without_the_table_gets_it_and_every_person_is_auto(tm
     with sqlite3.connect(db) as conn:
         conn.execute("DROP TABLE user_avatars")
     admin_store.init_db(db)
-    assert avatars.get(user["id"], path=db) == {"choice": "auto", "picture_url": None, "picture_set_at": None}
+    assert avatars.get(user["id"], path=db) == {"choice": "auto", "picture_url": None, "picture_set_at": None,
+                                                  "generated_template": None, "generated_at": None}
 
 
 def test_the_table_refuses_a_word_or_url_the_code_never_writes(tmp_path: Path) -> None:
@@ -277,7 +278,8 @@ def test_removing_a_person_deletes_their_avatar_row_and_the_provider_url(tmp_pat
     avatars.record_sign_in_picture(member["id"], PICTURE, path=db)
     avatars.set_choice(member["id"], "picture", path=db)
     accounts.change_person(member["id"], owner["id"], remove=True, path=db)
-    assert avatars.get(member["id"], path=db) == {"choice": "auto", "picture_url": None, "picture_set_at": None}
+    assert avatars.get(member["id"], path=db) == {"choice": "auto", "picture_url": None, "picture_set_at": None,
+                                                  "generated_template": None, "generated_at": None}
     with sqlite3.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM user_avatars WHERE user_id=?", (member["id"],)).fetchone()[0] == 0
 
