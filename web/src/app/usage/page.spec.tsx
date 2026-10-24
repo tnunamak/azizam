@@ -405,7 +405,7 @@ test.each([undefined, null])("UA-01 labels an unrecorded receipt cost in summary
     receipts: [
       { request_id: "unknown", capability: "chat", cost_usd: cost },
       { request_id: "zero", capability: "image", cost_usd: 0 },
-      { request_id: "local", capability: "video", cost_usd: cost, remote: false },
+      { request_id: "local", capability: "video", cost_usd: cost, remote: false, served_locally: true },
     ],
     by_model: [{ model: "unmeasured-model", capability: "chat", requests: 1 }],
   });
@@ -437,7 +437,7 @@ test("A17 names a local request, a remote one without a reported cost, and a tot
     spend_measured_requests: 1,
     spend_total_requests: 2,
     receipts: [
-      { request_id: "local-1", capability: "chat", remote: false },
+      { request_id: "local-1", capability: "chat", remote: false, served_locally: true },
       { request_id: "remote-1", capability: "image", remote: true },
     ],
     by_model: [
@@ -466,6 +466,99 @@ test("A17 names a local request, a remote one without a reported cost, and a tot
   ).toBeVisible();
 });
 
+
+test("A month served entirely here says Local · no charge, not No paid requests", async () => {
+  renderUsage({
+    requests: 12,
+    local_requests: 12,
+    paid_requests: 0,
+    unknown_paid_requests: 0,
+    remote_spend: 0,
+    spend_measured_requests: 12,
+    spend_total_requests: 12,
+    by_model: [{ model: "local-chat", capability: "chat", requests: 12, remote_spend: 0, paid_requests: 0, unknown_paid_requests: 0, local_requests: 12 }],
+  });
+  const spend = (await screen.findByText("Spend this month (USD)", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(spend).getByText("Local · no charge")).toBeVisible();
+  expect(within(spend).queryByText("No paid requests")).not.toBeInTheDocument();
+  expect(within(modelRow("Local Chat")).getByText("Local · no charge")).toBeVisible();
+});
+
+test("Local requests sit beside a paid total, in the total and in their own rows", async () => {
+  renderUsage({
+    requests: 5,
+    local_requests: 3,
+    paid_requests: 1,
+    unknown_paid_requests: 0,
+    remote_spend: 0.5,
+    spend_measured_requests: 3,
+    spend_total_requests: 5,
+    by_model: [
+      { model: "paid-image", capability: "image", requests: 2, remote_spend: 0.5, paid_requests: 1, unknown_paid_requests: 0, local_requests: 0 },
+      { model: "local-chat", capability: "chat", requests: 3, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0, local_requests: 3 },
+    ],
+  });
+  const spend = (await screen.findByText("Spend this month (USD)", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(spend).getByText("$0.50")).toBeVisible();
+  expect(within(spend).getByText("3 local · no charge")).toBeVisible();
+  expect(within(modelRow("Local Chat")).getByText("Local · no charge")).toBeVisible();
+  expect(within(modelRow("Paid Image")).getByText("$0.50")).toBeVisible();
+});
+
+test("A month with no paid request still counts its local ones beside No paid requests", async () => {
+  renderUsage({
+    requests: 5,
+    local_requests: 2,
+    paid_requests: 0,
+    unknown_paid_requests: 0,
+    remote_spend: 0,
+    spend_measured_requests: 5,
+    spend_total_requests: 5,
+  });
+  const spend = (await screen.findByText("Spend this month (USD)", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(spend).getByText("No paid requests")).toBeVisible();
+  expect(within(spend).getByText("2 local · no charge")).toBeVisible();
+});
+
+test("A request that failed before routing reads Cost not recorded, never Local", async () => {
+  renderUsage({
+    receipts: [{ request_id: "refused", capability: "chat", remote: false, status: "failed" }],
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "View recent requests" }));
+  const refused = screen.getByRole("button", { name: /Receipt details for Chat request/ });
+  expect(within(refused).getByText("Cost not recorded")).toBeInTheDocument();
+  expect(within(refused).queryByText("Local · no charge")).not.toBeInTheDocument();
+});
+
+test("Usage CSV writes zero spend only for a request served here", async () => {
+  const blobs: Blob[] = [];
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL(blob: Blob) { blobs.push(blob); return "blob:served"; }
+    static revokeObjectURL = vi.fn();
+  });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  try {
+    renderUsage({
+      receipts: [
+        { request_id: "served", capability: "chat", resolved_model: "local-chat", remote: false, served_locally: true, status: "succeeded" },
+        { request_id: "refused", capability: "chat", resolved_model: "local-chat", remote: false, status: "failed" },
+      ],
+    });
+    const button = await screen.findByRole("button", { name: "Download CSV" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await userEvent.setup().click(button);
+    const csv = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blobs[0]);
+    });
+    const spendColumns = csv.trimEnd().split("\r\n").slice(1).map((row) => row.split(",").at(-1));
+    expect(spendColumns).toEqual(["0", ""]);
+  } finally {
+    click.mockRestore();
+  }
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
