@@ -328,7 +328,11 @@
 # OV3 slice 1 round 3, merged with origin/main 89e514766: the stamped job maker, the stamped Library decision, the
 # activity page filled before its limit, the migration test and the tests for each. Full hermetic collection measured
 # 17280 on 2026-10-23.
-pytest = 17280
+# OV3 slice 1 round 4: +10 maker-backfill cases (personal, session, service and parent-link jobs, a receipt that names
+# another job, unresolved jobs, the Library listing, the second run), +4 bounded activity-feed cases (a mostly
+# unreadable table, cursor continuity, page size, a malformed cursor) and +1 Library source-label case.
+# Full hermetic collection measured 17295 on 2026-10-24.
+pytest = 17295
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -371,7 +375,7 @@ pytest = 17280
 # expectations. Full run: 223 files, 3321 cases, all passed (2026-10-23).
 # Train r103 step 5 (account chooser): 3362 + 89 (3321 - 3232) = 3451, provisional until the final vitest list.
 # Owner visibility step 3 slice 1 (-4): the feat side replaces three maker-display tests with one and cuts the owner
-# fetch matrix from five cases to four. Main's 3451 less 4 is 3447, provisional until the final vitest list.
+# fetch matrix from five cases to four. Main's 3451 less 4 is 3447, measured on 2026-10-24 with `npx vitest list --json`.
 vitest = 3447
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
@@ -394,8 +398,8 @@ vitest = 3447
 # chooser-states 6 and 2 in the global-state project, signin-shell 10, invite-signin 1, chooser-round-trip 2).
 # Gate lists 554 (533 + live-data 3 + household 18), measured 2026-10-23.
 # Train r103 step 5 (account chooser): 537 + 29 (554 - 525) = 566, provisional until the final Playwright lists.
-# Owner visibility step 3 slice 1 (-1): the Library owner fetch matrix moves from five cases to four. 566 less 1 is 565,
-# provisional until the final Playwright lists.
+# Owner visibility step 3 slice 1 (-1): the Library owner fetch matrix moves from five cases to four. 566 less 1 is 565.
+# Measured on 2026-10-24 with `playwright test --list`: playwright.config.ts 544, live-data 3, household 18.
 playwright = 565
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
