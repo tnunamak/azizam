@@ -367,7 +367,11 @@
 # failed picture, a picture row's model, an unpriced remote attempt, and a same-key replay of a failed image job through
 # the real image route. collect-only measured 17249 (2026-10-24).
 # Train r106 (2026-10-24): full hermetic collection is 17401 on the merged tree (scripts/run-hermetic-pytest.sh --collect-only -q).
-pytest = 17401
+# Usage review P2 fixes (unpriced cost from work attempts, legacy job failure): +2 pytest cases in tests/test_me_media.py for a
+# dispatch-stamped submit beside a priced remote attempt, and a legacy job that names its readable creator and has failed.
+# collect-only measured 17251 (2026-10-24).
+# Train r106 after merging A17 round 7 (+2 Usage fold cases): 17401 + 2 = 17403.
+pytest = 17403
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

@@ -1861,8 +1861,10 @@ def _fold_media_jobs(
         counted = [member for member in members if all(member is not replay for replay in replays)]
         display = submit if submit is not None else min(counted, key=_attempt_order)
         attempts = [member for member in counted if member is not submit]
+        # ``job`` is set only when the viewer can read the record, by the same rule as ``readable``, so a failure
+        # takes the same decision as every other lookup of the job.
         failed = (submit is not None and not attempts and job is not None
-                  and job.get("status") == media_jobs.STATUS_FAILED and _job_in_scope(job, job_scope))
+                  and job.get("status") == media_jobs.STATUS_FAILED)
         folded[display["request_id"]] = _job_request(display, counted, submit=submit is not None, failed=failed)
         in_jobs.update(member["request_id"] for member in members)
     return [
@@ -1906,7 +1908,9 @@ def _job_request(
     ``failed`` (its job record shows the job failed) makes the outcome failed.
     """
     work = [member for member in members if member is not display] if submit else members
-    newest = sorted(work or [display], key=_attempt_order, reverse=True)
+    # With no work receipt yet, the submit or standing receipt is the work itself.
+    work_or_display = work or [display]
+    newest = sorted(work_or_display, key=_attempt_order, reverse=True)
     started = [member["started_at_ms"] for member in work if isinstance(member.get("started_at_ms"), int)]
     costs = [cost for cost in (_receipt_cost(member) for member in members) if cost is not None]
     request = {
@@ -1916,8 +1920,9 @@ def _job_request(
         "remote": any(_receipt_is_paid_remote(member) for member in members),
         "cost": {"usd": sum(costs)} if costs else None,
         # One paid remote attempt reported no cost, so the summed cost above is only the known part of the request.
+        # The submit copies no cost and is not an attempt, so it is checked only when it is the work itself.
         "_unpriced_remote": any(
-            _receipt_is_paid_remote(member) and _receipt_cost(member) is None for member in members
+            _receipt_is_paid_remote(member) and _receipt_cost(member) is None for member in work_or_display
         ),
         "_outcome_request_id": newest[0]["request_id"],
     }

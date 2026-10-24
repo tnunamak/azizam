@@ -1783,13 +1783,14 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertTrue(row["served_locally"])
 
     def _submit_picture(self, job_id: str, submit_request_id: str, *, app_id: str, created_at: int | None = None,
-                        status: str = media_jobs.STATUS_SUCCEEDED, links_job: bool = True) -> None:
+                        status: str = media_jobs.STATUS_SUCCEEDED, links_job: bool = True,
+                        remote: bool = False) -> None:
         # The image route's submit receipt names no model, and its job names this receipt as the parent.
-        # It names its job too, unless it predates that link (links_job=False).
+        # It names its job too, unless it predates that link (links_job=False). remote=True stamps remote dispatch.
         self._receipt(app_id, submit_request_id, intent="image.generate",
                       route_path="/gateway/v1/media/jobs/image-generations", requested_model=None,
                       resolved_model=None, status="ok", backend="comfyui", created_at=created_at,
-                      job_id=job_id if links_job else None,
+                      job_id=job_id if links_job else None, remote=remote,
                       # The route's finish() gives its submit receipt attempt 1, the same number as the first attempt.
                       attempt_number=1)
         media_jobs.create(media_jobs.MediaJob(
@@ -1853,6 +1854,20 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(row["status"], "failed")
         self.assertFalse(row["served_locally"])
         self.assertIsNone(row["remote_spend"])
+
+    def test_a_legacy_job_that_names_its_readable_creator_counts_as_failed(self) -> None:
+        # The job record names no App and no owner, so it takes its readable creator's scope, as its other lookups do.
+        self._receipt(self.app_a["id"], "req_legacy_submit", job_id="mj_legacy",
+                      route_path="/gateway/v1/media/jobs/image-generations", requested_model=None,
+                      resolved_model=None, status="ok", backend="comfyui")
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="mj_legacy", request_id="imgjob_legacy", intent="image.generate",
+            parent_request_id="req_legacy_submit", status=media_jobs.STATUS_FAILED,
+        ), path=self.jobs_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 1))
+        [row] = usage["receipts"]
+        self.assertEqual((row["request_id"], row["status"]), ("req_legacy_submit", "failed"))
 
     def test_a_job_record_the_viewer_cannot_read_does_not_fail_its_request(self) -> None:
         # The job belongs to another App, so Alice's Usage does not read its failure.
@@ -1952,6 +1967,17 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertTrue(usage["remote_spend_available"])
         [row] = usage["receipts"]
         self.assertEqual(row["remote_spend"], 0.25)
+
+    def test_a_dispatch_stamped_submit_beside_a_priced_remote_attempt_is_not_unknown_paid(self) -> None:
+        # The submit receipt carries remote dispatch but copies no cost. Only the attempt's cost is the request's cost.
+        self._submit_picture("mj_dispatched", "req_dispatched_submit", app_id=self.app_a["id"], remote=True)
+        self._work_receipt("req_dispatched_work", "mj_dispatched", app_id=self.app_a["id"], remote=True, cost=0.25)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["remote_spend"], usage["spend_measured_requests"]), (1, 0.25, 1))
+        self.assertEqual((usage["paid_requests"], usage["unknown_paid_requests"]), (1, 0))
+        self.assertTrue(usage["remote_spend_available"])
+        [row] = usage["receipts"]
+        self.assertEqual((row["request_id"], row["remote_spend"]), ("req_dispatched_submit", 0.25))
 
     def _usage_client_on(self, receipts_db: Path, jobs_db: Path) -> TestClient:
         # The Usage router over another pair of stores, such as the ones a gateway rig writes through its routes.
