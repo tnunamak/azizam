@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ChevronDown } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
 import { PageHeader } from "@/components/product/page-header";
 import { EmptyState } from "@/components/product/empty-state";
@@ -140,10 +141,10 @@ export default function ConnectPage() {
   return (
     <div className="page-read">
       <PageHeader
-        title="Connect"
+        title={setupApp ? `Connect ${setupName}` : "Connect"}
         subtitle={
           setupApp
-            ? `Set up ${setupName} with its key.`
+            ? "Paste this address and your key."
             : "Use this gateway from other apps and AI agents."
         }
       />
@@ -247,10 +248,10 @@ function ConnectDetails({
         </div>
       </SettingsSection>
       <SettingsSection
-        title="Set up an app"
+        title={app ? `Set up ${appName}` : "Set up an app"}
         description={
           app
-            ? `For ${appName}. Where to click and what to paste.`
+            ? "Where to click and what to paste."
             : "Where to click and what to paste, for each app."
         }
       >
@@ -309,10 +310,10 @@ function ConnectDetails({
               . Until then, apps that send a header can use a key.
             </p>
           )}
-          <div>
-            <h3 className="text-body font-medium">Tools</h3>
+          {/* Reference material, not setup: each stays closed until someone asks for it. */}
+          <Reference summary="MCP tools this gateway offers">
             {tools.length ? (
-              <ul aria-label="MCP tools" className="mt-2 flex flex-col gap-2">
+              <ul aria-label="MCP tools" className="flex flex-col gap-2">
                 {tools.map((tool) => (
                   <li key={tool.name} className="min-w-0">
                     <code className="font-mono text-sm">{tool.name}</code>
@@ -327,22 +328,22 @@ function ConnectDetails({
                 This gateway didn&apos;t list any MCP tools.
               </p>
             )}
-          </div>
+          </Reference>
+          <Reference summary="MCP notes by app">
+            <p className="text-muted-foreground text-meta">
+              From each app&apos;s own documentation, checked {appGuides.checked}.
+            </p>
+            <Accordion type="single" collapsible>
+              {mcpApps.map((client) => (
+                <ClientNote
+                  key={client.id}
+                  app={client}
+                  guide={resolveMcpGuide(client.mcp, mcpUrl)}
+                />
+              ))}
+            </Accordion>
+          </Reference>
         </div>
-      </SettingsSection>
-      <SettingsSection
-        title="MCP notes for each app"
-        description={`From each app's own documentation, checked ${appGuides.checked}.`}
-      >
-        <Accordion type="single" collapsible className="px-4">
-          {mcpApps.map((client) => (
-            <ClientNote
-              key={client.id}
-              app={client}
-              guide={resolveMcpGuide(client.mcp, mcpUrl)}
-            />
-          ))}
-        </Accordion>
       </SettingsSection>
       <SettingsSection
         title="Use a key instead"
@@ -379,6 +380,22 @@ function ConnectDetails({
         </SettingsSection>
       ) : null}
     </>
+  );
+}
+
+/** A disclosure for reference material. Closed by default; the native element keeps it usable without script. */
+function Reference({ summary, children }: { summary: string; children: ReactNode }) {
+  return (
+    <details className="group border-t pt-4">
+      <summary className="text-body flex min-h-8 w-fit cursor-pointer list-none items-center gap-2 font-medium max-sm:min-h-11 [&::-webkit-details-marker]:hidden">
+        <ChevronDown
+          aria-hidden="true"
+          className="size-4 shrink-0 transition-transform group-open:rotate-180"
+        />
+        {summary}
+      </summary>
+      <div className="mt-3 flex flex-col gap-3">{children}</div>
+    </details>
   );
 }
 

@@ -199,6 +199,16 @@ describe("Connect", () => {
     ).toBeTruthy();
   });
 
+  test("keeps the MCP tools and the notes per app closed until someone opens them", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    renderPage(member);
+    for (const summary of ["MCP tools this gateway offers", "MCP notes by app"]) {
+      const disclosure = (await screen.findByText(summary)).closest("details");
+      expect(disclosure).not.toBeNull();
+      expect(disclosure).not.toHaveAttribute("open");
+    }
+  });
+
   test("tells people to paste the address and sign in, not to use a key, when sign-in works", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue({
       ...discovery,
@@ -236,7 +246,7 @@ describe("Connect", () => {
     });
     renderPage(member);
     expect(
-      await screen.findByText("MCP notes for each app"),
+      await screen.findByText("MCP notes by app"),
     ).toBeTruthy();
     expect(screen.getByText(/checked 2026-/)).toBeTruthy();
     // One accordion row per MCP app in the data, none written into the page.
@@ -342,8 +352,9 @@ describe("Connect", () => {
       sessionWith([savedApp]);
       renderPage(member);
       expect(
-        await screen.findByText("For OpenWhispr laptop. Where to click and what to paste."),
+        await screen.findByRole("heading", { level: 1, name: "Connect OpenWhispr laptop" }),
       ).toBeVisible();
+      expect(screen.getByRole("heading", { name: "Set up OpenWhispr laptop" })).toBeVisible();
       expect(screen.getByRole("link", { name: "Back to Apps & keys" })).toHaveAttribute(
         "href",
         "/apps/",
