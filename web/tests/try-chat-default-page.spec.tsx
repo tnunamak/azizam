@@ -166,3 +166,50 @@ describe("Chat never starts on an embedding model", () => {
     expect(model).not.toHaveTextContent("No options available");
   });
 });
+
+// A chat row whose capability fields are unknown: it names no modalities, or no capabilities at all.
+const bareChat = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  name,
+  display_name: name,
+  capability: "chat",
+  alias: false,
+  use_names: [id],
+  locality: "local",
+  ...extra,
+});
+
+describe("a chat model with unknown capability fields is an ordinary chat choice", () => {
+  it("preselects the only chat model when its row names no input or output modalities", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        json(
+          url.includes("workflows")
+            ? { workflows: [] }
+            : {
+                aliases: [],
+                models: [bareChat("bare", "Bare chat model", { capabilities: [{ intent: "chat.completions", capability: "chat" }] })],
+              },
+        ),
+      ),
+    );
+    render(<TryPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Bare chat model"),
+    );
+  });
+
+  it("preselects the only chat model when its row has only the chat kind and no capability summaries", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        json(url.includes("workflows") ? { workflows: [] } : { aliases: [], models: [bareChat("bare", "Bare chat model")] }),
+      ),
+    );
+    render(<TryPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Bare chat model"),
+    );
+  });
+});

@@ -73,4 +73,10 @@ describe("the default chat model is an ordinary chat model, read from the catalo
     ]);
     expect(choice).toBeUndefined();
   });
+
+  it("takes the only chat model when its capability fields are unknown, since nothing rules it out", () => {
+    // Unknown fields set neither flag, so the model is an ordinary chat choice.
+    const choice = chatDefaultChoice([chat("only", 0)]);
+    expect(choice?.id).toBe("only");
+  });
 });
