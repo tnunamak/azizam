@@ -376,11 +376,15 @@ class MeMediaRouterTests(unittest.TestCase):
     def _job(self, request_id: str, asset_id: str, *, workflow: str = "wf.image", media_type: str = "image/png") -> None:
         # The request that made the job also wrote its receipt, so the job takes that receipt's App and maker.
         receipt = receipt_store.get(request_id, audience="internal", path=self.receipts_db) or {}
-        with request_source.acting_as(app_id=receipt.get("app_id"), person_id=receipt.get("maker_person_id")):
+        app_id = receipt.get("app_id")
+        app = admin_store.get_app(app_id, path=self.admin_db) if app_id else None
+        # A request through a personal App runs as that App's person; the receipt names the maker when it was recorded.
+        person_id = receipt.get("maker_person_id") or (app["owner_user_id"] if app and app.get("kind") == "personal" else None)
+        with request_source.acting_as(app_id=app_id, person_id=person_id):
             media_jobs.create(
                 media_jobs.MediaJob(
                     request_id=request_id,
-                    app_id=receipt.get("app_id"),
+                    app_id=app_id,
                     intent="image.generate",
                     workflow=workflow,
                     status=media_jobs.STATUS_SUCCEEDED,
