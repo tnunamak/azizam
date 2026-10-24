@@ -1831,6 +1831,7 @@ def _usage_summary(
     measured = 0
     paid_requests = 0
     unknown_paid_requests = 0
+    local_requests = 0
     failed_requests = 0
     outcomes_known = True
     for receipt in receipts:
@@ -1851,7 +1852,7 @@ def _usage_summary(
         model = _usage_model(receipt)
         row = by_model.setdefault((model, capability), {"model": model, "requests": 0, "remote_spend": None,
                                           "capability": capability, "paid_requests": 0,
-                                          "unknown_paid_requests": 0})
+                                          "unknown_paid_requests": 0, "local_requests": 0})
         row["requests"] += 1
         cost = _receipt_cost(receipt)
         if cost is not None:
@@ -1864,6 +1865,9 @@ def _usage_summary(
         elif _receipt_is_paid_remote(receipt):
             unknown_paid_requests += 1
             row["unknown_paid_requests"] += 1
+        if _receipt_served_locally(receipt):
+            local_requests += 1
+            row["local_requests"] += 1
     hashes = owner_keys
     made: set[str] = set()
     # Retain first-match semantics without scanning the month's receipts per job.
@@ -1935,6 +1939,8 @@ def _usage_summary(
         visible = visible_receipts.get(internal["request_id"])
         if visible:
             visible["remote_spend"] = _receipt_cost(internal)
+            # The row reads the same rule as the totals; a client never sees the backend name.
+            visible["served_locally"] = _receipt_served_locally(internal)
             visible["capability"] = _capability(internal)
             visible["source"] = internal.get("source")
             if isinstance(internal.get("source"), Mapping):
@@ -1961,6 +1967,7 @@ def _usage_summary(
         "remote_spend_coverage": "This total includes recorded request costs only; other charges may be missing.",
         "spend_measured_requests": measured, "spend_total_requests": len(receipts),
         "paid_requests": paid_requests, "unknown_paid_requests": unknown_paid_requests,
+        "local_requests": local_requests,
         "retention_days": retention_days,
         "coverage_start": datetime.fromtimestamp(coverage_start, timezone.utc).isoformat(),
         "coverage_note": coverage_note,
@@ -2084,7 +2091,18 @@ def _annotate_receipt_source(
 
 
 def _receipt_cost(receipt: Mapping[str, Any]) -> float | None:
-    value = _nested(receipt, "metadata", "litellm", "response_cost")
+    """What a receipt says the request cost: the provider's reported figure, else the recorded cost.
+
+    The Usage row and the totals both read this, so a request counts the same way in each.
+    """
+    for value in (_nested(receipt, "metadata", "litellm", "response_cost"), _nested(receipt, "cost", "usd")):
+        cost = _reported_amount(value)
+        if cost is not None:
+            return cost
+    return None
+
+
+def _reported_amount(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     try:
@@ -2092,6 +2110,21 @@ def _receipt_cost(receipt: Mapping[str, Any]) -> float | None:
         return parsed if math.isfinite(parsed) and parsed >= 0 else None
     except (TypeError, ValueError):
         return None
+
+
+def _receipt_served_locally(receipt: Mapping[str, Any]) -> bool:
+    """Whether the receipt positively shows the request ran on this machine.
+
+    ``remote: false`` alone is the default, so it is not enough. The receipt must also name
+    a backend, must not record a charge, and must show the request was served: it succeeded,
+    or it reached the backend. A request that failed before routing never reached one, so it
+    is not counted local and reads as a cost not recorded.
+    """
+    backend = receipt.get("backend")
+    if receipt.get("remote") is not False or not isinstance(backend, str) or not backend.strip():
+        return False
+    served = receipt.get("status") == "succeeded" or receipt.get("started_at_ms") is not None
+    return served and _receipt_cost(receipt) in (None, 0)
 
 
 def _capability(receipt: Mapping[str, Any]) -> str:

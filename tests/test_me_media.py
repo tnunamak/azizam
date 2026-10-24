@@ -232,6 +232,10 @@ class MeMediaRouterTests(unittest.TestCase):
         owner_key_hash: str | None = None,
         connection_id: str | None = None,
         api_key_name: str | None = None,
+        backend: str | None = None,
+        remote: bool = False,
+        started: bool = False,
+        usd: str | None = None,
     ) -> None:
         receipt = RouteReceipt(
             protocol="openai.images",
@@ -245,13 +249,17 @@ class MeMediaRouterTests(unittest.TestCase):
             owner_key_hash=owner_key_hash,
             connection_id=connection_id,
             api_key_name=api_key_name,
+            backend=backend,
+            remote=remote,
         )
         receipt.accepted_at_ms = 1_700_000_000_000
         receipt.updated_at_ms = 1_700_000_001_000
+        if started:
+            receipt.started_at_ms = 1_700_000_000_500
         if cost is not None:
             receipt.metadata["litellm"] = {"response_cost": cost}
-        if cost_class is not None:
-            receipt.cost = {"cost_class": cost_class, "usd": cost}
+        if cost_class is not None or usd is not None:
+            receipt.cost = {"cost_class": cost_class, "usd": usd if usd is not None else cost}
         receipt_store.record(receipt, created_at=int(time.time()) if created_at is None else created_at, path=self.receipts_db)
 
     def _job(self, request_id: str, asset_id: str, *, workflow: str = "wf.image", media_type: str = "image/png") -> None:
@@ -1527,6 +1535,72 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(usage["paid_requests"], 0)
         self.assertEqual(usage["unknown_paid_requests"], 1)
         self.assertFalse(usage["remote_spend_available"])
+
+    def test_totals_count_a_decision_cost_recorded_on_the_receipt(self) -> None:
+        # A paid decision records its amount on the receipt's cost, and the row shows it; the total must too.
+        self._receipt(self.app_a["id"], "req_decision_paid", intent="decide", route_path="/typesafe/v1/decisions",
+                      requested_model="decide-remote", resolved_model="decide-remote", backend="paid-decisions",
+                      remote=True, usd="0.0042")
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["remote_spend"], 0.0042)
+        self.assertEqual(usage["spend_measured_requests"], 1)
+        self.assertEqual(usage["paid_requests"], 1)
+        self.assertEqual(usage["unknown_paid_requests"], 0)
+        self.assertEqual(usage["receipts"][0]["remote_spend"], 0.0042)
+
+    def test_a_remote_receipt_with_no_recorded_cost_stays_unreported(self) -> None:
+        self._receipt(self.app_a["id"], "req_remote_bare", intent="chat.completions", route_path="/v1/chat/completions",
+                      requested_model="paid-chat", resolved_model="paid-chat", backend="paid-provider", remote=True)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["unknown_paid_requests"], 1)
+        self.assertEqual(usage["paid_requests"], 0)
+        self.assertFalse(usage["remote_spend_available"])
+        self.assertEqual(usage["local_requests"], 0)
+        self.assertIsNone(usage["receipts"][0]["remote_spend"])
+        self.assertFalse(usage["receipts"][0]["served_locally"])
+
+    def test_a_request_the_receipt_shows_was_served_locally_counts_as_local(self) -> None:
+        self._receipt(self.app_a["id"], "req_local_chat", intent="chat.completions", route_path="/v1/chat/completions",
+                      requested_model="local-chat", resolved_model="local-chat", backend="local-engine", started=True)
+        self._receipt(self.app_a["id"], "req_local_zero", intent="chat.completions", route_path="/v1/chat/completions",
+                      requested_model="local-chat", resolved_model="local-chat", backend="gateway-substrate", cost=0.0)
+        self._receipt(self.app_a["id"], "req_local_failed_after_dispatch", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="local-chat", resolved_model="local-chat",
+                      backend="local-engine", status="failed", started=True)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], 3)
+        self.assertEqual(usage["local_requests"], 3)
+        self.assertEqual(usage["paid_requests"], 0)
+        self.assertEqual(usage["unknown_paid_requests"], 0)
+        self.assertEqual(usage["remote_spend"], 0)
+        self.assertEqual(usage["by_model"][0]["local_requests"], 3)
+        self.assertTrue(all(receipt["served_locally"] for receipt in usage["receipts"]))
+
+    def test_a_request_that_failed_before_routing_is_not_counted_as_local(self) -> None:
+        # Refused before any backend was chosen: the receipt has only the default remote:false.
+        self._receipt(self.app_a["id"], "req_refused_unrouted", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="local-chat", resolved_model="local-chat",
+                      status="failed")
+        # A backend name is set when the receipt is created, then admission refuses it before dispatch.
+        self._receipt(self.app_a["id"], "req_refused_admission", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="local-chat", resolved_model="local-chat",
+                      backend="gateway-substrate", status="rejected")
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], 2)
+        self.assertEqual(usage["local_requests"], 0)
+        self.assertEqual(usage["unknown_paid_requests"], 0)
+        self.assertEqual(usage["remote_spend"], 0)
+        self.assertEqual([row["local_requests"] for row in usage["by_model"]], [0])
+        self.assertFalse(any(receipt["served_locally"] for receipt in usage["receipts"]))
+
+    def test_receipt_cost_prefers_the_provider_figure_then_the_recorded_cost(self) -> None:
+        self.assertEqual(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": "0.01"}},
+                                                 "cost": {"usd": "0.02"}}), 0.01)
+        self.assertEqual(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": "bad"}},
+                                                 "cost": {"usd": "0.02"}}), 0.02)
+        self.assertEqual(me_media._receipt_cost({"cost": {"usd": "0.0042"}}), 0.0042)
+        self.assertIsNone(me_media._receipt_cost({"cost": {"usd": None}}))
+        self.assertIsNone(me_media._receipt_cost({"cost": {"usd": "NaN"}}))
 
     def test_missing_audio_job_asset_is_listed_unavailable_and_not_downloadable(self) -> None:
         asset_id = "aud_" + "0" * 64
