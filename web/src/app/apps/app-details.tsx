@@ -65,7 +65,8 @@ export function AppKeyRows({
               )}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          {/* On a phone, when the buttons wrap under the key, their text lines up with the key's name, not inside it. */}
+          <div className="flex shrink-0 items-center gap-1 max-sm:-ml-3">
             <Button
               variant="ghost"
               size="sm"
@@ -127,17 +128,20 @@ export function AppTrustedLine({
       ) : (
         <span>none</span>
       )}
-      <span aria-hidden="true" className="text-muted-foreground">
-        ·
+      {/* The separator and Manage wrap together, so a line never ends on a dangling dot. */}
+      <span className="inline-flex items-center gap-2 whitespace-nowrap">
+        <span aria-hidden="true" className="text-muted-foreground">
+          ·
+        </span>
+        <Button
+          variant="link"
+          size="sm"
+          aria-label={`Manage trusted addresses for ${appName}`}
+          onClick={onManage}
+        >
+          Manage
+        </Button>
       </span>
-      <Button
-        variant="link"
-        size="sm"
-        aria-label={`Manage trusted addresses for ${appName}`}
-        onClick={onManage}
-      >
-        Manage
-      </Button>
     </div>
   );
 }

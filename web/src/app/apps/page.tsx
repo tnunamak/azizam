@@ -860,7 +860,7 @@ function AppsContents() {
               ? null
               : mintBlockedReason(app);
             const minting = mintingAppId === app.id;
-            // A notice leads the meta line, so it is the last thing a phone cuts off.
+            // A notice leads the meta line, so it is read first.
             const meta = joinParts([
               oldKeys.length
                 ? "Old keys still work"
@@ -878,6 +878,47 @@ function AppsContents() {
               : needsNewKey && app.can_mint_keys
                 ? "This app's key doesn't save your prompts. Replace it to use your prompt settings."
                 : (blockedReason ?? undefined);
+              const primary = (
+                      minting ? (
+                        <span
+                          role="status"
+                          className="text-muted-foreground text-meta inline-flex items-center gap-2"
+                        >
+                          <Spinner />
+                          Creating key…
+                        </span>
+                      ) : oldKeys.length ? (
+                        <Button
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => void revokeUnfinished(app.id, oldKeys)}
+                        >
+                          Revoke old keys
+                        </Button>
+                      ) : !app.credentials.length && app.can_mint_keys ? (
+                        <Button
+                          variant="outline"
+                          disabled={busy}
+                          onClick={(event) => {
+                            rememberAppFocus(app.id, event.currentTarget);
+                            resetDraft();
+                            setCreatedApp(app);
+                            setName(app.name);
+                            setCreating(true);
+                          }}
+                        >
+                          Create key
+                        </Button>
+                      ) : rowReplace !== null ? (
+                        <Button
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => void replaceFromRow(app, rowReplace)}
+                        >
+                          {replacingKeyId === rowReplace.id ? "Replacing…" : "Replace key"}
+                        </Button>
+                      ) : null
+              );
             return (
               <li
                 key={app.id}
@@ -909,47 +950,12 @@ function AppsContents() {
                       {meta}
                     </p>
                   </div>
-                  {/* On a phone the actions drop under the name, aligned with it, so a long name never shares a line with them. */}
-                  <div className="flex shrink-0 items-center gap-2 max-sm:basis-full max-sm:pl-7">
-                    {minting ? (
-                      <span
-                        role="status"
-                        className="text-muted-foreground text-meta inline-flex items-center gap-2"
-                      >
-                        <Spinner />
-                        Creating key…
-                      </span>
-                    ) : oldKeys.length ? (
-                      <Button
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() => void revokeUnfinished(app.id, oldKeys)}
-                      >
-                        Revoke old keys
-                      </Button>
-                    ) : !app.credentials.length && app.can_mint_keys ? (
-                      <Button
-                        variant="outline"
-                        disabled={busy}
-                        onClick={(event) => {
-                          rememberAppFocus(app.id, event.currentTarget);
-                          resetDraft();
-                          setCreatedApp(app);
-                          setName(app.name);
-                          setCreating(true);
-                        }}
-                      >
-                        Create key
-                      </Button>
-                    ) : rowReplace !== null ? (
-                      <Button
-                        variant="outline"
-                        disabled={busy}
-                        onClick={() => void replaceFromRow(app, rowReplace)}
-                      >
-                        {replacingKeyId === rowReplace.id ? "Replacing…" : "Replace key"}
-                      </Button>
-                    ) : null}
+                  {/* On a phone the app's action drops under its name, aligned with it; the menu stays top right. */}
+                  {primary ? (
+                    <div className="flex shrink-0 items-center gap-2 max-sm:order-last max-sm:basis-full max-sm:pl-7">
+                      {primary}
+                    </div>
+                  ) : null}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -1051,7 +1057,6 @@ function AppsContents() {
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                  </div>
                 </div>
                 <AppKeyRows
                   app={app}
