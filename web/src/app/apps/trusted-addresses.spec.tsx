@@ -124,7 +124,7 @@ it("offers trusted addresses to the owner only", async () => {
   ).toBeNull();
 });
 
-it("lists the app's trusted addresses under it, with the keyless-access note", async () => {
+it("shows the app's trusted addresses as chips on its line, with Manage", async () => {
   vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
   entries = [
     {
@@ -136,15 +136,40 @@ it("lists the app's trusted addresses under it, with the keyless-access note", a
     },
   ];
   renderApps();
-  expect(
-    await screen.findByRole("heading", { name: "Trusted addresses (keyless access)" }),
-  ).toBeVisible();
-  expect(
-    screen.getByText(
-      "Requests from these addresses use this app's access plan when they omit a key.",
-    ),
-  ).toBeVisible();
   expect(await screen.findByText("192.168.1.0/24")).toBeVisible();
+  expect(screen.getByText("Trusted addresses:")).toBeVisible();
+  expect(
+    screen.getByRole("button", {
+      name: "Manage trusted addresses for Living room display",
+    }),
+  ).toBeVisible();
+});
+
+it("says none on an app's line when no address is trusted", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  renderApps();
+  expect(await screen.findByText("none")).toBeVisible();
+  expect(screen.getByText("Trusted addresses:")).toBeVisible();
+});
+
+it("explains trusted addresses once on the page, in the About text, and not under each app", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
+  entries = [
+    {
+      id: "tad_1",
+      app_id: "display",
+      address: "192.168.1.0/24",
+      note: "Hall",
+      created_at: 1,
+    },
+  ];
+  renderApps();
+  await screen.findByText("192.168.1.0/24");
+  expect(
+    screen.getByText(/^Each app has its own keys\. About trusted addresses: a device at a trusted address/),
+  ).toBeInTheDocument();
+  expect(screen.getAllByText(/a device at a trusted address/i)).toHaveLength(1);
+  expect(screen.queryByText(/Requests from these addresses/)).toBeNull();
 });
 
 it("starts empty, adds an address with a note, and removes it", async () => {

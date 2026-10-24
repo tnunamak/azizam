@@ -1128,3 +1128,20 @@ it("retains a rejected new app's name and access plan for a safe retry", async (
   expect(accountApi.mintKey).toHaveBeenCalledTimes(1);
 });
 
+
+it("groups each app with its own keys under its name, and says No keys yet for an app with none", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [twoKeys, { ...app, id: "phone", name: "Phone" }],
+  });
+  renderApps(member);
+  const list = await screen.findByRole("list", { name: "Apps" });
+  // Each app is one direct item of the list; its keys are a nested list inside it.
+  const [laptop, phone] = Array.from(list.children) as HTMLElement[];
+  expect(within(laptop).getByRole("heading", { name: "My laptop" })).toBeVisible();
+  expect(
+    within(within(laptop).getByRole("list", { name: "Keys for My laptop" })).getAllByRole("listitem"),
+  ).toHaveLength(2);
+  expect(within(phone).getByText("No keys yet")).toBeVisible();
+  expect(within(phone).queryByRole("list", { name: /^Keys for/ })).toBeNull();
+});

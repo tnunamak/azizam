@@ -38,7 +38,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton, SkeletonRows } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { ListCard, ListRow } from "@/components/product/list-card";
 import { SignInConnections } from "@/components/product/sign-in-connections";
 import {
   Select,
@@ -51,7 +50,6 @@ import {
   PageHeader,
   EmptyState,
   ErrorState,
-  RelativeTime,
   CopyField,
 } from "@/components/product";
 import { cn } from "@/lib/cn";
@@ -64,7 +62,7 @@ import { useViewer } from "@/components/shell/session";
 import { AppGuide } from "@/components/product/app-guide";
 import { TrustedAddressesDialog } from "./trusted-addresses";
 import { RenameAppDialog, RenameKeysDialog } from "./rename";
-import { AppKeyRows, AppTrustedRows } from "./app-details";
+import { AppKeyRows, AppTrustedLine } from "./app-details";
 
 const accountKey = ["account", "session"];
 /** "person": the app uses its person's own plan ("Same as you"). */
@@ -99,6 +97,11 @@ function accessPlanSummary(app: AccountApp): string {
   const plan = app.access_plan;
   if (!plan) return "";
   return plan.same_as_person ? `${plan.name} (yours)` : plan.name;
+}
+
+/** The non-empty parts of one line, joined with a middle dot. */
+function joinParts(parts: (string | null)[]): string {
+  return parts.filter((part): part is string => part !== null).join(" · ");
 }
 
 /** Why this app cannot get a key. The API sends only the boolean, so the
@@ -763,7 +766,12 @@ function AppsContents() {
     <div className="space-y-8">
       <PageHeader
         title="Apps & keys"
-        subtitle="Each app has its own keys."
+        // For an owner the trusted-address rule is explained once, in the About text, not under every app.
+        subtitle={
+          accountData?.user?.role === "owner"
+            ? "Each app has its own keys. About trusted addresses: a device at a trusted address can use an app with no key, at that app's access plan. Add only addresses you control."
+            : "Each app has its own keys."
+        }
         primaryAction={
           <Button
             ref={newAppButton}
@@ -826,25 +834,18 @@ function AppsContents() {
           action={<Button onClick={startNewApp}>New app</Button>}
         />
       ) : (
-        // The list template: one ListCard of 60 px rows (64 on a phone).
-        <ListCard label="Apps">
+        // Each app is one group: its header, then its keys and (for an owner) its trusted addresses, indented under
+        // its name. The groups stack with a gap, so the page reads as a list of apps, not one flat list of rows.
+        <ul aria-label="Apps" className="flex flex-col gap-3">
           {apps.map((app) => {
             const appName = formatAppName(app.name, accountData?.user?.email);
-            const lastUsed = app.credentials.reduce<number | null>(
-              (latest, key) =>
-                key.last_used_at != null &&
-                (latest === null || key.last_used_at > latest)
-                  ? key.last_used_at
-                  : latest,
-              null,
-            );
             const activeIds = new Set(app.credentials.map((key) => key.id));
             // Old keys from a rotation finished later, still active.
             const oldKeys = (unfinished[app.id] ?? []).filter((id) =>
               activeIds.has(id),
             );
             // A personal app's key the cut-over removes, and the person must replace: its keys cannot save the
-            // member's prompts. The row offers that replacement only when one key needs it; the keys dialog
+            // member's prompts. The header offers that replacement only when one key needs it; the keys dialog
             // offers the same replacement for each key.
             const replaceable =
               app.kind === "personal"
@@ -859,58 +860,57 @@ function AppsContents() {
               ? null
               : mintBlockedReason(app);
             const minting = mintingAppId === app.id;
-            // A notice must stay whole on a phone, where there is no hover:
-            // its meta line wraps and a row action moves under it.
-            const hasAction = oldKeys.length > 0 || rowReplace !== null;
-            const hasNotice = hasAction || blockedReason !== null;
-            // The app's row, then its keys and (for an owner) its trusted addresses, indented under it.
-            return [
-              <ListRow
+            // A notice leads the meta line, so it is the last thing a phone cuts off.
+            const meta = joinParts([
+              oldKeys.length
+                ? "Old keys still work"
+                : needsNewKey && app.can_mint_keys
+                  ? "Needs a new key"
+                  : null,
+              blockedReason ? "Can't create keys" : null,
+              `${app.credentials.length} ${app.credentials.length === 1 ? "key" : "keys"}`,
+              accessPlanSummary(app)
+                ? `Access plan: ${accessPlanSummary(app)}`
+                : null,
+            ]);
+            const metaTitle = oldKeys.length
+              ? "Your new key is saved. Some old keys still work."
+              : needsNewKey && app.can_mint_keys
+                ? "This app's key doesn't save your prompts. Replace it to use your prompt settings."
+                : (blockedReason ?? undefined);
+            return (
+              <li
                 key={app.id}
                 id={`app-${app.id}`}
                 tabIndex={requestedApp === app.id ? -1 : undefined}
+                aria-labelledby={`app-title-${app.id}`}
                 className={cn(
+                  "bg-card rounded-panel min-w-0 overflow-hidden border",
                   requestedApp === app.id &&
                     "ring-ring ring-offset-background ring-2 ring-offset-2",
-                  hasNotice &&
-                    "max-sm:py-3 max-sm:[&_[data-slot=list-row-meta]]:overflow-visible max-sm:[&_[data-slot=list-row-meta]]:whitespace-normal",
-                  hasAction &&
-                    "max-sm:flex-wrap max-sm:[&_[data-slot=list-row-trailing]]:w-full max-sm:[&_[data-slot=list-row-trailing]]:pl-7",
                 )}
-                lines={2}
-                titleAs="h2"
-                leading={<AppWindow aria-hidden="true" />}
-                title={appName}
-                // A notice leads the line, so a phone's trailing action
-                // cuts the key count, not the notice.
-                meta={[
-                  oldKeys.length
-                    ? "Old keys still work"
-                    : needsNewKey && app.can_mint_keys
-                      ? "Needs a new key"
-                      : null,
-                  blockedReason ? "Can't create keys" : null,
-                  `${app.credentials.length} ${app.credentials.length === 1 ? "key" : "keys"}`,
-                  accessPlanSummary(app)
-                    ? `Access plan: ${accessPlanSummary(app)}`
-                    : null,
-                ]}
-                metaTitle={
-                  oldKeys.length
-                    ? "Your new key is saved. Some old keys still work."
-                    : needsNewKey && app.can_mint_keys
-                      ? "This app's key doesn't save your prompts. Replace it to use your prompt settings."
-                      : (blockedReason ?? undefined)
-                }
-                facts={[
-                  lastUsed !== null ? (
-                    <span key="used">
-                      Last used <RelativeTime ts={lastUsed} />
-                    </span>
-                  ) : null,
-                ]}
-                trailing={
-                  <>
+              >
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+                  <AppWindow
+                    aria-hidden="true"
+                    className="text-muted-foreground size-4 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1 basis-40">
+                    <h2
+                      id={`app-title-${app.id}`}
+                      className="text-[15px] leading-6 font-semibold break-words"
+                    >
+                      {appName}
+                    </h2>
+                    <p
+                      title={metaTitle}
+                      className="text-muted-foreground text-meta"
+                    >
+                      {meta}
+                    </p>
+                  </div>
+                  {/* On a phone the actions drop under the name, aligned with it, so a long name never shares a line with them. */}
+                  <div className="flex shrink-0 items-center gap-2 max-sm:basis-full max-sm:pl-7">
                     {minting ? (
                       <span
                         role="status"
@@ -1051,35 +1051,34 @@ function AppsContents() {
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                  </>
-                }
-              />,
-              <AppKeyRows
-                key={`${app.id}-keys`}
-                app={app}
-                busy={busy}
-                onRotate={(key) => {
-                  rememberAppFocus(app.id);
-                  setAction({ kind: "rotate", app, key });
-                  setError(null);
-                }}
-                onRevoke={(key) => {
-                  rememberAppFocus(app.id);
-                  setAction({ kind: "revoke", app, key });
-                  setError(null);
-                }}
-              />,
-              accountData?.user?.role === "owner" ? (
-                <AppTrustedRows
-                  key={`${app.id}-trusted`}
+                  </div>
+                </div>
+                <AppKeyRows
                   app={app}
                   appName={appName}
-                  onManage={() => setTrustingApp(app)}
+                  busy={busy}
+                  onRotate={(key) => {
+                    rememberAppFocus(app.id);
+                    setAction({ kind: "rotate", app, key });
+                    setError(null);
+                  }}
+                  onRevoke={(key) => {
+                    rememberAppFocus(app.id);
+                    setAction({ kind: "revoke", app, key });
+                    setError(null);
+                  }}
                 />
-              ) : null,
-            ];
+                {accountData?.user?.role === "owner" ? (
+                  <AppTrustedLine
+                    app={app}
+                    appName={appName}
+                    onManage={() => setTrustingApp(app)}
+                  />
+                ) : null}
+              </li>
+            );
           })}
-        </ListCard>
+        </ul>
       )}
       {accountData?.authenticated ? (
         <SignInConnections
