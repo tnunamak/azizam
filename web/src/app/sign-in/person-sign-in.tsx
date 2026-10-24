@@ -11,6 +11,7 @@ import { isNetworkFailure } from "@/lib/network-error";
 import { PRODUCT_NAME } from "@/lib/product";
 import type { RememberedPerson } from "@/lib/remembered-people";
 import { PersonAvatar, generatedAvatarPalettes } from "@/components/product/person-avatar";
+import { useReportSignInBusy } from "@/components/shell/sign-in-frame";
 import { authFetch, continueTo, type SignInOptions } from "./auth-api";
 import { notFreshFor } from "./sign-in-status";
 
@@ -208,6 +209,7 @@ export function PlainSignIn({
   // refused password keeps its text selected, so the next try replaces it. Both fields name the alert (aria-describedby).
   const refused = login.isError && login.error instanceof ApiError && login.error.code === "invalid_login";
   const busy = login.isPending || opening;
+  useReportSignInBusy(busy);
   useEffect(() => {
     if (!login.isError) return;
     passwordRef.current?.focus();
@@ -497,6 +499,7 @@ export function PersonPassword({
     passwordRef.current?.focus();
     if (failure?.kind === "wrong") passwordRef.current?.select();
   }, [attempt.isError, attempt.error, failure]);
+  useReportSignInBusy(attempt.isPending);
   const tooMany = failure?.kind === "too-many";
   const wrong = failure?.kind === "wrong";
 

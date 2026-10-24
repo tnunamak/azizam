@@ -10,6 +10,7 @@ import {
 } from "@/components/product/person-avatar";
 import { cn } from "@/lib/cn";
 import type { RememberedPerson } from "@/lib/remembered-people";
+import { useReportSignInBusy } from "@/components/shell/sign-in-frame";
 import type { LeftPerson, Status } from "./sign-in-status";
 
 /** The avatar's colour, as the gateway names it. Never the provider's picture: this list is seen by whoever is at the computer. */
@@ -111,6 +112,7 @@ export function Chooser({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const base = useId();
   const busy = opening !== null || openingElse;
+  useReportSignInBusy(busy);
   const openingPerson = people.find((person) => person.tile === opening);
   const { mixed, twoLines } = rowShape(people);
   // The provider's name while a provider is opening, else null: the live region below exists only then.
