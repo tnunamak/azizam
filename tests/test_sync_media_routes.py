@@ -532,6 +532,8 @@ class SyncMediaRouteTests(unittest.TestCase):
         stored = receipt_store.get(receipt.request_id, path=self.receipt_db)
         assert stored is not None
         self.assertEqual(stored["status"], "succeeded")
+        # A success was served, so the receipt says when its work started.
+        self.assertIsNotNone(stored["started_at_ms"])
         self.assertEqual(stored["requested_model"], "tts-1")
         self.assertTrue(stored["stream"])
         self.assertEqual(stored["policy_decision"], "allowed")
@@ -553,4 +555,5 @@ class SyncMediaRouteTests(unittest.TestCase):
         stored_stream = receipt_store.get(streaming_receipt.request_id, path=self.receipt_db)
         assert stored_stream is not None
         self.assertEqual(stored_stream["status"], "succeeded")
+        self.assertIsNotNone(stored_stream["started_at_ms"])
         self.assertTrue(stored_stream["stream"])

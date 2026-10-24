@@ -1567,7 +1567,8 @@ class MeMediaRouterTests(unittest.TestCase):
         self._receipt(self.app_a["id"], "req_local_chat", intent="chat.completions", route_path="/v1/chat/completions",
                       requested_model="local-chat", resolved_model="local-chat", backend="local-engine", started=True)
         self._receipt(self.app_a["id"], "req_local_zero", intent="chat.completions", route_path="/v1/chat/completions",
-                      requested_model="local-chat", resolved_model="local-chat", backend="gateway-substrate", cost=0.0)
+                      requested_model="local-chat", resolved_model="local-chat", backend="gateway-substrate", cost=0.0,
+                      started=True)
         self._receipt(self.app_a["id"], "req_local_failed_after_dispatch", intent="chat.completions",
                       route_path="/v1/chat/completions", requested_model="local-chat", resolved_model="local-chat",
                       backend="local-engine", status="failed", started=True)
@@ -1596,6 +1597,29 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(usage["remote_spend"], 0)
         self.assertEqual([row["local_requests"] for row in usage["by_model"]], [0])
         self.assertFalse(any(receipt["served_locally"] for receipt in usage["receipts"]))
+
+    def test_a_success_with_no_start_time_is_not_counted_as_local(self) -> None:
+        # Receipts written now stamp a start time when a backend serves the request, so a bare success proves nothing.
+        self._receipt(self.app_a["id"], "req_unstamped_success", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="local-chat", resolved_model="local-chat",
+                      backend="local-engine")
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (1, 0))
+        [row] = usage["receipts"]
+        self.assertFalse(row["served_locally"])
+
+    def test_a_success_written_before_start_times_existed_still_counts_as_local(self) -> None:
+        # Receipts stored before started_at_ms existed have no such key, and their success is their only evidence.
+        receipt_store.record({
+            "request_id": "req_legacy_local", "protocol": "openai.chat", "path": "/v1/chat/completions",
+            "intent": "chat.completions", "app_id": self.app_a["id"], "api_key_name": "App",
+            "requested_model": "local-chat", "resolved_model": "local-chat", "backend": "local-engine",
+            "remote": False, "status": "succeeded",
+        }, created_at=int(time.time()), path=self.receipts_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (1, 1))
+        [row] = usage["receipts"]
+        self.assertTrue(row["served_locally"])
 
     def _submit_picture(self, job_id: str, submit_request_id: str, *, app_id: str, created_at: int | None = None,
                         status: str = media_jobs.STATUS_SUCCEEDED, links_job: bool = True) -> None:
@@ -1681,6 +1705,21 @@ class MeMediaRouterTests(unittest.TestCase):
         usage = self.client.get("/me/api/usage/summary").json()
         self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 0))
         self.assertEqual(usage["receipts"][0]["status"], "ok")
+        # Alice's own chat is the creating receipt of a second foreign job, and her own work receipt names that job.
+        # The unreadable record must not join the chat to the work, count its picture, or pass on its provenance.
+        self._receipt(self.app_a["id"], "req_foreign_chat", intent="chat.completions", route_path="/v1/chat/completions",
+                      requested_model="local-chat", resolved_model="local-chat", backend="local-engine", started=True)
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="mj_foreign_two", request_id="imgjob_foreign_two", intent="image.generate",
+            parent_request_id="req_foreign_chat", app_id=self.app_b["id"], status=media_jobs.STATUS_SUCCEEDED,
+            assets=[{"asset_id": "img_foreign_two", "media_type": "image/png"}],
+        ), path=self.jobs_db)
+        self._work_receipt("req_foreign_work", "mj_foreign_two", app_id=self.app_a["id"], status="error", started=False)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"], usage["media_count"]), (3, 1, 0))
+        statuses = {row["request_id"]: row["status"] for row in usage["receipts"]}
+        self.assertEqual(statuses["req_foreign_chat"], "succeeded")
+        self.assertEqual(statuses["req_foreign_work"], "error")
 
     def test_a_picture_counts_once_after_its_job_record_is_erased(self) -> None:
         # The work receipt is stored first: the submit receipt must still be the request, not the earliest row.
@@ -1702,6 +1741,113 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 1)
         media_jobs.delete_succeeded(["mj_old"], path=self.jobs_db)
         self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 2)
+
+    def test_a_request_named_only_as_a_jobs_parent_is_not_its_submit(self) -> None:
+        # The job's creating receipt is gone, so the chat it names only as its parent is not the job's submit.
+        self._receipt(self.app_a["id"], "req_named_chat", intent="chat.completions", route_path="/v1/chat/completions",
+                      requested_model="local-chat", resolved_model="local-chat", backend="local-engine", started=True)
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="mj_named", request_id="imgjob_named", intent="image.generate", parent_request_id="req_named_chat",
+            creating_receipt_id="req_gone", app_id=self.app_a["id"], status=media_jobs.STATUS_FAILED,
+        ), path=self.jobs_db)
+        self._work_receipt("req_named_work", "mj_named", app_id=self.app_a["id"], status="error", started=False)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (2, 1))
+        statuses = {row["request_id"]: row["status"] for row in usage["receipts"]}
+        self.assertEqual(statuses, {"req_named_chat": "succeeded", "req_named_work": "error"})
+
+    def test_a_same_key_replay_of_a_failed_picture_does_not_hide_the_failure(self) -> None:
+        now = int(time.time())
+        self._submit_picture("mj_replayed", "req_replayed_submit", app_id=self.app_a["id"], created_at=now - 30)
+        self._work_receipt("req_replayed_work", "mj_replayed", app_id=self.app_a["id"], status="error", started=False,
+                           created_at=now - 20)
+        # The same Idempotency-Key submitted again after the failure: another submit receipt for the same job, stored last.
+        self._receipt(self.app_a["id"], "req_replayed_again", job_id="mj_replayed",
+                      route_path="/gateway/v1/media/jobs/image-generations", requested_model=None, resolved_model=None,
+                      status="ok", backend="comfyui", attempt_number=1, created_at=now - 10)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 1))
+        [row] = usage["receipts"]
+        self.assertEqual((row["request_id"], row["status"]), ("req_replayed_submit", "error"))
+
+    def test_a_picture_row_carries_the_model_that_by_model_counts(self) -> None:
+        self._submit_picture("mj_model", "req_model_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_model_work", "mj_model", app_id=self.app_a["id"])
+        usage = self.client.get("/me/api/usage/summary").json()
+        [model] = usage["by_model"]
+        self.assertTrue(model["model"])
+        [row] = usage["receipts"]
+        self.assertEqual(row.get("model"), model["model"])
+
+    def test_a_picture_with_one_unpriced_remote_attempt_counts_as_unknown_beside_its_known_cost(self) -> None:
+        self._submit_picture("mj_partial", "req_partial_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_partial_first", "mj_partial", app_id=self.app_a["id"], attempt=1, status="error",
+                           remote=True, cost=0.25)
+        # The second attempt ran on a paid remote backend, and its provider reported no cost.
+        self._work_receipt("req_partial_second", "mj_partial", app_id=self.app_a["id"], attempt=2, remote=True)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["remote_spend"], usage["spend_measured_requests"]), (1, 0.25, 1))
+        self.assertEqual((usage["paid_requests"], usage["unknown_paid_requests"]), (1, 1))
+        self.assertTrue(usage["remote_spend_available"])
+        [row] = usage["receipts"]
+        self.assertEqual(row["remote_spend"], 0.25)
+
+    def _usage_client_on(self, receipts_db: Path, jobs_db: Path) -> TestClient:
+        # The Usage router over another pair of stores, such as the ones a gateway rig writes through its routes.
+        app = FastAPI()
+        app.include_router(
+            me_media.create_me_media_router(
+                session_provider=self._session,
+                mutation_validator=self._mutation_validator,
+                signed_url_builder=lambda request, asset_id, mode: f"http://testserver/v1/assets/{asset_id}/content?md={mode}&sig=test",
+                asset_path_resolver=self._asset_path,
+                asset_media_type_resolver=lambda asset_id, path: "image/png",
+                asset_deleter=self._delete_unshared,
+                asset_catalog_provider=self._catalog,
+                asset_metadata_reader=self._asset_metadata,
+                admin_db_path=self.admin_db,
+                media_jobs_path=jobs_db,
+                receipts_path=receipts_db,
+                prompt_memory_path=self.prompt_db,
+            )
+        )
+        return TestClient(app)
+
+    def test_a_same_key_replay_of_a_failed_image_job_counts_once_as_failed(self) -> None:
+        # Through the real image route: submit, the worker's attempt fails, then the same Idempotency-Key submits again.
+        import asyncio
+
+        import proxy
+        from tests.support.adapter_differential_rig import GatewayRig, comfy_exchanges, scenario
+
+        failed = {"p1": {"status": {"status_str": "error", "completed": False, "messages": [
+            ["execution_error", {"node_type": "KSampler", "node_id": "7", "exception_message": "CUDA error"}]]},
+            "outputs": {}}}
+        body = {"prompt": "doomed", "response_format": "url", "background": "opaque"}
+        headers = {"Idempotency-Key": "same-key-after-failure"}
+        with GatewayRig("usage_replay", Path(self.tmp.name) / "rig") as rig:
+            rig.set(proxy, "_schedule_image_media_job", lambda job_id: rig.scheduled.append(job_id) or True)
+            fake = rig.engine("comfy", scenario("comfyui", "usage-replay-comfy",
+                                                comfy_exchanges(history=failed, strict=False)), host="comfy.usage.test")
+            rig.set(proxy, "COMFY_HOST", fake.base_url)
+
+            async def drive() -> tuple[str, str]:
+                first = await rig.call("POST", "/gateway/v1/media/jobs/image-generations", label="submit the image job",
+                                       json_body=body, headers=headers, unordered_json=True)
+                await proxy._run_image_media_job(rig.scheduled[0])
+                again = await rig.call("POST", "/gateway/v1/media/jobs/image-generations", label="same key again",
+                                       json_body=body, headers=headers, unordered_json=True)
+                return first.json()["job_id"], again.json()["job_id"]
+
+            first_id, again_id = asyncio.run(drive())
+            self.current_user = self.owner
+            # The owner's own scope holds no Apps here, so ask for everyone's usage: the rig's receipts belong to no App.
+            usage = self._usage_client_on(rig.receipts_db, rig.media_jobs_db).get(
+                "/me/api/usage/summary", params={"person": "all"}).json()
+        self.assertEqual(again_id, first_id)
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 1))
+        [row] = usage["receipts"]
+        self.assertEqual(row["status"], "failed")
 
     def test_a_request_outside_any_job_is_counted_as_before(self) -> None:
         self._receipt(self.app_a["id"], "req_plain_chat", intent="chat.completions",
