@@ -83,3 +83,26 @@ def augment_owner_openapi(schema: dict, routes: list) -> None:
                 operation["responses"]["200"] = {"description": "Canonical configuration YAML",
                     "content": {"text/plain": {"schema": {"type": "string"}}}}
             schema["paths"].setdefault(route.path, {})[method.lower()] = operation
+    mark_owner_only_operations(schema)
+
+
+OWNER_ONLY_TAG = "Owner only"
+OWNER_ONLY_NOTE = "Owner only: needs the owner's sign-in."
+
+
+def mark_owner_only_operations(schema: dict) -> None:
+    """Tag every operation that takes the owner's bearer credential, and open its description with the note.
+
+    The rule keys on the security requirement, so an owner operation declared anywhere in the app is marked the same
+    way. Running it twice changes nothing.
+    """
+    for path_item in schema["paths"].values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict) or operation.get("security") != [{"OwnerBearer": []}]:
+                continue
+            tags = operation.setdefault("tags", [])
+            if OWNER_ONLY_TAG not in tags:
+                tags.append(OWNER_ONLY_TAG)
+            description = operation.get("description", "")
+            if not description.startswith(OWNER_ONLY_NOTE):
+                operation["description"] = f"{OWNER_ONLY_NOTE}\n\n{description}".strip()

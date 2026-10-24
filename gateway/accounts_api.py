@@ -10,10 +10,16 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, model_validator
 from starlette.responses import JSONResponse
 
-from gateway import accounts, admin_store, browser_sessions, remembered_people
+from gateway import accounts, admin_store, browser_sessions, operation_security, remembered_people
 from gateway.settings_api import instance_settings
 from gateway.admin_api import _require_admin
 from gateway.admin_oidc import SessionError, csrf_token_for_session, safe_browser_return_to
+
+
+# How each sign-in route checks its caller (gateway/operation_security.py); the API reference states it.
+PUBLIC_OPENAPI = operation_security.openapi_extra(operation_security.PUBLIC)
+OPTIONAL_SESSION_OPENAPI = operation_security.openapi_extra(operation_security.OPTIONAL_SESSION)
+BROWSER_SESSION_OPENAPI = operation_security.openapi_extra(operation_security.BROWSER_SESSION)
 
 
 class _AccountRoute(APIRoute):
@@ -182,7 +188,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
         return response
 
-    @router.get("/auth/api/options")
+    @router.get("/auth/api/options", openapi_extra=PUBLIC_OPENAPI)
     def get_options(request: Request):
         result = options()
         result["oidc_url"] = "/login?" + urlencode({"return_to": safe_browser_return_to(request.query_params.get("return_to"))})
@@ -205,7 +211,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             person["person_id"], body.password, client_ip(request), path=path_provider(),
         )
 
-    @router.post("/auth/api/login")
+    @router.post("/auth/api/login", openapi_extra=PUBLIC_OPENAPI)
     def login(request: Request, body: Login):
         try:
             same_origin(request)
@@ -255,7 +261,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
                 status_code=503,
             )
 
-    @router.get("/auth/api/remembered")
+    @router.get("/auth/api/remembered", openapi_extra=OPTIONAL_SESSION_OPENAPI)
     def remembered(request: Request):
         """The names this browser keeps: a tile, a name, an avatar and how the person signs in. Nothing else about them,
         except that the entry of the person this browser is signed in as carries ``you``: true."""
@@ -282,7 +288,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             current_person_id=session.subject if session else None)
         return {"remember": True, "people": people}
 
-    @router.delete("/auth/api/remembered/{tile}")
+    @router.delete("/auth/api/remembered/{tile}", openapi_extra=PUBLIC_OPENAPI)
     def forget_remembered(request: Request, tile: str):
         """Take one name off this browser's list. It does not sign anyone out or change their account."""
         same_origin(request)
@@ -294,14 +300,14 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
                                  path=path_provider(), signing_key=key)
         return {"ok": True}
 
-    @router.post("/auth/api/invite")
+    @router.post("/auth/api/invite", openapi_extra=PUBLIC_OPENAPI)
     def inspect(request: Request, body: InspectInvite):
         same_origin(request)
         invite = accounts.inspect_invite(body.token, path=path_provider())
         return {"plan": _plan_choice(invite["plan_id"], path_provider()), "email": invite["email"], "expires_at": invite["expires_at"],
                 "owner_name": "The gateway owner", "instance_name": options()["instance_name"]}
 
-    @router.post("/auth/api/invite/accept")
+    @router.post("/auth/api/invite/accept", openapi_extra=OPTIONAL_SESSION_OPENAPI)
     def accept(request: Request, body: Accept):
         same_origin(request)
         opts, path = options(), path_provider()
@@ -332,7 +338,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
                                                         path=path, oidc_user_id=oidc_user_id)
         return accept_and_sign_in(request, acceptance, authenticated_at=authenticated_at)
 
-    @router.post("/auth/api/password-reset")
+    @router.post("/auth/api/password-reset", openapi_extra=PUBLIC_OPENAPI)
     def reset(request: Request, body: Reset):
         same_origin(request)
         # Second bucket is per reset link, not one shared bucket: a shared key
@@ -356,7 +362,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             raise accounts.AccountError("csrf_required", "Refresh this page and try again.", 403)
         return session, key
 
-    @router.post("/auth/api/reauth")
+    @router.post("/auth/api/reauth", openapi_extra=BROWSER_SESSION_OPENAPI)
     def reauth(request: Request, body: Reauth):
         """Confirm the signed-in person's password, so risky owner actions are allowed for a while."""
         same_origin(request)
@@ -373,7 +379,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         browser_sessions.set_cookie(response, refreshed, cookie=cookie_provider(), signing_key=key)
         return response
 
-    @router.post("/auth/api/sign-out-everywhere")
+    @router.post("/auth/api/sign-out-everywhere", openapi_extra=BROWSER_SESSION_OPENAPI)
     def sign_out_everywhere(request: Request):
         """End every sign-in this person has, on every device, this one included."""
         same_origin(request)

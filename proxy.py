@@ -25,7 +25,6 @@ import asyncio
 import shutil
 import base64
 import copy
-import functools
 import json
 import math
 import os
@@ -319,6 +318,7 @@ from gateway.toolcall_detection import (
 from gateway.discovery import WorkflowRegistry
 from gateway.video_limits import limits_for_workflow, video_limits
 from gateway.app_key_openapi import augment_app_key_openapi
+from gateway import operation_security
 from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
 from gateway.workflow_openapi import advertised_inputs_schema, workflow_catalog
 from gateway.discovery_metadata import (
@@ -14374,10 +14374,15 @@ async def _maker_browser_session_request(request: Request) -> bool:
     return await asyncio.to_thread(_oidc_session_from_request, request) is not None
 
 
+# The paths whose every operation passes the App key layer before its handler runs, whether or not the handler
+# checks the caller itself. The API reference gives these operations the App key security (fill_security).
+KEY_LAYER_PREFIXES = ("/gateway/v1", "/native/")
+
+
 @app.middleware("http")
 async def _gateway_auth_middleware(request: Request, call_next):
     """Gate gateway-native discovery/receipt APIs, and the per-engine native lane, behind the proxy key layer."""
-    if request.url.path.startswith(("/gateway/v1", "/native/")):
+    if request.url.path.startswith(KEY_LAYER_PREFIXES):
         if await _maker_browser_session_request(request):
             return await call_next(request)
         refusal = await _authenticate_mounted_route(request)
@@ -24267,7 +24272,8 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
     )
 
 
-@app.get("/v1/assets/{asset_id}/thumbnail", openapi_extra=SIGNED_THUMBNAIL_OPENAPI, response_class=Response)
+@app.get("/v1/assets/{asset_id}/thumbnail", response_class=Response,
+         openapi_extra={**SIGNED_THUMBNAIL_OPENAPI, **operation_security.openapi_extra(operation_security.SIGNED_URL)})
 async def assets_thumbnail(asset_id: str, request: Request):
     """Serve a small WebP preview of an asset named by a signed thumbnail URL."""
     return await asyncio.to_thread(_signed_asset_thumbnail_response, asset_id, request)
@@ -26372,7 +26378,7 @@ async def list_models(request: Request):
     )
 
 
-@app.get("/v1/status")
+@app.get("/v1/status", openapi_extra=operation_security.openapi_extra(operation_security.OWNER))
 async def v1_status(request: Request):
     """Consolidated admin-only status JSON for the dashboard."""
     try:
@@ -31642,84 +31648,86 @@ async def _ui_admin_page_guard(request: Request, name: str) -> Response | None:
 Op = frontend_mount.Operation
 # These handlers check the caller themselves, in the error shape of their protocol. An Op the mount
 # authenticates (no ``self_authenticates``) is checked before its handler runs, on any path prefix.
-SelfAuthOp = functools.partial(frontend_mount.Operation, self_authenticates=True)
+def SelfAuthOp(endpoint, methods, *, auth, **options):
+    """An operation that checks its caller itself. ``auth`` declares how: APP_KEY, or SIGNED_URL for a signed link."""
+    return frontend_mount.Operation(endpoint, methods, self_authenticates=True, auth=auth, **options)
 FRONTEND_TRANSLATORS.register("identity", {
-    "models.list": SelfAuthOp(list_models, frozenset({"GET"})),
-    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"})),
-    "voices.list": SelfAuthOp(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI),
+    "models.list": SelfAuthOp(list_models, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "voices.list": SelfAuthOp(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI, auth=operation_security.APP_KEY),
     "audio.speech": SelfAuthOp(audio_speech, frozenset({"POST"}), openapi_extra=AUDIO_SPEECH_OPENAPI,
-                               response_class=Response),
+                               response_class=Response, auth=operation_security.APP_KEY),
     "audio.transcriptions": SelfAuthOp(audio_transcriptions, frozenset({"POST"}),
-                                       openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI),
-    "audio.translations": SelfAuthOp(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI),
-    "audio.generate": SelfAuthOp(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI),
-    "audio.models": SelfAuthOp(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI),
-    "images.generate": SelfAuthOp(images_generations, frozenset({"POST"}), openapi_extra=IMAGES_GENERATIONS_OPENAPI),
-    "images.variations": SelfAuthOp(images_variations, frozenset({"POST"}), openapi_extra=IMAGES_VARIATIONS_OPENAPI),
-    "images.edit": SelfAuthOp(images_edits, frozenset({"POST"}), openapi_extra=IMAGES_EDITS_OPENAPI),
+                                       openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "audio.translations": SelfAuthOp(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "audio.generate": SelfAuthOp(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI, auth=operation_security.APP_KEY),
+    "audio.models": SelfAuthOp(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI, auth=operation_security.APP_KEY),
+    "images.generate": SelfAuthOp(images_generations, frozenset({"POST"}), openapi_extra=IMAGES_GENERATIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "images.variations": SelfAuthOp(images_variations, frozenset({"POST"}), openapi_extra=IMAGES_VARIATIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "images.edit": SelfAuthOp(images_edits, frozenset({"POST"}), openapi_extra=IMAGES_EDITS_OPENAPI, auth=operation_security.APP_KEY),
     "images.content": SelfAuthOp(images_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
-                                 response_class=Response),
+                                 response_class=Response, auth=operation_security.SIGNED_URL),
     "assets.content": SelfAuthOp(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
-                                 response_class=Response),
-    "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI),
-    "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI),
+                                 response_class=Response, auth=operation_security.SIGNED_URL),
+    "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI, auth=operation_security.APP_KEY),
     "videos.content": SelfAuthOp(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,
-                                 response_class=Response),
-    "videos.list": SelfAuthOp(videos_list, frozenset({"GET"}), openapi_extra=VIDEOS_LIST_OPENAPI),
-    "videos.delete": SelfAuthOp(videos_delete, frozenset({"DELETE"}), openapi_extra=VIDEOS_DELETE_OPENAPI),
-    "videos.remix": SelfAuthOp(videos_remix, frozenset({"POST"}), openapi_extra=VIDEOS_REMIX_OPENAPI),
-    "videos.edit": SelfAuthOp(videos_edit, frozenset({"POST"}), openapi_extra=VIDEOS_EDIT_OPENAPI),
-    "videos.extend": SelfAuthOp(videos_extend, frozenset({"POST"}), openapi_extra=VIDEOS_EXTEND_OPENAPI),
-    "rerank": SelfAuthOp(rerank_v1, frozenset({"POST"})),
-    "rerank.v2": SelfAuthOp(rerank_v2, frozenset({"POST"})),
-    "rerank.root": SelfAuthOp(rerank_root, frozenset({"POST"})),
-    "responses.create": SelfAuthOp(create_response, frozenset({"POST"})),
-    "responses.retrieve": SelfAuthOp(retrieve_response, frozenset({"GET"})),
-    "responses.input_items": SelfAuthOp(list_response_input_items, frozenset({"GET"})),
-    "responses.input_tokens": SelfAuthOp(count_response_input_tokens, frozenset({"POST"})),
-    "responses.cancel": SelfAuthOp(cancel_response, frozenset({"POST"})),
-    "responses.delete": SelfAuthOp(delete_response, frozenset({"DELETE"})),
-    "chat.completions": SelfAuthOp(chat_completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
-    "text.completions": SelfAuthOp(completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
-    "text.embeddings": SelfAuthOp(embeddings, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+                                 response_class=Response, auth=operation_security.APP_KEY),
+    "videos.list": SelfAuthOp(videos_list, frozenset({"GET"}), openapi_extra=VIDEOS_LIST_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.delete": SelfAuthOp(videos_delete, frozenset({"DELETE"}), openapi_extra=VIDEOS_DELETE_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.remix": SelfAuthOp(videos_remix, frozenset({"POST"}), openapi_extra=VIDEOS_REMIX_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.edit": SelfAuthOp(videos_edit, frozenset({"POST"}), openapi_extra=VIDEOS_EDIT_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.extend": SelfAuthOp(videos_extend, frozenset({"POST"}), openapi_extra=VIDEOS_EXTEND_OPENAPI, auth=operation_security.APP_KEY),
+    "rerank": SelfAuthOp(rerank_v1, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "rerank.v2": SelfAuthOp(rerank_v2, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "rerank.root": SelfAuthOp(rerank_root, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.create": SelfAuthOp(create_response, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.retrieve": SelfAuthOp(retrieve_response, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "responses.input_items": SelfAuthOp(list_response_input_items, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "responses.input_tokens": SelfAuthOp(count_response_input_tokens, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.cancel": SelfAuthOp(cancel_response, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.delete": SelfAuthOp(delete_response, frozenset({"DELETE"}), auth=operation_security.APP_KEY),
+    "chat.completions": SelfAuthOp(chat_completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI, auth=operation_security.APP_KEY),
+    "text.completions": SelfAuthOp(completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI, auth=operation_security.APP_KEY),
+    "text.embeddings": SelfAuthOp(embeddings, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI, auth=operation_security.APP_KEY),
     "unsupported.assistants": SelfAuthOp(openai_assistants_unsupported,
-                                         frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"}), include_in_schema=False),
+                                         frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"}), include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.files": SelfAuthOp(openai_files_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                            include_in_schema=False),
+                            include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.batches": SelfAuthOp(openai_batches_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                              include_in_schema=False),
+                              include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.fine_tuning": SelfAuthOp(openai_fine_tuning_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                                  include_in_schema=False),
+                                  include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.realtime": SelfAuthOp(openai_realtime_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                               include_in_schema=False),
+                               include_in_schema=False, auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("anthropic", {
-    "chat.completions": SelfAuthOp(anthropic_messages, frozenset({"POST"})),
-    "tokens.count": SelfAuthOp(anthropic_count_tokens, frozenset({"POST"})),
-    "models.list": SelfAuthOp(anthropic_models, frozenset({"GET"})),
-    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"})),
+    "chat.completions": SelfAuthOp(anthropic_messages, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "tokens.count": SelfAuthOp(anthropic_count_tokens, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.list": SelfAuthOp(anthropic_models, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("ollama", {
-    "chat.completions": SelfAuthOp(ollama_chat, frozenset({"POST"})),
-    "text.completions": SelfAuthOp(ollama_generate, frozenset({"POST"})),
-    "text.embeddings": SelfAuthOp(ollama_embed, frozenset({"POST"})),
-    "text.embeddings.prompt": SelfAuthOp(ollama_embeddings, frozenset({"POST"})),
-    "models.tags": SelfAuthOp(ollama_tags, frozenset({"GET"})),
-    "models.show": SelfAuthOp(ollama_show, frozenset({"POST"})),
-    "models.ps": SelfAuthOp(ollama_ps, frozenset({"GET"})),
-    "version": SelfAuthOp(ollama_version, frozenset({"GET"})),
-    "models.create": SelfAuthOp(ollama_create, frozenset({"POST"})),
-    "models.copy": SelfAuthOp(ollama_copy, frozenset({"POST"})),
-    "models.pull": SelfAuthOp(ollama_pull, frozenset({"POST"})),
-    "models.push": SelfAuthOp(ollama_push, frozenset({"POST"})),
-    "blobs": SelfAuthOp(ollama_blobs, frozenset({"HEAD", "POST"})),
-    "models.delete": SelfAuthOp(ollama_delete, frozenset({"DELETE"})),
+    "chat.completions": SelfAuthOp(ollama_chat, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "text.completions": SelfAuthOp(ollama_generate, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "text.embeddings": SelfAuthOp(ollama_embed, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "text.embeddings.prompt": SelfAuthOp(ollama_embeddings, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.tags": SelfAuthOp(ollama_tags, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.show": SelfAuthOp(ollama_show, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.ps": SelfAuthOp(ollama_ps, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "version": SelfAuthOp(ollama_version, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.create": SelfAuthOp(ollama_create, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.copy": SelfAuthOp(ollama_copy, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.pull": SelfAuthOp(ollama_pull, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.push": SelfAuthOp(ollama_push, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "blobs": SelfAuthOp(ollama_blobs, frozenset({"HEAD", "POST"}), auth=operation_security.APP_KEY),
+    "models.delete": SelfAuthOp(ollama_delete, frozenset({"DELETE"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("realtime", {
-    "realtime.session": SelfAuthOp(realtime_v1, frozenset({"WEBSOCKET"})),
+    "realtime.session": SelfAuthOp(realtime_v1, frozenset({"WEBSOCKET"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("gateway", {
-    "media.job.content": SelfAuthOp(gateway_media_job_content, frozenset({"GET"})),
+    "media.job.content": SelfAuthOp(gateway_media_job_content, frozenset({"GET"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("provider-native", {
     "provider.list": Op(provider_native_list, frozenset({"GET"})),
@@ -31834,6 +31842,8 @@ def _gateway_openapi() -> dict[str, Any]:
     from gateway.owner_openapi import augment_owner_openapi
     augment_owner_openapi(schema, app.routes)
     augment_app_key_openapi(schema)
+    operation_security.augment_schemes(schema, cookie_name=ADMIN_AUTH.cookie.name)
+    operation_security.fill_security(schema, is_public=is_public_path, key_layer_prefixes=KEY_LAYER_PREFIXES)
     app.openapi_schema = schema
     return schema
 
