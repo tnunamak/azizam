@@ -366,7 +366,12 @@ pytest = 17215
 # Apps & keys and Connect round 3, Connect part: connect/page.spec.tsx goes from 18 to 20 cases (the App strip and
 # the keyless and local-address cases replace the removed tools and notes cases), +3 in lib/private-address.spec.ts
 # and +2 in lib/docs.spec.ts. vitest list measured 3467 (2026-10-24, 235 files).
-vitest = 3467
+# Apps & keys and Connect round 4: connect/page.spec.tsx gains the no-preselection, More clients, generic-recipe and
+# missing-model cases; apps/page.spec.tsx gains the Key 2 and Revoke cases; lib/private-address.spec.ts gains the
+# reach cases (+13 net).
+# No Playwright case was added or removed, so the playwright ceiling stays at 569.
+# vitest list measured 3480 (2026-10-24).
+vitest = 3480
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
