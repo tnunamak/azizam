@@ -100,12 +100,16 @@ version. Others see that picture only when the person chose it. Removing it dele
 person deletes it too. Schema 19 rebuilds `user_avatars` once to add the word `generated`.
 
 **The automatic picture.** A person with no sign-in picture and no chosen avatar (`auto`) gets one picture made for
-them, once. The page asks on their first signed-in load where the avatar shows (`POST .../avatar/default`). The
-gateway starts the make job only when an image route exists and no other picture job is queued or running; that
-wait uses no attempt. The attempt is recorded before the job starts (`default_attempted_at`), so a failure is never
-retried, and a person who removes the picture is never given another. When the job succeeds, the picture is kept and
-becomes the avatar, unless the person chose another avatar meanwhile (the picture is then kept for later). The job
-id is `default_job_id` until the job has stopped. Schema 20 adds those two columns.
+them, once. The page asks on their first signed-in load where the avatar shows (`POST .../avatar/default`). One
+default starts at a time, and only when an image route exists and no other picture job is queued or running. A load
+that finds the slot taken, picture work busy, or a start refused for capacity (HTTP 429 or 503) starts nothing and
+uses no attempt, so a later load tries again. The attempt (`default_attempted_at`) is recorded once the job has
+started, with the job's id in `default_job_id`, or when the start fails for another reason, so that failure is never
+retried. A person who removes the picture is never given another. A keep, a pick or a Remove by the person records the
+attempt and forgets the job, so a default that finishes after one publishes nothing. When the job succeeds and the
+person has made no such choice, the picture is kept. It becomes the avatar if they have the automatic choice and no
+sign-in picture; otherwise they can choose it later. `default_job_id` is set until the job has stopped. Schema 20
+adds those two columns.
 
 The browser never loads the provider's address (no hot-linking, so the provider learns nothing about
 who views whom): the gateway fetches it on the server with no cookie, credential or referer, over `https` only, at
