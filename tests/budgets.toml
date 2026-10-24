@@ -375,7 +375,9 @@ pytest = 17242
 # Sign-in privacy round: the owner-line cases become three (none names the owner, and the reset line is one copy for
 # everyone), and one case checks the name box sits under the provider button. Full run 231 files, 3433 cases, all
 # passed (2026-10-23). Measured value.
-vitest = 3433
+# Sign-in round 3: the round before added six cases after this ceiling was set (page.spec.tsx +1, chooser.spec.tsx +5).
+# This round adds none. `vitest list`: 231 files, 3439 cases (measured 2026-10-23).
+vitest = 3439
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -416,7 +418,11 @@ vitest = 3433
 # Sign-in privacy round: +1 case in e2e/home-redesign.spec.ts, the column's centring on a desktop and the 72 px start on a
 # phone. S1 to S4 and S6 gained assertions, not cases. --list: playwright.config.ts 588, live-data 3, household 18: 609,
 # measured 2026-10-23.
-playwright = 609
+# Sign-in round 3: +8 cases in e2e/signin-shell.spec.ts (the primary's type and colour, the dark edge, the remember gaps and
+# the 44 px targets, and a 40-character name, at 1440 and 390 px) and +9 in e2e/signin-built.spec.ts (the round-3 captures,
+# skipped unless SIGNIN_SHOTS_DIR is set). --list: playwright.config.ts 605, live-data 3, household 18: 626, measured
+# 2026-10-23.
+playwright = 626
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
