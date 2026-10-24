@@ -192,6 +192,15 @@ test("at 1440 px Recent fills Home's 960 px column, and the 760 px composer sits
     };
   });
   expect(sizes).toEqual({ prompt: "16px", title: "13px", titleLine: "18px", titleHeight: 36, meta: "12px" });
+  // Every tile's "Kind · when" sits on one baseline, whether its title takes one line or two.
+  const metaBottoms = await tiles.evaluateAll((items) =>
+    items.map((item) => {
+      const metas = Array.from(item.querySelectorAll("span, p")).filter((node) => node.className.includes("text-badge"));
+      return Math.round(metas[metas.length - 1]?.getBoundingClientRect().bottom ?? -1);
+    }),
+  );
+  expect(metaBottoms).not.toContain(-1);
+  expect(new Set(metaBottoms).size).toBe(1);
 });
 
 test("H4 the facts line shows the cost and wait its row knows, and leaves out what it does not", async ({ isolated }) => {
