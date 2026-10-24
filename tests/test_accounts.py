@@ -797,10 +797,12 @@ def test_oidc_invite_binding_gives_preexisting_apps_the_invited_plan(account_db,
     _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], email=user["email"], path=path)
     response = client.post("/auth/api/invite/accept", json={"token": token, "email": user["email"], "name": "Person"}, headers={"x-azizam-csrf": csrf_token_for_session(session, signing_key=SIGNING_KEY)})
     assert response.status_code == 200
-    apps = rows(path, "SELECT * FROM apps WHERE owner_user_id=?", (user["id"],))
+    apps = rows(path, "SELECT * FROM apps WHERE owner_user_id=? AND id NOT IN (SELECT app_id FROM session_apps)",
+                (user["id"],))
     assert len(apps) == 3
     assert len(rows(path, "SELECT * FROM credentials")) == 3
     assert {app["access_plan"] for app in apps} == {"person"}
+    assert admin_store.get_session_app_for_user(user["id"], path=path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
     assert accounts.plan_for_user(user["id"], path=path) == plan["id"]
 
 
