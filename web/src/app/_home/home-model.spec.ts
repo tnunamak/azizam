@@ -145,7 +145,6 @@ describe("H9 the owner's panel names operational facts only", () => {
         key: "engine",
         tone: "down",
         fact: "Video studio stopped answering.",
-        detail: null,
         action: { label: "Open Engines", href: "/engines/" },
       },
     ]);
@@ -157,7 +156,7 @@ describe("H9 the owner's panel names operational facts only", () => {
     expect(need.action.href).toBe("/engines/");
   });
 
-  it("names each fault with its cause, and every capability that is off in one row", () => {
+  it("names each fault, and every capability that is off in one row", () => {
     const needs = gatewayNeeds({
       ...NO_FAULTS,
       capabilities: [
@@ -173,21 +172,18 @@ describe("H9 the owner's panel names operational facts only", () => {
         key: "capability:video",
         tone: "down",
         fact: "Video is down",
-        detail: "Engine can’t take requests right now.",
         action: { label: "Open Engines", href: "/engines/" },
       },
       {
         key: "capability:speech",
         tone: "degraded",
         fact: "Voice is degraded",
-        detail: null,
         action: { label: "Open Engines", href: "/engines/" },
       },
       {
         key: "capability:off",
         tone: "off",
         fact: "Images and Sound effects are off",
-        detail: null,
         action: { label: "Open Engines", href: "/engines/" },
       },
     ]);

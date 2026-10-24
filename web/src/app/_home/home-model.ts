@@ -266,8 +266,6 @@ export interface GatewayNeed {
   /** How bad it is: a fault the owner must fix, or a gap in what is set up. */
   tone: "down" | "degraded" | "off";
   fact: string;
-  /** The cause, when the data has one. */
-  detail: string | null;
   action: { label: string; href: string };
 }
 
@@ -314,30 +312,28 @@ export function gatewayNeeds(input: {
   const engines = { label: "Open Engines", href: "/engines/" };
   // A capability row that names its failing engine already tells this; one fault is one row.
   const engineNamed = input.capabilities.some((view) => FAULTS.has(view.state) && view.failing.length > 0);
-  if (input.engineFault && !engineNamed) needs.push({ key: "engine", tone: "down", fact: input.engineFault, detail: null, action: engines });
+  if (input.engineFault && !engineNamed) needs.push({ key: "engine", tone: "down", fact: input.engineFault, action: engines });
   if (input.providerFault)
     needs.push({
       key: "provider",
       tone: "down",
       fact: input.providerFault,
-      detail: null,
       action: { label: "Open Providers", href: "/providers/" },
     });
   if (input.noEngine)
-    needs.push({ key: "engine-added", tone: "off", fact: "Add an engine to turn something on", detail: null, action: engines });
+    needs.push({ key: "engine-added", tone: "off", fact: "Add an engine to turn something on", action: engines });
   for (const view of input.capabilities) {
     if (!FAULTS.has(view.state)) continue;
     needs.push({
       key: `capability:${view.key}`,
       tone: view.state === "down" ? "down" : "degraded",
       fact: capabilityIs(view.label, view.word.toLowerCase()),
-      detail: view.detail ?? null,
       action: engines,
     });
   }
   const off = input.capabilities.filter((view) => view.state === "off").map((view) => view.label);
   if (off.length && !input.noEngine)
-    needs.push({ key: "capability:off", tone: "off", fact: capabilityIs(joinNames(off), "off"), detail: null, action: engines });
+    needs.push({ key: "capability:off", tone: "off", fact: capabilityIs(joinNames(off), "off"), action: engines });
   return needs;
 }
 

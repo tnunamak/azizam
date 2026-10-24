@@ -344,6 +344,31 @@ test("H9 the owner's panel holds operations only, each with one link to where it
   await expect(panel).not.toContainText(/prompt|photo|picture/i);
 });
 
+test("at 1440 px the owner's panel is a quiet muted block, and the fault shows there, not as a dot on the chooser", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await seedOwner(page, page.context().request);
+  await page.goto("/");
+  const panel = page.getByRole("region", { name: "Your gateway" });
+  await expect(panel.getByRole("link", { name: /^Video is down/ })).toBeVisible();
+  // One line per row: the cause is on the page the row opens.
+  await expect(panel).not.toContainText("not accepting");
+  const block = panel.locator("ul").first().locator("..");
+  const look = await block.evaluate((node) => {
+    const probe = document.createElement("div");
+    probe.className = "bg-muted";
+    document.body.append(probe);
+    const muted = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    const style = getComputedStyle(node);
+    return { fill: style.backgroundColor, muted, border: style.borderTopWidth };
+  });
+  expect(look.fill).toBe(look.muted);
+  expect(look.border).toBe("0px");
+  const video = page.getByRole("group", { name: "What to make" }).getByRole("button", { name: /Video/ });
+  await expect(video).toContainText("Down");
+  await expect(video.locator(".rounded-full.bg-destructive")).toHaveCount(0);
+});
+
 test("H10 a member never sees the gateway panel", async ({ isolated }) => {
   const member = await isolated.member();
   await member.page.goto("/");
