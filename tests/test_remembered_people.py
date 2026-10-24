@@ -996,3 +996,28 @@ def test_sixty_one_unknown_tiles_from_one_address_are_refused_with_429(tls):
 
     assert [response.status_code for response in responses[:60]] == [404] * 60
     assert responses[60].status_code == 429 and responses[60].json()["error"]["code"] == "login_rate_limited"
+
+
+def test_the_login_attempt_limit_is_sixty_per_address_when_the_gateway_sets_none(tls, monkeypatch):
+    monkeypatch.delenv("AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW", raising=False)
+    client = tls.client()
+    statuses = [client.post(LOGIN, json={"tile": f"t_guess{index:02d}", "password": "a guess"}).status_code for index in range(61)]
+
+    assert statuses[:60] == [404] * 60 and statuses[60] == 429
+
+
+def test_the_gateway_setting_replaces_the_login_attempt_limit(tls, monkeypatch):
+    monkeypatch.setenv("AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW", "3")
+    client = tls.client()
+    statuses = [client.post(LOGIN, json={"tile": f"t_guess{index:02d}", "password": "a guess"}).status_code for index in range(4)]
+
+    assert statuses == [404, 404, 404, 429]
+
+
+@pytest.mark.parametrize("setting", ["0", "-5", "many"])
+def test_an_invalid_gateway_setting_keeps_the_login_attempt_limit_at_sixty(tls, monkeypatch, setting):
+    monkeypatch.setenv("AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW", setting)
+    client = tls.client()
+    statuses = [client.post(LOGIN, json={"tile": f"t_guess{index:02d}", "password": "a guess"}).status_code for index in range(61)]
+
+    assert statuses[:60] == [404] * 60 and statuses[60] == 429

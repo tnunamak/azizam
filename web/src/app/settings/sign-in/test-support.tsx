@@ -97,6 +97,7 @@ const baseProvider = {
   redirect_uri: "https://ai.example.test/admin/oidc/callback",
   tested_at: null,
   groups_missing: false,
+  fresh_login_supported: false,
 };
 
 const OWNER = {
@@ -111,6 +112,7 @@ export function liveSnapshot(over: Partial<SignInSnapshot> = {}): SignInSnapshot
     revision: "rev-1",
     viewer: { role: "owner", can_edit: true },
     methods: { password: true, provider: true },
+    memory: "remember",
     provider: {
       ...baseProvider,
       name: "Keycloak",
@@ -178,6 +180,7 @@ export function passedStatus(
   return {
     status: "passed",
     tested_at: Math.floor(Date.now() / 1000),
+    fresh_login_supported: false,
     identity: {
       name: "Tim Nunamaker",
       email: "tim.nunamaker@gmail.com",

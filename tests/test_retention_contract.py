@@ -138,7 +138,8 @@ def test_decide_equals_the_moved_decision_on_every_input(kind):
 
 
 def test_a_kept_decision_names_the_parts_the_data_allows_by_default():
-    for kind, parts in ((retention.LIBRARY_PROMPT, ("accepted",)), (retention.CONVERSATION, ("accepted", "received"))):
+    for kind, parts in ((retention.LIBRARY_PROMPT, ("accepted",)), (retention.CONVERSATION, ("accepted", "received")),
+                        (retention.REQUEST_HISTORY, ("accepted", "received"))):
         kept = retention.decide(kind, person_id="p", member=None, household_policy=None, request_body=None, now=NOW)
         assert (kept.keep, kept.kind, kept.parts) == (True, kind, parts)
         refused = retention.decide(kind, person_id="p", member=None, household_policy={"never_keep": True},

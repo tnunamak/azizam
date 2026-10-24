@@ -15,8 +15,8 @@ def own_output(v, r):
     o = r.origin
     if o is None:      # legacy = browser-created, never OwnOutput
         return False
-    if v.auth_kind == "app_key":   # attributed row created by its same non-null App (credential id recorded)
-        return o.auth_kind == "app_key" and nn(o.credential_id) and nn(v.app_id) and r.app_id == v.app_id
+    if v.auth_kind == "app_key":   # App-key output from the same App
+        return o.auth_kind == "app_key" and nn(v.app_id) and r.app_id == v.app_id
     if v.auth_kind == "mcp_grant":  # exact same non-null connection_id
         return o.auth_kind == "mcp_grant" and nn(v.connection_id) and o.connection_id == v.connection_id
     return False

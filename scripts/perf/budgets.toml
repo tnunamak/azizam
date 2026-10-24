@@ -14,7 +14,17 @@ processes = 0         # no request starts a process (ffprobe, systemctl, ...)
 # A route may carry its own limits when it cannot meet the default yet. Each needs a
 # reason, and the table may only shrink.
 [api.routes]
-# "/some/route" = { p95_ms = 250, reason = "..." }
+# No route has its own limits. Every route meets the defaults above, including the cold reads of Home and the
+# owner's status page (api_bench.py). The status page and Home read the stored snapshot and never wait for a probe.
+# A read after idle starts a background refresh; its process starts count against the read only if they begin while
+# the read is in flight. test_perf_harness.py fails if a row is added here.
+
+# A cold read must not hold the event loop: api_bench.py measures the largest /health latency while
+# the read runs, less the idle median, and check.py judges it here. Every request waits for the
+# loop, so a stall of this size is felt by every person on the gateway. A fork on the loop costs
+# about 0.05 ms per MB of resident memory, so a probe that spawns on the loop shows up here.
+[loop]
+max_stall_ms = 100
 
 [ui]
 ready_ms = 500        # last change to <main> after navigation, warm HTTP cache, 1440 px wide

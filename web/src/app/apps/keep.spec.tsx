@@ -596,6 +596,72 @@ it("shows no line once every key and address names its person", async () => {
   expect(screen.queryByRole("link", { name: /need a quick check/ })).toBeNull();
 });
 
+/** jsdom has no layout, so the call that brings a row into view is recorded rather than run. */
+function recordScrolls(): Element[] {
+  const scrolled: Element[] = [];
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: function scrollIntoView(this: Element) {
+      scrolled.push(this);
+    },
+  });
+  return scrolled;
+}
+
+afterEach(() => {
+  Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+});
+
+it("the quick-check line opens the first App with a key to check, with that key's remedy in view and focused", async () => {
+  const scrolled = recordScrolls();
+  vi.mocked(accountApi.session).mockResolvedValue(
+    snapshotOf(
+      [
+        appWith({ id: "tidy", name: "Tidy", credentials: [ownKey] }),
+        appWith({ id: "hall", name: "Hall display", credentials: [ownKey, oldKey] }),
+      ],
+      "owner",
+    ),
+  );
+  renderApps(owner);
+
+  fireEvent.click(await screen.findByRole("link", { name: "1 key or address needs a quick check" }));
+
+  const dialog = await screen.findByRole("dialog", { name: "Keys for Hall display" });
+  const keep = within(dialog).getByRole("button", { name: "Keep key Old desk key" });
+  await waitFor(() => expect(keep).toHaveFocus());
+  expect(scrolled).toContain(keep.closest("li"));
+  expect(screen.queryByRole("dialog", { name: "Keys for Tidy" })).toBeNull();
+});
+
+it("with only an address to check, the same line opens the App's trusted addresses on that address", async () => {
+  const scrolled = recordScrolls();
+  vi.mocked(accountApi.session).mockResolvedValue(
+    snapshotOf([appWith({ credentials: [ownKey], addresses_to_check: 1 })], "owner"),
+  );
+  vi.mocked(adminFetch).mockImplementation(async () => ({ trusted_addresses: [unkeptAddress] }));
+  renderApps(owner);
+
+  fireEvent.click(await screen.findByRole("link", { name: "1 key or address needs a quick check" }));
+
+  const dialog = await screen.findByRole("dialog", { name: "Trusted addresses for Hall display" });
+  const keep = await within(dialog).findByRole("button", { name: "Keep address 10.0.0.7" });
+  await waitFor(() => expect(keep).toHaveFocus());
+  expect(scrolled).toContain(keep.closest("li"));
+});
+
+it("a member with only an address to check opens no dialog: addresses are the owner's to change", async () => {
+  recordScrolls();
+  vi.mocked(accountApi.session).mockResolvedValue(
+    snapshotOf([appWith({ credentials: [ownKey], addresses_to_check: 1 })]),
+  );
+  renderApps(member);
+
+  fireEvent.click(await screen.findByRole("link", { name: "1 key or address needs a quick check" }));
+
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
 // Keeping a binding that administrators on record could also have made waits for the owner's confirmation.
 const ADMINISTRATORS: AdministratorsOnRecord = { people: ["Simon Agent"], unnamed_people: 1, admin_keys: 23 };
 const keyWithAdmins: Credential = { ...oldKey, administrators: ADMINISTRATORS };

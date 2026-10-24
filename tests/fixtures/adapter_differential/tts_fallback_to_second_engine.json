@@ -101,6 +101,13 @@
   ],
   "gateway_sleeps": [],
   "media_jobs": {
+    "media_job_asset_origins": [
+      {
+        "asset_id": "aud_a3fb99bc8032af9c3f1625560262c6d48b85a89cbe86a391019de2cd25ff5b5e",
+        "job_id": "<job:1>",
+        "origin_id": "<req:1>"
+      }
+    ],
     "media_jobs": [
       {
         "api_key_name": "test-app",
@@ -164,7 +171,7 @@
     ],
     "media_jobs_schema_version": [
       {
-        "version": 4
+        "version": 5
       }
     ],
     "retention_fact_destinations": [

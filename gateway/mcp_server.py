@@ -30,6 +30,7 @@ per model):
 * ``rename_app`` and ``rename_key``: give one of the signed-in person's own Apps or keys a new name. They
   work for a client the person signed in (an OAuth connection) whose consent included renaming (the grant's
   ``mcp:rename`` scope), never for an App key, and change a label only: no new key, no new access.
+* ``requests`` and ``retention``: read or delete personal request history, and read or set its retention choice.
 
 The module owns no business logic. Authentication, profile policy, receipts and
 job storage stay in the core routes: every action is dispatched in process to
@@ -44,11 +45,12 @@ from gateway.media_jobs import ERROR_FIELDS, PHASE_FIELDS, is_terminal
 import asyncio
 import base64
 import binascii
+import copy
 import json
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from gateway.stt_samples import RIGHTS_CAVEAT
 
@@ -289,13 +291,28 @@ TOOLS.append({
 })
 
 TOOLS.append({
-    "name": "requests", "title": "Read the retention ledger",
-    "description": "Owner and administrators can see dated facts about where request content may remain. Action: ledger.",
+    "name": "requests", "title": "Read or delete your request history",
+    "description": "List, read or delete your own request history. Actions: list, get, delete, delete_all.",
     "inputSchema": {"type": "object", "properties": {
-        "action": {"type": "string", "enum": ["ledger"]},
-        "request_id": {"type": "string", "description": "Optional saved request id; omit for today's facts."},
+        "action": {"type": "string", "enum": ["list", "get", "delete", "delete_all"]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+        "cursor": {"type": "string"},
+        "record_id": {"type": "string", "minLength": 1, "maxLength": 128},
     }, "required": ["action"], "additionalProperties": False},
-    "annotations": {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
+})
+
+TOOLS.append({
+    "name": "retention", "title": "Read or set your request history setting",
+    "description": "Read your request history setting, or set it when this connection has privacy permission. "
+                   "Actions: mine_get, mine_set.",
+    "inputSchema": {"type": "object", "properties": {
+        "action": {"type": "string", "enum": ["mine_get", "mine_set"]},
+        "keep": {"type": "boolean"},
+        "retention": {"type": "string"},
+        "parts": {"type": "array", "items": {"type": "string"}},
+    }, "required": ["action"], "additionalProperties": False},
+    "annotations": {"readOnlyHint": False, "idempotentHint": True, "openWorldHint": False},
 })
 
 # ------------------------------------------------------------------ result I/O
@@ -649,25 +666,104 @@ def tool_result(payload: Mapping[str, Any], *, is_error: bool = False, version: 
     return result
 
 
+async def _history_tool(deps: McpDeps, request: Request, auth: Any, name: str, args: Mapping[str, Any],
+                       version: str) -> dict[str, Any]:
+    """Dispatch personal request-history actions to the same routes as REST clients."""
+    action = args.get("action")
+    method: str
+    path: str
+    kwargs: dict[str, Any] = {}
+    deleted_record: str | None = None
+
+    if name == "requests":
+        if action == "ledger":
+            if (deps.retention_ledger is None or not deps.retention_visible(request, auth)
+                    or set(args) - {"action", "request_id"}):
+                return tool_result({"status": "error", "error": "The retention ledger is unavailable for this caller."},
+                                   is_error=True, version=version)
+            request_id = args.get("request_id")
+            if request_id is not None and (not isinstance(request_id, str) or not request_id or len(request_id) > 128):
+                return tool_result({"status": "error", "error": "request_id must be a saved request id."},
+                                   is_error=True, version=version)
+            try:
+                view = await asyncio.to_thread(deps.retention_ledger, request, auth, request_id)
+            except PermissionError:
+                view = None
+            return tool_result({"ledger": view} if view is not None else
+                               {"status": "error", "error": "Ledger not found."},
+                               is_error=view is None, version=version)
+
+        if action == "list":
+            if set(args) - {"action", "limit", "cursor"}:
+                return _tool_argument_error("list accepts only limit and cursor", version)
+            limit = args.get("limit", 20)
+            cursor = args.get("cursor")
+            if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+                return _tool_argument_error("limit must be an integer from 1 to 100", version)
+            if cursor is not None and (not isinstance(cursor, str) or not cursor):
+                return _tool_argument_error("cursor must be a non-empty cursor string", version)
+            method, path = "GET", "/gateway/v1/requests"
+            kwargs["params"] = {"limit": limit, **({"cursor": cursor} if cursor is not None else {})}
+        elif action in {"get", "delete"}:
+            if set(args) != {"action", "record_id"}:
+                return _tool_argument_error(f"{action} requires only record_id", version)
+            record_id = args.get("record_id")
+            if not isinstance(record_id, str) or not record_id or len(record_id) > 128:
+                return _tool_argument_error("record_id must be a saved request record id", version)
+            method = "GET" if action == "get" else "DELETE"
+            path = f"/gateway/v1/requests/{quote(record_id, safe='')}"
+            deleted_record = record_id if action == "delete" else None
+        elif action == "delete_all":
+            if set(args) != {"action"}:
+                return _tool_argument_error("delete_all accepts only action", version)
+            method, path = "DELETE", "/gateway/v1/requests"
+        else:
+            return _tool_argument_error("action must be list, get, delete, delete_all or an available ledger action",
+                                        version)
+    elif name == "retention":
+        if action == "mine_get":
+            if set(args) != {"action"}:
+                return _tool_argument_error("mine_get accepts only action", version)
+            method, path = "GET", "/gateway/v1/me/retention"
+        elif action == "mine_set":
+            if set(args) != {"action", "keep", "retention", "parts"}:
+                return _tool_argument_error("mine_set requires keep, retention and parts", version)
+            keep, period, parts = args.get("keep"), args.get("retention"), args.get("parts")
+            if not isinstance(keep, bool) or not isinstance(period, str) or not isinstance(parts, list) \
+                    or any(not isinstance(part, str) for part in parts):
+                return _tool_argument_error("mine_set requires a boolean keep, string retention and string parts", version)
+            method, path = "PUT", "/gateway/v1/me/retention"
+            kwargs["json"] = {"keep": keep, "retention": period, "parts": parts}
+        else:
+            return _tool_argument_error("action must be mine_get or mine_set", version)
+    else:  # pragma: no cover - caller only routes the two history tools here
+        return _tool_argument_error("unknown history tool", version)
+
+    try:
+        response = await deps.call(request, method, path, **kwargs)
+    except Exception:  # noqa: BLE001 - MCP must not leak a traceback or internal message.
+        return tool_result({"status": "error", "error": "the gateway could not complete this history action"},
+                           is_error=True, version=version)
+    if response.status_code == 204:
+        payload: Mapping[str, Any] = {"deleted": deleted_record} if deleted_record else {"status": "succeeded"}
+    else:
+        try:
+            value = response.json()
+            payload = value if isinstance(value, Mapping) else {"result": value}
+        except (ValueError, TypeError):
+            payload = {"status": "error", "error": "the gateway returned an invalid history response"}
+    return tool_result(payload, is_error=response.status_code >= 400, version=version)
+
+
+def _tool_argument_error(message: str, version: str) -> dict[str, Any]:
+    return tool_result({"status": "error", "error": message}, is_error=True, version=version)
+
+
 async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args: Mapping[str, Any],
                     version: str = MODERN_VERSION) -> dict[str, Any]:
     tools = Tools(deps, request, auth)
-    if name == "requests":
-        if (deps.retention_ledger is None or not deps.retention_visible(request, auth)
-                or args.get("action") != "ledger" or set(args) - {"action", "request_id"}):
-            return tool_result({"status": "error", "error": "The retention ledger is unavailable for this caller."},
-                               is_error=True, version=version)
-        request_id = args.get("request_id")
-        if request_id is not None and (not isinstance(request_id, str) or not request_id or len(request_id) > 128):
-            return tool_result({"status": "error", "error": "request_id must be a saved request id."},
-                               is_error=True, version=version)
-        try:
-            view = await asyncio.to_thread(deps.retention_ledger, request, auth, request_id)
-        except PermissionError:
-            view = None
-        return tool_result({"ledger": view} if view is not None else
-                           {"status": "error", "error": "Ledger not found."},
-                           is_error=view is None, version=version)
+    if name in {"requests", "retention"}:
+        return await _history_tool(deps, request, auth, name, args, version)
     if name == "stt_measurement":
         if deps.stt_measurement is None:
             return tool_result({"status": "error", "error": "Long-audio operator commands are unavailable."}, is_error=True, version=version)
@@ -765,11 +861,22 @@ async def handle_message(deps: McpDeps, request: Request, auth: Any, msg: Mappin
         owner_can_measure = (deps.stt_measurement is not None
                              and deps.owner_visible(request, auth))
         can_read_ledger = deps.retention_ledger is not None and deps.retention_visible(request, auth)
-        result = {"tools": [tool for tool in TOOLS if
-                             (tool["name"] != "stt_measurement" or owner_can_measure)
-                             and (tool["name"] != "requests" or can_read_ledger)]}
+        visible_tools = []
+        for tool in TOOLS:
+            if tool["name"] == "stt_measurement" and not owner_can_measure:
+                continue
+            if tool["name"] == "requests" and can_read_ledger:
+                # Keep the old operator ledger action available only to callers who can read it.
+                tool = copy.deepcopy(tool)
+                tool["description"] += " The ledger action shows dated facts about where request content may remain."
+                tool["inputSchema"]["properties"]["action"]["enum"].append("ledger")
+                tool["inputSchema"]["properties"]["request_id"] = {
+                    "type": "string", "description": "Optional saved request id; omit for today's facts.",
+                }
+            visible_tools.append(tool)
+        result = {"tools": visible_tools}
         if modern:
-            result.update(ttlMs=300000, cacheScope="private" if owner_can_measure or can_read_ledger else "public")
+            result.update(ttlMs=300000, cacheScope="private")
     elif method == "tools/call":
         name = params.get("name")
         if not isinstance(name, str) or name not in {t["name"] for t in TOOLS}:

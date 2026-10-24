@@ -19,7 +19,7 @@ import tempfile
 from functools import lru_cache
 import time
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 from gateway import admin_store, avatars, session_guard, session_policy, trusted_addresses
 from gateway import receipt_store
@@ -43,6 +43,7 @@ __all__ = [
     "rename_user_app_key",
     "request_user_access",
     "revoke_user_app_key",
+    "set_user_app_key_privacy_permission",
 ]
 
 
@@ -475,8 +476,11 @@ def get_user_receipt(
     record = ReceiptRecord(person_id=makers[0] if len(makers) == 1 else None, app_id=app_id)
     if not isinstance(decide(Viewer(person_id=user_id, auth_kind="session"), record, "read"), Own):
         raise not_found
+
+    # The full request-history entry goes only to the maker the receipt names. Owning its App does not make a viewer
+    # the maker, so the App's owner sees kind and decision only, as anyone else does.
     found = receipt_store.get_with_created_at(
-        request_id, audience="client", viewer_person_id=user_id, path=receipts_path,
+        request_id, audience="client", viewer_person_id=str(user["id"]), path=receipts_path,
     )
     if found is None:
         raise not_found
@@ -782,13 +786,10 @@ def ensure_try_session_key(
     session: AdminSession,
     *,
     reuse_id: str | None = None,
-    before_mint: Callable[[], None] | None = None,
     now: int | None = None,
     path: Path = admin_store.DB_PATH,
 ) -> dict[str, Any]:
     """Return the Try page's key for this sign-in, minting one only if needed.
-
-    ``before_mint`` runs just before a new key is made, never for a reused one; it can refuse by raising.
 
     The key expires with the sign-in session and is revoked when it signs
     out. The secret is shown once, so the browser keeps it and passes its id
@@ -823,8 +824,6 @@ def ensure_try_session_key(
         out = _sanitize_credential(reused)
         out.update(active=True, reused=True, app_name=app_name)
         return out
-    if before_mint is not None:
-        before_mint()
     admin_store.revoke_older_session_credentials(
         str(app["id"]), session.family_id, keep=1, now=ts, path=path,
     )
@@ -1137,4 +1136,29 @@ def revoke_user_app_key(
     )
     out = _sanitize_credential(after)
     out["active"] = False
+    return out
+
+
+def set_user_app_key_privacy_permission(
+    session: AdminSession,
+    credential_id: str,
+    enabled: bool,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Set request-history access on one live key the signed-in person owns."""
+    user = _user_from_session(session, path=path)
+    if not isinstance(enabled, bool):
+        raise UserPortalError("invalid_privacy_permission", "enabled must be true or false", status_code=400)
+    try:
+        updated = admin_store.set_app_credential_privacy_permission(
+            credential_id, person_id=str(user["id"]), enabled=enabled,
+            session=session_guard.BrowserSession.of(session, str(user["id"])), path=path,
+        )
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if updated is None:
+        raise _credential_not_found()
+    out = _sanitize_credential(updated)
+    out["active"] = True
     return out

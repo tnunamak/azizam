@@ -378,7 +378,7 @@ def test_r4_4_b_a_body_forget_stops_its_reply_from_being_buffered(member_db):
     owner = RequestHistoryMiddleware(None, admin_path=lambda: db, media_path=lambda: media)
     capture = request_history_capture._Capture(owner, state={IDENTITY_STATE_KEY: _identity(person)},
                                                headers={"content-type": "application/json"}, header_forget=False,
-                                               limit=1 << 20, route="/v1/responses")
+                                               limit=1 << 20, route="/v1/responses", media_path=media)
 
     async def forget_then_reply():
         await capture.receive_wrapped(_one_body(FORGET_BODY))()

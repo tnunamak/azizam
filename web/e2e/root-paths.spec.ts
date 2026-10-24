@@ -140,7 +140,7 @@ test("OIDC sign-in carries one return destination", async ({ page }) => {
   });
   await expect(link).toHaveAttribute(
     "href",
-    `/login?return_to=${encodeURIComponent(destination)}`,
+    `/login?return_to=${encodeURIComponent(destination)}&remember=1`,
   );
   const href = new URL((await link.getAttribute("href"))!, "http://localhost");
   expect(href.searchParams.getAll("return_to")).toEqual([destination]);

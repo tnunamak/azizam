@@ -1337,6 +1337,14 @@
   },
   {
     "auth": "session-only",
+    "gate": "Browser session; accountable person and own App key only; mutations require CSRF/action header and recent sign-in",
+    "handler": "proxy.user_portal_key_privacy_permission",
+    "method": "PUT",
+    "path": "/me/api/credentials/{credential_id}/privacy-permission",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
     "handler": "proxy.user_portal_credential_access",
     "method": "GET",
@@ -1413,6 +1421,14 @@
     "handler": "gateway.mcp_oauth.connections",
     "method": "GET",
     "path": "/me/api/mcp/connections",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; own connection only; mutations require CSRF/action header and recent sign-in",
+    "handler": "gateway.mcp_oauth.privacy_permission",
+    "method": "PUT",
+    "path": "/me/api/mcp/connections/{grant_id}/privacy-permission",
     "schema": false
   },
   {
@@ -1557,6 +1573,14 @@
     "handler": "gateway.request_history_api.put_my_retention",
     "method": "PUT",
     "path": "/me/api/retention",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.request_history_api.dismiss_request_history_notice",
+    "method": "POST",
+    "path": "/me/api/retention/notice-seen",
     "schema": false
   },
   {

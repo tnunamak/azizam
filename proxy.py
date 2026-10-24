@@ -16,7 +16,7 @@ Features:
 """
 
 from gateway.compat import get_env
-from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, private_tmp, request_forms
+from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
@@ -215,7 +215,7 @@ from gateway.admin_runtime import (
     session_admin_role_subject,
 )
 from gateway.api import create_gateway_router, create_request_retention_router
-from gateway.request_source import note_connection, note_trusted_address
+from gateway.request_source import note_connection, note_maker, note_trusted_address
 from gateway.availability import availability_evidence_snapshot, project_capabilities
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
@@ -224,6 +224,9 @@ from gateway.models_catalog import (
     create_models_catalog_router,
     registered_model_capabilities,
     HealthProbeNoResponse,
+    HealthProbeRefused,
+    HealthProbeTimedOut,
+    connect_failure_kind,
     probe_service_health,
 )
 from gateway.workflows_catalog import (
@@ -253,6 +256,7 @@ from gateway.user_runtime import (
     replace_user_app_key,
     request_user_access,
     revoke_user_app_key,
+    set_user_app_key_privacy_permission,
 )
 from gateway.audio_extensions import (
     bind_audio_workflow_extensions,
@@ -2034,41 +2038,6 @@ def _provision_existing_user_personal_apps() -> int:
     return created
 
 
-def _ensure_personal_app_for_owner(
-    user: Mapping[str, Any],
-    *,
-    role: str,
-    via: str = "setup_local_owner",
-) -> Mapping[str, Any] | None:
-    """Ensure a just-claimed local owner has a personal App.
-
-    Parity with the OIDC login path, so the user portal can hand the new owner
-    a working key without a separate "create App" step. The App is "Same as
-    its person"; it runs once the owner has an access plan.
-    """
-    user_id = str(user.get("id") or "")
-    if not user_id:
-        return None
-    label = user.get("email") or user.get("display_name") or user_id
-    app = admin_store.ensure_personal_app_for_user(
-        user_id,
-        name=f"{label} personal access",
-        path=ADMIN_STORE.path,
-    )
-    admin_store.record_audit(
-        "app.self_create",
-        actor_kind="user",
-        actor_id=user_id,
-        actor_label=str(user.get("display_name") or user.get("email") or user_id),
-        target_kind="app",
-        target_id=str(app["id"]),
-        metadata={"email": user.get("email"), "via": via, "role": role,
-                  "access_plan": app.get("access_plan")},
-        path=ADMIN_STORE.path,
-    )
-    return app
-
-
 AuthIdentity = RuntimeIdentity
 
 
@@ -2353,6 +2322,9 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
     result = _authenticate_request(request, request_path)
     if isinstance(result, AuthContext):
         setattr(request.state, request_history_capture.IDENTITY_STATE_KEY, result)
+        if result.identity is not None:
+            # Receipts this request makes name the person it ran as, and no one else (REQUEST_RETENTION.md 13.3).
+            note_maker(result.identity.app_id, result.identity.person_id)
     return result
 
 
@@ -2472,7 +2444,8 @@ def _authenticate_mcp_access_token(request: Request, request_path: str, token: s
     if identity.app_id:
         note_connection(identity.app_id, connection.grant_id)
     return AuthContext(identity=replace(identity, name=f"{connection.client_name} (MCP)",
-                                        connection_id=connection.grant_id, auth_kind="mcp_grant"))
+                                        connection_id=connection.grant_id, auth_kind="mcp_grant",
+                                        privacy_permission=connection.privacy_permission))
 
 
 def authenticate_runtime_request(request: Request, request_path: str) -> RuntimeRouteAuth | Response:
@@ -12787,25 +12760,22 @@ async def _run_workflow_drift_once() -> dict:
         }
     interpreter = sys.executable or "python3"
     try:
-        proc = await asyncio.create_subprocess_exec(
-            interpreter, str(_DRIFT_SCRIPT_PATH), "--verbose",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path(__file__).parent),
-        )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-        except asyncio.TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
+            done = await off_loop_spawn.run(
+                [interpreter, str(_DRIFT_SCRIPT_PATH), "--verbose"],
+                capture_output=True,
+                cwd=str(Path(__file__).parent),
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
             return {
                 "status": "error",
                 "reason": "drift script timed out after 120s",
                 "checked_at": int(time.time()),
             }
-        rc = proc.returncode
-        out = (stdout or b"").decode("utf-8", errors="replace")
-        err = (stderr or b"").decode("utf-8", errors="replace")
+        rc = done.returncode
+        out = (done.stdout or b"").decode("utf-8", errors="replace")
+        err = (done.stderr or b"").decode("utf-8", errors="replace")
         return {
             "status": "ok" if rc == 0 else "drift" if rc == 1 else "error",
             "exit_code": rc,
@@ -13092,8 +13062,15 @@ async def _serve(app: FastAPI):
         IMAGE_CACHE_DIR, _prompt_migration_state_path(),
     ))
 
+    # The status snapshot builds only while something reads it. The backend history needs samples whether or not
+    # anyone reads, so its sampler runs as long as the gateway does, and shutdown joins both.
+    status_endpoint.open_snapshot(_build_status_snapshot)
+    status_endpoint.start_backend_samples(lambda: config)
+
     yield
 
+    await status_endpoint.stop_snapshot()
+    await status_endpoint.stop_backend_samples()
     prompt_memory_stop.set()
     prompt_memory_task.cancel()
     metadata_migration_task.cancel()
@@ -13867,7 +13844,80 @@ def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[
     return out
 
 
-_SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+# Every capabilities and overview read asks about the same few services. Their rows are kept for the TTL below, and a
+# read that finds a service cold shares the probe already in flight for it, so a read costs no HTTP probe or `systemctl`
+# process unless a row has expired. The status grid keeps its own rows and deadlines.
+_SERVICE_ROW_CACHE_TTL_S = 12.0
+_SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}  # service id -> (probe start, row)
+_SERVICE_ROW_PROBES: dict[str, asyncio.Task] = {}  # service id -> the probe in flight that will answer it
+
+
+def _service_row_key(row: Mapping[str, Any]) -> str:
+    return str(row.get("service_id") or row.get("key") or "")
+
+
+async def _probe_service_rows(services: dict[str, Any], started: float) -> list[dict[str, Any]]:
+    owner = asyncio.current_task()
+    try:
+        rows = await status_endpoint._backend_grid({"backends": services})
+    finally:
+        # Unregister only the entries this task registered. A fallback probe registers none, so a newer probe for the
+        # same service may still be in flight when it finishes.
+        for key in services:
+            if _SERVICE_ROW_PROBES.get(key) is owner:
+                _SERVICE_ROW_PROBES.pop(key)
+    checked_at = int(time.time())
+    for row in rows:
+        row.setdefault("observed_at_s", checked_at)
+        _SERVICE_ROW_CACHE[_service_row_key(row)] = (started, dict(row))
+    return rows
+
+
+async def _service_rows(services: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The rows for these services: a row cached less than the TTL ago, else the row of a probe in flight for the
+    service, else a new probe for the services nobody is probing. A shared probe that fails does not fail this
+    reader: its services are probed again one by one, and a service that still fails gets an unknown row."""
+    now = status_endpoint._now()
+    rows: list[dict[str, Any]] = []
+    waits: dict[asyncio.Task, list[str]] = {}  # each probe this reader waits on -> the requested services it answers
+    cold: dict[str, Any] = {}
+    for key, service in services.items():
+        hit = _SERVICE_ROW_CACHE.get(key)
+        probe = _SERVICE_ROW_PROBES.get(key)
+        if hit is not None and now - hit[0] < _SERVICE_ROW_CACHE_TTL_S:
+            rows.append(dict(hit[1]))
+        elif probe is not None and not probe.done():
+            waits.setdefault(probe, []).append(key)
+        else:
+            cold[key] = service
+    if cold:
+        probe = asyncio.ensure_future(_probe_service_rows(cold, now))
+        _SERVICE_ROW_PROBES.update(dict.fromkeys(cold, probe))
+        waits[probe] = list(cold)
+    for probe, keys in waits.items():
+        try:
+            # Shielded: a reader that is cancelled must not cancel the probe that the other readers are waiting on.
+            rows.extend(row for row in await asyncio.shield(probe) if _service_row_key(row) in services)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - another service's failure in a shared batch must not fail this reader
+            rows.extend(await _service_rows_one_by_one({key: services[key] for key in keys}))
+    return rows
+
+
+async def _service_rows_one_by_one(services: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Probe each service on its own after a shared probe failed. A service that fails again gets an unknown row with
+    the error's type, never an exception."""
+    async def one(key: str, service: Any) -> list[dict[str, Any]]:
+        try:
+            return await _probe_service_rows({key: service}, status_endpoint._now())
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - reported as an unknown row
+            return [{"service_id": key, "key": key, "status": "unknown", "last_error": type(exc).__name__,
+                     "observed_at_s": int(time.time())}]
+    groups = await asyncio.gather(*(one(key, service) for key, service in services.items()))
+    return [row for group in groups for row in group]
 
 
 async def _status_payload_with_service_rows(
@@ -13889,22 +13939,7 @@ async def _status_payload_with_service_rows(
     missing = {key: value for key, value in backends.items() if key in wanted}
     if not missing:
         return status_payload
-    # Every capabilities and overview read asks about the same few services. Their
-    # rows are kept as long as the status grid keeps its own, so a read costs no
-    # HTTP probe or `systemctl` process unless a row has expired.
-    now = time.monotonic()
-    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
-    kept = [dict(hit[1]) for key in missing if (hit := _SERVICE_ROW_CACHE.get(key)) and now - hit[0] < ttl]
-    kept_ids = {str(row.get("service_id") or row.get("key") or "") for row in kept}
-    unchecked = {key: value for key, value in missing.items() if key not in kept_ids}
-    probed: list[dict[str, Any]] = []
-    if unchecked:
-        probed = await status_endpoint._backend_grid({"backends": unchecked})
-        checked_at = int(time.time())
-        for row in probed:
-            row.setdefault("observed_at_s", checked_at)
-            _SERVICE_ROW_CACHE[str(row.get("service_id") or row.get("key") or "")] = (now, dict(row))
-    extra = status_endpoint._merge_backend_observations([*kept, *probed])
+    extra = status_endpoint._merge_backend_observations(await _service_rows(missing))
     return {**status_payload, "backends": [*rows, *extra]}
 
 
@@ -13944,17 +13979,9 @@ async def _capabilities_availability_evidence(
 
 
 def _cached_status_payload_for_availability() -> Mapping[str, Any]:
-    cache = getattr(status_endpoint, "_CACHE", {})
-    cached = cache.get("data") if isinstance(cache, Mapping) else None
-    ts = cache.get("ts") if isinstance(cache, Mapping) else None
-    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
-    if not isinstance(cached, Mapping):
-        return {}
-    if not isinstance(ts, (int, float)) or isinstance(ts, bool):
-        return {}
-    if ttl <= 0 or time.monotonic() - float(ts) > ttl:
-        return {}
-    return cached
+    """The latest status snapshot's payload, for availability answers that need no probe. Empty before the first build,
+    and once the snapshot is too old to trust: the caller then probes the services it needs."""
+    return status_endpoint.latest_payload()
 
 
 def _runtime_availability_evidence(
@@ -13990,8 +14017,20 @@ async def _status_payload_with_protocol_issues(payload: Mapping[str, Any]) -> Ma
     return {**payload, "protocol_issues": issues, "health_sources": sources}
 
 
+async def _build_status_snapshot() -> dict[str, Any]:
+    """One full status build, run in the background while something reads the snapshot. Every section probes on its own
+    budget, and the availability evidence is worked out from the result. Readers take the result from the snapshot;
+    none waits for it."""
+    payload = await _status_payload_with_protocol_issues(await status_endpoint.build_status_payload(config))
+    return await _with_availability(payload)
+
+
 async def _status_payload_with_availability() -> Mapping[str, Any]:
-    payload = await _status_payload_with_protocol_issues(await status_endpoint.get_cached_status(config))
+    """The admin status and Home read the snapshot. Nothing here probes, and no request waits for a build."""
+    return await status_endpoint.get_cached_status(config)
+
+
+async def _with_availability(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     try:
         # Registry and capability resolution read SQLite; keep them off the loop.
         service_records, no_auth_capabilities = await asyncio.to_thread(
@@ -14000,8 +14039,11 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
         health_evidence = await _models_catalog_health_evidence(service_records, service_ids=(service_records.get("services") or {}).keys())
         # Composed workflow engines (the face sidecar) are checked read-only
         # for evidence; the engine grid itself is unchanged.
+        # A section that times out keeps its last rows, so this build can carry rows from an old answer. Availability does
+        # not count those as evidence of now: without a recent answer, a service has no row here and reads as unknown.
+        build_rows = payload if status_endpoint.backend_rows_are_fresh() else {**payload, "backends": []}
         service_rows = await _status_payload_with_service_rows(
-            payload, _workflow_availability_services(service_records),
+            build_rows, _workflow_availability_services(service_records),
             _composed_dependency_service_ids(no_auth_capabilities),
         )
         availability_evidence = await asyncio.to_thread(
@@ -14026,7 +14068,10 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
             ),
             "_availability_evidence": availability_evidence,
         }
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # The page still renders without the availability evidence. Log the type only: the message
+        # can carry a path or a secret.
+        print(f"[proxy] status availability skipped: {type(exc).__name__}", flush=True)
         return payload
 
 
@@ -16185,23 +16230,8 @@ async def _step_up_gate(request: Request, call_next):
     if step_up.is_sensitive(request.method, path):
         denial = await asyncio.to_thread(_step_up_denial, request)
         if denial is not None:
-            if path.startswith("/setup/"):
-                # A form post: say it in words, not as JSON.
-                return HTMLResponse(
-                    "<!doctype html><title>Sign in again</title><main><h1>Sign in again</h1>"
-                    "<p>It has been a while since you signed in, so no App or key was made.</p>"
-                    '<p><a href="/login?return_to=/setup/console">Sign in again</a>, then go back and create the App.</p></main>',
-                    status_code=401, headers={"Cache-Control": "no-store"})
             return denial
     return await call_next(request)
-
-
-def _require_recent_sign_in_for_administrator(session) -> None:
-    """Raise ``StepUpRequired`` for an owner or administrator whose sign-in is older than the window."""
-    roles = admin_store.effective_admin_roles("user", session.subject, path=ADMIN_STORE.path)
-    if ADMIN_CONTROL_ROLES & roles:
-        step_up.require_recent(
-            authenticated_at=session.last_authenticated, subject=session.subject, window_seconds=_step_up_window())
 
 
 def _mcp_require_recent_sign_in(request: Request, session) -> Response | None:
@@ -16366,8 +16396,17 @@ async def _models_catalog_health_evidence(
     async def get_json(url: str) -> Mapping[str, Any] | None:
         if not url.startswith(("http://", "https://")):
             return None
-        async with httpx.AsyncClient(timeout=0.75, verify=context) as client:
-            response = await client.get(url)
+        try:
+            async with httpx.AsyncClient(timeout=0.75, verify=context) as client:
+                response = await client.get(url)
+        except httpx.TimeoutException as exc:
+            raise HealthProbeTimedOut() from exc
+        except httpx.ConnectError as exc:
+            # Only a refused connection says nothing listens. A name that does not resolve or a
+            # failed TLS handshake propagates as an ordinary failure: the probe reports it as unavailable.
+            if connect_failure_kind(exc) == "refused":
+                raise HealthProbeRefused() from exc
+            raise
         if response.status_code >= 400:
             raise HealthProbeNoResponse(status_code=response.status_code)
         payload = response.json()
@@ -16450,10 +16489,8 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         )
     except Exception:  # noqa: BLE001
         health_evidence = {}
-    try:
-        status_payload = await status_endpoint.get_cached_status(config)
-    except Exception:  # noqa: BLE001
-        status_payload = _cached_status_payload_for_availability()
+    # Availability takes the snapshot only while it is fresh. An older row is probed below, not trusted.
+    status_payload = _cached_status_payload_for_availability()
     try:
         status_payload = await _status_payload_with_service_rows(
             status_payload or {}, service_records,
@@ -16951,7 +16988,6 @@ async def user_portal_try_key(request: Request):
         credential = ensure_try_session_key(
             session,
             reuse_id=str(reuse_id) if reuse_id else None,
-            before_mint=lambda: _require_recent_sign_in_for_administrator(session),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:
@@ -17066,6 +17102,32 @@ async def user_portal_rename_key(credential_id: str, request: Request):
         credential = await asyncio.to_thread(
             rename_user_app_key, session, credential_id, label if isinstance(label, str) else "",
             path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(status_code=200, content={"credential": credential}, headers={"cache-control": "no-store"})
+
+
+@app.put("/me/api/credentials/{credential_id}/privacy-permission", include_in_schema=False)
+async def user_portal_key_privacy_permission(credential_id: str, request: Request):
+    """Let the signed-in accountable person widen request-history access for one App key."""
+    try:
+        session = await asyncio.to_thread(_require_user_session, request)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    enabled = body.get("enabled") if isinstance(body, Mapping) else None
+    if not isinstance(enabled, bool):
+        return _user_action_response_error(UserPortalError(
+            "invalid_privacy_permission", "enabled must be true or false", status_code=400))
+    try:
+        credential = await asyncio.to_thread(
+            set_user_app_key_privacy_permission, session, credential_id, enabled, path=ADMIN_STORE.path)
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     return JSONResponse(status_code=200, content={"credential": credential}, headers={"cache-control": "no-store"})
@@ -17640,26 +17702,100 @@ def _normalize_local_email(value: str) -> str:
     return (value or "").strip().lower()
 
 
-async def _issue_browser_admin_session(
+def _complete_setup_local_owner(
     request: Request,
     *,
-    user_id: str,
     email: str,
-    role: str,
+    verifier: str,
     signing_key: bytes,
-    redirect_to: str = "/setup/",
-) -> Response:
+):
+    """Commit the first owner, their plan, their personal App and their session together.
+
+    Returns the session and its cookie, or None when an owner was already claimed. The caller sets the
+    cookie after this returns, so the cookie is set only once the claim has committed.
+    """
+    path = ADMIN_STORE.path
     cookie = _browser_admin_cookie_config()
-    # Both calls open and write SQLite, so they run in a thread, not on the event loop.
-    await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cookie,
-                            signing_key=signing_key, path=ADMIN_STORE.path)
-    session = await asyncio.to_thread(
-        browser_sessions.issue,
-        {"sub": user_id, "email": email}, role=role, cookie=cookie, path=ADMIN_STORE.path,
-    )
-    response = RedirectResponse(redirect_to, status_code=303)
-    browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=signing_key)
-    return response
+    accounts.initialize(path)
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        user = admin_store.claim_first_local_owner_in(
+            conn,
+            issuer=_LOCAL_OWNER_ISSUER,
+            subject=email,
+            email=email,
+            display_name=email,
+            verifier=verifier,
+            granted_by="setup-local-owner",
+        )
+        if user is None:
+            return None
+        user_id = str(user["id"])
+        # A fresh gateway has no built-in default plan, so the first owner gets one
+        # ordinary starting plan; without it they would be refused on their own gateway.
+        admin_store.seed_first_owner_plan_in(conn, user_id)
+        # Parity with OIDC login: give the new owner a personal App up front so the
+        # portal can hand them a working key without a separate "create App" step.
+        label = user.get("email") or user.get("display_name") or user_id
+        app = admin_store.ensure_personal_app_for_user_in(conn, user_id, name=f"{label} personal access")
+        admin_store._record_audit_in_transaction(
+            conn, "app.self_create",
+            actor_kind="user", actor_id=user_id,
+            actor_label=str(user.get("display_name") or user.get("email") or user_id),
+            target_kind="app", target_id=str(app["id"]),
+            metadata={"email": user.get("email"), "via": "setup_local_owner", "role": "owner",
+                      "access_plan": app.get("access_plan")},
+            now=int(time.time()),
+        )
+        browser_sessions.end_incoming_in(conn, request, cookie=cookie, signing_key=signing_key, path=path)
+        session = browser_sessions.issue_in(conn, {"sub": user_id, "email": email}, role="owner",
+                                            cookie=cookie, path=path)
+    accounts.invalidate_asset_families()
+    return session, cookie
+
+
+def _complete_setup_local_login(
+    request: Request,
+    user: Mapping[str, Any],
+    *,
+    email: str,
+    built_in: bool,
+    signing_key: bytes,
+):
+    """Commit the setup recovery login and its replacement session together."""
+    path = ADMIN_STORE.path
+    user_id = str(user["id"])
+    cookie = _browser_admin_cookie_config()
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        role_names = admin_store.effective_user_roles_in(conn, user_id)
+        if not built_in and "owner" not in role_names:
+            return None, "builtin_disabled"
+        if "owner" in role_names:
+            role = "owner"
+        elif role_names & {"admin", "superadmin"}:
+            role = "admin"
+        else:
+            return None, "admin_role_required"
+
+        accounts.clear_signin_refusal_in(conn, user_id)
+        admin_store._record_audit_in_transaction(
+            conn, "setup.local_owner_login",
+            actor_kind="user", actor_id=user_id,
+            actor_label=str(user.get("display_name") or user.get("email") or user_id),
+            target_kind="user", target_id=user_id,
+            metadata={"email": email, "via": "setup_page"},
+            now=int(time.time()),
+        )
+        browser_sessions.end_incoming_in(
+            conn, request, cookie=cookie, signing_key=signing_key, path=path,
+        )
+        session = browser_sessions.issue_in(
+            conn, {"sub": user_id, "email": email},
+            role=role, cookie=cookie, path=path,
+        )
+    accounts.invalidate_asset_families()
+    return session, None
 
 
 def _origin_header_allowed_for_request(request: Request) -> bool:
@@ -17794,35 +17930,19 @@ async def setup_create_local_owner(request: Request):
             status_code=400,
         )
 
-    user = admin_store.claim_first_local_owner(
-        issuer=_LOCAL_OWNER_ISSUER,
-        subject=email,
-        email=email,
-        display_name=email,
-        verifier=verifier,
-        granted_by="setup-local-owner",
-        path=ADMIN_STORE.path,
-    )
-    if user is None:
-        return RedirectResponse("/setup/", status_code=303)
-    # A fresh gateway has no built-in default plan, so the first owner gets one
-    # ordinary starting plan; without it they would be refused on their own gateway.
-    admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
-    # Parity with OIDC login: give the new owner a personal App up front so the
-    # portal can hand them a working key without a separate "create App" step.
-    _ensure_personal_app_for_owner(user, role="owner")
     # Setup is done — hand the new owner to the portal, where their key is
     # auto-minted and revealed once. Landing back on /setup would greet them
     # with the operator "this gateway has an owner" recovery card (third-person,
     # plus a redundant second key-mint flow). The portal is the real home.
-    return await _issue_browser_admin_session(
-        request,
-        user_id=str(user["id"]),
-        email=email,
-        role="owner",
-        signing_key=signing_key,
-        redirect_to="/",
+    claimed = await asyncio.to_thread(
+        _complete_setup_local_owner, request, email=email, verifier=verifier, signing_key=signing_key,
     )
+    if claimed is None:
+        return RedirectResponse("/setup/", status_code=303)
+    session, cookie = claimed
+    response = RedirectResponse("/", status_code=303)
+    browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=signing_key)
+    return response
 
 
 @app.post("/setup/local-login", include_in_schema=False)
@@ -17886,17 +18006,14 @@ async def setup_local_login(request: Request):
             login_email=email,
             status_code=401,
         )
-    role_names = admin_store.effective_admin_roles(
-        "user", str(user["id"]), path=ADMIN_STORE.path,
+    session, signin_error = await asyncio.to_thread(
+        _complete_setup_local_login, request, user, email=email,
+        built_in=built_in, signing_key=signing_key,
     )
-    if not built_in and "owner" not in role_names:
+    if signin_error == "builtin_disabled":
         # Only the owner's password works while built-in sign-in is off.
         return JSONResponse({"error": {"code": "builtin_disabled", "message": "Use the identity provider to sign in."}}, status_code=403)
-    if "owner" in role_names:
-        role = "owner"
-    elif "admin" in role_names or "superadmin" in role_names:
-        role = "admin"
-    else:
+    if signin_error == "admin_role_required":
         return await _setup_page_response(
             request,
             login_error=(
@@ -17906,27 +18023,16 @@ async def setup_local_login(request: Request):
             login_email=email,
             status_code=403,
         )
-    accounts.clear_signin_refusal(str(user["id"]), path=ADMIN_STORE.path)
-    admin_store.record_audit(
-        "setup.local_owner_login",
-        actor_kind="user",
-        actor_id=str(user["id"]),
-        actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
-        target_kind="user",
-        target_id=str(user["id"]),
-        metadata={"email": email, "via": "setup_page"},
-        path=ADMIN_STORE.path,
-    )
     # A returning owner/admin signing in from /setup lands on the portal, their
     # home — not back on the operator setup console.
-    return await _issue_browser_admin_session(
-        request,
-        user_id=str(user["id"]),
-        email=email,
-        role=role,
-        signing_key=signing_key,
-        redirect_to=_safe_admin_return_to(values.get("return_to") or request.query_params.get("return_to")),
+    response = RedirectResponse(
+        _safe_admin_return_to(values.get("return_to") or request.query_params.get("return_to")),
+        status_code=303,
     )
+    browser_sessions.set_cookie(
+        response, session, cookie=_browser_admin_cookie_config(), signing_key=signing_key,
+    )
+    return response
 
 
 @app.post("/setup/first-app", include_in_schema=False)
@@ -18044,6 +18150,118 @@ def _browser_signin_failure(request: Request, *, return_to: str | None = None, r
     )
 
 
+class _OidcBootstrapRefused(Exception):
+    """A first-owner race changed the admission decision during sign-in."""
+
+
+class _OidcAccountDisabled(Exception):
+    """The OIDC identity belongs to a disabled or removed person."""
+
+
+def _complete_oidc_signin(
+    request: Request,
+    state,
+    cfg,
+    claims: Mapping[str, Any],
+    decision,
+    bootstrap_owner: bool,
+):
+    """Commit every successful OIDC sign-in write together and return its session and device cookie."""
+    path = ADMIN_STORE.path
+    accounts.initialize(path)
+    previous = browser_sessions.decode_incoming(
+        request, cookie=cfg.cookie, signing_key=cfg.signing_key,
+    ) if state.reauth else None
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        user = admin_store.upsert_oidc_user_in(
+            conn, cfg.issuer, str(claims["sub"]),
+            email=str(claims.get("email") or ""),
+            display_name=str(claims.get("name") or claims.get("email") or ""),
+        )
+        person_id = str(user["id"])
+        account_state = conn.execute(
+            "SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,),
+        ).fetchone()
+        if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
+            raise _OidcAccountDisabled()
+        accounts.record_oidc_verification_in(conn, person_id, claims.get("email_verified") is True)
+        accounts.clear_signin_refusal_in(conn, person_id)
+        oidc_access_names = access_names_from_oidc_claims(
+            claims, client_id=cfg.client_id, groups_claim=cfg.groups_claim,
+        )
+        admin_store.replace_user_identity_claims_in(conn, person_id, oidc_access_names)
+
+        owner_claimed = False
+        if bootstrap_owner:
+            owner_claimed = admin_store.claim_first_owner_in(
+                conn, person_id, granted_by="oidc-bootstrap",
+            )
+            if owner_claimed:
+                admin_store.seed_first_owner_plan_in(conn, person_id)
+            else:
+                # Another first sign-in won ownership while this request waited for the write lock.
+                decision = signin_admin.decide(
+                    path, claims, issuer=cfg.issuer, client_id=cfg.client_id,
+                    groups_claim=cfg.groups_claim, bootstrap_owner=False,
+                )
+                if not decision.outcome.admitted:
+                    raise _OidcBootstrapRefused()
+
+        effective_grants = admin_store.reconcile_oidc_admin_roles_in(
+            conn, person_id, {"admin"} if decision.outcome.admin else set(),
+        )
+        signin_admin.sync_rule_plan_in(conn, person_id, decision.outcome)
+        effective_roles = {grant["role"] for grant in effective_grants}
+        role = "owner" if owner_claimed or "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
+        avatars.record_sign_in_picture_in(conn, person_id, claims.get("picture"))
+        label = user.get("email") or user.get("display_name") or user["id"]
+        app = admin_store.ensure_personal_app_for_user_in(
+            conn, person_id, name=f"{label} personal access",
+        )
+        admin_store._record_audit_in_transaction(
+            conn, "app.self_create",
+            actor_kind="user", actor_id=person_id,
+            actor_label=str(user.get("display_name") or user.get("email") or person_id),
+            target_kind="app", target_id=str(app["id"]),
+            metadata={"email": user.get("email"), "via": "oidc_login",
+                      "access_plan": app.get("access_plan")},
+            now=int(time.time()),
+        )
+
+        if previous is not None and previous.subject != person_id:
+            raise ValueError("re-authentication was completed by a different person")
+        session_claims = {"sub": person_id, "email": claims.get("email") or ""}
+        provider_time = _provider_auth_time(claims)
+        authenticated_at = AUTH_TIME_UNKNOWN if provider_time is None else provider_time
+        if previous is not None:
+            try:
+                session = browser_sessions.confirm_in(
+                    conn, previous, path=path, authenticated_at=authenticated_at,
+                )
+            except SessionError:
+                # The session ended while the person was at the provider. The provider has just proved who they
+                # are, so they get a new session, as they did before sign-in writes were atomic.
+                previous = None
+        if previous is None:
+            if not state.reauth:
+                browser_sessions.end_incoming_in(
+                    conn, request, cookie=cfg.cookie, signing_key=cfg.signing_key, path=path,
+                )
+            session = browser_sessions.issue_in(
+                conn, session_claims, role=role, cookie=cfg.cookie, path=path,
+                authenticated_at=authenticated_at,
+            )
+        minted = remembered_people.keep_in(
+            conn,
+            token=remembered_people.device_token(request, secure=cfg.cookie.secure),
+            person_id=person_id, method="sso", issuer=cfg.issuer,
+            remember=state.remember, from_tile=bool(state.tile_person_id),
+        )
+    accounts.invalidate_asset_families()
+    return user, session, minted
+
+
 @app.get("/admin/oidc/callback", include_in_schema=False)
 async def admin_oidc_callback(request: Request):
     error = request.query_params.get("error")
@@ -18108,105 +18326,24 @@ async def admin_oidc_callback(request: Request):
             # A refused person keeps nothing the identity provider gave them.
             await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
             raise
-        user = admin_store.upsert_oidc_user(
-            cfg.issuer,
-            str(claims["sub"]),
-            email=str(claims.get("email") or ""),
-            display_name=str(claims.get("name") or claims.get("email") or ""),
-            path=ADMIN_STORE.path,
-        )
-        accounts.record_oidc_verification(str(user["id"]), claims.get("email_verified") is True, path=ADMIN_STORE.path)
-        accounts.clear_signin_refusal(str(user["id"]), path=ADMIN_STORE.path)
-        account_state = accounts.access(str(user["id"]), path=ADMIN_STORE.path)
-        if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
-            return clear_browser_binding(JSONResponse({"error": {"code": "account_disabled", "message": "This account is disabled."}}, status_code=403), state)
-        oidc_access_names = access_names_from_oidc_claims(
-            claims,
-            client_id=cfg.client_id,
-            groups_claim=cfg.groups_claim,
-        )
-        admin_store.replace_user_identity_claims(
-            str(user["id"]),
-            oidc_access_names,
-            path=ADMIN_STORE.path,
-        )
-        # Whether an owner already exists is decided inside the write's own
-        # transaction, so two first sign-ins cannot both become owner.
-        if bootstrap_owner and admin_store.claim_first_owner(
-            str(user["id"]), granted_by="oidc-bootstrap", path=ADMIN_STORE.path,
-        ):
-            admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
-        elif bootstrap_owner:
-            # Another first sign-in won the owner role; this person is an ordinary one.
-            decision, _ = await _decide_oidc_signin(cfg, claims, bootstrap_owner=False)
-            if not decision.outcome.admitted:
-                await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
-                raise SignInRefused("sign-in rules do not let this person in")
-        # Rule-derived grants are re-derived at every sign-in; a grant no rule
-        # supports any more ends here. Grants the owner gave by hand stay.
-        effective_grants = admin_store.reconcile_oidc_admin_roles(
-            str(user["id"]), {"admin"} if decision.outcome.admin else set(),
-            path=ADMIN_STORE.path,
-        )
-        signin_admin.sync_rule_plan(ADMIN_STORE.path, str(user["id"]), decision.outcome)
-        effective_roles = {grant["role"] for grant in effective_grants}
-        role = "owner" if "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
-        # Kept only for a person who is let in: the URL the provider shared (https and short);
-        # the browser never loads it (gateway/me_avatar.py serves it).
-        await asyncio.to_thread(avatars.record_sign_in_picture, str(user["id"]), claims.get("picture"), path=ADMIN_STORE.path)
-        label = user.get("email") or user.get("display_name") or user["id"]
-        app = admin_store.ensure_personal_app_for_user(
-            str(user["id"]),
-            name=f"{label} personal access",
-            path=ADMIN_STORE.path,
-        )
-        admin_store.record_audit(
-            "app.self_create",
-            actor_kind="user",
-            actor_id=str(user["id"]),
-            actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
-            target_kind="app",
-            target_id=str(app["id"]),
-            metadata={"email": user.get("email"), "via": "oidc_login",
-                      "access_plan": app.get("access_plan")},
-            path=ADMIN_STORE.path,
-        )
-        session_claims = {
-            "sub": user["id"],
-            "email": claims.get("email") or "",
-        }
-        previous = await asyncio.to_thread(_oidc_session_from_request, request) if state.reauth else None
-        if previous is not None and previous.subject != str(user["id"]):
-            # Confirming is for the person who asked. Someone else's login is not a confirmation.
-            raise ValueError("re-authentication was completed by a different person")
-        # Without auth_time the provider has not said when the person signed in, so the time is unknown, not
-        # "now": the session is signed in and never recent (decision D40).
-        provider_time = _provider_auth_time(claims)
-        authenticated_at = AUTH_TIME_UNKNOWN if provider_time is None else provider_time
-        if previous is not None:
-            # Confirming the same person keeps their sign-in: the same family under a new session id, as a password
-            # confirm does, so the view id and the browser's other tabs stay the same (decision D35 for the old id).
-            session = await asyncio.to_thread(browser_sessions.confirm, previous, path=ADMIN_STORE.path,
-                                              authenticated_at=authenticated_at)
-        else:
-            if not state.reauth:
-                await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
-                                        signing_key=cfg.signing_key, path=ADMIN_STORE.path)
-            session = await asyncio.to_thread(
-                browser_sessions.issue,
-                session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
-                authenticated_at=authenticated_at,
+        try:
+            user, session, minted = await asyncio.to_thread(
+                _complete_oidc_signin, request, state, cfg, claims, decision, bootstrap_owner,
             )
+        except _OidcBootstrapRefused:
+            await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
+            raise SignInRefused("sign-in rules do not let this person in") from None
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
         browser_sessions.set_cookie(response, session, cookie=cfg.cookie, signing_key=cfg.signing_key)
-        minted = await asyncio.to_thread(
-            remembered_people.keep, path=ADMIN_STORE.path,
-            token=remembered_people.device_token(request, secure=cfg.cookie.secure),
-            person_id=str(user["id"]), method="sso", issuer=cfg.issuer,
-            remember=state.remember, from_tile=bool(state.tile_person_id))
         if minted:
             remembered_people.set_device_cookie(response, minted, secure=cfg.cookie.secure)
         return clear_browser_binding(response, state)
+    except _OidcAccountDisabled:
+        response = JSONResponse(
+            {"error": {"code": "account_disabled", "message": "This account is disabled."}},
+            status_code=403,
+        )
+        return clear_browser_binding(response, state) if state else response
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as failure:
         no_time = isinstance(failure, ProviderReportsNoSignInTime)
         response = _browser_signin_failure(
@@ -18221,6 +18358,18 @@ async def admin_oidc_callback(request: Request):
                 content="OIDC authentication failed",
                 status_code=400,
                 media_type="text/plain; charset=utf-8",
+            )
+        return clear_browser_binding(response, state) if state else response
+    except Exception:  # noqa: BLE001 - unexpected failures must not escape the sign-in boundary
+        response = _browser_signin_failure(
+            request, return_to=state.return_to if state else None, reason="provider",
+        )
+        if response is None:
+            response = JSONResponse(
+                {"error": {"code": "signin_unavailable",
+                            "message": "Sign-in could not be completed. Try again."}},
+                status_code=503,
+                headers={"cache-control": "no-store"},
             )
         return clear_browser_binding(response, state) if state else response
 
@@ -18747,7 +18896,8 @@ async def health():
     """Proxy service health. Public so external health checks do not need API keys."""
     body = {
         "status": "healthy",
-        "app_credentials_configured": active_app_credential_count(),
+        # SQLite on a worker thread: an open and a query on the loop would hold every other request.
+        "app_credentials_configured": await asyncio.to_thread(active_app_credential_count),
     }
     # A broken session view key is reported as degraded, with its reason code only: signed-in accounts cannot be
     # checked until it is fixed. This comment stays out of the docstring, which is the published OpenAPI description.

@@ -149,7 +149,7 @@
     ],
     "media_jobs_schema_version": [
       {
-        "version": 4
+        "version": 5
       }
     ],
     "retention_fact_destinations": [

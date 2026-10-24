@@ -112,6 +112,20 @@ def install_counters() -> None:
 
     sys.addaudithook(hook)
 
+    # uvloop spawns in C (libuv), so no audit event fires for asyncio's own spawns. Count the
+    # asyncio call here instead, or every systemctl probe would read as zero processes.
+    import asyncio
+
+    spawn = asyncio.create_subprocess_exec
+
+    async def counted_create_subprocess_exec(*args, **kwargs):
+        _bump("subproc")
+        if ATTRIBUTE:
+            _where("proc", str(args[0] if args else "create_subprocess_exec"))
+        return await spawn(*args, **kwargs)
+
+    asyncio.create_subprocess_exec = counted_create_subprocess_exec  # type: ignore[assignment]
+
 
 class PerfStamp:
     """Pure ASGI middleware: adds the counter deltas to the response headers."""
@@ -195,8 +209,9 @@ def main() -> None:
     routes_file = os.environ.get("PERF_ROUTES_FILE")
     if routes_file:
         dump_routes(proxy.app, routes_file)
-    uvicorn.run(proxy.app, host="127.0.0.1", port=port, log_level="warning", loop="asyncio",
-                timeout_keep_alive=3600)
+    # uvicorn's default loop (uvloop when installed), as proxy.py runs in production. On the stdlib
+    # loop a spawn is a cheap vfork, so this fixture would not show the stall that a fork on uvloop causes.
+    uvicorn.run(proxy.app, host="127.0.0.1", port=port, log_level="warning", timeout_keep_alive=3600)
 
 
 if __name__ == "__main__":

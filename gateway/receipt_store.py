@@ -344,6 +344,11 @@ def finalize(
         for field in _IMMUTABLE_ACCEPTED_FIELDS:
             if field in accepted:
                 merged[field] = accepted[field]
+        # The maker decides who reads the full retention entry, so the accepted value wins, absent or not.
+        if accepted.get("maker_person_id") is None:
+            merged.pop("maker_person_id", None)
+        else:
+            merged["maker_person_id"] = accepted["maker_person_id"]
         for field in PHASE_FIELDS:
             if accepted.get(field) is not None:
                 merged[field] = accepted[field]
@@ -373,14 +378,13 @@ def finalize(
 
 
 def _filter_for_audience(
-    data: Mapping[str, Any], audience: str, *,
-    viewer_person_id: str | None = None,
+    data: Mapping[str, Any], audience: str, *, viewer_person_id: str | None = None,
 ) -> dict[str, Any]:
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
+    # Only the maker the receipt names reads the full entry. Owning the App the request came through is not enough.
     retention_detail = audience == "internal" or bool(
-        viewer_person_id and data.get("maker_person_id") == viewer_person_id
-    )
+        viewer_person_id and data.get("maker_person_id") == viewer_person_id)
     return serialize_receipt_for_audience(
         _with_source(data), audience, from_store=True, retention_detail=retention_detail,
     )

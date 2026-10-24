@@ -37,7 +37,7 @@ def test_request_history_is_a_group_on_by_default_as_data():
 
 def test_request_history_kind_captures_the_accepted_and_received_parts():
     kind = retention.bundled().data["kinds"]["request_history"]
-    assert kind["parts"] == {"allowed": ["accepted", "received"], "default": ["accepted"]}
+    assert kind["parts"] == {"allowed": ["accepted", "received"], "default": ["accepted", "received"]}
     assert kind["readers"] == "maker"
     assert kind["max_record_bytes"] == 1048576
 
@@ -50,6 +50,16 @@ def test_new_member_keeps_request_history_for_the_default_period():
     assert decision.keep is True
     assert decision.reason == "remembered"
     assert decision.kept_until == 1_000 + 7 * 86_400
+    assert decision.parts == ("accepted", "received")
+
+
+def test_a_stored_choice_of_sent_only_is_kept_as_chosen_under_the_replies_default():
+    chosen = {"remember": True, "retention": "7_days", "parts": ["accepted"]}
+    decision = retention.decide(
+        retention.REQUEST_HISTORY, person_id="maker", member=chosen, household_policy=None,
+        request_body={"model": "m"}, now=1_000,
+    )
+    assert decision.keep is True
     assert decision.parts == ("accepted",)
 
 

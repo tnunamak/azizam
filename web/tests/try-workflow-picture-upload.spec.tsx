@@ -18,11 +18,21 @@ import multirefCatalog from "./fixtures/workflows-image-edit-multiref.json";
 // pictures are typed "string" with `asset: true`, and the recommended route
 // (multipart /v1/images/edits) sends them as the file parts "image[]" and
 // "mask". Each picture gets one picker; nothing shows a made-up path.
+const HISTORY_ON = {
+  keep: true,
+  retention: "7_days",
+  parts: ["accepted"],
+  choices: ["1_day", "7_days", "30_days"],
+  allowed_parts: ["accepted", "received"],
+  notice_due: false,
+};
+
 const account = vi.hoisted(() => ({
   session: vi.fn(),
   tryKey: vi.fn(),
   revokeKey: vi.fn(),
   promptMemory: vi.fn(),
+  requestHistory: vi.fn(),
   params: new URLSearchParams(),
 }));
 vi.mock("next/navigation", () => ({
@@ -76,6 +86,7 @@ beforeEach(() => {
   });
   account.tryKey.mockResolvedValue({ id: "try-key", api_key: "test-key", reused: false, app_name: "Try", expires_at: 0 });
   account.promptMemory.mockResolvedValue(promptMemory(true));
+  account.requestHistory.mockResolvedValue({ ...HISTORY_ON });
   fetchMock.mockReset().mockImplementation(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") return json({ data: [] });
     if (url.includes("/me/api/receipts/")) return json({}, 404);

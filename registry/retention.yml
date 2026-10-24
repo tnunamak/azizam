@@ -240,7 +240,8 @@ kinds:
     readers: scope
   request_history:
     purpose: Request history keeps what your apps sent for a short time, so you can check it and run it again.
-    parts: {allowed: [accepted, received], default: [accepted]}
+    # A new member keeps what was sent and what came back. A person who chose parts keeps the choice (D50).
+    parts: {allowed: [accepted, received], default: [accepted, received]}
     max_record_bytes: 1048576
     # Stored bytes one person may hold (256 MiB). Over it, the maintenance pass removes the oldest records first (FIFO).
     max_bytes_per_person: 268435456
