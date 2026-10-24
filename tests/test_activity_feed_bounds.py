@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from gateway import admin_store, receipt_store, user_runtime
 from gateway.admin_oidc import AdminSession
@@ -188,3 +190,75 @@ def test_every_way_a_cursor_is_refused_gives_the_same_400(feed, monkeypatch):
 
     assert {(refusal.status_code, refusal.code, refusal.message) for refusal in refusals} == {
         (400, "invalid_cursor", refusals[0].message)}
+
+
+@pytest.fixture
+def viewer(tmp_path: Path):
+    admin_path, receipts_path = tmp_path / "admin.db", tmp_path / "receipts.db"
+    admin_store.init_db(admin_path)
+    receipt_store.init_db(receipts_path)
+    alice = admin_store.upsert_oidc_user("https://people.test", "alice", path=admin_path, email="alice@example.test")
+    session = AdminSession(subject=alice["id"], email=alice["email"], role="none", issued_at=1, expires_at=4_000_000_000)
+    return session, alice["id"], admin_path, receipts_path
+
+
+def _sealed(admin_path: Path, viewer_id: str, body: str) -> str:
+    """A cursor sealed under the server's own key, so only the field checks can refuse it."""
+    nonce = secrets.token_bytes(12)
+    sealed = AESGCM(user_runtime._activity_cursor_key(admin_path)).encrypt(
+        nonce, body.encode("utf-8"), user_runtime._activity_cursor_aad(viewer_id))
+    return base64.urlsafe_b64encode(nonce + sealed).decode("ascii").rstrip("=")
+
+
+def _body(*, created_at: str = "1000", request_id: str = '"req_x"', exp: str | None = None) -> str:
+    """A cursor's plaintext as JSON text, each field written as the raw JSON it should carry."""
+    expires = exp or str(user_runtime._activity_now() + 600)
+    return f'{{"created_at":{created_at},"exp":{expires},"request_id":{request_id}}}'
+
+
+def _snapshot_for(viewer, cursor: str) -> dict[str, Any]:
+    session, _, admin_path, receipts_path = viewer
+    return user_runtime.build_user_activity_snapshot(session, path=admin_path, receipts_path=receipts_path, cursor=cursor)
+
+
+@pytest.mark.parametrize("fields", [
+    {"created_at": "1e999"},  # JSON reads this as infinity
+    {"created_at": "NaN"},
+    {"created_at": str(2**63)},  # one past the largest SQLite integer
+    {"created_at": str(-(2**63) - 1)},  # one past the smallest
+    {"created_at": '"1000"'},  # a string where an integer belongs
+    {"created_at": "true"},
+    {"exp": "1e999"},
+    {"exp": str(2**63)},
+    {"request_id": '"' + "r" * 129 + '"'},  # one past the id bound
+    {"request_id": '""'},
+    {"request_id": "42"},
+])
+def test_a_sealed_cursor_with_an_out_of_range_field_is_refused_with_a_400(viewer, fields):
+    _, viewer_id, admin_path, _ = viewer
+
+    refusal = _refusal(lambda: _snapshot_for(viewer, _sealed(admin_path, viewer_id, _body(**fields))))
+
+    assert (refusal.status_code, refusal.code) == (400, "invalid_cursor")
+
+
+def test_a_sealed_cursor_with_an_extra_field_is_refused_with_a_400(viewer):
+    _, viewer_id, admin_path, _ = viewer
+    body = _body()[:-1] + ',"extra":1}'
+
+    refusal = _refusal(lambda: _snapshot_for(viewer, _sealed(admin_path, viewer_id, body)))
+
+    assert (refusal.status_code, refusal.code) == (400, "invalid_cursor")
+
+
+@pytest.mark.parametrize("fields", [
+    {"created_at": str(2**63 - 1)},
+    {"created_at": str(-(2**63))},
+    {"request_id": '"' + "r" * 128 + '"'},
+])
+def test_a_sealed_cursor_at_the_edge_of_its_bounds_is_read_as_a_position(viewer, fields):
+    _, viewer_id, admin_path, _ = viewer
+
+    snapshot = _snapshot_for(viewer, _sealed(admin_path, viewer_id, _body(**fields)))
+
+    assert snapshot["authenticated"] is True and snapshot["receipts"] == []

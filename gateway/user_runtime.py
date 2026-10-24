@@ -479,10 +479,18 @@ ACTIVITY_CURSOR_TTL_SECONDS = 60 * 60
 _ACTIVITY_CURSOR_LABEL = b"azizam.activity-cursor.v1"
 _ACTIVITY_CURSOR_NONCE_BYTES = 12
 _ACTIVITY_CURSOR_MAX_CHARS = 1024
+_ACTIVITY_CURSOR_ID_MAX_CHARS = 128
+# SQLite stores an integer in 64 bits. A position outside that range would fail inside the query, not at the client.
+_SQLITE_INT_MIN, _SQLITE_INT_MAX = -(2**63), 2**63 - 1
 
 
 def _activity_now() -> int:
     return int(time.time())
+
+
+def _is_sqlite_int(value: object) -> bool:
+    # ``type(...) is int`` also refuses bool, and a float such as the JSON number 1e999 (infinity).
+    return type(value) is int and _SQLITE_INT_MIN <= value <= _SQLITE_INT_MAX
 
 
 def _activity_cursor_aad(viewer_id: str) -> bytes:
@@ -533,10 +541,15 @@ def _open_activity_cursor(cursor: str, *, viewer_id: str, admin_path: Path) -> t
         plaintext = AESGCM(key).decrypt(blob[:_ACTIVITY_CURSOR_NONCE_BYTES], blob[_ACTIVITY_CURSOR_NONCE_BYTES:],
                                         _activity_cursor_aad(viewer_id))
         data = json.loads(plaintext)
-        created_at, request_id, expires_at = data["created_at"], data["request_id"], data["exp"]
-    except (KeyError, TypeError, ValueError, InvalidTag):
+    except (ValueError, InvalidTag):
         raise refused from None
-    if not isinstance(expires_at, int) or expires_at < _activity_now():
+    # The seal proves this server wrote the cursor, but its fields still reach a query, so they are checked too.
+    if not isinstance(data, dict) or set(data) != {"created_at", "exp", "request_id"}:
+        raise refused
+    created_at, request_id, expires_at = data["created_at"], data["request_id"], data["exp"]
+    if not (_is_sqlite_int(created_at) and _is_sqlite_int(expires_at)) or expires_at < _activity_now():
+        raise refused
+    if type(request_id) is not str or not 0 < len(request_id) <= _ACTIVITY_CURSOR_ID_MAX_CHARS:
         raise refused
     return created_at, request_id
 
