@@ -14758,7 +14758,14 @@ def _avatar_start_job(request: Request, person_id: str, model: str, prompt: str)
         raise PublicFailure("session_user_not_found", 401)
     return me_make.start_person_job(
         request,
-        {"intent": avatar_generation.IMAGE_INTENT, "model": model, "prompt": prompt, "n": 1},
+        {
+            "intent": avatar_generation.IMAGE_INTENT,
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            # The prompt is the gateway's template, not the person's words, so it is not kept in their prompt memory.
+            "extensions": {prompt_memory.NAMESPACE: {"mode": "forget"}},
+        },
         user=user,
         runtime=_SESSION_MAKE_RUNTIME,
         find_owned_asset=lambda request, user_id, asset_id: me_media.owned_library_asset(

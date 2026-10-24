@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, avatar_generation, avatars, media_fetch
+from gateway import admin_store, avatar_generation, avatars, media_fetch, prompt_memory
 from gateway.admin_oidc import AdminSession
 from gateway.me_avatar import AvatarGeneration, PictureCache, create_me_avatar_router
 
@@ -400,3 +400,18 @@ def test_an_existing_database_accepts_the_generated_choice_after_upgrade(tmp_pat
         conn.execute("UPDATE user_avatars SET choice='generated', generated_template='1', generated_at=2 WHERE user_id=?",
                      (user["id"],))
         assert conn.execute("SELECT choice FROM user_avatars").fetchone()[0] == "generated"
+
+
+def test_the_make_job_forgets_its_template_prompt(monkeypatch) -> None:
+    # The template is the gateway's words, not the person's: the job asks prompt memory to keep nothing of it.
+    import proxy
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(proxy.admin_store, "get_user", lambda person_id, path: {"id": person_id})
+    monkeypatch.setattr(proxy.me_make, "start_person_job",
+                        lambda request, body, **kwargs: seen.update(body=dict(body)) or {"job_id": "job_1"})
+    prompt = avatar_generation.build_prompt(3)
+    proxy._avatar_start_job(None, "usr_alice", "picture-route", prompt)
+    assert seen["body"]["prompt"] == prompt
+    assert seen["body"]["intent"] == "image.generate" and seen["body"]["n"] == 1
+    assert seen["body"]["extensions"] == {prompt_memory.NAMESPACE: {"mode": "forget"}}
