@@ -163,6 +163,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # The edit transport documents repeated image[] parts for pictures. The sign-in box (Login.remember) is
         # nullable: true keeps a name, false takes it off, null leaves the list alone. The remembered list's entry for
         # the person signed in on the browser carries "you": true.
-        assert route_graph.openapi_digest(proxy.app) == "0b8e2afe2a1af80bf7e3cac5af6cf1305ece275aae02fa7115fc05041ff385f3"
+        assert route_graph.openapi_digest(proxy.app) == "7e31e1c19546175cead7d88175cc1727f7b80b80b9de69f5dd6cc6800f10d1c7"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
