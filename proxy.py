@@ -23949,6 +23949,9 @@ async def gateway_image_generations_media_job(request: Request):
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
 
+    # Usage counts the job as this request. The submit receipt names its job, as Make's does,
+    # so the pair stays linked after the job record is erased.
+    receipt.job_id = job.job_id
     try:
         media_jobs.append_event(
             job.job_id,

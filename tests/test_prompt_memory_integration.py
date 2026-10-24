@@ -133,6 +133,8 @@ def test_image_job_submit_receipt_has_no_outcome_and_worker_receipt_reports_the_
         queued = receipt_store.recent(path=rig.receipts_db, audience="client")
         submit = next(row for row in queued if row["path"] == "/gateway/v1/media/jobs/image-generations")
         assert "retention" not in submit
+        # The submit receipt names the job it created, so Usage can pair it with the job after the job record is erased.
+        assert submit["job_id"] == rig.scheduled[0]
         await proxy._run_image_media_job(rig.scheduled[0])
 
     with GatewayRig("receipt_job", tmp_path / "rig") as rig:
