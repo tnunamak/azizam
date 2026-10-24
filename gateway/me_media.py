@@ -1857,7 +1857,9 @@ def _job_request(
     ``failed`` (its job record shows the job failed) makes the outcome failed.
     """
     work = [member for member in members if member is not display] if submit else members
-    newest = sorted(work or [display], key=_attempt_order, reverse=True)
+    # With no work receipt yet, the submit or standing receipt is the work itself.
+    work_or_display = work or [display]
+    newest = sorted(work_or_display, key=_attempt_order, reverse=True)
     started = [member["started_at_ms"] for member in work if isinstance(member.get("started_at_ms"), int)]
     costs = [cost for cost in (_receipt_cost(member) for member in members) if cost is not None]
     request = {
@@ -1867,8 +1869,9 @@ def _job_request(
         "remote": any(_receipt_is_paid_remote(member) for member in members),
         "cost": {"usd": sum(costs)} if costs else None,
         # One paid remote attempt reported no cost, so the summed cost above is only the known part of the request.
+        # The submit copies no cost and is not an attempt, so it is checked only when it is the work itself.
         "_unpriced_remote": any(
-            _receipt_is_paid_remote(member) and _receipt_cost(member) is None for member in members
+            _receipt_is_paid_remote(member) and _receipt_cost(member) is None for member in work_or_display
         ),
         "_outcome_request_id": newest[0]["request_id"],
     }
