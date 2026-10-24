@@ -93,5 +93,31 @@ class ProbedModelKindTests(unittest.TestCase):
         self.assertIsNone(engine_check.suggested_model_kind([], catalog))
 
 
+class KindOfferTests(unittest.TestCase):
+    def test_the_capability_words_an_engine_records_name_the_kinds_it_serves(self) -> None:
+        self.assertEqual(capability_ids.offered_model_kinds(["chat", "completions", "embeddings"]), ["chat", "embed"])
+        self.assertEqual(capability_ids.offered_model_kinds(["image", "rerank"]), [])
+
+    def test_each_capability_of_a_definition_names_the_kinds_it_serves(self) -> None:
+        definitions = {row["definition"]: row for row in load_engine_catalog().public()["definitions"]}
+        served = {cap["id"]: cap["kinds"] for cap in definitions["openai-compatible"]["capabilities"]}
+        self.assertEqual(served, {"chat": ["chat"], "embeddings": ["embed"]})
+
+    def test_the_speech_kind_is_labelled_voice_as_the_voice_glossary_names_it(self) -> None:
+        labels = {kind["id"]: kind["label"] for kind in load_engine_catalog().public()["model_kinds"]}
+        self.assertEqual(labels, {"chat": "Chat", "embed": "Embeddings", "speech": "Voice", "transcribe": "Transcription"})
+
+    def test_the_form_refuses_a_kind_no_capability_of_the_engine_serves(self) -> None:
+        rows = [{"model_group": "chat-model", "kind": "chat"}, {"model_group": "voice-model", "kind": "speech"}]
+        with self.assertRaises(engine_check.DraftError) as raised:
+            engine_admin._refuse_unoffered_kinds(rows, ["chat", "completions"])
+        self.assertEqual(raised.exception.field, "models.1.kind")
+        self.assertEqual(str(raised.exception), "This engine doesn’t offer Voice.")
+
+    def test_a_kind_the_engine_serves_and_a_model_without_one_are_accepted(self) -> None:
+        engine_admin._refuse_unoffered_kinds(
+            [{"model_group": "chat-model", "kind": "chat"}, {"model_group": "plain-model"}], ["chat", "completions"])
+
+
 if __name__ == "__main__":
     unittest.main()

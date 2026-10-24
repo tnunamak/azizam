@@ -269,6 +269,40 @@ describe("who can use the models", () => {
     expect(screen.queryByText("After you save")).toBeNull();
   });
 
+  it("the Capability pick-list offers only the kinds of the capabilities ticked for this engine", async () => {
+    mount({ capabilities: ["chat"] });
+    const picks = await screen.findAllByLabelText("Capability");
+    expect(picks).toHaveLength(2);
+    for (const pick of picks) {
+      expect(within(pick).getAllByRole("option").map((option) => option.textContent)).toEqual(["All the engine offers", "Chat"]);
+    }
+  });
+
+  it("a kind the engine no longer offers is refused on its model's Capability control when Save changes is pressed", async () => {
+    const user = userEvent.setup();
+    mount({
+      capabilities: ["chat"],
+      models: [
+        { id: "qwen3-32b-instruct-q4_k_m", public_name: "qwen3-32b", context_window: 40960, enabled: true, kind: "chat" },
+        { id: "nomic-embed-text-v1.5", public_name: "nomic-embed-text", context_window: 8192, enabled: true, kind: "embed" },
+      ],
+    });
+    const update = vi.spyOn(enginesApi, "update").mockRejectedValue(
+      new ApiError("invalid_engine", "This engine doesn’t offer Embeddings.", 400, {
+        error: { code: "invalid_engine", message: "This engine doesn’t offer Embeddings.", field: "models.1.kind" },
+      }),
+    );
+    const names = await screen.findAllByLabelText("Name apps use");
+    await user.clear(names[0]);
+    await user.type(names[0], "my-chat");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    const picks = await screen.findAllByLabelText("Capability");
+    expect(picks[1]).toHaveAttribute("aria-invalid", "true");
+    expect(picks[0]).not.toHaveAttribute("aria-invalid");
+    expect(screen.getAllByText("This engine doesn’t offer Embeddings.")).toHaveLength(1);
+  });
+
   it("says when the route fails and offers Try again, without blocking Save", async () => {
     const user = userEvent.setup();
     mount();

@@ -200,11 +200,17 @@
     "capabilities": [
      {
       "id": "chat",
-      "label": "Chat"
+      "label": "Chat",
+      "kinds": [
+       "chat"
+      ]
      },
      {
       "id": "embeddings",
-      "label": "Embeddings"
+      "label": "Embeddings",
+      "kinds": [
+       "embed"
+      ]
      }
     ]
    },
@@ -376,11 +382,17 @@
     "capabilities": [
      {
       "id": "chat",
-      "label": "Chat"
+      "label": "Chat",
+      "kinds": [
+       "chat"
+      ]
      },
      {
       "id": "embeddings",
-      "label": "Embeddings"
+      "label": "Embeddings",
+      "kinds": [
+       "embed"
+      ]
      }
     ]
    }
@@ -394,7 +406,25 @@
     "sent": "One short text, “hello”",
     "cost": "About one token"
    }
-  }
+  },
+  "model_kinds": [
+   {
+    "id": "chat",
+    "label": "Chat"
+   },
+   {
+    "id": "embed",
+    "label": "Embeddings"
+   },
+   {
+    "id": "speech",
+    "label": "Voice"
+   },
+   {
+    "id": "transcribe",
+    "label": "Transcription"
+   }
+  ]
  },
  "checks": {
   "oai_ok": {

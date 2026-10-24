@@ -506,6 +506,34 @@ def test_a_model_kind_is_saved_shown_and_bound_to_its_own_capability(gateway, fa
     assert bound["plain-model"] == {"chat.completions", "text.completions", "text.embeddings"}
 
 
+def test_a_model_kind_the_engine_does_not_offer_is_refused_and_nothing_is_saved(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    _silent(fake_upstreams, "chat-only.fk.test")
+    before = set(_registry(gateway)["services"])
+    refused = _create(owner, {"definition": "openai-compatible", "name": "Chat Only", "disabled": True,
+                              "values": {"address": "http://chat-only.fk.test/v1"}, "capabilities": ["chat"],
+                              "models": [{"id": "chat-up", "public_name": "chat-model", "kind": "chat"},
+                                         {"id": "voice-up", "public_name": "voice-model", "kind": "speech"}]})
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["field"] == "models.1.kind", "the error names the model's Capability control"
+    assert refused.json()["error"]["message"] == "This engine doesn’t offer Voice."
+    assert set(_registry(gateway)["services"]) == before, "a refused save leaves no engine behind"
+
+
+def test_a_capability_cannot_be_unticked_while_a_model_is_kinded_for_it(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    _silent(fake_upstreams, "embed-engine.fk.test")
+    created = _create(owner, {"definition": "openai-compatible", "name": "Embed Engine", "disabled": True,
+                              "values": {"address": "http://embed-engine.fk.test/v1"}, "capabilities": ["chat", "embeddings"],
+                              "models": [{"id": "embed-up", "public_name": "embed-model", "kind": "embed"}]})
+    assert created.status_code == 201, created.text
+    refused = _edit(owner, "embed-engine", {"capabilities": ["chat"]})
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["field"] == "models.0.kind"
+    view = owner.get("/admin/api/engines/embed-engine").json()["engine"]
+    assert {row["public_name"]: row.get("kind") for row in view["models"]} == {"embed-model": "embed"}
+
+
 def test_create_answers_with_the_new_engine_id(gateway, fake_upstreams):
     owner, *_ = owner_and_admin(gateway)
     _silent(fake_upstreams, "named.fk.test")
