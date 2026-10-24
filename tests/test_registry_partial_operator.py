@@ -167,6 +167,7 @@ def test_metadata_patch_of_a_left_out_service_points_to_the_fix_flow(live, monke
 
     assert response.status_code == 409, response.text[:300]
     error = response.json()["error"]
+    assert error["code"] == "service_left_out"
     assert "left out" in error["message"]
     assert "PUT /admin/api/operator/service-registry/excluded/services/bad-engine" in error["message"]
     assert _stored(live) == before

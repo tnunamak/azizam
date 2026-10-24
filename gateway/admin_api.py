@@ -2663,7 +2663,9 @@ def create_admin_router(
         The text is cleaned of the secret parts of the form that caused it (an address with user info, a header value).
         """
         msg = projection.scrub_text(str(exc)[:600], _body_secret_texts(body))
-        if "not found" in msg:
+        if "left out" in msg:
+            code, http = "service_left_out", status.HTTP_409_CONFLICT
+        elif "not found" in msg:
             code, http = "service_not_found", status.HTTP_404_NOT_FOUND
         elif "already exists" in msg:
             code, http = "service_conflict", status.HTTP_409_CONFLICT
