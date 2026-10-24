@@ -405,7 +405,8 @@ def _add_route(
     if not operation.include_in_schema:
         options["include_in_schema"] = False
     # The operation's extra schema, plus the security its mode implies (the API reference reads it; no request does).
-    options["openapi_extra"] = {**(operation.openapi_extra or {}), **operation_security.openapi_extra(operation_mode(operation))}
+    security = operation_security.openapi_extra(operation_mode(operation))
+    options["openapi_extra"] = {**(operation.openapi_extra or {}), **security}
     if operation.response_class is not None:
         options["response_class"] = operation.response_class
     route_class = _mounted_route_class(row, operation, authenticate=authenticate, refuse=refuse)

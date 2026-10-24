@@ -24,13 +24,11 @@ SIGNED_URL = "signed_url"
 # Calls need no credential. The operation takes its own token in the body, or none at all.
 PUBLIC = "public"
 
-MODES = (APP_KEY, OWNER, BROWSER_SESSION, OPTIONAL_SESSION, SIGNED_URL, PUBLIC)
-# The modes a self-authenticating operation may declare (SelfAuthOp). Others are checked by the mount or declared on the route.
+# The modes a self-authenticating operation may declare (SelfAuthOp). The rest are checked by the
+# mount, or declared on the route.
 SELF_AUTH_MODES = frozenset({APP_KEY, SIGNED_URL})
 
 BROWSER_SESSION_SCHEME = "BrowserSession"
-
-
 HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
 
 
