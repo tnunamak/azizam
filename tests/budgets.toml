@@ -353,7 +353,9 @@ pytest = 17185
 # files, 3192 cases, all passed (2026-10-23). The ceiling stays at 3232, the figure recorded above, which is not exceeded.
 # Home visual round 3, merged with main at r103: full run 229 files, 3420 cases, all passed (2026-10-23). Measured
 # value; it replaces the provisional 3451.
-vitest = 3420
+# Home visual round 4 (feat/home-visual-3): the first visit's audio discs and its one-kind case, the slim history
+# notice. Full run 229 files, 3423 cases, all passed (2026-10-23). Measured value.
+vitest = 3423
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -382,7 +384,10 @@ vitest = 3420
 # stays at 3232, the figure main records, which this branch does not exceed.
 # Home visual round 3, merged with main at r103: playwright.config.ts 563, live-data 3, household 18: 584, measured
 # 2026-10-23 (it matches 566 + 18, the Home branch's cases over the 525 base).
-playwright = 584
+# Home visual round 4 (feat/home-visual-3): the first visit's edges, ring and one-kind cases, the owner's quiet
+# panel, the phone layout, and the notice saved at 768 px. --list: playwright.config.ts 574, live-data 3,
+# household 18: 595, measured 2026-10-23.
+playwright = 595
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
