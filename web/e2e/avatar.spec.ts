@@ -43,12 +43,12 @@ test("a person changes their avatar from the account menu and it sticks", { tag:
   expect(start.choice).toBe("auto");
   try {
     const dialog = await openPicker(page);
-    // Auto can already check Plum for this person; clicking a checked radio sends no change event.
-    const currentChoice = await dialog
-      .locator("input[type='radio']:checked")
-      .getAttribute("value");
+    // The colours show under Initials, which is the source this person has. Auto can already check Plum for them;
+    // choosing the colour that is checked sends no change event.
+    const colours = dialog.getByRole("radiogroup", { name: "Colour of your initials" });
+    const currentColour = (await colours.locator("[role='radio'][aria-checked='true']").innerText()).trim();
     const selection =
-      currentChoice === "v7"
+      currentColour === "Plum"
         ? {
             label: "Fern",
             choice: "v2",
@@ -59,12 +59,10 @@ test("a person changes their avatar from the account menu and it sticks", { tag:
             choice: "v7",
             background: /#5C3F61|rgb\(92, 63, 97\)/,
           };
-    const chosen = dialog.getByRole("radio", {
-      name: new RegExp(selection.label),
-    });
-    await expect(chosen).not.toBeChecked();
-    await dialog.getByText(selection.label, { exact: true }).click();
-    await expect(chosen).toBeChecked();
+    const chosen = colours.getByRole("radio", { name: selection.label, exact: true });
+    await expect(chosen).toHaveAttribute("aria-checked", "false");
+    await chosen.click();
+    await expect(chosen).toHaveAttribute("aria-checked", "true");
     await expect(page.getByText("We couldn't save your avatar")).toHaveCount(0);
     await expect
       .poll(async () => (await (await page.request.get("/me/api/profile/avatar")).json()).choice)
@@ -77,6 +75,10 @@ test("a person changes their avatar from the account menu and it sticks", { tag:
     await page.reload();
     const trigger = page.getByRole("button", { name: /^Account menu/ }).first();
     await expect(discOf(trigger)).toHaveCSS("background-image", selection.background);
+    if (SHOTS) {
+      mkdirSync(SHOTS, { recursive: true });
+      await page.screenshot({ path: path.join(SHOTS, "avatar-after-change-1440.png") });
+    }
     await page.goto("/people/");
     await expect(page.getByRole("heading", { name: "People" })).toBeVisible();
     await expect(
@@ -129,7 +131,8 @@ for (const view of views) {
       fulfilBytes(route, { contentType: "image/png", body: PNG }),
     );
     const dialog = await openPicker(page);
-    await expect(dialog.getByRole("radio")).toHaveCount(9);
+    // The sign-in picture and Initials are the sources; the colours show only under Initials, so not here.
+    await expect(dialog.getByRole("radio")).toHaveCount(2);
     const box = (await dialog.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(view.width);
@@ -137,8 +140,8 @@ for (const view of views) {
     // No sideways scroll, and every choice is a touch target of 44 or more on a phone.
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     if (view.width < 640)
-      for (const label of await dialog.locator("label").all()) {
-        const size = (await label.boundingBox())!;
+      for (const row of await dialog.getByRole("radio").all()) {
+        const size = (await row.boundingBox())!;
         expect(size.height).toBeGreaterThanOrEqual(44);
       }
     const axe = await new AxeBuilder({ page }).include("[role='dialog']").analyze();

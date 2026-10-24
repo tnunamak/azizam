@@ -21,6 +21,8 @@ export interface Viewer {
     picture_url: string | null;
     sign_in_picture_url?: string | null;
     made_picture_url?: string | null;
+    /** The automatic picture is being made for this person. */
+    generating?: boolean;
   } | null;
   serviceAdmin?: boolean;
   name: string;
@@ -61,6 +63,7 @@ export async function fetchViewer(): Promise<Viewer> {
           picture_url: snapshot.user.avatar.picture_url ?? null,
           sign_in_picture_url: snapshot.user.avatar.sign_in_picture_url ?? null,
           made_picture_url: snapshot.user.avatar.made_picture_url ?? null,
+          generating: snapshot.user.avatar.generating === true,
         },
       }),
       name: formatPersonName(snapshot.user.name, "Your account"),

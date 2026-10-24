@@ -89,7 +89,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { useAvatarSetting } from "./avatar-setting";
+import { AutomaticAvatar, useAvatarSetting } from "./avatar-setting";
 import { ViewerContext, useViewer, useViewerQuery } from "./session";
 // Keep the shortcut listener in the shell; load the palette and account menu
 // outside the first paint, then fetch them once the page is idle so the first
@@ -882,6 +882,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       }
     >
       <TooltipProvider>
+        <AutomaticAvatar />
         <a
           href="#main-content"
           className="focus:bg-background sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:rounded-md focus:p-3"

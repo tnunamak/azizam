@@ -200,44 +200,49 @@ export function AccountMenuContent({
       </DropdownMenu>
       {canChangeAvatar && avatarPersonId && onAvatarChange && (
         <Dialog open={avatarPickerOpen} onOpenChange={setAvatarPickerOpen}>
+          {/*
+            Anchored at a fixed top offset, so the dialog does not jump between states. On a phone it is a bottom
+            sheet: at most 85% of the screen, its body scrolls, and Done stays in view. The close button is Done.
+          */}
           <DialogContent
-            className="sm:max-w-sm"
+            showCloseButton={false}
+            className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[85dvh] top-24! translate-y-0! sm:max-w-sm max-sm:top-auto! max-sm:bottom-0! max-sm:left-0! max-sm:right-0! max-sm:w-full! max-sm:max-w-none! max-sm:translate-x-0! max-sm:rounded-b-none!"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
               avatarDialogRequested.current = false;
               accountTriggerRef.current?.focus();
             }}
           >
-            <DialogHeader>
+            <DialogHeader className="text-left!">
               <DialogTitle>Your avatar</DialogTitle>
               <DialogDescription>
                 Choose how you appear to other people.
               </DialogDescription>
             </DialogHeader>
-            <div className="flex justify-center">
-              <PersonAvatar
+            <div className="min-h-0 space-y-4 overflow-y-auto">
+              <div className="flex justify-center">
+                <PersonAvatar
+                  personId={avatarPersonId}
+                  name={viewer.name}
+                  selection={avatarSelection}
+                  pictureUrl={avatarPictureUrl}
+                  size="xl"
+                />
+              </div>
+              <AvatarPickerWithGeneration
                 personId={avatarPersonId}
                 name={viewer.name}
-                selection={avatarSelection}
-                pictureUrl={avatarPictureUrl}
-                size="xl"
+                value={avatarSelection}
+                signInPictureUrl={avatarSignInPictureUrl}
+                madePictureUrl={avatarMadePictureUrl}
+                onChange={onAvatarChange}
+                pending={avatarPending}
+                error={avatarError}
               />
             </div>
-            <AvatarPickerWithGeneration
-              personId={avatarPersonId}
-              name={viewer.name}
-              value={avatarSelection}
-              signInPictureUrl={avatarSignInPictureUrl}
-              madePictureUrl={avatarMadePictureUrl}
-              onChange={onAvatarChange}
-              pending={avatarPending}
-              error={avatarError}
-            />
             <DialogFooter>
               <DialogClose asChild>
-                <Button variant="outline" size="md">
-                  Done
-                </Button>
+                <Button size="md">Done</Button>
               </DialogClose>
             </DialogFooter>
           </DialogContent>

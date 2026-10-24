@@ -9,15 +9,19 @@ import {
 } from "@/components/product/person-avatar";
 import { accountApi, type AvatarSetting } from "@/lib/account-api";
 import { applySavedAvatar } from "./avatar-setting";
+import { useViewer } from "./session";
 
 /** The make job states after which it makes no more pictures. */
 const STOPPED = new Set(["succeeded", "failed", "canceled", "cancelled"]);
 
 /**
- * The make-my-avatar flow: whether an image route exists, one attempt at a time, the pictures it made, and
- * keeping or removing one. `onSaved` receives the avatar the gateway saved.
+ * The make-my-avatar flow: whether an image route exists, one attempt at a time, the picture it made, and
+ * keeping or removing one. `onSaved` receives the avatar the gateway saved. A picture the gateway is making as the
+ * person's automatic default counts as making too, so the picker shows it while it is made.
  */
 function useAvatarGeneration(onSaved: (saved: AvatarSetting) => void): AvatarGenerationView {
+  const viewer = useViewer();
+  const automatic = viewer.avatar?.generating === true;
   const [jobId, setJobId] = useState<string | null>(null);
   const { data: generatorData } = useQuery({
     queryKey: ["avatars", "generator"],
@@ -70,8 +74,8 @@ function useAvatarGeneration(onSaved: (saved: AvatarSetting) => void): AvatarGen
   });
   return {
     available: generatorData?.available === true,
-    making: start.isPending || (jobId !== null && !STOPPED.has(status)),
-    results: succeeded ? (pictureData ?? []) : [],
+    making: start.isPending || automatic || (jobId !== null && !STOPPED.has(status)),
+    candidate: succeeded ? (pictureData?.[0] ?? null) : null,
     failed:
       start.isError || status === "failed" || status === "canceled" || status === "cancelled" || picturesFailed,
     onMake: () => {

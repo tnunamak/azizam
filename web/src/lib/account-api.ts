@@ -57,6 +57,8 @@ export interface AvatarSetting {
   /** The person's own previews of each picture they have (absent for anyone else). */
   sign_in_picture_url?: string | null;
   made_picture_url?: string | null;
+  /** The automatic picture is being made for the person (their own view only). */
+  generating?: boolean;
 }
 
 /** A make job as the make page reads it: its state, and its pictures once it has succeeded. */
@@ -370,6 +372,9 @@ export const accountApi = {
     }),
   /** Whether this gateway has an image route to make the person's avatar with. */
   avatarGenerator: () => accountRequest<{ available: boolean }>("/me/api/profile/avatar/generator"),
+  /** The automatic picture for a person with no sign-in picture and no chosen avatar. The gateway makes it once. */
+  startDefaultAvatar: () =>
+    accountRequest<AvatarSetting>("/me/api/profile/avatar/default", { method: "POST" }),
   /** Start one attempt at a picture: a make job, with a new seed each time. */
   startAvatarGeneration: () =>
     accountRequest<{ job: MakeJob }>("/me/api/profile/avatar/generate", { method: "POST" }),

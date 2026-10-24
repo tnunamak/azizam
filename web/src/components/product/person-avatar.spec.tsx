@@ -280,78 +280,91 @@ describe("avatar picker", () => {
     return { onChange, ...view };
   }
 
-  it("offers the eight generated avatars as one radio group with plain names", () => {
-    setup();
-    const group = screen.getByRole("group", { name: "Choose your avatar" });
-    const radios = within(group).getAllByRole("radio");
-    expect(radios).toHaveLength(8);
-    expect(radios.map((radio) => (radio as HTMLInputElement).value)).toEqual(
-      generatedAvatarPalettes.map((palette) => palette.id),
-    );
-    for (const palette of generatedAvatarPalettes)
-      expect(within(group).getByText(palette.label)).toBeVisible();
+  const sources = () => within(screen.getByRole("radiogroup", { name: "Where your avatar comes from" })).getAllByRole("radio");
+  const colours = () => screen.queryByRole("radiogroup", { name: "Colour of your initials" });
+  const checkedRadios = () => screen.getAllByRole("radio").filter((radio) => radio.getAttribute("aria-checked") === "true");
+
+  it("leads with the source choices in order: sign-in picture, generated, initials", () => {
+    setup({ signInPictureUrl: PICTURE, generation: { available: true, making: false, candidate: null, failed: false, onMake: vi.fn(), onKeep: vi.fn(), onRemove: vi.fn() } });
+    expect(sources().map((radio) => radio.getAttribute("value"))).toEqual(["sign-in", "made", "initials"]);
   });
 
-  it("marks the automatic avatar's swatch as chosen, so the dialog opens on what the person has", () => {
+  it("shows the eight colours only under Initials, with the sentence that they are kept", () => {
     setup({ value: { kind: "auto" } });
-    const automatic = getGeneratedAvatar("usr_a1b2").id;
-    const checked = screen.getAllByRole("radio").filter((radio) => (radio as HTMLInputElement).checked);
-    expect(checked.map((radio) => (radio as HTMLInputElement).value)).toEqual([automatic]);
+    expect(within(colours()!).getAllByRole("radio")).toHaveLength(8);
+    for (const palette of generatedAvatarPalettes)
+      expect(within(colours()!).getByRole("radio", { name: palette.label })).toBeVisible();
+    expect(screen.getByText("Your avatar keeps its colour when you change your name.")).toBeVisible();
   });
 
-  it("reports a chosen variant", async () => {
+  it("hides the colours while another source is the one shown", () => {
+    setup({ signInPictureUrl: PICTURE, value: { kind: "auto" } });
+    expect(colours()).toBeNull();
+  });
+
+  it("marks the checked source with aria-checked and a check mark", () => {
+    setup({ signInPictureUrl: PICTURE, value: { kind: "auto" } });
+    const picture = screen.getByRole("radio", { name: /Sign-in picture/ });
+    expect(picture).toHaveAttribute("aria-checked", "true");
+    expect(picture.querySelector("svg")).not.toBeNull();
+    expect(screen.getByRole("radio", { name: "Initials" })).toHaveAttribute("aria-checked", "false");
+    expect(checkedRadios()).toEqual([picture]);
+  });
+
+  it("reports a chosen colour", async () => {
     const { onChange } = setup({ value: { kind: "auto" } });
     const other = generatedAvatarPalettes.find((palette) => palette.id !== getGeneratedAvatar("usr_a1b2").id)!;
-    await userEvent.click(screen.getByRole("radio", { name: new RegExp(other.label) }));
+    await userEvent.click(within(colours()!).getByRole("radio", { name: other.label }));
     expect(onChange).toHaveBeenCalledWith({ kind: "generated", variant: other.id });
   });
 
-  it("is operable from the keyboard", async () => {
-    const { onChange } = setup({ value: { kind: "generated", variant: "v1" } });
-    screen.getAllByRole("radio")[0].focus();
+  it("is operable from the keyboard: the arrow keys move between the colours", async () => {
+    setup({ value: { kind: "generated", variant: "v1" } });
+    within(colours()!).getByRole("radio", { name: "Tide" }).focus();
     await userEvent.keyboard("{ArrowDown}");
-    expect(onChange).toHaveBeenCalledWith({ kind: "generated", variant: "v2" });
+    expect(within(colours()!).getByRole("radio", { name: "Fern" })).toHaveFocus();
   });
 
   it("offers the sign-in picture only when the provider shared one", () => {
     const without = setup();
-    expect(screen.queryByRole("radio", { name: /sign-in picture/ })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /Sign-in picture/ })).toBeNull();
     without.unmount();
     setup({ signInPictureUrl: PICTURE });
-    expect(screen.getByRole("radio", { name: "Use my sign-in picture" })).toBeVisible();
+    expect(screen.getByRole("radio", { name: /Sign-in picture/ })).toBeVisible();
   });
 
-  it("checks the picture for the default choice, since that is the avatar the person sees", async () => {
+  it("checks the sign-in picture for the default choice, and taking a colour means choosing Initials first", async () => {
     const { onChange } = setup({ signInPictureUrl: PICTURE, value: { kind: "auto" } });
-    const picture = screen.getByRole("radio", { name: "Use my sign-in picture" });
-    expect(picture).toBeChecked();
-    expect(screen.getAllByRole("radio").filter((radio) => (radio as HTMLInputElement).checked)).toEqual([picture]);
-    await userEvent.click(screen.getByRole("radio", { name: "Rose" }));
-    expect(onChange).toHaveBeenCalledWith({ kind: "generated", variant: "v4" });
+    expect(screen.getByRole("radio", { name: /Sign-in picture/ })).toHaveAttribute("aria-checked", "true");
+    expect(checkedRadios()).toHaveLength(1);
+    await userEvent.click(screen.getByRole("radio", { name: "Initials" }));
+    expect(onChange).toHaveBeenCalledWith({ kind: "generated", variant: getGeneratedAvatar("usr_a1b2").id });
   });
 
-  it("checks a generated swatch the person chose over the picture, and picking the picture stores it", async () => {
+  it("checks a colour the person chose over the picture, and picking the picture stores it", async () => {
     const { onChange } = setup({ signInPictureUrl: PICTURE, value: { kind: "generated", variant: "v4" } });
-    expect(screen.getByRole("radio", { name: "Use my sign-in picture" })).not.toBeChecked();
-    await userEvent.click(screen.getByRole("radio", { name: "Use my sign-in picture" }));
+    expect(screen.getByRole("radio", { name: /Sign-in picture/ })).toHaveAttribute("aria-checked", "false");
+    expect(within(colours()!).getByRole("radio", { name: "Rose" })).toHaveAttribute("aria-checked", "true");
+    await userEvent.click(screen.getByRole("radio", { name: /Sign-in picture/ }));
     expect(onChange).toHaveBeenCalledWith({ kind: "sign-in" });
   });
 
   it("does not offer a picture that is not a gateway path", () => {
     setup({ signInPictureUrl: "https://lh3.example.test/p.png" });
-    expect(screen.queryByRole("radio", { name: /sign-in picture/ })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /Sign-in picture/ })).toBeNull();
   });
 
-  it("checks the picture, and no swatch, while it is the choice", () => {
+  it("checks the picture, and no colour, while it is the choice", () => {
     setup({ signInPictureUrl: PICTURE, value: { kind: "sign-in" } });
-    expect(screen.getByRole("radio", { name: "Use my sign-in picture" })).toBeChecked();
-    expect(screen.getAllByRole("radio").filter((radio) => (radio as HTMLInputElement).checked)).toHaveLength(1);
+    expect(screen.getByRole("radio", { name: /Sign-in picture/ })).toHaveAttribute("aria-checked", "true");
+    expect(colours()).toBeNull();
+    expect(checkedRadios()).toHaveLength(1);
   });
 
   it("says plainly when the chosen picture is gone and checks the avatar that is shown instead", () => {
     setup({ value: { kind: "sign-in" } });
     expect(screen.getByRole("status")).toHaveTextContent("Your sign-in picture is not available. Your generated avatar is shown.");
-    expect(screen.getAllByRole("radio").filter((radio) => (radio as HTMLInputElement).checked)).toHaveLength(1);
+    expect(screen.getByRole("radio", { name: "Initials" })).toHaveAttribute("aria-checked", "true");
   });
 
   it("locks the choices while saving and says so", () => {
@@ -365,23 +378,26 @@ describe("avatar picker", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("We couldn't save your avatar. Try again.");
   });
 
-  it("tells the person where the picture comes from and who sees it", () => {
+  it("says where the sign-in picture comes from in its row, and who sees the picture once, at the foot", () => {
     setup({ signInPictureUrl: PICTURE });
-    expect(
-      screen.getByText(/Azizam gets this picture from your sign-in provider\. Only you and the people who run this gateway can see it\./),
-    ).toBeVisible();
+    expect(screen.getByText("Azizam gets this picture from your sign-in provider.")).toBeVisible();
+    expect(screen.getByText("People on this gateway see the picture you choose.")).toBeVisible();
+    expect(screen.getAllByText("People on this gateway see the picture you choose.")).toHaveLength(1);
   });
 
-  it("keeps a swatch's colour when the name changes", () => {
-    const first = setup({ name: "Mira" });
-    const swatches = (view: ReturnType<typeof render>) =>
-      Array.from(view.container.querySelectorAll<HTMLElement>("fieldset label span span span")).map(
-        (disc) => disc.style.backgroundImage,
-      );
-    const before = swatches(first);
+  it("keeps a colour when the name changes", () => {
+    const discs = (view: ReturnType<typeof render>) =>
+      Array.from(
+        view.container.querySelectorAll<HTMLElement>(
+          "[role='radiogroup'][aria-label='Colour of your initials'] [data-slot='person-avatar'] > *",
+        ),
+      ).map((disc) => disc.style.backgroundImage);
+    const first = setup({ name: "Mira", value: { kind: "auto" } });
+    const before = discs(first);
     first.unmount();
-    const after = setup({ name: "Mira Chen-Okafor" });
-    expect(swatches(after)).toEqual(before);
+    const after = setup({ name: "Mira Chen-Okafor", value: { kind: "auto" } });
+    expect(discs(after)).toEqual(before);
+    expect(before).toHaveLength(8);
     expect(before.every(Boolean)).toBe(true);
   });
 });
@@ -432,7 +448,7 @@ describe("make my avatar", () => {
     return {
       available: true,
       making: false,
-      results: [],
+      candidate: null,
       failed: false,
       onMake: vi.fn(),
       onKeep: vi.fn(),
@@ -449,72 +465,79 @@ describe("make my avatar", () => {
     return { onChange, ...utils };
   }
 
-  const checked = () => screen.getAllByRole("radio").filter((radio) => (radio as HTMLInputElement).checked);
+  // The source choices only: the colours carry their own checked state under Initials.
+  const checkedRadios = () =>
+    within(screen.getByRole("radiogroup", { name: "Where your avatar comes from" }))
+      .getAllByRole("radio")
+      .filter((radio) => radio.getAttribute("aria-checked") === "true");
 
-  it("offers no make button and no remove button when no image route is enabled", () => {
+  it("offers no generated row, make button or remove button when no image route is enabled", () => {
     renderPicker({ generation: view({ available: false }) });
-    expect(screen.queryByRole("button", { name: "Make me an avatar" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Remove generated avatar" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "Generated" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Make an avatar" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete generated avatar" })).toBeNull();
   });
 
-  it("offers Make me an avatar when a route exists, and starts an attempt on press", async () => {
+  it("offers Make an avatar beside a style sample, says how long it takes and what stays, and starts an attempt on press", async () => {
     const generation = view();
-    renderPicker({ generation });
-    await userEvent.click(screen.getByRole("button", { name: "Make me an avatar" }));
+    const { container } = renderPicker({ generation });
+    expect(screen.getByRole("radio", { name: "Generated" })).toBeDisabled();
+    expect(container.querySelector("img[src='/avatar-style-sample.svg']")).not.toBeNull();
+    expect(screen.getByText("Takes about 20 seconds. Your current picture stays until you pick a new one.")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Make an avatar" }));
     expect(generation.onMake).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the palette initial while a picture is being made, and offers no second start", () => {
+  it("keeps the colour initial while a picture is being made, and offers no second start", () => {
     renderPicker({ value: { kind: "auto" }, generation: view({ making: true }) });
-    expect(screen.getByRole("status")).toHaveTextContent("Making your avatar");
-    expect(screen.queryByRole("button", { name: "Make me an avatar" })).toBeNull();
-    expect(checked()).toHaveLength(1);
-    expect(screen.queryByRole("radio", { name: "Your generated avatar" })).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("Making your avatar…");
+    expect(screen.queryByRole("button", { name: "Make an avatar" })).toBeNull();
+    expect(screen.getByRole("radio", { name: "Initials" })).toHaveAttribute("aria-checked", "true");
+    expect(checkedRadios()).toHaveLength(1);
   });
 
-  it("says plainly when a picture could not be made, and offers another try", () => {
-    renderPicker({ generation: view({ failed: true }) });
-    expect(screen.getByRole("alert")).toHaveTextContent("We couldn't make your avatar. Try again.");
-    expect(screen.getByRole("button", { name: "Make me an avatar" })).toBeVisible();
-  });
-
-  it("offers the pictures made, keeps the one the person picks, and then offers another try", async () => {
-    const generation = view({
-      results: [
-        { assetId: "img_one", src: "/me/api/media/img_one/file?sig=1" },
-        { assetId: "img_two", src: "/me/api/media/img_two/file?sig=2" },
-      ],
-    });
+  it("says plainly when a picture could not be made, keeps the current one, and offers Try again", async () => {
+    const generation = view({ failed: true });
     renderPicker({ generation });
-    expect(screen.getByRole("list", { name: "Pictures you can use" })).toBeVisible();
-    await userEvent.click(screen.getAllByRole("button", { name: "Use this picture" })[1]);
-    expect(generation.onKeep).toHaveBeenCalledWith("img_two");
-    expect(screen.getByRole("button", { name: "Try another" })).toBeVisible();
+    expect(screen.getByText("Couldn't make an avatar just now. Your current one is unchanged.")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(generation.onMake).toHaveBeenCalledTimes(1);
   });
 
-  it("checks the kept picture when it is the avatar, and removes it on request", async () => {
+  it("shows the candidate with Use this and Make another, and keeps only the one the person uses", async () => {
+    const generation = view({ candidate: { assetId: "img_two", src: "/me/api/media/img_two/file?sig=2" } });
+    renderPicker({ generation });
+    expect(screen.getByRole("img", { name: "New avatar" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Use this" }));
+    expect(generation.onKeep).toHaveBeenCalledWith("img_two");
+    await userEvent.click(screen.getByRole("button", { name: "Make another" }));
+    expect(generation.onMake).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks the kept picture when it is the avatar; a new one replaces it, it can be deleted, and switching is free", async () => {
     const generation = view();
     renderPicker({ value: { kind: "made" }, madePictureUrl: MADE, generation });
-    const made = screen.getByRole("radio", { name: "Your generated avatar" });
-    expect(made).toBeChecked();
-    expect(checked()).toEqual([made]);
-    await userEvent.click(screen.getByRole("button", { name: "Remove generated avatar" }));
+    expect(screen.getByRole("radio", { name: "Generated" })).toHaveAttribute("aria-checked", "true");
+    expect(checkedRadios()).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Make a new one" })).toBeVisible();
+    expect(screen.getByText("Switching to another choice is free. Your generated avatar is kept.")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Delete generated avatar" }));
     expect(generation.onRemove).toHaveBeenCalledTimes(1);
   });
 
-  it("offers the kept picture beside the palette, whichever avatar is chosen", async () => {
+  it("offers the kept picture beside the colours, whichever avatar is chosen", async () => {
     const { onChange } = renderPicker({
       value: { kind: "auto" },
       signInPictureUrl: PICTURE,
       madePictureUrl: MADE,
       generation: view(),
     });
-    expect(screen.getByRole("radio", { name: "Your generated avatar" })).not.toBeChecked();
-    await userEvent.click(screen.getByRole("radio", { name: "Your generated avatar" }));
+    expect(screen.getByRole("radio", { name: "Generated" })).toHaveAttribute("aria-checked", "false");
+    await userEvent.click(screen.getByRole("radio", { name: "Generated" }));
     expect(onChange).toHaveBeenCalledWith({ kind: "made" });
   });
 
-  it("returns to the sign-in picture when the generated one is removed", () => {
+  it("returns to the sign-in picture when the generated one is removed, and the Generated row waits for a new one", () => {
     const { rerender, onChange } = renderPicker({
       value: { kind: "made" },
       signInPictureUrl: PICTURE,
@@ -532,12 +555,12 @@ describe("make my avatar", () => {
         onChange={onChange}
       />,
     );
-    expect(screen.getByRole("radio", { name: "Use my sign-in picture" })).toBeChecked();
-    expect(screen.queryByRole("radio", { name: "Your generated avatar" })).toBeNull();
-    expect(checked()).toHaveLength(1);
+    expect(screen.getByRole("radio", { name: /Sign-in picture/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Generated" })).toBeDisabled();
+    expect(checkedRadios()).toHaveLength(1);
   });
 
-  it("returns to the palette when there is no sign-in picture to return to", () => {
+  it("returns to the colours when there is no sign-in picture to return to", () => {
     const { rerender, onChange } = renderPicker({ value: { kind: "made" }, madePictureUrl: MADE, generation: view() });
     rerender(
       <AvatarPicker
@@ -549,16 +572,16 @@ describe("make my avatar", () => {
         onChange={onChange}
       />,
     );
-    expect(screen.queryByRole("radio", { name: "Use my sign-in picture" })).toBeNull();
-    expect(screen.queryByRole("radio", { name: "Your generated avatar" })).toBeNull();
-    expect(checked()).toHaveLength(1);
+    expect(screen.queryByRole("radio", { name: /Sign-in picture/ })).toBeNull();
+    expect(screen.getByRole("radio", { name: "Initials" })).toHaveAttribute("aria-checked", "true");
+    expect(checkedRadios()).toHaveLength(1);
   });
 
   it("has no accessibility violations with the pictures and the make flow shown", async () => {
     const { container } = renderPicker({
       madePictureUrl: MADE,
       value: { kind: "made" },
-      generation: view({ results: [{ assetId: "img_one", src: "/me/api/media/img_one/file?sig=1" }] }),
+      generation: view({ candidate: { assetId: "img_one", src: "/me/api/media/img_one/file?sig=1" } }),
     });
     expect((await axe(container)).violations).toEqual([]);
   });
