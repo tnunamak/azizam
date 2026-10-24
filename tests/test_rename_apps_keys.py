@@ -765,7 +765,7 @@ def test_the_owner_openapi_document_gives_the_command_line_both_rename_commands(
     assert [op["operationId"].replace("_", "-") for op in commands.values()] == [
         "owner-patch-admin-api-apps-app-id", "owner-patch-admin-api-apps-app-id-keys-credential-id"]
     for op in commands.values():
-        assert op["security"] == [{"OwnerBearer": []}] and op["tags"] == ["apps and keys"]
+        assert op["security"] == [{"OwnerBearer": []}] and op["tags"] == ["apps and keys", "Owner only"]
     assert not any(path.startswith("/me/api/") for path in schema["paths"]), "a person's own routes stay out of the owner document"
 
 
