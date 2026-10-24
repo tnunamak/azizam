@@ -236,6 +236,8 @@ class MeMediaRouterTests(unittest.TestCase):
         remote: bool = False,
         started: bool = False,
         usd: str | None = None,
+        job_id: str | None = None,
+        attempt_number: int | None = None,
     ) -> None:
         receipt = RouteReceipt(
             protocol="openai.images",
@@ -251,6 +253,8 @@ class MeMediaRouterTests(unittest.TestCase):
             api_key_name=api_key_name,
             backend=backend,
             remote=remote,
+            job_id=job_id,
+            attempt_number=attempt_number,
         )
         receipt.accepted_at_ms = 1_700_000_000_000
         receipt.updated_at_ms = 1_700_000_001_000
@@ -1592,6 +1596,118 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(usage["remote_spend"], 0)
         self.assertEqual([row["local_requests"] for row in usage["by_model"]], [0])
         self.assertFalse(any(receipt["served_locally"] for receipt in usage["receipts"]))
+
+    def _submit_picture(self, job_id: str, submit_request_id: str, *, app_id: str, created_at: int | None = None,
+                        status: str = media_jobs.STATUS_SUCCEEDED) -> None:
+        # The image route's submit receipt names no model, and its job names this receipt as the parent.
+        self._receipt(app_id, submit_request_id, intent="image.generate",
+                      route_path="/gateway/v1/media/jobs/image-generations", requested_model=None,
+                      resolved_model=None, status="ok", backend="comfyui", created_at=created_at)
+        media_jobs.create(media_jobs.MediaJob(
+            job_id=job_id, request_id=f"imgjob_idem_{job_id}", intent="image.generate",
+            parent_request_id=submit_request_id, app_id=app_id, status=status,
+        ), path=self.jobs_db)
+
+    def _work_receipt(self, request_id: str, job_id: str, *, app_id: str, attempt: int = 1, status: str = "ok",
+                      started: bool = True, remote: bool = False, cost: float | None = None) -> None:
+        # The worker's receipt for one attempt: it carries the job's id and reports where the work ran.
+        self._receipt(app_id, request_id, job_id=job_id, attempt_number=attempt, intent="image.generate",
+                      route_path="/v1/images/generations", status=status, backend="local-engine", remote=remote,
+                      started=started, cost=cost)
+
+    def test_a_picture_made_through_a_job_counts_once_and_is_local(self) -> None:
+        self._submit_picture("mj_try", "req_try_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_try_work", "mj_try", app_id=self.app_a["id"])
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (1, 1))
+        self.assertEqual((usage["paid_requests"], usage["unknown_paid_requests"]), (0, 0))
+        self.assertFalse(usage["remote_spend_available"])
+        self.assertEqual([(row["requests"], row["local_requests"]) for row in usage["by_model"]], [(1, 1)])
+        [row] = usage["receipts"]
+        self.assertEqual(row["request_id"], "req_try_submit")
+        self.assertTrue(row["served_locally"])
+        self.assertIsNone(row["remote_spend"])
+
+    def test_a_picture_with_two_attempts_counts_once_with_the_summed_cost(self) -> None:
+        self._submit_picture("mj_retry", "req_retry_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_retry_first", "mj_retry", app_id=self.app_a["id"], attempt=1, status="error",
+                           remote=True, cost=0.25)
+        self._work_receipt("req_retry_second", "mj_retry", app_id=self.app_a["id"], attempt=2, remote=True, cost=0.5)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], 1)
+        self.assertEqual(usage["remote_spend"], 0.75)
+        self.assertEqual((usage["spend_measured_requests"], usage["paid_requests"]), (1, 1))
+        # The latest attempt succeeded, so the request is not failed.
+        self.assertEqual(usage["failed_requests"], 0)
+        [row] = usage["receipts"]
+        self.assertEqual((row["request_id"], row["remote_spend"], row["served_locally"]),
+                         ("req_retry_submit", 0.75, False))
+
+    def test_a_picture_whose_work_failed_counts_once_as_a_failed_request(self) -> None:
+        self._submit_picture("mj_failed", "req_failed_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_failed_work", "mj_failed", app_id=self.app_a["id"], status="error", started=False)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"], usage["local_requests"]), (1, 1, 0))
+        [row] = usage["receipts"]
+        self.assertEqual(row["status"], "error")
+
+    def test_a_job_refused_before_dispatch_counts_once_as_cost_not_recorded(self) -> None:
+        self._submit_picture("mj_refused", "req_refused_submit", app_id=self.app_a["id"],
+                             status=media_jobs.STATUS_FAILED)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"], usage["unknown_paid_requests"]), (1, 0, 0))
+        self.assertFalse(usage["remote_spend_available"])
+        [row] = usage["receipts"]
+        self.assertFalse(row["served_locally"])
+        self.assertIsNone(row["remote_spend"])
+
+    def test_a_request_outside_any_job_is_counted_as_before(self) -> None:
+        self._receipt(self.app_a["id"], "req_plain_chat", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="local-chat", resolved_model="local-chat",
+                      backend="local-engine", started=True)
+        self._submit_picture("mj_beside", "req_beside_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_beside_work", "mj_beside", app_id=self.app_a["id"])
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (2, 2))
+        self.assertEqual({row["request_id"] for row in usage["receipts"]}, {"req_plain_chat", "req_beside_submit"})
+
+    def test_a_job_never_takes_a_value_from_a_work_receipt_the_viewer_cannot_read(self) -> None:
+        self._submit_picture("mj_scope", "req_scope_submit", app_id=self.app_a["id"])
+        # Bob's work receipt names the same job, but Alice cannot read it, so its paid cost must not reach her totals.
+        self._work_receipt("req_scope_work", "mj_scope", app_id=self.app_b["id"], remote=True, cost=4.0)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["remote_spend"], usage["paid_requests"]), (1, 0, 0))
+        self.assertEqual((usage["unknown_paid_requests"], usage["remote_spend_available"]), (0, False))
+        [row] = usage["receipts"]
+        self.assertEqual(row["request_id"], "req_scope_submit")
+        self.assertFalse(row["served_locally"])
+        self.assertIsNone(row["remote_spend"])
+
+    def test_a_job_whose_submit_receipt_is_from_last_month_counts_once_this_month(self) -> None:
+        last_month = int(datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0,
+                                                              microsecond=0).timestamp()) - 60
+        self._submit_picture("mj_last", "req_last_submit", app_id=self.app_a["id"], created_at=last_month)
+        self._work_receipt("req_last_work", "mj_last", app_id=self.app_a["id"])
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (1, 1))
+        # The submit receipt is outside this month, so the job's work receipt stands for the request.
+        self.assertEqual([row["request_id"] for row in usage["receipts"]], ["req_last_work"])
+
+    def test_an_audio_or_video_job_with_one_receipt_counts_once(self) -> None:
+        # These jobs write no separate submit receipt: the worker's receipt is the job's own, keyed by its request id.
+        for intent, route, prefix in (("audio.generate", "/gateway/v1/media/jobs", "aud"),
+                                      ("video.generate", "/v1/videos", "vid")):
+            request_id = f"{prefix}job_one"
+            self._receipt(self.app_a["id"], request_id, job_id=f"mj_{prefix}", intent=intent,
+                          route_path=route, requested_model="model-one", resolved_model="model-one",
+                          backend="local-engine", started=True, status="ok")
+            media_jobs.create(media_jobs.MediaJob(
+                job_id=f"mj_{prefix}", request_id=request_id, intent=intent, parent_request_id=request_id,
+                app_id=self.app_a["id"], status=media_jobs.STATUS_SUCCEEDED,
+            ), path=self.jobs_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (2, 2))
+        self.assertEqual(sorted(row["request_id"] for row in usage["receipts"]), ["audjob_one", "vidjob_one"])
 
     def test_receipt_cost_prefers_the_provider_figure_then_the_recorded_cost(self) -> None:
         self.assertEqual(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": "0.01"}},
