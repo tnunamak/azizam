@@ -44,6 +44,10 @@ const SKY = new File([PNG_BYTES], "sky.png", { type: "image/png" });
 
 const json = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+// The picture a successful run answers with: one pixel, as the picture-edit route returns it.
+const PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+const bytes = (text: string, type: string) =>
+  new Response(new Blob([text], { type }), { headers: { "content-type": type } });
 
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", { configurable: true, value: () => false });
@@ -62,11 +66,15 @@ beforeEach(() => {
     },
   });
   account.requestHistory.mockResolvedValue({ ...HISTORY_ON });
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:result" });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) =>
-      json(url.includes("workflows") ? { workflows: [first, second] } : { aliases: [], models: [] }),
-    ),
+    vi.fn(async (url: string, init?: RequestInit) => {
+      // A run answers with its picture, as the picture-edit route does.
+      if (init?.method === "POST") return bytes(atob(PIXEL_PNG), "image/png");
+      return json(url.includes("workflows") ? { workflows: [first, second] } : { aliases: [], models: [] });
+    }),
   );
 });
 afterEach(() => {
@@ -160,5 +168,62 @@ describe("workflows with the same input names", () => {
     await switchTo(user, second.title);
     expect(within(picturePlace()).getByText("sky.png")).toBeVisible();
     expect(within(picturePlace()).queryByText("garden.png")).toBeNull();
+  });
+});
+
+/** Types a request and runs it. The run succeeds, so the words and the picture it sent become the base. */
+async function runWithPicture(user: ReturnType<typeof userEvent.setup>) {
+  fireEvent.change(description(), { target: { value: "Make the sky purple" } });
+  await user.click(screen.getByRole("button", { name: /^Run/ }));
+  expect(await screen.findByText("Workflow result")).toBeVisible();
+}
+
+describe("the picture a workflow last ran with", () => {
+  it("is not unsent after a successful run, on screen or once the person leaves", async () => {
+    const user = userEvent.setup();
+    await openTry();
+    await attach(user, PNG);
+    await runWithPicture(user);
+    expect(unsentWork()).toEqual([]);
+    await switchTo(user, second.title);
+    expect(unsentWork()).toEqual([]);
+  });
+
+  it("is unsent again once that picture is replaced after the run", async () => {
+    const user = userEvent.setup();
+    await openTry();
+    await attach(user, PNG);
+    await runWithPicture(user);
+    await attach(user, SKY);
+    expect(unsentWork()).toEqual([{ kind: "try-draft", count: 1 }]);
+  });
+
+  it("is unsent again once that picture is removed after the run", async () => {
+    const user = userEvent.setup();
+    await openTry();
+    await attach(user, PNG);
+    await runWithPicture(user);
+    await user.click(within(picturePlace()).getByRole("button", { name: /Remove picture/ }));
+    expect(within(picturePlace()).queryByText("garden.png")).toBeNull();
+    expect(unsentWork()).toEqual([{ kind: "try-draft", count: 1 }]);
+  });
+
+  it("comes back with the picture it ran with, and is not unsent, when the person returns to it", async () => {
+    const user = userEvent.setup();
+    await openTry();
+    await attach(user, PNG);
+    await runWithPicture(user);
+    await switchTo(user, second.title);
+    await switchTo(user, first.title);
+    expect(within(picturePlace()).getByText("garden.png")).toBeVisible();
+    expect(unsentWork()).toEqual([]);
+  });
+
+  it("is still unsent when a picture is attached and the person leaves without running it", async () => {
+    const user = userEvent.setup();
+    await openTry();
+    await attach(user, PNG);
+    await switchTo(user, second.title);
+    expect(unsentWork()).toEqual([{ kind: "try-draft", count: 1 }]);
   });
 });
