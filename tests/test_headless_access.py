@@ -1,8 +1,10 @@
 """Registered-route coverage, schema stability, and real credential boundaries."""
 from __future__ import annotations
 
+import ast
 import os
 import copy
+import functools
 import hashlib
 import json
 import re
@@ -397,6 +399,51 @@ def test_each_declared_mode_is_enforced_as_declared(mode, principals):
             assert response.status_code not in {401, 403}, (mode, name, response.status_code, response.text[:200])
 
 
+# A signed link's signature is checked before the link is served, so with a valid expiry the signature is all that a
+# refused call can fail on. For each operation a link reaches: the refusal a missing signature gets, and the refusal a
+# wrong one gets, each as (status, message). The content routes say a signature is missing before they check any.
+BAD_SIGNATURE = (403, "Invalid or expired signature")
+UNSIGNED = (400, "Signature required")
+SIGNED_LINK_REFUSALS = {
+    "/v1/assets/{asset_id}/thumbnail": {"missing": BAD_SIGNATURE, "wrong": BAD_SIGNATURE},
+    "/v1/assets/{asset_id}/content": {"missing": UNSIGNED, "wrong": BAD_SIGNATURE},
+    "/v1/images/{image_id}/content": {"missing": UNSIGNED, "wrong": BAD_SIGNATURE},
+    "/openai/v1/assets/{asset_id}/content": {"missing": UNSIGNED, "wrong": BAD_SIGNATURE},
+    "/openai/v1/images/{image_id}/content": {"missing": UNSIGNED, "wrong": BAD_SIGNATURE},
+}
+
+
+def test_signed_link_refusals_cover_exactly_the_signed_operations():
+    signed = {path for path, _method, operation in _operations(proxy.app.openapi())
+              if {operation_security.SIGNED_LINK_SCHEME: []} in operation.get("security", [])}
+    assert signed == set(SIGNED_LINK_REFUSALS)
+
+
+@pytest.mark.parametrize("case", ["missing", "wrong"])
+@pytest.mark.parametrize("path", list(SIGNED_LINK_REFUSALS))
+def test_signed_link_refuses_a_missing_or_wrong_signature(path, case, principals):
+    """A valid expiry with no signature, or with a signature that is not this link's, gets exactly its handler's refusal.
+    The refusal comes before any asset lookup, so the asset does not need to exist."""
+    query = {"expires": str(int(time.time()) + 600)}
+    if case == "wrong":
+        query["sig"] = "0" * 64  # shaped like an HMAC, and not this link's
+    principals.client.cookies.clear()
+    response = principals.client.get(re.sub(r"\{[^}]+\}", ASSET_ID, path), params=query, follow_redirects=False)
+    assert (response.status_code, response.json()["error"]["message"]) == SIGNED_LINK_REFUSALS[path][case], (
+        path, case, response.status_code, response.text[:200])
+
+
+@pytest.mark.parametrize("path", list(SIGNED_LINK_REFUSALS))
+def test_signed_link_with_its_own_signature_is_not_refused_for_the_signature(path, principals):
+    """The same link with its own signature gets past the signature check, so the refusals above are the signature's."""
+    expires = int(time.time()) + 600
+    mode = thumbnails.THUMB_MODE if path.endswith("/thumbnail") else None
+    query = {"expires": str(expires), "sig": proxy._sign_asset_token(ASSET_ID, expires, mode)}
+    principals.client.cookies.clear()
+    response = principals.client.get(re.sub(r"\{[^}]+\}", ASSET_ID, path), params=query, follow_redirects=False)
+    assert response.status_code != 403 and "signature" not in response.text.lower(), (path, response.status_code)
+
+
 # The request history takes an App key or the signed-in session of the person who made the request. The maker's
 # delete-everything is left out of the admitted calls: it would empty that person's history.
 REQUEST_HISTORY = [("GET", "/gateway/v1/requests"), ("GET", "/gateway/v1/requests/missing-fixture-id"),
@@ -705,6 +752,101 @@ HANDLER_ERRORS = {
     "invalid_password", "service_not_found", "record_not_found", "retention_destination_not_found",
     "ledger_not_found",
 }
+
+
+# The owner writes that refuse a browser session, with the body each is probed with and what each credential gets. The
+# body is invalid on purpose: a session that got past the check would stop at the body check and change nothing.
+BEARER_ONLY = {key for key, metadata in OWNER_OPERATIONS.items() if metadata.get("bearer_only")}
+BEARER_ONLY_PROBES = {
+    "POST /admin/api/drain": {"body": {"draining": "not-a-boolean"},
+                              "session": (403, "drain_bearer_required"), "bearer": (400, "invalid_draining")},
+}
+
+
+def test_bearer_only_probes_cover_exactly_the_routes_the_route_map_flags():
+    assert set(BEARER_ONLY_PROBES) == BEARER_ONLY
+
+
+@pytest.mark.parametrize("key", sorted(BEARER_ONLY_PROBES))
+def test_bearer_only_route_refuses_the_owner_session_and_admits_the_owner_bearer(key, principals):
+    probe = BEARER_ONLY_PROBES[key]
+    method, path = key.split(" ", 1)
+    drain_before = _drain_state()
+    principals.client.cookies.clear()
+    principals.client.cookies.set(*principals.owner_cookie)
+    session = principals.client.request(method, path, json=probe["body"], headers=principals.owner_headers,
+                                        follow_redirects=False)
+    assert (session.status_code, session.json()["error"]["code"]) == probe["session"], (key, session.text[:200])
+    principals.client.cookies.clear()
+    bearer = principals.client.request(method, path, json=probe["body"], headers=principals._auth(),
+                                       follow_redirects=False)
+    assert (bearer.status_code, bearer.json()["error"]["code"]) == probe["bearer"], (key, bearer.text[:200])
+    assert _drain_state() == drain_before
+
+
+def _production_modules():
+    """The modules that define the gateway's routes and the checks those routes make."""
+    root = Path(proxy.__file__).parent
+    return [root / "proxy.py", *sorted((root / "gateway").rglob("*.py"))]
+
+
+class _ReferencesAndChecks(ast.NodeVisitor):
+    """Per function: the names it refers to (called, passed on or read), and whether it compares an auth method with "bearer"."""
+
+    def __init__(self):
+        self.scope = []
+        self.refers = {}
+        self.refusing = set()
+
+    def _function(self, node):
+        self.scope.append(node.name)
+        self.refers.setdefault(node.name, set())
+        self.generic_visit(node)
+        self.scope.pop()
+
+    visit_FunctionDef = visit_AsyncFunctionDef = _function
+
+    def visit_Name(self, node):
+        if self.scope:
+            self.refers[self.scope[-1]].add(node.id)
+
+    def visit_Attribute(self, node):
+        if self.scope:
+            self.refers[self.scope[-1]].add(node.attr)
+        self.generic_visit(node)
+
+    def visit_Compare(self, node):
+        if (self.scope and any(isinstance(right, ast.Constant) and right.value == "bearer" for right in node.comparators)
+                and "auth_method" in ast.unparse(node.left)):
+            self.refusing.add(self.scope[-1])
+        self.generic_visit(node)
+
+
+@functools.cache
+def _bearer_refusing_handlers():
+    """The functions that refuse every credential but a bearer key, and every function that refers to one of them.
+
+    A handler passes its check on as an argument (``asyncio.to_thread(_drain_authorize, ...)``), so a reference counts.
+    """
+    scan = _ReferencesAndChecks()
+    for module in _production_modules():
+        scan.visit(ast.parse(module.read_text()))
+    handlers = set(scan.refusing)
+    while True:
+        referrers = {name for name, refers in scan.refers.items() if refers & handlers}
+        if referrers <= handlers:
+            return frozenset(handlers)
+        handlers |= referrers
+
+
+def test_every_handler_that_refuses_a_browser_session_write_is_flagged_bearer_only():
+    handlers = _bearer_refusing_handlers()
+    # The scan has to find the drain's check and the drain's write handler, or the comparison below would pass with nothing found.
+    assert {"_drain_authorize", "admin_drain_set"} <= handlers
+    # The check guards writes. The drain's GET reaches the same helper and admits sessions, so only the write is bearer-only.
+    writes = {f"{method} {path}" for path, route in walk_routes(proxy.app.routes) if isinstance(route, APIRoute)
+              for method in route.methods - {"GET", "HEAD", "OPTIONS"} if route.endpoint.__name__ in handlers}
+    assert writes == BEARER_ONLY, sorted(writes ^ BEARER_ONLY)
 
 
 @pytest.mark.parametrize("row", [row for row in INVENTORY if row["auth"] == "session-only"],
