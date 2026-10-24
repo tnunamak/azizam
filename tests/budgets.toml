@@ -379,7 +379,10 @@
 # tests/test_avatar_generation.py, 14 cases are added and 2 replaced: a net of +12. The feature tip before this round
 # measured 17452 (scripts/run-hermetic-pytest.sh --collect-only -q), already 5 over round 2's ceiling, so the ceiling is
 # set to this round's measured count.
-pytest = 17464
+# Generated avatars round 4 (2026-10-24): one regression case in tests/test_avatar_generation.py for a manual make that
+# starts during the automatic default's lookup. The feature tip before it measured 17464, and collect-only measures
+# 17465 with it (scripts/run-hermetic-pytest.sh --collect-only -q), so the ceiling is set to 17465.
+pytest = 17465
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
