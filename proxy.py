@@ -237,6 +237,7 @@ from gateway.user_runtime import (
     UserPortalError,
     build_user_activity_snapshot,
     build_user_portal_snapshot,
+    decode_activity_cursor,
     session_view_key_problem,
     create_user_app,
     delete_user_app,
@@ -16707,6 +16708,7 @@ async def user_portal_activity(request: Request):
         limit=limit if limit else 20,
         path=ADMIN_STORE.path,
         receipts_path=receipt_store.DB_PATH,
+        before=decode_activity_cursor(request.query_params.get("cursor")),
     )
     return JSONResponse(
         status_code=200,

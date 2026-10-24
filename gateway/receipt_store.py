@@ -650,6 +650,7 @@ def recent(
     maker_person_id: str | None = None,
     include_null_app_id: bool = False,
     since_s: int | None = None,
+    before: tuple[int, str] | None = None,
     outer_only: bool = True,
     now_ms: int | None = None,
     stale_after_ms: int = STALE_AFTER_MS,
@@ -659,7 +660,9 @@ def recent(
 
     Optional filters: ``app_profile`` (exact match), ``app_ids`` (member-scope:
     return only receipts whose ``app_id`` is in this allow-list), and
-    ``since_s`` (only receipts written within the last N seconds).
+    ``since_s`` (only receipts written within the last N seconds). ``before`` is a
+    keyset cursor, ``(created_at, request_id)`` of the last row a caller read: only
+    rows that sort after it in this order are returned.
 
     ``app_ids`` is a positive membership filter. An empty list returns no rows
     unless ``include_null_app_id`` is set for an owner-only instance feed.
@@ -696,6 +699,9 @@ def recent(
     if since_s is not None:
         clauses.append("created_at >= ?")
         params.append(int(time.time()) - int(since_s))
+    if before is not None:
+        clauses.append("(created_at < ? OR (created_at = ? AND request_id < ?))")
+        params.extend([int(before[0]), int(before[0]), str(before[1])])
     if outer_only:
         # The unary plus keeps SQLite on the created_at index. Without it the planner takes the
         # parent_request_id index and sorts every top-level receipt to return a handful.

@@ -9,13 +9,17 @@ ownership remain admin-plane actions.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
 import stat
 import tempfile
+from collections import deque
+from collections.abc import Callable, Iterator
 from functools import lru_cache
 import time
 from pathlib import Path
@@ -370,6 +374,10 @@ def build_user_portal_snapshot(
 # admin concern.
 USER_ACTIVITY_DEFAULT_LIMIT = 20
 USER_ACTIVITY_MAX_LIMIT = 100
+# Receipts one feed request may read, whether or not they make the page. A page of rows the person may not read ends
+# here, with a cursor for the next request, so no request scans the whole receipt store.
+USER_ACTIVITY_SCAN_LIMIT = 1000
+_ACTIVITY_BATCH = 50
 
 
 def _owned_app_ids(user_id: str, *, path: Path) -> list[str]:
@@ -393,11 +401,13 @@ def build_user_activity_snapshot(
     limit: int = USER_ACTIVITY_DEFAULT_LIMIT,
     path: Path = admin_store.DB_PATH,
     receipts_path: Path = receipt_store.DB_PATH,
+    before: tuple[int, str] | None = None,
 ) -> dict[str, Any]:
     """Return the recent receipts the signed-in person made (D51).
 
     Owning an App does not make its requests the owner's. The candidates are the Apps the person owns and the
-    receipts the person made, through any App. Each row is then read by its maker.
+    receipts the person made, through any App. Each row is then read by its maker. Candidates are read newest first
+    in batches, each authorized before it counts toward the page; ``before`` resumes after a previous page's cursor.
     """
     if session is None:
         return {"authenticated": False, "receipts": []}
@@ -414,18 +424,13 @@ def build_user_activity_snapshot(
     user_id = str(user["id"])
     owned = _owned_app_ids(user_id, path=path)
     viewer = Viewer(person_id=user_id, auth_kind="session")
-    # Every candidate is read before the limit applies, so rows this person may not read never take a place on the page.
-    every = receipt_store.count(path=receipts_path) or 1
-    candidates: dict[str, dict[str, Any]] = {}
-    if owned:
-        for row in receipt_store.recent(limit=every, audience="internal", app_ids=owned, path=receipts_path):
-            candidates[str(row["request_id"])] = row
-    for row in receipt_store.recent(limit=every, audience="internal", maker_person_id=user_id, path=receipts_path):
-        candidates[str(row["request_id"])] = row
-    newest = sorted(candidates.values(), key=lambda row: (row.get("_stored_at") or 0, str(row["request_id"])), reverse=True)
+    sources = [_newest_receipts(receipts_path, app_ids=owned)] if owned else []
+    sources.append(_newest_receipts(receipts_path, maker_person_id=user_id))
+    scan = _ActivityScan(sources, before=before)
     apps = content_makers.Apps(path)
     allowed: list[str] = []
-    for row in newest:
+    # A row this person may not read is passed over without taking a place on the page.
+    for row in scan:
         app_id = str(row.get("app_id") or "") or None
         makers = content_makers.row_makers(
             explicit=[str(row.get("maker_person_id") or "")], app_id=app_id,
@@ -436,6 +441,7 @@ def build_user_activity_snapshot(
             allowed.append(str(row["request_id"]))
             if len(allowed) == safe_limit:
                 break
+    has_more = scan.pending()
     visible = receipt_store.get_many(allowed, audience="client", viewer_person_id=user_id, path=receipts_path)
     return {
         "authenticated": True,
@@ -444,7 +450,92 @@ def build_user_activity_snapshot(
         "receipts": [visible[request_id] for request_id in allowed if request_id in visible],
         "scoped_app_count": len(owned),
         "scope": "me",
+        # A page ends at its size or at the scan limit. The cursor resumes after the last receipt read.
+        "has_more": has_more,
+        "next_cursor": encode_activity_cursor(scan.last_key) if has_more and scan.last_key else None,
     }
+
+
+def encode_activity_cursor(key: tuple[int, str]) -> str:
+    raw = json.dumps({"created_at": key[0], "request_id": key[1]}, separators=(",", ":"))
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def decode_activity_cursor(raw: str | None) -> tuple[int, str] | None:
+    """The cursor a feed page returned, or None for the first page. A malformed cursor reads as the first page."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(base64.urlsafe_b64decode((raw + "=" * (-len(raw) % 4)).encode("ascii")).decode("utf-8"))
+        return int(data["created_at"]), str(data["request_id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _newest_receipts(receipts_path: Path, **filters: Any) -> Callable[[tuple[int, str] | None, int], list[dict[str, Any]]]:
+    """One source of candidate receipts: the newest page after a cursor, read with the same filters each time."""
+    def read(before: tuple[int, str] | None, limit: int) -> list[dict[str, Any]]:
+        return receipt_store.recent(limit=limit, audience="internal", before=before, path=receipts_path, **filters)
+    return read
+
+
+class _ActivityScan:
+    """Candidate receipts from several sources, newest first, each once, read in batches.
+
+    A source is read only when its next row is needed, and no request reads past ``USER_ACTIVITY_SCAN_LIMIT`` rows.
+    When the limit stops the scan, rows already read are still returned, and nothing newer than ``last_key`` is left
+    unread, so a cursor made from ``last_key`` resumes without a gap.
+    """
+
+    def __init__(self, sources: list[Callable[[tuple[int, str] | None, int], list[dict[str, Any]]]],
+                 *, before: tuple[int, str] | None) -> None:
+        self._sources = sources
+        self._fetch_after = [before] * len(sources)
+        self._queues: list[deque[dict[str, Any]]] = [deque() for _ in sources]
+        self._exhausted = [False] * len(sources)
+        self._read = 0
+        self._seen: set[str] = set()
+        self.last_key: tuple[int, str] | None = None
+
+    @staticmethod
+    def _key(row: Mapping[str, Any]) -> tuple[int, str]:
+        return int(row.get("_stored_at") or 0), str(row["request_id"])
+
+    def _fill(self, index: int) -> None:
+        if self._queues[index] or self._exhausted[index]:
+            return
+        want = min(_ACTIVITY_BATCH, USER_ACTIVITY_SCAN_LIMIT - self._read)
+        if want <= 0:
+            return
+        rows = self._sources[index](self._fetch_after[index], want)
+        self._read += len(rows)
+        self._exhausted[index] = len(rows) < want
+        if rows:
+            self._fetch_after[index] = self._key(rows[-1])
+        self._queues[index].extend(rows)
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        while True:
+            for index in range(len(self._sources)):
+                self._fill(index)
+            if any(not queue and not self._exhausted[index] for index, queue in enumerate(self._queues)):
+                # The limit stopped a source whose next row is unknown, so a newer row may be unread. Stop here.
+                return
+            heads = [(self._key(queue[0]), index) for index, queue in enumerate(self._queues) if queue]
+            if not heads:
+                return
+            _, index = max(heads)
+            row = self._queues[index].popleft()
+            self.last_key = self._key(row)
+            request_id = str(row["request_id"])
+            if request_id in self._seen:
+                continue
+            self._seen.add(request_id)
+            yield row
+
+    def pending(self) -> bool:
+        """Whether a later request may find more candidates after the rows this scan has read."""
+        return any(self._queues) or not all(self._exhausted)
 
 
 def get_user_receipt(
