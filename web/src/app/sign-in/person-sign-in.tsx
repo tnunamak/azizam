@@ -267,7 +267,7 @@ export function PlainSignIn({
         ref={headingRef}
         tabIndex={-1}
         id="sign-in-title"
-        className="text-3xl font-semibold tracking-[-0.02em] outline-none"
+        className="text-3xl font-semibold tracking-[-0.02em] break-words outline-none"
       >
         {reset
           ? "Choose a new password"
