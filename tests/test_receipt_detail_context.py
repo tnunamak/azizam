@@ -208,6 +208,20 @@ def test_a_member_reads_their_own_receipt_made_through_a_service_app(detail):
     assert owner_feed["receipts"] == []
 
 
+def test_the_activity_limit_counts_only_rows_the_person_may_read(detail):
+    """Rows the owner may not read are filtered before the limit, so they cannot shrink the owner's page (finding 3)."""
+    service = admin_store.create_app("Household", kind="service", owner_user_id=detail.owner_session.subject,
+                                     access_plan="person", path=detail.admin_path)
+    detail.store("req_owner_work", {**CHAT_RECEIPT, "maker_person_id": detail.owner_session.subject},
+                 service["id"], 1792300300)
+    for index in range(3):
+        detail.store(f"req_member_work_{index}", {**CHAT_RECEIPT, "maker_person_id": detail.alice["id"]},
+                     service["id"], 1792300310 + index)
+    feed = build_user_activity_snapshot(detail.owner_session, limit=1, path=detail.admin_path,
+                                        receipts_path=detail.receipts_path)
+    assert [row["request_id"] for row in feed["receipts"]] == ["req_owner_work"]
+
+
 def test_shared_app_receipt_route_masks_other_makers_retention(detail):
     from fastapi.testclient import TestClient
 

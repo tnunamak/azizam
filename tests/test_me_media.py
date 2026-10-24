@@ -30,6 +30,7 @@ from gateway import (
     provenance,
     receipt_store,
     request_history,
+    request_source,
 )
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
@@ -228,6 +229,24 @@ class MeMediaRouterTests(unittest.TestCase):
         self.current_user = self.owner
         self.assertIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
         self.assertEqual(self.client.get("/me/api/jobs/job_owner_make").status_code, 200)
+
+    def test_a_client_parent_link_does_not_make_another_person_the_maker_of_a_job(self) -> None:
+        """Alice names Bob's receipt as the parent of her job. The job is still Alice's: the maker is the one stamped
+        from her authenticated request, and the parent link names no one (a client can send any parent)."""
+        self._receipt(self.app_b["id"], "req_bob_chat", maker_person_id=self.bob["id"])
+        with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+            media_jobs.create(media_jobs.MediaJob(
+                job_id="job_claimed", request_id="req_alice_claim", parent_request_id="req_bob_chat",
+                intent="image.generate", workflow="wf.image", app_id=self.app_a["id"],
+                status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                assets=[{"asset_id": "img_" + "6" * 64, "media_type": "image/png"}],
+            ), path=self.jobs_db)
+        self.current_user = self.bob
+        self.assertNotIn("job_claimed", [job["job_id"] for job in self.client.get("/me/api/jobs").json()["jobs"]])
+        self.assertEqual(self.client.get("/me/api/jobs/job_claimed").status_code, 404)
+        self.current_user = self.alice
+        self.assertIn("job_claimed", [job["job_id"] for job in self.client.get("/me/api/jobs").json()["jobs"]])
+        self.assertEqual(self.client.get("/me/api/jobs/job_claimed").status_code, 200)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
