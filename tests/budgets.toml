@@ -361,7 +361,9 @@ pytest = 17215
 # vitest list measured 3452 (2026-10-24).
 # Set up this app (slice 2): +3 Connect cases for ?app=<id> (set up, unknown app, plain visit) and +1 rename case
 # (the menu's Set up this app link). vitest list measured 3456 (2026-10-24).
-vitest = 3456
+# Apps & keys and Connect round 2: trusted-address cases (one replaced, two added: +2), an App-grouping case (+1)
+# and a Connect disclosure case (+1). vitest list measured 3460 (2026-10-24).
+vitest = 3460
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -383,7 +385,9 @@ vitest = 3456
 # Train r103 step 5 (account chooser): 537 + 29 (554 - 525) = 566, provisional until the final Playwright lists.
 # Set up this app (slice 2): +1 case in e2e/connect.spec.ts (chromium project). Gate lists measured 2026-10-24:
 # playwright.config.ts 546 + live-data 3 + household 18 = 567.
-playwright = 567
+# Apps & keys and Connect round 2: +1 case in e2e/connect.spec.ts (Back and Forward between two Connect pages, with
+# axe on the Apps and Connect pages). Gate lists measured 2026-10-24: playwright.config.ts 547 + live-data 3 + household 18 = 568.
+playwright = 568
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
