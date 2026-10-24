@@ -609,7 +609,9 @@ def test_a_version_five_store_gains_the_maker_stamp_and_its_old_jobs_stay_unstam
         stamped = media_jobs.create(_make_job(request_id="req_new", app_id="app_test"), path=path)
     old = media_jobs.create(_make_job(request_id="req_old"), path=path)
     with sqlite3.connect(path) as conn:
-        # Rebuild the version 5 shape: no stamp columns, and the job JSON of a row written before the stamp existed.
+        # Rebuild the version 5 shape: no stamp columns and no maker index, and the job JSON of a row written before the
+        # stamp existed.
+        conn.execute("DROP INDEX IF EXISTS media_jobs_maker_person")
         for column in ("maker_person_id", "maker_credential_id", "maker_connection_id"):
             conn.execute(f"ALTER TABLE media_jobs DROP COLUMN {column}")
         conn.execute("UPDATE media_jobs SET job_json = json_remove(job_json, '$.maker_person_id', "
