@@ -6991,7 +6991,7 @@
         ]
       },
       "post": {
-        "description": "Needs the owner's or an admin's sign-in.\n\nSet or clear the draining flag. Body: {\"draining\": bool, \"ttl_s\": num, \"reason\": str}.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only; bearer only. Browser session mutations require CSRF/action headers; bearer calls do not. Drain writes accept bearer credentials only.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nSet or clear the draining flag. Body: {\"draining\": bool, \"ttl_s\": num, \"reason\": str}.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only; bearer only. A browser session is refused, even with CSRF and action headers.",
         "operationId": "owner_post_admin_api_drain",
         "parameters": [],
         "requestBody": {
@@ -7064,9 +7064,6 @@
         "security": [
           {
             "OwnerBearer": []
-          },
-          {
-            "BrowserSession": []
           }
         ],
         "summary": "Admin Drain Set",
