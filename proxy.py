@@ -16,7 +16,7 @@ Features:
 """
 
 from gateway.compat import get_env
-from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, private_tmp, request_forms
+from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
@@ -12760,25 +12760,22 @@ async def _run_workflow_drift_once() -> dict:
         }
     interpreter = sys.executable or "python3"
     try:
-        proc = await asyncio.create_subprocess_exec(
-            interpreter, str(_DRIFT_SCRIPT_PATH), "--verbose",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path(__file__).parent),
-        )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-        except asyncio.TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
+            done = await off_loop_spawn.run(
+                [interpreter, str(_DRIFT_SCRIPT_PATH), "--verbose"],
+                capture_output=True,
+                cwd=str(Path(__file__).parent),
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
             return {
                 "status": "error",
                 "reason": "drift script timed out after 120s",
                 "checked_at": int(time.time()),
             }
-        rc = proc.returncode
-        out = (stdout or b"").decode("utf-8", errors="replace")
-        err = (stderr or b"").decode("utf-8", errors="replace")
+        rc = done.returncode
+        out = (done.stdout or b"").decode("utf-8", errors="replace")
+        err = (done.stderr or b"").decode("utf-8", errors="replace")
         return {
             "status": "ok" if rc == 0 else "drift" if rc == 1 else "error",
             "exit_code": rc,
@@ -13065,9 +13062,15 @@ async def _serve(app: FastAPI):
         IMAGE_CACHE_DIR, _prompt_migration_state_path(),
     ))
 
+    # The status snapshot builds only while something reads it. The backend history needs samples whether or not
+    # anyone reads, so its sampler runs as long as the gateway does, and shutdown joins both.
+    status_endpoint.open_snapshot(_build_status_snapshot)
+    status_endpoint.start_backend_samples(lambda: config)
+
     yield
 
-    await _stop_home_refreshes()
+    await status_endpoint.stop_snapshot()
+    await status_endpoint.stop_backend_samples()
     prompt_memory_stop.set()
     prompt_memory_task.cancel()
     metadata_migration_task.cancel()
@@ -13841,7 +13844,80 @@ def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[
     return out
 
 
-_SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+# Every capabilities and overview read asks about the same few services. Their rows are kept for the TTL below, and a
+# read that finds a service cold shares the probe already in flight for it, so a read costs no HTTP probe or `systemctl`
+# process unless a row has expired. The status grid keeps its own rows and deadlines.
+_SERVICE_ROW_CACHE_TTL_S = 12.0
+_SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}  # service id -> (probe start, row)
+_SERVICE_ROW_PROBES: dict[str, asyncio.Task] = {}  # service id -> the probe in flight that will answer it
+
+
+def _service_row_key(row: Mapping[str, Any]) -> str:
+    return str(row.get("service_id") or row.get("key") or "")
+
+
+async def _probe_service_rows(services: dict[str, Any], started: float) -> list[dict[str, Any]]:
+    owner = asyncio.current_task()
+    try:
+        rows = await status_endpoint._backend_grid({"backends": services})
+    finally:
+        # Unregister only the entries this task registered. A fallback probe registers none, so a newer probe for the
+        # same service may still be in flight when it finishes.
+        for key in services:
+            if _SERVICE_ROW_PROBES.get(key) is owner:
+                _SERVICE_ROW_PROBES.pop(key)
+    checked_at = int(time.time())
+    for row in rows:
+        row.setdefault("observed_at_s", checked_at)
+        _SERVICE_ROW_CACHE[_service_row_key(row)] = (started, dict(row))
+    return rows
+
+
+async def _service_rows(services: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The rows for these services: a row cached less than the TTL ago, else the row of a probe in flight for the
+    service, else a new probe for the services nobody is probing. A shared probe that fails does not fail this
+    reader: its services are probed again one by one, and a service that still fails gets an unknown row."""
+    now = status_endpoint._now()
+    rows: list[dict[str, Any]] = []
+    waits: dict[asyncio.Task, list[str]] = {}  # each probe this reader waits on -> the requested services it answers
+    cold: dict[str, Any] = {}
+    for key, service in services.items():
+        hit = _SERVICE_ROW_CACHE.get(key)
+        probe = _SERVICE_ROW_PROBES.get(key)
+        if hit is not None and now - hit[0] < _SERVICE_ROW_CACHE_TTL_S:
+            rows.append(dict(hit[1]))
+        elif probe is not None and not probe.done():
+            waits.setdefault(probe, []).append(key)
+        else:
+            cold[key] = service
+    if cold:
+        probe = asyncio.ensure_future(_probe_service_rows(cold, now))
+        _SERVICE_ROW_PROBES.update(dict.fromkeys(cold, probe))
+        waits[probe] = list(cold)
+    for probe, keys in waits.items():
+        try:
+            # Shielded: a reader that is cancelled must not cancel the probe that the other readers are waiting on.
+            rows.extend(row for row in await asyncio.shield(probe) if _service_row_key(row) in services)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - another service's failure in a shared batch must not fail this reader
+            rows.extend(await _service_rows_one_by_one({key: services[key] for key in keys}))
+    return rows
+
+
+async def _service_rows_one_by_one(services: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Probe each service on its own after a shared probe failed. A service that fails again gets an unknown row with
+    the error's type, never an exception."""
+    async def one(key: str, service: Any) -> list[dict[str, Any]]:
+        try:
+            return await _probe_service_rows({key: service}, status_endpoint._now())
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - reported as an unknown row
+            return [{"service_id": key, "key": key, "status": "unknown", "last_error": type(exc).__name__,
+                     "observed_at_s": int(time.time())}]
+    groups = await asyncio.gather(*(one(key, service) for key, service in services.items()))
+    return [row for group in groups for row in group]
 
 
 async def _status_payload_with_service_rows(
@@ -13863,22 +13939,7 @@ async def _status_payload_with_service_rows(
     missing = {key: value for key, value in backends.items() if key in wanted}
     if not missing:
         return status_payload
-    # Every capabilities and overview read asks about the same few services. Their
-    # rows are kept as long as the status grid keeps its own, so a read costs no
-    # HTTP probe or `systemctl` process unless a row has expired.
-    now = time.monotonic()
-    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
-    kept = [dict(hit[1]) for key in missing if (hit := _SERVICE_ROW_CACHE.get(key)) and now - hit[0] < ttl]
-    kept_ids = {str(row.get("service_id") or row.get("key") or "") for row in kept}
-    unchecked = {key: value for key, value in missing.items() if key not in kept_ids}
-    probed: list[dict[str, Any]] = []
-    if unchecked:
-        probed = await status_endpoint._backend_grid({"backends": unchecked})
-        checked_at = int(time.time())
-        for row in probed:
-            row.setdefault("observed_at_s", checked_at)
-            _SERVICE_ROW_CACHE[str(row.get("service_id") or row.get("key") or "")] = (now, dict(row))
-    extra = status_endpoint._merge_backend_observations([*kept, *probed])
+    extra = status_endpoint._merge_backend_observations(await _service_rows(missing))
     return {**status_payload, "backends": [*rows, *extra]}
 
 
@@ -13918,17 +13979,9 @@ async def _capabilities_availability_evidence(
 
 
 def _cached_status_payload_for_availability() -> Mapping[str, Any]:
-    cache = getattr(status_endpoint, "_CACHE", {})
-    cached = cache.get("data") if isinstance(cache, Mapping) else None
-    ts = cache.get("ts") if isinstance(cache, Mapping) else None
-    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
-    if not isinstance(cached, Mapping):
-        return {}
-    if not isinstance(ts, (int, float)) or isinstance(ts, bool):
-        return {}
-    if ttl <= 0 or time.monotonic() - float(ts) > ttl:
-        return {}
-    return cached
+    """The latest status snapshot's payload, for availability answers that need no probe. Empty before the first build,
+    and once the snapshot is too old to trust: the caller then probes the services it needs."""
+    return status_endpoint.latest_payload()
 
 
 def _runtime_availability_evidence(
@@ -13964,86 +14017,33 @@ async def _status_payload_with_protocol_issues(payload: Mapping[str, Any]) -> Ma
     return {**payload, "protocol_issues": issues, "health_sources": sources}
 
 
-# Home's engine rows. One refresh runs at a time, shielded from the Home reads that wait on it:
-# a read that is cancelled does not abandon the refresh, and a burst of reads shares one probe pass.
-_ENGINE_ROWS: dict[str, Any] = {}  # {"ts": monotonic time, "payload": rows} of the last complete pass
-_ENGINE_ROWS_TASK: asyncio.Task | None = None
-# Rows older than the status cache's TTL are served at once while a refresh runs, up to this age.
-_ENGINE_ROWS_MAX_STALE_S = 60.0
-# A read that has no rows it may serve waits this long for the refresh, then gets checking rows.
-_ENGINE_ROWS_FIRST_WAIT_S = 0.5
+async def _build_status_snapshot() -> dict[str, Any]:
+    """One full status build, run in the background while something reads the snapshot. Every section probes on its own
+    budget, and the availability evidence is worked out from the result. Readers take the result from the snapshot;
+    none waits for it."""
+    payload = await _status_payload_with_protocol_issues(await status_endpoint.build_status_payload(config))
+    return await _with_availability(payload)
 
 
-def _start_engine_rows_refresh() -> asyncio.Task:
-    """The refresh in flight, started if there is none."""
-    global _ENGINE_ROWS_TASK
-    if _ENGINE_ROWS_TASK is None or _ENGINE_ROWS_TASK.done():
-        _ENGINE_ROWS_TASK = asyncio.get_running_loop().create_task(_refresh_engine_rows())
-        _ENGINE_ROWS_TASK.add_done_callback(lambda task: _log_home_probe_failure("engine rows", task))
-    return _ENGINE_ROWS_TASK
+async def _status_payload_with_availability() -> Mapping[str, Any]:
+    """The admin status and Home read the snapshot. Nothing here probes, and no request waits for a build."""
+    return await status_endpoint.get_cached_status(config)
 
 
-async def _refresh_engine_rows() -> dict[str, Any]:
-    backends = await status_endpoint._backend_grid(config)
-    payload = {"backends": backends, "generated_at": int(time.time())}
-    _ENGINE_ROWS.update(ts=time.monotonic(), payload=payload)
-    return payload
-
-
-def _log_home_probe_failure(name: str, task: asyncio.Task) -> None:
-    # A probe that no reader awaits still reports its failure.
-    if not task.cancelled() and task.exception() is not None:
-        logging.getLogger(__name__).error("Home's %s refresh failed", name, exc_info=task.exception())
-
-
-async def _engine_rows_payload() -> dict[str, Any]:
-    """The engine rows of one status pass, without the rest of the status page.
-
-    A fresh status page already holds them. Otherwise only the engine probes run, the
-    same probes the status page runs, so Home never waits for the GPU, disk, log and
-    git reads that it does not show. Nor does a Home read wait for the probes, except
-    briefly when it has no rows to serve; then it gets checking rows if they are not in yet.
-    """
-    cached = _cached_status_payload_for_availability()
-    if cached:
-        return {"backends": list(cached.get("backends") or []), "generated_at": cached.get("generated_at")}
-    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
-    held = _ENGINE_ROWS.get("payload")
-    age = time.monotonic() - float(_ENGINE_ROWS.get("ts", 0.0))
-    if held is not None and age < ttl:
-        return held
-    refresh = _start_engine_rows_refresh()
-    if held is not None and age < _ENGINE_ROWS_MAX_STALE_S:
-        return held
-    try:
-        # Shielded: a reader that is cancelled leaves the refresh running for the next reader.
-        return await asyncio.wait_for(asyncio.shield(refresh), timeout=_ENGINE_ROWS_FIRST_WAIT_S)
-    except Exception:  # noqa: BLE001 - a refresh that is late or failed reads as checking rows
-        return {"backends": status_endpoint.checking_backend_rows(config), "generated_at": int(time.time())}
-
-
-async def _home_status_payload() -> Mapping[str, Any]:
-    return await _status_payload_with_availability(full=False)
-
-
-async def _status_payload_with_availability(*, full: bool = True) -> Mapping[str, Any]:
-    payload = (
-        await _status_payload_with_protocol_issues(await status_endpoint.get_cached_status(config))
-        if full
-        else await _engine_rows_payload()
-    )
+async def _with_availability(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     try:
         # Registry and capability resolution read SQLite; keep them off the loop.
         service_records, no_auth_capabilities = await asyncio.to_thread(
             lambda: (ADMIN_STORE.get_service_registry(), _gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT)))
         execution_runtime = litellm_runtime_from_registry(service_records, env=os.environ)
-        # Home reads the cached evidence without waiting; the full status page probes.
-        health_probe = _models_catalog_health_evidence if full else _home_health_evidence
-        health_evidence = await health_probe(service_records, service_ids=(service_records.get("services") or {}).keys())
+        health_evidence = await _models_catalog_health_evidence(service_records, service_ids=(service_records.get("services") or {}).keys())
         # Composed workflow engines (the face sidecar) are checked read-only
         # for evidence; the engine grid itself is unchanged.
+        # A section that times out keeps its last rows, so this build can carry rows from an old answer. Availability does
+        # not count those as evidence of now: without a recent answer, a service has no row here and reads as unknown.
+        build_rows = payload if status_endpoint.backend_rows_are_fresh() else {**payload, "backends": []}
         service_rows = await _status_payload_with_service_rows(
-            payload, _workflow_availability_services(service_records),
+            build_rows, _workflow_availability_services(service_records),
             _composed_dependency_service_ids(no_auth_capabilities),
         )
         availability_evidence = await asyncio.to_thread(
@@ -14068,7 +14068,10 @@ async def _status_payload_with_availability(*, full: bool = True) -> Mapping[str
             ),
             "_availability_evidence": availability_evidence,
         }
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # The page still renders without the availability evidence. Log the type only: the message
+        # can carry a path or a secret.
+        print(f"[proxy] status availability skipped: {type(exc).__name__}", flush=True)
         return payload
 
 
@@ -16298,7 +16301,7 @@ app.include_router(create_home_router(
     capabilities=lambda identity: _gateway_capabilities_for_auth_context(AuthContext(identity=identity)),
     aliases=_gateway_aliases_provider,
     public_base_url=lambda request: _public_base_url(request),
-    status_provider=_home_status_payload,
+    status_provider=_status_payload_with_availability,
     admin_auth=ADMIN_AUTH,
     spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
     availability_services=_workflow_availability_services,
@@ -16428,53 +16431,6 @@ async def _models_catalog_health_evidence(
     return kept
 
 
-# Home reads the health evidence the catalog probe keeps. A refresh that is still running is not waited for,
-# so one slow health endpoint cannot hold up a Home read.
-_HOME_HEALTH_TASK: asyncio.Task | None = None
-
-
-def _cached_health_evidence(service_records: Mapping[str, Any], service_ids: list[str], max_age_s: float) -> dict[str, dict[str, Any]]:
-    """The cached evidence of the services that are young enough and still match their record."""
-    services = service_records.get("services") if isinstance(service_records, Mapping) else None
-    services = services if isinstance(services, Mapping) else {}
-    now = time.monotonic()
-    served: dict[str, dict[str, Any]] = {}
-    for service_id in service_ids:
-        hit = _HEALTH_EVIDENCE_CACHE.get(service_id)
-        # An edited service is not answered from its old record, as in _models_catalog_health_evidence.
-        if hit is not None and now - hit[0] < max_age_s and hit[1] == json.dumps(services.get(service_id), sort_keys=True, default=str):
-            served[service_id] = dict(hit[2])
-    return served
-
-
-async def _stop_home_refreshes() -> None:
-    """Cancel and join the Home refreshes that outlive their reader, so none probes or writes a cache after shutdown."""
-    global _ENGINE_ROWS_TASK, _HOME_HEALTH_TASK
-    tasks = [task for task in (_ENGINE_ROWS_TASK, _HOME_HEALTH_TASK) if task is not None and not task.done()]
-    for task in tasks:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    _ENGINE_ROWS_TASK = _HOME_HEALTH_TASK = None
-
-
-async def _home_health_evidence(service_records: Mapping[str, Any], *, service_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
-    """The health evidence Home can use now, without waiting for a probe.
-
-    A read is served what the cache holds, up to the stale limit, while a refresh runs. The refresh lands in
-    the cache for the next read. A read with nothing cached gets none, and its services read as not measured.
-    """
-    global _HOME_HEALTH_TASK
-    wanted = list(dict.fromkeys(str(service_id) for service_id in service_ids))
-    fresh = _cached_health_evidence(service_records, wanted, _HEALTH_EVIDENCE_TTL_S)
-    if len(fresh) == len(wanted):
-        return fresh
-    if _HOME_HEALTH_TASK is None or _HOME_HEALTH_TASK.done():
-        _HOME_HEALTH_TASK = asyncio.get_running_loop().create_task(
-            _models_catalog_health_evidence(service_records, service_ids=wanted))
-        _HOME_HEALTH_TASK.add_done_callback(lambda task: _log_home_probe_failure("health evidence", task))
-    return _cached_health_evidence(service_records, wanted, _ENGINE_ROWS_MAX_STALE_S)
-
-
 async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
     session = (await asyncio.to_thread(_oidc_session_from_request, request))
     if session is None:
@@ -16528,10 +16484,8 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         )
     except Exception:  # noqa: BLE001
         health_evidence = {}
-    try:
-        status_payload = await status_endpoint.get_cached_status(config)
-    except Exception:  # noqa: BLE001
-        status_payload = _cached_status_payload_for_availability()
+    # Availability takes the snapshot only while it is fresh. An older row is probed below, not trusted.
+    status_payload = _cached_status_payload_for_availability()
     try:
         status_payload = await _status_payload_with_service_rows(
             status_payload or {}, service_records,
@@ -18937,7 +18891,8 @@ async def health():
     """Proxy service health. Public so external health checks do not need API keys."""
     body = {
         "status": "healthy",
-        "app_credentials_configured": active_app_credential_count(),
+        # SQLite on a worker thread: an open and a query on the loop would hold every other request.
+        "app_credentials_configured": await asyncio.to_thread(active_app_credential_count),
     }
     # A broken session view key is reported as degraded, with its reason code only: signed-in accounts cannot be
     # checked until it is fixed. This comment stays out of the docstring, which is the published OpenAPI description.

@@ -245,15 +245,11 @@ def test_systemd_status_observes_process_state_without_health_probe(monkeypatch,
     import asyncio
     from gateway import lifecycle_drivers
 
-    class Process:
-        async def communicate(self):
-            return observed.encode(), b""
+    def run_probe(argv):
+        assert argv == ["systemctl", "--user", "is-active", "--", "fake.service"]
+        return f"{observed}\n".encode()
 
-    async def create_process(*command, **kwargs):
-        assert command == ("systemctl", "--user", "is-active", "fake.service")
-        return Process()
-
-    monkeypatch.setattr(lifecycle_drivers.asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(lifecycle_drivers, "_run_probe", run_probe)
     service = {"lifecycle": {"driver": "systemd", "driver_config": {"unit": "fake.service", "scope": "user"}}}
     assert asyncio.run(lifecycle_drivers.SystemdDriver().status(service)) == expected
 
@@ -731,15 +727,14 @@ def test_status_probe_connect_failure_marks_no_response_kind():
     assert row["kind"] == "no_response"
 
 
-def test_cached_status_payload_for_availability_expires(monkeypatch):
+def test_availability_reads_the_latest_snapshot_and_nothing_before_the_first_build(monkeypatch):
     import proxy
 
-    now = proxy.time.monotonic()
-    monkeypatch.setattr(proxy.status_endpoint, "_CACHE_TTL_S", 10.0)
-    monkeypatch.setattr(proxy.status_endpoint, "_CACHE", {"ts": now - 11.0, "data": {"backends": [{"key": "svc", "status": "up"}]}})
+    monkeypatch.setattr(proxy.status_endpoint, "_SNAPSHOT", {})
     assert proxy._cached_status_payload_for_availability() == {}
 
-    proxy.status_endpoint._CACHE = {"ts": now, "data": {"backends": [{"key": "svc", "status": "up"}]}}
+    monkeypatch.setattr(proxy.status_endpoint, "_SECTION_AT", {"backends": proxy.status_endpoint._now()})
+    proxy.status_endpoint._store_snapshot({"backends": [{"key": "svc", "status": "up"}]})
     assert proxy._cached_status_payload_for_availability()["backends"][0]["key"] == "svc"
 
 
@@ -1318,17 +1313,16 @@ def test_availability_projection_is_presentation_only_not_a_routing_input():
                 users[node.name] = used
     assert set(users) <= {
         "_gateway_capabilities_provider", "_capabilities_availability_evidence", "_runtime_availability_evidence",
-        "_status_payload_with_availability", "_home_status_payload", "_user_models_catalog_payload",
+        "_status_payload_with_availability", "_with_availability", "_user_models_catalog_payload",
         "_user_workflows_catalog_payload",
     }
-    # The two provider callables are only handed to discovery and Home/Status routers. Home gets the
-    # engine-rows variant (_home_status_payload); the admin Status keeps the full status page.
+    # The two provider callables are only handed to discovery and the Home/Status routers. Both read the same
+    # snapshot (_status_payload_with_availability); the background build is the only code that probes.
     module_refs = [n for n in ast.walk(tree) if isinstance(n, ast.keyword)
-                   and isinstance(n.value, ast.Name) and n.value.id in {"_gateway_capabilities_provider", "_status_payload_with_availability", "_home_status_payload"}]
+                   and isinstance(n.value, ast.Name) and n.value.id in {"_gateway_capabilities_provider", "_status_payload_with_availability"}]
     assert {(k.arg, k.value.id) for k in module_refs} <= {
         ("capabilities_provider", "_gateway_capabilities_provider"),
         ("status_provider", "_status_payload_with_availability"),
-        ("status_provider", "_home_status_payload"),
     }
 
 

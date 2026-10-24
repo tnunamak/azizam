@@ -87,7 +87,7 @@ def test_exact_model_aux_and_profile_is_noop_but_profile_change_restarts(tmp_pat
         target_profile="kv-q5-q4",
     )
     with patch.object(driver, "_dropin_path", return_value=dropin), patch(
-        "asyncio.create_subprocess_exec"
+        "gateway.off_loop_spawn.run"
     ) as subprocess_exec:
         assert asyncio.run(driver.swap(service, q5, ctx=ctx_q5)) is True
     subprocess_exec.assert_not_called()
@@ -107,16 +107,13 @@ def test_exact_model_aux_and_profile_is_noop_but_profile_change_restarts(tmp_pat
         target_profile="kv-q8",
     )
     with patch.object(driver, "_dropin_path", return_value=dropin), patch(
-        "asyncio.create_subprocess_exec", return_value=process
+        "gateway.off_loop_spawn.run", return_value=process
     ) as subprocess_exec, patch("httpx.AsyncClient", return_value=client_context):
         assert asyncio.run(driver.swap(service, q8, ctx=ctx_q8)) is True
 
     assert subprocess_exec.call_count == 2
     assert subprocess_exec.call_args_list[1].args == (
-        "systemctl",
-        "--user",
-        "restart",
-        "llama-bee.service",
+        ["systemctl", "--user", "restart", "llama-bee.service"],
     )
     assert dropin.read_text() == driver._dropin_text(q8)
 

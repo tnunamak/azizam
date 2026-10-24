@@ -19,9 +19,13 @@ from __future__ import annotations
 from gateway.compat import get_env
 
 import asyncio
+import concurrent.futures
+import contextvars
 import copy
+import functools
 import importlib
 import json
+import logging
 import os
 import re
 import ssl
@@ -42,13 +46,41 @@ from gateway.http_tls import tls_context
 from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload, connect_failure_kind
 from gateway.model_presentation import declared_health_success, service_health_endpoint, starts_on_demand
 
-# Loop-owned cache and shared rebuild; all callers use the gateway's event loop.
-_CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
-_CACHE_TTL_S = 12.0
-# Past the TTL, a status that is at most this old is served at once while one
-# background rebuild refreshes it, so no request pays for the rebuild.
-_CACHE_STALE_S = 60.0
-_BUILD_TASK: asyncio.Task | None = None
+_log = logging.getLogger(__name__)
+
+# The status snapshot: one full build, run in the background, that every reader takes its answer from. No request
+# waits for a probe. A build runs only while something reads the snapshot. A read keeps it wanted for
+# SNAPSHOT_IDLE_WINDOW_S; while it is wanted the refresher builds every SNAPSHOT_INTERVAL_S, and it stops once the
+# window has passed with no read. The next read starts it again. A section that does not answer keeps its last
+# answer, and its age in the snapshot keeps growing until it answers again.
+SNAPSHOT_INTERVAL_S = 15.0
+SNAPSHOT_IDLE_WINDOW_S = 300.0
+# Availability decisions trust a backend row only if the backend section answered this recently. An older row is
+# probed, not trusted. The build's own time does not count: a timed-out section keeps its old rows in a fresh build.
+SNAPSHOT_FRESH_S = 60.0
+_SNAPSHOT: dict[str, Any] = {}  # built_at (epoch), built (monotonic), payload, section_at {name: monotonic}
+_SNAPSHOT_TASK: asyncio.Task | None = None
+_SNAPSHOT_BUILD: Callable[[], Awaitable[dict]] | None = None  # registered by open_snapshot; the refresher runs it
+_SNAPSHOT_WANTED_UNTIL = 0.0  # monotonic: the refresher runs while now is before this
+_SNAPSHOT_CLOSED = False  # set by stop_snapshot at shutdown, so no read starts a refresher after it
+_SECTION_AT: dict[str, float] = {}  # when each section last answered, monotonic time
+# The 24-hour backend history has its own light sampler, which runs as long as the gateway does. It probes the HTTP
+# health URLs only, so it starts no process; the snapshot's status grid keeps the lifecycle checks.
+BACKEND_SAMPLE_INTERVAL_S = 60.0
+# Shutdown waits this long for a sample write that has already started. A thread cannot be cancelled once it runs.
+BACKEND_SAMPLE_JOIN_S = 5.0
+_SAMPLE_TASK: asyncio.Task | None = None
+_SAMPLE_WRITE: concurrent.futures.Future | None = None  # the sample write on the status pool, while one runs
+
+
+def _now() -> float:
+    """The clock the snapshot reads. Tests replace it, so a schedule of minutes runs without waiting."""
+    return time.monotonic()
+
+
+async def _sleep(seconds: float) -> None:
+    """The wait between ticks of the refresher and the sampler. Tests replace it with a fake clock."""
+    await asyncio.sleep(seconds)
 
 
 def _resolve_commit_hash() -> Optional[str]:
@@ -379,18 +411,45 @@ def _row_for_lifecycle_state(target: Mapping[str, Any], state: str, warning: str
     return row
 
 
-async def _lifecycle_probe(target: Mapping[str, Any], config_backends: Mapping[str, Any]) -> dict[str, Any]:
+_LIFECYCLE_PROBE_TIMEOUT_S = 1.5
+
+
+async def _systemd_lifecycle_states(targets: list[dict[str, Any]], config_backends: Mapping[str, Any]) -> dict[str, Any]:
+    """The state of each systemd target, from one `systemctl` call per scope (SystemdDriver.statuses).
+
+    A target that could not be answered maps to its exception. Other drivers answer for themselves.
+    """
+    systemd = [
+        target for target in targets
+        if isinstance(lifecycle_drivers.driver_for_service(str(target["key"]), config_backends=config_backends),
+                      lifecycle_drivers.SystemdDriver)
+    ]
+    if not systemd:
+        return {}
+    try:
+        states = await asyncio.wait_for(
+            lifecycle_drivers.SystemdDriver.statuses([target["service"] for target in systemd]),
+            timeout=_LIFECYCLE_PROBE_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001
+        return {target["key"]: exc for target in systemd}
+    return {target["key"]: state for target, state in zip(systemd, states)}
+
+
+async def _lifecycle_probe(target: Mapping[str, Any], config_backends: Mapping[str, Any], state: Any = None) -> dict[str, Any]:
     driver = lifecycle_drivers.driver_for_service(str(target["key"]), config_backends=config_backends)
     service = target["service"]
     warning: str | None = None
     try:
-        warning = await asyncio.wait_for(driver.preflight(service), timeout=1.5)
+        warning = await asyncio.wait_for(driver.preflight(service), timeout=_LIFECYCLE_PROBE_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001
         warning = _safe_err(exc)
-    try:
-        state = await asyncio.wait_for(driver.status(service), timeout=1.5)
-    except Exception as exc:  # noqa: BLE001
-        return _row_for_lifecycle_state(target, "unknown", _safe_err(exc))
+    if state is None:  # not answered in a batch
+        try:
+            state = await asyncio.wait_for(driver.status(service), timeout=_LIFECYCLE_PROBE_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001
+            return _row_for_lifecycle_state(target, "unknown", _safe_err(exc))
+    if isinstance(state, BaseException):
+        return _row_for_lifecycle_state(target, "unknown", _safe_err(state))
     return _row_for_lifecycle_state(target, state, warning)
 
 
@@ -475,6 +534,14 @@ async def _backend_grid(config: dict, *, deadline_s: float = _BACKEND_GRID_DEADL
             row = await _probe(client, target["key"], target["name"], target["url"], target["role"], target["note"], service=service)
             row["observed_at_s"] = int(time.time())
             return row
+        # The systemd batch runs alongside the HTTP probes. Each lifecycle row waits for the batch, not for them.
+        systemd_states = asyncio.ensure_future(_systemd_lifecycle_states(lifecycle_targets, backends))
+
+        async def lifecycle_probe(target):
+            # Shielded: a lifecycle probe that hits its deadline must not cancel the batch the other rows wait on.
+            states = await asyncio.shield(systemd_states)
+            return await _lifecycle_probe(target, backends, states.get(target["key"]))
+
         # Each probe has its own deadline, so one slow engine does not hold up the rows of the others.
         http_results, lifecycle_results = await asyncio.gather(
             asyncio.gather(
@@ -482,7 +549,7 @@ async def _backend_grid(config: dict, *, deadline_s: float = _BACKEND_GRID_DEADL
                 return_exceptions=False,
             ),
             asyncio.gather(
-                *[_within_deadline(_lifecycle_probe(t, backends), deadline_s, t, _overdue_lifecycle_row) for t in lifecycle_targets],
+                *[_within_deadline(lifecycle_probe(t), deadline_s, t, _overdue_lifecycle_row) for t in lifecycle_targets],
                 return_exceptions=False,
             ),
         )
@@ -3589,26 +3656,67 @@ def _status_config_snapshot(config: dict) -> dict:
     return config_snapshot
 
 
-async def build_status_payload(config: dict) -> dict:
-    errors: dict[str, str] = {}
+# The blocking status sections run on this pool, not on the default executor: a status build must not
+# take every worker that requests use for their SQLite and file work. Most sections wait on a subprocess.
+_SECTION_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=6, thread_name_prefix="status-section")
 
-    async def section(name: str, coro):
+
+def _section(fn, *args, **kwargs):
+    """Run a blocking status section on _SECTION_POOL, in the caller's context, as asyncio.to_thread does."""
+    context = contextvars.copy_context()
+    return asyncio.get_running_loop().run_in_executor(
+        _SECTION_POOL, functools.partial(context.run, fn, *args, **kwargs))
+
+
+# Every status section has a budget. A section that has not answered by then shows its last answer,
+# marked stale, and the page does not wait for it. Backends get more: one probe can take up to its
+# connect and read timeouts.
+SECTION_BUDGET_S = 3.0
+SECTION_BUDGETS: dict[str, float] = {"backends": 6.0}
+_SECTION_LAST: dict[str, Any] = {}
+
+
+async def gather_sections(
+    sections: Mapping[str, Awaitable[Any]],
+    *,
+    errors: dict[str, str],
+    stale: list[str],
+    budgets: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
+    """Answer every section at once, each within its budget, and return {name: answer}.
+
+    A section that raises has no answer and a safe message in errors. A section past its budget is
+    named in stale and answers with its last answer (None before any).
+    """
+    limits = SECTION_BUDGETS if budgets is None else budgets
+
+    async def answer(name: str, awaitable: Awaitable[Any]) -> Any:
+        budget = limits.get(name, SECTION_BUDGET_S)
         try:
-            return await coro
+            value = await asyncio.wait_for(awaitable, budget)
+        except asyncio.TimeoutError:
+            stale.append(name)
+            errors[name] = f"stale: no answer within {budget:g}s"
+            return _SECTION_LAST.get(name)
         except Exception as e:  # noqa: BLE001
             errors[name] = _safe_err(e)
             return None
+        _SECTION_LAST[name] = value
+        _SECTION_AT[name] = _now()
+        return value
+
+    names = list(sections)
+    values = await asyncio.gather(*(answer(name, sections[name]) for name in names))
+    return dict(zip(names, values))
+
+
+async def build_status_payload(config: dict) -> dict:
+    errors: dict[str, str] = {}
+    stale: list[str] = []
 
     def loop_section(name: str, fn):
         try:
             return fn()
-        except Exception as e:  # noqa: BLE001
-            errors[name] = _safe_err(e)
-            return None
-
-    async def sync_section(name: str, fn):
-        try:
-            return await asyncio.to_thread(fn)
         except Exception as e:  # noqa: BLE001
             errors[name] = _safe_err(e)
             return None
@@ -3626,60 +3734,125 @@ async def build_status_payload(config: dict) -> dict:
     )
 
     try:
-        firehose_metrics = await asyncio.to_thread(importlib.import_module, "firehose_metrics")
+        firehose_metrics = await _section(importlib.import_module, "firehose_metrics")
     except Exception:
         firehose_metrics = None  # type: ignore
 
-    # Run independent probes in parallel.
-    backends_task = section("backends", _backend_grid(config))
-    queue_task = section("comfy_queue", _comfy_queue_and_stats())
-    llama_task = section("llama_props_slots", _llama_props_and_slots())
-    aux_task = section("aux_health", _enriched_aux_health())
+    async def video_meta_section() -> dict:
+        if proxy_module is None or firehose_metrics is None:
+            return {}
+        return await _section(firehose_metrics.snapshot_video_meta)
 
-    backends, queue_result, llama_result, aux_health = await asyncio.gather(
-        backends_task, queue_task, llama_task, aux_task,
-    )
+    async def auth_key_section() -> list[dict]:
+        known_names: list[str] = []
+        app_ids_by_label: dict[str, set[str]] = {}
+        if proxy_module is not None:
+            try:
+                store = getattr(proxy_module, "ADMIN_STORE", None)
+                db_path = getattr(store, "path", None)
+                known_names, app_ids_by_label = await _section(_status_auth_key_names, db_path)
+            except Exception:
+                known_names, app_ids_by_label = [], {}
+        if firehose_metrics is None:
+            rows = [
+                {
+                    "name": n,
+                    "requests_24h": None,
+                    "errors_4xx_24h": None,
+                    "errors_5xx_24h": None,
+                    "last_seen": None,
+                    "latency_ms_p50": None,
+                    "latency_ms_p95": None,
+                    "top_endpoints": [],
+                    "active": None,
+                    "unavailable_reason": "firehose_metrics not loaded",
+                }
+                for n in known_names
+            ]
+        else:
+            rows = await _section(firehose_metrics.snapshot_per_key, known_names)
+        _attach_unique_app_ids_to_auth_keys(rows, app_ids_by_label)
+        return rows
+
+    async def auth_window_section() -> dict:
+        if firehose_metrics is None:
+            return {}
+        try:
+            # Tells the renderer how far back the counters actually cover so
+            # the section title can be honest after a restart.
+            return await _section(firehose_metrics.snapshot_window) or {}
+        except Exception:
+            return {}
+
+    async def recent_events_section() -> list[dict]:
+        if firehose_metrics is None:
+            return []
+        return await _section(firehose_metrics.snapshot_recent_events, 50)
+
+    # Phase 1: the sections that need only the config and the stores. They run at once, each within its budget.
+    first = await gather_sections({
+        "backends": _backend_grid(config),
+        "comfy_queue": _comfy_queue_and_stats(),
+        "llama_props_slots": _llama_props_and_slots(),
+        "aux_health": _enriched_aux_health(),
+        "gpus": _section(_gpus_raw),
+        "ram_attribution": _section(_ram_attribution, config),
+        "repo_state": _section(_repo_state),
+        "comfy_custom_nodes": _section(_comfy_custom_nodes),
+        "capabilities": _section(_capabilities, config),
+        "image_capabilities": _section(_image_capabilities, config),
+        "xids": _section(_journal_xids),
+        "uptime": _section(_uptime_since),
+        "kernel_recent": _section(_kernel_recent_events),
+        "reboot_history": _section(_reboot_history),
+        "proxy_restarts": _section(_proxy_restart_count),
+        "disk_partitions": _section(_disk_partitions),
+        **{f"hotspot_{name}": _section(_dir_summary, name, path) for name, path in _HOTSPOT_DIRS},
+        "journal_disk": _section(_journal_disk_usage),
+        "sensors": _section(_read_sensors),
+        "cpu_usage": _section(_cpu_usage_quick),
+        # OWNER_VISIBILITY_STEP3: remove member recent-media content from operational status audiences.
+        "recent_videos": _section(_recent_renders_videos, 20),
+        "recent_images": _section(_recent_renders_images, 10),
+        "images_budget": _section(_images_budget, config),
+        "vram_estimates": _section(_read_vram_estimates),
+        "gpu_budget": _section(_read_gpu_budget),
+        "image_cache": _section(_dir_summary, "image_cache", _IMAGE_CACHE_DIR),
+        "video_meta": video_meta_section(),
+        "auth_keys": auth_key_section(),
+        "auth_keys_window": auth_window_section(),
+        "recent_events": recent_events_section(),
+        "config_snapshot": _section(_status_config_snapshot, config),
+        "daisy_audit": _section(_daisy_audit_summary),
+        "daisy_pi_context": _section(_daisy_pi_context),
+        "daisy_telegram_bridge": _section(_daisy_telegram_bridge),
+        "workflow_drift": _section(_workflow_drift_status),
+    }, errors=errors, stale=stale)
+
+    backends = first["backends"]
+    gpus_raw = first["gpus"]
+    comfy_queue, comfy_stats = (first["comfy_queue"] or (None, None))
+    props, slots = (first["llama_props_slots"] or (None, None))
+    aux_health = first["aux_health"] or {}
+    voxtral_health = aux_health.get("voxtral") if isinstance(aux_health, dict) else None
+    video_meta = first["video_meta"] or {}
+
+    # In-process projection of loop-owned state: no I/O and no await.
     voices_summary = loop_section("voices_summary", lambda: _voices_summary(proxy_module))
-    comfy_queue, comfy_stats = (queue_result or (None, None))
-    props, slots = (llama_result or (None, None))
-
-    voxtral_health = (aux_health or {}).get("voxtral") if isinstance(aux_health, dict) else None
-    models = await sync_section(
-        "models",
-        lambda: _build_models(config, props, slots, voxtral_health=voxtral_health),
-    )
-
-    gpus_raw = await sync_section("gpus", _gpus_raw)
-    try:
-        gpus = await _gpu_workloads(gpus_raw, comfy_queue, slots)
-    except Exception as e:  # noqa: BLE001
-        errors["gpu_workloads"] = _safe_err(e)
-        gpus = gpus_raw
-
-    vram_attr = await sync_section("vram_attribution", lambda: _vram_attribution(gpus_raw, config))
-    ram_attr = await sync_section("ram_attribution", lambda: _ram_attribution(config))
-    repo_state = await sync_section("repo_state", _repo_state)
-    comfy_custom_nodes = await sync_section("comfy_custom_nodes", _comfy_custom_nodes) or []
-    capabilities = await sync_section("capabilities", lambda: _capabilities(config)) or []
-    image_capabilities = await sync_section("image_capabilities", lambda: _image_capabilities(config)) or []
 
     driver = {
-        **(await sync_section("xids", _journal_xids) or {}),
-        "uptime_since": await sync_section("uptime", _uptime_since),
-        "kernel_recent": await sync_section("kernel_recent", _kernel_recent_events) or [],
-        "reboot_history": await sync_section("reboot_history", _reboot_history) or [],
-        "proxy_restarts": await sync_section("proxy_restarts", _proxy_restart_count),
+        **(first["xids"] or {}),
+        "uptime_since": first["uptime"],
+        "kernel_recent": first["kernel_recent"] or [],
+        "reboot_history": first["reboot_history"] or [],
+        "proxy_restarts": first["proxy_restarts"],
     }
 
     disk = {
-        "partitions": await sync_section("disk_partitions", _disk_partitions) or [],
-        "hotspots": [
-            await sync_section(f"hotspot_{name}", lambda n=name, p=p: _dir_summary(n, p))
-            for name, p in _HOTSPOT_DIRS
-        ],
-        "journal_disk_usage_bytes": await sync_section("journal_disk", _journal_disk_usage),
+        "partitions": first["disk_partitions"] or [],
+        "hotspots": [h for h in (first[f"hotspot_{name}"] for name, _path in _HOTSPOT_DIRS) if h],
+        "journal_disk_usage_bytes": first["journal_disk"],
     }
-    disk["hotspots"] = [h for h in disk["hotspots"] if h]
     # Compute deduped (non-overlapping) hot-spot total. When one path is a
     # subdirectory of another we attribute its bytes only to the deepest
     # ancestor present, so the total reflects unique on-disk bytes.
@@ -3702,109 +3875,51 @@ async def build_status_payload(config: dict) -> dict:
     except Exception:
         disk["hotspots_total_non_overlapping_bytes"] = None
 
-    thermal = await sync_section("sensors", _read_sensors) or {}
-    cpu = await sync_section("cpu_usage", _cpu_usage_quick) or {}
-
-    # OWNER_VISIBILITY_STEP3: remove member recent-media content from operational status audiences.
-    recent_videos = await sync_section(
-        "recent_videos",
-        lambda: _recent_renders_videos(20),
-    ) or []
-    recent_images = await sync_section("recent_images", lambda: _recent_renders_images(10)) or []
+    thermal = first["sensors"] or {}
+    cpu = first["cpu_usage"] or {}
+    recent_videos = first["recent_videos"] or []
+    recent_images = first["recent_images"] or []
 
     budgets = {
         "gpu0": None,
         "gpu1": None,
-        "images": await sync_section("images_budget", lambda: _images_budget(config)) or {},
-        "vram_estimates": await sync_section("vram_estimates", _read_vram_estimates),
+        "images": first["images_budget"] or {},
+        "vram_estimates": first["vram_estimates"],
     }
-    gpu_budget = await sync_section("gpu_budget", _read_gpu_budget)
+    gpu_budget = first["gpu_budget"]
     if gpu_budget:
         budgets["gpu0"] = gpu_budget.get("gpu0")
         budgets["gpu1"] = gpu_budget.get("gpu1")
         budgets["raw"] = gpu_budget.get("raw")
+    image_cache = first["image_cache"]
+    auth_keys = first["auth_keys"] or []
+    auth_keys_window = first["auth_keys_window"] or {}
+    recent_events = first["recent_events"] or []
 
-    # Image cache snapshot.
-    image_cache = await sync_section("image_cache", lambda: _dir_summary("image_cache", _IMAGE_CACHE_DIR))
+    # Phase 2: the sections that read phase 1 answers. The backend history is read here and written by the backend
+    # sampler, at its own cadence. A build adds no samples, so they do not come at the times a build happens to run.
+    second = await gather_sections({
+        "models": _section(_build_models, config, props, slots, voxtral_health=voxtral_health),
+        "gpu_workloads": _gpu_workloads(gpus_raw, comfy_queue, slots),
+        "vram_attribution": _section(_vram_attribution, gpus_raw, config),
+        "metrics": _section(_metrics_section, gpus_raw, disk, backends),
+    }, errors=errors, stale=stale)
+    models = second["models"]
+    gpus = second["gpu_workloads"] if second["gpu_workloads"] is not None else gpus_raw
+    vram_attr = second["vram_attribution"]
+    metrics_block = second["metrics"] or {}
 
+    # Live projections of loop-owned state come last, so they show the jobs and swaps as they are when
+    # the page is assembled, not as they were when the phases began.
     # Live video jobs: bounded in-process projection only, with no I/O or
     # await while iterating loop-owned progress. Keep it on the loop.
-    if proxy_module is not None and firehose_metrics is not None:
-        try:
-            video_meta = await asyncio.to_thread(firehose_metrics.snapshot_video_meta)
-        except Exception as e:
-            errors["video_meta"] = _safe_err(e)
-            video_meta = {}
-    else:
-        video_meta = {}
     # OWNER_VISIBILITY_STEP3: live jobs need job Own; operational status must use the closed projection.
     video_jobs = loop_section(
         "video_jobs",
         lambda: _live_video_jobs(proxy_module, video_meta) if proxy_module else [],
     ) or []
-
-    swap_state = loop_section(
-        "swap_state",
-        lambda: _swap_state(proxy_module) if proxy_module else {},
-    )
-    comfy_ws_state = loop_section(
-        "comfy_ws_state",
-        lambda: _comfy_ws_state(proxy_module) if proxy_module else {},
-    )
-
-    # Per-key activity from in-process counters.
-    auth_keys: list[dict] = []
-    auth_keys_window: dict[str, Any] = {}
-    known_names: list[str] = []
-    app_ids_by_label: dict[str, set[str]] = {}
-    if proxy_module is not None:
-        try:
-            store = getattr(proxy_module, "ADMIN_STORE", None)
-            db_path = getattr(store, "path", None)
-            known_names, app_ids_by_label = await asyncio.to_thread(_status_auth_key_names, db_path)
-        except Exception:
-            known_names = []
-            app_ids_by_label = {}
-    if firehose_metrics is not None:
-        try:
-            auth_keys = await asyncio.to_thread(firehose_metrics.snapshot_per_key, known_names)
-        except Exception as e:
-            errors["auth_keys"] = _safe_err(e)
-            auth_keys = []
-        try:
-            # Tells the renderer how far back the counters actually cover so
-            # the section title can be honest after a restart.
-            auth_keys_window = await asyncio.to_thread(firehose_metrics.snapshot_window) or {}
-        except Exception:
-            auth_keys_window = {}
-    else:
-        auth_keys = [
-            {
-                "name": n,
-                "requests_24h": None,
-                "errors_4xx_24h": None,
-                "errors_5xx_24h": None,
-                "last_seen": None,
-                "latency_ms_p50": None,
-                "latency_ms_p95": None,
-                "top_endpoints": [],
-                "active": None,
-                "unavailable_reason": "firehose_metrics not loaded",
-            }
-            for n in known_names
-        ]
-    _attach_unique_app_ids_to_auth_keys(auth_keys, app_ids_by_label)
-
-    recent_events: list[dict] = []
-    if firehose_metrics is not None:
-        try:
-            recent_events = await asyncio.to_thread(firehose_metrics.snapshot_recent_events, 50)
-        except Exception as e:
-            errors["recent_events"] = _safe_err(e)
-            recent_events = []
-
-    # Aux health enrichment.
-    aux_health = aux_health or {}
+    swap_state = loop_section("swap_state", lambda: _swap_state(proxy_module) if proxy_module else {})
+    comfy_ws_state = loop_section("comfy_ws_state", lambda: _comfy_ws_state(proxy_module) if proxy_module else {})
 
     # ComfyUI system_stats — VRAM headroom from comfy's perspective.
     comfy_view: Optional[dict] = None
@@ -3823,13 +3938,6 @@ async def build_status_payload(config: dict) -> dict:
             }
         except Exception as e:
             errors["comfy_stats"] = _safe_err(e)
-
-    config_snapshot = await sync_section("config_snapshot", lambda: _status_config_snapshot(config)) or {}
-
-    await sync_section("service_health_samples", lambda: _record_backend_health_samples(backends))
-    metrics_block = await sync_section(
-        "metrics", lambda: _metrics_section(gpus_raw, disk, backends)
-    ) or {}
 
     # Enrich each backend entry with typed history for UI service rows.
     # Sourced from the already-computed metrics.services block — no extra I/O.
@@ -3861,16 +3969,22 @@ async def build_status_payload(config: dict) -> dict:
     except Exception:
         pass  # degrade silently — live status still present without history
 
-    daisy = await sync_section("daisy_audit", _daisy_audit_summary) or {}
+    daisy = first["daisy_audit"] or {}
     # Augment the daisy summary with two extra signals the audit identified.
     # Each probe runs in a worker and degrades independently on failure.
-    pi_ctx = await sync_section("daisy_pi_context", _daisy_pi_context)
+    pi_ctx = first["daisy_pi_context"]
     if pi_ctx is not None:
         daisy["pi_context"] = pi_ctx
-    bridge = await sync_section("daisy_telegram_bridge", _daisy_telegram_bridge)
+    bridge = first["daisy_telegram_bridge"]
     if bridge is not None:
         daisy["telegram_bridge"] = bridge
-    drift = await sync_section("workflow_drift", _workflow_drift_status)
+    drift = first["workflow_drift"]
+    ram_attr = first["ram_attribution"]
+    repo_state = first["repo_state"]
+    comfy_custom_nodes = first["comfy_custom_nodes"] or []
+    capabilities = first["capabilities"] or []
+    image_capabilities = first["image_capabilities"] or []
+    config_snapshot = first["config_snapshot"] or {}
 
     # ------------------------------------------------------------------
     # Banner severity.
@@ -3956,10 +4070,10 @@ async def build_status_payload(config: dict) -> dict:
         pct = part.get("pct_used") or 0
         if pct >= 95:
             system_health = _bump(system_health, "bad")
-            sh_reasons.append(("bad", await asyncio.to_thread(_disk_pressure_reason, part, config)))
+            sh_reasons.append(("bad", await _section(_disk_pressure_reason, part, config)))
         elif pct >= 85:
             system_health = _bump(system_health, "warn")
-            sh_reasons.append(("warn", await asyncio.to_thread(_disk_pressure_reason, part, config)))
+            sh_reasons.append(("warn", await _section(_disk_pressure_reason, part, config)))
 
     # Thermal — CPU.
     cpu_state = thermal.get("cpu_thermal_state")
@@ -4064,6 +4178,7 @@ async def build_status_payload(config: dict) -> dict:
         "config_snapshot": config_snapshot,
         "metrics": metrics_block,
         "errors": errors,
+        "stale_sections": sorted(set(stale)),
         "commit_hash": _COMMIT_HASH,
     }
 
@@ -4204,38 +4319,178 @@ def _build_models(
     }
 
 
-async def _rebuild_cached_status(config: dict) -> dict:
-    global _BUILD_TASK
+def _store_snapshot(payload: dict) -> None:
+    global _SNAPSHOT
+    _SNAPSHOT = {
+        "built_at": time.time(),
+        "built": _now(),
+        "payload": payload,
+        "section_at": dict(_SECTION_AT),
+    }
+
+
+def open_snapshot(build: Callable[[], Awaitable[dict]]) -> None:
+    """Register the build that readers may start. Nothing builds until the first read."""
+    global _SNAPSHOT_BUILD, _SNAPSHOT_CLOSED
+    _SNAPSHOT_BUILD = build
+    _SNAPSHOT_CLOSED = False
+
+
+def _note_read() -> None:
+    """A read keeps the snapshot wanted for the idle window, and starts the refresher if it has stopped.
+
+    Readers run on the event loop, which is where the refresher runs. A read with no loop running, from a thread,
+    still extends the window; the next read on the loop starts the refresher.
+    """
+    global _SNAPSHOT_TASK, _SNAPSHOT_WANTED_UNTIL
+    _SNAPSHOT_WANTED_UNTIL = _now() + SNAPSHOT_IDLE_WINDOW_S
+    if _SNAPSHOT_BUILD is None or _SNAPSHOT_CLOSED:
+        return
+    if _SNAPSHOT_TASK is not None and not _SNAPSHOT_TASK.done():
+        return
     try:
-        data = await build_status_payload(config)
-        # A long rebuild must not use up the TTL before it becomes available.
-        _CACHE["data"] = data
-        _CACHE["ts"] = time.monotonic()
-        return data
-    finally:
-        _BUILD_TASK = None
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    _SNAPSHOT_TASK = loop.create_task(_snapshot_loop(_SNAPSHOT_BUILD))
 
 
-def _consume_build_exception(task: asyncio.Task) -> None:
-    # A disconnected sole caller leaves the shielded build running. Retrieve
-    # failures even then; awaiting callers still receive the same exception.
-    if not task.cancelled():
-        task.exception()
+async def _snapshot_loop(build: Callable[[], Awaitable[dict]]) -> None:
+    """Build, wait one interval, and build again while the snapshot is wanted. The first check after the window ends it."""
+    while True:
+        try:
+            _store_snapshot(await build())
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - the last snapshot stays; only the type is logged, as the message can carry a path
+            _log.error("status snapshot build failed: %s", type(error).__name__)
+        await _sleep(SNAPSHOT_INTERVAL_S)
+        if _now() >= _SNAPSHOT_WANTED_UNTIL:
+            return
+
+
+async def stop_snapshot() -> None:
+    """Close the snapshot, cancel its build if one runs, and wait until it has ended. No read starts one after this."""
+    global _SNAPSHOT_TASK, _SNAPSHOT_CLOSED
+    _SNAPSHOT_CLOSED = True
+    task, _SNAPSHOT_TASK = _SNAPSHOT_TASK, None
+    if task is None:
+        return
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+def _backends_answered_recently(section_at: Mapping[str, float], now: float) -> bool:
+    """Whether the backend section's last answer is recent enough for its rows to count as evidence of now."""
+    answered = section_at.get("backends")
+    return answered is not None and now - answered <= SNAPSHOT_FRESH_S
+
+
+def backend_rows_are_fresh() -> bool:
+    """Whether the backend rows of the build in progress come from an answer within SNAPSHOT_FRESH_S."""
+    return _backends_answered_recently(_SECTION_AT, _now())
+
+
+def latest_payload() -> Mapping[str, Any]:
+    """The latest snapshot's payload for an availability answer, or {} when its backend rows are not fresh enough.
+
+    The bound applies to the backend section's own last answer. A build can be fresh while its backend section carries
+    a row from an old answer, because gather_sections keeps the last answer of a section that times out. {} means no
+    snapshot yet, a backend section that has never answered, or one whose last answer is older than SNAPSHOT_FRESH_S.
+    The caller then probes the services it needs. The read keeps the snapshot wanted, as any read does.
+    """
+    _note_read()
+    if not _SNAPSHOT or not _backends_answered_recently(_SNAPSHOT["section_at"], _now()):
+        return {}
+    return _SNAPSHOT["payload"]
 
 
 async def get_cached_status(config: dict) -> dict:
-    global _BUILD_TASK
-    now = time.monotonic()
-    if _CACHE["data"] is not None and (now - _CACHE["ts"]) < _CACHE_TTL_S:
-        data = dict(_CACHE["data"])
-        data["cache_age_s"] = round(now - _CACHE["ts"], 2)
-        return data
-    if _BUILD_TASK is None:
-        _BUILD_TASK = asyncio.create_task(_rebuild_cached_status(config))
-        _BUILD_TASK.add_done_callback(_consume_build_exception)
-    if _CACHE["data"] is not None and (now - _CACHE["ts"]) < _CACHE_STALE_S:
-        data = dict(_CACHE["data"])
-        data["cache_age_s"] = round(now - _CACHE["ts"], 2)
-        return data
-    # One cancelled HTTP request must not cancel every other waiter.
-    return await asyncio.shield(_BUILD_TASK)
+    """The latest snapshot, for every status reader. It never waits for a probe: it returns the snapshot as it is, with
+    its age, and a read after idle starts the refresh in the background.
+
+    Before the first build has finished, the answer says it is checking, and its engines read as unknown.
+    Each section carries its age in ``snapshot.section_age_s``.
+    """
+    _note_read()
+    if not _SNAPSHOT:
+        return {
+            "checking": True,
+            "backends": checking_backend_rows(config),
+            "snapshot": {"built_at": None, "age_s": None, "section_age_s": {}},
+        }
+    now = _now()
+    age = round(now - _SNAPSHOT["built"], 2)
+    data = dict(_SNAPSHOT["payload"])
+    data["cache_age_s"] = age
+    data["snapshot"] = {
+        "built_at": _SNAPSHOT["built_at"],
+        "age_s": age,
+        "section_age_s": {name: round(now - at, 2) for name, at in _SNAPSHOT["section_at"].items()},
+    }
+    return data
+
+
+async def _sample_backend_health(config: dict) -> None:
+    """One light sample: the health URL of each HTTP backend, probed as the status grid probes it.
+
+    The grid also asks each backend's lifecycle driver, which runs `systemctl`. The sampler does not, so an idle gateway
+    starts no process for its history. A backend with no health URL has no HTTP row, so it has no sample here. Its
+    recorded uptime was always zero before this change: a lifecycle state alone never reads as up.
+    """
+    backends = config.get("backends", {}) or {}
+    targets = _resolve_backend_targets(config)
+    if not targets:
+        return
+    ssl_context = await _shared_probe_ssl_context()
+    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=ssl_context) as client:
+        rows = await asyncio.gather(*(
+            _within_deadline(
+                _probe(client, t["key"], t["name"], t["url"], t["role"], t["note"], service=backends.get(t["key"], {})),
+                _BACKEND_GRID_DEADLINE_S, t, _overdue_http_row,
+            )
+            for t in targets
+        ))
+    await _write_backend_samples(rows)
+
+
+async def _write_backend_samples(rows: list) -> None:
+    """Write one sample on the status pool. The write's handle is kept, so shutdown can wait for a write that has started."""
+    global _SAMPLE_WRITE
+    context = contextvars.copy_context()
+    _SAMPLE_WRITE = _SECTION_POOL.submit(functools.partial(context.run, _record_backend_health_samples, rows))
+    await asyncio.wrap_future(_SAMPLE_WRITE)
+
+
+async def _backend_sample_loop(get_config: Callable[[], dict]) -> None:
+    while True:
+        try:
+            await _sample_backend_health(get_config())
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - only the type is logged, as for the snapshot
+            _log.error("backend health sample failed: %s", type(error).__name__)
+        await _sleep(BACKEND_SAMPLE_INTERVAL_S)
+
+
+def start_backend_samples(get_config: Callable[[], dict]) -> None:
+    """Start the sampler: one sample at once, then one every BACKEND_SAMPLE_INTERVAL_S, for as long as the gateway runs."""
+    global _SAMPLE_TASK
+    if _SAMPLE_TASK is None or _SAMPLE_TASK.done():
+        _SAMPLE_TASK = asyncio.get_running_loop().create_task(_backend_sample_loop(get_config))
+
+
+async def stop_backend_samples() -> None:
+    """Cancel the sampler and wait until it has ended. A sample write that has started cannot be cancelled, so shutdown
+    waits for it too, for at most BACKEND_SAMPLE_JOIN_S, and logs if it is still running after that."""
+    global _SAMPLE_TASK, _SAMPLE_WRITE
+    task, _SAMPLE_TASK = _SAMPLE_TASK, None
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    # The shared metrics writer is not closed here: the lifespan closes it after the metrics sampler has stopped too.
+    write, _SAMPLE_WRITE = _SAMPLE_WRITE, None
+    if write is not None and not write.done():
+        _finished, unfinished = await asyncio.wait({asyncio.wrap_future(write)}, timeout=BACKEND_SAMPLE_JOIN_S)
+        if unfinished:
+            _log.warning("backend sample write still running %s s into shutdown; not waiting longer", BACKEND_SAMPLE_JOIN_S)
