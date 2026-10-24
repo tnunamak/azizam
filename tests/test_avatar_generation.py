@@ -1,12 +1,15 @@
 """A person's generated avatar: the fixed prompt, the image route it uses, the job, the keep and the remove."""
 from __future__ import annotations
 
+import asyncio
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -15,6 +18,7 @@ from fastapi.testclient import TestClient
 from gateway import admin_store, avatar_generation, avatars, media_fetch, prompt_memory
 from gateway.admin_oidc import AdminSession
 from gateway.me_avatar import AvatarGeneration, PictureCache, create_me_avatar_router
+from gateway.public_failure import PublicFailure
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 # The sign-in picture the fake provider serves: a different image from the one the gateway made.
@@ -47,6 +51,9 @@ class FakeGeneration:
         self.started: list[tuple[str, str, str]] = []
         self.owner_of: dict[str, str] = {}
         self.files: dict[str, Path] = {}
+        self.jobs: dict[str, dict[str, Any]] = {}
+        self.busy = False
+        self.refuse_start = False
         self._dir = tmp_path / "library"
         self._dir.mkdir(exist_ok=True)
 
@@ -57,6 +64,11 @@ class FakeGeneration:
         self.owner_of[asset_id] = owner
         self.files[asset_id] = path
 
+    def finish_job(self, job_id: str, *, status: str = "succeeded", asset_id: str | None = None) -> None:
+        """The job reaches a stop: its picture (when it made one) is in the Library already."""
+        self.jobs[job_id]["status"] = status
+        self.jobs[job_id]["asset_ids"] = [asset_id] if asset_id else []
+
     def as_generation(self) -> AvatarGeneration:
         def own_picture_file(person_id: str, asset_id: str) -> Path | None:
             if self.owner_of.get(asset_id) != person_id:
@@ -64,11 +76,22 @@ class FakeGeneration:
             return self.files[asset_id]
 
         def start(_request: Request, person_id: str, model: str, prompt: str) -> dict[str, Any]:
+            if self.refuse_start:
+                raise PublicFailure("make_unavailable", 503)
             self.started.append((person_id, model, prompt))
-            return {"job_id": f"job_{len(self.started)}", "status": "queued"}
+            job_id = f"job_{len(self.started)}"
+            self.jobs[job_id] = {"owner": person_id, "status": "queued", "asset_ids": []}
+            return {"job_id": job_id, "status": "queued"}
+
+        def job_state(person_id: str, job_id: str) -> dict[str, Any] | None:
+            job = self.jobs.get(job_id)
+            if job is None or job["owner"] != person_id:
+                return None
+            return {"status": job["status"], "asset_ids": list(job["asset_ids"])}
 
         return AvatarGeneration(model_for=lambda _person_id: self.model, start=start,
-                                own_picture_file=own_picture_file)
+                                own_picture_file=own_picture_file, job_state=job_state,
+                                busy=lambda: self.busy)
 
 
 class Rig:
@@ -415,3 +438,264 @@ def test_the_make_job_forgets_its_template_prompt(monkeypatch) -> None:
     assert seen["body"]["prompt"] == prompt
     assert seen["body"]["intent"] == "image.generate" and seen["body"]["n"] == 1
     assert seen["body"]["extensions"] == {prompt_memory.NAMESPACE: {"mode": "forget"}}
+
+
+# --- Remove, the read that races a choice, and the person's removal ----------------------------------------------
+
+def _keep(client, asset_id: str = "img_alice1"):
+    return client.post("/me/api/profile/avatar/generated", json={"asset_id": asset_id}, headers=ACTION)
+
+
+def _default(client):
+    return client.post("/me/api/profile/avatar/default", headers=ACTION)
+
+
+def test_remove_leaves_no_made_picture_when_the_person_shows_the_sign_in_picture(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice", picture=PICTURE)
+    generation.add_job_picture(alice, "img_alice1")
+    client = rig.as_(alice).client
+    _keep(client)
+    assert client.put("/me/api/profile/avatar", json={"choice": "picture"}, headers=ACTION).status_code == 200
+    removed = client.delete("/me/api/profile/avatar/generated", headers=ACTION).json()
+    assert removed["choice"] == "picture"
+    assert removed["made_picture_url"] is None
+    stored = avatars.get(alice, path=rig.db)
+    assert stored["generated_template"] is None and stored["generated_at"] is None
+    assert client.get("/me/api/profile/avatar/picture?kind=generated").status_code == 404
+    assert client.get("/me/api/profile/avatar/picture").content == SIGN_IN_PNG
+
+
+def test_a_generated_picture_read_answers_as_a_new_one_would_when_the_choice_changes(
+        rig: Rig, generation: FakeGeneration, monkeypatch) -> None:
+    alice = rig.person("alice")
+    generation.add_job_picture(alice, "img_alice1")
+    _keep(rig.as_(alice).client)
+    reading, release = threading.Event(), threading.Event()
+    read = avatars.read_generated
+
+    def slow_read(person_id: str, *, path: Path) -> bytes | None:
+        data = read(person_id, path=path)
+        reading.set()
+        release.wait(5)
+        return data
+
+    monkeypatch.setattr(avatars, "read_generated", slow_read)
+
+    async def scenario() -> tuple[int, int]:
+        transport = httpx.ASGITransport(app=rig.client.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://avatar.test") as http:
+            pending = asyncio.ensure_future(http.get("/me/api/profile/avatar/picture"))
+            await asyncio.to_thread(reading.wait, 5)
+            changed = await http.put("/me/api/profile/avatar", json={"choice": "auto"}, headers=ACTION)
+            release.set()
+            waited = await pending
+        return waited.status_code, changed.status_code
+
+    assert asyncio.run(scenario()) == (404, 200)
+
+
+def test_removing_a_person_through_the_accounts_path_deletes_the_picture_the_gateway_made(
+        rig: Rig, generation: FakeGeneration) -> None:
+    from gateway import accounts
+
+    alice = rig.person("alice")
+    owner = rig.person("owner")
+    generation.add_job_picture(alice, "img_alice1")
+    _keep(rig.as_(alice).client)
+    copy = avatars.generated_dir(alice, path=rig.db) / avatar_generation.TEMPLATE_VERSION
+    assert copy.read_bytes() == PNG
+    accounts.change_person(alice, owner, remove=True, path=rig.db)
+    assert not copy.exists() and not copy.parent.exists()
+    with sqlite3.connect(rig.db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM user_avatars WHERE user_id=?", (alice,)).fetchone()[0] == 0
+
+
+# --- The automatic default: one make job for a person with no picture and no choice -----------------------------
+
+def test_the_first_load_makes_one_default_picture_for_a_person_with_no_picture(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    admin = rig.person("ada")
+    _make_admin(rig.db, admin)
+    client = rig.as_(alice).client
+    first = _default(client)
+    assert first.status_code == 200 and first.json()["generating"] is True
+    _default(client)
+    assert len(generation.started) == 1
+    generation.add_job_picture(alice, "img_default1")
+    generation.finish_job("job_1", asset_id="img_default1")
+    settled = client.get("/me/api/profile/avatar").json()
+    assert settled["choice"] == "generated" and settled["generating"] is False
+    assert settled["picture_url"].startswith("/me/api/profile/avatar/picture?v=")
+    assert client.get("/me/api/profile/avatar/picture").content == PNG
+    # Visible to others like any chosen avatar.
+    assert rig.as_(admin).client.get(f"/me/api/profile/avatar/picture?person={alice}").content == PNG
+
+
+def test_a_person_with_a_sign_in_picture_is_never_given_a_default(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice", picture=PICTURE)
+    response = _default(rig.as_(alice).client)
+    assert response.status_code == 200 and response.json()["generating"] is False
+    assert generation.started == []
+    assert avatars.get(alice, path=rig.db)["default_attempted_at"] is None
+
+
+def test_no_image_route_starts_nothing_and_leaves_the_default_for_a_later_load(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    generation.model = None
+    _default(client)
+    assert generation.started == []
+    assert avatars.get(alice, path=rig.db)["default_attempted_at"] is None
+    generation.model = "picture-route"
+    _default(client)
+    assert len(generation.started) == 1
+
+
+def test_other_picture_work_defers_the_default_without_using_its_attempt(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    generation.busy = True
+    _default(client)
+    assert generation.started == []
+    assert avatars.get(alice, path=rig.db)["default_attempted_at"] is None
+    generation.busy = False
+    _default(client)
+    assert len(generation.started) == 1
+
+
+def test_a_default_that_cannot_start_is_recorded_and_never_retried(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    generation.refuse_start = True
+    response = _default(client)
+    assert response.status_code == 200 and response.json()["generating"] is False
+    assert avatars.get(alice, path=rig.db)["default_attempted_at"] is not None
+    generation.refuse_start = False
+    _default(client)
+    assert generation.started == []
+
+
+def test_a_default_that_fails_while_making_is_not_retried(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    _default(client)
+    generation.finish_job("job_1", status="failed")
+    settled = client.get("/me/api/profile/avatar").json()
+    assert settled["generating"] is False and settled["choice"] == "auto" and settled["picture_url"] is None
+    _default(client)
+    assert len(generation.started) == 1
+
+
+def test_a_person_who_removes_their_default_is_not_given_another(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    _default(client)
+    generation.add_job_picture(alice, "img_default1")
+    generation.finish_job("job_1", asset_id="img_default1")
+    client.get("/me/api/profile/avatar")
+    client.delete("/me/api/profile/avatar/generated", headers=ACTION)
+    _default(client)
+    assert len(generation.started) == 1
+    assert client.get("/me/api/profile/avatar").json()["choice"] == "auto"
+
+
+def test_a_default_that_finishes_after_the_person_chose_another_avatar_keeps_that_choice(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    _default(client)
+    client.put("/me/api/profile/avatar", json={"choice": "v3"}, headers=ACTION)
+    generation.add_job_picture(alice, "img_default1")
+    generation.finish_job("job_1", asset_id="img_default1")
+    view = client.get("/me/api/profile/avatar").json()
+    assert view["choice"] == "v3" and view["generating"] is False
+    assert view["made_picture_url"] is not None
+
+
+# --- The gateway's own make runtime: a person's picture job is scheduled on the loop and runs ---------------------
+
+@pytest.fixture
+def real_make(tmp_path: Path, monkeypatch):
+    """The gateway's make runtime on throwaway stores: the same path a person's make job takes."""
+    import proxy
+    from gateway import media_jobs, receipt_store
+
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    media_jobs.init_db(tmp_path / "jobs.db")
+    receipt_store.init_db(tmp_path / "receipts.db")
+    monkeypatch.setattr(proxy.ADMIN_STORE, "path", db)
+    monkeypatch.setattr(media_jobs, "DB_PATH", tmp_path / "jobs.db")
+    monkeypatch.setattr(receipt_store, "DB_PATH", tmp_path / "receipts.db")
+    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "payloads")
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOADS", {})
+    monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES", {})
+    alice = admin_store.upsert_oidc_user("https://idp.example", "alice", email="alice@example.test", path=db)
+    return proxy, db, alice["id"], tmp_path / "jobs.db"
+
+
+def _real_make_app(proxy, db: Path, person_id: str) -> FastAPI:
+    generation = AvatarGeneration(model_for=lambda _person_id: "picture-route", start=proxy._avatar_start_job,
+                                  own_picture_file=lambda _person_id, _asset_id: None)
+    app = FastAPI()
+    app.include_router(create_me_avatar_router(
+        session_provider=_session_for({"subject": person_id}), mutation_validator=_validator,
+        admin_db_path=db, generation=generation))
+    return app
+
+
+def test_a_person_picture_job_is_scheduled_on_the_loop_and_runs_to_its_picture(real_make, monkeypatch) -> None:
+    from gateway import media_jobs
+
+    proxy, db, alice, jobs_db = real_make
+
+    async def fake_execute(self, payload):
+        return [{"asset_id": "img_" + "0a" * 32, "media_type": "image/png"}]
+
+    monkeypatch.setattr(proxy._SessionMakeRuntime, "execute", fake_execute)
+
+    async def scenario() -> tuple[int, str, dict[str, Any] | None]:
+        transport = httpx.ASGITransport(app=_real_make_app(proxy, db, alice))
+        async with httpx.AsyncClient(transport=transport, base_url="http://avatar.test") as http:
+            response = await http.post("/me/api/profile/avatar/generate", headers=ACTION)
+            job_id = response.json().get("job", {}).get("job_id", "") if response.status_code == 202 else ""
+            job = None
+            for _ in range(500):
+                job = media_jobs.get(job_id, path=jobs_db) if job_id else None
+                if job is not None and media_jobs.is_terminal(job["status"]):
+                    break
+                await asyncio.sleep(0.01)
+        return response.status_code, job_id, job
+
+    status, job_id, job = asyncio.run(scenario())
+    assert status == 202
+    assert job is not None and job["status"] == "succeeded"
+    assert job_id not in proxy._image_media_job_scheduled
+    assert job_id not in proxy._SESSION_MAKE_RUNTIME._gates
+
+
+def test_a_job_that_cannot_be_scheduled_outside_the_loop_leaves_no_marker_or_gate(real_make) -> None:
+    proxy, _db, _alice, _jobs_db = real_make
+    runtime = proxy._SessionMakeRuntime()
+    with pytest.raises(RuntimeError):
+        runtime.schedule("mj_unscheduled", lambda: None)
+    assert "mj_unscheduled" not in proxy._image_media_job_scheduled
+    assert "mj_unscheduled" not in runtime._gates
+
+
+def test_a_person_job_that_cannot_be_scheduled_fails_at_once_and_keeps_no_prompt(real_make, monkeypatch) -> None:
+    from gateway import media_jobs
+
+    proxy, db, alice, jobs_db = real_make
+
+    def broken_schedule(self, job_id, run):
+        raise RuntimeError("no running event loop")
+
+    monkeypatch.setattr(proxy._SessionMakeRuntime, "schedule", broken_schedule)
+    client = TestClient(_real_make_app(proxy, db, alice))
+    response = client.post("/me/api/profile/avatar/generate", headers=ACTION)
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "make_queue_failed"
+    app_id = admin_store.get_session_app_for_user(alice, path=db)["id"]
+    jobs = media_jobs.recent(10, app_ids=[app_id], path=jobs_db)
+    assert [job["status"] for job in jobs] == ["failed"]
+    assert proxy._SESSION_MAKE_RUNTIME.load_payload(jobs[0]["job_id"]) is None

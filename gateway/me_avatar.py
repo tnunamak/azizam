@@ -120,6 +120,10 @@ class AvatarGeneration:
     start: Callable[[Request, str, str, str], Mapping[str, Any]]
     # The file of one of the person's own Library pictures, or None when it is not theirs or not a picture.
     own_picture_file: Callable[[str, str], Path | None]
+    # The person's own make job: {"status": ..., "asset_ids": [...]}, or None when it is not theirs or not found.
+    job_state: Callable[[str, str], Mapping[str, Any] | None] = lambda _person_id, _job_id: None
+    # Whether other picture work is queued or running here. The automatic default waits for it.
+    busy: Callable[[], bool] = lambda: False
 
 
 def _error(code: str, message: str, status: int) -> JSONResponse:
