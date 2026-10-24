@@ -259,6 +259,31 @@ test("H8 with no work, Home offers what can be made, and choosing a row focuses 
   await expect(page.getByRole("textbox", { name: /Describe|Ask/ })).toBeFocused();
 });
 
+test("at 1440 px a first visit's cards keep the composer's 760 px edges, under a centred 13 px line", async ({ isolated }) => {
+  const member = await isolated.member();
+  const { page } = member;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await seedFirstVisitMember(page, member.context.request);
+  await page.goto("/");
+  const group = page.getByRole("region", { name: "What you can make here" }).getByRole("group", { name: "What to make" });
+  await expect(group).toBeVisible();
+  const composer = (await page.locator("[data-slot='composer']").boundingBox())!;
+  const row = (await group.boundingBox())!;
+  expect(Math.abs(row.x - composer.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(row.x + row.width - (composer.x + composer.width))).toBeLessThanOrEqual(1);
+  const lead = page.getByText("Sam set up this gateway for the household.");
+  const box = (await lead.boundingBox())!;
+  const text = await lead.evaluate((node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const rect = range.getBoundingClientRect();
+    return { center: rect.left + rect.width / 2, size: getComputedStyle(node).fontSize };
+  });
+  expect(text.size).toBe("13px");
+  expect(Math.abs(text.center - (composer.x + composer.width / 2))).toBeLessThanOrEqual(1);
+  expect(Math.round(row.y - (box.y + box.height))).toBe(16);
+});
+
 test("H11 without an access plan the composer is absent, and Ask posts once and confirms in place", async ({ isolated, request }) => {
   const member = await isolated.member();
   const { page } = member;
