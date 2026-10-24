@@ -14,7 +14,6 @@ import {
 import { endSession } from "@/lib/session-end";
 import { unsavedWorkNow } from "@/lib/unsaved-work";
 import {
-  AvatarPicker,
   PersonAvatar,
   type AvatarSelection,
 } from "@/components/product/person-avatar";
@@ -37,6 +36,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { AvatarPickerWithGeneration } from "./avatar-generation";
 import { useViewer } from "./session";
 import { SwitchConfirm, type LeaveRequest } from "./switch-confirm";
 
@@ -52,7 +52,9 @@ export function AccountMenuContent({
   onOpenChange,
   avatarPersonId = null,
   avatarSelection,
-  signInPictureUrl,
+  avatarPictureUrl = null,
+  avatarSignInPictureUrl = null,
+  avatarMadePictureUrl = null,
   onAvatarChange,
   avatarPending = false,
   avatarError,
@@ -63,7 +65,10 @@ export function AccountMenuContent({
   /** Wire the stable application person ID when the session API exposes it. */
   avatarPersonId?: string | null;
   avatarSelection?: AvatarSelection | null;
-  signInPictureUrl?: string | null;
+  /** The picture the avatar shows now (the sign-in picture, or the one the gateway made). */
+  avatarPictureUrl?: string | null;
+  avatarSignInPictureUrl?: string | null;
+  avatarMadePictureUrl?: string | null;
   onAvatarChange?: (selection: AvatarSelection) => void;
   avatarPending?: boolean;
   avatarError?: string | null;
@@ -108,7 +113,7 @@ export function AccountMenuContent({
               personId={avatarPersonId}
               name={viewer.name}
               selection={avatarSelection}
-              pictureUrl={signInPictureUrl}
+              pictureUrl={avatarPictureUrl}
               size={compact ? "md" : "sm"}
               decorative
             />
@@ -214,15 +219,16 @@ export function AccountMenuContent({
                 personId={avatarPersonId}
                 name={viewer.name}
                 selection={avatarSelection}
-                pictureUrl={signInPictureUrl}
+                pictureUrl={avatarPictureUrl}
                 size="xl"
               />
             </div>
-            <AvatarPicker
+            <AvatarPickerWithGeneration
               personId={avatarPersonId}
               name={viewer.name}
               value={avatarSelection}
-              pictureUrl={signInPictureUrl}
+              signInPictureUrl={avatarSignInPictureUrl}
+              madePictureUrl={avatarMadePictureUrl}
               onChange={onAvatarChange}
               pending={avatarPending}
               error={avatarError}

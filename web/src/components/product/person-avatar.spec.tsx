@@ -6,6 +6,7 @@ import {
   AVATAR_PICTURE_PATH,
   AvatarPicker,
   PersonAvatar,
+  type AvatarGenerationView,
   choiceFromSelection,
   generatedAvatarPalettes,
   getAvatarInitials,
@@ -112,7 +113,7 @@ describe("generated avatars", () => {
     const { container } = render(
       <div>
         <PersonAvatar personId="u" name="Mira Chen" />
-        <AvatarPicker personId="u" name="Mira Chen" pictureUrl={PICTURE} onChange={() => {}} />
+        <AvatarPicker personId="u" name="Mira Chen" signInPictureUrl={PICTURE} onChange={() => {}} />
       </div>,
     );
     expect((await axe(container)).violations).toEqual([]);
@@ -316,12 +317,12 @@ describe("avatar picker", () => {
     const without = setup();
     expect(screen.queryByRole("radio", { name: /sign-in picture/ })).toBeNull();
     without.unmount();
-    setup({ pictureUrl: PICTURE });
+    setup({ signInPictureUrl: PICTURE });
     expect(screen.getByRole("radio", { name: "Use my sign-in picture" })).toBeVisible();
   });
 
   it("checks the picture for the default choice, since that is the avatar the person sees", async () => {
-    const { onChange } = setup({ pictureUrl: PICTURE, value: { kind: "auto" } });
+    const { onChange } = setup({ signInPictureUrl: PICTURE, value: { kind: "auto" } });
     const picture = screen.getByRole("radio", { name: "Use my sign-in picture" });
     expect(picture).toBeChecked();
     expect(screen.getAllByRole("radio").filter((radio) => (radio as HTMLInputElement).checked)).toEqual([picture]);
@@ -330,19 +331,19 @@ describe("avatar picker", () => {
   });
 
   it("checks a generated swatch the person chose over the picture, and picking the picture stores it", async () => {
-    const { onChange } = setup({ pictureUrl: PICTURE, value: { kind: "generated", variant: "v4" } });
+    const { onChange } = setup({ signInPictureUrl: PICTURE, value: { kind: "generated", variant: "v4" } });
     expect(screen.getByRole("radio", { name: "Use my sign-in picture" })).not.toBeChecked();
     await userEvent.click(screen.getByRole("radio", { name: "Use my sign-in picture" }));
     expect(onChange).toHaveBeenCalledWith({ kind: "sign-in" });
   });
 
   it("does not offer a picture that is not a gateway path", () => {
-    setup({ pictureUrl: "https://lh3.example.test/p.png" });
+    setup({ signInPictureUrl: "https://lh3.example.test/p.png" });
     expect(screen.queryByRole("radio", { name: /sign-in picture/ })).toBeNull();
   });
 
   it("checks the picture, and no swatch, while it is the choice", () => {
-    setup({ pictureUrl: PICTURE, value: { kind: "sign-in" } });
+    setup({ signInPictureUrl: PICTURE, value: { kind: "sign-in" } });
     expect(screen.getByRole("radio", { name: "Use my sign-in picture" })).toBeChecked();
     expect(screen.getAllByRole("radio").filter((radio) => (radio as HTMLInputElement).checked)).toHaveLength(1);
   });
@@ -365,7 +366,7 @@ describe("avatar picker", () => {
   });
 
   it("tells the person where the picture comes from and who sees it", () => {
-    setup({ pictureUrl: PICTURE });
+    setup({ signInPictureUrl: PICTURE });
     expect(
       screen.getByText(/Azizam gets this picture from your sign-in provider\. Only you and the people who run this gateway can see it\./),
     ).toBeVisible();
@@ -424,3 +425,141 @@ describe("person marks", () => {
   });
 });
 
+describe("make my avatar", () => {
+  const MADE = `${AVATAR_PICTURE_PATH}?kind=generated&v=1760000100`;
+
+  function view(overrides: Partial<AvatarGenerationView> = {}): AvatarGenerationView {
+    return {
+      available: true,
+      making: false,
+      results: [],
+      failed: false,
+      onMake: vi.fn(),
+      onKeep: vi.fn(),
+      onRemove: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function renderPicker(props: Partial<React.ComponentProps<typeof AvatarPicker>> = {}) {
+    const onChange = vi.fn();
+    const utils = render(
+      <AvatarPicker personId="usr_a1b2" name="Mira Chen" onChange={onChange} {...props} />,
+    );
+    return { onChange, ...utils };
+  }
+
+  const checked = () => screen.getAllByRole("radio").filter((radio) => (radio as HTMLInputElement).checked);
+
+  it("offers no make button and no remove button when no image route is enabled", () => {
+    renderPicker({ generation: view({ available: false }) });
+    expect(screen.queryByRole("button", { name: "Make me an avatar" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove generated avatar" })).toBeNull();
+  });
+
+  it("offers Make me an avatar when a route exists, and starts an attempt on press", async () => {
+    const generation = view();
+    renderPicker({ generation });
+    await userEvent.click(screen.getByRole("button", { name: "Make me an avatar" }));
+    expect(generation.onMake).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the palette initial while a picture is being made, and offers no second start", () => {
+    renderPicker({ value: { kind: "auto" }, generation: view({ making: true }) });
+    expect(screen.getByRole("status")).toHaveTextContent("Making your avatar");
+    expect(screen.queryByRole("button", { name: "Make me an avatar" })).toBeNull();
+    expect(checked()).toHaveLength(1);
+    expect(screen.queryByRole("radio", { name: "Your generated avatar" })).toBeNull();
+  });
+
+  it("says plainly when a picture could not be made, and offers another try", () => {
+    renderPicker({ generation: view({ failed: true }) });
+    expect(screen.getByRole("alert")).toHaveTextContent("We couldn't make your avatar. Try again.");
+    expect(screen.getByRole("button", { name: "Make me an avatar" })).toBeVisible();
+  });
+
+  it("offers the pictures made, keeps the one the person picks, and then offers another try", async () => {
+    const generation = view({
+      results: [
+        { assetId: "img_one", src: "/me/api/media/img_one/file?sig=1" },
+        { assetId: "img_two", src: "/me/api/media/img_two/file?sig=2" },
+      ],
+    });
+    renderPicker({ generation });
+    expect(screen.getByRole("list", { name: "Pictures you can use" })).toBeVisible();
+    await userEvent.click(screen.getAllByRole("button", { name: "Use this picture" })[1]);
+    expect(generation.onKeep).toHaveBeenCalledWith("img_two");
+    expect(screen.getByRole("button", { name: "Try another" })).toBeVisible();
+  });
+
+  it("checks the kept picture when it is the avatar, and removes it on request", async () => {
+    const generation = view();
+    renderPicker({ value: { kind: "made" }, madePictureUrl: MADE, generation });
+    const made = screen.getByRole("radio", { name: "Your generated avatar" });
+    expect(made).toBeChecked();
+    expect(checked()).toEqual([made]);
+    await userEvent.click(screen.getByRole("button", { name: "Remove generated avatar" }));
+    expect(generation.onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers the kept picture beside the palette, whichever avatar is chosen", async () => {
+    const { onChange } = renderPicker({
+      value: { kind: "auto" },
+      signInPictureUrl: PICTURE,
+      madePictureUrl: MADE,
+      generation: view(),
+    });
+    expect(screen.getByRole("radio", { name: "Your generated avatar" })).not.toBeChecked();
+    await userEvent.click(screen.getByRole("radio", { name: "Your generated avatar" }));
+    expect(onChange).toHaveBeenCalledWith({ kind: "made" });
+  });
+
+  it("returns to the sign-in picture when the generated one is removed", () => {
+    const { rerender, onChange } = renderPicker({
+      value: { kind: "made" },
+      signInPictureUrl: PICTURE,
+      madePictureUrl: MADE,
+      generation: view(),
+    });
+    rerender(
+      <AvatarPicker
+        personId="usr_a1b2"
+        name="Mira Chen"
+        value={{ kind: "auto" }}
+        signInPictureUrl={PICTURE}
+        madePictureUrl={null}
+        generation={view()}
+        onChange={onChange}
+      />,
+    );
+    expect(screen.getByRole("radio", { name: "Use my sign-in picture" })).toBeChecked();
+    expect(screen.queryByRole("radio", { name: "Your generated avatar" })).toBeNull();
+    expect(checked()).toHaveLength(1);
+  });
+
+  it("returns to the palette when there is no sign-in picture to return to", () => {
+    const { rerender, onChange } = renderPicker({ value: { kind: "made" }, madePictureUrl: MADE, generation: view() });
+    rerender(
+      <AvatarPicker
+        personId="usr_a1b2"
+        name="Mira Chen"
+        value={{ kind: "auto" }}
+        madePictureUrl={null}
+        generation={view()}
+        onChange={onChange}
+      />,
+    );
+    expect(screen.queryByRole("radio", { name: "Use my sign-in picture" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "Your generated avatar" })).toBeNull();
+    expect(checked()).toHaveLength(1);
+  });
+
+  it("has no accessibility violations with the pictures and the make flow shown", async () => {
+    const { container } = renderPicker({
+      madePictureUrl: MADE,
+      value: { kind: "made" },
+      generation: view({ results: [{ assetId: "img_one", src: "/me/api/media/img_one/file?sig=1" }] }),
+    });
+    expect((await axe(container)).violations).toEqual([]);
+  });
+});
