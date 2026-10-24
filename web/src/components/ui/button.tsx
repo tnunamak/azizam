@@ -39,7 +39,8 @@ const buttonVariants = cva(
         // Large actions use the form height on desktop; 44 is phone-only.
         lg: "h-10 max-sm:h-11 px-5 font-medium text-body has-[>svg]:px-4",
         // The one primary action of a page that has nothing else to do (the sign-in page): 48 at every width, 16 px semibold.
-        xl: "h-12 px-6 text-lg font-semibold has-[>svg]:px-5",
+        // `text-lg!` is important because the base's `text-meta` otherwise wins the cascade (14 px, measured).
+        xl: "h-12 px-6 text-lg! font-semibold has-[>svg]:px-5",
         icon: "size-8 font-medium",
         "icon-xs": "size-8 font-medium [&_svg:not([class*='size-'])]:size-3.5",
         "icon-sm": "size-8 font-medium",
