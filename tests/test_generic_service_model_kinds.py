@@ -329,6 +329,24 @@ def test_reenabling_an_installed_package_whose_kinds_are_unchanged_passes(gatewa
     assert _stored_model_kind(gateway, "voice-box") == "speech"
 
 
+def test_reenabling_a_disabled_package_whose_stored_kind_it_does_not_offer_passes(gateway, tmp_path):
+    owner, *_ = owner_and_admin(gateway)
+    source = _voice_package(tmp_path, capabilities="speech", kind="speech")
+    assert _enable_package(owner, source).status_code == 200
+    disabled = owner.delete("/admin/api/extensions/voice-package?mode=disable", headers=_write_headers(owner))
+    assert disabled.status_code == 200, disabled.text
+    snapshot = admin_store.get_service_registry_with_generation(path=gateway.path)
+    assert snapshot is not None
+    registry = snapshot["value"]
+    registry["services"]["voice-box"]["capabilities"] = ["chat"]  # the stored record, as a save from before the check left it
+    write_service_registry_for_test(registry, path=gateway.path)
+
+    enabled = _enable_package(owner, source)
+
+    assert enabled.status_code == 200, enabled.text
+    assert _stored_model_kind(gateway, "voice-box") == "speech"
+
+
 def _store_left_out(gateway, service_id="held-box"):
     """Store a record the registry leaves out: its models are not model records, so it does not validate."""
     snapshot = admin_store.get_service_registry_with_generation(path=gateway.path)
