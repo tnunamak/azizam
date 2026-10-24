@@ -17,7 +17,7 @@ const shot = (width: number, name: string) =>
 async function saveWholePage(page: Page, file: string) {
   const release = await page.addStyleTag({ content: "nav[aria-label='Phone navigation']{position:static!important}" });
   await page.screenshot({ path: file, fullPage: true });
-  await release.evaluate((node) => node.remove());
+  await release.evaluate((node) => (node as Element).remove());
 }
 
 // The Home notice needs a member who predates request history: the row the schema 17 upgrade wrote, with the
