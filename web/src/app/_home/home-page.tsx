@@ -127,16 +127,18 @@ function YourApps({ home }: { home: HomeSnapshot }) {
 }
 
 /**
- * Columns by how many cards there are, so no row ends with one card beside empty cells: four sit two by
- * two on a phone and in one row from 640 px, at about the size of Recent's tiles.
+ * Cards keep about the size of Recent's tiles whatever their count: up to four share a row of four from
+ * 640 px (one card stays one tile, never a banner across the column), and five or six fill a row of their own
+ * from 1024 px. On a phone they sit two by two.
  */
 const STARTER_COLUMNS = [
-  "",
-  "",
-  "grid-cols-2",
-  "grid-cols-2 sm:grid-cols-3",
   "grid-cols-2 sm:grid-cols-4",
-  "grid-cols-2 lg:grid-cols-3",
+  "grid-cols-2 sm:grid-cols-4",
+  "grid-cols-2 sm:grid-cols-4",
+  "grid-cols-2 sm:grid-cols-4",
+  "grid-cols-2 sm:grid-cols-4",
+  "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5",
+  "grid-cols-2 sm:grid-cols-3 lg:grid-cols-6",
 ];
 
 /** A first visit's sample chat reply: the shape of what Chat gives back. */
