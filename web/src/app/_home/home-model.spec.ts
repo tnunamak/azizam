@@ -7,8 +7,10 @@ import {
   formatWait,
   gatewayNeeds,
   greetingFor,
+  greetingParts,
   kindOf,
   listFacts,
+  makingPrompt,
   makingRisk,
   makingTimeLeft,
   offeredRows,
@@ -252,6 +254,11 @@ describe("greeting and names", () => {
     expect(greetingFor(new Date(2026, 9, 23, 13), "June", true)).toBe("Welcome, June");
   });
 
+  it("splits the greeting so the name can be set quieter than the words before it", () => {
+    expect(greetingParts(new Date(2026, 9, 23, 13), "Robin", false)).toEqual({ lead: "Good afternoon", name: "Robin" });
+    expect(greetingParts(new Date(2026, 9, 23, 13), null, true)).toEqual({ lead: "Welcome", name: null });
+  });
+
   it("uses the first word of a name", () => {
     expect(firstNameOf("Robin Okafor")).toBe("Robin");
     expect(firstNameOf("  ")).toBeNull();
@@ -301,5 +308,21 @@ describe("a make on a capability that is not working says so", () => {
     expect(makingRisk(item, [view("down", "Down")])).toBe("Images down: it may not finish");
     expect(makingRisk(item, [view("ready", "Ready")])).toBeNull();
     expect(makingRisk(item, [])).toBeNull();
+  });
+});
+
+describe("a running make shows the words it was started with from this tab", () => {
+  const item = { kind: "making" as const, key: "making:j", making: "image" as const, startedAt: NOW - 3, typicalSeconds: 9, capability: "image" };
+  it("takes the newest Make of the same capability pressed shortly before the run was accepted", () => {
+    const made = [
+      { capability: "image", prompt: "A shed in spring rain", at: NOW - 5 },
+      { capability: "image", prompt: "An older picture", at: NOW - 900 },
+    ];
+    expect(makingPrompt(item, made)).toBe("A shed in spring rain");
+  });
+  it("shows no words for another capability, a Make long before the run, or a run of unknown start", () => {
+    expect(makingPrompt(item, [{ capability: "speech", prompt: "A story", at: NOW - 5 }])).toBeNull();
+    expect(makingPrompt(item, [{ capability: "image", prompt: "Too old", at: NOW - 900 }])).toBeNull();
+    expect(makingPrompt({ ...item, startedAt: null }, [{ capability: "image", prompt: "x", at: NOW - 5 }])).toBeNull();
   });
 });

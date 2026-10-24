@@ -116,14 +116,16 @@ afterEach(() => {
 const promptBox = () => screen.findByRole("textbox", { name: "Describe the picture you want" });
 
 describe("H1 typing never waits for the capability list", () => {
-  it("takes text before /me/api/home resolves, and Make is disabled with a name", async () => {
+  it("takes text before /me/api/home resolves, and Make is findable but does nothing yet", async () => {
     stubFetch({ "/me/api/home": () => new Promise(() => undefined) });
     renderHome();
     const box = await screen.findByRole("textbox", { name: "Describe what you want" });
     fireEvent.change(box, { target: { value: "A fox in snow" } });
     expect((box as HTMLTextAreaElement).value).toBe("A fox in snow");
     const make = screen.getByRole("button", { name: "Make" });
-    expect(make).toBeDisabled();
+    // aria-disabled, never a faded native disabled: the solid control stays findable and focusable.
+    expect(make).toHaveAttribute("aria-disabled", "true");
+    expect(make).not.toBeDisabled();
   });
 });
 
@@ -170,7 +172,7 @@ describe("H3 a capability that is down explains itself where the choice is made"
     fireEvent.click(video);
     expect(await screen.findByText(/Video is down\. Ask Sam to look at it\./)).toBeVisible();
     fireEvent.change(await screen.findByRole("textbox", { name: "Describe the clip you want" }), { target: { value: "a clip" } });
-    expect(screen.getByRole("button", { name: "Make" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Make" })).toHaveAttribute("aria-disabled", "true");
   });
 });
 
@@ -307,16 +309,18 @@ describe("H7 a failed Recent leaves the composer working", () => {
 });
 
 describe("H8 with no work, Home offers what can be made", () => {
-  it("shows What you can make here and no Recent, and a row chooses its kind and focuses the box", async () => {
+  it("shows What you can make here and no Recent, and its cards are the chooser: a card chooses its kind and focuses the box", async () => {
     stubFetch({ "/me/api/home": () => homePayload(), "/me/api/media": () => ({ assets: [] }) });
     renderHome();
     expect(await screen.findByRole("heading", { name: "What you can make here" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Recent" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Welcome, Robin" })).toBeVisible();
     const list = within(screen.getByRole("region", { name: "What you can make here" }));
-    fireEvent.click(list.getByRole("button", { name: /Chat/ }));
-    const group = screen.getByRole("group", { name: "What to make" });
-    expect(within(group).getByRole("button", { name: "Chat" })).toHaveAttribute("aria-pressed", "true");
+    // One chooser on the page: the cards, not the cards and the composer's chips.
+    expect(screen.getAllByRole("group", { name: "What to make" })).toHaveLength(1);
+    const group = list.getByRole("group", { name: "What to make" });
+    fireEvent.click(within(group).getByRole("button", { name: /^Chat/ }));
+    expect(within(group).getByRole("button", { name: /^Chat/ })).toHaveAttribute("aria-pressed", "true");
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Ask anything" })));
   });
 });
