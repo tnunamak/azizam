@@ -105,13 +105,13 @@ const taskLabels: Record<Task, string> = {
   image: terms.image,
   video: terms.video,
   music: terms.music,
-  sfx: terms.sound_effects,
+  sfx: terms.sfx,
   speech: terms.speech,
   audio: terms.audio,
   transcribe: terms.transcribe,
   decide: taskNames.decisions,
   embed: taskNames.embeddings,
-  rerank: terms.reranking,
+  rerank: terms.rerank,
 };
 
 /** One plain sentence per task: what an app uses it for. */

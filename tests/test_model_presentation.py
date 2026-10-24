@@ -708,13 +708,12 @@ def test_classification_follows_the_model_list_type():
     assert product_capability(Capability(intent="chat.completions", backend="one"), {LISTED_METADATA_KEY: listed}) == "rerank"
 
 
-def test_embeddings_capability_reads_as_document_search_to_people():
-    # The seeded service is already named "Document search"; its capability label
-    # must equal that name so no "(embeddings)" suffix is appended.
+def test_embeddings_capability_uses_the_voice_glossary_label():
+    # The engine keeps its configured name; the capability uses the glossary term.
     service = {"name": "Document search", "capabilities": ["embeddings"]}
-    assert service_capability_labels(service) == ["Document search"]
-    assert engine_label(service, "household-embedding") == "Document search"
-    assert service_presentation(service, "household-embedding")["capability_title"] == "Document search"
+    assert service_capability_labels(service) == ["Embeddings"]
+    assert engine_label(service, "household-embedding") == "Document search (embeddings)"
+    assert service_presentation(service, "household-embedding")["capability_title"] == "Embeddings"
 
 
 def test_embeddings_label_passes_the_member_jargon_sweep_list():

@@ -1,4 +1,4 @@
-/** Shared presentation vocabulary for gateway capabilities and product concepts. */
+/** Capability labels use the gateway capability IDs and VOICE.md vocabulary. */
 export const capabilityLabels = {
   chat: "Chat",
   image: "Images",
@@ -6,12 +6,39 @@ export const capabilityLabels = {
   speech: "Voice",
   transcribe: "Transcription",
   music: "Music",
-  sound_effects: "Sound effects",
+  sfx: "Sound effects",
   audio: "Audio",
-  decisions: "Decisions",
-  embeddings: "Embeddings",
-  reranking: "Reranking",
+  decide: "Decisions",
+  embed: "Embeddings",
+  rerank: "Reranking",
 } as const;
+
+type CapabilityId = keyof typeof capabilityLabels;
+
+const capabilityAliases: Record<string, CapabilityId> = {
+  images: "image",
+  generations: "image",
+  videos: "video",
+  tts: "speech",
+  transcription: "transcribe",
+  transcriptions: "transcribe",
+  stt: "transcribe",
+  sound_effects: "sfx",
+  decisions: "decide",
+  embeddings: "embed",
+  reranking: "rerank",
+};
+
+const capabilityLabelAliases: Record<string, string> = {
+  voice: capabilityLabels.speech,
+};
+
+/** Resolve a gateway capability ID or a known protocol spelling to its label. */
+export function capabilityLabelFor(key: string | null | undefined): string | undefined {
+  const normalized = String(key ?? "").toLowerCase();
+  const id = capabilityAliases[normalized] ?? normalized;
+  return capabilityLabelAliases[normalized] ?? capabilityLabels[id as CapabilityId];
+}
 
 /**
  * What a person asks for, in the words Home and Try use. Screens that name a
@@ -19,7 +46,7 @@ export const capabilityLabels = {
  * one name across the app.
  */
 export const taskNames = {
-  chat: "Chat",
+  chat: capabilityLabels.chat,
   image: "Make a picture",
   video: "Make a video",
   speech: "Read text aloud",
