@@ -98,8 +98,9 @@ the table is empty. `test_perf_harness.py` fails if a route is added to it.
    The build's own time does not count: a section that times out keeps its last answer inside a fresh build. The
    capability and model-catalog answers then probe the services they need, with the 12 s row cache, and readers that
    find a service cold share one probe in flight. If that probe fails, each reader probes its own services one by one,
-   so a failing service does not fail the readers of the other services. A service that fails again reads as unknown,
-   and its failure is not cached. The availability summary that each build stores (Home and the admin status read it) uses the same rule. It leaves out a stale
+   so a failing service does not fail the readers of the other services. A probe removes only the entries it
+   registered, so a finished fallback probe never removes a newer probe for the same service. A service that fails
+   again reads as unknown, and its failure is not cached. The availability summary that each build stores (Home and the admin status read it) uses the same rule. It leaves out a stale
    section's rows, so its services read as unknown until the section answers again. The status page still shows the
    stale rows, with their age. Without this rule, the first read after a long idle would trust rows that were hours old.
    **Shutdown cancels and joins both background tasks.** The lifespan calls `status_endpoint.stop_snapshot()`
@@ -176,7 +177,8 @@ stopped (0), and a backend with no health URL has no sample.
   both after.
 - `tests/test_service_row_cache.py`: the fallback's service rows: two immediate reads make one probe, a read 11.999 s
   after a probe is served from the cache and a read at 12 s probes again, five cold readers at once share one
-  probe, and a failing service in a shared probe does not fail a reader of another service.
+  probe, a failing service in a shared probe does not fail a reader of another service, and a finished fallback probe
+  leaves a newer probe for the same service registered.
 - `tests/test_backend_health_sampler.py`: the sampler probes the HTTP health URLs and starts no process; it
   samples once at startup and then once a minute; shutdown joins the sampler and waits, up to its bound, for a write
   that has started; the status build writes no samples.
