@@ -196,7 +196,7 @@ PLAIN_RESPONSE_CLASSES: dict[str, frozenset[str] | None] = {
     "keys": frozenset({"keys", "key", "deleted"}),
     "activity": frozenset({"records", "next_cursor", "automated_count", "event"}),
     "error": frozenset({"error", "check"}),
-    "engine_definitions": frozenset({"format_version", "definitions", "real_tests"}),
+    "engine_definitions": frozenset({"format_version", "definitions", "real_tests", "model_kinds"}),
     "stt_measurement": frozenset({"job", "policy", "samples", "settings", "settings_note", "revision", "commands", "measurement_ready", "known_limit", "trial_lengths", "trial_lengths_note"}),
     "engine_protocols": frozenset({"protocols", "problems"}),
     "engine_check": frozenset({"check", "test", "access"}),

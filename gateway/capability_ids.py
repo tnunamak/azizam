@@ -9,6 +9,13 @@ CAPABILITY_LABELS = {
     "transcribe": "Transcription", "music": "Music", "sfx": "Sound effects",
     "audio": "Audio", "decide": "Decisions", "embed": "Document search", "rerank": "Rerank",
 }
+# The kinds a registered model may declare: the one capability it serves, with
+# its builder label (engine pages say "Embeddings" where the catalog says
+# "Document search"). The catalog binds a kinded model only the capabilities of
+# its kind. A model with no kind, or a kind not listed here, keeps every
+# capability its engine offers. These are the families registered models bind.
+MODEL_KIND_LABELS = {"chat": "Chat", "embed": "Embeddings", "speech": "Speech", "transcribe": "Transcription"}
+MODEL_KINDS = tuple(MODEL_KIND_LABELS)
 PROTOCOL_CAPABILITIES = {
     "llm.execution": "chat", "typesafe-systemone": "decide",
     "chat": "chat", "completions": "chat", "chat.completions": "chat", "vision": "chat",

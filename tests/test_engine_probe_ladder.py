@@ -118,6 +118,7 @@ def test_a_task_field_is_evidence_for_the_work_it_names():
     embeddings = next(row for row in result["capabilities"] if row["id"] == "embeddings")
     assert embeddings["level"] == "likely" and "bge-m3" in embeddings["evidence"]
     assert result["models"][0]["use"] == "Embeddings"
+    assert result["models"][0]["kind"] == "embed", "the one kind the server's answer names is suggested for the wizard"
 
 
 def test_a_5xx_on_a_route_is_no_evidence():

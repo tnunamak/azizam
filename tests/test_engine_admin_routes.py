@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, engine_admin, engine_check, secret_store, service_registry, transforms
 from gateway.compat import positive_int_env
+from gateway.models_catalog import registered_model_capabilities
 from gateway.litellm_substrate import compile_litellm_config_from_registry
 from gateway.provider_sidecar import provider_secret_env_map_from_registry, provider_secret_origin_map_from_registry
 from tests.support.engine_dns import use_fake_engine_dns
@@ -481,6 +482,28 @@ def test_an_older_record_keeps_its_key_reference_and_its_start_driver_through_th
     assert after["config"]["api_key_env"] == "OLDER_KEY"
     assert after["lifecycle"]["driver"] == "systemd" and after["lifecycle"]["driver_config"] == lifecycle["driver_config"]
     assert "definition" not in after["config"], "a rename preserves the inferred legacy record"
+
+
+def test_a_model_kind_is_saved_shown_and_bound_to_its_own_capability(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    _silent(fake_upstreams, "kind.fk.test")
+    created = _create(owner, {"definition": "openai-compatible", "name": "Kind Engine", "disabled": True,
+                              "values": {"address": "http://kind.fk.test/v1"}, "capabilities": ["chat", "embeddings"],
+                              "models": [{"id": "chat-up", "public_name": "chat-model", "kind": "chat"},
+                                         {"id": "embed-up", "public_name": "embed-model", "kind": "embed"},
+                                         {"id": "plain-up", "public_name": "plain-model"}]})
+    assert created.status_code == 201, created.text
+    view = owner.get("/admin/api/engines/kind-engine").json()["engine"]
+    assert {row["public_name"]: row.get("kind") for row in view["models"]} == {
+        "chat-model": "chat", "embed-model": "embed", "plain-model": None}
+    # The create kept the engine off; the binding is for a live engine, so read the same record switched on.
+    live = {sid: {**record, "enabled": True} for sid, record in _registry(gateway)["services"].items()}
+    bound: dict[str, set[str]] = {}
+    for capability in registered_model_capabilities({"services": live}):
+        bound.setdefault(capability.model, set()).add(capability.intent)
+    assert bound["chat-model"] == {"chat.completions", "text.completions"}
+    assert bound["embed-model"] == {"text.embeddings"}
+    assert bound["plain-model"] == {"chat.completions", "text.completions", "text.embeddings"}
 
 
 def test_create_answers_with_the_new_engine_id(gateway, fake_upstreams):
