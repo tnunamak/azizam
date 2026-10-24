@@ -318,6 +318,7 @@ from gateway.toolcall_detection import (
 )
 from gateway.discovery import WorkflowRegistry
 from gateway.video_limits import limits_for_workflow, video_limits
+from gateway.app_key_openapi import augment_app_key_openapi
 from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
 from gateway.workflow_openapi import advertised_inputs_schema, workflow_catalog
 from gateway.discovery_metadata import (
@@ -405,6 +406,7 @@ from gateway.policy import (
 from gateway.receipts import (ReceiptLifecycleOwner, RouteReceipt, new_request_id,
                               configure_retention_fact_capture, record_retention_fact_failure, run_receipt_write)
 from gateway.runtime_auth import (
+    CLIENT_KEY_HEADERS,
     RuntimeIdentity,
     discovery_allows,
     discovery_audience_for_access,
@@ -2076,7 +2078,7 @@ def get_client_api_key_from_headers(headers) -> str:
     if auth_header.lower().startswith("bearer "):
         parts = auth_header.split(None, 1)
         return parts[1].strip() if len(parts) == 2 else ""
-    for header_name in ("x-api-key", "api-key"):
+    for header_name in CLIENT_KEY_HEADERS:
         api_key = headers.get(header_name, "")
         if api_key and api_key.strip():
             return api_key.strip()
@@ -31831,6 +31833,7 @@ def _gateway_openapi() -> dict[str, Any]:
     )
     from gateway.owner_openapi import augment_owner_openapi
     augment_owner_openapi(schema, app.routes)
+    augment_app_key_openapi(schema)
     app.openapi_schema = schema
     return schema
 
