@@ -922,6 +922,7 @@ function ReceiptsList({
               <button
                 type="button"
                 key={receipt.selectionKey}
+                data-receipt-id={receipt.requestId ?? undefined}
                 aria-label={`Receipt details for ${receipt.summary}${showPerson ? ` · ${receipt.personLabel ?? "Person not recorded"}` : ""}`}
                 onClick={() => onSelect(receipt)}
                 className="hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-3 py-4 text-left focus-visible:outline-2"
