@@ -29,7 +29,7 @@ from gateway.content_access import CreationRecord, JobRecord, Own, Viewer, decid
 from gateway.content_makers import job_receipt_ids as _job_receipt_ids
 from gateway.runtime_auth import RuntimeIdentity
 
-from gateway import content_makers, directory_index, admin_store, mcp_oauth_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, sqlite_startup
+from gateway import content_makers, directory_index, admin_store, mcp_oauth_store, request_connections, server_timing, thumbnails, me_make, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store, record_ownership, sqlite_startup
 from gateway.admin_oidc import AdminSession
 from gateway.model_ids import display_model_id
 from gateway.public_failure import PublicFailure
@@ -1035,6 +1035,16 @@ def _receipt_of(job: Mapping[str, Any], receipts: Mapping[str, Mapping[str, Any]
     return next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
 
 
+def _label_receipt(receipt: Mapping[str, Any] | None, scope: _MediaScope, apps: _Apps) -> Mapping[str, Any] | None:
+    """The receipt that may describe a Library item. A job's lookup can reach a receipt through the parent link its
+    client chose, so the receipt describes the item only when the viewer may read it (D51). Otherwise the item takes
+    the neutral source its job records, never the source of another person's request.
+    """
+    if receipt is None or record_ownership.owns_record("receipt", receipt, viewer=_library_viewer(scope), apps=apps):
+        return receipt
+    return None
+
+
 def _job_in_library(job: Mapping[str, Any], scope: _MediaScope) -> bool:
     """Whether the viewer may read this job and its items, by the maker stamped on the job when it was made.
 
@@ -1147,6 +1157,7 @@ def _media_entries(
     deleted = _deleted_asset_ids(scope, admin_db_path)
     hidden = media_jobs.hidden_assets(scope.user_ids, path=media_jobs_path) if scope.user_ids else set()
     for job, receipt in _scoped_jobs(scope, jobs_path=media_jobs_path, receipts_path=receipts_path):
+        receipt = _label_receipt(receipt, scope, apps)
         job_source = None
         for asset in _iter_job_assets(job):
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")

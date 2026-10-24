@@ -966,6 +966,27 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(source["label"], "Local network · no key · Open WebUI")
         self.assertEqual(source["client_hint"], "Open WebUI")
 
+    def test_a_parent_link_labels_the_source_only_for_a_viewer_who_may_read_the_parent(self) -> None:
+        # The parent link is chosen by the client, so its receipt labels the item's source only when the viewer may
+        # read that receipt. Otherwise the item keeps the source its own job records, never the other person's.
+        own_asset, foreign_asset = "img_" + "c" * 64, "img_" + "d" * 64
+        self._receipt(self.service_app["id"], "req_alice_parent", maker_person_id=self.alice["id"])
+        self._receipt(self.app_b["id"], "req_bob_parent", maker_person_id=self.bob["id"])
+        for asset_id, request_id, parent in ((own_asset, "req_alice_child", "req_alice_parent"),
+                                             (foreign_asset, "req_alice_child_2", "req_bob_parent")):
+            self._write_asset(asset_id, ["sha256:alice"], request_id=request_id)
+            with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+                media_jobs.create(media_jobs.MediaJob(
+                    request_id=request_id, parent_request_id=parent, app_id=self.app_a["id"],
+                    intent="image.generate", workflow="wf.image", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                    assets=[{"asset_id": asset_id, "media_type": "image/png"}],
+                ), path=self.jobs_db)
+
+        labels = {item["asset_id"]: item["source"]["label"] for item in self.client.get("/me/api/media").json()["assets"]}
+
+        self.assertEqual(labels[own_asset], self.service_app["name"])
+        self.assertEqual(labels[foreign_asset], self.app_a["name"])
+
     def test_owner_library_does_not_recover_foreign_source_from_job_identity(self) -> None:
         keyed_asset = "img_" + "8" * 64
         service_asset = "img_" + "7" * 64
