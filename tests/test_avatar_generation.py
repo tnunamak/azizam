@@ -17,6 +17,8 @@ from gateway.admin_oidc import AdminSession
 from gateway.me_avatar import AvatarGeneration, PictureCache, create_me_avatar_router
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+# The sign-in picture the fake provider serves: a different image from the one the gateway made.
+SIGN_IN_PNG = b"\x89PNG\r\n\x1a\n" + b"\x01" * 64
 PICTURE = "https://lh3.example.test/a/photo.png"
 ACTION = {"x-azizam-user-action": "1"}
 
@@ -77,7 +79,7 @@ class Rig:
         self.who: dict[str, str] = {}
 
         async def fetcher(url: str) -> media_fetch.FetchedMedia:
-            return media_fetch.FetchedMedia(PNG, "p.png", "image/png")
+            return media_fetch.FetchedMedia(SIGN_IN_PNG, "p.png", "image/png")
 
         app = FastAPI()
         app.include_router(create_me_avatar_router(
@@ -119,7 +121,7 @@ def test_the_prompt_is_fixed_by_its_seed_and_holds_no_personal_data() -> None:
         assert prompt == avatar_generation.build_prompt(seed)
         for value in personal:
             assert value.lower() not in prompt.lower(), value
-        assert "no face" in prompt and "no text" in prompt
+        assert "no face" in prompt.lower() and "no text" in prompt.lower()
 
 
 def test_the_prompt_takes_a_seed_and_nothing_about_the_person() -> None:
@@ -243,16 +245,15 @@ def test_keeping_refuses_anything_but_one_picture_id(rig: Rig, generation: FakeG
     assert avatars.get(alice, path=rig.db)["choice"] == "auto"
 
 
-def _make_owner(db: Path, person_id: str) -> None:
-    app = admin_store.ensure_personal_app_for_user(person_id, path=db)
-    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=person_id,
-                                  scope_app_id=app["id"], path=db)
+def _make_admin(db: Path, person_id: str) -> None:
+    # A global grant: an App-scoped one is not a control-plane role (admin_store.effective_admin_roles).
+    admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=person_id, path=db)
 
 
 def test_an_admin_sees_a_generated_picture_only_when_its_owner_chose_it(rig: Rig, generation: FakeGeneration) -> None:
     alice = rig.person("alice")
     admin = rig.person("ada")
-    _make_owner(rig.db, admin)
+    _make_admin(rig.db, admin)
     generation.add_job_picture(alice, "img_alice1")
     rig.as_(alice).client.post("/me/api/profile/avatar/generated", json={"asset_id": "img_alice1"}, headers=ACTION)
     rig.as_(alice).client.put("/me/api/profile/avatar", json={"choice": "v3"}, headers=ACTION)
@@ -296,7 +297,7 @@ def test_remove_returns_to_the_sign_in_picture_when_there_is_one(rig: Rig, gener
     assert body["choice"] == "auto"
     assert body["picture_url"].startswith("/me/api/profile/avatar/picture?v=")
     assert body["sign_in_available"] is True
-    assert client.get("/me/api/profile/avatar/picture").content != PNG
+    assert client.get("/me/api/profile/avatar/picture").content == SIGN_IN_PNG
     assert avatars.get(alice, path=rig.db)["generated_at"] is None
 
 
