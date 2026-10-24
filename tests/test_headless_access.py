@@ -402,9 +402,9 @@ def test_each_declared_mode_is_enforced_as_declared(mode, principals):
             assert response.status_code not in {401, 403}, (mode, name, response.status_code, response.text[:200])
 
 
-# A signed link's signature is checked before the link is served, so with a valid expiry the signature is all that a
-# refused call can fail on. For each operation a link reaches: the refusal a missing signature gets, and the refusal a
-# wrong one gets, each as (status, message). The content routes say a signature is missing before they check any.
+# With a valid expiry, the signature is what decides these refusals. For each operation a link reaches, this gives the
+# refusal for a missing signature and the refusal for a wrong one, each as (status, message). The content routes say a
+# signature is missing before they check any.
 BAD_SIGNATURE = (403, "Invalid or expired signature")
 UNSIGNED = (400, "Signature required")
 SIGNED_LINK_REFUSALS = {
@@ -846,7 +846,7 @@ def test_every_handler_that_refuses_a_browser_session_write_is_flagged_bearer_on
     handlers = _bearer_refusing_handlers()
     # The scan has to find the drain's check and the drain's write handler, or the comparison below would pass with nothing found.
     assert {"_drain_authorize", "admin_drain_set"} <= handlers
-    # The check guards writes. The drain's GET reaches the same helper and admits sessions, so only the write is bearer-only.
+    # The check guards writes: the drain's GET reaches the same helper with write off, so sessions still read it.
     writes = {f"{method} {path}" for path, route in walk_routes(proxy.app.routes) if isinstance(route, APIRoute)
               for method in route.methods - {"GET", "HEAD", "OPTIONS"} if route.endpoint.__name__ in handlers}
     assert writes == BEARER_ONLY, sorted(writes ^ BEARER_ONLY)
