@@ -20,6 +20,7 @@ from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
 from gateway.receipts import RouteReceipt
+from gateway import request_source
 from tests.support.access import service_app
 
 
@@ -257,17 +258,19 @@ class MeMediaGapContractTests(unittest.TestCase):
     def test_jobs_paginate_ties_after_scoping_without_loss(self) -> None:
         expected = [f"mine-{i:03d}" for i in range(205)]
         for job_id in expected:
-            media_jobs.create(media_jobs.MediaJob(
-                job_id=job_id, intent="image.generate", app_id=self.app_a["id"],
-                status="succeeded", created_at=1700000000, updated_at=1700000000,
-            ), path=self.jobs_db)
+            with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+                media_jobs.create(media_jobs.MediaJob(
+                    job_id=job_id, intent="image.generate", app_id=self.app_a["id"],
+                    status="succeeded", created_at=1700000000, updated_at=1700000000,
+                ), path=self.jobs_db)
         # Newer foreign rows would fill a globally paginated first page.
         for index in range(105):
-            media_jobs.create(media_jobs.MediaJob(
-                job_id=f"foreign-{index:03d}", intent="image.generate",
-                app_id=self.app_b["id"], status="succeeded",
-                created_at=1700000001, updated_at=1700000001,
-            ), path=self.jobs_db)
+            with request_source.acting_as(app_id=self.app_b["id"], person_id=self.bob["id"]):
+                media_jobs.create(media_jobs.MediaJob(
+                    job_id=f"foreign-{index:03d}", intent="image.generate",
+                    app_id=self.app_b["id"], status="succeeded",
+                    created_at=1700000001, updated_at=1700000001,
+                ), path=self.jobs_db)
         collected, lengths, cursor = [], [], None
         for _ in range(3):
             params = {"cursor": cursor} if cursor is not None else {}

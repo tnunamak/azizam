@@ -14,7 +14,7 @@ import proxy
 from tests.support.access import auth_identity  # noqa: E402
 import httpx
 import pytest
-from gateway import admin_store, media_jobs, me_media, prompt_memory, receipt_store
+from gateway import admin_store, media_jobs, me_media, prompt_memory, receipt_store, request_source
 from gateway.admin_api import AdminContext, NotYourApp
 from gateway.admin_oidc import AdminSession
 from gateway.admin_runtime import AdminSQLiteStore, runtime_identity_for_app_credential_hash
@@ -204,9 +204,12 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
         "prompt": "video-full-secret", "workflow": "video-full-workflow-secret",
     })
     for auth, expected in ((member_auth, 200), (owner_auth, 403), (_auth(app["id"], None, "sha256:old"), 403)):
-        response = asyncio.run(proxy.proxy_graph_video_content(
-            proxy._video_id_from_prompt_id("private"), auth, metadata_mode="full", index_library=False,
-        ))
+        # Each request runs as the identity that authenticated it, so a job it writes is stamped with that maker.
+        with request_source.acting_as(app_id=auth.identity.app_id, person_id=auth.identity.person_id,
+                                      credential_id=auth.identity.key_hash):
+            response = asyncio.run(proxy.proxy_graph_video_content(
+                proxy._video_id_from_prompt_id("private"), auth, metadata_mode="full", index_library=False,
+            ))
         assert response.status_code == expected, response.body
         if expected == 200:
             assert b"video-full-secret" in response.body

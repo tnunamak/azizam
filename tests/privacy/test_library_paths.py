@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 from gateway import admin_store, content_access, media_jobs, mcp_oauth, mcp_oauth_store
 from gateway.runtime_auth import hash_api_key
+from gateway import request_source
 from tests.support.app_keys import issue_app_key
 
 
@@ -73,11 +74,12 @@ def library_world():
         case._receipt(app["id"], request_id)
         case._job(request_id, asset_id)
         job_id = f"running_{name}"
-        media_jobs.create(media_jobs.MediaJob(
-            job_id=job_id, intent="image.generate", app_id=app["id"],
-            status=media_jobs.STATUS_RUNNING, created_at=1_700_000_000,
-            updated_at=1_700_000_001,
-        ), path=case.jobs_db)
+        with request_source.acting_as(app_id=app["id"], person_id=user["id"]):
+            media_jobs.create(media_jobs.MediaJob(
+                job_id=job_id, intent="image.generate", app_id=app["id"],
+                status=media_jobs.STATUS_RUNNING, created_at=1_700_000_000,
+                updated_at=1_700_000_001,
+            ), path=case.jobs_db)
         assets[name] = asset_id
         jobs[name] = job_id
 

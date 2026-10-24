@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import accounts, admin_store, me_make, media_delivery, media_jobs, prompt_memory, receipt_store  # noqa: E402
+from gateway import request_source
 from tests.support.access import store_plan  # noqa: E402
 
 PNG = b"\x89PNG\r\n\x1a\n-source-picture-bytes"
@@ -63,7 +64,8 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         source_job = media_jobs.MediaJob(intent="image.generate", request_id="req_source",
                                          app_id=self.app["id"], status=media_jobs.STATUS_SUCCEEDED,
                                          assets=[{"asset_id": SOURCE, "media_type": "image/png"}])
-        media_jobs.create(source_job, path=root / "jobs.db")
+        with request_source.acting_as(app_id=self.app["id"], person_id=self.user["id"]):
+            media_jobs.create(source_job, path=root / "jobs.db")
 
     def _payload(self, intent: str = "image.edit", **body) -> dict:
         body = {"model": "image", "prompt": "private make prompt", **body}
