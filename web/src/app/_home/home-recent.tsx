@@ -124,7 +124,6 @@ function ChatTileView({ item, className }: { item: Extract<RecentItem, { kind: "
       <Link
         prefetch={false}
         href={`/usage/?receipt=${encodeURIComponent(chat.request_id)}`}
-        aria-label={`Open chat: ${chat.title}`}
         className="group flex min-h-0 min-w-0 flex-1 flex-col"
       >
         <div className="bg-muted group-hover:bg-accent rounded-media flex aspect-square w-full flex-col overflow-hidden p-4 transition-colors duration-(--motion-fast)">
