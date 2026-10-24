@@ -20,20 +20,21 @@ export function useReportSignInBusy(busy: boolean) {
 
 /**
  * The frame of the sign-in page, at /sign-in/ and at a signed-out "/". There is no header and no navigation. The
- * page's column starts at a fixed 20 vh from the top in every state, so the mark stays where it is when the options
- * arrive. A footer holds the theme switch and the link to the product site. The column's own mark is the only mark.
+ * page's column starts at a fixed top offset in every state, so the mark stays where it is when the options arrive.
+ * A footer holds the theme switch and the link to the product site. The column's own mark is the only mark.
  * The page's own content supplies its `main` landmark. While a redirect or a submit runs, the footer is inert and dimmed,
  * as the page's other controls are.
  *
- * The max() keeps a short landscape phone's column below its safe area. At 390 by 844 and at 1440 by 900 the top is
- * the 20 vh value.
+ * The offset is 20 vh, and below 640 px wide it is 8 vh but never less than 24 px, so a phone's column and its footer
+ * both fit on a 390 by 844 screen. The max() keeps a short landscape phone's column below its safe area. At 1440 by 900
+ * the top is the 20 vh value.
  */
 export function SignInFrame({ children, themeToggle }: { children: ReactNode; themeToggle: ReactNode }) {
   const [busy, setBusy] = useState(false);
   return (
     <ReportBusy.Provider value={setBusy}>
       <div className="flex min-h-dvh flex-col">
-        <main id="main-content" className="flex flex-1 flex-col px-6 pt-[max(20vh,calc(env(safe-area-inset-top,0px)_+_1rem))] max-sm:pb-12">
+        <main id="main-content" className="flex flex-1 flex-col px-6 pt-[max(20vh,calc(env(safe-area-inset-top,0px)_+_1rem))] max-sm:pb-12 max-sm:pt-[max(clamp(24px,8vh,20vh),calc(env(safe-area-inset-top,0px)_+_1rem))]">
           <div className="flex justify-center">{children}</div>
         </main>
         <footer
@@ -47,7 +48,7 @@ export function SignInFrame({ children, themeToggle }: { children: ReactNode; th
             {themeToggle}
             <a
               href="https://azizam.dev/"
-              className="flex min-h-11 items-center underline-offset-[3px] hover:underline"
+              className="-mx-1.5 flex min-h-11 items-center rounded-md px-1.5 underline-offset-[3px] hover:underline"
             >
               About {PRODUCT_NAME}
             </a>

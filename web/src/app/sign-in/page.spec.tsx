@@ -535,10 +535,21 @@ it("names the instance only: no shared-by line, and no person's name, even if th
 it("gives the reset line one copy for everyone, with no name in it", async () => {
   Object.assign(options, { owner_name: "Sam Okafor" });
   mount();
-  const reset = await screen.findByText("Forgot your password? Ask the person who runs this gateway for a reset link.");
+  const reset = await screen.findByText("Forgot your password? Ask the person who set up Azizam for a reset link.");
   expect(reset).toBeVisible();
   expect(reset).toHaveClass("text-pretty");
   expect(screen.queryByText(/Sam Okafor/)).toBeNull();
+});
+
+it.each([
+  ["Okafor family", "Okafor family"],
+  ["", "Azizam"],
+])("names the instance in the reset line, or Azizam when none is set (%j)", async (instance, named) => {
+  options.instance_name = instance;
+  mount();
+  expect(
+    await screen.findByText(`Forgot your password? Ask the person who set up ${named} for a reset link.`),
+  ).toBeVisible();
 });
 
 it("puts the name box under the single sign-on button, and its helper is its description", async () => {
@@ -547,21 +558,53 @@ it("puts the name box under the single sign-on button, and its helper is its des
   options.oidc_label = "Okafor ID";
   mount();
   const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
-  const box = screen.getByRole("checkbox", { name: "Remember me on this browser" });
+  const box = screen.getByRole("checkbox", { name: "Remember my name on this browser" });
   expect(provider.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(box).toHaveAccessibleDescription("Turn this off on a public computer.");
+  expect(box).toHaveAccessibleDescription("Show my name here next time. Turn off on a shared computer.");
 });
 
-it("puts the name box after the form's Sign in when both ways in are on, so it covers both", async () => {
+it("keeps the name box directly under single sign-on, above the divider, when both ways in are on", async () => {
   options.built_in = true;
   options.oidc = true;
   options.oidc_label = "Okafor ID";
   mount();
   const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
+  const box = screen.getByRole("checkbox", { name: "Remember my name on this browser" });
+  const divider = screen.getByText("or use your email");
   const signIn = screen.getByRole("button", { name: "Sign in" });
-  const box = screen.getByRole("checkbox", { name: "Remember me on this browser" });
-  expect(provider.compareDocumentPosition(signIn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(signIn.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(provider.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(box.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(divider.compareDocumentPosition(signIn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("fills the sign-in beside single sign-on with ink once either field has text", async () => {
+  options.built_in = true;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  mount();
+  const user = userEvent.setup();
+  const signIn = await screen.findByRole("button", { name: "Sign in" });
+  expect(signIn).toHaveAttribute("data-variant", "outline");
+  await user.type(screen.getByLabelText("Email"), "member@example.test");
+  expect(signIn).toHaveAttribute("data-variant", "make");
+});
+
+it("shows a spinner on Sign in while the sign-in is checked", async () => {
+  options.built_in = true;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  vi.mocked(fetch).mockImplementation((input) =>
+    String(input) === "/auth/api/login"
+      ? new Promise(() => {})
+      : String(input).startsWith("/auth/api/options")
+        ? json(options)
+        : json({ owner_exists: true }),
+  );
+  mount();
+  await submit();
+  const pending = await screen.findByRole("button", { name: "Signing in…" });
+  expect(pending).toBeDisabled();
+  expect(pending.querySelector("svg")).toHaveClass("motion-safe:animate-spin");
 });
 
 it("moves focus to Email when the owner's password form opens in place", async () => {
@@ -652,7 +695,7 @@ it("applies the name box to single sign-on as well as to the password", async ()
   const user = userEvent.setup();
   const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
   expect(provider).toHaveAttribute("href", `${options.oidc_url}&remember=1`);
-  await user.click(screen.getByRole("checkbox", { name: "Remember me on this browser" }));
+  await user.click(screen.getByRole("checkbox", { name: "Remember my name on this browser" }));
   expect(provider).toHaveAttribute("href", `${options.oidc_url}&remember=0`);
   await user.type(screen.getByLabelText("Email"), "member@example.test");
   await user.type(screen.getByLabelText("Password"), "A long test password");

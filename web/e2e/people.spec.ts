@@ -566,7 +566,7 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
 }) => {
   await open(page, "sign-in", "seeded");
   await expect(
-    page.getByText("Forgot your password? Ask whoever set this up for a reset link."),
+    page.getByText(/^Forgot your password\? Ask the person who set up .+ for a reset link\.$/),
   ).toBeVisible();
   let failed = true;
   await page.route("**/auth/api/login", (route) => {

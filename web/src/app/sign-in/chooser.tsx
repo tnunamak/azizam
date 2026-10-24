@@ -63,7 +63,7 @@ export function StatusLine({
         {status.forget && onForget && (
           <button
             type="button"
-            className="text-link flex w-fit min-h-11 items-center text-left underline underline-offset-4"
+            className="text-link -mx-1.5 flex w-fit min-h-11 items-center rounded-md px-1.5 text-left underline underline-offset-4"
             onClick={() => onForget(status.forget!)}
           >
             Forget {status.forget.name} on this browser
@@ -228,7 +228,7 @@ export function Chooser({
       {onOwnerPassword && (
         <button
           type="button"
-          className="text-link text-meta mt-6 flex min-h-11 items-center font-medium disabled:opacity-50"
+          className="text-link text-meta mt-6 -mx-1.5 flex min-h-11 items-center rounded-md px-1.5 font-medium disabled:opacity-50"
           disabled={busy}
           onClick={onOwnerPassword}
         >
@@ -238,7 +238,7 @@ export function Chooser({
       <div className={cn(onOwnerPassword ? "mt-4" : "mt-6")}>
         <button
           type="button"
-          className="text-danger text-meta flex min-h-11 items-center font-medium underline underline-offset-4 disabled:opacity-50"
+          className="text-danger text-meta -mx-1.5 flex min-h-11 items-center rounded-md px-1.5 font-medium underline underline-offset-4 disabled:opacity-50"
           disabled={busy}
           onClick={onForgetMode}
         >

@@ -127,6 +127,22 @@ describe("the chooser", () => {
     expect(screen.queryByLabelText("Email")).toBeNull();
   });
 
+  it("takes its names only from this browser's remembered list, never from the public options answer", async () => {
+    // The options answer is public. Names placed in it must not reach the list: only this browser's own list names people.
+    Object.assign(options, {
+      owner_name: "Tim Nunamaker",
+      signed_in_oidc: { name: "Simon Agent", email: "simon@example.test", csrf_token: "token" },
+      people: [{ tile: "t_public", name: "Public Name" }],
+    });
+    remembered.people = [robin, lea];
+    mount();
+
+    expect(await rowNames()).toEqual(["Robin Okafor", "Léa Okafor", "Someone else"]);
+    for (const name of ["Tim Nunamaker", "Simon Agent", "Public Name"]) {
+      expect(document.body.textContent).not.toContain(name);
+    }
+  });
+
   it("never shows a picture on the list", async () => {
     mount();
     await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
@@ -528,13 +544,39 @@ describe("password sign-in for a remembered person", () => {
   });
 });
 
+describe("the password screen for a remembered person", () => {
+  it("names the instance in the reset line, as the plain form does", async () => {
+    remembered.people = [robin, lea];
+    options.instance_name = "Okafor family";
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Robin Okafor" }));
+    expect(
+      await screen.findByText("Forgot your password? Ask the person who set up Okafor family for a reset link."),
+    ).toBeVisible();
+  });
+
+  it("shows a spinner on Sign in while the password is checked", async () => {
+    remembered.people = [robin, lea];
+    loginReply = () => new Promise(() => {});
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Robin Okafor" }));
+    await user.type(await screen.findByLabelText("Password for Robin Okafor"), "A long test password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    const pending = await screen.findByRole("button", { name: "Signing in…" });
+    expect(pending).toBeDisabled();
+    expect(pending.querySelector("svg")).toHaveClass("motion-safe:animate-spin");
+  });
+});
+
 describe("the plain form", () => {
   it("shows the name box on by default, under Sign in, and sends remember true", async () => {
     remembered.people = [];
     mount();
-    const box = await screen.findByRole("checkbox", { name: "Remember me on this browser" });
+    const box = await screen.findByRole("checkbox", { name: "Remember my name on this browser" });
     expect(box).toBeChecked();
-    expect(screen.getByText("Turn this off on a public computer.")).toBeVisible();
+    expect(screen.getByText("Show my name here next time. Turn off on a shared computer.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Sign in" }).compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Email"), "member@example.test");
@@ -547,7 +589,7 @@ describe("the plain form", () => {
     remembered.people = [];
     mount();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Remember me on this browser" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Remember my name on this browser" }));
     await user.type(screen.getByLabelText("Email"), "member@example.test");
     await user.type(screen.getByLabelText("Password"), "A long test password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));

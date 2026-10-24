@@ -330,8 +330,8 @@ export default function SignInPage() {
 
   if (arrival === null || loading) {
     // The loaded single sign-on page's own rhythm, so the column does not move when the options arrive: the heading,
-    // the button, the name box under it (16 above, then 38 for its row and its helper), and the owner's link. The heading
-    // text is fixed: the address may name a different page, and the server render has no address.
+    // the button, the name box under it (16 above, then 58 for its row and its two-line helper), and the owner's link.
+    // The heading text is fixed: the address may name a different page, and the server render has no address.
     return column(
       <>
         <h1 id="sign-in-title" className="sr-only">
@@ -343,7 +343,7 @@ export default function SignInPage() {
         </div>
         <div aria-hidden="true" className="mt-8">
           <div className="bg-muted rounded-control h-12 w-full" />
-          <div className="mt-4 h-[38px]" />
+          <div className="mt-4 h-[58px]" />
           <div className="mt-3 h-11" />
         </div>
         <p role="status" className="sr-only">
@@ -491,6 +491,7 @@ export default function SignInPage() {
       return column(
         <PersonPassword
           person={who}
+          instanceName={instanceName || PRODUCT_NAME}
           onBack={() => {
             setNotice(null);
             setView(null);

@@ -141,7 +141,8 @@ export function withRemember(url: string, remember: boolean): string {
 
 /**
  * The plain sign-in form (S9): single sign-on, email and password, or the reset form for a reset link. The name box
- * (remember) sits under the single sign-on button, or after the form's Sign in when there is a form (DESIGN.md 4.9).
+ * (remember) sits under the single sign-on button when there is one, and after the form's Sign in when there is only a
+ * form (DESIGN.md 4.9).
  */
 export function PlainSignIn({
   data,
@@ -227,8 +228,11 @@ export function PlainSignIn({
     Boolean(data) && !data?.built_in && data?.owner_password !== false && !reset;
   const showForm = Boolean(data?.built_in) || Boolean(reset) || ownerForm;
   const nameBoxShown = rememberOn && !reset;
-  // The name box is one row on the column's left edge (DESIGN.md 4.9). It sits under the single sign-on button when that
-  // is the only way in, and under the whole form (after its Sign in) when there is a form, so it covers both ways.
+  // The primary beside single sign-on is an outline until either field has text, then the ink pill: the form is in use.
+  const filled = email !== "" || password !== "";
+  // The name box is one row on the column's left edge (DESIGN.md 4.9). It sits directly under the single sign-on button
+  // whenever there is one, above the divider, so it never sits below the main action. With no provider it sits after the
+  // form's Sign in. It keeps the name for this browser's list only, and the session is not changed.
   // The 44 px target keeps every control at least 44 by 44; its vertical margins are -14 px, so it takes 16 px of
   // height, and its 14 px overhang puts the box on the column's edge. The label tucks 4 px into the target's clear
   // space, which leaves 10 px between the box and the label. The helper is indented by the box plus those 10 px.
@@ -256,12 +260,12 @@ export function PlainSignIn({
           </span>
         </button>
         <Label htmlFor={rememberId} className="-ml-1 text-body font-medium">
-          Remember me on this browser
+          Remember my name on this browser
         </Label>
       </div>
       {/* 26 px: the 16 px box and the 10 px gap, so the helper starts where the label does. */}
       <p id={rememberHelpId} className="text-muted-foreground text-meta mt-0.5 pl-[26px]">
-        Turn this off on a public computer.
+        Show my name here next time. Turn off on a shared computer.
       </p>
     </div>
   ) : null;
@@ -271,7 +275,7 @@ export function PlainSignIn({
       {fromList && !reset && (
         <button
           type="button"
-          className="text-link text-meta mb-4 flex min-h-11 items-center gap-1 underline underline-offset-4 disabled:opacity-50"
+          className="text-link text-meta mb-4 -mx-1.5 flex min-h-11 items-center gap-1 rounded-md px-1.5 underline underline-offset-4 disabled:opacity-50"
           disabled={busy}
           onClick={onBack}
         >
@@ -325,7 +329,7 @@ export function PlainSignIn({
             )}
           </>
         )}
-        {hasProvider && !showForm && nameBox && <div className="mt-4">{nameBox}</div>}
+        {hasProvider && nameBox && <div className="mt-4">{nameBox}</div>}
         {hasProvider && showForm && (
           <div className="text-muted-foreground text-meta my-6 flex items-center gap-4">
             <span className="flex-1 border-t" />
@@ -336,7 +340,7 @@ export function PlainSignIn({
         {hasProvider && ownerCanUsePassword && !ownerForm && (
           <button
             type="button"
-            className="text-link text-meta mt-3 flex min-h-11 items-center font-medium disabled:opacity-50"
+            className="text-link text-meta mt-3 -mx-1.5 flex min-h-11 items-center rounded-md px-1.5 font-medium disabled:opacity-50"
             disabled={busy}
             onClick={() => setOwnerForm(true)}
           >
@@ -364,7 +368,7 @@ export function PlainSignIn({
                   required
                   aria-invalid={refused || undefined}
                   aria-describedby={login.isError ? errorId : undefined}
-                  className="aria-invalid:focus-visible:border-destructive"
+                  className="aria-invalid:focus-visible:border-destructive aria-invalid:focus-visible:outline-destructive"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   disabled={busy}
@@ -384,7 +388,7 @@ export function PlainSignIn({
                 required
                 aria-invalid={refused || undefined}
                 aria-describedby={login.isError ? errorId : undefined}
-                className="aria-invalid:focus-visible:border-destructive"
+                className="aria-invalid:focus-visible:border-destructive aria-invalid:focus-visible:outline-destructive"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 disabled={busy}
@@ -398,10 +402,15 @@ export function PlainSignIn({
             <Button
               type="submit"
               size="xl"
-              variant={hasProvider ? "outline" : "make"}
-              className="w-full whitespace-normal!"
+              variant={hasProvider && !filled ? "outline" : "make"}
+              className={cn(
+                "w-full whitespace-normal!",
+                // The outline's edge is ink at 60%, so it reads as an edge in both themes (3:1 or more on the page).
+                hasProvider && !filled && "rounded-full! border-foreground/60!",
+              )}
               disabled={busy}
             >
+              {login.isPending && <Loader2 aria-hidden className="motion-safe:animate-spin motion-reduce:hidden" />}
               {login.isPending
                 ? reset
                   ? "Saving password…"
@@ -410,10 +419,10 @@ export function PlainSignIn({
                   ? "Save password"
                   : "Sign in"}
             </Button>
-            {nameBox}
+            {!hasProvider && nameBox}
             {!reset && (
               <p className="text-muted-foreground text-meta text-pretty">
-                Forgot your password? Ask the person who runs this gateway for a reset link.
+                Forgot your password? Ask the person who set up {instanceName || PRODUCT_NAME} for a reset link.
               </p>
             )}
           </form>
@@ -459,10 +468,13 @@ function passwordFailure(error: unknown): PasswordFailure {
 /** One remembered person's password screen (S6): their name is the heading, and the password is the only task. */
 export function PersonPassword({
   person,
+  instanceName,
   onBack,
   onGone,
 }: {
   person: RememberedPerson;
+  /** The instance's name, for the reset line. The product's name when none is set. */
+  instanceName: string;
   onBack: () => void;
   /** The gateway no longer knows this name on this browser (S10). */
   onGone: (tile: string) => void;
@@ -522,7 +534,7 @@ export function PersonPassword({
       </div>
       <button
         type="button"
-        className="text-link text-meta mt-3 flex min-h-11 items-center gap-1 underline underline-offset-4 disabled:opacity-50"
+        className="text-link text-meta mt-3 -mx-1.5 flex min-h-11 items-center gap-1 rounded-md px-1.5 underline underline-offset-4 disabled:opacity-50"
         disabled={attempt.isPending}
         onClick={onBack}
       >
@@ -553,7 +565,7 @@ export function PersonPassword({
             onChange={(event) => setPassword(event.target.value)}
             disabled={attempt.isPending}
             // On an invalid field the focus ring takes the error colour, so the error stays visible while typing.
-            className="aria-invalid:focus-visible:border-destructive aria-invalid:focus-visible:ring-destructive/30"
+            className="aria-invalid:focus-visible:border-destructive aria-invalid:focus-visible:outline-destructive"
           />
         </div>
         <p id={helpId} className="text-muted-foreground text-meta">
@@ -581,10 +593,11 @@ export function PersonPassword({
           className="w-full whitespace-normal!"
           disabled={attempt.isPending || tooMany}
         >
+          {attempt.isPending && <Loader2 aria-hidden className="motion-safe:animate-spin motion-reduce:hidden" />}
           {attempt.isPending ? "Signing in…" : "Sign in"}
         </Button>
         <p className="text-muted-foreground text-meta text-pretty">
-          Forgot your password? Ask the person who runs this gateway for a reset link.
+          Forgot your password? Ask the person who set up {instanceName} for a reset link.
         </p>
       </form>
     </>

@@ -381,7 +381,11 @@ pytest = 17242
 # chooser.spec.tsx +2), and this round adds three: page.spec.tsx +1 (focus on the password field after a refusal) and
 # components/shell/sign-in-frame.spec.tsx +2 (the footer waits while the page is busy). Full run: 231 files, 3448 cases,
 # all passed.
-vitest = 3448
+# Sign-in round 5 (2026-10-24): page.spec.tsx +4 (the reset line names the instance, two cases; Sign in fills with ink once a
+# field has text; Sign in shows a spinner while it is checked) and chooser.spec.tsx +3 (the chooser's names come only from
+# this browser's remembered list; the password screen's reset line; its spinner). `vitest list`: 231 files, 3457 cases;
+# the full run passes 3455 of them (measured 2026-10-24). The ceiling takes the larger count.
+vitest = 3457
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -431,7 +435,13 @@ vitest = 3448
 # 1440 and 390 px; the footer's wait while a provider opens and while a password sign-in runs) and +4 in
 # e2e/signin-built.spec.ts (the password form while it signs in, and the focus rings on Email, the remember checkbox and
 # the owner's link). --list: playwright.config.ts 621, live-data 3, household 18: 642, measured 2026-10-24.
-playwright = 642
+# Sign-in round 5 (2026-10-24): +7 cases in e2e/signin-shell.spec.ts (the both-methods Sign in is a 48 px pill with a 3:1 edge,
+# in both themes at both widths, replacing the dark-only check: +2; a refused password's ring is red, in both themes: +2;
+# the spinner beside single sign-on, the text link's focus padding, and the footer in view at 390 px: +3) and +5 in
+# e2e/signin-built.spec.ts (single sign-on while it opens, the password step for a remembered account, the both-methods
+# Sign in while it signs in, the remember checkbox beside single sign-on, and the edge-contrast record; skipped unless
+# SIGNIN_SHOTS_DIR is set). --list: playwright.config.ts 633, live-data 3, household 18: 654, measured 2026-10-24.
+playwright = 654
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
