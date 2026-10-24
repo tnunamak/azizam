@@ -199,7 +199,6 @@ export function PlainSignIn({
     if (login.isError) errorRef.current?.focus();
   }, [login.isError, login.error]);
   const instanceName = data?.instance_name?.trim();
-  const owner = data?.owner_name?.trim();
   const provider = data?.oidc_label?.trim();
   const hasProvider = data?.oidc && !reset;
   const providerLabel =
@@ -211,6 +210,42 @@ export function PlainSignIn({
     Boolean(data) && !data?.built_in && data?.owner_password !== false && !reset;
   const showForm = Boolean(data?.built_in) || Boolean(reset) || ownerForm;
   const nameBoxShown = rememberOn && !reset;
+  // The name box is a quiet row under the main action, on the column's left edge (DESIGN.md 4.9): under the single
+  // sign-on button, or under the password form's Sign in. Its helper sits under the label, at the label's left edge.
+  const nameBox = nameBoxShown ? (
+    <div>
+      <div className="flex items-center gap-3">
+        {/* A 44 px target around the 16 px box, so every control on this page is at least 44 by 44. The target hangs 14 px
+            into the margin, which puts the box itself on the column's left edge. */}
+        <button
+          type="button"
+          role="checkbox"
+          id={rememberId}
+          aria-checked={remember}
+          aria-describedby={rememberHelpId}
+          onClick={() => setRemember((value) => !value)}
+          className="focus-visible:ring-ring/50 -ml-3.5 flex size-11 shrink-0 items-center justify-center rounded-control outline-none focus-visible:ring-[3px]"
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "flex size-4 items-center justify-center rounded-sm border",
+              remember ? "bg-primary border-primary text-primary-foreground" : "border-input",
+            )}
+          >
+            {remember && <Check className="size-3.5" />}
+          </span>
+        </button>
+        <Label htmlFor={rememberId} className="text-body font-medium">
+          Show my name on this browser next time
+        </Label>
+      </div>
+      {/* 42 px: the 44 px target less its 14 px overhang, and the 12 px gap, so the helper starts where the label does. */}
+      <p id={rememberHelpId} className="text-muted-foreground text-meta pl-[42px]">
+        Turn this off on a public computer.
+      </p>
+    </div>
+  ) : null;
 
   return (
     <>
@@ -234,40 +269,7 @@ export function PlainSignIn({
           ? "Choose a new password"
           : `Sign in to ${instanceName || PRODUCT_NAME}`}
       </h1>
-      {!reset && owner && <p className="text-muted-foreground text-lg mt-2">Shared by {owner}.</p>}
       <div className="mt-8">
-        {nameBoxShown && (
-          <div className="mb-6 space-y-2">
-            <div className="flex items-center gap-3">
-              {/* A 44 px target around the 16 px box: every control on this page is at least 44 by 44. */}
-              <button
-                type="button"
-                role="checkbox"
-                id={rememberId}
-                aria-checked={remember}
-                aria-describedby={rememberHelpId}
-                onClick={() => setRemember((value) => !value)}
-                className="focus-visible:ring-ring/50 flex size-11 shrink-0 items-center justify-center rounded-control outline-none focus-visible:ring-[3px]"
-              >
-                <span
-                  aria-hidden
-                  className={cn(
-                    "flex size-4 items-center justify-center rounded-sm border",
-                    remember ? "bg-primary border-primary text-primary-foreground" : "border-input",
-                  )}
-                >
-                  {remember && <Check className="size-3.5" />}
-                </span>
-              </button>
-              <Label htmlFor={rememberId} className="text-body font-medium">
-                Show my name on this browser next time
-              </Label>
-            </div>
-            <p id={rememberHelpId} className="text-muted-foreground text-meta pl-7">
-              Turn this off on a public computer.
-            </p>
-          </div>
-        )}
         <ProviderNotices error={providerError} />
         {hasProvider && (
           <Button size="xl" className="w-full whitespace-normal!" asChild>
@@ -276,6 +278,7 @@ export function PlainSignIn({
             </a>
           </Button>
         )}
+        {hasProvider && nameBox && <div className="mt-4">{nameBox}</div>}
         {hasProvider && (data.built_in || ownerForm) && (
           <div className="text-muted-foreground text-meta my-6 flex items-center gap-4">
             <span className="flex-1 border-t" />
@@ -357,11 +360,10 @@ export function PlainSignIn({
                   ? "Save password"
                   : "Sign in"}
             </Button>
+            {!hasProvider && nameBox}
             {!reset && (
               <p className="text-muted-foreground text-meta">
-                {owner
-                  ? `Forgot your password? Ask ${owner} for a reset link.`
-                  : "Forgot your password? Ask the person who runs Azizam for a reset link."}
+                Forgot your password? Ask the person who runs this gateway for a reset link.
               </p>
             )}
           </form>
@@ -407,13 +409,10 @@ function passwordFailure(error: unknown): PasswordFailure {
 /** One remembered person's password screen (S6): their name is the heading, and the password is the only task. */
 export function PersonPassword({
   person,
-  owner,
   onBack,
   onGone,
 }: {
   person: RememberedPerson;
-  /** The owner's name for the reset line, or empty when the gateway has none. */
-  owner: string;
   onBack: () => void;
   /** The gateway no longer knows this name on this browser (S10). */
   onGone: (tile: string) => void;
@@ -532,9 +531,7 @@ export function PersonPassword({
           {attempt.isPending ? "Signing in…" : "Sign in"}
         </Button>
         <p className="text-muted-foreground text-meta">
-          {owner
-            ? `Forgot your password? Ask ${owner} for a reset link.`
-            : "Forgot your password? Ask the person who runs Azizam for a reset link."}
+          Forgot your password? Ask the person who runs this gateway for a reset link.
         </p>
       </form>
     </>

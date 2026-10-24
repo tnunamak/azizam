@@ -185,9 +185,10 @@ export function Chooser({
         </p>
       )}
       <div className="mt-6">
+        {/* px-0! because the Button's default size sets px-3, and cn does not merge it away: the link's text sits on the rows' edge. */}
         <Button
           variant="link"
-          className="min-h-11 px-0"
+          className="min-h-11 px-0!"
           aria-disabled={busy || undefined}
           tabIndex={busy ? -1 : undefined}
           onClick={() => {

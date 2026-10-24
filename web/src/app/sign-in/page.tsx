@@ -311,9 +311,9 @@ export default function SignInPage() {
   );
 
   if (arrival === null || loading) {
-    // The loaded single sign-on page's own rhythm, so the column does not move when the options arrive: the heading
-    // and its line, the name box (44 + 8 + 20, then 24), the button and the owner's link. The heading text is fixed:
-    // the address may name a different page, and the server render has no address.
+    // The loaded single sign-on page's own rhythm, so the column does not move when the options arrive: the heading,
+    // the button, the name box under it (16, then 44 + 20 for its helper), and the owner's link. The heading text is
+    // fixed: the address may name a different page, and the server render has no address.
     return column(
       <>
         <h1 id="sign-in-title" className="sr-only">
@@ -322,11 +322,10 @@ export default function SignInPage() {
         {/* Quiet blocks, not the shell's pulsing skeletons: the sign-in page shows none of the app's loading chrome. */}
         <div aria-hidden="true">
           <div className="bg-muted rounded-control h-9 w-72 max-w-full" />
-          <div className="bg-muted rounded-control mt-2 h-6 w-48 max-w-full" />
         </div>
         <div aria-hidden="true" className="mt-8">
-          <div className="mb-6 h-18" />
           <div className="bg-muted rounded-control h-12 w-full" />
+          <div className="mt-4 h-16" />
           <div className="mt-3 h-11" />
         </div>
         <p role="status" className="sr-only">
@@ -464,7 +463,6 @@ export default function SignInPage() {
       return column(
         <PersonPassword
           person={who}
-          owner={options?.owner_name?.trim() ?? ""}
           onBack={() => {
             setNotice(null);
             setView(null);

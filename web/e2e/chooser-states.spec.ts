@@ -63,6 +63,10 @@ for (const viewport of WIDTHS) {
 
       await expect(page.getByRole("status")).toContainText("You’re signed out.");
       await capture(page, name, "list-after-sign-out");
+      // The forget link sits on the rows' left edge, not indented past them.
+      const row = await page.locator("main ul li button").first().boundingBox();
+      const forget = await page.getByRole("button", { name: "Forget someone on this browser" }).boundingBox();
+      expect(Math.abs(forget!.x - row!.x)).toBeLessThan(0.5);
       await endingStates(page, name, robinName);
 
       await page.goto("/sign-in/");

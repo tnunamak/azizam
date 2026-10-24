@@ -522,29 +522,33 @@ it("keeps one heading and no form when options fail to load", async () => {
   expect(screen.queryByText("Recovery and advanced setup")).toBeNull();
 });
 
-it("says who shares the gateway under the heading, and leaves the line out when the owner has no name", async () => {
-  Object.assign(options, { owner_name: "Sam" });
+it("names the instance only: no shared-by line, and no person's name, even if the gateway sent one", async () => {
+  // The sign-in page is public. The options answer carries no owner name, and the page would not print one anyway.
+  Object.assign(options, { owner_name: "Sam Okafor" });
   mount();
-  expect(await screen.findByText("Shared by Sam.")).toBeVisible();
-});
-
-it("leaves out the shared-by line when the gateway names no owner", async () => {
-  mount();
-  await screen.findByLabelText("Email");
+  expect(await screen.findByRole("heading", { name: "Sign in to Azizam" })).toBeVisible();
   expect(screen.queryByText(/Shared by/)).toBeNull();
+  expect(screen.queryByText(/Sam Okafor/)).toBeNull();
 });
 
-it("asks for a reset by the owner's name, and keeps the line true without one", async () => {
-  Object.assign(options, { owner_name: "Sam" });
-  mount();
-  expect(await screen.findByText("Forgot your password? Ask Sam for a reset link.")).toBeVisible();
-});
-
-it("gives the reset line a plain fallback when the gateway names no owner", async () => {
+it("gives the reset line one copy for everyone, with no name in it", async () => {
+  Object.assign(options, { owner_name: "Sam Okafor" });
   mount();
   expect(
-    await screen.findByText("Forgot your password? Ask the person who runs Azizam for a reset link."),
+    await screen.findByText("Forgot your password? Ask the person who runs this gateway for a reset link."),
   ).toBeVisible();
+  expect(screen.queryByText(/Sam Okafor/)).toBeNull();
+});
+
+it("puts the name box under the single sign-on button, and its helper is its description", async () => {
+  options.built_in = false;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  mount();
+  const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
+  const box = screen.getByRole("checkbox", { name: "Show my name on this browser next time" });
+  expect(provider.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(box).toHaveAccessibleDescription("Turn this off on a public computer.");
 });
 
 it("moves focus to Email when the owner's password form opens in place", async () => {

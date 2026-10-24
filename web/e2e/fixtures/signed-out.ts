@@ -13,7 +13,6 @@ export function answerSignInOptions(route: Route, overrides: Record<string, unkn
     oidc_label: "Okafor ID",
     oidc_url: `/login?return_to=${encodeURIComponent(returnTo)}`,
     instance_name: "Okafor household",
-    owner_name: "Sam Okafor",
     owner_password: true,
     fresh_sign_in: false,
     ...overrides,

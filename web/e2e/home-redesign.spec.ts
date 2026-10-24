@@ -487,9 +487,45 @@ test("S1 signed out at / with single sign-on only, one primary control links str
       const primary = page.locator("main [data-variant='default']");
       await expect(primary).toHaveCount(1);
       await expect(primary).toHaveAttribute("href", "/login?return_to=%2F&remember=1");
-      expect((await primary.boundingBox())?.height).toBe(48);
+      const button = await primary.boundingBox();
+      expect(button?.height).toBe(48);
+      // The name box is a quiet row under the button. Its box sits on the heading's left edge, and its helper starts
+      // where the label does.
+      const heading = await page.getByRole("heading", { level: 1 }).boundingBox();
+      const tick = await page
+        .getByRole("checkbox", { name: "Show my name on this browser next time" })
+        .locator("span")
+        .first()
+        .boundingBox();
+      const label = await page.locator("label", { hasText: "Show my name on this browser next time" }).boundingBox();
+      // The helper's text starts at its padding, not at its border box, so the start is read from the padding.
+      const helperStart = await page.getByText("Turn this off on a public computer.").evaluate((element) => {
+        return element.getBoundingClientRect().left + parseFloat(getComputedStyle(element).paddingLeft);
+      });
+      expect(tick!.y).toBeGreaterThan(button!.y + button!.height);
+      expect(Math.abs(tick!.x - heading!.x)).toBeLessThan(0.5);
+      expect(Math.abs(helperStart - label!.x)).toBeLessThan(0.5);
       await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
       await expect(page.locator("a[href^='/sign-in/']")).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  }
+});
+
+test("the sign-in column is centred on a desktop screen and starts 72 px down on a phone", async ({ browser, baseURL }) => {
+  for (const viewport of [LAYOUTS[0], LAYOUTS[1], LAYOUTS[2]]) {
+    const { context, page } = await signedOut(browser, baseURL, viewport);
+    try {
+      await page.route("**/auth/api/options*", (route) => answerSignInOptions(route));
+      await page.goto("/");
+      const column = await page.locator("main section").boundingBox();
+      if (viewport.width >= 640) {
+        // The 60 px footer is matched by 60 px of top padding, so the column's middle is the screen's middle.
+        expect(Math.abs(column!.y + column!.height / 2 - viewport.height / 2)).toBeLessThan(2);
+      } else {
+        expect(column!.y).toBeCloseTo(72, 0);
+      }
     } finally {
       await context.close();
     }
@@ -507,6 +543,9 @@ test("S2 signed out at /library/?asset=x returns there after the provider callba
     await expect(page).toHaveURL(/\/sign-in\/\?return_to=%2Flibrary%2F%3Fasset%3Dx$/);
     const provider = page.getByRole("link", { name: "Continue with Okafor ID" });
     await expect(provider).toHaveAttribute("href", "/login?return_to=%2Flibrary%2F%3Fasset%3Dx&remember=1");
+    // The name box under the button sets the remember flag the provider is sent with: unticked, the address says 0.
+    await page.getByRole("checkbox", { name: "Show my name on this browser next time" }).click();
+    await expect(provider).toHaveAttribute("href", "/login?return_to=%2Flibrary%2F%3Fasset%3Dx&remember=0");
     const landed = page.waitForRequest((request) => {
       const url = new URL(request.url());
       return request.isNavigationRequest() && url.pathname === "/library/" && url.search === "?asset=x";
@@ -533,6 +572,10 @@ test("S3 owner password reveals the form in place, with focus on Email", async (
     await expect(page.getByLabel("Email", { exact: true })).toBeFocused();
     expect(page.url()).toBe(url);
     expect(navigations).toBe(0);
+    // The form opens below the name box, which stays under the single sign-on button.
+    const box = await page.getByRole("checkbox", { name: "Show my name on this browser next time" }).boundingBox();
+    const email = await page.getByLabel("Email", { exact: true }).boundingBox();
+    expect(box!.y).toBeLessThan(email!.y);
   } finally {
     await context.close();
   }
@@ -544,8 +587,11 @@ test("S4 a provider error shows the alert, keeps the button, and never redirects
     await page.route("**/auth/api/options*", (route) => answerSignInOptions(route));
     await page.goto("/sign-in/?error=provider");
     // Next's route announcer is also an alert, so the provider's message is found by its text.
-    await expect(page.getByRole("alert").filter({ hasText: "Single sign-on didn’t finish." })).toBeVisible();
+    const alert = page.getByRole("alert").filter({ hasText: "Single sign-on didn’t finish." });
+    await expect(alert).toBeVisible();
     await expect(page.getByRole("link", { name: "Continue with Okafor ID" })).toBeVisible();
+    // The alert sits above the button, and the button is not moved by the alert.
+    expect((await alert.boundingBox())!.y).toBeLessThan((await page.getByRole("link", { name: "Continue with Okafor ID" }).boundingBox())!.y);
     // Nothing moves the browser on: no navigation starts in the three seconds after the page loads.
     const moved = await page
       .waitForRequest((request) => request.isNavigationRequest() && request.frame() === page.mainFrame(), { timeout: 3_000 })
@@ -593,12 +639,15 @@ test("S6 options and setup start together on first render, with almost no layout
     await expect(page.getByRole("status")).toContainText("Getting sign-in ready");
     await page.evaluate(() => document.fonts.ready);
     const shiftsBefore = await page.evaluate(() => (window as unknown as { shifts: { total: number } }).shifts.total);
+    // The loading column reserves the loaded one's height: the button, then the name box and the owner's link under it.
+    const loadingHeight = (await page.locator("main section").boundingBox())!.height;
     options.release();
     setup.release();
     await expect(page.getByRole("link", { name: "Continue with Okafor ID" })).toBeVisible();
     await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
     const shiftsAfter = await page.evaluate(() => (window as unknown as { shifts: { total: number } }).shifts.total);
     expect(shiftsAfter - shiftsBefore).toBeLessThan(0.01);
+    expect(Math.abs((await page.locator("main section").boundingBox())!.height - loadingHeight)).toBeLessThanOrEqual(2);
   } finally {
     await context.close();
   }

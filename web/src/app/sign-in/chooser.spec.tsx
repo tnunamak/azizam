@@ -469,12 +469,13 @@ describe("password sign-in for a remembered person", () => {
 });
 
 describe("the plain form", () => {
-  it("shows the name box on by default, under the heading, and sends remember true", async () => {
+  it("shows the name box on by default, under Sign in, and sends remember true", async () => {
     remembered.people = [];
     mount();
     const box = await screen.findByRole("checkbox", { name: "Show my name on this browser next time" });
     expect(box).toBeChecked();
     expect(screen.getByText("Turn this off on a public computer.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Sign in" }).compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Email"), "member@example.test");
     await user.type(screen.getByLabelText("Password"), "A long test password");

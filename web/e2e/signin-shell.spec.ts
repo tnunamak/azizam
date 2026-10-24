@@ -167,6 +167,9 @@ test("named provider is first, keyboard focus is visible, and provider text wrap
   await expect.poll(() => provider.evaluate(
       (element) => getComputedStyle(element).outlineStyle,
     )).not.toBe("none");
+  // The name box sits under the provider button, so it is the next stop; then the email field, then the password.
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("checkbox", { name: "Show my name on this browser next time" })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("Email", { exact: true })).toBeFocused();
   await page.keyboard.press("Tab");
