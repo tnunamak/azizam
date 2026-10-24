@@ -3,7 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fulfilJson } from "./fixtures/intercept";
+import { fulfilBytes, fulfilJson } from "./fixtures/intercept";
 import type { Locator, Page } from "@playwright/test";
 
 const options = {
@@ -177,7 +177,7 @@ test("named provider is first, keyboard focus is visible, and provider text wrap
   await page.keyboard.press("Tab");
   await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("checkbox", { name: "Show my name on this browser next time" })).toBeFocused();
+  await expect(page.getByRole("checkbox", { name: "Remember me on this browser" })).toBeFocused();
   await page.getByRole("heading", { level: 1 }).click();
   for (const theme of ["light", "dark"] as const) {
     for (const width of [1440, 390]) {
@@ -241,7 +241,8 @@ for (const [state, code, status, message, expected] of [
     await expect(page.getByRole("main").getByRole("alert")).toContainText(
       expected,
     );
-    await expect(page.getByRole("main").getByRole("alert")).toBeFocused();
+    // A refused sign-in moves focus to the password field, where the next try starts. The alert is announced there.
+    await expect(page.getByLabel("Password", { exact: true })).toBeFocused();
   });
 }
 
@@ -411,16 +412,26 @@ async function answerSignIn(
   );
 }
 
-/** A design token's colour in the page's current theme, in the same form the browser reports for a background. */
-async function tokenColour(page: Page, token: string) {
-  return page.evaluate((name) => {
-    const probe = document.createElement("div");
-    probe.style.backgroundColor = `var(--${name})`;
-    document.body.append(probe);
-    const colour = getComputedStyle(probe).backgroundColor;
-    probe.remove();
-    return colour;
-  }, token);
+/**
+ * A design token's colour in the page's current theme, in the form the browser reports for that property: a background
+ * by default, or a text or an outline colour.
+ */
+async function tokenColour(
+  page: Page,
+  token: string,
+  property: "backgroundColor" | "color" | "outlineColor" = "backgroundColor",
+) {
+  return page.evaluate(
+    ({ name, prop }) => {
+      const probe = document.createElement("div");
+      probe.style[prop] = `var(--${name})`;
+      document.body.append(probe);
+      const colour = getComputedStyle(probe)[prop];
+      probe.remove();
+      return colour;
+    },
+    { name: token, prop: property },
+  );
 }
 
 /** Where a run of text starts, so a gap is measured between words and not between 44 px targets. */
@@ -440,7 +451,7 @@ function bottomOf(box: { y: number; height: number } | null) {
 for (const width of [1440, 390] as const) {
   const height = width === 390 ? 844 : 900;
 
-  test(`sign-in round 3: the primary is 16 px semibold in the Home's Make colour at ${width} px`, async ({ page }) => {
+  test(`sign-in round 3: the primary is 16 px semibold, on the Home's resting Make fill and radius, at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await page.addInitScript((value) => localStorage.setItem("theme", value), "light");
@@ -450,7 +461,12 @@ for (const width of [1440, 390] as const) {
     await expect(primary).toBeVisible();
     await expect(primary).toHaveCSS("font-size", "16px");
     await expect(primary).toHaveCSS("font-weight", "600");
-    await expect(primary).toHaveCSS("background-color", await tokenColour(page, "make"));
+    await expect(primary).toHaveCSS("background-color", await tokenColour(page, "make-rest"));
+    await expect(primary).toHaveCSS("color", await tokenColour(page, "make-rest-foreground", "color"));
+    // A pill, as the Home's Make is: the corner radius is at least half the height.
+    const box = await primary.boundingBox();
+    const radius = parseFloat(await primary.evaluate((element) => getComputedStyle(element).borderTopLeftRadius));
+    expect(radius).toBeGreaterThanOrEqual(box!.height / 2);
   });
 
   test(`sign-in round 3: an outline button's edge is the field edge in dark at ${width} px`, async ({ page }) => {
@@ -509,3 +525,129 @@ for (const width of [1440, 390] as const) {
     expect(await heading.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   });
 }
+
+// Sign-in round 4: the focus rings on Email, the remember checkbox and the owner's text link; the owner's link beside the
+// forget link; the theme switch's icon; the loading column's heading and top; the footer's wait while the page is busy.
+/** A focus ring is solid and 2 px, in the page's ring colour. The remember checkbox draws its ring on its box. */
+async function expectFocusRing(page: Page, locator: Locator) {
+  await expect.poll(() => locator.evaluate((element) => getComputedStyle(element).outlineStyle)).toBe("solid");
+  await expect(locator).toHaveCSS("outline-width", "2px");
+  await expect(locator).toHaveCSS("outline-color", await tokenColour(page, "ring", "outlineColor"));
+}
+
+for (const theme of ["light", "dark"] as const) {
+  /** The page at 1440 by 900 in this theme, with the theme set before the page loads. */
+  async function themed(page: Page) {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+    await page.addInitScript((value) => localStorage.setItem("theme", value), theme);
+  }
+
+  test(`sign-in round 4: a focus ring shows on Email and on the remember checkbox, in ${theme}`, async ({ page }) => {
+    await themed(page);
+    await answerSignIn(page, { built_in: true, oidc: false });
+    await page.goto("/");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sign in to Azizam");
+    const email = page.getByLabel("Email", { exact: true });
+    await page.keyboard.press("Tab");
+    await expect(email).toBeFocused();
+    await expectFocusRing(page, email);
+    // Email, Password and Sign in come first. The checkbox's ring is on its 16 px box, inside its 44 px target.
+    for (let step = 0; step < 3; step += 1) await page.keyboard.press("Tab");
+    const remember = page.getByRole("checkbox", { name: "Remember me on this browser" });
+    await expect(remember).toBeFocused();
+    await expectFocusRing(page, remember.locator("span").first());
+  });
+
+  test(`sign-in round 4: a focus ring shows on the owner's text link, in ${theme}`, async ({ page }) => {
+    await themed(page);
+    await answerSignIn(page, { built_in: false, oidc: true });
+    await page.goto("/");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sign in to Azizam");
+    // The provider, then the remember checkbox, then the owner's link.
+    for (let step = 0; step < 3; step += 1) await page.keyboard.press("Tab");
+    const owner = page.getByRole("button", { name: "Owner? Sign in with your password" });
+    await expect(owner).toBeFocused();
+    await expectFocusRing(page, owner);
+  });
+
+  test(`sign-in round 4: Forget someone on this browser reads apart from the owner's link, in ${theme}`, async ({ page }) => {
+    await themed(page);
+    await answerSignIn(page, { built_in: false, oidc: true }, TWO_SSO_PEOPLE);
+    await page.goto("/");
+    const owner = page.getByRole("button", { name: "Owner? Sign in with your password" });
+    const forget = page.getByRole("button", { name: "Forget someone on this browser" });
+    await expect(forget).toBeVisible();
+    // The owner's way in is the link colour and plain. Forget is the destructive colour and underlined.
+    await expect(owner).toHaveCSS("color", await tokenColour(page, "link", "color"));
+    await expect(owner).toHaveCSS("text-decoration-line", "none");
+    await expect(forget).toHaveCSS("color", await tokenColour(page, "destructive", "color"));
+    await expect(forget).toHaveCSS("text-decoration-line", "underline");
+  });
+
+  test(`sign-in round 4: the theme switch shows the mode a press switches to, in ${theme}`, async ({ page }) => {
+    await themed(page);
+    await answerSignIn(page, { built_in: true, oidc: false });
+    await page.goto("/");
+    const toggle = page.getByRole("button", { name: theme === "light" ? "Switch to dark" : "Switch to light" });
+    await expect(toggle).toBeVisible();
+    // The moon is the button's first icon and the sun its second: in light the moon shows, and in dark the sun does.
+    const moon = toggle.locator("svg").nth(0);
+    const sun = toggle.locator("svg").nth(1);
+    await expect(theme === "light" ? moon : sun).toBeVisible();
+    await expect(theme === "light" ? sun : moon).toBeHidden();
+  });
+}
+
+for (const width of [1440, 390] as const) {
+  test(`sign-in round 4: the loading heading is the loaded heading's height, and the column starts at 20 vh, at ${width} px`, async ({ page }) => {
+    const height = width === 390 ? 844 : 900;
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await page.addInitScript((value) => localStorage.setItem("theme", value), "light");
+    // Never answered: the page holds its loading state, with its placeholder heading, for the measure.
+    await page.route("**/auth/api/options*", () => {});
+    await page.goto("/");
+    await expect(page.getByRole("status")).toHaveText("Getting sign-in ready…");
+    const column = await page.locator("main section").boundingBox();
+    const placeholder = await page.locator("main .bg-muted").first().boundingBox();
+    expect(column!.y).toBeCloseTo(height * 0.2, 0);
+    await page.unroute("**/auth/api/options*");
+    await answerSignIn(page, { built_in: false, oidc: true });
+    await page.reload();
+    const heading = page.getByRole("heading", { level: 1 });
+    await expect(heading).toHaveText("Sign in to Azizam");
+    // The default name fits on one line at both widths, and so does the placeholder: the two take the same height.
+    const loaded = await heading.boundingBox();
+    expect(loaded!.height).toBeCloseTo(placeholder!.height, 0);
+    expect(loaded!.y).toBeCloseTo(placeholder!.y, 0);
+    expect((await page.locator("main section").boundingBox())!.y).toBeCloseTo(column!.y, 0);
+  });
+}
+
+test("sign-in round 4: while a provider opens, the footer's controls wait with the page", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await answerSignIn(page, { built_in: false, oidc: true });
+  // A 204 ends the provider's trip without a new page, so the page stays in its opening state.
+  await page.route(/\/login\?/, (route) => fulfilBytes(route, { status: 204 }));
+  await page.goto("/");
+  const provider = page.getByRole("link", { name: "Continue with Household accounts" });
+  await expect(provider).toBeVisible();
+  await provider.click({ noWaitAfter: true });
+  await expect(page.getByRole("status")).toContainText("Opening Household accounts");
+  await expect(page.locator("footer")).toHaveAttribute("inert", "");
+  await expect(page.locator("footer")).toHaveCSS("opacity", "0.5");
+});
+
+test("sign-in round 4: while the password form signs in, the footer's controls wait too", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await answerSignIn(page, { built_in: true, oidc: false });
+  // Never answered: the sign-in stays pending, so the page holds its submit.
+  await page.route("**/auth/api/login", () => {});
+  await page.goto("/");
+  await page.getByLabel("Email", { exact: true }).fill("robin@example.test");
+  await page.getByLabel("Password", { exact: true }).fill("a password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Signing in…" })).toBeDisabled();
+  await expect(page.locator("footer")).toHaveAttribute("inert", "");
+});

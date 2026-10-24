@@ -2,13 +2,14 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { Browser, Page } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
-import { fulfilJson } from "./fixtures/intercept";
+import { fulfilBytes, fulfilJson } from "./fixtures/intercept";
 import { answerSignInOptions, signedOut } from "./fixtures/signed-out";
 
 /*
  * The built signed-out front door, saved for the design side-by-side check: three sign-in methods, with and without
  * remembered people, at 1440 and 390, in light and dark. Round 3 adds the states the design judge asked for: the loading
- * page, a wrong password, the provider opening, a long instance name, and a focus ring on the primary action. The
+ * page, a wrong password, the provider opening, a long instance name, and a focus ring on the primary action. Round 4
+ * adds the password form while it signs in, and focus rings on Email, the remember checkbox and a text link. The
  * household's own names are answered here, because the fixture has no identity provider to remember people through. Set
  * SIGNIN_SHOTS_DIR to save the pictures; otherwise these cases are skipped.
  */
@@ -88,6 +89,36 @@ async function focusSignIn(page: Page) {
   await expect(signIn).toBeFocused();
 }
 
+/** Keyboard focus on Email: the first Tab after the heading reaches it. */
+async function focusEmail(page: Page) {
+  await loaded(page);
+  await page.keyboard.press("Tab");
+  await expect(page.getByLabel("Email", { exact: true })).toBeFocused();
+}
+
+/** Keyboard focus on the remember checkbox: after Email, Password and Sign in. */
+async function focusRemember(page: Page) {
+  await focusEmail(page);
+  for (let step = 0; step < 3; step += 1) await page.keyboard.press("Tab");
+  await expect(page.getByRole("checkbox", { name: "Remember me on this browser" })).toBeFocused();
+}
+
+/** Keyboard focus on the owner's text link: after the provider and the remember checkbox. */
+async function focusOwnerLink(page: Page) {
+  await loaded(page);
+  for (let step = 0; step < 3; step += 1) await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Owner? Sign in with your password" })).toBeFocused();
+}
+
+/** The password form submitted: the sign-in never answers, so the page holds "Signing in…" for the picture. */
+async function signingIn(page: Page) {
+  await loaded(page);
+  await page.getByLabel("Email", { exact: true }).fill("robin@example.test");
+  await page.getByLabel("Password", { exact: true }).fill("not the password");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Signing in…" })).toBeDisabled();
+}
+
 /**
  * Saves one picture at each width and theme. `arrange` routes the page before it loads; `settle` waits until the state is
  * on screen, and may act first.
@@ -161,7 +192,7 @@ test.describe("built sign-in pages for the design side-by-side check", () => {
       async (page) => {
         await answer(page, "sso-only", { remembered: true });
         // A 204 ends the provider's navigation without a new page, so the list stays on "Opening" for the picture.
-        await page.route(/\/login\?/, (route) => route.fulfill({ status: 204 }));
+        await page.route(/\/login\?/, (route) => fulfilBytes(route, { status: 204 }));
       },
       async (page) => {
         await loaded(page);
@@ -192,5 +223,31 @@ test.describe("built sign-in pages for the design side-by-side check", () => {
 
   test("saves the focus ring on the password form's Sign in", async ({ browser, baseURL }) => {
     await savePictures(browser, baseURL, "signin-password-only-focus", (page) => answer(page, "password-only"), focusSignIn);
+  });
+
+  test("saves the password form while it signs in", async ({ browser, baseURL }) => {
+    await savePictures(
+      browser,
+      baseURL,
+      "signin-password-only-signing-in",
+      async (page) => {
+        await answer(page, "password-only");
+        // Never answered: the sign-in stays pending for the picture.
+        await page.route("**/auth/api/login", () => {});
+      },
+      signingIn,
+    );
+  });
+
+  test("saves the focus ring on Email", async ({ browser, baseURL }) => {
+    await savePictures(browser, baseURL, "signin-password-only-focus-email", (page) => answer(page, "password-only"), focusEmail);
+  });
+
+  test("saves the focus ring on the remember checkbox", async ({ browser, baseURL }) => {
+    await savePictures(browser, baseURL, "signin-password-only-focus-remember", (page) => answer(page, "password-only"), focusRemember);
+  });
+
+  test("saves the focus ring on a text link, the owner's", async ({ browser, baseURL }) => {
+    await savePictures(browser, baseURL, "signin-sso-only-focus-link", (page) => answer(page, "sso-only"), focusOwnerLink);
   });
 });

@@ -160,7 +160,7 @@ for (const viewport of WIDTHS) {
       await device.goto("/sign-in/");
       await expect(device.getByLabel("Email")).toBeVisible();
       await expect(device.getByRole("heading", { level: 1, name: CHOOSER_HEADING })).toHaveCount(0);
-      await expect(device.getByRole("checkbox", { name: "Show my name on this browser next time" })).toHaveCount(0);
+      await expect(device.getByRole("checkbox", { name: "Remember me on this browser" })).toHaveCount(0);
     });
 
     test(`the list cannot be read, the plain form for a new browser, and the reset form are captured`, async ({ browser, baseURL }) => {
@@ -170,7 +170,7 @@ for (const viewport of WIDTHS) {
       const fresh = await browser.newContext({ baseURL, viewport: { width: viewport.width, height: viewport.height } });
       const page = await fresh.newPage();
       await page.goto("/sign-in/");
-      await expect(page.getByRole("checkbox", { name: "Show my name on this browser next time" })).toBeChecked();
+      await expect(page.getByRole("checkbox", { name: "Remember me on this browser" })).toBeChecked();
       await capture(page, name, "form");
 
       await page.route("**/auth/api/remembered", (route) => route.abort());

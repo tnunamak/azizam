@@ -493,11 +493,11 @@ test("S1 signed out at / with single sign-on only, one primary control links str
       // where the label does.
       const heading = await page.getByRole("heading", { level: 1 }).boundingBox();
       const tick = await page
-        .getByRole("checkbox", { name: "Show my name on this browser next time" })
+        .getByRole("checkbox", { name: "Remember me on this browser" })
         .locator("span")
         .first()
         .boundingBox();
-      const label = await page.locator("label", { hasText: "Show my name on this browser next time" }).boundingBox();
+      const label = await page.locator("label", { hasText: "Remember me on this browser" }).boundingBox();
       // The helper's text starts at its padding, not at its border box, so the start is read from the padding.
       const helperStart = await page.getByText("Turn this off on a public computer.").evaluate((element) => {
         return element.getBoundingClientRect().left + parseFloat(getComputedStyle(element).paddingLeft);
@@ -513,19 +513,15 @@ test("S1 signed out at / with single sign-on only, one primary control links str
   }
 });
 
-test("the sign-in column is centred on a desktop screen and starts 72 px down on a phone", async ({ browser, baseURL }) => {
+test("the sign-in column starts at 20 vh on every screen, and is not centred", async ({ browser, baseURL }) => {
   for (const viewport of [LAYOUTS[0], LAYOUTS[1], LAYOUTS[2]]) {
     const { context, page } = await signedOut(browser, baseURL, viewport);
     try {
       await page.route("**/auth/api/options*", (route) => answerSignInOptions(route));
       await page.goto("/");
       const column = await page.locator("main section").boundingBox();
-      if (viewport.width >= 640) {
-        // The 60 px footer is matched by 60 px of top padding, so the column's middle is the screen's middle.
-        expect(Math.abs(column!.y + column!.height / 2 - viewport.height / 2)).toBeLessThan(2);
-      } else {
-        expect(column!.y).toBeCloseTo(72, 0);
-      }
+      // The mark sits at 20 vh in every state, so a short column stays high on the screen rather than in its middle.
+      expect(column!.y).toBeCloseTo(viewport.height * 0.2, 0);
     } finally {
       await context.close();
     }
@@ -544,7 +540,7 @@ test("S2 signed out at /library/?asset=x returns there after the provider callba
     const provider = page.getByRole("link", { name: "Continue with Okafor ID" });
     await expect(provider).toHaveAttribute("href", "/login?return_to=%2Flibrary%2F%3Fasset%3Dx&remember=1");
     // The name box under the button sets the remember flag the provider is sent with: unticked, the address says 0.
-    await page.getByRole("checkbox", { name: "Show my name on this browser next time" }).click();
+    await page.getByRole("checkbox", { name: "Remember me on this browser" }).click();
     await expect(provider).toHaveAttribute("href", "/login?return_to=%2Flibrary%2F%3Fasset%3Dx&remember=0");
     const landed = page.waitForRequest((request) => {
       const url = new URL(request.url());
@@ -573,7 +569,7 @@ test("S3 owner password reveals the form in place, with focus on Email", async (
     expect(page.url()).toBe(url);
     expect(navigations).toBe(0);
     // Once the form is open, the name box sits after its Sign in, so it covers both ways in (DESIGN.md 4.9).
-    const box = await page.getByRole("checkbox", { name: "Show my name on this browser next time" }).boundingBox();
+    const box = await page.getByRole("checkbox", { name: "Remember me on this browser" }).boundingBox();
     const signIn = await page.getByRole("button", { name: "Sign in", exact: true }).boundingBox();
     expect(box!.y).toBeGreaterThan(signIn!.y);
   } finally {
