@@ -120,7 +120,7 @@ describe("the chooser", () => {
     remembered.people = [robin, lea];
     mount();
 
-    expect(await screen.findByRole("heading", { name: "Who’s signing in?" })).toHaveFocus();
+    expect(await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" })).toHaveFocus();
     expect(document.title).toBe("Who’s signing in? · Azizam");
     expect(await rowNames()).toEqual(["Robin Okafor", "Léa Okafor", "Someone else"]);
     expect(screen.getByRole("button", { name: "Forget someone on this browser" })).toBeVisible();
@@ -129,15 +129,75 @@ describe("the chooser", () => {
 
   it("never shows a picture on the list", async () => {
     mount();
-    await screen.findByRole("heading", { name: "Who’s signing in?" });
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
     expect(document.querySelector("img")).toBeNull();
+  });
+
+  it("names the method on each row only when the list mixes methods", async () => {
+    remembered.people = [robin, sam];
+    mount();
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
+    expect(within(screen.getByRole("button", { name: "Robin Okafor" })).getByText("Password")).toBeVisible();
+    expect(within(screen.getByRole("button", { name: "Sam Okafor" })).getByText("Family login")).toBeVisible();
+  });
+
+  it("drops the method from every row when everyone signs in the same way", async () => {
+    options.built_in = false;
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    const june: Person = { ...sam, tile: "t_june", name: "June Okafor", avatar: { variant: "v4", initial: "J" } };
+    remembered.people = [sam, june];
+    mount();
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
+    expect(screen.queryByText("Family login")).toBeNull();
+    expect(await rowNames()).toEqual(["Sam Okafor", "June Okafor", "Someone else"]);
+  });
+
+  it("sends Someone else straight to the provider, in one click, when single sign-on is the only way in", async () => {
+    options.built_in = false;
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    const june: Person = { ...sam, tile: "t_june", name: "June Okafor", avatar: { variant: "v4", initial: "J" } };
+    remembered.people = [sam, june];
+    const navigateTo = vi.spyOn(navigate, "to").mockImplementation(() => {});
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Someone else" }));
+    expect(navigateTo).toHaveBeenCalledTimes(1);
+    expect(navigateTo).toHaveBeenCalledWith("/login?return_to=%2F&remember=1");
+    expect(screen.queryByRole("button", { name: "Continue with Family login" })).toBeNull();
+    expect(screen.queryByLabelText("Email")).toBeNull();
+    expect(screen.getByRole("button", { name: "Someone else" })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("keeps the owner's password one link from the list, and opens its form at once", async () => {
+    options.built_in = false;
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    remembered.people = [sam, { ...sam, tile: "t_june", name: "June Okafor" }];
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Owner? Sign in with your password" }));
+    expect(await screen.findByLabelText("Email")).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Back to the list" })).toBeVisible();
+  });
+
+  it("offers no owner link on the list when the owner's password is turned off", async () => {
+    options.built_in = false;
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    Object.assign(options, { owner_password: false });
+    remembered.people = [sam, { ...sam, tile: "t_june", name: "June Okafor" }];
+    mount();
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
+    expect(screen.queryByRole("button", { name: "Owner? Sign in with your password" })).toBeNull();
   });
 
   it("shows the plain form, not the list, when only one person is remembered", async () => {
     remembered.people = [robin];
     mount();
     expect(await screen.findByLabelText("Email")).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Who’s signing in?" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Who’s signing in to Azizam?" })).toBeNull();
   });
 
   it("shows the plain form when nobody is remembered", async () => {
@@ -162,7 +222,7 @@ describe("the chooser", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Sign out of Keycloak first" }),
     ).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Who’s signing in?" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Who’s signing in to Azizam?" })).toBeNull();
     expect(screen.queryByRole("list")).toBeNull();
   });
 
@@ -212,7 +272,7 @@ describe("after a switch or a sign-out", () => {
   it("takes the ending out of the address, so a reload shows no status line", async () => {
     setAddress("/sign-in/?after=switch");
     mount();
-    await screen.findByRole("heading", { name: "Who’s signing in?" });
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
     expect(window.location.search).toBe("");
   });
 
@@ -258,7 +318,7 @@ describe("after a switch or a sign-out", () => {
   it("drops the link to the last page: the options and the sign-in both go Home", async () => {
     setAddress("/sign-in/?after=switch&return_to=%2Fusage%2F");
     mount();
-    await screen.findByRole("heading", { name: "Who’s signing in?" });
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
         "/auth/api/options?return_to=%2F",

@@ -4,7 +4,8 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, type Isolated, type Member } from "./fixtures/isolation";
 
-export const CHOOSER_HEADING = "Who’s signing in?";
+// "Who’s signing in to {instance}?": the instance name differs by fixture, so the heading is matched by its shape.
+export const CHOOSER_HEADING = /^Who’s signing in to .+\?$/;
 
 /** The account menu's Sign out, from any app page. */
 export async function signOut(page: Page) {

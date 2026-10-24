@@ -55,7 +55,8 @@ type View =
   | { kind: "forget" }
   | { kind: "person"; tile: string }
   | { kind: "gone"; tile: string }
-  | { kind: "plain"; fromList: boolean };
+  /** `owner`: open the owner's password form at once, from the list's owner link. */
+  | { kind: "plain"; fromList: boolean; owner?: boolean };
 
 /** What the page last reported after the person's own action: how the session ended, or what was forgotten. */
 type Notice =
@@ -129,6 +130,7 @@ export default function SignInPage() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [removed, setRemoved] = useState<Set<string>>(() => new Set());
   const [opening, setOpening] = useState<string | null>(null);
+  const [openingElse, setOpeningElse] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Until this runs the page is the loading state, the same as the server's render. Its requests start in the render
@@ -210,6 +212,9 @@ export default function SignInPage() {
   const everyone: RememberedPerson[] = remembered?.people ?? [];
   const people = everyone.filter((person) => !removed.has(person.tile));
   const nameOf = (tile: string) => everyone.find((person) => person.tile === tile)?.name ?? "";
+  // Single sign-on is the only way in. The owner's password, when allowed, stays one link away from the list.
+  const ssoOnly = Boolean(options?.oidc) && !options?.built_in;
+  const ownerPasswordOffered = ssoOnly && options?.owner_password !== false;
 
   const current: View = reset
     ? { kind: "plain", fromList: false }
@@ -255,6 +260,19 @@ export default function SignInPage() {
       return;
     }
     setView({ kind: "person", tile: person.tile });
+  }
+
+  // With single sign-on as the only way in, "Someone else" is the provider: one click, with the same name choice as the
+  // form's button. With a password form too, it opens the form (DESIGN.md 4.9).
+  function someoneElse() {
+    setNotice(null);
+    setActionError(null);
+    if (ssoOnly && options) {
+      setOpeningElse(true);
+      navigate.to(withRemember(options.oidc_url, rememberOn));
+      return;
+    }
+    setView({ kind: "plain", fromList: true });
   }
 
   function forgetPerson(person: { tile: string; name: string }) {
@@ -385,7 +403,7 @@ export default function SignInPage() {
     );
   }
 
-  const plain = (fromList: boolean) => (
+  const plain = (fromList: boolean, owner = false) => (
     <PlainSignIn
       data={options}
       reset={reset}
@@ -397,6 +415,7 @@ export default function SignInPage() {
         setView(null);
       }}
       providerError={arrival.providerError}
+      openOwnerForm={owner}
     />
   );
   const statusLine = status && (
@@ -414,8 +433,10 @@ export default function SignInPage() {
         <Chooser
           people={ordered}
           providerName={providerName}
+          instanceName={instanceName || PRODUCT_NAME}
           status={status}
           opening={opening}
+          openingElse={openingElse}
           alerts={
             <>
               {actionError && (
@@ -427,17 +448,22 @@ export default function SignInPage() {
             </>
           }
           onChoose={chooseRow}
-          onSomeoneElse={() => {
-            setNotice(null);
-            setActionError(null);
-            setView({ kind: "plain", fromList: true });
-          }}
+          onSomeoneElse={someoneElse}
           onForgetMode={() => {
             setNotice(null);
             setActionError(null);
             setView({ kind: "forget" });
           }}
           onForgetFromStatus={forgetFromStatus}
+          onOwnerPassword={
+            ownerPasswordOffered
+              ? () => {
+                  setNotice(null);
+                  setActionError(null);
+                  setView({ kind: "plain", fromList: true, owner: true });
+                }
+              : undefined
+          }
         />,
       );
     case "forget": {
@@ -483,7 +509,7 @@ export default function SignInPage() {
       return column(
         <>
           {statusLine}
-          {plain(current.fromList)}
+          {plain(current.fromList, current.owner)}
         </>,
       );
   }
