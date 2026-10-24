@@ -352,7 +352,10 @@ def _digest(value):
 
 
 def test_existing_data_plane_schema_is_byte_equivalent():
-    """Digests were captured from the unmodified base commit, before the overlay."""
+    """Digests were captured from the unmodified base commit, before the overlay.
+
+    /v1/status is the one path re-captured since: it is owner-only now, so its tags and description note changed on purpose.
+    """
     schema = proxy.app.openapi()
     baseline = json.loads((FIXTURES / "headless_data_plane_hashes.json").read_text())
     for path, expected in baseline["paths"].items():
