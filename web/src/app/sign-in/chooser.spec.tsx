@@ -532,7 +532,7 @@ describe("the plain form", () => {
   it("shows the name box on by default, under Sign in, and sends remember true", async () => {
     remembered.people = [];
     mount();
-    const box = await screen.findByRole("checkbox", { name: "Show my name on this browser next time" });
+    const box = await screen.findByRole("checkbox", { name: "Remember me on this browser" });
     expect(box).toBeChecked();
     expect(screen.getByText("Turn this off on a public computer.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Sign in" }).compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -547,7 +547,7 @@ describe("the plain form", () => {
     remembered.people = [];
     mount();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Show my name on this browser next time" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Remember me on this browser" }));
     await user.type(screen.getByLabelText("Email"), "member@example.test");
     await user.type(screen.getByLabelText("Password"), "A long test password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
@@ -596,5 +596,33 @@ describe("the plain form", () => {
     await user.click(await screen.findByRole("button", { name: "Someone else" }));
     await user.click(await screen.findByRole("button", { name: "Back to the list" }));
     expect(await rowNames()).toEqual(["Robin Okafor", "Léa Okafor", "Someone else"]);
+  });
+});
+
+describe("the chooser's own controls", () => {
+  it("gives Someone else no blank second line, so its name sits centred in the row", async () => {
+    remembered.people = [robin, sam];
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    mount();
+    const row = await screen.findByRole("button", { name: "Someone else" });
+    expect(row.textContent).toBe("Someone else");
+    // The people's rows keep their second line: the method, since the list mixes methods.
+    expect(screen.getByRole("button", { name: "Robin Okafor" }).textContent).toContain("Password");
+  });
+
+  it("holds Forget and the owner's link while a provider opens", async () => {
+    options.built_in = false;
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    const june: Person = { ...sam, tile: "t_june", name: "June Okafor", avatar: { variant: "v4", initial: "J" } };
+    remembered.people = [sam, june];
+    const navigateTo = vi.spyOn(navigate, "to").mockImplementation(() => {});
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "June Okafor" }));
+    expect(navigateTo).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Forget someone on this browser" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Owner? Sign in with your password" })).toBeDisabled();
   });
 });

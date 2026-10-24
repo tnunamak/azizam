@@ -200,9 +200,10 @@ export function Chooser({
               <span id={`${base}-else`} className="text-body truncate font-medium">
                 Someone else
               </span>
-              {(twoLines || openingElse) && (
+              {/* No blank second line: with nothing to say, the name sits centred in the row, not above its middle. */}
+              {openingElse && (
                 <span id={`${base}-else-sub`} className="text-muted-foreground text-meta truncate">
-                  {openingElse ? `Opening ${providerName}…` : "\u00a0"}
+                  {`Opening ${providerName}…`}
                 </span>
               )}
             </span>
@@ -221,33 +222,27 @@ export function Chooser({
           Opening {openingName}
         </p>
       )}
-      <div className="mt-6">
-        {/* px-0! because the Button's default size sets px-3, and cn does not merge it away: the link's text sits on the rows' edge. */}
-        <Button
-          variant="link"
-          className="min-h-11 px-0!"
-          aria-disabled={busy || undefined}
-          tabIndex={busy ? -1 : undefined}
-          onClick={() => {
-            if (!busy) onForgetMode();
-          }}
-        >
-          Forget someone on this browser
-        </Button>
-      </div>
+      {/* The way in comes first. The destructive link follows on a row of its own, in the muted destructive colour. */}
       {onOwnerPassword && (
         <button
           type="button"
-          className="text-link text-meta flex min-h-11 items-center font-medium"
-          aria-disabled={busy || undefined}
-          tabIndex={busy ? -1 : undefined}
-          onClick={() => {
-            if (!busy) onOwnerPassword();
-          }}
+          className="text-link text-meta mt-6 flex min-h-11 items-center font-medium disabled:opacity-50"
+          disabled={busy}
+          onClick={onOwnerPassword}
         >
           Owner? Sign in with your password
         </button>
       )}
+      <div className={cn(onOwnerPassword ? "mt-4" : "mt-6")}>
+        <button
+          type="button"
+          className="text-danger text-meta flex min-h-11 items-center font-medium underline underline-offset-4 disabled:opacity-50"
+          disabled={busy}
+          onClick={onForgetMode}
+        >
+          Forget someone on this browser
+        </button>
+      </div>
     </>
   );
 }
