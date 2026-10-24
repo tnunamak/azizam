@@ -8,8 +8,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { RelativeTime } from "@/components/product/relative-time";
 import { MAKING_COPY } from "@/components/product/making-tile";
 import { capabilityMeta, SectionHeading } from "@/components/product/readiness";
-import { MediaTile } from "./home-media-tile";
-import { makingProgress, makingRisk, makingTimeLeft, type MakingKind as HomeMakingKind, type RecentItem } from "./home-model";
+import { CAPTION_META, CAPTION_TITLE, MediaTile } from "./home-media-tile";
+import { useEffect, useState } from "react";
+import { makingProgress, makingPrompt, makingRisk, makingTimeLeft, type MakingKind as HomeMakingKind, type RecentItem } from "./home-model";
+import { readMade, type HomeMade } from "./handoff";
 import type { CapabilityView } from "@/lib/capability-state";
 
 /** Six tiles on a wide screen and four beside the owner's panel. A phone shows the first four. */
@@ -44,8 +46,23 @@ export function RecentLoading() {
 /** The capability key whose glyph and hue a running make wears. */
 const MAKING_CAPABILITY: Record<HomeMakingKind, string> = { image: "image", video: "video", audio: "speech" };
 
-/** A make that is still running: its tile first, with the time left, then the result. */
-function MakingTileView({ item, now, risk, className }: { item: Making; now: number; risk: string | null; className?: string }) {
+/**
+ * A make that is still running: its tile first, with the words it was started with (when this tab started
+ * it) and the time left, then the result.
+ */
+function MakingTileView({
+  item,
+  now,
+  risk,
+  prompt,
+  className,
+}: {
+  item: Making;
+  now: number;
+  risk: string | null;
+  prompt: string | null;
+  className?: string;
+}) {
   const progress = makingProgress(item, now);
   const timeLeft = makingTimeLeft(item, now);
   const overdue = timeLeft === "Taking longer than usual";
@@ -57,11 +74,21 @@ function MakingTileView({ item, now, risk, className }: { item: Making; now: num
       <div
         role="status"
         aria-label={copy}
-        className="bg-card border-border rounded-media relative flex aspect-square w-full items-center justify-center overflow-hidden border"
+        className={cn(
+          "bg-muted rounded-media relative flex aspect-square w-full overflow-hidden",
+          prompt ? "flex-col p-4" : "items-center justify-center",
+        )}
       >
-        <span className={cn("flex size-12 items-center justify-center rounded-full", tint)}>
-          <Icon aria-hidden="true" className={cn("size-6 animate-pulse motion-reduce:animate-none", tone)} />
-        </span>
+        {prompt ? (
+          <>
+            <Icon aria-hidden="true" className={cn("size-4 shrink-0 animate-pulse motion-reduce:animate-none", tone)} />
+            <p className="text-foreground text-label mt-3 line-clamp-3 font-normal">{prompt}</p>
+          </>
+        ) : (
+          <span className={cn("flex size-12 items-center justify-center rounded-full", tint)}>
+            <Icon aria-hidden="true" className={cn("size-6 animate-pulse motion-reduce:animate-none", tone)} />
+          </span>
+        )}
         {progress != null ? (
           <div
             role="progressbar"
@@ -75,8 +102,8 @@ function MakingTileView({ item, now, risk, className }: { item: Making; now: num
           </div>
         ) : null}
       </div>
-      <p className="text-foreground text-meta mt-2 truncate font-medium">{copy}</p>
-      <p className="text-muted-foreground text-badge truncate">{overdue ? timeLeft : timeLeft ? capitalise(timeLeft) : "Making"}</p>
+      <p className={CAPTION_TITLE}>{copy}</p>
+      <p className={CAPTION_META}>{overdue ? timeLeft : timeLeft ? capitalise(timeLeft) : "Making"}</p>
       {risk ? <p className="text-warning text-badge">{risk}</p> : null}
     </li>
   );
@@ -100,13 +127,13 @@ function ChatTileView({ item, className }: { item: Extract<RecentItem, { kind: "
         aria-label={`Open chat: ${chat.title}`}
         className="group block min-w-0"
       >
-        <div className="bg-card border-border group-hover:border-input rounded-media flex aspect-square w-full flex-col overflow-hidden border p-4 transition-colors duration-(--motion-fast)">
+        <div className="bg-muted group-hover:bg-accent rounded-media flex aspect-square w-full flex-col overflow-hidden p-4 transition-colors duration-(--motion-fast)">
           <MessageSquare aria-hidden="true" className="text-capability-chat size-4 shrink-0" />
-          <p className="text-foreground text-meta mt-3 line-clamp-4">{chat.title}</p>
+          <p className="text-foreground text-label mt-3 line-clamp-3 font-normal">{chat.title}</p>
         </div>
-        <span className="mt-2 block min-w-0">
-          <span className="text-foreground text-meta block truncate font-medium">Chat</span>
-          <span className="text-muted-foreground text-badge block truncate">
+        <span className="block min-w-0">
+          <span className={CAPTION_TITLE}>Chat</span>
+          <span className={CAPTION_META}>
             <RelativeTime ts={chat.created_at} fallback="" />
           </span>
         </span>
@@ -139,6 +166,9 @@ export function Recent({
   retrying: boolean;
 }) {
   const shown = items.slice(0, owner ? OWNER_SHOWN : WIDE_SHOWN);
+  // Read after mount: sessionStorage is the browser's, and the first render must match the server's.
+  const [made, setMade] = useState<HomeMade[]>([]);
+  useEffect(() => setMade(readMade()), []);
   return (
     <section aria-labelledby="recent-heading">
       <SectionHeading
@@ -181,7 +211,14 @@ export function Recent({
               const className = index >= 4 ? PHONE_BEYOND_FOUR : undefined;
               if (item.kind === "making")
                 return (
-                  <MakingTileView key={item.key} item={item} now={now} risk={makingRisk(item, views)} className={className} />
+                  <MakingTileView
+                    key={item.key}
+                    item={item}
+                    now={now}
+                    risk={makingRisk(item, views)}
+                    prompt={makingPrompt(item, made)}
+                    className={className}
+                  />
                 );
               if (item.kind === "chat")
                 return <ChatTileView key={item.key} item={item} className={className} />;

@@ -142,13 +142,20 @@ async function stubSession(page: Page, request: APIRequestContext, persona: Pers
   );
 }
 
-/** Robin, a member with a week of work: a picture being made, pictures, a voice clip and a chat. */
+/** Robin, a member with a week of work: a picture being made (started from Home in this tab), pictures, a voice clip and a chat. */
 export async function seedReturningMember(page: Page, request: APIRequestContext) {
   const persona = { name: "Robin Okafor", ownerName: "Sam" };
   await stubSession(page, request, persona);
   await serveSeedFiles(page);
   const real = await (await request.get("/me/api/home")).json();
   const now = Date.now() / 1000;
+  // Robin pressed Make on Home in this tab a moment before the running picture was accepted (handoff.ts).
+  await page.addInitScript((at) => {
+    sessionStorage.setItem(
+      "azizam.home.made",
+      JSON.stringify([{ capability: "image", prompt: "A watercolour of the garden shed in spring rain", at }]),
+    );
+  }, now - 5);
   const template = real.capabilities.find((row: Json) => row.icon_key === "chat") ?? real.capabilities[0];
   await page.route("**/me/api/home", (route) =>
     fulfilJson(route, {

@@ -39,3 +39,40 @@ export function takeHomeHandoff(capability: string | null): HomeHandoff | null {
     return null;
   }
 }
+
+/*
+ * What this tab last made from Home, so a make still running can show its words on its tile: a receipt
+ * carries no prompt. It stays in sessionStorage, as the hand-off does, so the words leave with the tab.
+ */
+const MADE_KEY = "azizam.home.made";
+const MADE_KEPT = 5;
+
+export interface HomeMade {
+  capability: string;
+  prompt: string;
+  /** When Make was pressed, in epoch seconds. */
+  at: number;
+}
+
+export function rememberMade(made: Omit<HomeMade, "at">): void {
+  try {
+    const kept = readMade().slice(0, MADE_KEPT - 1);
+    sessionStorage.setItem(MADE_KEY, JSON.stringify([{ ...made, at: Date.now() / 1000 }, ...kept]));
+  } catch {
+    // Storage can be refused; the running tile then shows its kind only.
+  }
+}
+
+/** What this tab made from Home, newest first. */
+export function readMade(): HomeMade[] {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(MADE_KEY) ?? "[]");
+    if (!Array.isArray(value)) return [];
+    return value.filter(
+      (item): item is HomeMade =>
+        typeof item?.capability === "string" && typeof item?.prompt === "string" && typeof item?.at === "number",
+    );
+  } catch {
+    return [];
+  }
+}

@@ -7,9 +7,20 @@ import { AudioLines, ImageIcon, Pause, Play, Video } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RelativeTime } from "@/components/product/relative-time";
-import { AudioFace, MediaBadge, playDiscButton } from "@/components/product/audio-cover";
+import { AudioFace, MediaBadge } from "@/components/product/audio-cover";
 import { homeApi, type HomeCreation } from "./home-api";
 import { parseEpochSeconds } from "./home-model";
+
+/** A tile's caption: the title in up to two lines at 13/18, then "Kind · when" at 12 (DESIGN "Home"). */
+export const CAPTION_TITLE = "text-foreground text-label mt-2 line-clamp-2 break-words";
+export const CAPTION_META = "text-muted-foreground text-badge mt-0.5 block truncate";
+
+/**
+ * Home's play disc on an audio face: 36 px, the dark scrim on the light face and a white disc with a dark
+ * glyph on the dark face (--media-disc), so it never sinks into the waveform.
+ */
+const HOME_PLAY_DISC =
+  "bg-media-disc text-media-disc-foreground hover:opacity-90 focus-visible:ring-ring pointer-events-auto relative z-30 flex size-9 items-center justify-center rounded-full transition-opacity duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none [&_svg]:size-4 [&_svg]:translate-x-px [&_svg]:fill-current";
 
 /** Shown while the tile is near the viewport: a video or an audio clip starts loading only then. */
 function useHomePreviewVisible() {
@@ -151,6 +162,7 @@ function CreationMedia({
   if (creation.kind === "audio" && creation.download_url) {
     return (
       <AudioFace
+        ink="text-foreground/60"
         peaksKey={creation.asset_id}
         src={audioSrc}
         sizeBytes={creation.size_bytes}
@@ -189,7 +201,7 @@ function CreationMedia({
             <button
               type="button"
               // On a phone the tile opens the clip in Library instead.
-              className={cn(playDiscButton, "max-sm:hidden")}
+              className={cn(HOME_PLAY_DISC, "max-sm:hidden")}
               disabled={audioLoading || audioError === "unavailable"}
               aria-label={audioLoading ? "Loading audio…" : `${isPlaying ? "Pause" : "Play"} ${title}`}
               onClick={async () => {
@@ -259,9 +271,9 @@ export function MediaTile({ creation, className }: { creation: HomeCreation; cla
   // apart, so its link covers the tile only and the caption stays text.
   const linkName = prompt ? `Open ${label} in Library: ${prompt}` : `Open ${label} in Library`;
   const captionText = (
-    <span className="mt-2 block min-w-0">
-      <span className="text-foreground text-meta block truncate font-medium">{title}</span>
-      <span className="text-muted-foreground text-badge block truncate">
+    <span className="block min-w-0">
+      <span className={CAPTION_TITLE}>{title}</span>
+      <span className={CAPTION_META}>
         {label}
         {at != null ? (
           <>

@@ -231,6 +231,22 @@ export function makingRisk(item: Extract<RecentItem, { kind: "making" }>, views:
   return `${view.label} ${view.word.toLowerCase()}: it may not finish`;
 }
 
+/**
+ * The words a running make was started with, when this tab started it from Home: the newest Make of the
+ * same capability pressed up to ten minutes before the run was accepted. Null when no Make matches.
+ */
+export function makingPrompt(
+  item: Extract<RecentItem, { kind: "making" }>,
+  made: Array<{ capability: string; prompt: string; at: number }>,
+): string | null {
+  if (item.startedAt == null || !item.capability) return null;
+  const startedAt = item.startedAt;
+  const match = made.find(
+    (entry) => entry.capability === item.capability && entry.at <= startedAt + 5 && startedAt - entry.at <= 600,
+  );
+  return match?.prompt.trim() || null;
+}
+
 /** How far through a making run the time is, 0 to 1, or null when no typical time is known. */
 export function makingProgress(item: Extract<RecentItem, { kind: "making" }>, now: number): number | null {
   if (!item.typicalSeconds || item.startedAt == null) return null;
@@ -332,13 +348,17 @@ export function workingLine(views: CapabilityView[]): string | null {
   return `${joinNames(ready)} ${ready.length === 1 && !/s$/i.test(ready[0]) ? "is" : "are"} working`;
 }
 
-/** Greeting from the time of day; a first-time member is welcomed instead. */
-export function greetingFor(now: Date, firstName: string | null, firstVisit: boolean): string {
+/** Greeting from the time of day, in two parts so the name can be quieter; a first-time member is welcomed instead. */
+export function greetingParts(now: Date, firstName: string | null, firstVisit: boolean): { lead: string; name: string | null } {
   const name = firstName?.trim() || null;
-  if (firstVisit) return name ? `Welcome, ${name}` : "Welcome";
+  if (firstVisit) return { lead: "Welcome", name };
   const hour = now.getHours();
-  const part = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
-  return name ? `${part}, ${name}` : part;
+  return { lead: hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening", name };
+}
+
+export function greetingFor(now: Date, firstName: string | null, firstVisit: boolean): string {
+  const { lead, name } = greetingParts(now, firstName, firstVisit);
+  return name ? `${lead}, ${name}` : lead;
 }
 
 /** The first word of a display name, for the greeting. An address is never a name, so it gives none. */
