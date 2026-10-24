@@ -162,14 +162,10 @@ function samplePeaks(kind: string): number[] {
   });
 }
 
-/**
- * Each medium's own soft two-stop well, from the capability hues: speech teal, music amber to rose (rose
- * leads in dark, where amber over the deep-water page turns olive). Dark wells are a 22% tint on the surface.
- */
+/** Each medium's own soft two-stop well (tokens --well-*): speech teal, music amber to rose, rose alone in dark. */
 function audioWell(kind: string): string {
-  if (kind === "speech" || kind === "voice")
-    return "bg-linear-to-br from-capability-chat/22 to-capability-chat/8 dark:from-capability-chat/22 dark:to-capability-chat/10";
-  return "bg-linear-to-br from-capability-voice/22 to-capability-video/18 dark:from-capability-video/22 dark:to-capability-voice/12";
+  if (kind === "speech" || kind === "voice") return "bg-linear-to-br from-well-voice-from to-well-voice-to";
+  return "bg-linear-to-br from-well-music-from to-well-music-to";
 }
 
 /** The sample a card's play disc plays: the web app ships one for speech and one for music (home-sample-*.mp3). */
