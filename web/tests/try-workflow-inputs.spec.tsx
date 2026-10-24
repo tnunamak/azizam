@@ -532,6 +532,59 @@ describe("WorkflowInputs", () => {
     });
   });
 
+  describe("a control's accessible description is its helper text, then its problem", () => {
+    const strength: WorkflowInput = {
+      name: "strength",
+      type: "number",
+      help: "Keep at 1 to change the whole picture.",
+      required: true,
+      minimum: 0,
+      maximum: 1,
+    };
+    const picture: WorkflowInput = {
+      name: "source_image",
+      type: "asset",
+      required: true,
+      help: "The picture to change.",
+    };
+
+    it("describes a number control by its helper text", () => {
+      render(<WorkflowInputs inputs={[strength]} json="{}" onChange={() => undefined} />);
+      expect(screen.getByRole("spinbutton", { name: /Strength/ })).toHaveAccessibleDescription(
+        "Keep at 1 to change the whole picture.",
+      );
+    });
+
+    it("describes a control with a problem by its helper text and then the problem", () => {
+      render(
+        <WorkflowInputs
+          inputs={[strength]}
+          json="{}"
+          onChange={() => undefined}
+          problems={{ strength: "Enter a number from 0 to 1." }}
+        />,
+      );
+      expect(screen.getByRole("spinbutton", { name: /Strength/ })).toHaveAccessibleDescription(
+        "Keep at 1 to change the whole picture. Enter a number from 0 to 1.",
+      );
+    });
+
+    it("describes a picture's Choose a file button by its helper text", () => {
+      render(
+        <WorkflowInputs
+          inputs={[picture]}
+          json="{}"
+          onChange={() => undefined}
+          onFileChange={() => undefined}
+        />,
+      );
+      const group = screen.getByRole("group", { name: /Source image/ });
+      expect(
+        within(group).getByRole("button", { name: "Choose a file" }),
+      ).toHaveAccessibleDescription("The picture to change.");
+    });
+  });
+
   it("renders mapped body asset inputs as a picker with the link under Advanced", () => {
     const onChange = vi.fn();
     render(

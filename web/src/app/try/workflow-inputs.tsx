@@ -338,6 +338,9 @@ function WorkflowInputControl({
     ? "This setting cannot be changed here yet."
     : inputHint(input, outputKind);
   const errorId = problem ? `${id}-error` : undefined;
+  const hintId = hint || detail ? `${id}-hint` : undefined;
+  // The helper line, then the problem: both are what the control says about itself.
+  const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
   const disabled = parentDisabled || isUnsupportedValue(value);
   // An asset the catalog does not type is a picture, as for body inputs
   // below; a generic file ("binary") gets a plain file chooser.
@@ -358,7 +361,7 @@ function WorkflowInputControl({
   );
   // The hint and, for an owner, the technical detail: one helper line, in two spans.
   const hintLine = hint || detail ? (
-    <span className="text-muted-foreground text-xs">
+    <span id={hintId} className="text-muted-foreground text-xs">
       {hint ? <span>{hint}</span> : null}
       {hint && detail ? " " : null}
       {detail ? <span data-slot="input-detail">{detail}</span> : null}
@@ -394,7 +397,7 @@ function WorkflowInputControl({
             kind={kind}
             file={file}
             invalid={Boolean(problem)}
-            describedBy={errorId}
+            describedBy={describedBy}
             onFileChange={onFileChange}
           />
         ) : (
@@ -404,7 +407,7 @@ function WorkflowInputControl({
             aria-labelledby={`${id}-label`}
             aria-required={input.required || undefined}
             aria-invalid={Boolean(problem) || undefined}
-            aria-describedby={errorId}
+            aria-describedby={describedBy}
             onChange={(event) =>
               onFileChange(event.currentTarget.files?.[0] ?? null)
             }
@@ -428,7 +431,7 @@ function WorkflowInputControl({
           kind={mediaKindOf(input) ?? "image"}
           value={typeof value === "string" ? value : undefined}
           invalid={Boolean(problem)}
-          describedBy={errorId}
+          describedBy={describedBy}
           onChange={onChange}
         />
         {problemLine}
@@ -442,7 +445,7 @@ function WorkflowInputControl({
       {controlFor(input, id, label, value, disabled || fileInput, fileInput, onChange, {
         placeholder: inputPlaceholder(input, outputKind),
         invalid: Boolean(problem),
-        describedBy: errorId,
+        describedBy,
       })}
       {hintLine}
       {problemLine}
