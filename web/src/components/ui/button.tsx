@@ -17,8 +17,9 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
-        // The Home's Make colour (`--make`). The sign-in page's primary action uses it, so the two match.
-        make: "bg-make text-make-foreground hover:bg-make/90",
+        // The Home's resting Make: an ink pill (`--make-rest`), the same fill and radius as Make in the composer. The
+        // sign-in page's primary action uses it. `rounded-full!` beats the base's `rounded-control`, which cn does not merge.
+        make: "rounded-full! bg-make-rest text-make-rest-foreground hover:bg-make-rest/90",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         // In dark the edge is the field edge (`--input`, 3:1 on the page). Light keeps the hairline (`--border`).

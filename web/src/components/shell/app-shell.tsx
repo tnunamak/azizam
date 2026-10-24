@@ -152,14 +152,15 @@ function signInHref(returnPath: string): string {
 
 function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
   const { resolvedTheme, setTheme } = useTheme();
-  // The name says what a press does ("Switch to dark"), and the tooltip shows the same words.
+  // The name says what a press does ("Switch to dark"), and the tooltip shows the same words. The icon is the mode a
+  // press switches to: the moon in light, the sun in dark.
   const next = resolvedTheme === "dark" ? "light" : "dark";
   const label = `Switch to ${next}`;
   const toggle = () => setTheme(next);
   const icons = (
     <>
-      <Sun className="size-4 dark:hidden" aria-hidden="true" />
-      <Moon className="hidden size-4 dark:block" aria-hidden="true" />
+      <Moon className="size-4 dark:hidden" aria-hidden="true" />
+      <Sun className="hidden size-4 dark:block" aria-hidden="true" />
     </>
   );
   return chrome ? (

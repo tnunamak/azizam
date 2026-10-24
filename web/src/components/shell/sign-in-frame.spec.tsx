@@ -13,6 +13,8 @@ it("frames the page in one main landmark, with a footer that links to the produc
   expect(screen.getByRole("contentinfo")).toContainElement(screen.getByRole("link", { name: "About Azizam" }));
   expect(screen.getByRole("link", { name: "About Azizam" })).toHaveAttribute("href", "https://azizam.dev/");
   expect(screen.getByRole("button", { name: "Toggle theme" })).toBeVisible();
+  // The product name is said once, in the link: the footer has no second copy of it.
+  expect(screen.getByRole("contentinfo").textContent?.match(/Azizam/g)).toHaveLength(1);
 });
 
 it("has no header and no navigation: the sign-in page is one column", () => {
