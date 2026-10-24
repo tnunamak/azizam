@@ -42,7 +42,7 @@ import { CallLine } from "../parts/call-line";
 import { CapabilityList, rowsFromCheck, type CapabilityRow, type TestState } from "../parts/capabilities";
 import { FindingCard } from "../parts/finding-card";
 import { FormField, LinkButton, Note, describedBy, focusFirstInvalid } from "../parts/form";
-import { ModelsBlock, draftsFromCheck, duplicateNames, modelsBody, type ModelDraft } from "../parts/models-block";
+import { ModelsBlock, draftsFromCheck, duplicateNames, kindRefusal, modelsBody, type ModelDraft } from "../parts/models-block";
 import {
   ARGV_REASON,
   AttentionNotes,
@@ -404,6 +404,9 @@ function RecordForm({
   const refusedFinding = refusal?.finding;
   const findingInline = Boolean(refusedFinding && (refusedField === "address" || refusedField === "key"));
   const refusedHere = (field: string) => (refusedField === field ? refusal?.message : undefined);
+  const refusedKind = refusal ? kindRefusal(refusedField, refusal.message) : null;
+  // The kinds the ticked capabilities serve. The Capability pick-list offers only these.
+  const offeredKinds = definition.capabilities.filter((c) => ticked.has(c.id)).flatMap((c) => c.kinds);
   const optionErrors: Record<string, string> = refusedField && optionKeys.has(refusedField) && refusal ? { [refusedField]: refusal.message } : {};
   useEffect(() => {
     if (saveError) focusFirstInvalid(root.current);
@@ -1032,8 +1035,10 @@ function RecordForm({
                   models={models}
                   onChange={setModels}
                   kinds={modelKinds}
+                  offeredKinds={offeredKinds}
                   readOnly={settingsLocked || commands.length > 0 || saving}
                   error={refusedHere("models")}
+                  kindError={refusedKind ?? undefined}
                   emptyText={nativeMode ? "No models are listed yet. Add a model using the public name the server accepts." : "No models are listed yet. Check the server to find them, or add a model by the name the server uses."}
                 />
                 {modelsChanged ? (

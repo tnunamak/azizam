@@ -60,7 +60,8 @@ export interface EngineDefinition {
   fields: EngineField[];
   check_rows: string[];
   check_request: { method: "GET" | "POST"; path: string; from: "origin" | "address" };
-  capabilities: { id: string; label: string }[];
+  /** What the engine can do. `kinds` are the model kinds that work serves: a model's Capability can only be one of them. */
+  capabilities: { id: string; label: string; kinds: string[] }[];
   models_note?: string;
 }
 

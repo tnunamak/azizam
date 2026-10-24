@@ -35,7 +35,7 @@ import httpcore
 import httpx
 
 from gateway import transforms
-from gateway.capability_ids import MODEL_KINDS, PROTOCOL_CAPABILITIES
+from gateway.capability_ids import offered_model_kinds
 from gateway.engine_definitions import EngineCatalog
 
 DEFAULT_CAP_BYTES = 64 * 1024
@@ -805,12 +805,10 @@ def suggested_model_kind(capabilities: Iterable[str], catalog: EngineCatalog) ->
     """The one kind a probed model's capabilities name, or None when they name none or more than one.
 
     The engine's own words for its work (its record capabilities) map to the
-    gateway's kinds through PROTOCOL_CAPABILITIES, so no engine name is needed.
+    gateway's kinds through offered_model_kinds, so no engine name is needed.
     """
-    kinds = {PROTOCOL_CAPABILITIES.get(word) for cap_id in capabilities
-             for word in catalog.capability(cap_id)["record_capabilities"]}
-    kinds &= set(MODEL_KINDS)
-    return kinds.pop() if len(kinds) == 1 else None
+    kinds = offered_model_kinds(word for cap_id in capabilities for word in catalog.capability(cap_id)["record_capabilities"])
+    return kinds[0] if len(kinds) == 1 else None
 
 
 def _model_caps(entry: Mapping[str, Any], rules: Iterable[Mapping[str, Any]]) -> list[str]:

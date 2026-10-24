@@ -299,8 +299,8 @@ describe("who can use the models", () => {
     await waitFor(() => expect(update).toHaveBeenCalled());
     const picks = await screen.findAllByLabelText("Capability");
     expect(picks[1]).toHaveAttribute("aria-invalid", "true");
+    expect(picks[1]).toHaveAccessibleDescription(expect.stringContaining("This engine doesn’t offer Embeddings."));
     expect(picks[0]).not.toHaveAttribute("aria-invalid");
-    expect(screen.getAllByText("This engine doesn’t offer Embeddings.")).toHaveLength(1);
   });
 
   it("says when the route fails and offers Try again, without blocking Save", async () => {

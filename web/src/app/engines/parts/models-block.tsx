@@ -71,22 +71,34 @@ export function modelsBody(models: ModelDraft[]) {
   }));
 }
 
+/** The server's refusal of one model's kind, when the field it names is that model's Capability (models.N.kind). */
+export function kindRefusal(field: string | null, message: string): { index: number; message: string } | null {
+  const match = field?.match(/^models\.(\d+)\.kind$/);
+  return match ? { index: Number(match[1]), message } : null;
+}
+
 export function ModelsBlock({
   models,
   onChange,
   emptyText,
   kinds,
+  offeredKinds,
   readOnly,
   error,
+  kindError,
 }: {
   models: ModelDraft[];
   onChange: (next: ModelDraft[]) => void;
   emptyText: string;
   /** The kinds a model may be given, from the gateway: each id with its builder label. */
   kinds: { id: string; label: string }[];
+  /** The kind ids the engine's ticked capabilities serve. The pick-list offers only these. */
+  offeredKinds: string[];
   readOnly?: boolean;
   /** A message from the server about the list as a whole, for example after a refused Save. */
   error?: string;
+  /** The server refused one model's kind: its message goes under that model's Capability control. */
+  kindError?: { index: number; message: string };
 }) {
   const [query, setQuery] = useState("");
   const [byName, setByName] = useState("");
@@ -217,6 +229,7 @@ export function ModelsBlock({
                 <FormField
                   label="Capability"
                   help="What apps may use this model for. Leave it on “All the engine offers” unless the engine serves this model for one thing only."
+                  error={kindError?.index === index ? kindError.message : undefined}
                 >
                   {(control) => (
                     <NativeSelect
@@ -226,11 +239,14 @@ export function ModelsBlock({
                       onChange={(event) => update(index, { kind: event.target.value })}
                     >
                       <option value="">All the engine offers</option>
-                      {kinds.map((kind) => (
-                        <option key={kind.id} value={kind.id}>
-                          {kind.label}
-                        </option>
-                      ))}
+                      {/* A kind the engine no longer offers stays listed while this model has it, so the refusal shows what it is. */}
+                      {kinds
+                        .filter((kind) => offeredKinds.includes(kind.id) || kind.id === model.kind)
+                        .map((kind) => (
+                          <option key={kind.id} value={kind.id}>
+                            {kind.label}
+                          </option>
+                        ))}
                     </NativeSelect>
                   )}
                 </FormField>
