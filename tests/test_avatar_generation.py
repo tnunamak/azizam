@@ -7,7 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 import pytest
@@ -23,8 +23,12 @@ from gateway.public_failure import PublicFailure
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 # The sign-in picture the fake provider serves: a different image from the one the gateway made.
 SIGN_IN_PNG = b"\x89PNG\r\n\x1a\n" + b"\x01" * 64
+# Two more pictures, told apart by their bytes: the one an automatic default makes, and one a person keeps by hand.
+MADE_BY_DEFAULT = b"\x89PNG\r\n\x1a\n" + b"\x02" * 64
+MADE_BY_HAND = b"\x89PNG\r\n\x1a\n" + b"\x03" * 64
 PICTURE = "https://lh3.example.test/a/photo.png"
 ACTION = {"x-azizam-user-action": "1"}
+DEFAULT_PATH = "/me/api/profile/avatar/default"
 
 
 def _session_for(who: dict[str, str]):
@@ -53,7 +57,12 @@ class FakeGeneration:
         self.files: dict[str, Path] = {}
         self.jobs: dict[str, dict[str, Any]] = {}
         self.busy = False
-        self.refuse_start = False
+        # What a start does next: raise ``start_error``, or first run ``during_start`` (a choice that lands mid-start).
+        self.start_error: Exception | None = None
+        self.during_start: Callable[[str], None] | None = None
+        # When set, the model lookup waits on it, so a test can hold one start while other loads arrive.
+        self.model_gate: threading.Event | None = None
+        self.model_entered = threading.Event()
         self._dir = tmp_path / "library"
         self._dir.mkdir(exist_ok=True)
 
@@ -75,9 +84,17 @@ class FakeGeneration:
                 return None
             return self.files[asset_id]
 
+        def model_for(_person_id: str) -> str | None:
+            if self.model_gate is not None:
+                self.model_entered.set()
+                self.model_gate.wait(5)
+            return self.model
+
         def start(_request: Request, person_id: str, model: str, prompt: str) -> dict[str, Any]:
-            if self.refuse_start:
-                raise PublicFailure("make_unavailable", 503)
+            if self.during_start is not None:
+                self.during_start(person_id)
+            if self.start_error is not None:
+                raise self.start_error
             self.started.append((person_id, model, prompt))
             job_id = f"job_{len(self.started)}"
             self.jobs[job_id] = {"owner": person_id, "status": "queued", "asset_ids": []}
@@ -89,9 +106,12 @@ class FakeGeneration:
                 return None
             return {"status": job["status"], "asset_ids": list(job["asset_ids"])}
 
-        return AvatarGeneration(model_for=lambda _person_id: self.model, start=start,
-                                own_picture_file=own_picture_file, job_state=job_state,
-                                busy=lambda: self.busy)
+        def busy() -> bool:
+            # As in the app: picture work is busy while any of its jobs is still queued or running.
+            return self.busy or any(job["status"] in {"queued", "running"} for job in self.jobs.values())
+
+        return AvatarGeneration(model_for=model_for, start=start, own_picture_file=own_picture_file,
+                                job_state=job_state, busy=busy)
 
 
 class Rig:
@@ -566,14 +586,86 @@ def test_other_picture_work_defers_the_default_without_using_its_attempt(rig: Ri
     assert len(generation.started) == 1
 
 
-def test_a_default_that_cannot_start_is_recorded_and_never_retried(rig: Rig, generation: FakeGeneration) -> None:
+def _as(person_id: str) -> dict[str, str]:
+    """The action header and the person a request is for: the app in ``_anyone_app`` serves whoever is named."""
+    return {**ACTION, "x-test-person": person_id}
+
+
+def _session_from_header(request: Request) -> AdminSession | None:
+    subject = request.headers.get("x-test-person")
+    if not subject:
+        return None
+    return AdminSession(subject=subject, email=f"{subject}@example.test", role="none",
+                        issued_at=time.time(), expires_at=time.time() + 3600)
+
+
+def _anyone_app(rig: Rig, generation: FakeGeneration) -> FastAPI:
+    """One app that serves any person named in the header, so loads by different people can overlap."""
+    async def no_fetch(_url: str) -> media_fetch.FetchedMedia:
+        raise media_fetch.MediaFetchError("the tests do not fetch provider pictures")
+
+    app = FastAPI()
+    app.include_router(create_me_avatar_router(
+        session_provider=_session_from_header, mutation_validator=_validator, admin_db_path=rig.db,
+        picture_fetcher=no_fetch, cache=PictureCache(), generation=generation.as_generation()))
+    return app
+
+
+def test_loads_by_different_people_at_once_start_one_default_and_the_rest_defer(
+        rig: Rig, generation: FakeGeneration) -> None:
+    alice, bob, carol = rig.person("alice"), rig.person("bob"), rig.person("carol")
+    app = _anyone_app(rig, generation)
+    gate = threading.Event()
+    generation.model_gate = gate
+
+    async def scenario():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://avatar.test") as http:
+            first = asyncio.ensure_future(http.post(DEFAULT_PATH, headers=_as(alice)))
+            # Alice's load holds the one start while its model lookup runs.
+            assert await asyncio.to_thread(generation.model_entered.wait, 5)
+            others = await asyncio.gather(http.post(DEFAULT_PATH, headers=_as(bob)),
+                                          http.post(DEFAULT_PATH, headers=_as(carol)))
+            gate.set()
+            return await first, others
+
+    first_answer, (bob_answer, carol_answer) = asyncio.run(scenario())
+    assert first_answer.json()["generating"] is True
+    assert bob_answer.json()["generating"] is False and carol_answer.json()["generating"] is False
+    assert avatars.get(bob, path=rig.db)["default_attempted_at"] is None
+    assert avatars.get(carol, path=rig.db)["default_attempted_at"] is None
+    assert [person for person, _model, _prompt in generation.started] == [alice]
+    # Alice's job is queued, so picture work is busy and the others still defer.
+    _default(rig.as_(carol).client)
+    assert len(generation.started) == 1
+    # Each of them gets the default on a later load, once the job before theirs has stopped.
+    generation.finish_job("job_1")
+    _default(rig.as_(bob).client)
+    generation.finish_job("job_2")
+    _default(rig.as_(carol).client)
+    assert [person for person, _model, _prompt in generation.started] == [alice, bob, carol]
+
+
+@pytest.mark.parametrize(("code", "status"), [("make_unavailable", 503), ("make_busy", 503), ("too_many_jobs", 429)])
+def test_a_capacity_refusal_defers_the_default_and_keeps_its_attempt(
+        rig: Rig, generation: FakeGeneration, code: str, status: int) -> None:
     alice = rig.person("alice")
     client = rig.as_(alice).client
-    generation.refuse_start = True
+    generation.start_error = PublicFailure(code, status, maximum=3)
     response = _default(client)
     assert response.status_code == 200 and response.json()["generating"] is False
+    assert avatars.get(alice, path=rig.db)["default_attempted_at"] is None
+    generation.start_error = None
+    _default(client)
+    assert len(generation.started) == 1
+
+
+def test_a_default_whose_start_fails_for_another_reason_is_never_retried(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    generation.start_error = PublicFailure("make_queue_failed", 500)
+    _default(client)
     assert avatars.get(alice, path=rig.db)["default_attempted_at"] is not None
-    generation.refuse_start = False
+    generation.start_error = None
     _default(client)
     assert generation.started == []
 
@@ -602,16 +694,107 @@ def test_a_person_who_removes_their_default_is_not_given_another(rig: Rig, gener
     assert client.get("/me/api/profile/avatar").json()["choice"] == "auto"
 
 
-def test_a_default_that_finishes_after_the_person_chose_another_avatar_keeps_that_choice(rig: Rig, generation: FakeGeneration) -> None:
+def test_a_manual_keep_during_a_pending_default_is_not_overwritten_and_remove_leaves_nothing(
+        rig: Rig, generation: FakeGeneration) -> None:
     alice = rig.person("alice")
     client = rig.as_(alice).client
     _default(client)
-    client.put("/me/api/profile/avatar", json={"choice": "v3"}, headers=ACTION)
-    generation.add_job_picture(alice, "img_default1")
+    generation.add_job_picture(alice, "img_hand1", MADE_BY_HAND)
+    assert _keep(client, "img_hand1").status_code == 200
+    generation.add_job_picture(alice, "img_default1", MADE_BY_DEFAULT)
+    generation.finish_job("job_1", asset_id="img_default1")
+    assert client.get("/me/api/profile/avatar").json()["choice"] == "generated"
+    assert client.get("/me/api/profile/avatar/picture").content == MADE_BY_HAND
+    removed = client.delete("/me/api/profile/avatar/generated", headers=ACTION).json()
+    assert removed["choice"] == "auto" and removed["made_picture_url"] is None
+    assert client.get("/me/api/profile/avatar/picture").status_code == 404
+    _default(client)
+    assert len(generation.started) == 1
+
+
+def test_a_keep_that_lands_while_the_default_is_finishing_is_not_overwritten(
+        rig: Rig, generation: FakeGeneration, monkeypatch) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    _default(client)
+    generation.add_job_picture(alice, "img_hand1", MADE_BY_HAND)
+    generation.add_job_picture(alice, "img_default1", MADE_BY_DEFAULT)
+    generation.finish_job("job_1", asset_id="img_default1")
+    settling = threading.Thread(target=avatars.finish_default, args=(alice, "job_1", MADE_BY_DEFAULT),
+                                kwargs={"path": rig.db})
+    write_copy = avatars._write_copy
+
+    def write_and_let_the_default_settle(person_id: str, data: bytes, *, path: Path) -> None:
+        write_copy(person_id, data, path=path)
+        if data == MADE_BY_HAND:
+            # The default settles while the keep is writing. It must wait for the keep, then change nothing.
+            settling.start()
+            settling.join(1)
+
+    monkeypatch.setattr(avatars, "_write_copy", write_and_let_the_default_settle)
+    assert _keep(client, "img_hand1").status_code == 200
+    settling.join(5)
+    assert client.get("/me/api/profile/avatar/picture").content == MADE_BY_HAND
+
+
+def test_remove_during_a_pending_default_means_the_default_never_appears(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    _default(client)
+    assert client.delete("/me/api/profile/avatar/generated", headers=ACTION).status_code == 200
+    generation.add_job_picture(alice, "img_default1", MADE_BY_DEFAULT)
     generation.finish_job("job_1", asset_id="img_default1")
     view = client.get("/me/api/profile/avatar").json()
-    assert view["choice"] == "v3" and view["generating"] is False
-    assert view["made_picture_url"] is not None
+    assert view["choice"] == "auto" and view["picture_url"] is None and view["generating"] is False
+    assert client.get("/me/api/profile/avatar/picture").status_code == 404
+    _default(client)
+    assert len(generation.started) == 1
+
+
+@pytest.mark.parametrize("choice", ["v3", "auto"])
+def test_a_manual_choice_while_the_default_is_pending_drops_its_picture(rig: Rig, generation: FakeGeneration,
+                                                                       choice: str) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    _default(client)
+    assert client.put("/me/api/profile/avatar", json={"choice": choice}, headers=ACTION).status_code == 200
+    generation.add_job_picture(alice, "img_default1", MADE_BY_DEFAULT)
+    generation.finish_job("job_1", asset_id="img_default1")
+    view = client.get("/me/api/profile/avatar").json()
+    assert view["choice"] == choice and view["generating"] is False
+    assert view["made_picture_url"] is None
+    assert client.get("/me/api/profile/avatar/picture?kind=generated").status_code == 404
+
+
+@pytest.mark.parametrize("manual", ["keep", "auto", "variant", "remove"])
+def test_a_manual_choice_while_the_default_is_starting_leaves_no_pending_job(
+        rig: Rig, generation: FakeGeneration, manual: str) -> None:
+    alice = rig.person("alice")
+    client = rig.as_(alice).client
+    generation.add_job_picture(alice, "img_hand1", MADE_BY_HAND)
+    generation.add_job_picture(alice, "img_default1", MADE_BY_DEFAULT)
+
+    def choose_by_hand(person_id: str) -> None:
+        if manual == "keep":
+            avatars.store_generated(person_id, MADE_BY_HAND, path=rig.db)
+        elif manual == "auto":
+            avatars.set_choice(person_id, "auto", path=rig.db)
+        elif manual == "variant":
+            avatars.set_choice(person_id, "v3", path=rig.db)
+        else:
+            avatars.clear_generated(person_id, path=rig.db)
+
+    generation.during_start = choose_by_hand
+    response = _default(client)
+    assert response.json()["generating"] is False
+    assert avatars.get(alice, path=rig.db)["default_job_id"] is None
+    generation.finish_job("job_1", asset_id="img_default1")
+    assert client.get("/me/api/profile/avatar").json()["generating"] is False
+    shown = client.get("/me/api/profile/avatar/picture")
+    if manual == "keep":
+        assert shown.content == MADE_BY_HAND
+    else:
+        assert shown.status_code == 404
 
 
 # --- The gateway's own make runtime: a person's picture job is scheduled on the loop and runs ---------------------
