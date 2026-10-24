@@ -366,7 +366,10 @@ pytest = 17215
 # notice. Full run 229 files, 3423 cases, all passed (2026-10-23). Measured value.
 # Home visual round 5: no vitest case added or removed (one Home case renamed); full run 229 files, 3423 cases, all
 # passed (2026-10-23). The ceiling stays at the measured value.
-vitest = 3423
+# Sign-in front door: +11 cases (sign-in/page.spec.tsx +5 for the owner line, the reset line and Email focus; app/page.spec.tsx
+# +4, new, for the root's three states; components/shell/sign-in-frame.spec.tsx +2, new). Full run 231 files, 3434 cases,
+# all passed (2026-10-23). Measured value.
+vitest = 3434
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -401,7 +404,10 @@ vitest = 3423
 # Home visual round 5 (feat/home-visual-3): +7 cases in e2e/home-redesign.spec.ts: the phone chooser row, two play-disc
 # cases (light and dark), the first visit's card focus and Try, the 760 px notice, the 72 px gap and the 16 px prompt.
 # --list: playwright.config.ts 581, live-data 3, household 18: 602, measured 2026-10-23.
-playwright = 602
+# Sign-in front door: +6 cases in e2e/signin-built.spec.ts, the built sign-in captures (skipped unless SIGNIN_SHOTS_DIR is
+# set). S1-S4 and S6 in home-redesign.spec.ts were test.fixme and are real cases now, so the count does not move for them.
+# --list: playwright.config.ts 587, live-data 3, household 18: 608, measured 2026-10-23.
+playwright = 608
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
