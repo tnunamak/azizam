@@ -541,7 +541,8 @@ export default function HomePage() {
         className={cn(
           "min-w-0 space-y-10",
           // The first visit's cards are the chooser, so they sit close under the composer; Recent sits apart.
-          firstVisit ? "mt-8 sm:mt-10" : "mt-14 sm:mt-18 lg:mt-20",
+          // At 1440 px the e2e test measures 72 px from the chooser's box to Recent's heading box.
+          firstVisit ? "mt-8 sm:mt-10" : "mt-14 sm:mt-18 lg:mt-17",
           // A member's first visit keeps the composer's 760 px edges all the way down: one set of edges.
           firstVisit && !isOwner && "mx-auto max-w-(--content-composer)",
           isOwner && "lg:grid lg:grid-cols-[minmax(0,1fr)_18.75rem] lg:items-start lg:gap-x-8 lg:space-y-0",

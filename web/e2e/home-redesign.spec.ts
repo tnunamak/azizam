@@ -614,6 +614,17 @@ test("at 1440 px the request history notice is the composer's 760 px, centred un
   expect(Math.abs(chips.x + chips.width / 2 - centre)).toBeLessThanOrEqual(1);
 });
 
+test("at 1440 px Recent sits 72 px under the chooser", async ({ isolated }) => {
+  const member = await isolated.member();
+  const { page } = member;
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await seedReturningMember(page, member.context.request);
+  await page.goto("/");
+  const chooser = (await page.getByRole("group", { name: "What to make" }).boundingBox())!;
+  const recent = (await page.getByRole("heading", { name: "Recent", exact: true }).boundingBox())!;
+  expect(Math.round(recent.y - (chooser.y + chooser.height))).toBe(72);
+});
+
 test("at 390 px the phone tab bar never covers the end of Home, with the request history notice showing", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;
