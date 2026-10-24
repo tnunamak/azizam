@@ -357,7 +357,9 @@ pytest = 17215
 # (inert until fresh sign-in is reported), the stale-name notice, the Settings choice, and the session-end and switch
 # expectations. Full run: 223 files, 3321 cases, all passed (2026-10-23).
 # Train r103 step 5 (account chooser): 3362 + 89 (3321 - 3232) = 3451, provisional until the final vitest list.
-vitest = 3451
+# Walkthrough A17 (Usage cost labels): +1 vitest case in src/app/usage/page.spec.tsx for the four cost states
+# on one page. `vitest list` measured 3452 on 2026-10-24. Playwright stays at 566 (545 + 3 + 18), measured the same day.
+vitest = 3452
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
