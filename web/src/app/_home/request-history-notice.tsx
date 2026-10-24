@@ -50,13 +50,14 @@ export function RequestHistoryNotice() {
   const busy = turnOn.isPending || dismiss.isPending;
   return (
     // A slim one-line banner on the page tint, not a card (judge round 2): it asks once, and Make stays the
-    // page's one primary action, so Turn on is an outline button and Not now a text button.
+    // page's one primary action, so Turn on is an outline button and Not now a text button. On a phone the
+    // sentence keeps the width and the two answers wrap under it; the dismiss button stays in the corner.
     <section
       aria-labelledby="history-notice-title"
-      className="bg-muted rounded-panel flex min-h-12 flex-wrap items-center gap-x-3 gap-y-1 py-1.5 pr-1.5 pl-4"
+      className="bg-muted rounded-panel relative flex min-h-12 flex-wrap items-center gap-x-3 gap-y-1 py-1.5 pr-1.5 pl-4 max-sm:items-start max-sm:py-3 max-sm:pr-12"
     >
-      <Info aria-hidden="true" className="text-info size-4 shrink-0" />
-      <p className="text-meta min-w-0 flex-1">
+      <Info aria-hidden="true" className="text-info size-4 shrink-0 max-sm:mt-0.5" />
+      <p className="text-meta min-w-0 flex-1 max-sm:basis-[calc(100%-1.75rem)]">
         <span id="history-notice-title" role="heading" aria-level={2} className="font-medium">
           Request history is available.
         </span>{" "}
@@ -64,24 +65,24 @@ export function RequestHistoryNotice() {
           Look back at what you asked. It’s off for you until you turn it on.
         </span>
       </p>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1 max-sm:pl-7">
         <Button size="sm" variant="outline" disabled={busy} onClick={() => turnOn.mutate(data)}>
           Turn on
         </Button>
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => dismiss.mutate(undefined)}>
           Not now
         </Button>
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label="Dismiss"
-          className="text-muted-foreground"
-          disabled={busy}
-          onClick={() => dismiss.mutate(undefined)}
-        >
-          <X aria-hidden="true" />
-        </Button>
       </div>
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        aria-label="Dismiss"
+        className="text-muted-foreground shrink-0 max-sm:absolute max-sm:top-1 max-sm:right-1"
+        disabled={busy}
+        onClick={() => dismiss.mutate(undefined)}
+      >
+        <X aria-hidden="true" />
+      </Button>
     </section>
   );
 }

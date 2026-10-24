@@ -239,9 +239,18 @@ test("H7 a failed Recent leaves the composer working, and Try again refetches on
   expect(paths.filter((item) => item.startsWith("/me/api/home")).length).toBe(homeBefore);
 });
 
+test("H8 with one kind to make and no work, Home shows the composer's single chip and no cards", async ({ isolated }) => {
+  const member = await isolated.member();
+  const { page } = member;
+  await page.goto("/");
+  await expect(page.getByRole("group", { name: "What to make" }).getByRole("button")).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "What you can make here" })).toHaveCount(0);
+});
+
 test("H8 with no work, Home offers what can be made, and choosing a row focuses the box", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;
+  await seedFirstVisitMember(page, member.context.request);
   await page.goto("/");
   const list = page.getByRole("region", { name: "What you can make here" });
   await expect(list).toBeVisible();
@@ -382,6 +391,12 @@ test("at 390 px the phone tab bar never covers the end of Home, with the request
   await seedHistoryNoticeDue(page, member.context.request);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Request history is available." })).toBeVisible();
+  // The notice's sentence keeps the width, and its two answers wrap under it.
+  const notice = page.getByRole("region", { name: "Request history is available." });
+  const sentence = await notice.getByRole("paragraph").boundingBox();
+  const turnOn = await notice.getByRole("button", { name: "Turn on" }).boundingBox();
+  expect(sentence!.width).toBeGreaterThan(240);
+  expect(turnOn!.y).toBeGreaterThanOrEqual(sentence!.y + sentence!.height);
   // One app per line at this width, so three apps never wrap two and one.
   const apps = page.getByRole("region", { name: "Your apps" }).getByRole("listitem");
   await expect(apps).toHaveCount(2);
@@ -431,18 +446,17 @@ test.describe("built pages for the design side-by-side check", () => {
         await expect(page.getByRole("list", { name: "Recent work" })).toBeVisible();
         await save(page, "home-member-returning");
       });
-      if (viewport.width !== 768)
-        test(`saves the returning member Home with the request history notice at ${suffix}`, async ({ isolated }) => {
-          const member = await isolated.member();
-          const { page } = member;
-          await page.setViewportSize(viewport);
-          await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-          await seedReturningMember(page, member.context.request);
-          await seedHistoryNoticeDue(page, member.context.request);
-          await page.goto("/");
-          await expect(page.getByRole("heading", { name: "Request history is available." })).toBeVisible();
-          await save(page, "home-notice");
-        });
+      test(`saves the returning member Home with the request history notice at ${suffix}`, async ({ isolated }) => {
+        const member = await isolated.member();
+        const { page } = member;
+        await page.setViewportSize(viewport);
+        await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+        await seedReturningMember(page, member.context.request);
+        await seedHistoryNoticeDue(page, member.context.request);
+        await page.goto("/");
+        await expect(page.getByRole("heading", { name: "Request history is available." })).toBeVisible();
+        await save(page, "home-notice");
+      });
       test(`saves the owner Home at ${suffix}`, async ({ page }) => {
         await page.setViewportSize(viewport);
         await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
