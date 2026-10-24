@@ -625,6 +625,17 @@ test("at 1440 px Recent sits 72 px under the chooser", async ({ isolated }) => {
   expect(Math.round(recent.y - (chooser.y + chooser.height))).toBe(72);
 });
 
+test("at 390 px the composer's prompt is 16 px, so iOS does not zoom in when it is focused", async ({ isolated }) => {
+  const member = await isolated.member();
+  const { page } = member;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seedReturningMember(page, member.context.request);
+  await page.goto("/");
+  const prompt = page.locator("#home-prompt");
+  await expect(prompt).toHaveCSS("font-size", "16px");
+  await expect(prompt).toHaveCSS("line-height", "24px");
+});
+
 test("at 390 px the phone tab bar never covers the end of Home, with the request history notice showing", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;
