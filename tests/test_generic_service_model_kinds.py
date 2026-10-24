@@ -386,9 +386,10 @@ def test_fixing_a_left_out_record_refuses_a_kind_it_does_not_offer(gateway):
     assert _durable_state(gateway) == before
 
 
-def test_fixing_a_left_out_record_with_a_kind_it_offers_is_saved(gateway):
+def test_fixing_a_left_out_record_with_a_kind_it_offers_is_saved_beside_a_legacy_row(gateway):
     owner, *_ = owner_and_admin(gateway)
     assert _add(owner, capabilities=["chat"], models=[CHAT_ROW]).status_code == 201
+    _seed_stored_kind(gateway, "box", "speech")  # another record, stored before the check, that the fix does not change
     _store_left_out(gateway)
     record = _left_out_record(owner)
     record["config"]["models"] = [{"id": "chat-2", "model_group": "chat-2", "upstream_model": "chat-2", "kind": "chat"}]
@@ -397,3 +398,4 @@ def test_fixing_a_left_out_record_with_a_kind_it_offers_is_saved(gateway):
 
     assert fixed.status_code == 200, fixed.text
     assert _stored_model_kind(gateway, "held-box") == "chat"
+    assert _stored_model_kind(gateway, "box") == "speech"
