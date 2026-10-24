@@ -13,7 +13,7 @@ export function SignInFrame({ children, themeToggle }: { children: ReactNode; th
       <main id="main-content" className="flex flex-1 items-center justify-center px-6 py-12 max-sm:items-start max-sm:pt-18">
         {children}
       </main>
-      <footer className="text-subtle-foreground flex items-center justify-between gap-4 px-6 py-2 text-label sm:px-8">
+      <footer className="text-subtle-foreground flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-6 py-2 text-label sm:px-8">
         <span className="flex items-center gap-1.5">
           <BrandMark className="size-4" />
           {PRODUCT_NAME}

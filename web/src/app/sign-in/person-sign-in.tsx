@@ -85,11 +85,11 @@ export function NotFreshScreen({
       </div>
       <div className="mt-8 flex flex-col gap-3 sm:flex-row">
         {signOut ? (
-          <Button size="xl" className="w-full whitespace-normal sm:w-auto" asChild>
+          <Button size="xl" className="w-full whitespace-normal! sm:w-auto" asChild>
             <a href="/login/provider-sign-out">Sign out of {provider}</a>
           </Button>
         ) : (
-          <Button size="xl" className="w-full whitespace-normal sm:w-auto" asChild>
+          <Button size="xl" className="w-full whitespace-normal! sm:w-auto" asChild>
             <a href={signInAgain}>Sign in again</a>
           </Button>
         )}
@@ -270,7 +270,7 @@ export function PlainSignIn({
         )}
         <ProviderNotices error={providerError} />
         {hasProvider && (
-          <Button size="xl" className="w-full whitespace-normal" asChild>
+          <Button size="xl" className="w-full whitespace-normal!" asChild>
             <a href={withRemember(data.oidc_url, rememberOn && remember)}>
               {providerLabel}
             </a>
@@ -346,7 +346,7 @@ export function PlainSignIn({
               type="submit"
               size="xl"
               variant={hasProvider ? "outline" : "default"}
-              className="w-full whitespace-normal"
+              className="w-full whitespace-normal!"
               disabled={login.isPending}
             >
               {login.isPending
@@ -526,7 +526,7 @@ export function PersonPassword({
         <Button
           type="submit"
           size="xl"
-          className="w-full whitespace-normal"
+          className="w-full whitespace-normal!"
           disabled={attempt.isPending || tooMany}
         >
           {attempt.isPending ? "Signing in…" : "Sign in"}

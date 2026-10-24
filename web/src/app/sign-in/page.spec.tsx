@@ -521,3 +521,38 @@ it("keeps one heading and no form when options fail to load", async () => {
   expect(screen.queryByLabelText("Email")).toBeNull();
   expect(screen.queryByText("Recovery and advanced setup")).toBeNull();
 });
+
+it("says who shares the gateway under the heading, and leaves the line out when the owner has no name", async () => {
+  Object.assign(options, { owner_name: "Sam" });
+  mount();
+  expect(await screen.findByText("Shared by Sam.")).toBeVisible();
+});
+
+it("leaves out the shared-by line when the gateway names no owner", async () => {
+  mount();
+  await screen.findByLabelText("Email");
+  expect(screen.queryByText(/Shared by/)).toBeNull();
+});
+
+it("asks for a reset by the owner's name, and keeps the line true without one", async () => {
+  Object.assign(options, { owner_name: "Sam" });
+  mount();
+  expect(await screen.findByText("Forgot your password? Ask Sam for a reset link.")).toBeVisible();
+});
+
+it("gives the reset line a plain fallback when the gateway names no owner", async () => {
+  mount();
+  expect(
+    await screen.findByText("Forgot your password? Ask the person who runs Azizam for a reset link."),
+  ).toBeVisible();
+});
+
+it("moves focus to Email when the owner's password form opens in place", async () => {
+  options.built_in = false;
+  options.oidc = true;
+  Object.assign(options, { owner_password: true });
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "Owner? Sign in with your password" }));
+  expect(await screen.findByLabelText("Email")).toHaveFocus();
+});
