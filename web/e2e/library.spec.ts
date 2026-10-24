@@ -286,7 +286,8 @@ for (const lifecycle of ["first load", "reload", "kind filter", "deep link"] as 
       signedRequests.push(route.request().url());
       return fulfilBytes(route, { contentType: "image/svg+xml", body: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"/>') });
     });
-    await page.route("**/me/api/media{,/**}?**", (route) => {
+    // Paths without a query too: a poster or download link carries none.
+    await page.route(/\/me\/api\/media(\/|\?|$)/, (route) => {
       const url = new URL(route.request().url());
       // The folder check has no asset scope; keep the asset assertions below.
       if (url.searchParams.has("folder_state")) return route.continue();
@@ -400,14 +401,14 @@ test("library filters dates, pages forward and preserves prior items", async ({
   await page
     .getByRole("button", { name: /Open A clean product render/ })
     .click();
-  await expect(
-    page.getByRole("button", { name: "Delete", exact: true }),
-  ).toHaveCount(1);
-  // The gateway returned this person's item, so normal maker actions apply.
+  // The gateway returned this person's item, so normal maker actions apply. Delete is one of them.
   await page
     .getByRole("dialog")
     .getByRole("button", { name: /^Actions for / })
     .click();
+  await expect(
+    page.getByRole("menuitem", { name: "Delete", exact: true }),
+  ).toHaveCount(1);
   await expect(
     page.getByRole("menuitem", { name: "Download with details" }),
   ).toBeVisible();
@@ -506,7 +507,7 @@ test("library audio plays independently and video uses its recorded poster", asy
   await detail.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page).not.toHaveURL(/asset=/);
   await expect(detail).toBeHidden();
-  await expect.poll(() => posterRequests.at(-1) ?? "").toContain("/poster/download");
+  await expect.poll(() => posterRequests.at(-1) ?? "").toContain("/video-poster/download");
   expect(posterRequests.every((url) => !new URL(url).searchParams.has("scope"))).toBe(true);
   await expect(page.locator('[role="listbox"]')).toHaveCount(0);
   await auditPage(page);

@@ -53,18 +53,13 @@ for (const width of [390, 1440] as const) {
     await page.screenshot({ path: test.info().outputPath(`library-running-${width}.png`), fullPage: false });
   });
 
-  test(`maker key and unavailable tile are not clipped at ${width}`, async ({ page }) => {
+  test(`unavailable tile is not clipped at ${width}, and the owner sees no maker key`, async ({ page }) => {
     await open(page, width);
-    if (width === 390) await page.getByRole("button", { name: /^Filters/ }).click();
-    await page.getByRole("combobox", { name: "Person", exact: true }).click();
-    await page.getByRole("option", { name: "Everyone", exact: true }).click();
-    if (width === 390) await page.keyboard.press("Escape");
     await page.getByText("Show them").click();
-    const key = page.getByRole("group", { name: "Creation makers" });
-    await expect(key).toBeVisible();
-    await expect(key.getByText(longName)).toBeVisible();
-    const clipped = await key.evaluate((node) => node.scrollWidth > node.clientWidth + 1);
-    expect(clipped, "maker key scrolls sideways").toBe(false);
+    // OWNER_VISIBILITY: the owner's Library has no person choice and no maker labels, so no long maker name is shown.
+    await expect(page.getByRole("combobox", { name: "Person", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("group", { name: "Creation makers" })).toHaveCount(0);
+    await expect(page.getByText(longName)).toHaveCount(0);
     const gone = page.locator("article", { has: page.getByRole("img", { name: /preview unavailable/ }) }).first();
     await expect(gone).toBeVisible();
     const fits = await gone.locator("div.overflow-hidden").first().evaluate((node) => {

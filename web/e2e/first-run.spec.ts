@@ -74,6 +74,11 @@ test("a new operator sets up, adds the fake engine and chats in under ten minute
     .getByRole("link", { name: "Try", exact: true })
     .click();
   await expect(page).toHaveURL(/\/try\/?$/);
+  // Try starts with no model chosen: the operator picks the one they just added, writes the question, then runs it.
+  await page.getByRole("combobox", { name: "Model", exact: true }).click();
+  // The picker shows the engine's name in its own capitals ("Marker Engine").
+  await page.getByRole("option", { name: ENGINE_NAME }).click();
+  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Say hello from the new gateway.");
   await page.getByRole("button", { name: "Run", exact: true }).click();
   const resultHeading = page.getByRole("heading", { name: "Chat result", exact: true });
   await expect(resultHeading).toBeVisible({ timeout: 60_000 });

@@ -78,7 +78,7 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
   await page.route("**/me/api/media/img_long", (route) =>
     fulfilJson(route, { asset }),
   );
-  await page.route("**/me/api/media/img_long/download?*", (route) => {
+  await page.route("**/me/api/media/img_long/download", (route) => {
     renewals++;
     return fulfilJson(route, { download_url: png });
   });

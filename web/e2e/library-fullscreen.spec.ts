@@ -28,7 +28,7 @@ const mediaFixture = {
 async function openPicture(page: Page, width: 1440 | 390) {
   await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
   await page.route("**/me/api/media?**", (route) => fulfilJson(route, mediaFixture));
-  await page.route("**/me/api/media/asset_fullscreen_1/download?*", (route) =>
+  await page.route("**/me/api/media/asset_fullscreen_1/download", (route) =>
     fulfilJson(route, { download_url: picture }),
   );
   await page.goto("/library/");

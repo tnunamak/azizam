@@ -272,7 +272,7 @@ describe("Home and Library polish", () => {
   it("keeps audio controls outside the open action and uses a duration fallback for video", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) => String(input).includes("/download?")
+      vi.fn(async (input: RequestInfo | URL) => String(input).includes("/download")
         ? Response.json({ download_url: "/signed/audio1" })
         : Response.json({ assets, models: [] })),
     );
@@ -320,7 +320,7 @@ describe("Home and Library polish", () => {
     ).toBeVisible();
     expect(within(dialog).getByRole("slider", { name: "Position" })).toBeVisible();
   });
-  it("resolves a supplied poster through the scoped signed-download API", async () => {
+  it("resolves a supplied poster through the signed-download API", async () => {
     const requests: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -337,19 +337,10 @@ describe("Home and Library polish", () => {
     );
     renderPage(<LibraryPage />, true);
     await screen.findByRole("button", { name: (name) => name.startsWith("Open Swimming fish, ") });
-    expect(requests).toContain("/me/api/media/poster1/download?scope=me");
-    screen.getByRole("combobox", { name: "Person" }).focus();
-    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-      configurable: true,
-      value: () => {},
-    });
-    await userEvent.keyboard("{Enter}");
-    await userEvent.click(
-      await screen.findByRole("option", { name: "Everyone" }),
-    );
-    await waitFor(() =>
-      expect(requests).toContain("/me/api/media/poster1/download?scope=everyone"),
-    );
+    expect(requests).toContain("/me/api/media/poster1/download");
+    // OWNER_VISIBILITY: the owner's Library has no person choice, and no request names a scope.
+    expect(screen.queryByRole("combobox", { name: "Person" })).toBeNull();
+    expect(requests.filter((path) => path.includes("scope="))).toEqual([]);
   });
   it("does not invent an unknown duration and preserves kind filter requests", async () => {
     const requests: string[] = [];
@@ -372,7 +363,7 @@ describe("Home and Library polish", () => {
       "true",
     );
     await waitFor(() =>
-      expect(requests).toContain("/me/api/media?limit=40&kind=video&scope=me"),
+      expect(requests).toContain("/me/api/media?limit=40&kind=video"),
     );
   });
 });
