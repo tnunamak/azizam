@@ -367,7 +367,10 @@ pytest = 17217
 # no eligible chat model), receipt lookups (+2: a late answer after a later check, and leaving Try cancels a lookup),
 # the workflow draft guard (+5 in tests/try-workflow-drafts.spec.tsx), and helper text (+3). vitest list measured 3482
 # (base 3468, no case removed).
-vitest = 3482
+# Try picture baseline (2026-10-24): +5 vitest cases in tests/try-workflow-drafts.spec.tsx: a successful run leaves no
+# unsent picture, a replaced or removed picture after a run is unsent, the picture comes back as it ran, and a picture
+# attached without a run is still unsent. vitest list measured 3487 (base 3482, no case removed).
+vitest = 3487
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
