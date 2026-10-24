@@ -1530,6 +1530,46 @@
   {
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.post_default",
+    "method": "POST",
+    "path": "/me/api/profile/avatar/default",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.post_generate",
+    "method": "POST",
+    "path": "/me/api/profile/avatar/generate",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.delete_generated",
+    "method": "DELETE",
+    "path": "/me/api/profile/avatar/generated",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.post_generated",
+    "method": "POST",
+    "path": "/me/api/profile/avatar/generated",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
+    "handler": "gateway.me_avatar.get_generator",
+    "method": "GET",
+    "path": "/me/api/profile/avatar/generator",
+    "schema": false
+  },
+  {
+    "auth": "session-only",
+    "gate": "Browser session; mutations require CSRF/action header",
     "handler": "gateway.me_avatar.get_picture",
     "method": "GET",
     "path": "/me/api/profile/avatar/picture",

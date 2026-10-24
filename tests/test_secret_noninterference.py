@@ -135,6 +135,9 @@ def _replace_every_secret(owner) -> int:
 def test_replacing_every_secret_with_different_bytes_changes_no_management_output(gateway, host_isolated, isolated_media_folder, tmp_path, monkeypatch) -> None:
     owner, *_ = owner_and_admin(gateway)
     _plant(gateway, owner, tmp_path, monkeypatch)
+    # The avatar generator's read provisions the owner's session App the first time (admin_store.ensure_session_app_for_user),
+    # so that App would appear between the two readings. Provision it first: the readings then differ only by the secrets.
+    assert owner.get("/me/api/profile/avatar/generator").status_code == 200
     before = _reading(gateway, owner)
 
     changed = _replace_every_secret(owner)
