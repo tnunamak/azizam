@@ -273,6 +273,10 @@ def create_me_avatar_router(
             model = await asyncio.to_thread(generation.model_for, person_id)
             if model is None:
                 return
+            # A manual make does not take the slot, so one may have started during the lookups above. Nothing awaits
+            # between this check and the start, so no other load can start one in between.
+            if generation.busy():
+                return  # Busy now: a later load starts it, and the attempt is kept.
             prompt = avatar_generation.build_prompt(avatar_generation.new_seed())
             try:
                 job = generation.start(request, person_id, model, prompt)
