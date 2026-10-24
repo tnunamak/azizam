@@ -60,15 +60,18 @@ def augment_owner_openapi(schema: dict, routes: list) -> None:
             operation["operationId"] = "owner_" + method.lower() + "_" + re.sub(
                 r"[^a-zA-Z0-9]+", "_", route.path).strip("_")
             operation["tags"] = [metadata["tag"]]
-            operation["security"] = operation_security.security_for(operation_security.OWNER)
+            bearer_only = metadata.get("bearer_only", False)
+            operation["security"] = operation_security.security_for(
+                operation_security.OWNER_BEARER if bearer_only else operation_security.OWNER)
             parameters = operation.setdefault("parameters", [])
             for name in re.findall(r"\{([^}:]+)(?::[^}]+)?\}", route.path):
                 if not any(p.get("in") == "path" and p.get("name") == name for p in parameters):
                     parameters.append({"name": name, "in": "path", "required": True,
                                        "schema": {"type": "string"}})
+            audience = (". A browser session is refused, even with CSRF and action headers."
+                        if bearer_only else ". Browser session mutations require CSRF/action headers; bearer calls do not.")
             operation["description"] = (operation.get("description", "") + "\n\nAuthorization: "
-                + metadata["gate"] + ". Browser session mutations require CSRF/action headers; bearer calls do not."
-                + (" Drain writes accept bearer credentials only." if method == "POST" and route.path.endswith("/drain") else "")).strip()
+                + metadata["gate"] + audience).strip()
             # Most legacy handlers manually read JSON. An open object is honest;
             # required fields and validation remain documented by the handler.
             if "requestBody" not in operation and method in {"POST", "PUT", "PATCH"}:

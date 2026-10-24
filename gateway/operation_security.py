@@ -17,6 +17,9 @@ APP_KEY = "app_key"
 # Calls carry the owner's or an admin's credential (OwnerBearer), or the admin session cookie. The owner and any
 # admin role are admitted; App keys are refused. An operation only the owner may call says so in its tag.
 OWNER = "owner"
+# Calls carry the owner's or an admin's bearer credential, and no browser session: a session is refused even with the
+# CSRF and action headers. The route map flags such an owner route ``bearer_only``.
+OWNER_BEARER = "owner_bearer"
 # Calls carry the signed-in browser session cookie. A call without one is refused.
 BROWSER_SESSION = "browser_session"
 # Calls are admitted without a session. A signed-in session changes the answer, so the cookie is optional.
@@ -62,6 +65,8 @@ def security_for(mode: str) -> list[dict[str, list]]:
     if mode == OWNER:
         # The admin credential, or the admin session: AdminAuthenticator takes either.
         return [{"OwnerBearer": []}, {BROWSER_SESSION_SCHEME: []}]
+    if mode == OWNER_BEARER:
+        return [{"OwnerBearer": []}]
     if mode == BROWSER_SESSION:
         return [{BROWSER_SESSION_SCHEME: []}]
     if mode == OPTIONAL_SESSION:

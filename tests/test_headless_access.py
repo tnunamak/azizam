@@ -210,7 +210,10 @@ def test_openapi_snapshot_and_security():
     for key, metadata in OWNER_OPERATIONS.items():
         method, path = key.split(" ", 1)
         operation = schema["paths"][path][method.lower()]
-        assert operation["security"] == operation_security.security_for(operation_security.OWNER)
+        mode = operation_security.OWNER_BEARER if metadata.get("bearer_only") else operation_security.OWNER
+        assert operation["security"] == operation_security.security_for(mode), key
+        if metadata.get("bearer_only"):
+            assert "A browser session is refused, even with CSRF and action headers." in operation["description"], key
         audience = OWNER_ONLY_TAG if metadata["owner_only"] else OWNER_AND_ADMINS_TAG
         assert operation["tags"] == [metadata["tag"], audience]
         path_names = set(re.findall(r"\{([^}]+)\}", path))

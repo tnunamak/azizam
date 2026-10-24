@@ -151,7 +151,8 @@
   "POST /admin/api/drain": {
     "tag": "status",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only; bearer only",
-    "owner_only": false
+    "owner_only": false,
+    "bearer_only": true
   },
   "GET /admin/api/extensions": {
     "tag": "engines and providers",
