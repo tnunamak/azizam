@@ -353,7 +353,7 @@ def test_remove_returns_to_the_palette_when_there_is_no_picture(rig: Rig, genera
     client.post("/me/api/profile/avatar/generated", json={"asset_id": "img_alice1"}, headers=ACTION)
     body = client.delete("/me/api/profile/avatar/generated", headers=ACTION).json()
     assert body == {"choice": "auto", "person_id": alice, "picture_url": None, "sign_in_picture_url": None,
-                    "made_picture_url": None, "generating": False}
+                    "made_picture_url": None, "generating": False, "default_due": False}
     assert client.get("/me/api/profile/avatar/picture").status_code == 404
 
 
