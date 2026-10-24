@@ -34,7 +34,7 @@ function watchApi(page: Page) {
 
 const primary = (page: Page) => page.locator("main [data-variant='default']");
 
-test("H1 H12 a member's cold load makes at most four Home requests, and typing waits for none of them", async ({ isolated }) => {
+test("H1 H12 a member's cold load makes at most five Home requests, and typing waits for none of them", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;
   const paths = watchApi(page);
@@ -53,7 +53,8 @@ test("H1 H12 a member's cold load makes at most four Home requests, and typing w
   await expect(page.getByRole("button", { name: /^(Make|Send)$/ })).toBeEnabled();
   await expect(box).toHaveValue("A lake at dawn");
   const counted = paths.filter((item) => item.startsWith("/me/api/") || item.startsWith("/gateway/v1/"));
-  expect(counted.length).toBeLessThanOrEqual(4);
+  // Four for Home itself, and the request history notice's own read of /me/api/retention (r103).
+  expect(counted.length).toBeLessThanOrEqual(5);
   expect(counted.filter((item) => item.startsWith("/me/api/home")).length).toBe(1);
   expect(counted.filter((item) => item.startsWith("/gateway/v1/"))).toEqual([]);
 });
@@ -157,7 +158,7 @@ test("H6 five tiles fill the row at 1100 px, with no gap at its end", async ({ i
   expect(Math.abs(Math.max(...boxes.map((box) => box.right)) - (list!.x + list!.width))).toBeLessThanOrEqual(2);
 });
 
-test("at 1440 px the composer and Recent share one column: the composer's edges meet the row's outer tile edges", async ({ isolated }) => {
+test("at 1440 px Recent fills Home's 960 px column, and the 760 px composer sits centred over it", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -168,9 +169,12 @@ test("at 1440 px the composer and Recent share one column: the composer's edges 
   const boxes = await tiles.evaluateAll((items) => items.map((item) => item.getBoundingClientRect().toJSON()));
   const composer = await page.locator("[data-slot='composer']").boundingBox();
   expect(composer).not.toBeNull();
-  // One centred column: the composer runs from the first tile's left edge to the last tile's right edge.
-  expect(Math.abs(composer!.x - boxes[0].left)).toBeLessThanOrEqual(1);
-  expect(Math.abs(composer!.x + composer!.width - boxes[5].right)).toBeLessThanOrEqual(1);
+  // One centred column: the row spans 960, and the composer is inset by the same amount on both sides.
+  expect(Math.round(boxes[5].right - boxes[0].left)).toBe(960);
+  expect(Math.round(composer!.width)).toBe(760);
+  const leftInset = composer!.x - boxes[0].left;
+  const rightInset = boxes[5].right - (composer!.x + composer!.width);
+  expect(Math.abs(leftInset - rightInset)).toBeLessThanOrEqual(1);
 });
 
 test("H4 the facts line shows the cost and wait its row knows, and leaves out what it does not", async ({ isolated }) => {

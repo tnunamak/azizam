@@ -231,6 +231,11 @@ export async function seedOwner(page: Page, request: APIRequestContext) {
       ],
     }),
   );
+  // Per-key trend maps are keyed by app names earlier cases created, which the shape oracle cannot know;
+  // the panel reads none of them, so the stub sends them empty.
+  const trends = status.status?.metrics?.trends;
+  if (trends)
+    for (const key of Object.keys(trends)) if (key.startsWith("per_key_")) trends[key] = {};
   const health = status.status?.current_health;
   if (health) {
     const video = {
