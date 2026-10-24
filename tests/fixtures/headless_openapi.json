@@ -1501,6 +1501,7 @@
             "type": "number"
           },
           "denoise": {
+            "description": "Keep at 1 to make a new song from your words.",
             "maximum": 1,
             "minimum": 0,
             "type": "number"
@@ -1595,6 +1596,7 @@
             "type": "number"
           },
           "denoise": {
+            "description": "Keep at 1 to make a new song from your words.",
             "maximum": 1,
             "minimum": 0,
             "type": "number"
