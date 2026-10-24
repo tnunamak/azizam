@@ -299,6 +299,33 @@ def resume_jobs(*, runtime: MakeRuntime, jobs_path: Path, enabled: bool = True) 
     return resumed
 
 
+def record_dispatch(
+    job_id: str,
+    *,
+    backend: str | None,
+    started_at_ms: int,
+    remote: bool,
+    jobs_path: Path,
+    receipts_path: Path,
+) -> bool:
+    """Record on the job's own receipt where its work ran and when it began.
+
+    The runtime calls this once work has reached a backend. A job refused
+    before that point never calls it, so its receipt stays unrecorded.
+    """
+    try:
+        job = media_jobs.get(job_id, path=jobs_path)
+        request_id = str((job or {}).get("request_id") or "")
+        if not request_id:
+            return False
+        return receipt_store.record_dispatch(
+            request_id, backend=backend, started_at_ms=started_at_ms, remote=remote, path=receipts_path,
+        )
+    except Exception as exc:  # noqa: BLE001 - the picture is made; its receipt is best-effort here.
+        log.warning("make job %s dispatch not recorded: %s", job_id, type(exc).__name__)
+        return False
+
+
 def _submit(
     request: Request,
     body: Any,

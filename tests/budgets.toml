@@ -351,6 +351,21 @@
 # Sign-in privacy round: +1 case (tests/test_accounts.py, the invite answer names the owner by role, not by name; the
 # options case is renamed). This branch, which carries the Home branch's cases on top of main r104, collects 17242
 # (measured 2026-10-23, collect-only through scripts/run-hermetic-pytest.sh).
+# Walkthrough A16/A17 (Usage totals and local counts): +5 pytest cases in tests/test_me_media.py for recorded decision costs,
+# unreported remote receipts, served-here requests, pre-routing refusals and the cost rule. collect-only measured 17220 (2026-10-24).
+# Make dispatch receipts: +10 pytest cases in tests/test_image_handler_gaps.py (the image routes' start stamp, with and without
+# a refusal), tests/test_session_make_runtime.py (the Make job's dispatch record, refusals, remote, first dispatch) and
+# tests/test_me_media.py (Usage counts for a completed and a refused Make job). collect-only measured 17230 (2026-10-24).
+# Walkthrough A16/A17 (Usage counts a media job once): +8 pytest cases in tests/test_me_media.py for a picture made through a
+# job, two attempts, a failed picture, a refusal before dispatch, a request outside any job, a work receipt the viewer cannot
+# read, a submit receipt from last month, and audio or video jobs. collect-only measured 17238 (2026-10-24).
+# Walkthrough A16/A17 round 5 (Usage finds a media job's submit receipt by its job id): +4 pytest cases in tests/test_me_media.py
+# for a picture that still counts once after its job record is removed, an older submit receipt left unlinked, a job record
+# another app owns, and an audio job after its record is removed. collect-only measured 17242 (2026-10-24).
+# Usage review fixes (media job folding, replays and start times): +7 pytest cases in tests/test_me_media.py for a success
+# with no start time, a success stored before start times, a chat named only as a job's parent, a same-key replay of a
+# failed picture, a picture row's model, an unpriced remote attempt, and a same-key replay of a failed image job through
+# the real image route. collect-only measured 17249 (2026-10-24).
 pytest = 17340
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
@@ -448,6 +463,11 @@ pytest = 17340
 # reach cases (+13 net).
 # No Playwright case was added or removed, so the playwright ceiling stays at 569.
 # vitest list measured 3480 (2026-10-24).
+# Walkthrough A17 (Usage cost labels): +1 vitest case in src/app/usage/page.spec.tsx for the four cost states
+# on one page. `vitest list` measured 3452 on 2026-10-24. Playwright stays at 566 (545 + 3 + 18), measured the same day.
+# Walkthrough A16/A17 (Usage local counts): +5 vitest cases in src/app/usage/page.spec.tsx for local-only months, local
+# requests beside paid totals, a no-paid month with local requests, a pre-routing failure and the CSV zero rule.
+# `vitest list` measured 3457 on 2026-10-24.
 vitest = 3488
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.

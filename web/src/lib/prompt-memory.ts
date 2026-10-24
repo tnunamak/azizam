@@ -149,12 +149,12 @@ function words(value: Retention): string {
   return value.replaceAll("_", " ");
 }
 
-/** The member's choice: "Forget prompts after" … */
+/** The member's choice: "Forget them after" … */
 export function memberRetentionLabel(value: Retention): string {
   return keepsForever(value) ? "Never" : words(value);
 }
 
-/** The owner's cap: "Keep prompts for" … */
+/** The owner's cap: "Longest time to keep them" … */
 export function capLabel(value: Retention): string {
   return keepsForever(value) ? "No limit" : words(value);
 }
@@ -264,11 +264,11 @@ export function promptNotSavedReason(
   state: TryKeepState,
   owner: boolean,
 ): string | null {
-  if (state === "member-off") return "You turned off prompt keeping.";
+  if (state === "member-off") return "You turned off keeping words and chats.";
   if (state === "household-off")
     return owner
-      ? "You turned off prompt keeping for everyone."
-      : "This gateway doesn’t keep prompts.";
+      ? "You turned off keeping words and chats for everyone."
+      : "This gateway doesn’t keep words and chats.";
   return null;
 }
 
@@ -321,9 +321,9 @@ export function purgeStatus(
 ): string | null {
   if (!purge?.pending) return null;
   if (purge.database_pending)
-    return "Prompt deletion hasn't finished. Azizam keeps retrying.";
+    return "Deleting saved words and chats hasn’t finished. Azizam keeps retrying.";
   if (purge.deadline_repair_pending)
-    return "Saved prompts haven't been shortened to the current limits yet. Azizam keeps retrying.";
+    return "Saved words and chats haven’t been shortened to the current limits yet. Azizam keeps retrying.";
   const stripping = purge.metadata_stripping;
   const left = stripping?.files_pending;
   const count =
@@ -331,7 +331,7 @@ export function purgeStatus(
       ? ` ${left} ${left === 1 ? "file" : "files"} left.`
       : "";
   if (stripping?.status === "retrying")
-    return `Some older files still contain prompts. Azizam keeps retrying.${count}`;
+    return `Some older files still contain words you used. Azizam keeps retrying.${count}`;
   return `Removing copies from older files in the background.${count}`;
 }
 

@@ -5328,6 +5328,8 @@ async def proxy_stt_request(
                 elif streams:
                     receipt.metadata["status_code"] = 200
 
+            # The engine call starts here. Recording the start now lets Usage count a success of this route as served.
+            owner.mark_phase("started_at_ms")
             reply = await _stt_adapter(execution.backend_config).invoke(
                 _stt_connection(execution),
                 "stt.translate" if operation == "translations" else "stt.transcribe",
@@ -8339,6 +8341,7 @@ async def proxy_graph_image_request(
             )
             if admission is not None:
                 return admission
+            _mark_backend_started(receipt)
             return await _generate_images_with_adaptive_batching(
                 request=request,
                 client=client,
@@ -8969,6 +8972,7 @@ async def proxy_graph_image_edit_request(
             )
             if admission is not None:
                 return admission
+            _mark_backend_started(receipt)
             return await _generate_images_with_adaptive_batching(
                 request=request,
                 client=client,
@@ -14655,6 +14659,8 @@ class _SessionMakeRuntime:
             finally:
                 _MAKE_PUBLISH_GATE.reset(gate_token)
                 _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
+                # Canceled or failed work may still have reached the backend.
+                _record_make_dispatch(str(payload.get("job_id") or ""), receipt)
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         if not 200 <= int(response.status_code) < 300:
             message, error_info = _media_job_failure(response)
@@ -14679,6 +14685,16 @@ async def _cancellable_make_call(gate: _MakePublishGate, work: Awaitable[Respons
     if gate.canceled and 200 <= response.status_code < 300:
         raise me_make.MakeCanceled()
     return response
+
+
+def _record_make_dispatch(job_id: str, receipt: RouteReceipt) -> None:
+    """Give the make job's own receipt where its work ran, once the work has begun there."""
+    if receipt.started_at_ms is None:
+        return  # Refused before any backend work began, so nothing is recorded.
+    me_make.record_dispatch(
+        job_id, backend=receipt.backend, started_at_ms=receipt.started_at_ms, remote=receipt.remote,
+        jobs_path=media_jobs.DB_PATH, receipts_path=receipt_store.DB_PATH,
+    )
 
 
 _SESSION_MAKE_RUNTIME = _SessionMakeRuntime()
@@ -19411,6 +19427,12 @@ def start_image_route_receipt(
     return receipt
 
 
+def _mark_backend_started(receipt: RouteReceipt | None) -> None:
+    """Stamp the moment work is handed to a backend. A refusal before this call leaves no start."""
+    if receipt is not None:
+        receipt.mark_phase("started_at_ms")
+
+
 def _apply_image_route_policy(
     receipt: RouteReceipt,
     auth_context: AuthContext,
@@ -23851,6 +23873,8 @@ async def gateway_image_generations_media_job(request: Request):
             job_id = str(existing.get("job_id") or "")
             if job_id and _has_image_media_job_payload(job_id):
                 _schedule_image_media_job(job_id)
+        # A same-key replay answers the job it already made, so its receipt belongs to that job, not to a new request.
+        receipt.job_id = str(existing["job_id"])
         response = _image_media_job_response(existing, request)
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
@@ -23956,11 +23980,16 @@ async def gateway_image_generations_media_job(request: Request):
 
     if created.job_id != job.job_id:
         _delete_image_media_job_payload(job.job_id)
+        # A concurrent retry with the same key lost the race: its receipt belongs to the job that won.
+        receipt.job_id = created.job_id
         created_dict = created.to_dict("internal")
         response = _image_media_job_response(created_dict, request)
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
 
+    # Usage counts the job as this request. The submit receipt names its job, as Make's does,
+    # so the pair stays linked after the job record is erased.
+    receipt.job_id = job.job_id
     try:
         media_jobs.append_event(
             job.job_id,
@@ -30158,6 +30187,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
         lease = await runtime.lease(drain=_swap_drain, lock_for=swap_lock_for,
                                     may_switch=_target_activation(auth_context) != "existing_only")
         if op == "images":
+            _mark_backend_started(receipt)
             response = await _protocol_image_result(runtime, body, request, auth_context, receipt, store)
         else:
             reply = await runtime.invoke(op, body)

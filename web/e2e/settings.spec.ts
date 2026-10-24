@@ -234,7 +234,7 @@ for (const [state, theme, width] of [
           "Instance",
           "Sign-in",
           "People and access",
-          "Prompts",
+          "Saved words and chats",
           "Receipts",
           "Media admission",
           "Extensions",

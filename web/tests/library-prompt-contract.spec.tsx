@@ -89,7 +89,7 @@ function mountPromptContract(personId: string, remember: boolean) {
 
 it.each([
   { remember: true, expected: "No saved prompt" },
-  { remember: false, expected: "No saved prompt. You turned off prompt keeping." },
+  { remember: false, expected: "No saved prompt. You turned off keeping words and chats." },
 ])("renders the maker's missing-prompt explanation: $remember", async ({ remember, expected }) => {
   const user = userEvent.setup();
   const fixture = mountPromptContract("me", remember);

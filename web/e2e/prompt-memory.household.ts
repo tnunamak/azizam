@@ -416,7 +416,7 @@ test.describe("Keys", () => {
 });
 
 test.describe("Your settings", () => {
-  test("Delete my saved prompts asks first and keeps the creations", async ({
+  test("Delete saved words and chats asks first and keeps the creations", async ({
     browser,
     baseURL,
   }) => {
@@ -438,10 +438,10 @@ test.describe("Your settings", () => {
     await expect(dialog).toContainText(
       "Your pictures, audio and videos stay in Library.",
     );
-    await dialog.getByRole("button", { name: "Delete prompts" }).click();
+    await dialog.getByRole("button", { name: "Delete words and chats" }).click();
     await expect(
       page.getByText(
-        /^Deleted \d+ saved prompts?\.|^Deletion pending\. Azizam will keep retrying\./,
+        /^Deleted words for \d+ creations?\.|^Deletion pending\. Azizam will keep retrying\./,
       ),
     ).toBeVisible();
     const after = await (
@@ -460,13 +460,13 @@ test.describe("Your settings", () => {
   }) => {
     const { ctx, page } = await as(browser, seed.restricted_email, baseURL!);
     await page.goto("/account/");
-    await page.getByRole("switch", { name: "Remember what I type" }).click();
+    await page.getByRole("switch", { name: "Keep the words you used to make things" }).click();
     await page
       .getByRole("dialog")
       .getByRole("button", { name: "Turn off" })
       .click();
     await expect(
-      page.getByRole("switch", { name: "Remember what I type" }),
+      page.getByRole("switch", { name: "Keep the words you used to make things" }),
     ).not.toBeChecked();
     const memory = await (
       await page.request.get("/me/api/prompt-memory")
@@ -479,9 +479,9 @@ test.describe("Your settings", () => {
       "/account/",
     );
     await page.goto("/account/");
-    await page.getByRole("switch", { name: "Remember what I type" }).click();
+    await page.getByRole("switch", { name: "Keep the words you used to make things" }).click();
     await expect(
-      page.getByRole("switch", { name: "Remember what I type" }),
+      page.getByRole("switch", { name: "Keep the words you used to make things" }),
     ).toBeChecked();
     await ctx.close();
   });
@@ -495,36 +495,36 @@ test.describe("Settings: the household's rules", () => {
     const owner = await as(browser, seed.owner_email, baseURL!);
     await owner.page.goto("/settings/");
     const section = owner.page.locator("section", {
-      has: owner.page.getByRole("heading", { name: "Prompts" }),
+      has: owner.page.getByRole("heading", { name: "Saved words and chats" }),
     });
-    await section.getByRole("combobox", { name: "Keep prompts for" }).click();
+    await section.getByRole("combobox", { name: "Longest time to keep them" }).click();
     await owner.page.getByRole("option", { name: "3 months" }).click();
     await owner.page
       .getByRole("dialog")
-      .getByRole("button", { name: "Delete older prompts" })
+      .getByRole("button", { name: "Delete older words and chats" })
       .click();
     await expect(
-      section.getByRole("combobox", { name: "Keep prompts for" }),
+      section.getByRole("combobox", { name: "Longest time to keep them" }),
     ).toHaveText("3 months");
 
     const member = await as(browser, seed.member_email, baseURL!);
     await member.page.goto("/account/");
     await expect(member.page.getByText("Up to 3 months here.")).toBeVisible();
     await member.page
-      .getByRole("combobox", { name: "Forget prompts after" })
+      .getByRole("combobox", { name: "Forget them after" })
       .click();
     await expect(
       member.page.getByRole("option", { name: "Never" }),
     ).toHaveAttribute("aria-disabled", "true");
     await member.page.keyboard.press("Escape");
 
-    await section.getByRole("switch", { name: "Never keep prompts" }).click();
+    await section.getByRole("switch", { name: "Never keep words or chats" }).click();
     await owner.page
       .getByRole("dialog")
-      .getByRole("button", { name: "Never keep prompts" })
+      .getByRole("button", { name: "Never keep words or chats" })
       .click();
     await expect(
-      section.getByRole("switch", { name: "Never keep prompts" }),
+      section.getByRole("switch", { name: "Never keep words or chats" }),
     ).toBeChecked();
 
     await member.page.reload();
@@ -543,9 +543,9 @@ test.describe("Settings: the household's rules", () => {
     ).toBeVisible();
 
     // Turning it back on asks nothing and restores nothing.
-    await section.getByRole("switch", { name: "Never keep prompts" }).click();
+    await section.getByRole("switch", { name: "Never keep words or chats" }).click();
     await expect(
-      section.getByRole("switch", { name: "Never keep prompts" }),
+      section.getByRole("switch", { name: "Never keep words or chats" }),
     ).not.toBeChecked();
     await owner.ctx.close();
     await member.ctx.close();

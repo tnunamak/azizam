@@ -411,7 +411,7 @@ export function CommandPalette({
                   in the sidebar; the palette finds them too. */}
               {!viewer.serviceAdmin && (
                 <CommandItem
-                  keywords={["prompts", "privacy", "account"]}
+                  keywords={["words", "chats", "prompts", "privacy", "account"]}
                   onSelect={() => go("/account")}
                 >
                   <UserRoundCog />

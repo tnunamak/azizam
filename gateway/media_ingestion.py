@@ -144,6 +144,9 @@ def finish_receipt(receipt: RouteReceipt, *, status_code: int) -> RouteReceipt:
     status = "cancelled" if int(status_code) == 499 else "succeeded" if 200 <= int(status_code) < 400 else "failed"
     receipt.metadata["status_code"] = int(status_code)
     receipt.metadata["terminal_reason"] = "cancelled" if status == "cancelled" else f"http_{int(status_code)}"
+    if status == "succeeded" and receipt.started_at_ms is None:
+        # The route does its work between begin and finish, so the work started when the receipt was accepted.
+        receipt.mark_phase("started_at_ms", now_ms=receipt.accepted_at_ms)
     receipt.finish(status)
     try:
         receipt.persist_retention_facts()
