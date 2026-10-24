@@ -14,7 +14,6 @@ import {
 import { endSession } from "@/lib/session-end";
 import { unsavedWorkNow } from "@/lib/unsaved-work";
 import {
-  AvatarPicker,
   PersonAvatar,
   type AvatarSelection,
 } from "@/components/product/person-avatar";
@@ -37,6 +36,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { AvatarPickerWithGeneration } from "./avatar-generation";
 import { useViewer } from "./session";
 import { SwitchConfirm, type LeaveRequest } from "./switch-confirm";
 
@@ -52,7 +52,9 @@ export function AccountMenuContent({
   onOpenChange,
   avatarPersonId = null,
   avatarSelection,
-  signInPictureUrl,
+  avatarPictureUrl = null,
+  avatarSignInPictureUrl = null,
+  avatarMadePictureUrl = null,
   onAvatarChange,
   avatarPending = false,
   avatarError,
@@ -63,7 +65,10 @@ export function AccountMenuContent({
   /** Wire the stable application person ID when the session API exposes it. */
   avatarPersonId?: string | null;
   avatarSelection?: AvatarSelection | null;
-  signInPictureUrl?: string | null;
+  /** The picture the avatar shows now (the sign-in picture, or the one the gateway made). */
+  avatarPictureUrl?: string | null;
+  avatarSignInPictureUrl?: string | null;
+  avatarMadePictureUrl?: string | null;
   onAvatarChange?: (selection: AvatarSelection) => void;
   avatarPending?: boolean;
   avatarError?: string | null;
@@ -108,7 +113,7 @@ export function AccountMenuContent({
               personId={avatarPersonId}
               name={viewer.name}
               selection={avatarSelection}
-              pictureUrl={signInPictureUrl}
+              pictureUrl={avatarPictureUrl}
               size={compact ? "md" : "sm"}
               decorative
             />
@@ -195,43 +200,49 @@ export function AccountMenuContent({
       </DropdownMenu>
       {canChangeAvatar && avatarPersonId && onAvatarChange && (
         <Dialog open={avatarPickerOpen} onOpenChange={setAvatarPickerOpen}>
+          {/*
+            Anchored at a fixed top offset, so the dialog does not jump between states. On a phone it is a bottom
+            sheet: at most 85% of the screen, its body scrolls, and Done stays in view. The close button is Done.
+          */}
           <DialogContent
-            className="sm:max-w-sm"
+            showCloseButton={false}
+            className="grid-rows-[auto_minmax(0,1fr)_auto] max-h-[85dvh] top-24! translate-y-0! sm:max-w-sm max-sm:top-auto! max-sm:bottom-0! max-sm:left-0! max-sm:right-0! max-sm:w-full! max-sm:max-w-none! max-sm:translate-x-0! max-sm:rounded-b-none!"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
               avatarDialogRequested.current = false;
               accountTriggerRef.current?.focus();
             }}
           >
-            <DialogHeader>
+            <DialogHeader className="text-left!">
               <DialogTitle>Your avatar</DialogTitle>
               <DialogDescription>
                 Choose how you appear to other people.
               </DialogDescription>
             </DialogHeader>
-            <div className="flex justify-center">
-              <PersonAvatar
+            <div className="min-h-0 space-y-4 overflow-y-auto">
+              <div className="flex justify-center">
+                <PersonAvatar
+                  personId={avatarPersonId}
+                  name={viewer.name}
+                  selection={avatarSelection}
+                  pictureUrl={avatarPictureUrl}
+                  size="xl"
+                />
+              </div>
+              <AvatarPickerWithGeneration
                 personId={avatarPersonId}
                 name={viewer.name}
-                selection={avatarSelection}
-                pictureUrl={signInPictureUrl}
-                size="xl"
+                value={avatarSelection}
+                signInPictureUrl={avatarSignInPictureUrl}
+                madePictureUrl={avatarMadePictureUrl}
+                onChange={onAvatarChange}
+                pending={avatarPending}
+                error={avatarError}
               />
             </div>
-            <AvatarPicker
-              personId={avatarPersonId}
-              name={viewer.name}
-              value={avatarSelection}
-              pictureUrl={signInPictureUrl}
-              onChange={onAvatarChange}
-              pending={avatarPending}
-              error={avatarError}
-            />
             <DialogFooter>
               <DialogClose asChild>
-                <Button variant="outline" size="md">
-                  Done
-                </Button>
+                <Button size="md">Done</Button>
               </DialogClose>
             </DialogFooter>
           </DialogContent>

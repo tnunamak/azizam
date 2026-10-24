@@ -394,8 +394,19 @@
 # collect-only measured 17435 (scripts/run-hermetic-pytest.sh --collect-only -q).
 # Changed-only kind check (2026-10-24): +8 cases in tests/test_generic_service_model_kinds.py and +1 in
 # tests/test_engine_admin_routes.py; collect-only measured 17444 (scripts/run-hermetic-pytest.sh --collect-only -q).
-# Train r107 merge (provisional until the final measure): 17403 + 43 (API reference) + 41 (model kinds) = 17487.
-pytest = 17487
+# Generated avatars (2026-10-24): +28 cases in tests/test_avatar_generation.py. collect-only on this branch measures 17271,
+# 158 below the merged-tree figure above, so the ceiling moves by the new cases only: 17403 + 28 = 17431.
+# Generated avatars round 2 (2026-10-24): collect-only on this branch measures 17287 (17271 before round 2), so the
+# ceiling moves by that change: 17431 + 16 = 17447.
+# Generated avatars round 3 (2026-10-24): the automatic default's admission and manual-choice races. In
+# tests/test_avatar_generation.py, 14 cases are added and 2 replaced: a net of +12. The feature tip before this round
+# measured 17452 (scripts/run-hermetic-pytest.sh --collect-only -q), already 5 over round 2's ceiling, so the ceiling is
+# set to this round's measured count.
+# Generated avatars round 4 (2026-10-24): one regression case in tests/test_avatar_generation.py for a manual make that
+# starts during the automatic default's lookup. The feature tip before it measured 17464, and collect-only measures
+# 17465 with it (scripts/run-hermetic-pytest.sh --collect-only -q), so the ceiling is set to 17465.
+# Train r107 merge (provisional until the final measure): 17403 + 43 (API reference) + 41 (model kinds) + 62 (generated avatars) = 17549.
+pytest = 17549
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -501,7 +512,12 @@ pytest = 17487
 # Per-model kinds (2026-10-24): +4 models-block cases, +1 wizard case, +1 Try guard case; vitest list measured 3536.
 # Refused kinds (2026-10-24): +4 models-block cases, +2 wizard cases and +2 record-page cases; vitest list measured 3544.
 # Voice label (2026-10-24): +1 case in web/src/lib/terms.spec.ts; vitest list measured 3545.
-vitest = 3545
+# Generated avatars (2026-10-24): +13 cases, src/components/product/person-avatar.spec.tsx (+10) and
+# src/components/shell/account-avatar.spec.tsx (+3). vitest list measured 3543 (--root web).
+# Generated avatars round 2 (2026-10-24): the picker and account specs follow the sources and the automatic picture
+# (asked once; never for a sign-in picture). vitest list measured 3547 (--root web), up 4 from 3543.
+# Train r107 merge (provisional until the final measure): 3530 + 15 (model kinds) + 17 (generated avatars) = 3562.
+vitest = 3562
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -568,7 +584,11 @@ vitest = 3545
 # Apps & keys and Connect round 3, Apps part: +1 case in e2e/connect.spec.ts (an App's access and key, and Create key on
 # an App with none). Gate lists measured 2026-10-24: playwright.config.ts 548 + live-data 3 + household 18 = 569.
 # Train r106 (2026-10-24): playwright.config.ts 635 + live-data 3 + household 18 = 656 (playwright test --list).
-playwright = 656
+# Generated avatars (2026-10-24): e2e/avatar-generated.spec.ts adds 16 chromium cases (four states at four sizes).
+# playwright.config.ts 651 (was 635) + live-data 3 + household 18 = 672 (playwright test --list).
+# Generated avatars round 2 (2026-10-24): seven states at four sizes, 28 chromium cases (was 16).
+# playwright.config.ts 663 + live-data 3 + household 18 = 684 (playwright test --list).
+playwright = 684
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core

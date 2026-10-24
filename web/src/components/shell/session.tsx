@@ -12,8 +12,18 @@ export interface Viewer {
   authenticated: boolean;
   /** The signed-in person's id; absent for service keys. */
   id?: string | null;
-  /** The signed-in person's avatar: the choice and a gateway path for the sign-in picture. */
-  avatar?: { choice: string; picture_url: string | null } | null;
+  /**
+   * The signed-in person's avatar: the choice, the picture it shows now, and the person's own previews of
+   * their sign-in picture and of the one the gateway made (gateway paths, or null).
+   */
+  avatar?: {
+    choice: string;
+    picture_url: string | null;
+    sign_in_picture_url?: string | null;
+    made_picture_url?: string | null;
+    /** The automatic picture is being made for this person. */
+    generating?: boolean;
+  } | null;
   serviceAdmin?: boolean;
   name: string;
   email: string | null;
@@ -51,6 +61,9 @@ export async function fetchViewer(): Promise<Viewer> {
         avatar: {
           choice: snapshot.user.avatar.choice,
           picture_url: snapshot.user.avatar.picture_url ?? null,
+          sign_in_picture_url: snapshot.user.avatar.sign_in_picture_url ?? null,
+          made_picture_url: snapshot.user.avatar.made_picture_url ?? null,
+          generating: snapshot.user.avatar.generating === true,
         },
       }),
       name: formatPersonName(snapshot.user.name, "Your account"),

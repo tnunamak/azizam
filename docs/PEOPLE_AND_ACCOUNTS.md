@@ -72,20 +72,46 @@ members and administrators cannot use the owner-only People/invitation APIs.
 
 Every person has an avatar, drawn from their stable person id (never the display name, so a rename keeps the
 colour). The choice is one word, stored in `user_avatars` (created with the account schema; a table of its own so
-no People list returns the picture URL): `auto` (the default), `v1` to `v8` (the eight generated palettes) or
-`picture` (the picture the identity provider shared).
+no People list returns the picture URL): `auto` (the default), `v1` to `v8` (the eight palettes), `picture` (the
+picture the identity provider shared) or `generated` (a picture the gateway made for the person; see below).
 
 | Endpoint | Result / request |
 | --- | --- |
-| `GET /me/api/profile/avatar` | `{choice, person_id, picture_url}`; `picture_url` is a gateway path or `null`, never the provider's address |
-| `PUT /me/api/profile/avatar` | `{choice}` and nothing else, with the same user-action header and CSRF token as other `/me` writes. Any other word, extra key or URL is `400 invalid_avatar_choice`; `picture` with no stored picture is `409 picture_unavailable` |
-| `GET /me/api/profile/avatars` | `{people: {id: {choice, picture_url}}}`: the caller's own; an owner or admin also gets everyone's (People and Library draw their marks from it). Another person's `picture_url` is shown only when that person chose `picture` |
-| `GET /me/api/profile/avatar/picture[?person=id]` | The sign-in picture as `image/png`, `image/jpeg`, `image/webp` or `image/gif`, or `404` |
+| `GET /me/api/profile/avatar` | `{choice, person_id, picture_url, sign_in_picture_url, made_picture_url, generating}`. `picture_url` is the gateway path of the picture shown, or `null`. The two preview paths are for the person only, and are `null` when there is no such picture. `generating` (the person only) is `true` while their automatic picture is being made. None is the provider's address. A read first keeps the automatic picture if its job has finished |
+| `PUT /me/api/profile/avatar` | `{choice}` and nothing else, with the same user-action header and CSRF token as other `/me` writes. Any other word, extra key or URL is `400 invalid_avatar_choice`; `picture` with no stored picture is `409 picture_unavailable`; `generated` with no kept picture is `409 generated_unavailable` |
+| `GET /me/api/profile/avatars` | `{people: {id: {choice, picture_url}}}`: the caller's own; an owner or admin also gets everyone's (People and Library draw their marks from it). Another person's `picture_url` is shown only when that person chose `picture` or `generated` |
+| `GET /me/api/profile/avatar/picture[?person=id]` | The picture shown, as `image/png`, `image/jpeg`, `image/webp` or `image/gif`, or `404`. `?kind=generated` or `?kind=sign-in` gives one of the person's own pictures whichever avatar they show (the person only) |
+| `GET /me/api/profile/avatar/generator` | `{available}`: whether an image route exists that the person may use to make an avatar. The picker shows its make button only then |
+| `POST /me/api/profile/avatar/generate` | Starts one attempt: a make job for `image.generate` on that route, with a new seed. Answers `202 {job}`, or `503 generator_unavailable` |
+| `POST /me/api/profile/avatar/generated` | `{asset_id}`: keeps one of the person's own Library pictures as the avatar. Anything else, or a picture not in their Library, is `404 generated_not_found` |
+| `DELETE /me/api/profile/avatar/generated` | Removes the kept picture. The avatar returns to the sign-in picture when there is one, and to the palette when there is not. Its metadata goes whichever avatar was shown |
+| `POST /me/api/profile/avatar/default` | The automatic picture (below): called on a signed-in load where the avatar shows. Answers the person's avatar view. A second call, or a call for a person who has a sign-in picture or a chosen avatar, starts nothing |
 
 The `picture` claim of the ID token is read at sign-in, only for a person who is let in. It is kept only when it is
 an `https` URL of at most 2048 characters with no credentials, and it is stored on the person (`user_avatars`),
 not in the session cookie. A claim that is present and fails these checks removes the stored URL; an absent claim
-leaves it. The browser never loads the provider's address (no hot-linking, so the provider learns nothing about
+leaves it. A generated avatar is made when the person presses Make an avatar, or once automatically (below), never at
+sign-in or in bulk. The gateway takes the first image capability the person may use from its catalog (`gateway/avatar_generation.py`), so no
+engine or model name is in code. The prompt is one fixed template with a style chosen by a random seed. It holds no
+name, address or photo, and its job asks prompt memory to forget it. The job is an ordinary make job, stamped with
+the person, so it shows in their Library. Keeping a picture copies the job's picture to the avatar cache beside the
+admin database, under one directory per person (named by a hash of the person id) with one file per template
+version. Others see that picture only when the person chose it. Removing it deletes the copy, and removing the
+person deletes it too. Schema 19 rebuilds `user_avatars` once to add the word `generated`.
+
+**The automatic picture.** A person with no sign-in picture and no chosen avatar (`auto`) gets one picture made for
+them, once. The page asks on their first signed-in load where the avatar shows (`POST .../avatar/default`). One
+default starts at a time, and only when an image route exists and no other picture job is queued or running. A load
+that finds the slot taken, picture work busy, or a start refused for capacity (HTTP 429 or 503) starts nothing and
+uses no attempt, so a later load tries again. The attempt (`default_attempted_at`) is recorded once the job has
+started, with the job's id in `default_job_id`, or when the start fails for another reason, so that failure is never
+retried. A person who removes the picture is never given another. A keep, a pick or a Remove by the person records the
+attempt and forgets the job, so a default that finishes after one publishes nothing. When the job succeeds and the
+person has made no such choice, the picture is kept. It becomes the avatar if they have the automatic choice and no
+sign-in picture; otherwise they can choose it later. `default_job_id` is set until the job has stopped. Schema 20
+adds those two columns.
+
+The browser never loads the provider's address (no hot-linking, so the provider learns nothing about
 who views whom): the gateway fetches it on the server with no cookie, credential or referer, over `https` only, at
 most 1 MB and 8 seconds, through the fetcher that guards media URLs (`gateway/media_fetch.py`) in its strict
 mode: public addresses only (checked after DNS and on every redirect hop), destination port 443 only, and never

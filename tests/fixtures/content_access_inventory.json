@@ -35,7 +35,7 @@
     {
       "path": "gateway/me_make.py",
       "function": "_submit",
-      "source_sha256": "1b00400013bd622931d21f5ac5938e3aad0d4b5b0a47dca7cef4e0b1ff365bb6",
+      "source_sha256": "655c448fc32be90afae27c0941d825171d64e647f46fe598266d9bcaafce179c",
       "call": "_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -1438,6 +1438,36 @@
       "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.put_avatar",
       "method": "PUT",
       "path": "/me/api/profile/avatar",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.get_generator",
+      "method": "GET",
+      "path": "/me/api/profile/avatar/generator",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.post_generate",
+      "method": "POST",
+      "path": "/me/api/profile/avatar/generate",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.post_default",
+      "method": "POST",
+      "path": "/me/api/profile/avatar/default",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.post_generated",
+      "method": "POST",
+      "path": "/me/api/profile/avatar/generated",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.delete_generated",
+      "method": "DELETE",
+      "path": "/me/api/profile/avatar/generated",
       "access": "own-account"
     },
     {

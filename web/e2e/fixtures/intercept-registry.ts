@@ -398,6 +398,7 @@ export const REGISTRY: Endpoint[] = [
   reads("/me/api/models/catalog", { required: ["/aliases", "/models"] }),
   // Home's one-time request history notice reads this; a capture stubs it due.
   reads("/me/api/retention", { required: ["/notice_due"] }),
+  reads("/me/api/profile/avatar/generator", { required: ["/available"] }),
   reads("/me/api/session", {
     required: [
       "/authenticated",

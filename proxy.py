@@ -17,6 +17,7 @@ Features:
 
 from gateway.compat import get_env
 from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
+from gateway.public_failure import PublicFailure
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
@@ -75,6 +76,7 @@ from gateway import (
     admin_store,
     audio_media_jobs,
     browser_sessions,
+    avatar_generation,
     avatars,
     remembered_people,
     frontend_mount,
@@ -14546,6 +14548,8 @@ class _SessionMakeRuntime:
     def schedule(self, job_id: str, run: Callable[[], Awaitable[None]]) -> None:
         if job_id in _image_media_job_scheduled:
             return
+        # The owning loop comes first: called off it, this raises before any marker or gate is kept.
+        loop = asyncio.get_running_loop()
         _image_media_job_scheduled.add(job_id)
         gate = self._gates.setdefault(job_id, _MakePublishGate())
 
@@ -14579,11 +14583,16 @@ class _SessionMakeRuntime:
             finally:
                 semaphore.release()
 
-        loop = asyncio.get_running_loop()
         # A cancel while the job waits for a turn ends the wait at once, so
         # only queued or running jobs hold a task and a gate.
         gate.loop, gate.stop_waiting = loop, asyncio.Event()
-        task = loop.create_task(bounded())
+        try:
+            task = loop.create_task(bounded())
+        except BaseException:
+            # No task will run the job, so give back its marker and its gate.
+            _image_media_job_scheduled.discard(job_id)
+            self._gates.pop(job_id, None)
+            raise
         _image_media_job_tasks.add(task)
 
         def _done(done_task: asyncio.Task) -> None:
@@ -14746,11 +14755,72 @@ app.include_router(
     )
 )
 
+def _avatar_picture_model(person_id: str) -> str | None:
+    """The image route a person's avatar is made with: the first one their own App may use, while media jobs are admitted."""
+    if _SESSION_MAKE_RUNTIME.admission(avatar_generation.IMAGE_INTENT) is not None:
+        return None
+    app = admin_store.ensure_session_app_for_user(person_id, name=me_make.APP_NAME, path=ADMIN_STORE.path)
+    identity = runtime_identity_for_session_app(str(app["id"]), person_id, path=ADMIN_STORE.path)
+    if identity is None or identity.denial:
+        return None
+    return avatar_generation.pick_route(_gateway_capabilities_for_auth_context(AuthContext(identity=identity)))
+
+
+def _avatar_start_job(request: Request, person_id: str, model: str, prompt: str) -> dict[str, Any]:
+    user = admin_store.get_user(person_id, path=ADMIN_STORE.path)
+    if user is None:
+        raise PublicFailure("session_user_not_found", 401)
+    return me_make.start_person_job(
+        request,
+        {
+            "intent": avatar_generation.IMAGE_INTENT,
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            # The prompt is the gateway's template, not the person's words, so it is not kept in their prompt memory.
+            "extensions": {prompt_memory.NAMESPACE: {"mode": "forget"}},
+        },
+        user=user,
+        runtime=_SESSION_MAKE_RUNTIME,
+        find_owned_asset=lambda request, user_id, asset_id: me_media.owned_library_asset(
+            user_id, asset_id, **_PERSON_LIBRARY),
+        admin_path=ADMIN_STORE.path,
+        jobs_path=media_jobs.DB_PATH,
+        receipts_path=receipt_store.DB_PATH,
+    )
+
+
+def _avatar_own_picture_file(person_id: str, asset_id: str) -> Path | None:
+    """The file of a picture in the person's own Library, or None. The Library decides whose job made it."""
+    item = me_media.owned_library_asset(person_id, asset_id, **_PERSON_LIBRARY)
+    if item is None or item.get("available") is False:
+        return None
+    path = asset_cache_path(asset_id)
+    return path if path is not None and path.is_file() else None
+
+
+def _avatar_job_state(person_id: str, job_id: str) -> dict[str, Any] | None:
+    """The person's own make job, as the automatic default reads it, or None when it is not theirs."""
+    return me_make.person_job_state(job_id, person_id, admin_path=ADMIN_STORE.path, jobs_path=media_jobs.DB_PATH)
+
+
+def _avatar_picture_work_busy() -> bool:
+    """Whether any picture job is queued or running here. The automatic default waits for the queue to clear."""
+    return bool(_image_media_job_scheduled)
+
+
 app.include_router(
     me_avatar.create_me_avatar_router(
         session_provider=lambda request: _oidc_session_from_request(request),
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
         admin_db_path=lambda: ADMIN_STORE.path,
+        generation=me_avatar.AvatarGeneration(
+            model_for=_avatar_picture_model,
+            start=_avatar_start_job,
+            own_picture_file=_avatar_own_picture_file,
+            job_state=_avatar_job_state,
+            busy=_avatar_picture_work_busy,
+        ),
     )
 )
 
