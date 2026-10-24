@@ -682,8 +682,12 @@ def create(
     outstanding_limits: Iterable[OutstandingLimit] = (),
     input_data: Mapping[str, Any] | None = None,
     path: Path = DB_PATH,
+    maker_from_request: bool = True,
 ) -> MediaJob:
     """Create a job; replay only matching owner, operation and submission facts.
+
+    The job's maker is the authenticated request's maker. A caller that indexes work made by someone else passes
+    ``maker_from_request=False``, and the maker it set on the job stands.
 
     A finished job older than ``REPLAY_WINDOW_S`` gives up its request ID to
     the new job instead of replaying.
@@ -707,7 +711,9 @@ def create(
     # Never accept a caller-supplied digest as proof that the input matches.
     record.input_hash = _input_hash(record, input_data)
     # The maker is the person and credential of the authenticated request, never a field of the submission.
-    record.maker_person_id, record.maker_credential_id, record.maker_connection_id = request_source.job_maker(record.app_id)
+    if maker_from_request:
+        record.maker_person_id, record.maker_credential_id, record.maker_connection_id = (
+            request_source.job_maker(record.app_id))
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         if record.request_id:

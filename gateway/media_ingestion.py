@@ -54,12 +54,15 @@ def index_sync_assets(
     api_key_name: str | None = None,
     metadata: Mapping[str, Any] | None = None,
     path=None,
+    maker_person_id: str | None = None,
+    maker_from_request: bool = True,
 ) -> media_jobs.MediaJob | None:
     """Create the succeeded media-job row for a synchronous media response.
 
     Returns ``None`` when no valid asset handles are present. The metadata bag
     must stay safe for ``media_jobs``: no prompts, request bodies, or media
-    bytes.
+    bytes. The job's maker is the request's own maker, unless ``maker_from_request`` is False: then it is
+    ``maker_person_id``, the creator of the stored output, which a different requester may index.
     """
     safe_assets = [_normalize_asset(asset) for asset in assets]
     safe_assets = [asset for asset in safe_assets if asset is not None]
@@ -67,7 +70,8 @@ def index_sync_assets(
         return None
     try:
         return _create_indexed(request_id, intent, safe_assets, workflow, backend, app_profile,
-                               app_id, owner_key_hash, api_key_name, metadata, path)
+                               app_id, owner_key_hash, api_key_name, metadata, path,
+                               maker_person_id, maker_from_request)
     except media_jobs.IdempotencyConflict:
         # The request id is server-made per response, so a second index of it
         # is a retry of the same response: the first record wins.
@@ -77,7 +81,8 @@ def index_sync_assets(
 
 
 def _create_indexed(request_id, intent, safe_assets, workflow, backend, app_profile,
-                    app_id, owner_key_hash, api_key_name, metadata, path) -> media_jobs.MediaJob:
+                    app_id, owner_key_hash, api_key_name, metadata, path,
+                    maker_person_id, maker_from_request) -> media_jobs.MediaJob:
     return media_jobs.create(
         media_jobs.MediaJob(
             request_id=request_id,
@@ -92,8 +97,10 @@ def _create_indexed(request_id, intent, safe_assets, workflow, backend, app_prof
             owner_key_hash=owner_key_hash,
             api_key_name=api_key_name,
             metadata=dict(metadata or {}),
+            maker_person_id=maker_person_id,
         ),
         path=media_jobs.DB_PATH if path is None else path,
+        maker_from_request=maker_from_request,
     )
 
 
@@ -224,6 +231,9 @@ def index_video_delivery(
         api_key_name=_safe_string(safe_record.get("api_key_name")),
         metadata={"mode": "sync_video_delivery"},
         path=media_jobs.DB_PATH,
+        # The video's creator is its maker. The request that delivers it may belong to someone else.
+        maker_person_id=_safe_string(safe_record.get("person_id")),
+        maker_from_request=False,
     )
     return job
 
