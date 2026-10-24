@@ -355,6 +355,8 @@ pytest = 17185
 # value; it replaces the provisional 3451.
 # Home visual round 4 (feat/home-visual-3): the first visit's audio discs and its one-kind case, the slim history
 # notice. Full run 229 files, 3423 cases, all passed (2026-10-23). Measured value.
+# Home visual round 5: no vitest case added or removed (one Home case renamed); full run 229 files, 3423 cases, all
+# passed (2026-10-23). The ceiling stays at the measured value.
 vitest = 3423
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
@@ -387,7 +389,10 @@ vitest = 3423
 # Home visual round 4 (feat/home-visual-3): the first visit's edges, ring and one-kind cases, the owner's quiet
 # panel, the phone layout, and the notice saved at 768 px. --list: playwright.config.ts 574, live-data 3,
 # household 18: 595, measured 2026-10-23.
-playwright = 595
+# Home visual round 5 (feat/home-visual-3): +7 cases in e2e/home-redesign.spec.ts: the phone chooser row, two play-disc
+# cases (light and dark), the first visit's card focus and Try, the 760 px notice, the 72 px gap and the 16 px prompt.
+# --list: playwright.config.ts 581, live-data 3, household 18: 602, measured 2026-10-23.
+playwright = 602
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
