@@ -47,7 +47,7 @@ from starlette.formparsers import (
 )
 from starlette.requests import ClientDisconnect
 
-from gateway import private_io, private_tmp
+from gateway import off_loop_spawn, private_io, private_tmp
 from gateway.alias_policy import transform_specs
 from gateway.resource_claims import (
     AdmissionDecision,
@@ -930,8 +930,8 @@ async def run_media_command(
     process: asyncio.subprocess.Process | None = None
     try:
         process = await await_with_cancellation(
-            asyncio.create_subprocess_exec(
-                *command,
+            off_loop_spawn.start(
+                command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             ),

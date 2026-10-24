@@ -21,6 +21,8 @@ from typing import Any, AsyncIterator, Mapping
 
 from starlette.requests import Request
 
+from gateway import off_loop_spawn
+
 OPENAI_PCM_RATE = 24000
 # Byte budget for peeking body messages before provisional upload admission.
 # When the model cannot be peeked, STT execution resolves it after parsing.
@@ -154,8 +156,8 @@ async def transcode_pcm_stream(
     emits it, so the first encoded bytes leave before synthesis finishes.
     A nonzero ffmpeg exit raises after any already-yielded output.
     """
-    process = await asyncio.create_subprocess_exec(
-        *ffmpeg_pcm_command(src_rate, response_format),
+    process = await off_loop_spawn.start(
+        ffmpeg_pcm_command(src_rate, response_format),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,

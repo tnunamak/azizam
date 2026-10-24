@@ -14,14 +14,17 @@ processes = 0         # no request starts a process (ffprobe, systemctl, ...)
 # A route may carry its own limits when it cannot meet the default yet. Each needs a
 # reason, and the table may only shrink.
 [api.routes]
-# "/some/route" = { p95_ms = 250, reason = "..." }
-# Home's first read after its engine rows are too old to serve (api_bench.py cold_home_row: it waits 61 s, past the
-# 60 s stale limit, before each of three reads). The limits are the values measured on the perf fixture at 283597f3e:
-# every sample was 44 statements and 13 processes, p95 353 ms at a 1-minute load of 51 (24 cores). The base commit
-# 2682130de measured the same 44 and 13 with the same harness; its p95 was 163 ms at load 28, so the times say
-# little across loads. The 13 processes are one systemctl check per lifecycle engine in the engine grid; the
-# processes are the exemption and should shrink.
-"/me/api/home (status cache expired)" = { p95_ms = 360, statements = 44, processes = 13, reason = "cold engine grid: one systemctl check per lifecycle engine" }
+# No route has its own limits. Every route meets the defaults above, including the cold reads of Home and the
+# owner's status page (api_bench.py). The status page and Home read the stored snapshot and never wait for a probe.
+# A read after idle starts a background refresh; its process starts count against the read only if they begin while
+# the read is in flight. test_perf_harness.py fails if a row is added here.
+
+# A cold read must not hold the event loop: api_bench.py measures the largest /health latency while
+# the read runs, less the idle median, and check.py judges it here. Every request waits for the
+# loop, so a stall of this size is felt by every person on the gateway. A fork on the loop costs
+# about 0.05 ms per MB of resident memory, so a probe that spawns on the loop shows up here.
+[loop]
+max_stall_ms = 100
 
 [ui]
 ready_ms = 500        # last change to <main> after navigation, warm HTTP cache, 1440 px wide

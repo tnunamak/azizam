@@ -65,7 +65,7 @@ class SpeechStreamExitTests(unittest.IsolatedAsyncioTestCase):
         for exited in (False, True):
             with self.subTest(exited=exited):
                 process = FakeProcess(0, exited=exited)
-                with patch.object(speech_stream.asyncio, "create_subprocess_exec", AsyncMock(return_value=process)):
+                with patch.object(speech_stream.off_loop_spawn, "start", AsyncMock(return_value=process)):
                     output = [chunk async for chunk in transcode()]
                 self.assertEqual(output, [b"encoded-first", b"encoded-second"])
                 self.assertEqual(process.stdin.written, [b"\x01\x02", b"\x03\x04"])
@@ -79,7 +79,7 @@ class SpeechStreamExitTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(exited=exited, broken=broken):
                     process = FakeProcess(1, exited=exited, broken=broken)
                     output = []
-                    with patch.object(speech_stream.asyncio, "create_subprocess_exec", AsyncMock(return_value=process)):
+                    with patch.object(speech_stream.off_loop_spawn, "start", AsyncMock(return_value=process)):
                         with self.assertRaisesRegex(RuntimeError, "ffmpeg exited with status 1"):
                             async for chunk in transcode():
                                 output.append(chunk)
@@ -97,7 +97,7 @@ class SpeechStreamExitTests(unittest.IsolatedAsyncioTestCase):
             yield b"\x01\x02"
 
         error = FileNotFoundError("ffmpeg not found")
-        with patch.object(speech_stream.asyncio, "create_subprocess_exec", AsyncMock(side_effect=error)) as spawn:
+        with patch.object(speech_stream.off_loop_spawn, "start", AsyncMock(side_effect=error)) as spawn:
             with self.assertRaises(FileNotFoundError) as raised:
                 await anext(transcode(untouched_source()))
         self.assertIs(raised.exception, error)
@@ -107,7 +107,7 @@ class SpeechStreamExitTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_transcode_does_not_emit_sse_done(self) -> None:
         process = FakeProcess(1)
         events = []
-        with patch.object(speech_stream.asyncio, "create_subprocess_exec", AsyncMock(return_value=process)):
+        with patch.object(speech_stream.off_loop_spawn, "start", AsyncMock(return_value=process)):
             with self.assertRaisesRegex(RuntimeError, "ffmpeg exited with status 1"):
                 async for event in speech_stream.pcm_to_sse(transcode()):
                     events.append(json.loads(event[len(b"data: "):]))
@@ -119,7 +119,7 @@ class SpeechStreamExitTests(unittest.IsolatedAsyncioTestCase):
             raise ValueError("source failed")
 
         process = FakeProcess(1)
-        with patch.object(speech_stream.asyncio, "create_subprocess_exec", AsyncMock(return_value=process)):
+        with patch.object(speech_stream.off_loop_spawn, "start", AsyncMock(return_value=process)):
             with self.assertRaisesRegex(ValueError, "source failed"):
                 async for _ in transcode(failing_source()):
                     pass

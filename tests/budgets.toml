@@ -309,7 +309,16 @@
 # Ceiling 16989 -> 16999, remeasured with scripts/run-hermetic-pytest.sh --collect-only -q (2026-10-23).
 # Train r103 step 5 (account chooser): 17171 + 11 (16999 - 16988) = 17182, provisional until the final hermetic collection.
 # Train r103: collect-only measured 17185.
-pytest = 17185
+# Status snapshot round 3: tests/test_status_snapshot.py goes from 8 to 17 cases, and the new
+# tests/test_backend_health_sampler.py adds 3: collect-only delta +12 (2026-10-23).
+# Status fallback and sampler round 4: tests/test_service_row_cache.py (new) adds 3 cases, tests/test_status_snapshot.py
+# adds 2, and tests/test_backend_health_sampler.py adds 2: collect-only 16869 -> 16876 (2026-10-23). The ceiling of
+# 16860 was already below the 16869 that 1104834e7 measures, so this sets it to the measured count.
+# Status probe ownership: +1 case in tests/test_service_row_cache.py (a finished fallback probe leaves a newer probe
+# registered). The two tests whose arrangement moved to the snapshot build keep their count.
+# collect-only 16877 -> 16878 (2026-10-23).
+# Train r104: collect-only measured 17215.
+pytest = 17215
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
