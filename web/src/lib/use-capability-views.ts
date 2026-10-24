@@ -15,7 +15,6 @@ import {
   type Verdict,
 } from "@/lib/capability-state";
 import { homeApi, type HomeSnapshot } from "@/app/_home/home-api";
-import { capabilityTiles } from "@/app/_home/presentation";
 import { appPlumbingCapabilities } from "@/lib/terms";
 
 /** People see these names (VOICE glossary); the gateway's own titles still match. */
@@ -213,7 +212,7 @@ export function useCapabilityViews(
   // A member's summary covers what they use; embeddings and decisions are
   // what their apps use behind the scenes, so they never read "Embeddings down".
   const rows = (
-    home ? capabilityTiles(home.capabilities, home.aliases) : []
+    home ? home.capabilities : []
   ).filter(
     (row) => owner || !appPlumbingCapabilities.has(row.icon_key ?? row.capability),
   );

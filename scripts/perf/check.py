@@ -75,6 +75,9 @@ def home_violations(report: dict, budget: dict) -> list[dict]:
         ("js_wire_kb", profiles["mobile"]["cold"]["js_wire_kb"]), ("js_requests", profiles["mobile"]["cold"]["js_requests"]),
         ("uncompressed_js", profiles["mobile"]["cold"]["js_uncompressed"]),
     ]
+    if report.get("who") == "member":
+        # Only a member's Home is judged on requests: an owner's also reads the status and registry the shell shares.
+        checks.append(("member_api_requests", profiles["desktop"]["cold"].get("member_api_requests")))
     return [{"kind": "home", "what": "Home", "metric": name, "value": value if value is not None else "never", "limit": budget[name],
              "over": 99 if value is None else value / max(budget[name], 1)}
             for name, value in checks if value is None or value > budget[name]]

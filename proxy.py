@@ -16332,6 +16332,8 @@ app.include_router(create_home_router(
     spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
     availability_services=_workflow_availability_services,
     workflow_records=GATEWAY_WORKFLOW_REGISTRY.records,
+    recent_chats=lambda person_id: request_history_api.recent_chats(
+        person_id, admin_path=ADMIN_STORE.path, media_path=media_jobs.DB_PATH, limit=6),
 ))
 
 

@@ -83,6 +83,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { takeHomeHandoff, type HomeHandoff } from "@/app/_home/handoff";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader, EmptyState, ErrorState } from "@/components/product";
 import { TechnicalDetails } from "@/components/product/technical-details";
@@ -1521,6 +1522,34 @@ export default function TryPage() {
   useEffect(() => {
     if (requestedTab) setActiveTab(requestedTab);
   }, [requestedTab]);
+
+  // A prompt typed on Home arrives in sessionStorage, never in the URL. It is taken once and sent as
+  // one run, on the tab this page opened, once that tab is showing and its list has loaded.
+  const homeHandoff = useRef<HomeHandoff | null | undefined>(undefined);
+  const [handoffPending, setHandoffPending] = useState(false);
+  useEffect(() => {
+    if (homeHandoff.current !== undefined) return;
+    homeHandoff.current = takeHomeHandoff(requestedCapabilityKey ?? null);
+    if (!homeHandoff.current || !requestedTab) {
+      homeHandoff.current = null;
+      return;
+    }
+    if (homeHandoff.current.prompt) {
+      const words = homeHandoff.current.prompt;
+      setPrompt((current) => ({ ...current, [requestedTab]: words }));
+    }
+    setHandoffPending(true);
+  }, [requestedCapabilityKey, requestedTab]);
+  useEffect(() => {
+    if (!handoffPending || !homeHandoff.current || !requestedTab || activeTab !== requestedTab) return;
+    const section: CatalogSection = requestedTab === "workflow" ? "workflows" : "models";
+    if (catalogState[section] !== "ready" && catalogState[section] !== "empty") return;
+    const form = formRefs.current[requestedTab];
+    if (!form) return;
+    homeHandoff.current = null;
+    setHandoffPending(false);
+    form.requestSubmit();
+  }, [handoffPending, activeTab, requestedTab, catalogState, prompt]);
 
   useEffect(() => {
     try {

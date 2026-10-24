@@ -63,6 +63,13 @@ for (const viewport of WIDTHS) {
 
       await expect(page.getByRole("status")).toContainText("You’re signed out.");
       await capture(page, name, "list-after-sign-out");
+      // The forget link sits on the rows' left edge, not indented past them.
+      const row = await page.locator("main ul li button").first().boundingBox();
+      const forgetLink = page.getByRole("button", { name: "Forget someone on this browser" });
+      const forget = await forgetLink.boundingBox();
+      // The link's focus padding sits in its negative margin, so its words start on the rows' left edge.
+      const padding = await forgetLink.evaluate((element) => parseFloat(getComputedStyle(element).paddingLeft));
+      expect(Math.abs(forget!.x + padding - row!.x)).toBeLessThan(0.5);
       await endingStates(page, name, robinName);
 
       await page.goto("/sign-in/");
@@ -156,7 +163,7 @@ for (const viewport of WIDTHS) {
       await device.goto("/sign-in/");
       await expect(device.getByLabel("Email")).toBeVisible();
       await expect(device.getByRole("heading", { level: 1, name: CHOOSER_HEADING })).toHaveCount(0);
-      await expect(device.getByRole("checkbox", { name: "Show my name on this browser next time" })).toHaveCount(0);
+      await expect(device.getByRole("checkbox", { name: "Remember my name on this browser" })).toHaveCount(0);
     });
 
     test(`the list cannot be read, the plain form for a new browser, and the reset form are captured`, async ({ browser, baseURL }) => {
@@ -166,7 +173,7 @@ for (const viewport of WIDTHS) {
       const fresh = await browser.newContext({ baseURL, viewport: { width: viewport.width, height: viewport.height } });
       const page = await fresh.newPage();
       await page.goto("/sign-in/");
-      await expect(page.getByRole("checkbox", { name: "Show my name on this browser next time" })).toBeChecked();
+      await expect(page.getByRole("checkbox", { name: "Remember my name on this browser" })).toBeChecked();
       await capture(page, name, "form");
 
       await page.route("**/auth/api/remembered", (route) => route.abort());

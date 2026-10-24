@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import json
 import sqlite3
 import time
 from collections.abc import Callable
@@ -83,8 +84,6 @@ _BATCH = 100
 
 
 def _item(row: dict[str, Any], app_name: str | None) -> dict[str, Any]:
-    import json
-
     return {
         "record_id": row["record_id"], "request_id": row.get("request_id"), "kind": row["kind"],
         "created_at": int(row["created_at"]), "kept_until": row.get("kept_until"),
@@ -118,6 +117,28 @@ def _cursor_position(cursor: str | None) -> tuple[int, str] | None:
     if not separator or not record_id or not created.isdigit():
         raise ValueError(cursor)
     return int(created), record_id
+
+
+def recent_chats(person_id: str, *, admin_path: Path, media_path: Path | None, limit: int,
+                 now: int | None = None) -> list[dict[str, Any]]:
+    """The person's own kept chats, newest first, each titled by its first user message.
+
+    A chat appears only while history keeps its body, so a conversation the person forgot or that expired is not
+    listed. The rows come from one read by the person's id, and the title is read now, not stored.
+    """
+    viewer = content_access.Viewer(person_id=person_id, auth_kind="session")
+    now = int(time.time()) if now is None else now
+    after = retention.group_cutoff(admin_path, person_id, GROUP)
+    titled = []
+    for row in request_history.chats_for_person(person_id, after=after, now=now, limit=limit, path=media_path):
+        if not isinstance(content_access.decide(viewer, content_access.request_history_record(row), "read"),
+                          content_access.Own):
+            continue
+        title = request_history.first_user_text(row["parts_json"])
+        if title is not None:
+            titled.append({"request_id": row.get("request_id"), "record_id": row["record_id"],
+                           "created_at": int(row["created_at"]), "title": title})
+    return titled
 
 
 def create_request_history_router(

@@ -40,7 +40,8 @@ test("a new operator sets up, adds the fake engine and chats in under ten minute
   await page.getByLabel("Confirm password").fill(PASSWORD);
   await page.getByRole("button", { name: "Create owner account" }).click();
   await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
-  await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible();
+  // Home's title is its greeting (the Home redesign removed the page title), "Welcome" on an owner's first visit.
+  await expect(page.getByRole("heading", { level: 1, name: /^(Welcome|Good (morning|afternoon|evening))/ })).toBeVisible();
 
   // 2. Home leads to the next step: no engine yet, so it says where to add one.
   const addEngine = page.getByRole("link", { name: "Add an engine" }).first();

@@ -224,7 +224,7 @@ test("theme toggle persists after navigation and reload", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "light" });
   await page.goto("/");
   await expect(page.locator("html")).toHaveClass(/light/);
-  await page.getByRole("button", { name: "Toggle theme" }).click();
+  await page.getByRole("button", { name: "Switch to dark" }).click();
   await expect(page.locator("html")).toHaveClass(/dark/);
   await page.getByRole("link", { name: "Models", exact: true }).first().click();
   await page.reload();
@@ -297,9 +297,8 @@ test("member shell hides owner controls and makes no owner API calls", async ({
         apps: [],
         receipts: [],
         capabilities: [],
-        aliases: [],
-        credential_aliases: {},
-        new_app_aliases: [],
+        has_access_plan: true,
+        recent_chats: [],
       },
       { response },
     );
@@ -360,7 +359,7 @@ for (const width of [1024, 768]) {
     await expect(
       page.getByRole("link", { name: "Settings", exact: true }),
     ).toBeVisible();
-    const toggle = page.getByRole("button", { name: "Toggle theme" });
+    const toggle = page.getByRole("button", { name: /^Switch to (dark|light)$/ });
     await toggle.click();
     await page.getByRole("button", { name: "Account menu" }).click();
     await expect(

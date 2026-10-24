@@ -10,7 +10,7 @@
  */
 export const EARLY_PATHS = {
   everywhere: ["/me/api/session"],
-  home: ["/me/api/home", "/me/api/media?limit=12"],
+  home: ["/me/api/home", "/me/api/media?limit=8"],
 } as const;
 
 const MAX_AGE_MS = 30_000;

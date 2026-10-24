@@ -89,6 +89,11 @@ export interface CapabilitiesResponse {
   capabilities: Array<CapabilitySummary>;
 }
 
+export interface CostHint {
+  kind: "free" | "paid" | "unknown";
+  price_usd: number | null;
+}
+
 export interface HomeCapability {
   capability_title?: string;
   icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
@@ -122,15 +127,15 @@ export interface HomeCapability {
   limits?: Record<string, unknown>;
   status: "ready" | "idle" | "starting" | "busy" | "degraded" | "unknown" | "unavailable";
   reason_code: string;
+  typical_seconds: number | null;
+  cost_hint: CostHint;
 }
 
-export interface HomeAlias {
-  local?: boolean;
-  id: string;
-  operation: string;
-  available: boolean;
-  status: "ready" | "idle" | "starting" | "busy" | "degraded" | "unknown" | "unavailable";
-  reason_code: string;
+export interface HomeChat {
+  request_id: string;
+  record_id: string;
+  created_at: number;
+  title: string;
 }
 
 export interface StatusSummary {
@@ -182,12 +187,9 @@ export interface HomeProjection {
   public_base_url: string;
   api_base_url: string;
   capabilities: Array<HomeCapability>;
-  aliases: Array<HomeAlias>;
-  credential_aliases: Record<string, Array<HomeAlias>>;
-  new_app_aliases: Array<HomeAlias>;
   status: StatusSummary;
   receipts: Array<HomeReceipt>;
-  creations: null;
+  recent_chats: Array<HomeChat>;
 }
 
 export interface SetupObservation {

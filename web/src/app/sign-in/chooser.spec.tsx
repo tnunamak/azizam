@@ -120,24 +120,100 @@ describe("the chooser", () => {
     remembered.people = [robin, lea];
     mount();
 
-    expect(await screen.findByRole("heading", { name: "Who’s signing in?" })).toHaveFocus();
+    expect(await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" })).toHaveFocus();
     expect(document.title).toBe("Who’s signing in? · Azizam");
     expect(await rowNames()).toEqual(["Robin Okafor", "Léa Okafor", "Someone else"]);
     expect(screen.getByRole("button", { name: "Forget someone on this browser" })).toBeVisible();
     expect(screen.queryByLabelText("Email")).toBeNull();
   });
 
+  it("takes its names only from this browser's remembered list, never from the public options answer", async () => {
+    // The options answer is public. Names placed in it must not reach the list: only this browser's own list names people.
+    Object.assign(options, {
+      owner_name: "Tim Nunamaker",
+      signed_in_oidc: { name: "Simon Agent", email: "simon@example.test", csrf_token: "token" },
+      people: [{ tile: "t_public", name: "Public Name" }],
+    });
+    remembered.people = [robin, lea];
+    mount();
+
+    expect(await rowNames()).toEqual(["Robin Okafor", "Léa Okafor", "Someone else"]);
+    for (const name of ["Tim Nunamaker", "Simon Agent", "Public Name"]) {
+      expect(document.body.textContent).not.toContain(name);
+    }
+  });
+
   it("never shows a picture on the list", async () => {
     mount();
-    await screen.findByRole("heading", { name: "Who’s signing in?" });
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
     expect(document.querySelector("img")).toBeNull();
+  });
+
+  it("names the method on each row only when the list mixes methods", async () => {
+    remembered.people = [robin, sam];
+    mount();
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
+    expect(within(screen.getByRole("button", { name: "Robin Okafor" })).getByText("Password")).toBeVisible();
+    expect(within(screen.getByRole("button", { name: "Sam Okafor" })).getByText("Family login")).toBeVisible();
+  });
+
+  it("drops the method from every row when everyone signs in the same way", async () => {
+    options.built_in = false;
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    const june: Person = { ...sam, tile: "t_june", name: "June Okafor", avatar: { variant: "v4", initial: "J" } };
+    remembered.people = [sam, june];
+    mount();
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
+    expect(screen.queryByText("Family login")).toBeNull();
+    expect(await rowNames()).toEqual(["Sam Okafor", "June Okafor", "Someone else"]);
+  });
+
+  it("sends Someone else straight to the provider, in one click, when single sign-on is the only way in", async () => {
+    options.built_in = false;
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    const june: Person = { ...sam, tile: "t_june", name: "June Okafor", avatar: { variant: "v4", initial: "J" } };
+    remembered.people = [sam, june];
+    const navigateTo = vi.spyOn(navigate, "to").mockImplementation(() => {});
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Someone else" }));
+    expect(navigateTo).toHaveBeenCalledTimes(1);
+    expect(navigateTo).toHaveBeenCalledWith("/login?return_to=%2F&remember=1");
+    expect(screen.queryByRole("button", { name: "Continue with Family login" })).toBeNull();
+    expect(screen.queryByLabelText("Email")).toBeNull();
+    expect(screen.getByRole("button", { name: "Someone else" })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("keeps the owner's password one link from the list, and opens its form at once", async () => {
+    options.built_in = false;
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    remembered.people = [sam, { ...sam, tile: "t_june", name: "June Okafor" }];
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Owner? Sign in with your password" }));
+    expect(await screen.findByLabelText("Email")).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Back to the list" })).toBeVisible();
+  });
+
+  it("offers no owner link on the list when the owner's password is turned off", async () => {
+    options.built_in = false;
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    Object.assign(options, { owner_password: false });
+    remembered.people = [sam, { ...sam, tile: "t_june", name: "June Okafor" }];
+    mount();
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
+    expect(screen.queryByRole("button", { name: "Owner? Sign in with your password" })).toBeNull();
   });
 
   it("shows the plain form, not the list, when only one person is remembered", async () => {
     remembered.people = [robin];
     mount();
     expect(await screen.findByLabelText("Email")).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Who’s signing in?" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Who’s signing in to Azizam?" })).toBeNull();
   });
 
   it("shows the plain form when nobody is remembered", async () => {
@@ -162,7 +238,7 @@ describe("the chooser", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Sign out of Keycloak first" }),
     ).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Who’s signing in?" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Who’s signing in to Azizam?" })).toBeNull();
     expect(screen.queryByRole("list")).toBeNull();
   });
 
@@ -212,7 +288,7 @@ describe("after a switch or a sign-out", () => {
   it("takes the ending out of the address, so a reload shows no status line", async () => {
     setAddress("/sign-in/?after=switch");
     mount();
-    await screen.findByRole("heading", { name: "Who’s signing in?" });
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
     expect(window.location.search).toBe("");
   });
 
@@ -258,7 +334,7 @@ describe("after a switch or a sign-out", () => {
   it("drops the link to the last page: the options and the sign-in both go Home", async () => {
     setAddress("/sign-in/?after=switch&return_to=%2Fusage%2F");
     mount();
-    await screen.findByRole("heading", { name: "Who’s signing in?" });
+    await screen.findByRole("heading", { name: "Who’s signing in to Azizam?" });
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
         "/auth/api/options?return_to=%2F",
@@ -468,13 +544,40 @@ describe("password sign-in for a remembered person", () => {
   });
 });
 
+describe("the password screen for a remembered person", () => {
+  it("names the instance in the reset line, as the plain form does", async () => {
+    remembered.people = [robin, lea];
+    options.instance_name = "Okafor family";
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Robin Okafor" }));
+    expect(
+      await screen.findByText("Forgot your password? Ask the person who set up Okafor family for a reset link."),
+    ).toBeVisible();
+  });
+
+  it("shows a spinner on Sign in while the password is checked", async () => {
+    remembered.people = [robin, lea];
+    loginReply = () => new Promise(() => {});
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Robin Okafor" }));
+    await user.type(await screen.findByLabelText("Password for Robin Okafor"), "A long test password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    const pending = await screen.findByRole("button", { name: "Signing in…" });
+    expect(pending).toBeDisabled();
+    expect(pending.querySelector("svg")).toHaveClass("motion-safe:animate-spin");
+  });
+});
+
 describe("the plain form", () => {
-  it("shows the name box on by default, under the heading, and sends remember true", async () => {
+  it("shows the name box on by default, under Sign in, and sends remember true", async () => {
     remembered.people = [];
     mount();
-    const box = await screen.findByRole("checkbox", { name: "Show my name on this browser next time" });
+    const box = await screen.findByRole("checkbox", { name: "Remember my name on this browser" });
     expect(box).toBeChecked();
-    expect(screen.getByText("Turn this off on a public computer.")).toBeVisible();
+    expect(screen.getByText("Show my name here next time. Turn off on a shared computer.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Sign in" }).compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Email"), "member@example.test");
     await user.type(screen.getByLabelText("Password"), "A long test password");
@@ -486,7 +589,7 @@ describe("the plain form", () => {
     remembered.people = [];
     mount();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Show my name on this browser next time" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Remember my name on this browser" }));
     await user.type(screen.getByLabelText("Email"), "member@example.test");
     await user.type(screen.getByLabelText("Password"), "A long test password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
@@ -535,5 +638,33 @@ describe("the plain form", () => {
     await user.click(await screen.findByRole("button", { name: "Someone else" }));
     await user.click(await screen.findByRole("button", { name: "Back to the list" }));
     expect(await rowNames()).toEqual(["Robin Okafor", "Léa Okafor", "Someone else"]);
+  });
+});
+
+describe("the chooser's own controls", () => {
+  it("gives Someone else no blank second line, so its name sits centred in the row", async () => {
+    remembered.people = [robin, sam];
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    mount();
+    const row = await screen.findByRole("button", { name: "Someone else" });
+    expect(row.textContent).toBe("Someone else");
+    // The people's rows keep their second line: the method, since the list mixes methods.
+    expect(screen.getByRole("button", { name: "Robin Okafor" }).textContent).toContain("Password");
+  });
+
+  it("holds Forget and the owner's link while a provider opens", async () => {
+    options.built_in = false;
+    options.oidc = true;
+    options.oidc_label = "Family login";
+    const june: Person = { ...sam, tile: "t_june", name: "June Okafor", avatar: { variant: "v4", initial: "J" } };
+    remembered.people = [sam, june];
+    const navigateTo = vi.spyOn(navigate, "to").mockImplementation(() => {});
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "June Okafor" }));
+    expect(navigateTo).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Forget someone on this browser" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Owner? Sign in with your password" })).toBeDisabled();
   });
 });

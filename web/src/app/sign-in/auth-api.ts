@@ -9,7 +9,6 @@ export interface SignInOptions {
   oidc_label: string;
   oidc_url: string;
   instance_name: string;
-  owner_name: string;
   /** The owner's own password works even while built-in sign-in is off. */
   owner_password?: boolean;
   /**

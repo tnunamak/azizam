@@ -64,7 +64,8 @@ async function installMember(
     fulfilJson(route, {
         authenticated: true,
         user: member,
-        aliases: [],
+        has_access_plan: true,
+        recent_chats: [],
         receipts: [],
         capabilities: rows,
       }),

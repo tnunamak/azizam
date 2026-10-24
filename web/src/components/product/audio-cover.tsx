@@ -185,6 +185,7 @@ export function AudioFace({
   center,
   status,
   className,
+  ink = "text-muted-foreground",
 }: {
   peaksKey: string;
   src?: string | null;
@@ -195,12 +196,15 @@ export function AudioFace({
   /** A short error line, shown at the top. */
   status?: ReactNode;
   className?: string;
+  /** The waveform's colour class (Home draws it at 60% of the text colour). */
+  ink?: string;
 }) {
   const peaks = useAudioPeaks(peaksKey, src, visible, 40, sizeBytes);
   return (
     <div
       className={cn(
-        "bg-muted text-muted-foreground relative flex size-full items-center justify-center",
+        "bg-muted relative flex size-full items-center justify-center",
+        ink,
         className,
       )}
     >
