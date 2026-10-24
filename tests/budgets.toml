@@ -319,9 +319,10 @@
 # collect-only 16877 -> 16878 (2026-10-23).
 # Train r104: collect-only measured 17215.
 # Try cleanup: +1 case, the ACE-Step denoise help-line check in tests/test_workflows_catalog.py; collect-only 17216.
-# ACE-Step denoise removal: that case became the check that no denoise input is offered, with the same count;
-# collect-only 17216 measured with scripts/run-hermetic-pytest.sh --collect-only -q (2026-10-24).
-pytest = 17216
+# ACE-Step denoise removal: that case became the check that no denoise input is offered, with the same count.
+# ACE-Step extension test: +1 case, a denoise control is refused as an unknown input (tests/test_tangoflux_audio_generate_manifest.py).
+# collect-only 17217 measured with scripts/run-hermetic-pytest.sh --collect-only -q (2026-10-24).
+pytest = 17217
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
