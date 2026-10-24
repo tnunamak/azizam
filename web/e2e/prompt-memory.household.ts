@@ -143,7 +143,7 @@ test.describe("Accessibility of the prompt screens", () => {
           await expect(
             page
               .locator(
-                "[data-slot=setting-row], [data-slot=prompt-keep], [data-slot=incognito], [role=dialog]",
+                "[data-slot=setting-row], [data-slot=prompt-keep], [data-slot=keep-history], [role=dialog]",
               )
               .first(),
           ).toBeVisible();
@@ -301,7 +301,7 @@ async function allAudioPages(
   return assets;
 }
 
-test.describe("Try: Don't keep this prompt", () => {
+test.describe("Try: keep request history off", () => {
   // Read text aloud: the household's picture jobs cannot deliver content in
   // this fixture (the job content route has no route policy without a
   // ComfyUI backend in the base config, HTTP 500), and speech is kept the
@@ -318,8 +318,8 @@ test.describe("Try: Don't keep this prompt", () => {
       new Set<string>((await allAudio()).map((a) => a.asset_id));
     const before = await audioIds();
     await page.goto("/try/?capability=speech");
-    const toggle = page.getByRole("switch", { name: "Incognito" });
-    await expect(toggle).not.toBeChecked();
+    const toggle = page.getByRole("switch", { name: "Keep request history" });
+    await expect(toggle).toBeChecked();
     await expect(
       page.getByText("Azizam tries to keep the prompt with the audio."),
     ).toBeVisible();
@@ -342,7 +342,7 @@ test.describe("Try: Don't keep this prompt", () => {
 
     await toggle.click();
     await expect(
-      page.getByText("The audio still goes to Library."),
+      page.getByText("The prompt isn’t kept. The audio still goes to Library."),
     ).toBeVisible();
     const forgotten = `A lantern glows in the fog ${Date.now()}`;
     await page.getByRole("textbox", { name: "Prompt" }).fill(forgotten);
@@ -354,7 +354,7 @@ test.describe("Try: Don't keep this prompt", () => {
     expect((await forgetSubmit).postDataJSON().extensions).toEqual({
       "com.azizam.prompts": { mode: "forget" },
     });
-    await expect(page.getByText("Incognito: this isn’t saved", { exact: true })).toBeVisible({
+    await expect(page.getByText("Not saved in your History", { exact: true })).toBeVisible({
       timeout: 60_000,
     });
 

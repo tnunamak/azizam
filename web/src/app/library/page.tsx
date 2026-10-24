@@ -208,8 +208,8 @@ function kindLabel(kind: MediaKind) {
 /**
  * A creation's name when the viewer has no prompt for it. The gateway gives
  * a prompt only to the person who made the item, and only while it is kept
- * (docs/design/PROMPT_MEMORY.md); apps' keys and "Don't keep this prompt"
- * keep none. Such items are named by type and time, "Video, Oct 20 at 7:45
+ * (docs/design/PROMPT_MEMORY.md); apps' keys and a request with keep request
+ * history off keep none. Such items are named by type and time, "Video, Oct 20 at 7:45
  * PM", never "Image" alone (D1.6); the maker is beside the name in the
  * viewer and on hover.
  */

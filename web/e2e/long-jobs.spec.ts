@@ -3,6 +3,15 @@ import AxeBuilder from "@axe-core/playwright";
 import { mkdir } from "node:fs/promises";
 import { fulfilJson } from "./fixtures/intercept";
 
+/** A person who has not written a prompt takes the tab's example first. Written words are never replaced. */
+async function takeExampleIfEmpty(page: import("@playwright/test").Page) {
+  const example = page.getByRole("button", { name: "Try an example" });
+  if (!(await example.count())) return;
+  const box = page.getByRole("textbox", { name: /^(Prompt|Question)$/ });
+  if ((await box.count()) && (await box.inputValue()) === "") await example.click();
+}
+
+
 
 // Try mints one key per sign-in and revokes the session's older Try keys
 // (gateway/user_runtime.py ensure_try_session_key). Cases that open Try share the
@@ -79,6 +88,7 @@ test("a long picture finishes elsewhere in the app and opens with a fresh URL", 
   await expect.poll(() => polls.length).toBe(1);
   expect(polls[0].since).toBeNull();
   await page.getByRole("tab", { name: "Make a picture" }).click();
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect.poll(() => started).toBe(true);
   await page.getByRole("link", { name: "Status", exact: true }).first().click();

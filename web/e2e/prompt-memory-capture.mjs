@@ -94,14 +94,14 @@ async function household(page, value) {
 const shots = {
   // Member: their own settings.
   "account-member": { as: seed.member_email, go: "/account/" },
-  // Member: Try with the default (kept) and with Don't keep on.
+  // Member: Try with the default (kept) and with keep request history off.
   "try-kept": { as: seed.member_email, go: "/try/?capability=image" },
   "try-forget": {
     as: seed.member_email,
     go: "/try/?capability=image",
     act: async (page) => {
       await page
-        .getByRole("switch", { name: "Incognito" })
+        .getByRole("switch", { name: "Keep request history" })
         .click();
     },
   },

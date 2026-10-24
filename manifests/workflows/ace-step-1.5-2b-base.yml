@@ -90,11 +90,6 @@ inputs:
   scheduler:
     label: step timing
     type: string
-  denoise:
-    label: change strength
-    type: number
-    minimum: 0
-    maximum: 1
 outputs:
   audio:
     media_type: audio/wav
@@ -158,6 +153,3 @@ bindings:
       scheduler:
         - node: "20"
           input: scheduler
-      denoise:
-        - node: "20"
-          input: denoise

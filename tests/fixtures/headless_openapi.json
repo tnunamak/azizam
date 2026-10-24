@@ -1500,11 +1500,6 @@
             "minimum": 0,
             "type": "number"
           },
-          "denoise": {
-            "maximum": 1,
-            "minimum": 0,
-            "type": "number"
-          },
           "duration": {
             "description": "Length in seconds.",
             "maximum": 300,
@@ -1591,11 +1586,6 @@
           },
           "cfg_scale": {
             "maximum": 20,
-            "minimum": 0,
-            "type": "number"
-          },
-          "denoise": {
-            "maximum": 1,
             "minimum": 0,
             "type": "number"
           },
@@ -32061,10 +32051,6 @@
               "field": "cfg_scale",
               "in": "extension"
             },
-            "denoise": {
-              "field": "denoise",
-              "in": "extension"
-            },
             "duration": {
               "field": "duration",
               "in": "body"
@@ -32168,10 +32154,6 @@
             },
             "cfg_scale": {
               "field": "cfg_scale",
-              "in": "extension"
-            },
-            "denoise": {
-              "field": "denoise",
               "in": "extension"
             },
             "duration": {
@@ -32285,10 +32267,6 @@
               "field": "cfg_scale",
               "in": "extension"
             },
-            "denoise": {
-              "field": "denoise",
-              "in": "extension"
-            },
             "duration": {
               "field": "duration",
               "in": "body"
@@ -32392,10 +32370,6 @@
             },
             "cfg_scale": {
               "field": "cfg_scale",
-              "in": "extension"
-            },
-            "denoise": {
-              "field": "denoise",
               "in": "extension"
             },
             "duration": {

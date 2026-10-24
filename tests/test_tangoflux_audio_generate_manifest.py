@@ -466,7 +466,6 @@ class TestAceStepAudioGenerateManifest(unittest.TestCase):
                     "temperature": 0.72,
                     "steps": 36,
                     "sampler": "er_sde",
-                    "denoise": 0.95,
                 }
             },
         }
@@ -484,7 +483,26 @@ class TestAceStepAudioGenerateManifest(unittest.TestCase):
         self.assertEqual(result.request["5"]["inputs"]["temperature"], 0.72)
         self.assertEqual(result.request["20"]["inputs"]["steps"], 36)
         self.assertEqual(result.request["20"]["inputs"]["sampler_name"], "er_sde")
-        self.assertEqual(result.request["20"]["inputs"]["denoise"], 0.95)
+        # No denoise control is offered, so the sampler keeps the graph's denoise of 1.
+        self.assertEqual(result.request["20"]["inputs"]["denoise"], 1.0)
+
+    def test_denoise_is_refused_because_text_to_music_starts_from_an_empty_latent(self) -> None:
+        workflow = _load_ace_xl_workflow()
+        result = bind_audio_workflow_extensions(
+            {
+                "model": "ace-step-1.5-xl-turbo",
+                "tags": "boom bap rap",
+                "lyrics": "[verse]\nhello",
+                "duration": 12,
+                "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {"denoise": 0.5}},
+            },
+            self.manifest,
+            "comfyui",
+            workflow,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.validation.rejected, {"denoise": "unknown input"})
 
     def test_route_managed_lyrics_rejected_inside_extension_block(self) -> None:
         result = bind_audio_workflow_extensions(

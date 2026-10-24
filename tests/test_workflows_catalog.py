@@ -346,6 +346,33 @@ class WorkflowsCatalogTests(unittest.TestCase):
         self.assertEqual(image["technical_notes"], "Test image workflow.")
         self.assertIsNone(image["purpose"])
 
+    def test_ace_step_offers_no_denoise_because_its_graphs_start_from_an_empty_latent(self) -> None:
+        # Text to music starts from an empty latent with no source audio, so a denoise below 1 would change nothing.
+        # The manifests do not offer the setting, and each graph keeps its sampler at denoise 1.
+        manifest_root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
+        registry = WorkflowRegistry.from_directory(manifest_root)
+        self.assertEqual(registry.errors, [])
+        records = [record for record in registry.records() if "ace-step" in record.id]
+        self.assertEqual(len(records), 2)
+        payload = build_workflows_catalog(
+            records=records,
+            capabilities=[
+                Capability(intent=record.intent, backend=record.supported_backends[0], workflow=record.id)
+                for record in records
+            ],
+        )
+        self.assertEqual(len(payload["workflows"]), 2)
+        for row in payload["workflows"]:
+            self.assertNotIn("denoise", [item["name"] for item in row["inputs"]], row["id"])
+        for record in records:
+            graph_path = Path(__file__).resolve().parents[1] / record.manifest["bindings"]["comfyui"]["workflow"]
+            graph = json.loads(graph_path.read_text())
+            sampler = next(
+                node for node in graph.values()
+                if isinstance(node, dict) and node.get("class_type") == "KSampler"
+            )
+            self.assertEqual(sampler["inputs"]["denoise"], 1, record.id)
+
     def test_every_exposed_builtin_workflow_has_a_distinct_short_purpose(self) -> None:
         manifest_root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
         registry = WorkflowRegistry.from_directory(manifest_root)

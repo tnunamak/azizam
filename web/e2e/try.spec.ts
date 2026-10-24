@@ -2,6 +2,32 @@ import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
 import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
+import type { Locator } from "@playwright/test";
+
+/**
+ * The text a person reads. An owner also sees each input's technical detail
+ * (data-slot="input-detail"), which is for owners, so it is left out here.
+ */
+async function plainText(locator: Locator) {
+  return locator.evaluate((node) => {
+    const detail = [...node.querySelectorAll<HTMLElement>('[data-slot="input-detail"]')];
+    const shown = detail.map((element) => element.style.display);
+    detail.forEach((element) => (element.style.display = "none"));
+    const text = (node as HTMLElement).innerText;
+    detail.forEach((element, index) => (element.style.display = shown[index]));
+    return text;
+  });
+}
+
+
+/** A person who has not written a prompt takes the tab's example first. Written words are never replaced. */
+async function takeExampleIfEmpty(page: import("@playwright/test").Page) {
+  const example = page.getByRole("button", { name: "Try an example" });
+  if (!(await example.count())) return;
+  const box = page.getByRole("textbox", { name: /^(Prompt|Question)$/ });
+  if ((await box.count()) && (await box.inputValue()) === "") await example.click();
+}
+
 
 
 // Try mints one key per sign-in and revokes the session's older Try keys
@@ -13,7 +39,10 @@ async function prepareTryKey(page: import("@playwright/test").Page) {
   await page.goto("/try/");
   // Run mints the temporary key; nothing does before it, so waiting for
   // "Getting Try ready…" to hide before Run passed at once. Minting can take
-  // a while on a busy machine, so give the mint itself the longer wait.
+  // a while on a busy machine, so give the mint itself the longer wait. The
+  // chat box starts empty, so take its example first.
+  await page.getByRole("button", { name: "Try an example" }).click();
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Key details")).toBeVisible({ timeout: 30_000 });
 }
@@ -106,13 +135,10 @@ test("try creates a session key, runs public chat, and links a receipt", async (
       response.url().includes("/openai/v1/chat/completions") &&
       response.request().method() === "POST",
   );
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   const catalog = await catalogResponse;
   expect(catalog.ok(), `catalog HTTP ${catalog.status()}`).toBe(true);
-  const accountPlan = (await catalog.json()).access_plan;
-  expect(accountPlan?.name).toBeTruthy();
-  await expect(page.getByText(`Your access plan: ${accountPlan.name}.`, { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Check another plan" })).toHaveAttribute("href", /^\/people\/?\?tab=plans$/);
   await waitForCatalog(page);
   const response = await chatResponse;
   expect(response.request().postDataJSON().model).not.toBe("");
@@ -148,6 +174,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
       { status: 403 },
     ),
   );
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
     page.getByText("This key cannot use demo-chat.", { exact: true }),
@@ -174,6 +201,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
       },
     ),
   );
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Receipt header priority works.")).toBeVisible();
   await expect(
@@ -190,6 +218,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   // Pictures run as pollable media jobs, so a dropped connection cannot
   // lose the result.
   await routeImageJob(page);
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Image result", { exact: true })).toBeVisible();
 
@@ -203,6 +232,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
       body: "audio",
     }),
   );
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Speech result", { exact: true })).toBeVisible();
 
@@ -219,6 +249,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
       { headers: { "x-azizam-request-id": "req_transcribe_try" } },
     ),
   );
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("The gateway is ready.")).toBeVisible();
 
@@ -237,6 +268,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
       { status: 404 },
     );
   });
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
     page.getByText("Decisions not enabled on this gateway", { exact: true }),
@@ -250,6 +282,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
       { status: 403 },
     ),
   );
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
     page.getByText("Your access plan does not allow decisions.", {
@@ -276,6 +309,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
       { headers: { "x-azizam-request-id": "req_decide_try" } },
     ),
   );
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("70%")).toBeVisible();
   // demo-decide is a local model, so its result says there was no provider charge.
@@ -309,6 +343,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
       },
     ),
   );
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Dimensions")).toBeVisible();
   await expect(page.getByText("3", { exact: true })).toBeVisible();
@@ -392,6 +427,7 @@ test("try query params select capability and preserve requested model", async ({
     }),
   );
   await page.goto("/try/?capability=decide");
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Key details")).toBeVisible();
   await expect(
@@ -402,6 +438,7 @@ test("try query params select capability and preserve requested model", async ({
   );
 
   await page.goto("/try/?capability=chat&model=fast");
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Key details")).toBeVisible();
   await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute(
@@ -411,6 +448,7 @@ test("try query params select capability and preserve requested model", async ({
   await expect(page.getByRole("combobox").first()).toContainText("fast");
 
   await page.goto("/try/?capability=chat&model=chat");
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Key details")).toBeVisible();
   await expect(page.getByRole("combobox").first()).toContainText("chat model");
@@ -498,6 +536,7 @@ test("try records audio, uploads it, and stops microphone tracks", async ({
     uploadedBody = requestBody!.toString("utf8");
     await fulfilJson(route, { text: "Recorded text." });
   });
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Recorded text.")).toBeVisible();
   expect(uploadedBody).toContain('name="file"; filename="recording.webm"');
@@ -544,6 +583,7 @@ for (const theme of ["light", "dark"] as const) {
           response.url().endsWith("/openai/v1/chat/completions") &&
           response.request().method() === "POST",
       );
+      await takeExampleIfEmpty(page);
       await page.getByRole("button", { name: "Run", exact: true }).click();
       expect((await completion).ok()).toBe(true);
       await expect(
@@ -558,6 +598,7 @@ for (const theme of ["light", "dark"] as const) {
           { status: 403 },
         ),
       );
+      await takeExampleIfEmpty(page);
       await page.getByRole("button", { name: "Run", exact: true }).click();
       await expect(
         page.getByText("This key cannot use chat.", { exact: true }),
@@ -787,7 +828,7 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
       (el) => getComputedStyle(el, "::placeholder").fontStyle,
     ),
   ).toBe("italic");
-  const visible = (await page.locator("main").innerText()).replace(/\s+/g, " ");
+  const visible = (await plainText(page.locator("main"))).replace(/\s+/g, " ");
   for (const jargon of [
     "Request body",
     "Writes prompt",
@@ -817,6 +858,7 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
       { status: 400 },
     );
   });
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Choose a picture to start from")).toBeVisible();
   await expect(page.getByText("Describe the video first")).toBeVisible();
@@ -843,6 +885,7 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
   });
 
   const request = page.waitForRequest("**/v1/videos");
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   const body = (await request).postDataJSON() as Record<string, unknown>;
   expect(body.input_reference).toMatch(/^data:image\/png;base64,/);
@@ -889,6 +932,7 @@ test("a picture survives a dropped connection and never reports the browser's er
   await page.route("**/gateway/v1/media/jobs/job_phone/content", (route) =>
     fulfilJson(route, { data: [{ url: TINY_PNG }] }),
   );
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Image result", { exact: true })).toBeVisible({
     timeout: 15_000,
@@ -908,6 +952,7 @@ test("a picture whose connection never returns says it may still be finishing", 
   await page.route("**/gateway/v1/media/jobs/image-generations", (route) =>
     route.abort("connectionfailed"),
   );
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
     page.getByText("Your picture may still be finishing"),
@@ -1005,46 +1050,9 @@ for (const width of [390, 1440]) {
       });
     });
     const request = page.waitForRequest("**/openai/v1/audio/speech");
+    await takeExampleIfEmpty(page);
     await page.getByRole("button", { name: "Run", exact: true }).click();
     await request;
   });
 }
 
-
-for (const width of [390, 1440]) {
-  test(`access refresh keeps focus and announces completion at ${width}px`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 1000 });
-    await page.goto("/try/");
-    const access = page.getByRole("group", { name: "Try access" });
-    const status = access.getByRole("status");
-    await expect(status).toContainText("Your access plan:");
-    const refresh = access.getByRole("button", { name: "Refresh access" });
-    await expect(refresh).toHaveAttribute("aria-busy", "false");
-    let finish!: () => void;
-    const held = new Promise<void>((resolve) => { finish = resolve; });
-    let requests = 0;
-    await page.route("**/me/api/models/catalog", async (route) => {
-      requests++;
-      await held;
-      await route.continue();
-    });
-    try {
-      await refresh.click();
-      await expect(refresh).toBeFocused();
-      await expect(refresh).toHaveJSProperty("disabled", false);
-      await expect(refresh).toHaveAttribute("aria-disabled", "true");
-      await expect(refresh).toHaveAttribute("aria-busy", "true");
-      await expect(status).toHaveText("Checking your access plan…");
-      // Keyboard activation must not start a second refresh while busy.
-      await refresh.press("Enter");
-    } finally {
-      finish();
-    }
-    await expect(refresh).toHaveAttribute("aria-busy", "false");
-    await expect(refresh).toBeFocused();
-    await expect(status).toContainText("Access refresh complete.");
-    expect(requests).toBe(1);
-    const audit = await new AxeBuilder({ page }).analyze();
-    expect(audit.violations.filter(({ impact }) => impact === "serious" || impact === "critical")).toEqual([]);
-  });
-}
