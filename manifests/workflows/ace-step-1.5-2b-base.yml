@@ -92,6 +92,7 @@ inputs:
     type: string
   denoise:
     label: change strength
+    help: Keep at 1 to make a new song from your words.
     type: number
     minimum: 0
     maximum: 1

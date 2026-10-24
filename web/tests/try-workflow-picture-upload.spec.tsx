@@ -146,14 +146,14 @@ describe("a picture-edit workflow on Try", () => {
     expect(text).not.toMatch(/\.bin\b|\.\/[\w-]+\.\w+|source_image|Managed by the workflow/);
   });
 
-  it("keeps the request JSON and input details for the owner, behind disclosures", async () => {
+  it("keeps the request JSON for the owner behind a disclosure, with no separate input list", async () => {
     await openWorkflow();
     expect(screen.queryByText("Advanced JSON")).toBeNull();
     expect(screen.queryByText("Input details")).toBeNull();
     cleanup();
     await openWorkflow(owner);
     expect(screen.getByText("Advanced JSON").closest("details")).not.toHaveAttribute("open");
-    expect(screen.getByText("Input details").closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByText("Input details")).toBeNull();
   });
 
   it("asks for the missing picture on its field and sends nothing", async () => {
