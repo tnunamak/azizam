@@ -2047,7 +2047,7 @@ def _usage_summary(
             visible["remote_spend"] = _receipt_cost(internal)
             # The row reads the same rule as the totals; a client never sees the backend name.
             visible["served_locally"] = _receipt_served_locally(internal)
-            # A media job's row shows the outcome and remote flag the fold counted: its attempts', or the job's failure.
+            # A media job's row shows the status and remote flag the fold counted, which may be the job's failure.
             if internal.get("_outcome_request_id"):
                 visible["status"] = internal.get("status")
                 visible["remote"] = internal.get("remote")
