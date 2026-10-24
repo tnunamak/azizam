@@ -1151,8 +1151,10 @@ def _scenario_running(ctx):
                 error=error, app_id=apps[slug]["id"], owner_key_hash=hashes[slug],
                 created_at=now - accepted_s, updated_at=now - 3 if status == "running" else now - accepted_s + 41,
                 metadata={"model": model},
+                maker_person_id=ctx["people"][slug]["id"], maker_credential_id=hashes[slug],
             ),
             path=paths["media_jobs"],
+            maker_from_request=False,
         )
 
     receipt("req_household_running_chat", "robin", "chat.completions", "/v1/chat/completions",
@@ -1276,8 +1278,11 @@ def _media(state, paths, apps, hashes, now, rng, people):
                 created_at=ts,
                 updated_at=ts + max(1, latency_ms // 1000),
                 metadata={"model": entry["model"]},
+                # The maker is the person whose App made it, through that App's key (the seed writes no request).
+                maker_person_id=maker, maker_credential_id=hashes[owner],
             ),
             path=paths["media_jobs"],
+            maker_from_request=False,
         )
         with sqlite3.connect(paths["metrics"]) as conn:
             metrics_store_tags = {
