@@ -100,6 +100,13 @@ def oracle_relations(v, row):
             "Shared": bool(share), "SharedPrompt": bool(share) and permission}
 
 
+def unmade_job_denied(row):
+    """Explicit deny: a job with no maker person and no stamped credential has no reader under any App, key or
+    address. The person-less ContentRead relation above would grant an App key or the trusted address that row, so
+    this rule overrides it. Fail closed: a job nobody made is read by nobody (D51)."""
+    return row.kind == "job" and row.person_id is None and row.credential_id is None
+
+
 @pytest.mark.parametrize("kind,action", tuple(product(MATRIX, ACTIONS)))
 def test_every_kind_action_basis_cell(kind, action):
     for actor, viewer in ACTORS.items():
@@ -109,6 +116,8 @@ def test_every_kind_action_basis_cell(kind, action):
             v = replace(viewer, is_owner=role, privacy_permission=privacy)
             relations = oracle_relations(v, row)
             allowed = [cell for cell in MATRIX[kind][action] if relations[cell]] if available else []
+            if unmade_job_denied(row):
+                allowed = []
             expected = Own if any(cell not in {"Shared", "SharedPrompt"} for cell in allowed) else Shared if allowed else Deny
             access = decide(v, row, action)
             assert isinstance(access, expected), (kind, action, actor, state, origin)
