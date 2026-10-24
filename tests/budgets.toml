@@ -408,7 +408,9 @@
 # Train r107 (2026-10-24): collect-only measured 17554 on the merged tree (scripts/run-hermetic-pytest.sh --collect-only -q).
 # Train r107, the read-only avatar generator and the automatic picture's cue (2026-10-24): five cases in
 # tests/test_avatar_generation.py. collect-only measures 17559 on the tree.
-pytest = 17559
+# F2/F3 (2026-10-24): six regression cases for left-out service PATCHes and sign-in session Apps.
+# collect-only measures 17565 on this branch.
+pytest = 17565
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
