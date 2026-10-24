@@ -3,7 +3,8 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, ownerApi, test } from "./fixtures/isolation";
-import { fulfilJson } from "./fixtures/intercept";
+import { fulfilBytes, fulfilJson } from "./fixtures/intercept";
+import { answerSignInOptions, signedOut } from "./fixtures/signed-out";
 import { seedFirstVisitMember, seedHistoryNoticeDue, seedOwner, seedReturningMember } from "./fixtures/home-seed";
 
 /*
@@ -475,12 +476,133 @@ test("S7 a signed-in viewer at / never shows the sign-in heading while the sessi
   await expect(page.getByRole("heading", { name: /Sign in to/ })).toHaveCount(0);
 });
 
-// The sign-in page is another lane's change. These cases state its contract and run when that lane lands.
-test.fixme("S1 signed out at / with single sign-on only, one primary control links straight to the provider", async () => {});
-test.fixme("S2 signed out at /library/?asset=x returns there after the provider callback", async () => {});
-test.fixme("S3 owner password reveals the form in place, with focus on Email", async () => {});
-test.fixme("S4 a provider error shows the alert, keeps the button, and never redirects", async () => {});
-test.fixme("S6 options and setup start together on first render, with almost no layout shift", async () => {});
+// The sign-in page (DESIGN.md section 7, S1-S6). S5 is the page's vitest cases (sign-in/page.spec.tsx).
+test("S1 signed out at / with single sign-on only, one primary control links straight to the provider", async ({ browser, baseURL }) => {
+  for (const viewport of [LAYOUTS[0], LAYOUTS[2]]) {
+    const { context, page } = await signedOut(browser, baseURL, viewport);
+    try {
+      await page.route("**/auth/api/options*", (route) => answerSignInOptions(route));
+      await page.goto("/");
+      // The href is the options' provider address plus the name box's answer (the chooser's remember flag).
+      const primary = page.locator("main [data-variant='default']");
+      await expect(primary).toHaveCount(1);
+      await expect(primary).toHaveAttribute("href", "/login?return_to=%2F&remember=1");
+      expect((await primary.boundingBox())?.height).toBe(48);
+      await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
+      await expect(page.locator("a[href^='/sign-in/']")).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  }
+});
+
+test("S2 signed out at /library/?asset=x returns there after the provider callback", async ({ browser, baseURL }) => {
+  const { context, page } = await signedOut(browser, baseURL, LAYOUTS[0]);
+  try {
+    await page.route("**/auth/api/options*", (route) => answerSignInOptions(route));
+    // The provider's callback is the gateway's own redirect to the return target. The fixture has no provider, so the
+    // redirect is answered here: it is the only part of the sign-in that this test stubs after the button.
+    await page.route("**/login?*", (route) => fulfilBytes(route, { status: 302, headers: { location: "/library/?asset=x" } }));
+    await page.goto("/library/?asset=x");
+    await expect(page).toHaveURL(/\/sign-in\/\?return_to=%2Flibrary%2F%3Fasset%3Dx$/);
+    const provider = page.getByRole("link", { name: "Continue with Okafor ID" });
+    await expect(provider).toHaveAttribute("href", "/login?return_to=%2Flibrary%2F%3Fasset%3Dx&remember=1");
+    const landed = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return request.isNavigationRequest() && url.pathname === "/library/" && url.search === "?asset=x";
+    });
+    await provider.click();
+    await landed;
+  } finally {
+    await context.close();
+  }
+});
+
+test("S3 owner password reveals the form in place, with focus on Email", async ({ browser, baseURL }) => {
+  const { context, page } = await signedOut(browser, baseURL, LAYOUTS[0]);
+  try {
+    await page.route("**/auth/api/options*", (route) => answerSignInOptions(route));
+    await page.goto("/");
+    const url = page.url();
+    // Counts page loads the browser starts, not same-page history updates the app makes.
+    let navigations = 0;
+    page.on("request", (request) => {
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations += 1;
+    });
+    await page.getByRole("button", { name: "Owner? Sign in with your password" }).click();
+    await expect(page.getByLabel("Email", { exact: true })).toBeFocused();
+    expect(page.url()).toBe(url);
+    expect(navigations).toBe(0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("S4 a provider error shows the alert, keeps the button, and never redirects", async ({ browser, baseURL }) => {
+  const { context, page } = await signedOut(browser, baseURL, LAYOUTS[0]);
+  try {
+    await page.route("**/auth/api/options*", (route) => answerSignInOptions(route));
+    await page.goto("/sign-in/?error=provider");
+    // Next's route announcer is also an alert, so the provider's message is found by its text.
+    await expect(page.getByRole("alert").filter({ hasText: "Single sign-on didn’t finish." })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Continue with Okafor ID" })).toBeVisible();
+    // Nothing moves the browser on: no navigation starts in the three seconds after the page loads.
+    const moved = await page
+      .waitForRequest((request) => request.isNavigationRequest() && request.frame() === page.mainFrame(), { timeout: 3_000 })
+      .then(
+        () => true,
+        () => false,
+      );
+    expect(moved).toBe(false);
+    await expect(page).toHaveURL(/\/sign-in\/\?error=provider$/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("S6 options and setup start together on first render, with almost no layout shift", async ({ browser, baseURL }) => {
+  const { context, page } = await signedOut(browser, baseURL, LAYOUTS[0]);
+  try {
+    const options = holdRoute();
+    const setup = holdRoute();
+    await page.route("**/auth/api/options*", async (route) => {
+      await options.released;
+      await answerSignInOptions(route);
+    });
+    await page.route("**/setup/api/state", async (route) => {
+      await setup.released;
+      await route.continue();
+    });
+    // The layout-shift total, counted from before the first script runs.
+    await page.addInitScript(() => {
+      const shifts = { total: 0 };
+      (window as unknown as { shifts: typeof shifts }).shifts = shifts;
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as (PerformanceEntry & { value: number; hadRecentInput: boolean })[]) {
+          if (!entry.hadRecentInput) shifts.total += entry.value;
+        }
+      }).observe({ type: "layout-shift" });
+    });
+    const asked = Promise.all([
+      page.waitForRequest((request) => new URL(request.url()).pathname === "/auth/api/options"),
+      page.waitForRequest((request) => new URL(request.url()).pathname === "/setup/api/state"),
+    ]);
+    await page.goto("/sign-in/");
+    // Both requests have left while both answers are still held: neither started after the other finished.
+    await asked;
+    await expect(page.getByRole("status")).toContainText("Getting sign-in ready");
+    await page.evaluate(() => document.fonts.ready);
+    const shiftsBefore = await page.evaluate(() => (window as unknown as { shifts: { total: number } }).shifts.total);
+    options.release();
+    setup.release();
+    await expect(page.getByRole("link", { name: "Continue with Okafor ID" })).toBeVisible();
+    await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+    const shiftsAfter = await page.evaluate(() => (window as unknown as { shifts: { total: number } }).shifts.total);
+    expect(shiftsAfter - shiftsBefore).toBeLessThan(0.01);
+  } finally {
+    await context.close();
+  }
+});
 
 const LAYOUTS = [
   { width: 1440, height: 900 },

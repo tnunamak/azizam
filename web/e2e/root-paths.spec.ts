@@ -4,7 +4,7 @@ import { fulfilJson } from "./fixtures/intercept";
 // The app lives at the origin root (gateway/ui_pages.json). Old /ui URLs are
 // gone: no redirect, no alias.
 
-test("anonymous front door shows the landing, signs in and returns to Home", async ({
+test("anonymous front door is the sign-in page, and signing in returns to Home", async ({
   browser,
   baseURL,
 }) => {
@@ -17,21 +17,20 @@ test("anonymous front door shows the landing, signs in and returns to Home", asy
     await page.goto("/?connect=phone");
     await expect(page).toHaveURL(/\/\?connect=phone$/);
     await expect(
-      page.getByText("Your own AI, in the apps you use", { exact: true }),
+      page.getByRole("heading", { level: 1, name: /^Sign in to / }),
     ).toBeVisible();
     await expect(
       page.getByRole("navigation", { name: "Main navigation" }),
     ).toHaveCount(0);
-    await page.getByRole("link", { name: "Sign in", exact: true }).click();
-    await expect(page).toHaveURL(/\/sign-in\//);
     await page.getByLabel("Email", { exact: true }).fill("owner@example.test");
     await page
       .getByLabel("Password", { exact: true })
       .fill("Portable UI test password 2026");
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page).toHaveURL(/\/\?connect=phone$/);
+    // Home's "Your apps" line offers the one way to add an app: a link, not a heading.
     await expect(
-      page.getByRole("heading", { name: "Connect an app", level: 2 }),
+      page.getByRole("link", { name: "Connect an app", exact: true }),
     ).toBeVisible();
     await expect(
       page

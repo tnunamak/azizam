@@ -74,12 +74,11 @@ function leavingTileFromRecord(): string | null {
 }
 
 /**
- * Reads the address and this browser's record. It runs on the first render in the browser, not in an effect, so the
- * options and setup requests start in that same render. The server has no address and renders the loading state,
- * which reads nothing from it, so the two renders agree.
+ * Reads the address and this browser's record. It runs in an effect, after the page has committed: an in-app
+ * navigation renders the sign-in page before the router has written its address into the window, so a read during
+ * render would see the page the person came from.
  */
-function readArrival(): Arrival | null {
-  if (typeof window === "undefined") return null;
+function readArrival(): Arrival {
   const address = window.location.search;
   const params = new URLSearchParams(address);
   const after = afterFrom(address);
@@ -125,20 +124,25 @@ function titleFor(view: View, heading: { reset: boolean; firstRun: boolean }, na
 }
 
 export default function SignInPage() {
-  const [arrival, setArrival] = useState<Arrival | null>(readArrival);
+  const [arrival, setArrival] = useState<Arrival | null>(null);
   const [view, setView] = useState<View | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(() => (arrival?.after ? { kind: "after" } : null));
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [removed, setRemoved] = useState<Set<string>>(() => new Set());
   const [opening, setOpening] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Until this runs the page is the loading state, the same as the server's render. Its requests start in the render
+  // that follows, together.
   useEffect(() => {
-    if (!arrival?.after) return;
+    const next = readArrival();
+    setArrival(next);
+    setNotice(next.after ? { kind: "after" } : null);
+    if (!next.after) return;
     // The ending is said once: a reload, or the next action, shows no line.
     const url = new URL(window.location.href);
     url.searchParams.delete("after");
     window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-  }, [arrival]);
+  }, []);
 
   // A link from an earlier person's page is dropped after a switch or a sign-out (DESIGN.md 4.10).
   const returnTo = arrival
@@ -167,6 +171,7 @@ export default function SignInPage() {
     refetch: refetchSetup,
   } = useQuery({
     queryKey: ["auth", "setup"],
+    enabled: arrival !== null,
     queryFn: () => authFetch<{ owner_exists: boolean }>("/setup/api/state"),
   });
   // The refused-sign-in screen (S8) is inert until the gateway reports fresh sign-in (SignInOptions.fresh_sign_in). It

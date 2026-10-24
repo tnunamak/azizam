@@ -99,19 +99,17 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("signed-out root shows the landing, not a sign-in redirect", async ({
+test("signed-out root is the sign-in page, not a redirect", async ({
   page,
 }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
   await expect(
-    page.getByText("Your own AI, in the apps you use", { exact: true }),
+    page.getByRole("heading", { level: 1, name: /^Sign in to / }),
   ).toBeVisible();
+  await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
   await expect(page.getByRole("navigation")).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Sign in", exact: true })).toHaveAttribute(
-    "href",
-    "/sign-in/?return_to=%2F",
-  );
+  await expect(page.locator("a[href^='/sign-in/']")).toHaveCount(0);
 });
 
 test("slow session checks never mount the app shell and retain filters and fragments", async ({

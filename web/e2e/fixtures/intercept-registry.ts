@@ -261,6 +261,7 @@ export const REGISTRY: Endpoint[] = [
   reads("/auth/api/options", {
     required: ["/built_in", "/oidc", "/oidc_label", "/oidc_url"],
   }),
+  reads("/auth/api/remembered", { required: ["/remember", "/people"] }),
   reads("/setup/api/state", { required: ["/owner_exists"] }),
   reads("/health", { required: ["/status"] }),
   reads("/admin/api/activity/requests", {
