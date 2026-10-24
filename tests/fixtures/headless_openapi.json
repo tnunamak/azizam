@@ -3587,6 +3587,12 @@
         "description": "Admin automation credential with the required owner/admin role. App keys are rejected.",
         "scheme": "bearer",
         "type": "http"
+      },
+      "SignedLink": {
+        "description": "A signed link. Its `sig` query parameter is an HMAC the gateway issued with the link, and its `expires` query parameter must also be present. Links come from the gateway's own responses, such as `download_url` and `thumbnail_url`; a client cannot make one.",
+        "in": "query",
+        "name": "sig",
+        "type": "apiKey"
       }
     }
   },
@@ -3599,7 +3605,7 @@
   "paths": {
     "/admin/api/access-plans": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_access_plans",
         "parameters": [],
         "responses": {
@@ -3661,12 +3667,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Access Plans",
         "tags": [
           "people and plans",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "post": {
@@ -3743,6 +3752,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Create Access Plan",
@@ -3754,7 +3766,7 @@
     },
     "/admin/api/access-plans/editor": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_access_plans_editor",
         "parameters": [],
         "responses": {
@@ -3816,12 +3828,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Access Plan Editor",
         "tags": [
           "people and plans",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
@@ -3909,6 +3924,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Delete Access Plan",
@@ -3918,7 +3936,7 @@
         ]
       },
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_access_plans_plan_id",
         "parameters": [
           {
@@ -4000,12 +4018,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Access Plan",
         "tags": [
           "people and plans",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "put": {
@@ -4102,6 +4123,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Update Access Plan",
@@ -4113,7 +4137,7 @@
     },
     "/admin/api/access/check": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nCheck access (design \u00a73.1): the decision an App's request would get.\n\n``{\"app\": app_id, \"request\": {...}}`` evaluates the App's two plans as\nthe runtime does; ``{\"plan\": plan_id, \"request\": {...}}`` evaluates one\nplan on both sides (an App that is \"Same as its person\").\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nCheck access (design \u00a73.1): the decision an App's request would get.\n\n``{\"app\": app_id, \"request\": {...}}`` evaluates the App's two plans as\nthe runtime does; ``{\"plan\": plan_id, \"request\": {...}}`` evaluates one\nplan on both sides (an App that is \"Same as its person\").\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_access_check",
         "parameters": [],
         "requestBody": {
@@ -4186,18 +4210,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Check Access",
         "tags": [
           "people and plans",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/access/preview": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nEverything one plan (or an App's two plans) can and cannot use.\n\n``{\"plan\": plan_id}`` or ``{\"app\": app_id}``. Returns ``plan_ids``,\n``summary`` (``usable`` of ``total`` entries, and how many are\n``blocked`` or ``unknown``), ``groups`` (the same counts per group)\nand ``entries``: one per Models page entry with ``state`` (allowed,\npartial, blocked, unknown), ``rule`` (the code, kind, id, name and plain\nsentence of the rule that decided it, allowed or not), ``reason`` (the\nsentence, when something is blocked or cannot be told), ``points_to``\n(the model an alias reaches) and ``kinds`` when one entry is allowed for\nsome kinds of work and not others. The owner gets the full rule; an\nadministrator gets it without the name of a restricted category. It makes\nno model request and costs nothing.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nEverything one plan (or an App's two plans) can and cannot use.\n\n``{\"plan\": plan_id}`` or ``{\"app\": app_id}``. Returns ``plan_ids``,\n``summary`` (``usable`` of ``total`` entries, and how many are\n``blocked`` or ``unknown``), ``groups`` (the same counts per group)\nand ``entries``: one per Models page entry with ``state`` (allowed,\npartial, blocked, unknown), ``rule`` (the code, kind, id, name and plain\nsentence of the rule that decided it, allowed or not), ``reason`` (the\nsentence, when something is blocked or cannot be told), ``points_to``\n(the model an alias reaches) and ``kinds`` when one entry is allowed for\nsome kinds of work and not others. The owner gets the full rule; an\nadministrator gets it without the name of a restricted category. It makes\nno model request and costs nothing.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_access_preview",
         "parameters": [],
         "requestBody": {
@@ -4270,12 +4297,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Preview Access",
         "tags": [
           "people and plans",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
@@ -4417,6 +4447,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Requests",
@@ -4428,7 +4461,7 @@
     },
     "/admin/api/admin-keys": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key; a key works only while the person who minted it still holds a role that permits it. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; an owner key needs the owner role; a caller mints only a role it holds; a key works only while the person who minted it still holds a role that permits it. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_admin_keys",
         "parameters": [],
         "requestBody": {
@@ -4501,18 +4534,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Create Admin Key",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/apps": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_apps",
         "parameters": [],
         "responses": {
@@ -4574,16 +4610,19 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Apps",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_apps",
         "parameters": [],
         "requestBody": {
@@ -4656,18 +4695,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Create App",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/apps/{app_id}": {
       "delete": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_apps_app_id",
         "parameters": [
           {
@@ -4749,16 +4791,19 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Disable App",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "patch": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_patch_admin_api_apps_app_id",
         "parameters": [
           {
@@ -4851,18 +4896,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Update App",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/apps/{app_id}/enable": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nRe-enable a disabled App.\n\nDELETE /apps/{id} is a one-way soft-disable. This endpoint is the undo\n\u2014 the smallest honest fix that lets the optimistic-disable flow offer a\ntoast with an \"Undo\" action. Idempotent: enabling an already-active app\nis a no-op that returns 200 and the current record.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nRe-enable a disabled App.\n\nDELETE /apps/{id} is a one-way soft-disable. This endpoint is the undo\n\u2014 the smallest honest fix that lets the optimistic-disable flow offer a\ntoast with an \"Undo\" action. Idempotent: enabling an already-active app\nis a no-op that returns 200 and the current record.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_apps_app_id_enable",
         "parameters": [
           {
@@ -4955,18 +5003,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Enable App",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/apps/{app_id}/keys": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; only the App's accountable person may add a key. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_apps_app_id_keys",
         "parameters": [
           {
@@ -5059,18 +5110,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Create Key",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/apps/{app_id}/keys/{credential_id}": {
       "patch": {
-        "description": "Owner only: needs the owner's sign-in.\n\nGive an App's key a new label. The key itself stays; this is not a credential change.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nGive an App's key a new label. The key itself stays; this is not a credential change.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_patch_admin_api_apps_app_id_keys_credential_id",
         "parameters": [
           {
@@ -5172,18 +5226,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Rename Key",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/apps/{app_id}/trusted-addresses": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_apps_app_id_trusted_addresses",
         "parameters": [
           {
@@ -5265,16 +5322,19 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Trusted Addresses",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to trust an address. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; only the App's accountable person may trust an address. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_apps_app_id_trusted_addresses",
         "parameters": [
           {
@@ -5367,18 +5427,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Add Trusted Address",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/apps/{app_id}/trusted-addresses/{entry_id}": {
       "delete": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_apps_app_id_trusted_addresses_entry_id",
         "parameters": [
           {
@@ -5469,18 +5532,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Delete Trusted Address",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/audit": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nList audit events with optional server-side filters and keyset cursor pagination.\n\nQuery params:\n  limit        \u2014 page size (default 50, max 200 per page); pagination\n                 via ``next_cursor`` makes the full log reachable beyond\n                 a single page.\n  actor_id     \u2014 exact match on actor_id (e.g. ``usr_\u2026`` or ``cli``).\n  action_prefix \u2014 matches events whose action starts with this prefix\n                  (e.g. ``service.`` or ``app.``).\n  before       \u2014 keyset cursor returned as ``next_cursor`` from a prior\n                 response, encoded as ``\"<created_at>:<id>\"``; fetches\n                 the next page older than that position.\n\nResponse:\n  { \"records\": [...], \"next_cursor\": \"<created_at>:<id>\" | null }\n  ``next_cursor`` is null exactly when no more rows match the current\n  filter \u2014 ``\"End of audit log\"`` territory for the UI.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nList audit events with optional server-side filters and keyset cursor pagination.\n\nQuery params:\n  limit        \u2014 page size (default 50, max 200 per page); pagination\n                 via ``next_cursor`` makes the full log reachable beyond\n                 a single page.\n  actor_id     \u2014 exact match on actor_id (e.g. ``usr_\u2026`` or ``cli``).\n  action_prefix \u2014 matches events whose action starts with this prefix\n                  (e.g. ``service.`` or ``app.``).\n  before       \u2014 keyset cursor returned as ``next_cursor`` from a prior\n                 response, encoded as ``\"<created_at>:<id>\"``; fetches\n                 the next page older than that position.\n\nResponse:\n  { \"records\": [...], \"next_cursor\": \"<created_at>:<id>\" | null }\n  ``next_cursor`` is null exactly when no more rows match the current\n  filter \u2014 ``\"End of audit log\"`` territory for the UI.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_audit",
         "parameters": [],
         "responses": {
@@ -5542,18 +5608,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Audit",
         "tags": [
           "usage and receipts",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/audit-events": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nCanonical noun-based alias for GET /audit.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nCanonical noun-based alias for GET /audit.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_audit_events",
         "parameters": [],
         "responses": {
@@ -5615,18 +5684,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Audit Events",
         "tags": [
           "usage and receipts",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/audit/{event_id}": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_audit_event_id",
         "parameters": [
           {
@@ -5708,12 +5780,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Audit Event",
         "tags": [
           "usage and receipts",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
@@ -5781,6 +5856,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Categories Active",
@@ -5865,6 +5943,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Categories Create",
@@ -5958,6 +6039,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Categories Activate",
@@ -6031,6 +6115,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Categories History",
@@ -6115,6 +6202,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Categories Preview",
@@ -6197,6 +6287,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Categories Revision",
@@ -6290,6 +6383,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Categories Restore",
@@ -6363,6 +6459,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Categories Services",
@@ -6438,6 +6537,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Admin Config Export",
@@ -6449,7 +6551,7 @@
     },
     "/admin/api/config/reload": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nHot-reload the runtime config from the DB service registry.\n\nRe-derives all backend host constants (KOBOLD_HOST,\nLLM_BACKEND_HOSTS, TTS_HOST, STT_HOST, EMBEDDINGS_HOST, COMFY_HOST \u2026)\nwithout a process restart.  Requests that arrive after this returns will\nsee the new values.\n\nNote: the LiteLLM subprocess still requires a separate restart to pick up\nits config-file changes.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nHot-reload the runtime config from the DB service registry.\n\nRe-derives all backend host constants (KOBOLD_HOST,\nLLM_BACKEND_HOSTS, TTS_HOST, STT_HOST, EMBEDDINGS_HOST, COMFY_HOST \u2026)\nwithout a process restart.  Requests that arrive after this returns will\nsee the new values.\n\nNote: the LiteLLM subprocess still requires a separate restart to pick up\nits config-file changes.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_config_reload",
         "parameters": [],
         "requestBody": {
@@ -6522,18 +6624,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Admin Config Reload",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/credentials": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nFlat list of every credential (app keys + admin automation keys).\n\nRecords are scrubbed of key material. Clients group by ``app_id`` /\n``subject_kind`` to render per-app key rows and active-key counts.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nFlat list of every credential (app keys + admin automation keys).\n\nRecords are scrubbed of key material. Clients group by ``app_id`` /\n``subject_kind`` to render per-app key rows and active-key counts.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_credentials",
         "parameters": [],
         "responses": {
@@ -6595,18 +6700,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Credentials",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/credentials/{credential_id}": {
       "delete": {
-        "description": "Owner only: needs the owner's sign-in.\n\nDELETE alias for POST \u2026/revoke \u2014 idiomatic REST revocation.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nDELETE alias for POST \u2026/revoke \u2014 idiomatic REST revocation.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_credentials_credential_id",
         "parameters": [
           {
@@ -6688,18 +6796,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Delete Credential",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/credentials/{credential_id}/revoke": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_credentials_credential_id_revoke",
         "parameters": [
           {
@@ -6792,18 +6903,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Revoke Credential",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/drain": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_drain",
         "parameters": [],
         "responses": {
@@ -6865,16 +6979,19 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Admin Drain Status",
         "tags": [
           "status",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nSet or clear the draining flag. Body: {\"draining\": bool, \"ttl_s\": num, \"reason\": str}.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only; bearer only. Browser session mutations require CSRF/action headers; bearer calls do not. Drain writes accept bearer credentials only.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nSet or clear the draining flag. Body: {\"draining\": bool, \"ttl_s\": num, \"reason\": str}.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only; bearer only. Browser session mutations require CSRF/action headers; bearer calls do not. Drain writes accept bearer credentials only.",
         "operationId": "owner_post_admin_api_drain",
         "parameters": [],
         "requestBody": {
@@ -6947,18 +7064,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Admin Drain Set",
         "tags": [
           "status",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/engine-definitions": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_engine_definitions",
         "parameters": [],
         "responses": {
@@ -7020,18 +7140,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Engine Definitions",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/engine-protocols": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_engine_protocols",
         "parameters": [],
         "responses": {
@@ -7093,18 +7216,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Engine Protocols",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/engines/access": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_engines_access",
         "parameters": [],
         "requestBody": {
@@ -7177,18 +7303,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Engine Access",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/engines/check": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_engines_check",
         "parameters": [],
         "requestBody": {
@@ -7261,18 +7390,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Check Engine",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/engines/test": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_engines_test",
         "parameters": [],
         "requestBody": {
@@ -7345,18 +7477,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Test Engine",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/engines/{service_id}": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_engines_service_id",
         "parameters": [
           {
@@ -7438,18 +7573,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Engine",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/engines/{service_id}/retention/facts": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_engines_service_id_retention_facts",
         "parameters": [
           {
@@ -7531,12 +7669,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Engine Facts",
         "tags": [
           "retention facts",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "put": {
@@ -7633,6 +7774,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Put Engine Facts",
@@ -7644,7 +7788,7 @@
     },
     "/admin/api/engines/{service_id}/retention/ledger": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_engines_service_id_retention_ledger",
         "parameters": [
           {
@@ -7726,12 +7870,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Engine Ledger",
         "tags": [
           "retention facts",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
@@ -7819,6 +7966,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Options",
@@ -7921,6 +8071,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Start",
@@ -8023,6 +8176,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Progress",
@@ -8136,6 +8292,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Apply",
@@ -8249,6 +8408,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Cancel",
@@ -8353,6 +8515,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Configure",
@@ -8364,7 +8529,7 @@
     },
     "/admin/api/extensions": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_extensions",
         "parameters": [],
         "responses": {
@@ -8426,18 +8591,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Extension Packages",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/extensions/enable": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_extensions_enable",
         "parameters": [],
         "requestBody": {
@@ -8510,18 +8678,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Enable Extension Package",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/extensions/validate": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_extensions_validate",
         "parameters": [],
         "requestBody": {
@@ -8594,18 +8765,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Validate Extension Package",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/extensions/{package_id}": {
       "delete": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_extensions_package_id",
         "parameters": [
           {
@@ -8701,12 +8875,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Remove Extension Package",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
@@ -8774,6 +8951,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Invites",
@@ -8865,6 +9045,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Create Invite",
@@ -8958,6 +9141,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Revoke Invite",
@@ -9051,6 +9237,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Copy Invite",
@@ -9062,7 +9251,7 @@
     },
     "/admin/api/me/retention/ledger": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_me_retention_ledger",
         "parameters": [],
         "responses": {
@@ -9124,18 +9313,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Current Retention Ledger",
         "tags": [
           "retention facts",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/host-commands": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_operator_host_commands",
         "parameters": [],
         "responses": {
@@ -9197,12 +9389,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Host Commands",
         "tags": [
           "settings",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "put": {
@@ -9279,6 +9474,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Update Host Commands",
@@ -9290,7 +9488,7 @@
     },
     "/admin/api/operator/litellm-config": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_operator_litellm_config",
         "parameters": [],
         "responses": {
@@ -9352,18 +9550,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Litellm Config",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/litellm/keys": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_operator_litellm_keys",
         "parameters": [],
         "responses": {
@@ -9425,16 +9626,19 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Litellm Keys",
         "tags": [
           "apps and keys",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_operator_litellm_keys",
         "parameters": [],
         "requestBody": {
@@ -9507,6 +9711,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Create Litellm Key",
@@ -9518,7 +9725,7 @@
     },
     "/admin/api/operator/litellm/keys/delete": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_operator_litellm_keys_delete",
         "parameters": [],
         "requestBody": {
@@ -9591,6 +9798,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Delete Litellm Keys",
@@ -9602,7 +9812,7 @@
     },
     "/admin/api/operator/media-job-admission": {
       "put": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_put_admin_api_operator_media_job_admission",
         "parameters": [],
         "requestBody": {
@@ -9675,18 +9885,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Update Media Job Admission Overrides",
         "tags": [
           "media and library",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/overrides": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_operator_overrides",
         "parameters": [],
         "responses": {
@@ -9748,18 +9961,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Operator Overrides",
         "tags": [
           "settings",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/service-availability": {
       "put": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_put_admin_api_operator_service_availability",
         "parameters": [],
         "requestBody": {
@@ -9832,18 +10048,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Update Service Availability Overrides",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/service-registry": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_operator_service_registry",
         "parameters": [],
         "responses": {
@@ -9905,16 +10124,19 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Service Registry",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "put": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_put_admin_api_operator_service_registry",
         "parameters": [],
         "requestBody": {
@@ -9987,18 +10209,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Update Service Registry",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/service-registry/excluded/{section}/{record_id}": {
       "delete": {
-        "description": "Owner only: needs the owner's sign-in.\n\nDrop a record the registry leaves out.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nDrop a record the registry leaves out.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_operator_service_registry_excluded_section_record_id",
         "parameters": [
           {
@@ -10089,16 +10314,19 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Remove Excluded Record",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "put": {
-        "description": "Owner only: needs the owner's sign-in.\n\nSave an edited copy of a record the registry leaves out. Its secret entries come back as read or are left out.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nSave an edited copy of a record the registry leaves out. Its secret entries come back as read or are left out.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_put_admin_api_operator_service_registry_excluded_section_record_id",
         "parameters": [
           {
@@ -10200,18 +10428,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Fix Excluded Record",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/services": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_operator_services",
         "parameters": [],
         "requestBody": {
@@ -10284,18 +10515,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Add Service",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/services/detect-models": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_operator_services_detect_models",
         "parameters": [],
         "requestBody": {
@@ -10368,18 +10602,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Detect Service Models",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/services/test": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_operator_services_test",
         "parameters": [],
         "requestBody": {
@@ -10452,18 +10689,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Test Service Connection",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/services/{service_id}": {
       "delete": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_operator_services_service_id",
         "parameters": [
           {
@@ -10545,16 +10785,19 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Remove Service",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "patch": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_patch_admin_api_operator_services_service_id",
         "parameters": [
           {
@@ -10647,18 +10890,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Update Service",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/services/{service_id}/enabled": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_operator_services_service_id_enabled",
         "parameters": [
           {
@@ -10751,18 +10997,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Set Service Enabled",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/operator/services/{service_id}/secret-entries": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nChange the secret entries of a service by explicit commands (retain, replace, clear, add, rename, set).\n\nThe response is the registry as ``GET /operator/service-registry`` answers it: a secret shows as a\nconfigured entry with its id, never as a value. See ``gateway/secret_commands.py`` for the commands.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nChange the secret entries of a service by explicit commands (retain, replace, clear, add, rename, set).\n\nThe response is the registry as ``GET /operator/service-registry`` answers it: a secret shows as a\nconfigured entry with its id, never as a value. See ``gateway/secret_commands.py`` for the commands.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_operator_services_service_id_secret_entries",
         "parameters": [
           {
@@ -10855,18 +11104,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Change Secret Entries",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/overview": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_overview",
         "parameters": [],
         "responses": {
@@ -10928,12 +11180,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Overview",
         "tags": [
           "status",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
@@ -11001,6 +11256,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "People",
@@ -11094,6 +11352,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Remove Person",
@@ -11195,6 +11456,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Update Person",
@@ -11298,6 +11562,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Reset Link",
@@ -11309,7 +11576,7 @@
     },
     "/admin/api/providers": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_providers",
         "parameters": [],
         "responses": {
@@ -11371,16 +11638,19 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Providers",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_providers",
         "parameters": [],
         "requestBody": {
@@ -11453,6 +11723,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Add Provider",
@@ -11464,7 +11737,7 @@
     },
     "/admin/api/providers/-/catalog": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_providers_catalog",
         "parameters": [],
         "responses": {
@@ -11526,18 +11799,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Catalog",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/providers/-/global-caps": {
       "delete": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_providers_global_caps",
         "parameters": [],
         "responses": {
@@ -11599,6 +11875,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Clear Global Caps",
@@ -11608,7 +11887,7 @@
         ]
       },
       "put": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_put_admin_api_providers_global_caps",
         "parameters": [],
         "requestBody": {
@@ -11681,6 +11960,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Set Global Caps",
@@ -11692,7 +11974,7 @@
     },
     "/admin/api/providers/-/test": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_providers_test",
         "parameters": [],
         "requestBody": {
@@ -11765,6 +12047,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Test Unsaved Provider",
@@ -11776,7 +12061,7 @@
     },
     "/admin/api/providers/{provider_id}": {
       "delete": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_providers_provider_id",
         "parameters": [
           {
@@ -11858,6 +12143,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Remove Provider",
@@ -11867,7 +12155,7 @@
         ]
       },
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_providers_provider_id",
         "parameters": [
           {
@@ -11949,18 +12237,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Provider",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/providers/{provider_id}/caps": {
       "delete": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_providers_provider_id_caps",
         "parameters": [
           {
@@ -12042,6 +12333,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Clear Provider Caps",
@@ -12051,7 +12345,7 @@
         ]
       },
       "put": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_put_admin_api_providers_provider_id_caps",
         "parameters": [
           {
@@ -12144,6 +12438,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Set Provider Caps",
@@ -12155,7 +12452,7 @@
     },
     "/admin/api/providers/{provider_id}/key": {
       "delete": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_delete_admin_api_providers_provider_id_key",
         "parameters": [
           {
@@ -12237,6 +12534,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Delete Provider Key",
@@ -12246,7 +12546,7 @@
         ]
       },
       "put": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_put_admin_api_providers_provider_id_key",
         "parameters": [
           {
@@ -12339,6 +12639,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Set Provider Key",
@@ -12350,7 +12653,7 @@
     },
     "/admin/api/providers/{provider_id}/models": {
       "put": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_put_admin_api_providers_provider_id_models",
         "parameters": [
           {
@@ -12443,6 +12746,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Update Provider Models",
@@ -12454,7 +12760,7 @@
     },
     "/admin/api/providers/{provider_id}/reconciliation": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_providers_provider_id_reconciliation",
         "parameters": [
           {
@@ -12536,18 +12842,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Provider Reconciliation",
         "tags": [
           "engines and providers",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/providers/{provider_id}/reconciliation/{reservation_id}": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_providers_provider_id_reconciliation_reservation_id",
         "parameters": [
           {
@@ -12649,6 +12958,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Reconcile Provider Reservation",
@@ -12660,7 +12972,7 @@
     },
     "/admin/api/providers/{provider_id}/retention/facts": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_providers_provider_id_retention_facts",
         "parameters": [
           {
@@ -12742,12 +13054,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Provider Facts",
         "tags": [
           "retention facts",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "put": {
@@ -12844,6 +13159,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Put Provider Facts",
@@ -12855,7 +13173,7 @@
     },
     "/admin/api/providers/{provider_id}/test": {
       "post": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_post_admin_api_providers_provider_id_test",
         "parameters": [
           {
@@ -12948,6 +13266,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Test Provider",
@@ -12959,7 +13280,7 @@
     },
     "/admin/api/requests/{request_id}/retention/ledger": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_requests_request_id_retention_ledger",
         "parameters": [
           {
@@ -13041,18 +13362,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Request Retention Ledger",
         "tags": [
           "retention facts",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/session": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nActor identity + CSRF token for browser (cookie-session) clients.\n\nThe web app (served at ``/``) bootstraps the actor and CSRF token\nfrom this endpoint using its session cookie. ``csrf_token`` is empty for\nbearer-key callers, whose mutations don't require CSRF headers.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nActor identity + CSRF token for browser (cookie-session) clients.\n\nThe web app (served at ``/``) bootstraps the actor and CSRF token\nfrom this endpoint using its session cookie. ``csrf_token`` is empty for\nbearer-key callers, whose mutations don't require CSRF headers.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_session",
         "parameters": [],
         "responses": {
@@ -13114,12 +13438,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Session",
         "tags": [
           "account",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
@@ -13187,6 +13514,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Defaults",
@@ -13269,6 +13599,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Put Defaults",
@@ -13342,6 +13675,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Effective",
@@ -13415,6 +13751,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Export Effective",
@@ -13488,6 +13827,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Instance",
@@ -13570,6 +13912,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Put Instance",
@@ -13643,6 +13988,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Prompt Memory",
@@ -13725,6 +14073,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Put Prompt Memory",
@@ -13798,6 +14149,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Receipts",
@@ -13880,6 +14234,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Put Receipts",
@@ -13953,6 +14310,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Preview Receipts",
@@ -13964,7 +14324,7 @@
     },
     "/admin/api/settings/retention/ledger": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_settings_retention_ledger",
         "parameters": [],
         "responses": {
@@ -14026,18 +14386,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Retention Ledger",
         "tags": [
           "retention facts",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/settings/retention/systems/{system_id}/facts": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_settings_retention_systems_system_id_facts",
         "parameters": [
           {
@@ -14119,12 +14482,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get System Facts",
         "tags": [
           "retention facts",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "put": {
@@ -14221,6 +14587,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Put System Facts",
@@ -14294,6 +14663,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Sessions",
@@ -14376,6 +14748,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Put Sessions",
@@ -14449,6 +14824,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Setup Progress",
@@ -14460,7 +14838,7 @@
     },
     "/admin/api/signin": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_signin",
         "parameters": [],
         "responses": {
@@ -14522,12 +14900,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Snapshot",
         "tags": [
           "settings",
-          "Owner only"
+          "Owner and admins"
         ]
       },
       "put": {
@@ -14613,6 +14994,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Save",
@@ -14706,6 +15090,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Discover Route",
@@ -14799,6 +15186,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Link Owner",
@@ -14883,6 +15273,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Dismiss Notice",
@@ -14976,6 +15369,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Owner Password",
@@ -15069,6 +15465,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Preview",
@@ -15162,6 +15561,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Start Test",
@@ -15255,6 +15657,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Cancel Test",
@@ -15346,6 +15751,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Get Test",
@@ -15439,6 +15847,9 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Begin Test",
@@ -15450,7 +15861,7 @@
     },
     "/admin/api/status": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nCached operator status for the React admin UI.\n\n``/v1/status`` stays a runtime API route. This endpoint gives the\nbrowser-session admin UI the same data through the admin API namespace.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nCached operator status for the React admin UI.\n\n``/v1/status`` stays a runtime API route. This endpoint gives the\nbrowser-session admin UI the same data through the admin API namespace.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_status",
         "parameters": [],
         "responses": {
@@ -15512,18 +15923,21 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Status Payload",
         "tags": [
           "status",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
     "/admin/api/users": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nAuthorization: AdminAuthenticator / _require_admin; owner/admin/superadmin. Browser session mutations require CSRF/action headers; bearer calls do not.",
         "operationId": "owner_get_admin_api_users",
         "parameters": [],
         "responses": {
@@ -15585,12 +15999,15 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Users",
         "tags": [
           "people and plans",
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
@@ -18181,6 +18598,9 @@
           },
           {
             "AppKeyXApiKey": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Delete All Requests",
@@ -18251,6 +18671,9 @@
           },
           {
             "AppKeyXApiKey": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "List Requests",
@@ -18304,6 +18727,9 @@
           },
           {
             "AppKeyXApiKey": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Delete Request",
@@ -18355,6 +18781,9 @@
           },
           {
             "AppKeyXApiKey": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "Read Request",
@@ -19395,6 +19824,24 @@
               "title": "Asset Id",
               "type": "string"
             }
+          },
+          {
+            "description": "The HMAC signature the gateway issued with this link. A changed or missing signature is refused.",
+            "in": "query",
+            "name": "sig",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Unix time, in seconds, after which the link is refused. Send it with `sig`.",
+            "in": "query",
+            "name": "expires",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -19561,7 +20008,11 @@
             "description": "Validation Error"
           }
         },
-        "security": [],
+        "security": [
+          {
+            "SignedLink": []
+          }
+        ],
         "summary": "Assets Content"
       }
     },
@@ -22744,6 +23195,24 @@
               "title": "Image Id",
               "type": "string"
             }
+          },
+          {
+            "description": "The HMAC signature the gateway issued with this link. A changed or missing signature is refused.",
+            "in": "query",
+            "name": "sig",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Unix time, in seconds, after which the link is refused. Send it with `sig`.",
+            "in": "query",
+            "name": "expires",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -22910,7 +23379,11 @@
             "description": "Validation Error"
           }
         },
-        "security": [],
+        "security": [
+          {
+            "SignedLink": []
+          }
+        ],
         "summary": "Images Content"
       }
     },
@@ -26436,6 +26909,24 @@
               "title": "Asset Id",
               "type": "string"
             }
+          },
+          {
+            "description": "The HMAC signature the gateway issued with this link. A changed or missing signature is refused.",
+            "in": "query",
+            "name": "sig",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Unix time, in seconds, after which the link is refused. Send it with `sig`.",
+            "in": "query",
+            "name": "expires",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -26602,7 +27093,11 @@
             "description": "Validation Error"
           }
         },
-        "security": [],
+        "security": [
+          {
+            "SignedLink": []
+          }
+        ],
         "summary": "Assets Content"
       }
     },
@@ -26618,6 +27113,24 @@
             "schema": {
               "title": "Asset Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "The HMAC signature the gateway issued with this link. A changed or missing signature is refused.",
+            "in": "query",
+            "name": "sig",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Unix time, in seconds, after which the link is refused. Send it with `sig`.",
+            "in": "query",
+            "name": "expires",
+            "required": true,
+            "schema": {
+              "type": "integer"
             }
           }
         ],
@@ -26776,7 +27289,11 @@
             "description": "Validation Error"
           }
         },
-        "security": [],
+        "security": [
+          {
+            "SignedLink": []
+          }
+        ],
         "summary": "Assets Thumbnail"
       }
     },
@@ -29986,6 +30503,24 @@
               "title": "Image Id",
               "type": "string"
             }
+          },
+          {
+            "description": "The HMAC signature the gateway issued with this link. A changed or missing signature is refused.",
+            "in": "query",
+            "name": "sig",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Unix time, in seconds, after which the link is refused. Send it with `sig`.",
+            "in": "query",
+            "name": "expires",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -30152,7 +30687,11 @@
             "description": "Validation Error"
           }
         },
-        "security": [],
+        "security": [
+          {
+            "SignedLink": []
+          }
+        ],
         "summary": "Images Content"
       }
     },
@@ -30564,7 +31103,7 @@
     },
     "/v1/status": {
       "get": {
-        "description": "Owner only: needs the owner's sign-in.\n\nConsolidated admin-only status JSON for the dashboard.",
+        "description": "Needs the owner's or an admin's sign-in.\n\nConsolidated status JSON for the dashboard.",
         "operationId": "v1_status_v1_status_get",
         "responses": {
           "200": {
@@ -30579,11 +31118,14 @@
         "security": [
           {
             "OwnerBearer": []
+          },
+          {
+            "BrowserSession": []
           }
         ],
         "summary": "V1 Status",
         "tags": [
-          "Owner only"
+          "Owner and admins"
         ]
       }
     },
