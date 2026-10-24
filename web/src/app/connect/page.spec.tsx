@@ -7,13 +7,22 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
 
 import { ViewerContext, type Viewer } from "@/components/shell/session";
 import { accountApi, type GatewayDiscovery } from "@/lib/account-api";
 import { productApi } from "@/lib/product-api";
 import type { ModelsCatalog } from "@/lib/product-api-types";
-import { mcpApps } from "@/lib/app-guides";
+import { appGuides } from "@/lib/app-guides";
+import { listTrustedAddresses } from "@/lib/trusted-addresses";
 import ConnectPage from "./page";
 
 vi.mock("next/link", () => ({
@@ -22,6 +31,15 @@ vi.mock("next/link", () => ({
       {children}
     </a>
   ),
+}));
+// Only the owner's view loads an App's trusted addresses; this stands in for the admin route.
+vi.mock("@/lib/trusted-addresses", () => ({
+  listTrustedAddresses: vi.fn(),
+  trustedAddressesKey: (appId: string) => [
+    "admin",
+    "app-trusted-addresses",
+    appId,
+  ],
 }));
 
 const member: Viewer = {
@@ -49,7 +67,6 @@ const discovery: GatewayDiscovery = {
         title: "Alpha",
         description: "Does the alpha thing.",
       },
-      { name: "tool_beta", title: "Beta", description: "Does the beta thing." },
     ],
   },
 };
@@ -67,12 +84,19 @@ function renderPage(viewer: Viewer) {
   );
 }
 
-const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 const catalog = {
   aliases: [
-    { id: "house-chat", capability: "chat", capabilities: [{ capability: "chat" }], recommended: true },
-    { id: "house-whisper", capability: "transcribe", capabilities: [{ capability: "transcribe" }] },
+    {
+      id: "house-chat",
+      capability: "chat",
+      capabilities: [{ capability: "chat" }],
+      recommended: true,
+    },
+    {
+      id: "house-whisper",
+      capability: "transcribe",
+      capabilities: [{ capability: "transcribe" }],
+    },
   ],
   models: [],
 } as unknown as ModelsCatalog;
@@ -85,12 +109,18 @@ beforeAll(() => {
 beforeEach(() => {
   vi.spyOn(accountApi, "mcpConnections").mockResolvedValue([]);
   vi.spyOn(productApi, "models").mockResolvedValue(catalog);
+  vi.mocked(listTrustedAddresses).mockReset().mockResolvedValue([]);
 });
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
+
+/** The client picker: every client in the data, as toggles. */
+async function picker() {
+  return within(await screen.findByRole("group", { name: "Setting up in" }));
+}
 
 describe("Connect", () => {
   test("shows a loading state while connection details load", () => {
@@ -99,19 +129,17 @@ describe("Connect", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       /loading connection details/i,
     );
-    expect(screen.queryByText("AI agents (MCP)")).toBeNull();
   });
 
-  test("asks a signed-out visitor to sign in and does not load details", () => {
-    const load = vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+  test("asks a signed-out visitor to sign in and shows no details", () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
     renderPage(signedOut);
     expect(screen.getByText("Sign in to connect your apps")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute(
       "href",
       "/sign-in/?return_to=%2Fconnect%2F",
     );
-    expect(screen.queryByRole("link", { name: "Create a key" })).toBeNull();
-    void load;
+    expect(screen.queryByLabelText("OpenAI-compatible address")).toBeNull();
   });
 
   test("offers a retry when details fail to load", async () => {
@@ -122,12 +150,13 @@ describe("Connect", () => {
     ).toBeTruthy();
   });
 
-  test("shows a member the addresses, the MCP server and a link to Apps & keys", async () => {
+  test("shows a member the endpoints, with the OpenAI-compatible one marked, and a link to Apps & keys", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
     renderPage(member);
     expect(
       await screen.findByLabelText("OpenAI-compatible address"),
     ).toHaveValue("https://gw.example/openai/v1");
+    expect(screen.getByText("Most apps use this one.")).toBeTruthy();
     expect(screen.getByLabelText("Anthropic-compatible address")).toHaveValue(
       "https://gw.example/anthropic",
     );
@@ -137,16 +166,15 @@ describe("Connect", () => {
     expect(screen.getByLabelText("MCP server address")).toHaveValue(
       "https://gw.example/mcp",
     );
-    // A plain visit sends the person to Apps & keys to choose an app; Connect creates no key.
     expect(
       screen.getByRole("link", { name: "choose the app in Apps & keys" }),
     ).toHaveAttribute("href", "/apps/");
     expect(screen.queryByRole("link", { name: "Create a key" })).toBeNull();
-    // The snippet carries the address from discovery and a placeholder, never a key.
-    const json = screen.getByText(/"mcpServers"/);
-    expect(json.textContent).toContain("https://gw.example/mcp");
-    expect(json.textContent).toContain("<your key>");
     expect(screen.queryByText("Gateway automation")).toBeNull();
+    // An address on a public host works from anywhere, so the local-only line stays off.
+    expect(
+      screen.queryByText("It works only from this machine or this network."),
+    ).toBeNull();
   });
 
   test("shows an owner the automation links as well", async () => {
@@ -159,69 +187,103 @@ describe("Connect", () => {
     );
   });
 
-  test("lists the MCP tools the server reports", async () => {
+  test("lists every client in the picker, and the open client's values with a link to its full steps", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
     renderPage(member);
-    const list = await screen.findByRole("list", { name: "MCP tools" });
-    const names = within(list)
-      .getAllByRole("listitem")
-      .map((item) => item.querySelector("code")?.textContent);
-    expect(names).toEqual(["tool_alpha", "tool_beta"]);
-    expect(within(list).getByText("Does the beta thing.")).toBeTruthy();
-  });
-
-  test("takes the tool list from the server, not from the page", async () => {
-    vi.spyOn(accountApi, "discovery").mockResolvedValue({
-      ...discovery,
-      mcp: {
-        ...discovery.mcp!,
-        tools: [
-          { name: "only_one", title: "One", description: "The only tool." },
-        ],
-      },
-    });
-    renderPage(member);
-    const list = await screen.findByRole("list", { name: "MCP tools" });
-    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
-    expect(within(list).getByText("only_one")).toBeTruthy();
-    // A page that hard-coded gateway tool names would still show them here.
-    for (const name of ["capabilities", "run", "job"])
-      expect(within(list).queryByText(name)).toBeNull();
-  });
-
-  test("says so when the server lists no tools", async () => {
-    vi.spyOn(accountApi, "discovery").mockResolvedValue({
-      recipes: discovery.recipes,
-    });
-    renderPage(member);
+    const options = within(
+      await screen.findByRole("group", { name: "Setting up in" }),
+    );
+    expect(options.getAllByRole("button")).toHaveLength(appGuides.apps.length);
     expect(
-      await screen.findByText("This gateway didn't list any MCP tools."),
+      options.getByRole("button", { name: "Open WebUI", pressed: true }),
     ).toBeTruthy();
+    expect(screen.getByLabelText("URL")).toHaveValue(
+      "https://gw.example/openai/v1",
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Model IDs")).toHaveValue("house-chat"),
+    );
+    // The key is never in the page; the key hint says where it goes.
+    expect(screen.getByText(/Paste a key from/)).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Full steps for Open WebUI →" }),
+    ).toHaveAttribute("href", "https://azizam.dev/docs/connect/open-webui/");
+    expect(document.body.innerHTML).not.toMatch(/opk_|oak_/);
   });
 
-  test("keeps the MCP tools and the notes per app closed until someone opens them", async () => {
+  test("changes the values when another client is chosen", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
     renderPage(member);
-    for (const summary of ["MCP tools this gateway offers", "MCP notes by app"]) {
-      const disclosure = (await screen.findByText(summary)).closest("details");
-      expect(disclosure).not.toBeNull();
-      expect(disclosure).not.toHaveAttribute("open");
+    fireEvent.click(
+      (await picker()).getByRole("button", { name: "OpenWhispr" }),
+    );
+    expect(
+      (await picker()).getByRole("button", {
+        name: "OpenWhispr",
+        pressed: true,
+      }),
+    ).toBeTruthy();
+    // OpenWhispr has two groups, each with its own Endpoint URL; both point at the same address.
+    for (const field of screen.getAllByLabelText("Endpoint URL")) {
+      expect(field).toHaveValue("https://gw.example/openai/v1");
     }
+    expect(
+      screen.getByRole("link", { name: "Full steps for OpenWhispr →" }),
+    ).toHaveAttribute("href", "https://azizam.dev/docs/connect/openwhispr/");
   });
 
-  test("tells people to paste the address and sign in, not to use a key, when sign-in works", async () => {
+  test("finds a client by name and says so when none matches", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    renderPage(member);
+    const search = await screen.findByRole("searchbox", {
+      name: "Find an app",
+    });
+    fireEvent.change(search, { target: { value: "whispr" } });
+    expect((await picker()).getAllByRole("button")).toHaveLength(1);
+    fireEvent.change(search, { target: { value: "zzz" } });
+    expect(screen.getByText("No app matches “zzz”.")).toBeTruthy();
+  });
+
+  test("shows an MCP-only client its server address, how it signs in, and the MCP docs", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    renderPage(member);
+    fireEvent.click((await picker()).getByRole("button", { name: "ChatGPT" }));
+    const recipe = await screen.findByRole("region", {
+      name: "Values for ChatGPT",
+    });
+    expect(within(recipe).getByLabelText("MCP server")).toHaveValue(
+      "https://gw.example/mcp",
+    );
+    expect(
+      screen.getByText("ChatGPT signs in with your account. It takes no key."),
+    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "MCP docs →" })).toHaveAttribute(
+      "href",
+      "https://azizam.dev/docs/mcp/",
+    );
+  });
+
+  test("keeps the setup steps, the tool list and the JSON out of the page", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    renderPage(member);
+    await screen.findByLabelText("OpenAI-compatible address");
+    expect(screen.queryByText("MCP tools this gateway offers")).toBeNull();
+    expect(screen.queryByText("MCP notes by app")).toBeNull();
+    expect(screen.queryByRole("list", { name: "How to connect" })).toBeNull();
+    expect(screen.queryByText(/"mcpServers"/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy JSON code" })).toBeNull();
+  });
+
+  test("says that sign-in apps need only the MCP address when sign-in works", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue({
       ...discovery,
       mcp: { ...discovery.mcp!, sign_in: true },
     });
     renderPage(member);
-    const steps = await screen.findByRole("list", { name: "How to connect" });
-    expect(steps.textContent).toMatch(/paste the MCP server address above/);
-    expect(steps.textContent).toMatch(/sign in to .* and choose Allow/);
-    expect(steps.textContent).not.toMatch(/key/i);
     expect(
-      screen.getByText(/ChatGPT and Claude.ai sign in instead/),
+      await screen.findByText(/Sign-in apps need only the MCP server address/),
     ).toBeTruthy();
+    expect(screen.queryByText(/public https/)).toBeNull();
   });
 
   test("explains that sign-in needs the public address when it is not set", async () => {
@@ -236,71 +298,24 @@ describe("Connect", () => {
     expect(
       screen.getByRole("link", { name: "Set it in Settings" }),
     ).toHaveAttribute("href", "/settings");
-    expect(screen.queryByRole("list", { name: "How to connect" })).toBeNull();
   });
 
-  test("renders MCP notes for each app from data, with the address filled in", async () => {
+  test("marks an address on this machine or network as local only", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue({
       ...discovery,
-      mcp: { ...discovery.mcp!, sign_in: true },
+      recipes: {
+        ...discovery.recipes,
+        openai: { canonical_base_url: "http://192.168.1.50:5000/openai/v1" },
+      },
     });
     renderPage(member);
     expect(
-      await screen.findByText("MCP notes by app"),
+      await screen.findByText(
+        "It works only from this machine or this network.",
+      ),
     ).toBeTruthy();
-    expect(screen.getByText(/checked 2026-/)).toBeTruthy();
-    // One accordion row per MCP app in the data, none written into the page.
-    for (const app of mcpApps)
-      expect(
-        screen.getByRole("button", { name: new RegExp(escapeRegExp(app.name)) }),
-      ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /LibreChat/ }));
-    expect(
-      await screen.findByText(/url: https:\/\/gw\.example\/mcp\./),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("link", { name: "LibreChat documentation" }),
-    ).toHaveAttribute("href", expect.stringMatching(/^https:\/\//));
-    // An entry the data marks unverified says so; a documented one does not.
-    const unverified = mcpApps.find((app) => app.mcp.status === "unverified")!;
-    const documented = mcpApps.find((app) => app.mcp.status === "documented")!;
-    expect(
-      screen.getByRole("button", { name: new RegExp(`^${escapeRegExp(unverified.name)}`) }).textContent,
-    ).toMatch(/Partly unverified/);
-    expect(
-      screen.getByRole("button", { name: new RegExp(`^${escapeRegExp(documented.name)}`) }).textContent,
-    ).not.toMatch(/Partly unverified/);
-    expect(document.body.textContent).not.toContain("{mcp_url}");
-  });
-
-  test("shows a Set up an app guide with the gateway address and the first model name", async () => {
-    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
-    renderPage(member);
-    expect(await screen.findByText("Set up an app")).toBeTruthy();
-    expect(screen.getByLabelText("Your app")).toHaveTextContent("Open WebUI");
-    // The address comes from discovery; the model from the person's catalog.
-    expect(screen.getByLabelText("URL")).toHaveValue("https://gw.example/openai/v1");
-    await waitFor(() =>
-      expect(screen.getByLabelText("Model IDs")).toHaveValue("house-chat"),
-    );
-    // The key field points to Apps & keys and never holds a key.
-    expect(screen.getByText("Paste a key from Apps & keys.")).toBeTruthy();
-    expect(document.body.innerHTML).not.toMatch(/opk_|oak_/);
-  });
-
-  test("changes the guide when another app is chosen", async () => {
-    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
-    renderPage(member);
-    fireEvent.click(await screen.findByLabelText("Your app"));
-    fireEvent.click(await screen.findByRole("option", { name: "OpenWhispr" }));
-    await waitFor(() =>
-      expect(screen.getByLabelText("Your app")).toHaveTextContent("OpenWhispr"),
-    );
-    await waitFor(() =>
-      expect(screen.getAllByLabelText("Model").map((el) => (el as HTMLInputElement).value)).toEqual([
-        "house-whisper",
-        "house-chat",
-      ]),
+    expect(screen.getByLabelText("OpenAI-compatible address")).toHaveValue(
+      "http://192.168.1.50:5000/openai/v1",
     );
   });
 
@@ -330,15 +345,39 @@ describe("Connect", () => {
       kind: "personal",
       disabled_at: null,
       created_at: 1_800_000_000,
-      access_plan: null,
+      access_plan: {
+        id: "plan_local",
+        name: "Local only",
+        summary: "Chat.",
+        same_as_person: false,
+      },
       can_mint_keys: true,
+      credentials: [
+        {
+          id: "key-1",
+          prefix: "opk_test1234abcd",
+          display_name: "Laptop",
+          created_at: 1_800_000_000,
+          last_used_at: 1_800_100_000,
+        },
+      ],
+    };
+    const zeroKeyApp = {
+      ...savedApp,
+      id: "zero-app",
+      name: "Phone",
       credentials: [],
     };
     const sessionWith = (apps: unknown[]) =>
       vi.spyOn(accountApi, "session").mockResolvedValue({
         authenticated: true,
         csrf_token: "test",
-        user: { id: "u", email: "sam@example.test", name: "Sam", role: "member" },
+        user: {
+          id: "u",
+          email: "sam@example.test",
+          name: "Sam",
+          role: "member",
+        },
         apps,
       } as never);
 
@@ -346,24 +385,87 @@ describe("Connect", () => {
       window.history.replaceState({}, "", "/");
     });
 
-    test("sets up that app: its name, its client guide, and a way back to Apps & keys", async () => {
+    test("opens the App's access and newest key first, with the picker set to its client", async () => {
       window.history.replaceState({}, "", "/connect/?app=saved-app");
       vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
       sessionWith([savedApp]);
       renderPage(member);
       expect(
-        await screen.findByRole("heading", { level: 1, name: "Connect OpenWhispr laptop" }),
+        await screen.findByRole("heading", {
+          level: 1,
+          name: "Connect OpenWhispr laptop",
+        }),
       ).toBeVisible();
-      expect(screen.getByRole("heading", { name: "Set up OpenWhispr laptop" })).toBeVisible();
-      expect(screen.getByRole("link", { name: "Back to Apps & keys" })).toHaveAttribute(
-        "href",
-        "/apps/",
-      );
-      expect(screen.getByRole("combobox", { name: "Your app" })).toHaveTextContent(
-        "OpenWhispr",
-      );
-      // A guide can name the key in more than one field; each says where the key goes.
-      expect(screen.getAllByText("Paste the key you saved for this app.")[0]).toBeVisible();
+      const strip = screen.getByRole("region", {
+        name: "OpenWhispr laptop: access and key",
+      });
+      expect(within(strip).getByText("Access plan: Local only")).toBeVisible();
+      expect(within(strip).getByText("opk_test…")).toBeVisible();
+      expect(within(strip).getByText(/Last used/)).toBeVisible();
+      expect(
+        within(strip).getByRole("link", { name: "Rotate key" }),
+      ).toHaveAttribute("href", "/apps/?app=saved-app&action=rotate");
+      expect(
+        screen.getByRole("link", { name: "Back to Apps & keys" }),
+      ).toHaveAttribute("href", "/apps/");
+      expect(
+        (await picker()).getByRole("button", {
+          name: "OpenWhispr",
+          pressed: true,
+        }),
+      ).toBeTruthy();
+      expect(
+        screen.getAllByText("Paste the key you saved for this app.")[0],
+      ).toBeVisible();
+    });
+
+    test("an App with no keys says so and offers Create key, never only a key to paste", async () => {
+      window.history.replaceState({}, "", "/connect/?app=zero-app");
+      vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+      sessionWith([zeroKeyApp]);
+      renderPage(member);
+      const strip = await screen.findByRole("region", {
+        name: "Phone: access and key",
+      });
+      expect(within(strip).getByText("No keys yet")).toBeVisible();
+      expect(
+        within(strip).getByRole("link", { name: "Create key" }),
+      ).toHaveAttribute("href", "/apps/?app=zero-app&action=create-key");
+      expect(
+        screen.getByText("No key yet. Create one above, then paste it here."),
+      ).toBeVisible();
+    });
+
+    test("an owner sees the App's keyless addresses on the strip, and a member never asks for them", async () => {
+      window.history.replaceState({}, "", "/connect/?app=saved-app");
+      vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+      vi.mocked(listTrustedAddresses).mockResolvedValue([
+        {
+          id: "t1",
+          app_id: "saved-app",
+          address: "192.168.1.50",
+          note: null,
+          created_at: 1,
+          created_by: null,
+        },
+      ]);
+      sessionWith([savedApp]);
+      renderPage(owner);
+      expect(
+        await screen.findByText("From 192.168.1.50 no key is needed"),
+      ).toBeVisible();
+    });
+
+    test("a member gets no keyless line and never loads an App's addresses", async () => {
+      window.history.replaceState({}, "", "/connect/?app=saved-app");
+      vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+      sessionWith([savedApp]);
+      renderPage(member);
+      await screen.findByRole("region", {
+        name: "OpenWhispr laptop: access and key",
+      });
+      expect(screen.queryByText(/no key is needed/)).toBeNull();
+      expect(listTrustedAddresses).not.toHaveBeenCalled();
     });
 
     test("says so when the app is not in the list, and the page still works", async () => {
@@ -371,7 +473,9 @@ describe("Connect", () => {
       vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
       sessionWith([savedApp]);
       renderPage(member);
-      expect(await screen.findByText(/That app isn't in your list/)).toBeVisible();
+      expect(
+        await screen.findByText(/That app isn't in your list/),
+      ).toBeVisible();
       expect(screen.getByLabelText("OpenAI-compatible address")).toHaveValue(
         "https://gw.example/openai/v1",
       );
@@ -381,8 +485,12 @@ describe("Connect", () => {
       vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
       const session = vi.spyOn(accountApi, "session");
       renderPage(member);
-      expect(await screen.findByLabelText("OpenAI-compatible address")).toBeTruthy();
-      expect(screen.queryByRole("link", { name: "Back to Apps & keys" })).toBeNull();
+      expect(
+        await screen.findByLabelText("OpenAI-compatible address"),
+      ).toBeTruthy();
+      expect(
+        screen.queryByRole("link", { name: "Back to Apps & keys" }),
+      ).toBeNull();
       expect(session).not.toHaveBeenCalled();
     });
   });

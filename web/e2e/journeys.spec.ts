@@ -29,7 +29,7 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", { t
   await expect(reveal).toBeVisible();
   // The setup guide shows the app's fields; the key stays in its own field.
   await expect(reveal.getByRole("heading", { name: "Set up your app" })).toBeVisible();
-  await expect(reveal.getByRole("combobox", { name: "Your app" })).toBeVisible();
+  await expect(reveal.getByRole("group", { name: "Setting up in" })).toBeVisible();
   await expect(reveal.getByLabel("Your key", { exact: true })).toHaveValue(firstKey.api_key);
   expect(
     await reveal.locator("section input").evaluateAll(

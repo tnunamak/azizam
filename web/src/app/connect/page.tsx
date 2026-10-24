@@ -1,25 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
 import { PageHeader } from "@/components/product/page-header";
 import { EmptyState } from "@/components/product/empty-state";
 import { ErrorState } from "@/components/product/error-state";
 import { CopyField } from "@/components/product/copy-field";
-import { CodeBlock } from "@/components/product/code-block";
 import { SettingsSection } from "@/components/product/setting-row";
-import { Badge } from "@/components/ui/badge";
+import { AppGuide } from "@/components/product/app-guide";
+import { RelativeTime } from "@/components/product/relative-time";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 import {
   accountApi,
   type AccountApp,
@@ -29,18 +22,17 @@ import { productApi } from "@/lib/product-api";
 import {
   appGuides,
   guideIdForAppName,
-  keyApps,
-  mcpApps,
-  resolveMcpGuide,
   suggestedModel,
-  type AppGuide as AppGuideData,
-  type McpGuide,
+  type GuideValues,
 } from "@/lib/app-guides";
-import { AppGuide } from "@/components/product/app-guide";
-import { PRODUCT_NAME } from "@/lib/product";
+import { MCP_DOCS_URL } from "@/lib/docs";
+import { keyStart } from "@/lib/key-hint";
+import { isLocalOnlyAddress } from "@/lib/private-address";
+import {
+  listTrustedAddresses,
+  trustedAddressesKey,
+} from "@/lib/trusted-addresses";
 import { formatAppName } from "@/lib/format";
-
-const KEY_PLACEHOLDER = "<your key>";
 
 /** Discovery sends root-relative or `{base_url}` addresses when the gateway
  * has no public address set; apps then reach it at the address in use here. */
@@ -63,36 +55,10 @@ function useRequestedAppId(): string | null {
   return appId;
 }
 
-function mcpSnippets(url: string) {
-  const name = PRODUCT_NAME.toLowerCase();
-  return [
-    {
-      language: "JSON",
-      code: JSON.stringify(
-        {
-          mcpServers: {
-            [name]: {
-              type: "http",
-              url,
-              headers: { Authorization: `Bearer ${KEY_PLACEHOLDER}` },
-            },
-          },
-        },
-        null,
-        2,
-      ),
-    },
-    {
-      language: "Command line",
-      code: [
-        `curl -X POST ${url} \\`,
-        `  -H "Authorization: Bearer ${KEY_PLACEHOLDER}" \\`,
-        `  -H "Content-Type: application/json" \\`,
-        `  -H "Accept: application/json" \\`,
-        `  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`,
-      ].join("\n"),
-    },
-  ];
+/** Names as one phrase: "A", "A and B", "A, B and C". */
+function listed(names: string[]): string {
+  if (names.length < 2) return names.join("");
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
 function ConnectSkeleton() {
@@ -108,10 +74,11 @@ function ConnectSkeleton() {
 }
 
 /**
- * How to use this gateway from other apps: the addresses, the setup steps for
- * each app, and the MCP server with the tools it lists. Everything comes from
+ * How to use this gateway from other apps: the values each client needs, the
+ * addresses behind them and the MCP server. Everything comes from
  * /.well-known/azizam, so the page cannot drift from the server. With
- * `?app=<id>` it sets up one app from Apps & keys and links back to it.
+ * `?app=<id>` it sets up one app from Apps & keys and shows that app's access
+ * and key first.
  */
 export default function ConnectPage() {
   const viewer = useViewer();
@@ -133,7 +100,8 @@ export default function ConnectPage() {
   });
   const setupApp: AccountApp | null =
     session?.apps.find((app) => app.id === requestedAppId) ?? null;
-  const notFound = requestedAppId !== null && session !== undefined && !setupApp;
+  const notFound =
+    requestedAppId !== null && session !== undefined && !setupApp;
   const setupName = setupApp
     ? formatAppName(setupApp.name, session?.user?.email)
     : "";
@@ -171,7 +139,9 @@ export default function ConnectPage() {
             description="Each app gets a key with your account's access plan."
             action={
               <Button asChild>
-                <Link prefetch={false} href="/sign-in/?return_to=%2Fconnect%2F">Sign in</Link>
+                <Link prefetch={false} href="/sign-in/?return_to=%2Fconnect%2F">
+                  Sign in
+                </Link>
               </Button>
             }
           />
@@ -213,227 +183,255 @@ function ConnectDetails({
 }) {
   const address = (id: string, fallback: string) =>
     absolute(discovery.recipes[id]?.canonical_base_url ?? fallback, origin);
-  const mcpUrl = absolute(discovery.mcp?.url ?? "/mcp", origin);
-  const tools = discovery.mcp?.tools ?? [];
+  const endpoints = {
+    openai: address("openai", "/openai/v1"),
+    anthropic: address("anthropic", "/anthropic"),
+    ollama: address("ollama", "/ollama"),
+    mcp: absolute(discovery.mcp?.url ?? "/mcp", origin),
+  };
   const signIn = discovery.mcp?.sign_in ?? false;
   // The client the person picks. Until they pick one, it is the guide the app's name points at.
   const [pickedGuide, setPickedGuide] = useState<string | null>(null);
-  const guideApp =
-    pickedGuide ?? (app ? guideIdForAppName(app.name) : keyApps[0].id);
+  const guideId =
+    pickedGuide ?? (app ? guideIdForAppName(app.name) : appGuides.apps[0].id);
   const { data: catalog, isPending: catalogPending } = useQuery({
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
   });
   const catalogRows = [...(catalog?.aliases ?? []), ...(catalog?.models ?? [])];
-  return (
+  // Only an owner or admin may list an app's trusted addresses; for anyone else the line stays off.
+  const { data: trusted } = useQuery({
+    queryKey: trustedAddressesKey(app?.id ?? ""),
+    queryFn: () => listTrustedAddresses(app!.id),
+    enabled: admin && app !== null,
+  });
+  const keyless = (trusted ?? []).map((entry) => entry.address);
+  const values: GuideValues = {
+    openai_url: endpoints.openai,
+    anthropic_url: endpoints.anthropic,
+    mcp_url: endpoints.mcp,
+    chat_model: suggestedModel(catalogRows, "chat"),
+    transcription_model: suggestedModel(catalogRows, "transcribe"),
+  };
+  const keyHint = app ? (
+    app.credentials.length ? (
+      "Paste the key you saved for this app."
+    ) : (
+      "No key yet. Create one above, then paste it here."
+    )
+  ) : (
     <>
-      <SettingsSection
-        title="API endpoints"
-        description="Paste an address and a key into any app that supports one."
-      >
-        <div className="flex flex-col gap-4 p-4">
+      Paste a key from{" "}
+      <Link prefetch={false} href="/apps/" className="underline">
+        Apps &amp; keys
+      </Link>
+      .
+    </>
+  );
+  const setup = (
+    <AppGuide
+      appId={guideId}
+      onAppChange={setPickedGuide}
+      values={values}
+      keyHint={keyHint}
+      loading={catalogPending}
+    />
+  );
+  const anyLocal = Object.values(endpoints).some(isLocalOnlyAddress);
+  const endpointsSection = (
+    <SettingsSection
+      title="Endpoints"
+      description="Reference: each address this gateway serves."
+    >
+      <div className="flex flex-col gap-4 p-4">
+        <div className="flex flex-col gap-2">
           <CopyField
             label="OpenAI-compatible address"
-            value={address("openai", "/openai/v1")}
+            value={endpoints.openai}
           />
-          <CopyField
-            label="Anthropic-compatible address"
-            value={address("anthropic", "/anthropic")}
-          />
-          <CopyField
-            label="Ollama-compatible address"
-            value={address("ollama", "/ollama")}
-          />
-          <CopyField label="MCP server address" value={mcpUrl} />
-        </div>
-      </SettingsSection>
-      <SettingsSection
-        title={app ? `Set up ${appName}` : "Set up an app"}
-        description={
-          app
-            ? "Where to click and what to paste."
-            : "Where to click and what to paste, for each app."
-        }
-      >
-        <div className="p-4">
-          <AppGuide
-            appId={guideApp}
-            onAppChange={setPickedGuide}
-            values={{
-              openai_url: address("openai", "/openai/v1"),
-              anthropic_url: address("anthropic", "/anthropic"),
-              mcp_url: mcpUrl,
-              chat_model: suggestedModel(catalogRows, "chat"),
-              transcription_model: suggestedModel(catalogRows, "transcribe"),
-            }}
-            keyHint={
-              app
-                ? "Paste the key you saved for this app."
-                : "Paste a key from Apps & keys."
-            }
-            loading={catalogPending}
-          />
-        </div>
-      </SettingsSection>
-      <SettingsSection
-        title="AI apps and agents (MCP)"
-        description="ChatGPT, Claude and other MCP apps can run this gateway's workflows as you."
-      >
-        <div className="flex flex-col gap-4 p-4">
-          {signIn ? (
-            <>
-              <ol aria-label="How to connect" className="list-decimal pl-5">
-                <li>
-                  In your AI app, add a custom MCP server (some apps call it a
-                  connector) and paste the MCP server address above.
-                </li>
-                <li>
-                  When the app asks, sign in to {PRODUCT_NAME} and choose Allow.
-                </li>
-              </ol>
-              <p className="text-muted-foreground text-meta">
-                The app then works within your access plan. You can disconnect
-                it in Apps &amp; keys at any time.
-              </p>
-            </>
-          ) : (
-            <p className="text-meta">
-              Signing in from AI apps needs this gateway&apos;s public https
-              address.{" "}
-              {admin ? (
-                <Link prefetch={false} href="/settings" className="underline">
-                  Set it in Settings
-                </Link>
-              ) : (
-                "Ask the owner to set it"
-              )}
-              . Until then, apps that send a header can use a key.
-            </p>
-          )}
-          {/* Reference material, not setup: each stays closed until someone asks for it. */}
-          <Reference summary="MCP tools this gateway offers">
-            {tools.length ? (
-              <ul aria-label="MCP tools" className="flex flex-col gap-2">
-                {tools.map((tool) => (
-                  <li key={tool.name} className="min-w-0">
-                    <code className="font-mono text-sm">{tool.name}</code>
-                    <p className="text-muted-foreground text-meta">
-                      {tool.description}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-muted-foreground text-meta">
-                This gateway didn&apos;t list any MCP tools.
-              </p>
-            )}
-          </Reference>
-          <Reference summary="MCP notes by app">
-            <p className="text-muted-foreground text-meta">
-              From each app&apos;s own documentation, checked {appGuides.checked}.
-            </p>
-            <Accordion type="single" collapsible>
-              {mcpApps.map((client) => (
-                <ClientNote
-                  key={client.id}
-                  app={client}
-                  guide={resolveMcpGuide(client.mcp, mcpUrl)}
-                />
-              ))}
-            </Accordion>
-          </Reference>
-        </div>
-      </SettingsSection>
-      <SettingsSection
-        title="Use a key instead"
-        description="For apps and scripts that send a key in a header. ChatGPT and Claude.ai sign in instead."
-      >
-        <div className="flex flex-col gap-4 p-4">
           <p className="text-muted-foreground text-meta">
-            Send your key in the Authorization header. Replace {KEY_PLACEHOLDER}{" "}
-            with a key from{" "}
-            <Link prefetch={false} href="/apps/" className="underline">
-              Apps &amp; keys
-            </Link>
-            .
+            Most apps use this one.
           </p>
-          <CodeBlock snippets={mcpSnippets(mcpUrl)} />
         </div>
-      </SettingsSection>
-      {admin ? (
-        <SettingsSection
-          title="Gateway automation"
-          description="For scripts that manage this gateway."
+        <CopyField
+          label="Anthropic-compatible address"
+          value={endpoints.anthropic}
+        />
+        <CopyField label="Ollama-compatible address" value={endpoints.ollama} />
+        <CopyField label="MCP server address" value={endpoints.mcp} />
+        {anyLocal ? (
+          <p className="text-muted-foreground text-meta">
+            It works only from this machine or this network.
+          </p>
+        ) : null}
+      </div>
+    </SettingsSection>
+  );
+  const mcpSection = (
+    <SettingsSection
+      title="AI apps and agents (MCP)"
+      description="ChatGPT, Claude and other MCP apps can run this gateway's workflows as you."
+    >
+      <div className="flex flex-col gap-3 p-4">
+        {signIn ? (
+          <p className="text-muted-foreground text-meta">
+            Sign-in apps need only the MCP server address. You can disconnect
+            any of them in Apps &amp; keys at any time.
+          </p>
+        ) : (
+          <p className="text-meta">
+            Signing in from AI apps needs this gateway&apos;s public https
+            address.{" "}
+            {admin ? (
+              <Link prefetch={false} href="/settings" className="underline">
+                Set it in Settings
+              </Link>
+            ) : (
+              "Ask the owner to set it"
+            )}
+            . Until then, apps that send a header can use a key.
+          </p>
+        )}
+        <a
+          href={MCP_DOCS_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-meta w-fit underline underline-offset-4"
         >
-          <div className="flex flex-col gap-2 p-4 text-sm">
-            <a href="/docs" className="underline">
-              API reference
-            </a>
-            <a href="/openapi.json" className="underline">
-              OpenAPI document
-            </a>
-            <Link prefetch={false} href="/settings" className="underline">
-              Set the gateway&apos;s public address
-            </Link>
-          </div>
-        </SettingsSection>
-      ) : null}
+          MCP setup docs →
+        </a>
+      </div>
+    </SettingsSection>
+  );
+  const automation = admin ? (
+    <p className="text-muted-foreground text-meta flex flex-wrap items-center gap-x-4 gap-y-2 border-t pt-4">
+      Gateway automation
+      <a href="/docs" className="underline underline-offset-4">
+        API reference
+      </a>
+      <a href="/openapi.json" className="underline underline-offset-4">
+        OpenAPI document
+      </a>
+      <Link
+        prefetch={false}
+        href="/settings"
+        className="underline underline-offset-4"
+      >
+        Set the public address
+      </Link>
+    </p>
+  ) : null;
+
+  if (app) {
+    return (
+      <>
+        <AppStrip app={app} appName={appName} addresses={keyless} />
+        <div className="bg-card rounded-panel border p-4">{setup}</div>
+        {endpointsSection}
+        {mcpSection}
+        {automation}
+      </>
+    );
+  }
+  return (
+    <>
+      {endpointsSection}
+      <SettingsSection
+        title="Set up an app"
+        description="Pick an app, then paste these values into it."
+      >
+        <div className="p-4">{setup}</div>
+      </SettingsSection>
+      {mcpSection}
+      {automation}
     </>
   );
 }
 
-/** A disclosure for reference material. Closed by default; the native element keeps it usable without script. */
-function Reference({ summary, children }: { summary: string; children: ReactNode }) {
+/**
+ * The app this page sets up: its access plan, its newest key (masked, with
+ * when it was last used) and the one action its key needs. Keyless addresses
+ * are listed only for an owner, who is the only one who can see them.
+ */
+function AppStrip({
+  app,
+  appName,
+  addresses,
+}: {
+  app: AccountApp;
+  appName: string;
+  addresses: string[];
+}) {
+  const newest = [...app.credentials].sort(
+    (a, b) =>
+      (b.last_used_at ?? b.created_at) - (a.last_used_at ?? a.created_at),
+  )[0];
+  const plan = app.access_plan;
+  const planName = plan
+    ? plan.same_as_person
+      ? `${plan.name} (yours)`
+      : plan.name
+    : "none yet";
+  const count = app.credentials.length;
+  const appHref = `/apps/?app=${encodeURIComponent(app.id)}`;
   return (
-    <details className="group border-t pt-4">
-      <summary className="text-body flex min-h-8 w-fit cursor-pointer list-none items-center gap-2 font-medium max-sm:min-h-11 [&::-webkit-details-marker]:hidden">
-        <ChevronDown
-          aria-hidden="true"
-          className="size-4 shrink-0 transition-transform group-open:rotate-180"
-        />
-        {summary}
-      </summary>
-      <div className="mt-3 flex flex-col gap-3">{children}</div>
-    </details>
-  );
-}
-
-/** One app's MCP setup notes (lib/app-guides.json): data, never a branch. */
-function ClientNote({ app, guide: note }: { app: AppGuideData; guide: McpGuide }) {
-  return (
-    <AccordionItem value={app.id}>
-      <AccordionTrigger>
-        <span className="flex flex-wrap items-center gap-2">
-          {app.name}
-          <Badge variant="outline">
-            {note.auth === "sign-in" ? "Sign in" : "Sign in or key"}
-          </Badge>
-          {note.status === "unverified" ? (
-            <Badge variant="secondary">Partly unverified</Badge>
-          ) : null}
-        </span>
-      </AccordionTrigger>
-      <AccordionContent>
-        <ol className="list-decimal pl-5">
-          {note.steps.map((step) => (
-            <li key={step} className="break-words">
-              {step}
-            </li>
-          ))}
-        </ol>
-        {note.note ? (
-          <p className="text-muted-foreground text-meta mt-2">{note.note}</p>
-        ) : null}
-        <a
-          href={note.docs}
-          className="text-meta mt-2 inline-block underline"
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          {app.name} documentation
-        </a>
-      </AccordionContent>
-    </AccordionItem>
+    <section
+      aria-label={`${appName}: access and key`}
+      className="bg-card rounded-panel flex flex-col gap-3 border p-4"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="text-body font-medium break-words">{appName}</h2>
+        <p className="text-muted-foreground text-meta">
+          Access plan: {planName}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <p className="text-meta flex flex-wrap items-center gap-x-3 gap-y-1">
+          {newest ? (
+            <>
+              <span className="font-mono">{keyStart(newest.prefix)}</span>
+              <span className="text-muted-foreground">
+                {newest.last_used_at != null ? (
+                  <>
+                    Last used <RelativeTime ts={newest.last_used_at} />
+                  </>
+                ) : (
+                  "Never used"
+                )}
+              </span>
+              {count > 1 ? (
+                <span className="text-muted-foreground">{count} keys</span>
+              ) : null}
+            </>
+          ) : (
+            <span className="text-muted-foreground">No keys yet</span>
+          )}
+        </p>
+        {!app.can_mint_keys ? (
+          count === 0 ? (
+            <p className="text-muted-foreground text-meta">
+              Ask the owner to update this app&apos;s access.
+            </p>
+          ) : null
+        ) : count === 0 ? (
+          <Button asChild variant="outline" size="sm">
+            <Link prefetch={false} href={`${appHref}&action=create-key`}>
+              Create key
+            </Link>
+          </Button>
+        ) : (
+          <Button asChild variant="outline" size="sm">
+            <Link prefetch={false} href={`${appHref}&action=rotate`}>
+              {count === 1 ? "Rotate key" : "Rotate keys"}
+            </Link>
+          </Button>
+        )}
+      </div>
+      {addresses.length > 0 ? (
+        <p className="text-muted-foreground text-meta">
+          From {listed(addresses)} no key is needed
+        </p>
+      ) : null}
+    </section>
   );
 }

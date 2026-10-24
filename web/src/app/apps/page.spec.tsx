@@ -912,7 +912,8 @@ it.each([
   await openNewApp(name);
   fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
   const dialog = within(await screen.findByRole("dialog", { name: `New key for ${name}` }));
-  expect(dialog.getByRole("combobox", { name: "Your app" })).toHaveTextContent(appName);
+  expect(dialog.getByRole("group", { name: "Setting up in" })).toBeVisible();
+  expect(dialog.getByRole("button", { name: appName, pressed: true })).toBeVisible();
   expect(dialog.getByRole("heading", { name: "Set up your app" })).toBeVisible();
   expect(dialog.getByLabelText("Your key")).toHaveValue("test-key-only");
   // The key field of the guide shows a hint, never the key.
@@ -923,9 +924,9 @@ it.each([
   expect(values).not.toContain("test-key-only");
   expect(guide.textContent).not.toContain("test-key-only");
   expect(dialog.getByRole("link", { name: "Connect" })).toHaveAttribute("href", expect.stringMatching(/^\/connect\/?\?app=/));
-  expect(dialog.getByRole("link", { name: `${appName} documentation` })).toHaveAttribute(
+  expect(dialog.getByRole("link", { name: `Full steps for ${appName} →` })).toHaveAttribute(
     "href",
-    expect.stringMatching(/^https:\/\//),
+    expect.stringMatching(/^https:\/\/azizam\.dev\/docs\/connect\//),
   );
   // The sticky action saves the key and closes the dialog.
   fireEvent.click(dialog.getByRole("button", { name: "I’ve saved the key" }));

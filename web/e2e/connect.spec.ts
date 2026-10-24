@@ -2,8 +2,8 @@ import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
 
-// Sign in, open Connect from the navigation, copy the MCP config.
-test("owner signs in, opens Connect and copies the MCP config", async ({
+// Sign in, open Connect from the navigation, copy an address from the recipe.
+test("owner signs in, opens Connect and copies an address from the recipe", async ({
   browser,
   baseURL,
 }) => {
@@ -32,38 +32,30 @@ test("owner signs in, opens Connect and copies the MCP config", async ({
       page.getByRole("heading", { level: 1, name: "Connect" }),
     ).toBeVisible();
 
-    // The reference material is closed until someone opens it.
-    const toolsDisclosure = page.locator("details").filter({ hasText: "MCP tools this gateway offers" });
-    await expect(toolsDisclosure).not.toHaveAttribute("open");
-    await expect(
-      page.locator("details").filter({ hasText: "MCP notes by app" }),
-    ).not.toHaveAttribute("open");
+    // Every client is one toggle, and the first one is open: its values, then a link to its full steps.
+    const picker = page.getByRole("group", { name: "Setting up in" });
+    await expect(picker.getByRole("button", { name: "Open WebUI", pressed: true })).toBeVisible();
+    expect(await picker.getByRole("button").count()).toBeGreaterThan(10);
+    const recipe = page.getByRole("region", { name: "Values for Open WebUI" });
+    await expect(recipe.getByLabel("URL", { exact: true })).toHaveValue(`${baseURL}/openai/v1`);
+    await expect(recipe.getByRole("link", { name: "Full steps for Open WebUI →" })).toHaveAttribute(
+      "href",
+      "https://azizam.dev/docs/connect/open-webui/",
+    );
 
-    // The tools come from the running server, whatever it exposes.
-    const live = await (await page.request.get("/.well-known/azizam")).json();
-    const names: string[] = live.mcp.tools.map((t: { name: string }) => t.name);
-    expect(names.length).toBeGreaterThan(0);
-    await page.getByText("MCP tools this gateway offers", { exact: true }).click();
-    const list = page.getByRole("list", { name: "MCP tools" });
-    for (const name of names) await expect(list).toContainText(name);
+    // The address copies to the clipboard as the whole value.
+    await recipe.getByRole("button", { name: "Copy URL" }).click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${baseURL}/openai/v1`);
 
-    // App setup comes from data: a generic guide, and MCP notes per app.
-    await expect(page.getByText("Set up an app", { exact: true })).toBeVisible();
-    await expect(page.getByRole("combobox", { name: "Your app" })).toContainText("Open WebUI");
-    await expect(page.getByText("MCP notes by app", { exact: true })).toBeVisible();
-    await expect(page.getByLabel("URL", { exact: true })).toHaveValue(`${baseURL}/openai/v1`);
+    // Reference material is not on the page: no tool list, no JSON block, no setup steps.
+    await expect(page.getByText("MCP tools this gateway offers")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Copy JSON code" })).toHaveCount(0);
+    await expect(page.getByRole("list", { name: "How to connect" })).toHaveCount(0);
 
-    await page.getByRole("button", { name: "Copy JSON code" }).click();
-    const copied = await page.evaluate(() => navigator.clipboard.readText());
-    const config = JSON.parse(copied);
-    expect(config.mcpServers.azizam.url).toBe(`${baseURL}/mcp`);
-    expect(config.mcpServers.azizam.headers.Authorization).toMatch(/^Bearer /);
-    expect(copied).not.toMatch(/opk_/);
-
-    // Connect creates no key: the key section links to Apps & keys, where keys are made.
+    // Connect creates no key: the key hint links to Apps & keys, where keys are made.
     await expect(page.getByRole("link", { name: "Create a key" })).toHaveCount(0);
     await expect(
-      page.getByLabel("Use a key instead").getByRole("link", { name: "Apps & keys", exact: true }),
+      recipe.getByRole("link", { name: "Apps & keys", exact: true }),
     ).toHaveAttribute("href", /^\/apps\/?$/);
   } finally {
     await context.close();
@@ -81,7 +73,7 @@ test("Set up this app opens Connect for that app, and Back returns to Apps & key
   await page.getByRole("menuitem", { name: "Set up this app", exact: true }).click();
   await expect(page).toHaveURL(/\/connect\/?\?app=/);
   await expect(page.getByRole("heading", { level: 1, name: /^Connect / })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "Your app" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Setting up in" })).toBeVisible();
   await page.getByRole("link", { name: "Back to Apps & keys", exact: true }).click();
   await expect(page).toHaveURL(/\/apps\/?$/);
 });

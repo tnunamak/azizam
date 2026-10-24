@@ -59,12 +59,17 @@ export function keyAppById(id: string | null | undefined) {
   return keyApps.find((app) => app.id === id);
 }
 
+/** Any client, key or MCP, by id. The setup picker lists every client. */
+export function clientById(id: string | null | undefined): AppGuide | undefined {
+  return appGuides.apps.find((app) => app.id === id);
+}
+
 /** The guide an app's name points at ("OpenWhispr laptop" → OpenWhispr), else the first guide. */
 export function guideIdForAppName(name: string): string {
   const lower = name.toLowerCase();
   return (
-    keyApps.find((app) => lower.includes(app.name.toLowerCase()))?.id ??
-    keyApps[0].id
+    appGuides.apps.find((app) => lower.includes(app.name.toLowerCase()))?.id ??
+    appGuides.apps[0].id
   );
 }
 

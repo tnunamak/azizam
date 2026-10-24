@@ -55,7 +55,7 @@ export function CopyField({
           disabled={disabled || loading}
           aria-invalid={!!error}
           aria-describedby={error || copyError ? `${id}-error` : undefined}
-          className="min-w-0 truncate border-0 bg-transparent font-mono text-sm focus-visible:-outline-offset-2 sm:text-sm"
+          className="min-w-0 border-0 bg-transparent font-mono text-sm focus-visible:-outline-offset-2 sm:text-sm"
         />
         <Button
           type="button"
