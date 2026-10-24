@@ -7,7 +7,7 @@ import { cn } from "@/lib/cn";
  */
 function Textarea({ className, ...props }: React.ComponentProps<"textarea">) {
   const ownMin = /(?:^|\s)min-h-/.test(className ?? "");
-  const ownSize = /(?:^|\s)text-(?:2xs|xs|sm|base|lg|xl|body|meta|label|badge)\b/.test(
+  const ownSize = /(?:^|\s)text-(?:2xs|xs|sm|base|lg|xl|heading|body|meta|label|badge)\b/.test(
     className ?? "",
   );
   return (
