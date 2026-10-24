@@ -122,7 +122,7 @@ describe("Connect", () => {
     ).toBeTruthy();
   });
 
-  test("shows a member the addresses, the MCP server and a key link", async () => {
+  test("shows a member the addresses, the MCP server and a link to Apps & keys", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
     renderPage(member);
     expect(
@@ -137,14 +137,16 @@ describe("Connect", () => {
     expect(screen.getByLabelText("MCP server address")).toHaveValue(
       "https://gw.example/mcp",
     );
-    expect(screen.getByRole("link", { name: "Create a key" })).toHaveAttribute(
+    // Connect creates no key: the key is made in Apps & keys, which the key section links to.
+    expect(screen.queryByRole("link", { name: "Create a key" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Apps & keys" })).toHaveAttribute(
       "href",
-      "/apps?action=create-key",
+      "/apps/",
     );
     // The snippet carries the address from discovery and a placeholder, never a key.
     const json = screen.getByText(/"mcpServers"/);
     expect(json.textContent).toContain("https://gw.example/mcp");
-    expect(json.textContent).toContain("<your app key>");
+    expect(json.textContent).toContain("<your key>");
     expect(screen.queryByText("Gateway automation")).toBeNull();
   });
 
@@ -205,7 +207,7 @@ describe("Connect", () => {
     });
     renderPage(member);
     const steps = await screen.findByRole("list", { name: "How to connect" });
-    expect(steps.textContent).toMatch(/paste this address/);
+    expect(steps.textContent).toMatch(/paste the MCP server address above/);
     expect(steps.textContent).toMatch(/sign in to .* and choose Allow/);
     expect(steps.textContent).not.toMatch(/key/i);
     expect(
@@ -273,7 +275,7 @@ describe("Connect", () => {
       expect(screen.getByLabelText("Model IDs")).toHaveValue("house-chat"),
     );
     // The key field points to Apps & keys and never holds a key.
-    expect(screen.getByText("Paste an app key. Create one in Apps & keys.")).toBeTruthy();
+    expect(screen.getByText("Paste a key from Apps & keys.")).toBeTruthy();
     expect(document.body.innerHTML).not.toMatch(/opk_|oak_/);
   });
 
@@ -293,7 +295,7 @@ describe("Connect", () => {
     );
   });
 
-  test("lists connections and disconnects one", async () => {
+  test("does not list sign-in connections: Apps & keys is the one list of apps", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
     vi.spyOn(accountApi, "mcpConnections").mockResolvedValue([
       {
@@ -305,16 +307,10 @@ describe("Connect", () => {
         last_used_at: null,
       },
     ]);
-    const revoke = vi
-      .spyOn(accountApi, "revokeMcpConnection")
-      .mockResolvedValue({});
     renderPage(member);
-    const list = await screen.findByRole("list", { name: "Connections" });
-    expect(within(list).getByText("Hosted Chat")).toBeTruthy();
-    expect(within(list).getByText(/Returns to hosted.example/)).toBeTruthy();
-    fireEvent.click(
-      within(list).getByRole("button", { name: "Disconnect Hosted Chat" }),
-    );
-    await waitFor(() => expect(revoke).toHaveBeenCalledWith("mcg_1"));
+    await screen.findByLabelText("OpenAI-compatible address");
+    expect(screen.queryByRole("list", { name: "Connections" })).toBeNull();
+    expect(screen.queryByText("Connected with sign-in")).toBeNull();
+    expect(screen.queryByText("Hosted Chat")).toBeNull();
   });
 });

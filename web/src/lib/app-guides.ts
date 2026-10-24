@@ -59,6 +59,15 @@ export function keyAppById(id: string | null | undefined) {
   return keyApps.find((app) => app.id === id);
 }
 
+/** The guide an app's name points at ("OpenWhispr laptop" → OpenWhispr), else the first guide. */
+export function guideIdForAppName(name: string): string {
+  const lower = name.toLowerCase();
+  return (
+    keyApps.find((app) => lower.includes(app.name.toLowerCase()))?.id ??
+    keyApps[0].id
+  );
+}
+
 /** The values a guide's placeholders take. A null value is not available. */
 export type GuideValues = {
   openai_url: string;

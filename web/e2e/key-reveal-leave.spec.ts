@@ -43,7 +43,7 @@ for (const viewport of viewports) {
     await page.getByLabel("App name").fill(isolated.name("Laptop"));
     await page.getByRole("button", { name: "Create app and key" }).click();
 
-    const reveal = page.getByRole("dialog", { name: /^Connect / });
+    const reveal = page.getByRole("dialog", { name: /^New key for / });
     const key = reveal.getByRole("textbox", { name: "Your key" });
     await expect(key).toHaveValue(/^opk_/);
     await expect.poll(() => closingWouldAsk(page)).toBe(true);
@@ -106,7 +106,7 @@ for (const viewport of viewports) {
     await openAppsFromLibrary(page, viewport);
 
     await page.getByRole("button", { name: "Replace key" }).click();
-    const reveal = page.getByRole("dialog", { name: /^Connect / });
+    const reveal = page.getByRole("dialog", { name: /^New key for / });
     const key = reveal.getByRole("textbox", { name: "Your key" });
     await expect(key).toHaveValue(/^opk_/);
     // The old key is revoked now. The member's principal lives on under the new key, which the teardown checks.
@@ -119,6 +119,6 @@ for (const viewport of viewports) {
     await expect(page).toHaveURL(/\/apps\/?$/);
     await question.getByRole("button", { name: "Leave anyway" }).click();
     await expect(page).toHaveURL(/\/library\/?$/);
-    await expect(page.getByRole("dialog", { name: /^Connect / })).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: /^New key for / })).toHaveCount(0);
   });
 }

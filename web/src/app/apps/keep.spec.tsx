@@ -229,6 +229,15 @@ async function chooseFromMenu(appName: string, item: string) {
   fireEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
 
+/** The owner's Manage button under an app opens its trusted addresses. */
+async function openTrustedAddresses(appName: string) {
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: `Manage trusted addresses for ${appName}`,
+    }),
+  );
+}
+
 async function openKeys(appName: string) {
   await chooseFromMenu(appName, "Rename keys");
   return screen.findByRole("dialog", { name: `Keys for ${appName}` });
@@ -369,7 +378,7 @@ it("replaces the key through the gateway, shows the new key once, and takes the 
   const keys = await openKeys("Hall display");
   fireEvent.click(within(keys).getByRole("button", { name: "Replace key Old desk key" }));
 
-  const reveal = await screen.findByRole("dialog", { name: "Connect Hall display" });
+  const reveal = await screen.findByRole("dialog", { name: "New key for Hall display" });
   expect(accountApi.replaceKey).toHaveBeenCalledWith("key-old");
   expect(within(reveal).getByRole("textbox", { name: "Your key" })).toHaveValue(replacementKey.api_key);
   expect(within(reveal).getByText("Copy the key now. It is shown only once.")).toBeVisible();
@@ -377,7 +386,7 @@ it("replaces the key through the gateway, shows the new key once, and takes the 
   fireEvent.click(within(reveal).getByRole("button", { name: "I’ve saved the key" }));
 
   await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "Connect Hall display" })).toBeNull(),
+    expect(screen.queryByRole("dialog", { name: "New key for Hall display" })).toBeNull(),
   );
   expect(within(keys).queryByRole("button", { name: "Replace key Old desk key" })).toBeNull();
   expect(within(keys).queryByText(KEY_REPLACE_UNNAMED)).toBeNull();
@@ -398,7 +407,7 @@ it("keeps the new key's secret out of the account snapshot the page caches", asy
 
   const keys = await openKeys("Hall display");
   fireEvent.click(within(keys).getByRole("button", { name: "Replace key Old desk key" }));
-  await screen.findByRole("dialog", { name: "Connect Hall display" });
+  await screen.findByRole("dialog", { name: "New key for Hall display" });
 
   const cached = JSON.stringify(client.getQueryData(["account", "session"]));
   expect(cached).toContain(replacementRecord.id);
@@ -427,7 +436,7 @@ it("shows Replacing while the gateway waits for the person to confirm, and repla
   // Rename stays available while a replacement runs; only editing another key blocks it.
   expect(within(keys).getByRole("button", { name: "Rename key Phone key" })).toBeEnabled();
   answer({ credential: replacementKey, replaced_credential_id: "key-old" });
-  expect(await screen.findByRole("dialog", { name: "Connect Hall display" })).toBeVisible();
+  expect(await screen.findByRole("dialog", { name: "New key for Hall display" })).toBeVisible();
 });
 
 it("says under the key why it could not be replaced, and keeps the old key and its button", async () => {
@@ -445,7 +454,7 @@ it("says under the key why it could not be replaced, and keeps the old key and i
   expect(await within(keys).findByRole("alert")).toHaveTextContent("App is disabled");
   expect(within(keys).getByText(KEY_REPLACE_UNNAMED)).toBeVisible();
   expect(within(keys).getByRole("button", { name: "Replace key Old desk key" })).toBeEnabled();
-  expect(screen.queryByRole("dialog", { name: "Connect Hall display" })).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "New key for Hall display" })).toBeNull();
 });
 
 it("keeps a trusted address with no recorded creator through its route, and refreshes the Apps list", async () => {
@@ -460,7 +469,7 @@ it("keeps a trusted address with no recorded creator through its route, and refr
   });
   renderApps(owner);
 
-  await chooseFromMenu("Hall display", "Trusted addresses");
+  await openTrustedAddresses("Hall display");
   const dialog = await screen.findByRole("dialog", { name: "Trusted addresses for Hall display" });
   expect(await within(dialog).findByText(ADDRESS_KEEP_NOTICE)).toBeVisible();
   fireEvent.click(within(dialog).getByRole("button", { name: "Keep address 10.0.0.7" }));
@@ -487,7 +496,7 @@ it("adds an address again in one call: the gateway replaces the old entry with t
   });
   renderApps(owner);
 
-  await chooseFromMenu("Hall display", "Trusted addresses");
+  await openTrustedAddresses("Hall display");
   const dialog = await screen.findByRole("dialog", { name: "Trusted addresses for Hall display" });
   expect(await within(dialog).findByText(ADDRESS_ADD_AGAIN_ALEX)).toBeVisible();
   fireEvent.click(within(dialog).getByRole("button", { name: "Add address 10.0.0.8 again" }));
@@ -511,7 +520,7 @@ it("says an address could not be added again, and its old entry stays listed", a
   );
   renderApps(owner);
 
-  await chooseFromMenu("Hall display", "Trusted addresses");
+  await openTrustedAddresses("Hall display");
   const dialog = await screen.findByRole("dialog", { name: "Trusted addresses for Hall display" });
   fireEvent.click(await within(dialog).findByRole("button", { name: "Add address 10.0.0.8 again" }));
 
@@ -532,7 +541,7 @@ it("words an address with no recorded maker as made before Azizam recorded it, n
   );
   renderApps(owner);
 
-  await chooseFromMenu("Hall display", "Trusted addresses");
+  await openTrustedAddresses("Hall display");
   const dialog = await screen.findByRole("dialog", { name: "Trusted addresses for Hall display" });
   expect(
     await within(dialog).findByText(
@@ -785,7 +794,7 @@ it("asks the owner to confirm the administrators before keeping an address they 
   );
   renderApps(owner);
 
-  await chooseFromMenu("Hall display", "Trusted addresses");
+  await openTrustedAddresses("Hall display");
   await screen.findByRole("dialog", { name: "Trusted addresses for Hall display" });
   fireEvent.click(await screen.findByRole("button", { name: "Keep address 10.0.0.7" }));
 
@@ -807,7 +816,7 @@ it("confirming keeps the address with the owner's confirmation, and cancelling k
   });
   renderApps(owner);
 
-  await chooseFromMenu("Hall display", "Trusted addresses");
+  await openTrustedAddresses("Hall display");
   await screen.findByRole("dialog", { name: "Trusted addresses for Hall display" });
   fireEvent.click(await screen.findByRole("button", { name: "Keep address 10.0.0.7" }));
   const dialog = await screen.findByRole("dialog", { name: "Keep this address?" });

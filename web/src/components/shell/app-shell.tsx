@@ -553,12 +553,17 @@ function isWideSidebar() {
   return window.matchMedia(WIDE_SIDEBAR_QUERY).matches;
 }
 
+/** Destinations the phone's More list leaves out: its bottom bar already has the tab. */
+const LEFT_OUT_OF_MORE = ["Apps & keys"];
+
 function Nav({
   expanded = false,
   onNavigate,
+  omit = [],
 }: {
   expanded?: boolean;
   onNavigate?: () => void;
+  omit?: string[];
 }) {
   const viewer = useViewer();
   const pathname = usePathname();
@@ -587,6 +592,7 @@ function Nav({
                     (!viewer.admin &&
                       group === "You" &&
                       d.title === "Status")) &&
+                  !omit.includes(d.title) &&
                   (!viewer.serviceAdmin ||
                     d.title === "Home" ||
                     (d.group === "Gateway" &&
@@ -1055,6 +1061,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             <div className="px-4 pb-6">
               <Nav
                 expanded
+                omit={moreOpen ? LEFT_OUT_OF_MORE : undefined}
                 onNavigate={() => {
                   setMoreOpen(false);
                   setRailOpen(false);

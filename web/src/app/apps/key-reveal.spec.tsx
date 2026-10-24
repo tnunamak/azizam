@@ -109,7 +109,7 @@ it("the Connect guide opens in a new tab, and the new key stays on screen and he
   fireEvent.change(screen.getByLabelText("App name"), { target: { value: "My laptop" } });
   fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
 
-  const reveal = await screen.findByRole("dialog", { name: "Connect My laptop" });
+  const reveal = await screen.findByRole("dialog", { name: "New key for My laptop" });
   expect(within(reveal).getByRole("textbox", { name: "Your key" })).toHaveValue("test-secret-not-real");
   expect(unsavedWorkNow()).toEqual([expect.objectContaining({ kind: "new-key", count: 1 })]);
 
@@ -121,7 +121,7 @@ it("the Connect guide opens in a new tab, and the new key stays on screen and he
   clickWithoutFollowing(guide);
 
   // The dialog stays open and still shows the key: the link did not unmount the page that holds the only copy.
-  expect(screen.getByRole("dialog", { name: "Connect My laptop" })).toBeVisible();
+  expect(screen.getByRole("dialog", { name: "New key for My laptop" })).toBeVisible();
   expect(screen.getByRole("textbox", { name: "Your key" })).toHaveValue("test-secret-not-real");
   expect(unsavedWorkNow()).toEqual([expect.objectContaining({ kind: "new-key" })]);
 
@@ -132,6 +132,7 @@ it("the Connect guide opens in a new tab, and the new key stays on screen and he
 
 it("a key replaced from its row is held until its person confirms saving it", async () => {
   const oldKey = {
+    prefix: "opk_test",
     id: "old-key",
     created_by: null,
     last_used_at: null,
@@ -149,7 +150,7 @@ it("a key replaced from its row is held until its person confirms saving it", as
   const row = within((await screen.findByRole("heading", { name: "My laptop" })).closest("li")!);
   fireEvent.click(row.getByRole("button", { name: "Replace key" }));
 
-  const reveal = await screen.findByRole("dialog", { name: "Connect My laptop" });
+  const reveal = await screen.findByRole("dialog", { name: "New key for My laptop" });
   expect(accountApi.replaceKey).toHaveBeenCalledWith("old-key");
   expect(unsavedWorkNow()).toEqual([expect.objectContaining({ kind: "new-key" })]);
   fireEvent.click(within(reveal).getByRole("button", { name: "I’ve saved the key" }));

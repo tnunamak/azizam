@@ -146,7 +146,7 @@ for (const viewport of viewports) {
     });
 
     await keys.getByRole("button", { name: /^Replace key / }).click();
-    const reveal = page.getByRole("dialog", { name: /^Connect / });
+    const reveal = page.getByRole("dialog", { name: /^New key for / });
     await expect(reveal.getByRole("textbox", { name: "Your key" })).toHaveValue(/^opk_/);
     await expect(reveal.getByText("Copy the key now. It is shown only once.")).toBeVisible();
     // The old key is revoked now. The member's principal lives on under the new key, which the teardown checks.

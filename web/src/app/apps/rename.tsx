@@ -39,7 +39,7 @@ function nameToSave(draft: string, saved: string): string | null {
 }
 
 /** First characters of a key, enough to tell keys apart and never enough to use one. */
-function keyStart(prefix: string): string {
+export function keyStart(prefix: string): string {
   return `${prefix.slice(0, 8)}…`;
 }
 

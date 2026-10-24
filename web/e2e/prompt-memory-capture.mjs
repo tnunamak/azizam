@@ -177,7 +177,7 @@ const shots = {
       await page.getByLabel("App name").fill("Kitchen tablet");
       await page.getByRole("button", { name: "Create app and key" }).click();
       await page
-        .getByRole("heading", { name: "Connect Kitchen tablet" })
+        .getByRole("heading", { name: "New key for Kitchen tablet" })
         .waitFor();
     },
   },

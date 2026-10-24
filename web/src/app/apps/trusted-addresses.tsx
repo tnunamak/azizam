@@ -43,9 +43,29 @@ export interface TrustedAddress {
 const listPath = (appId: string) =>
   `/admin/api/apps/${encodeURIComponent(appId)}/trusted-addresses`;
 
+/** One app's trusted addresses. The App's section on the Apps page and its dialog share this cache entry. */
+export const trustedAddressesKey = (appId: string) => ["admin", "app-trusted-addresses", appId];
+
+export function listTrustedAddresses(appId: string): Promise<TrustedAddress[]> {
+  return adminFetch<{ trusted_addresses: TrustedAddress[] }>(listPath(appId)).then(
+    (r) => r.trusted_addresses,
+  );
+}
+
 /** What to show for a failed change: the gateway's words, or the fallback. */
 function messageOf(caught: unknown, fallback: string): string {
   return caught instanceof Error && caught.message ? caught.message : fallback;
+}
+
+/** The row of the first address that needs a remedy, if the list is on the page. */
+function checkRowOf(data: TrustedAddress[] | undefined): HTMLElement | null {
+  const entry = data?.find((item) => item.cutover !== undefined);
+  return entry ? document.getElementById(`address-row-${entry.id}`) : null;
+}
+
+function focusRow(row: HTMLElement) {
+  row.scrollIntoView({ block: "center" });
+  row.querySelector("button")?.focus();
 }
 
 /** An owner trusts a device, or a range of them, to use one app with no
@@ -73,14 +93,11 @@ export function TrustedAddressesDialog({
   const [keptId, setKeptId] = useState<string | null>(null);
   const [keepConfirmation, setKeepConfirmation] = useState<KeepConfirmation | null>(null);
   const appId = app?.id ?? "";
-  const key = ["admin", "app-trusted-addresses", appId];
+  const key = trustedAddressesKey(appId);
   const { data, isPending, isError } = useQuery({
     queryKey: key,
     enabled: app !== null,
-    queryFn: () =>
-      adminFetch<{ trusted_addresses: TrustedAddress[] }>(listPath(appId)).then(
-        (r) => r.trusted_addresses,
-      ),
+    queryFn: () => listTrustedAddresses(appId),
   });
 
   async function change(run: () => Promise<unknown>) {
@@ -100,18 +117,18 @@ export function TrustedAddressesDialog({
     }
   }
 
-  // Opened from the quick-check line: once the list is in, the first address with a remedy is brought into view and
-  // focused, once per opening.
+  // Opened from the quick-check line: the first address with a remedy is brought into view and focused, once per
+  // opening. The list may already be cached (the App's section on the page loads it), so the row can be on screen
+  // when the dialog opens, or arrive after it. The open-focus handler covers the first case: it runs once the
+  // dialog's content is mounted, and Radix's own first-focus would otherwise win.
   const checkFocused = useRef(false);
   useEffect(() => {
     if (app === null) checkFocused.current = false;
     if (!focusCheck || checkFocused.current || !data) return;
-    const entry = data.find((item) => item.cutover !== undefined);
-    if (!entry) return;
+    const row = checkRowOf(data);
+    if (!row) return;
     checkFocused.current = true;
-    const row = document.getElementById(`address-row-${entry.id}`);
-    row?.scrollIntoView({ block: "center" });
-    row?.querySelector("button")?.focus();
+    focusRow(row);
   }, [app, data, focusCheck]);
 
   // After a keep the entry's Keep button is gone, so focus its Remove button once the change has settled.
@@ -217,7 +234,17 @@ export function TrustedAddressesDialog({
         }
       }}
     >
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        onOpenAutoFocus={(event) => {
+          if (!focusCheck || checkFocused.current) return;
+          const row = checkRowOf(data);
+          if (!row) return;
+          event.preventDefault();
+          checkFocused.current = true;
+          focusRow(row);
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Trusted addresses for {appName}</DialogTitle>
           <DialogDescription>

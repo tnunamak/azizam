@@ -10,7 +10,6 @@ import { ErrorState } from "@/components/product/error-state";
 import { CopyField } from "@/components/product/copy-field";
 import { CodeBlock } from "@/components/product/code-block";
 import { SettingsSection } from "@/components/product/setting-row";
-import { SignInConnections } from "@/components/product/sign-in-connections";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,7 +33,7 @@ import {
 import { AppGuide } from "@/components/product/app-guide";
 import { PRODUCT_NAME } from "@/lib/product";
 
-const KEY_PLACEHOLDER = "<your app key>";
+const KEY_PLACEHOLDER = "<your key>";
 
 /** Discovery sends root-relative or `{base_url}` addresses when the gateway
  * has no public address set; apps then reach it at the address in use here. */
@@ -89,9 +88,9 @@ function ConnectSkeleton() {
 }
 
 /**
- * How to use this gateway from other apps: the OpenAI-compatible, Anthropic and
- * Ollama addresses, and the MCP server with the tools it lists. Everything comes
- * from /.well-known/azizam, so the page cannot drift from the server.
+ * How to use this gateway from other apps: the addresses, the setup steps for
+ * each app, and the MCP server with the tools it lists. Everything comes from
+ * /.well-known/azizam, so the page cannot drift from the server.
  */
 export default function ConnectPage() {
   const viewer = useViewer();
@@ -111,13 +110,6 @@ export default function ConnectPage() {
       <PageHeader
         title="Connect"
         subtitle="Use this gateway from other apps and AI agents."
-        primaryAction={
-          viewer.authenticated ? (
-            <Button asChild>
-              <Link prefetch={false} href="/apps?action=create-key">Create a key</Link>
-            </Button>
-          ) : undefined
-        }
       />
       <div className="page-stack">
         {!viewer.authenticated ? (
@@ -172,8 +164,8 @@ function ConnectDetails({
   return (
     <>
       <SettingsSection
-        title="Apps"
-        description="Paste an address and an app key into any app that supports one."
+        title="API endpoints"
+        description="Paste an address and a key into any app that supports one."
       >
         <div className="flex flex-col gap-4 p-4">
           <CopyField
@@ -188,6 +180,7 @@ function ConnectDetails({
             label="Ollama-compatible address"
             value={address("ollama", "/ollama")}
           />
+          <CopyField label="MCP server address" value={mcpUrl} />
         </div>
       </SettingsSection>
       <SettingsSection
@@ -205,7 +198,7 @@ function ConnectDetails({
               chat_model: suggestedModel(catalogRows, "chat"),
               transcription_model: suggestedModel(catalogRows, "transcribe"),
             }}
-            keyHint="Paste an app key. Create one in Apps & keys."
+            keyHint="Paste a key from Apps & keys."
             loading={catalogPending}
           />
         </div>
@@ -215,13 +208,12 @@ function ConnectDetails({
         description="ChatGPT, Claude and other MCP apps can run this gateway's workflows as you."
       >
         <div className="flex flex-col gap-4 p-4">
-          <CopyField label="MCP server address" value={mcpUrl} />
           {signIn ? (
             <>
               <ol aria-label="How to connect" className="list-decimal pl-5">
                 <li>
                   In your AI app, add a custom MCP server (some apps call it a
-                  connector) and paste this address.
+                  connector) and paste the MCP server address above.
                 </li>
                 <li>
                   When the app asks, sign in to {PRODUCT_NAME} and choose Allow.
@@ -229,7 +221,7 @@ function ConnectDetails({
               </ol>
               <p className="text-muted-foreground text-meta">
                 The app then works within your access plan. You can disconnect
-                it here at any time.
+                it in Apps &amp; keys at any time.
               </p>
             </>
           ) : (
@@ -243,7 +235,7 @@ function ConnectDetails({
               ) : (
                 "Ask the owner to set it"
               )}
-              . Until then, apps that send a header can use an app key.
+              . Until then, apps that send a header can use a key.
             </p>
           )}
           <div>
@@ -267,27 +259,30 @@ function ConnectDetails({
           </div>
         </div>
       </SettingsSection>
-      <SignInConnections empty="No connections yet. Connect an app with the address above." />
       <SettingsSection
         title="MCP notes for each app"
         description={`From each app's own documentation, checked ${appGuides.checked}.`}
       >
         <Accordion type="single" collapsible className="px-4">
-          {mcpApps.map((app) => (
-            <ClientNote key={app.id} app={app} guide={resolveMcpGuide(app.mcp, mcpUrl)} />
+          {mcpApps.map((client) => (
+            <ClientNote
+              key={client.id}
+              app={client}
+              guide={resolveMcpGuide(client.mcp, mcpUrl)}
+            />
           ))}
         </Accordion>
       </SettingsSection>
       <SettingsSection
-        title="Use an app key instead"
-        description="For apps and scripts that send a header. ChatGPT and Claude.ai sign in instead."
+        title="Use a key instead"
+        description="For apps and scripts that send a key in a header. ChatGPT and Claude.ai sign in instead."
       >
         <div className="flex flex-col gap-4 p-4">
           <p className="text-muted-foreground text-meta">
-            Send your app key as a bearer token. Replace {KEY_PLACEHOLDER} with
-            a key you{" "}
-            <Link prefetch={false} href="/apps?action=create-key" className="underline">
-              create
+            Send your key in the Authorization header. Replace {KEY_PLACEHOLDER}{" "}
+            with a key from{" "}
+            <Link prefetch={false} href="/apps/" className="underline">
+              Apps &amp; keys
             </Link>
             .
           </p>
@@ -324,7 +319,7 @@ function ClientNote({ app, guide: note }: { app: AppGuideData; guide: McpGuide }
         <span className="flex flex-wrap items-center gap-2">
           {app.name}
           <Badge variant="outline">
-            {note.auth === "sign-in" ? "Sign in" : "Sign in or app key"}
+            {note.auth === "sign-in" ? "Sign in" : "Sign in or key"}
           </Badge>
           {note.status === "unverified" ? (
             <Badge variant="secondary">Partly unverified</Badge>

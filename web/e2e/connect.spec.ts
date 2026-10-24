@@ -50,10 +50,11 @@ test("owner signs in, opens Connect and copies the MCP config", async ({
     expect(config.mcpServers.azizam.headers.Authorization).toMatch(/^Bearer /);
     expect(copied).not.toMatch(/opk_/);
 
-    await expect(page.getByRole("link", { name: "Create a key" })).toHaveAttribute(
-      "href",
-      /^\/apps\/?\?action=create-key$/,
-    );
+    // Connect creates no key: the key section links to Apps & keys, where keys are made.
+    await expect(page.getByRole("link", { name: "Create a key" })).toHaveCount(0);
+    await expect(
+      page.getByLabel("Use a key instead").getByRole("link", { name: "Apps & keys", exact: true }),
+    ).toHaveAttribute("href", /^\/apps\/?$/);
   } finally {
     await context.close();
   }

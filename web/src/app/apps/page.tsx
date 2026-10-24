@@ -59,11 +59,12 @@ import { keyPromptNote } from "@/lib/prompt-memory";
 import { useUnsavedSecret } from "@/lib/unsaved-work";
 import { api, queryKeys, type AccessPlan, type Credential } from "@/lib/api";
 import { productApi } from "@/lib/product-api";
-import { keyApps, suggestedModel } from "@/lib/app-guides";
+import { guideIdForAppName, keyApps, suggestedModel } from "@/lib/app-guides";
 import { useViewer } from "@/components/shell/session";
 import { AppGuide } from "@/components/product/app-guide";
 import { TrustedAddressesDialog } from "./trusted-addresses";
 import { RenameAppDialog, RenameKeysDialog } from "./rename";
+import { AppKeyRows, AppTrustedRows } from "./app-details";
 
 const accountKey = ["account", "session"];
 /** "person": the app uses its person's own plan ("Same as you"). */
@@ -76,16 +77,8 @@ type Reveal = {
   /** Whether prompts sent with the key are remembered, and for whom. */
   note?: string | null;
 };
-type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp };
-
-/** The guide an app's name points at ("OpenWhispr laptop" → OpenWhispr). */
-function guideForName(name: string): string {
-  const lower = name.toLowerCase();
-  return (
-    keyApps.find((app) => lower.includes(app.name.toLowerCase()))?.id ??
-    keyApps[0].id
-  );
-}
+/** `key` is set when the action is for one key of the app (its row's Rotate or Revoke); otherwise it covers every key. */
+type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp; key?: Credential };
 
 /** What an app may use, in one sentence: 'Access plan "Local only": Chat and Images. No paid models.' */
 function planSentence(plan: { name: string; summary: string | null } | null | undefined): string {
@@ -443,7 +436,7 @@ function AppsContents() {
       }
       const appName = formatAppName(app.name, accountData?.user?.email);
       const key = await accountApi.mintKey(app.id, appName);
-      setGuideApp(guideForName(app.name));
+      setGuideApp(guideIdForAppName(app.name));
       setReveal({
         secret: key.api_key,
         appId: app.id,
@@ -524,7 +517,7 @@ function AppsContents() {
         : current,
     );
     revealFocusId.current = `rename-key-${record.id}`;
-    setGuideApp(guideForName(app.name));
+    setGuideApp(guideIdForAppName(app.name));
     setSaved(false);
     setReveal({
       secret,
@@ -579,14 +572,16 @@ function AppsContents() {
     setBusy(true);
     setError(null);
     try {
-      const ids = action.app.credentials.map((key) => key.id);
+      const ids = action.key
+        ? [action.key.id]
+        : action.app.credentials.map((key) => key.id);
       const appName = formatAppName(action.app.name, accountData?.user?.email);
       if (action.kind === "rotate") {
         const key = await accountApi.mintKey(
           action.app.id,
           `${appName} replacement`,
         );
-        setGuideApp(guideForName(action.app.name));
+        setGuideApp(guideIdForAppName(action.app.name));
         setReveal({
           secret: key.api_key,
           appId: action.app.id,
@@ -612,7 +607,7 @@ function AppsContents() {
               : null,
           );
         }
-        toast.success("App keys revoked");
+        toast.success(action.key ? "Key revoked" : "App keys revoked");
       } else {
         await accountApi.deleteApp(action.app.id);
         dialogReturnFocus.current = newAppButton.current;
@@ -713,7 +708,7 @@ function AppsContents() {
       const key = await accountApi.mintKey(app.id, appName);
       rememberAppFocus(app.id);
       setSaved(false);
-      setGuideApp(guideForName(app.name));
+      setGuideApp(guideIdForAppName(app.name));
       setReveal({
         secret: key.api_key,
         appId: app.id,
@@ -744,14 +739,20 @@ function AppsContents() {
         accessPlanSummary(action.app),
         action.kind === "rotate" &&
         action.app.kind === "personal" &&
-        action.app.credentials.some((key) => key.created_by === null)
+        (action.key ? [action.key] : action.app.credentials).some(
+          (key) => key.created_by === null,
+        )
           ? "A new key saves your prompts"
           : null,
         action.kind === "rotate"
-          ? "Save the replacement key first. Old keys stop after you confirm."
+          ? action.key
+            ? "Save the replacement key first. The old key stops after you confirm."
+            : "Save the replacement key first. Old keys stop after you confirm."
           : action.kind === "remove"
             ? "This removes the app and its keys."
-            : "Apps using these keys will stop connecting.",
+            : action.key
+              ? "Apps using this key will stop connecting."
+              : "Apps using these keys will stop connecting.",
       ]
         .filter(Boolean)
         .join(". ")
@@ -762,7 +763,7 @@ function AppsContents() {
     <div className="space-y-8">
       <PageHeader
         title="Apps & keys"
-        subtitle="Apps that use your gateway"
+        subtitle="Each app has its own keys and one access plan."
         primaryAction={
           <Button
             ref={newAppButton}
@@ -862,7 +863,8 @@ function AppsContents() {
             // its meta line wraps and a row action moves under it.
             const hasAction = oldKeys.length > 0 || rowReplace !== null;
             const hasNotice = hasAction || blockedReason !== null;
-            return (
+            // The app's row, then its keys and (for an owner) its trusted addresses, indented under it.
+            return [
               <ListRow
                 key={app.id}
                 id={`app-${app.id}`}
@@ -1028,16 +1030,6 @@ function AppsContents() {
                             Change access plan
                           </DropdownMenuItem>
                         )}
-                        {accountData?.user?.role === "owner" && (
-                          <DropdownMenuItem
-                            onSelect={() => {
-                              rememberAppFocus(app.id);
-                              setTrustingApp(app);
-                            }}
-                          >
-                            Trusted addresses
-                          </DropdownMenuItem>
-                        )}
                         <DropdownMenuItem
                           variant="destructive"
                           disabled={busy}
@@ -1053,8 +1045,31 @@ function AppsContents() {
                     </DropdownMenu>
                   </>
                 }
-              />
-            );
+              />,
+              <AppKeyRows
+                key={`${app.id}-keys`}
+                app={app}
+                busy={busy}
+                onRotate={(key) => {
+                  rememberAppFocus(app.id);
+                  setAction({ kind: "rotate", app, key });
+                  setError(null);
+                }}
+                onRevoke={(key) => {
+                  rememberAppFocus(app.id);
+                  setAction({ kind: "revoke", app, key });
+                  setError(null);
+                }}
+              />,
+              accountData?.user?.role === "owner" ? (
+                <AppTrustedRows
+                  key={`${app.id}-trusted`}
+                  app={app}
+                  appName={appName}
+                  onManage={() => setTrustingApp(app)}
+                />
+              ) : null,
+            ];
           })}
         </ListCard>
       )}
@@ -1188,7 +1203,9 @@ function AppsContents() {
                   : "Revoke"}{" "}
               {action?.kind === "remove"
                 ? actionAppName
-                : `keys for ${actionAppName}`}
+                : action?.key
+                  ? `key ${action.key.display_name}`
+                  : `keys for ${actionAppName}`}
               ?
             </DialogTitle>
             <DialogDescription>{actionDescription}</DialogDescription>
@@ -1221,7 +1238,9 @@ function AppsContents() {
                   ? "Create replacement key"
                   : action?.kind === "remove"
                     ? "Remove app"
-                    : "Revoke keys"}
+                    : action?.key
+                      ? "Revoke key"
+                      : "Revoke keys"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1281,7 +1300,7 @@ function AppsContents() {
           onPointerDownOutside={(event) => event.preventDefault()}
         >
           <DialogHeader>
-            <DialogTitle>Connect {reveal?.app}</DialogTitle>
+            <DialogTitle>New key for {reveal?.app}</DialogTitle>
             <DialogDescription>
               Copy the key now. It is shown only once.
             </DialogDescription>

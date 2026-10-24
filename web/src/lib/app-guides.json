@@ -36,7 +36,7 @@
         "status": "documented",
         "steps": [
           "An admin adds an MCP (Streamable HTTP) tool server with the server address.",
-          "Choose OAuth 2.1 (dynamic registration) so each person signs in, or Bearer with an app key.",
+          "Choose OAuth 2.1 (dynamic registration) so each person signs in, or Bearer with a key.",
           "Do not choose the OAuth or Session modes: they send Open WebUI's own sign-in, which this server refuses."
         ],
         "docs": "https://docs.openwebui.com/features/extensibility/mcp/"
@@ -196,7 +196,7 @@
         "steps": [
           "Add the server to mcp.json: {\"mcpServers\": {\"azizam\": {\"url\": \"{mcp_url}\"}}}",
           "Cursor asks you to sign in the first time it connects.",
-          "Or use an app key: add \"headers\": {\"Authorization\": \"Bearer <your app key>\"}."
+          "Or use a key: add \"headers\": {\"Authorization\": \"Bearer <your key>\"}."
         ],
         "docs": "https://cursor.com/docs/mcp"
       }
@@ -268,7 +268,7 @@
         "steps": [
           "Run: claude mcp add --transport http azizam {mcp_url}",
           "Run /mcp in Claude Code and choose Authenticate to sign in.",
-          "Or use an app key: add --header \"Authorization: Bearer <your app key>\"."
+          "Or use a key: add --header \"Authorization: Bearer <your key>\"."
         ],
         "docs": "https://code.claude.com/docs/en/mcp"
       }
@@ -408,7 +408,7 @@
         "steps": [
           "Run MCP: Add Server, choose HTTP and paste the server address.",
           "VS Code asks you to sign in and approve.",
-          "Or use an app key through a headers entry with an input variable."
+          "Or use a key through a headers entry with an input variable."
         ],
         "docs": "https://code.visualstudio.com/docs/agents/reference/mcp-configuration"
       }
@@ -422,7 +422,7 @@
         "status": "unverified",
         "steps": [
           "Add a server with \"serverUrl\": \"{mcp_url}\" to the MCP configuration.",
-          "Sign in when asked, or add an Authorization header with your app key."
+          "Sign in when asked, or add an Authorization header with your key."
         ],
         "note": "The documentation does not say which sign-in method Windsurf uses.",
         "docs": "https://docs.devin.ai/desktop/cascade/mcp"
@@ -438,7 +438,7 @@
         "steps": [
           "Run goose configure, then Add Extension, then Remote Extension (Streamable HTTP).",
           "Paste the server address. Goose opens a browser to sign in.",
-          "Or add the header Authorization: Bearer <your app key>."
+          "Or add the header Authorization: Bearer <your key>."
         ],
         "docs": "https://goose-docs.ai/docs/getting-started/using-extensions/"
       }
@@ -452,7 +452,7 @@
         "status": "unverified",
         "steps": [
           "Add a context server with \"url\": \"{mcp_url}\" in Zed's settings.",
-          "Without an Authorization header Zed signs in through the browser; with one it uses your app key."
+          "Without an Authorization header Zed signs in through the browser; with one it uses your key."
         ],
         "note": "The documentation does not say which protocol versions Zed sends.",
         "docs": "https://zed.dev/docs/ai/mcp"

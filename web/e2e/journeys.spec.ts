@@ -25,7 +25,7 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", { t
     .getByRole("button", { name: "Create app and key", exact: true })
     .click();
   const { credential: firstKey } = await (await mintedResponse).json();
-  const reveal = page.getByRole("dialog", { name: `Connect ${name}` });
+  const reveal = page.getByRole("dialog", { name: `New key for ${name}` });
   await expect(reveal).toBeVisible();
   // The setup guide shows the app's fields; the key stays in its own field.
   await expect(reveal.getByRole("heading", { name: "Set up your app" })).toBeVisible();
@@ -139,7 +139,7 @@ test("an owner gives a new app another access plan before its key exists, then c
   await dialog.getByRole("combobox", { name: "Access plan" }).click();
   await page.getByRole("option", { name: "Local chat", exact: true }).click();
   await dialog.getByRole("button", { name: "Create app and key", exact: true }).click();
-  const reveal = page.getByRole("dialog", { name: `Connect ${name}` });
+  const reveal = page.getByRole("dialog", { name: `New key for ${name}` });
   await expect(reveal).toBeVisible();
   await expect(reveal).toContainText("Access plan “Local chat”");
   expect(calls).toEqual(["set plan", "mint key"]);
