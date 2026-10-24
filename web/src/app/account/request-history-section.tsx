@@ -106,7 +106,7 @@ export function RequestHistorySection() {
       <SettingsSection
         id="history"
         title="Request history"
-        description="Choose whether Azizam keeps what your apps send, and for how long."
+        description="Covers every kind of request your apps send, such as chat, images and speech. Choose whether Azizam keeps them, and for how long."
       >
         <SettingRow
           label="Keep request history"

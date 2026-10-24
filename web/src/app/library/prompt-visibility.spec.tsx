@@ -179,7 +179,7 @@ describe("the prompt in the viewer", () => {
     });
     const dialog = await openOnly(user);
     expect(
-      await within(dialog).findByText("No saved prompt. You turned off prompt keeping."),
+      await within(dialog).findByText("No saved prompt. You turned off keeping words and chats."),
     ).toBeVisible();
     cleanup();
     renderWith([forgotten], {
@@ -194,7 +194,7 @@ describe("the prompt in the viewer", () => {
     const again = await openOnly(user);
     expect(
       await within(again).findByText(
-        "No saved prompt. This gateway doesn’t keep prompts.",
+        "No saved prompt. This gateway doesn’t keep words and chats.",
       ),
     ).toBeVisible();
   });

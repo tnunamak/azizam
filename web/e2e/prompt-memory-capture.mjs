@@ -152,7 +152,7 @@ const shots = {
     owner: { retention_cap: "3_months" },
     go: "/account/",
   },
-  // Background cleanup still running after Delete my saved prompts.
+  // Background cleanup still running after Delete saved words and chats.
   "account-cleanup": {
     as: seed.member_email,
     go: "/account/",

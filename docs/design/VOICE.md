@@ -35,8 +35,11 @@ Applies to every word in the product UI. Marketing pages (azizam.dev) follow it 
 | **Person** | Anyone with an account | user, account, principal |
 | **Owner** / **Admin** / **Member** | Roles | operator (in UI), superuser |
 | **Request** | One call an app makes | job (except long media jobs), execution |
+| **Request history** | What your apps sent, kept for a short time so you can check it or run it again. Covers every request kind: chat, images, speech | prompt history, log, audit trail |
 | **Receipt** | The record of one request: who, what, outcome, cost, time | log, audit row, trace |
 | **Creation** | One generated image, video or audio file in Library | asset, media item, artifact |
+| **Prompt** | The words a creation was made from, as Library shows and copies them | words (as a label for one creation), input text |
+| **Saved words and chats** | The setting that keeps each creation's prompt, and chats an app asks Azizam to keep. Its name in Settings and Your settings | prompt memory, prompt keeping, prompts (as a setting name) |
 | **Spend** | Money recorded against providers | cost (for totals), billing |
 | **Cap** | A spend limit | quota, budget (in UI) |
 
