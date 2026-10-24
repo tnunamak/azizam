@@ -326,8 +326,9 @@
 # collect-only 16877 -> 16878 (2026-10-23).
 # Train r104: collect-only measured 17215.
 # OV3 slice 1 round 3, merged with origin/main 89e514766: the stamped job maker, the stamped Library decision, the
-# activity page filled before its limit and the tests for each. Full hermetic collection measured 17279 on 2026-10-23.
-pytest = 17279
+# activity page filled before its limit, the migration test and the tests for each. Full hermetic collection measured
+# 17280 on 2026-10-23.
+pytest = 17280
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
