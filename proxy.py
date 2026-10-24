@@ -194,7 +194,7 @@ from gateway.local_owner import (
     load_or_create_signing_key as local_load_signing_key,
 )
 from gateway.setup_render import render_setup_page
-from gateway import signin_admin, signin_rules_migration
+from gateway import maker_stamp_migration, signin_admin, signin_rules_migration
 from gateway.signin_api import create_signin_api
 from gateway.admin_runtime import (
     ADMIN_CONTROL_ROLES,
@@ -12856,6 +12856,22 @@ async def _initialize_stores() -> None:
     await asyncio.to_thread(providers.recover_provider_spend, path=ADMIN_DB_PATH.parent / "provider_spend.db")
 
 
+def _backfill_media_job_makers_at_startup() -> None:
+    """Give legacy media jobs the maker their creation-time evidence names, once (OV3 slice 1).
+
+    A failure leaves those jobs unstamped, so they stay unread until a start completes the pass. The start itself goes on.
+    """
+    try:
+        counts = maker_stamp_migration.backfill(
+            media_jobs.DB_PATH, receipts_path=receipt_store.DB_PATH, admin_path=ADMIN_DB_PATH,
+        )
+    except Exception as exc:  # noqa: BLE001 - a start must not fail over a backfill; unresolved jobs stay unread
+        print(f"[proxy] WARNING: media job maker backfill did not finish: {type(exc).__name__}", flush=True)
+        return
+    if counts is not None:
+        print(f"[proxy] media job makers backfilled from creation-time evidence: {counts}", flush=True)
+
+
 def _migrate_host_command_permission() -> None:
     """Decision D13: installs that already declare command lifecycles keep them working."""
     registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
@@ -12925,6 +12941,7 @@ async def _serve(app: FastAPI):
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    await asyncio.to_thread(_backfill_media_job_makers_at_startup)
     await asyncio.to_thread(_report_session_view_key_problem)
     await asyncio.to_thread(prompt_memory.require_resolvable_periods, admin_path=ADMIN_DB_PATH)
     await asyncio.to_thread(STT_MEASUREMENTS.startup_cleanup)
