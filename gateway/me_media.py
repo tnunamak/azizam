@@ -1755,6 +1755,77 @@ def _matches_media_filters(item: Mapping[str, Any], request: Request) -> bool:
     return True
 
 
+def _attempt_order(receipt: Mapping[str, Any]) -> tuple[int, int, str]:
+    """Oldest first: the attempt number, then when the receipt was stored, then its id."""
+    attempt = receipt.get("attempt_number")
+    return (attempt if isinstance(attempt, int) else 0, int(receipt.get("_stored_at") or 0), str(receipt["request_id"]))
+
+
+def _fold_media_jobs(receipts: list[dict[str, Any]], jobs: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Count each media job once, as its submit receipt, with the outcome its work receipts recorded.
+
+    The worker writes a job's ``job_id`` on every attempt's work receipt, and a Make submit receipt
+    carries it too. The job names the submit receipt it was made from, by its creating receipt,
+    parent or request id. Only ``receipts`` the viewer can read take part, so no folded value comes
+    from a receipt they cannot read. When the submit receipt is not among them, the job's earliest
+    receipt stands for it. Receipts outside any job pass through unchanged.
+    """
+    by_request_id = {receipt["request_id"]: receipt for receipt in receipts}
+    members_by_job: dict[str, list[dict[str, Any]]] = {}
+    for receipt in receipts:
+        if receipt.get("job_id"):
+            members_by_job.setdefault(str(receipt["job_id"]), []).append(receipt)
+    folded: dict[str, dict[str, Any]] = {}  # request_id of the receipt that stands for each job
+    in_jobs: set[str] = set()
+    for job_id, members in members_by_job.items():
+        job = jobs.get(job_id)
+        submit = None
+        for request_id in _job_receipt_ids(job) if job is not None else []:
+            candidate = by_request_id.get(request_id)
+            if (candidate is not None and candidate["request_id"] not in folded
+                    and str(candidate.get("job_id") or job_id) == job_id):
+                submit = candidate
+                break
+        if submit is not None and all(member is not submit for member in members):
+            members = [submit, *members]
+        display = submit if submit is not None else min(members, key=_attempt_order)
+        folded[display["request_id"]] = _job_request(display, members, submit=submit is not None)
+        in_jobs.update(member["request_id"] for member in members)
+    return [
+        folded[receipt["request_id"]] if receipt["request_id"] in folded else receipt
+        for receipt in receipts
+        if receipt["request_id"] in folded or receipt["request_id"] not in in_jobs
+    ]
+
+
+def _job_request(display: Mapping[str, Any], members: list[dict[str, Any]], *, submit: bool) -> dict[str, Any]:
+    """One job's request: the receipt that stands for it, with the outcome, backend, start and cost its work recorded.
+
+    A job with several work receipts, such as retries, is one request, and its cost is the sum of their
+    recorded costs. A job with no work receipt keeps the standing receipt's own facts.
+    """
+    work = [member for member in members if member is not display] if submit else members
+    newest = sorted(work or [display], key=_attempt_order, reverse=True)
+    started = [member["started_at_ms"] for member in work if isinstance(member.get("started_at_ms"), int)]
+    costs = [cost for cost in (_receipt_cost(member) for member in members) if cost is not None]
+    request = {
+        **display,
+        "status": newest[0].get("status"),
+        "backend": _string_first(*(member.get("backend") for member in newest), display.get("backend")),
+        "started_at_ms": min(started) if started else display.get("started_at_ms"),
+        "remote": any(_receipt_is_paid_remote(member) for member in members),
+        "cost": {"usd": sum(costs)} if costs else None,
+        "_outcome_request_id": newest[0]["request_id"],
+    }
+    for key in ("requested_model", "resolved_model"):
+        request[key] = _string_first(display.get(key), *(member.get(key) for member in newest))
+    metadata = display.get("metadata")
+    if isinstance(metadata, Mapping) and "litellm" in metadata:
+        # The summed cost above is the request's cost; the receipt's own provider figure must not be read instead.
+        request["metadata"] = {key: value for key, value in metadata.items() if key != "litellm"}
+    return request
+
+
 def _usage_summary(
     request: Request, *, actor: _Actor, admin_db_path: Path,
     media_jobs_path: Path, receipts_path: Path,
@@ -1805,22 +1876,25 @@ def _usage_summary(
             "SELECT receipt_json, created_at FROM receipts WHERE " + " AND ".join(clauses)
             + " ORDER BY created_at DESC, request_id DESC", params,
         ).fetchall()
+    scoped: list[dict[str, Any]] = []
+    for raw, stored_at in rows:
+        value = json.loads(raw)
+        if isinstance(value, dict) and _receipt_in_scope(value, media_scope):
+            value["_stored_at"] = stored_at
+            _annotate_receipt_source(value, sources, admin_db_path, apps, connections)
+            scoped.append(value)
+    # One request per media job, so its work receipts are not counted beside its submit receipt.
+    job_ids = {str(value["job_id"]) for value in scoped if value.get("job_id")}
     receipts = []
     # Requests per source across the whole scope, so the Source picker can rank
     # sources by activity whichever source is currently selected.
     source_requests: dict[str, int] = {}
-    for raw, stored_at in rows:
-        value = json.loads(raw)
-        if isinstance(value, dict):
-            if not _receipt_in_scope(value, media_scope):
-                continue
-            value["_stored_at"] = stored_at
-            _annotate_receipt_source(value, sources, admin_db_path, apps, connections)
-            tallied = _source_id(value.get("source"))
-            if tallied:
-                source_requests[tallied] = source_requests.get(tallied, 0) + 1
-            if _source_matches_filter(value.get("source"), source_filter):
-                receipts.append(value)
+    for entry in _fold_media_jobs(scoped, media_jobs.get_many(job_ids, path=media_jobs_path) if job_ids else {}):
+        tallied = _source_id(entry.get("source"))
+        if tallied:
+            source_requests[tallied] = source_requests.get(tallied, 0) + 1
+        if _source_matches_filter(entry.get("source"), source_filter):
+            receipts.append(entry)
     for source_row in sources:
         source_row["requests"] = source_requests.get(str(source_row.get("id")), 0)
     # A disconnected connection stays listed only while it has requests to show.
@@ -1932,8 +2006,8 @@ def _usage_summary(
     receipt_list = []
     shown = receipts[:USAGE_RECEIPT_LIMIT]
     visible_receipts = receipt_store.get_many(
-        [internal["request_id"] for internal in shown], audience="client",
-        viewer_person_id=actor.user_id, path=receipts_path,
+        [rid for internal in shown for rid in (internal["request_id"], internal.get("_outcome_request_id")) if rid],
+        audience="client", viewer_person_id=actor.user_id, path=receipts_path,
     )
     for internal in shown:
         visible = visible_receipts.get(internal["request_id"])
@@ -1941,6 +2015,11 @@ def _usage_summary(
             visible["remote_spend"] = _receipt_cost(internal)
             # The row reads the same rule as the totals; a client never sees the backend name.
             visible["served_locally"] = _receipt_served_locally(internal)
+            # A media job's row shows the outcome and remote flag its work receipt recorded.
+            outcome = internal.get("_outcome_request_id")
+            if outcome:
+                visible["status"] = visible_receipts.get(outcome, {}).get("status", internal.get("status"))
+                visible["remote"] = internal.get("remote")
             visible["capability"] = _capability(internal)
             visible["source"] = internal.get("source")
             if isinstance(internal.get("source"), Mapping):
