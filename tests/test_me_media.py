@@ -2451,6 +2451,26 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(media_jobs.count(path=self.jobs_db), 0)
 
+    def test_a_completed_local_make_job_is_counted_local_in_usage(self) -> None:
+        _, job = self._submit_make("local-picture")
+        self._finished(job["job_id"])
+        # The runtime reports the dispatch once its work reaches a backend on this machine.
+        me_make.record_dispatch(job["job_id"], backend="local-engine", started_at_ms=1_700_000_000_500,
+                                remote=False, jobs_path=self.jobs_db, receipts_path=self.receipts_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], 1)
+        self.assertEqual(usage["local_requests"], 1)
+        self.assertTrue(usage["receipts"][0]["served_locally"])
+
+    def test_a_make_job_refused_before_dispatch_is_not_counted_local(self) -> None:
+        self.runtime.fail_with = me_make.MakeBackendError("This kind of work is disabled.", http_status=503)
+        _, job = self._submit_make("refused-picture")
+        self.assertEqual(self._finished(job["job_id"])["status"], media_jobs.STATUS_FAILED)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], 1)
+        self.assertEqual(usage["local_requests"], 0)
+        self.assertFalse(usage["receipts"][0]["served_locally"])
+
 
 
 class MemberFailureCopyTests(unittest.TestCase):

@@ -345,6 +345,61 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
                 generate.assert_not_awaited()
                 self.assertEqual(len(fake.calls("upload")), 0)
 
+    @staticmethod
+    def policy_allows():
+        """A route that takes a receipt asks policy first, and these test callers have no access plan."""
+        return patch.object(proxy, "_apply_image_route_policy",
+                            return_value=proxy.PolicyDecision(decision="allowed"))
+
+    async def test_generation_records_its_start_when_its_backend_runs(self):
+        async def run(client, workflow, *args, **kwargs):
+            return None, [b"fake-image"]
+
+        request = SimpleNamespace(json=AsyncMock(return_value={"model": "fixture-generate", "prompt": "a landscape"}))
+        receipt = RouteReceipt(protocol="openai.images", intent="image.generate", path="/v1/images/generations")
+        with self.policy_allows(), patch.object(proxy, "_graph_run_round", side_effect=run):
+            response = await proxy.proxy_graph_image_request(request, proxy.NO_AUTH_CONTEXT, receipt=receipt)
+        self.assertEqual(response.status_code, 200, response.body)
+        self.assertIsInstance(receipt.started_at_ms, int)
+
+    async def test_generation_refused_before_its_backend_runs_records_no_start(self):
+        request = SimpleNamespace(json=AsyncMock(return_value={"model": "fixture-generate", "prompt": "a landscape"}))
+        receipt = RouteReceipt(protocol="openai.images", intent="image.generate", path="/v1/images/generations")
+        refused = proxy.Response(content="{}", status_code=503, media_type="application/json")
+        with patch.object(proxy, "_dispatch_admission_response", return_value=refused), \
+                patch.object(proxy, "_generate_images_with_adaptive_batching", new_callable=AsyncMock) as generate:
+            response = await proxy.proxy_graph_image_request(request, proxy.NO_AUTH_CONTEXT, receipt=receipt)
+        self.assertEqual(response.status_code, 503, response.body)
+        generate.assert_not_awaited()
+        self.assertIsNone(receipt.started_at_ms)
+
+    async def test_edit_records_its_start_when_its_backend_runs(self):
+        async def run(client, workflow, *args, **kwargs):
+            return None, [b"fake-image"]
+
+        self.serve("upload-ok-any")
+        receipt = RouteReceipt(protocol="openai.images", intent="image.edit", path="/v1/images/edits")
+        with self.policy_allows(), patch.object(proxy, "_graph_run_round", side_effect=run):
+            response = await proxy.proxy_graph_image_edit_request(
+                self.edit_request(), proxy.NO_AUTH_CONTEXT, receipt=receipt,
+            )
+        self.assertEqual(response.status_code, 200, response.body)
+        self.assertIsInstance(receipt.started_at_ms, int)
+
+    async def test_edit_refused_at_its_dispatch_admission_records_no_start(self):
+        self.serve("upload-ok-any")
+        receipt = RouteReceipt(protocol="openai.images", intent="image.edit", path="/v1/images/edits")
+        refused = proxy.Response(content="{}", status_code=503, media_type="application/json")
+        # The edit route admits once when it accepts the request and again before it generates.
+        with self.policy_allows(), patch.object(proxy, "_dispatch_admission_response", side_effect=[None, refused]), \
+                patch.object(proxy, "_generate_images_with_adaptive_batching", new_callable=AsyncMock) as generate:
+            response = await proxy.proxy_graph_image_edit_request(
+                self.edit_request(), proxy.NO_AUTH_CONTEXT, receipt=receipt,
+            )
+        self.assertEqual(response.status_code, 503, response.body)
+        generate.assert_not_awaited()
+        self.assertIsNone(receipt.started_at_ms)
+
 
 class ImageRouteCancellationGapTests(IsolatedAsyncioTestCase):
     async def test_public_routes_persist_one_cancelled_receipt_and_reraise(self):
