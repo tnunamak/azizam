@@ -229,9 +229,9 @@ async function chooseFromMenu(appName: string, item: string) {
   fireEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
 
-/** The owner's Manage keyless access item in an app's menu opens its keyless addresses. */
+/** The owner's Allow keyless access… item in an app's menu opens its keyless addresses. */
 async function openTrustedAddresses(appName: string) {
-  await chooseFromMenu(appName, "Manage keyless access");
+  await chooseFromMenu(appName, "Allow keyless access…");
 }
 
 async function openKeys(appName: string) {

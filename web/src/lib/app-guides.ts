@@ -64,13 +64,33 @@ export function clientById(id: string | null | undefined): AppGuide | undefined 
   return appGuides.apps.find((app) => app.id === id);
 }
 
-/** The guide an app's name points at ("OpenWhispr laptop" → OpenWhispr), else the first guide. */
-export function guideIdForAppName(name: string): string {
+/**
+ * The recipe shown until a client is picked: any app that takes an OpenAI-compatible address. It is not a client, so
+ * it has no steps, no docs and no picker entry; it renders through the same key recipe as the clients.
+ */
+export const anyOpenAIGuide: AppGuide = {
+  id: "any-openai-compatible",
+  name: "Any OpenAI-compatible app",
+  kind: "Any app",
+  key: {
+    status: "documented",
+    steps: [],
+    docs: "",
+    fields: [
+      { label: "Base URL", value: "{openai_url}" },
+      { label: "API key", value: "{key}" },
+      { label: "Model", value: "{chat_model}" },
+    ],
+  },
+};
+
+/**
+ * The client an app's name points at ("OpenWhispr laptop" → OpenWhispr), or null when no client's name is in it. A
+ * null is not a choice: the page shows the generic recipe and the person picks a client.
+ */
+export function guideIdForAppName(name: string): string | null {
   const lower = name.toLowerCase();
-  return (
-    appGuides.apps.find((app) => lower.includes(app.name.toLowerCase()))?.id ??
-    appGuides.apps[0].id
-  );
+  return appGuides.apps.find((app) => lower.includes(app.name.toLowerCase()))?.id ?? null;
 }
 
 /** The values a guide's placeholders take. A null value is not available. */
@@ -131,6 +151,8 @@ export type ResolvedField = GuideField & {
   isModel: boolean;
   /** True when the value needs a model this person has none of. */
   missing: boolean;
+  /** The model task that is missing, in the Models page's words ("chat"), when `missing` is true. */
+  missingTask?: string;
 };
 
 export type ResolvedKeyGuide = Omit<KeyGuide, "fields" | "snippet" | "steps"> & {
@@ -161,6 +183,7 @@ export function resolveKeyGuide(
       isAddress: /\{\w+_url\}/.test(field.value),
       isModel: /\{\w+_model\}/.test(field.value),
       missing: missing.length > 0,
+      missingTask: missing[0],
     };
   });
   const snippet = guide.snippet

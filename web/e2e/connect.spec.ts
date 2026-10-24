@@ -32,20 +32,34 @@ test("owner signs in, opens Connect and copies an address from the recipe", asyn
       page.getByRole("heading", { level: 1, name: "Connect" }),
     ).toBeVisible();
 
-    // Every client is one toggle, and the first one is open: its values, then a link to its full steps.
-    const picker = page.getByRole("group", { name: "Setting up in" });
+    // No client is picked until the person picks one: the generic recipe shows, and the first six clients are toggles.
+    // The group is named for the picked client once one is picked, so the locator names both.
+    const picker = page.getByRole("group", { name: /^(Clients|Setting up: )/ });
+    await expect(picker.getByRole("button", { pressed: true })).toHaveCount(0);
+    // Only the client toggles carry aria-pressed; "More clients" does not.
+    expect(await picker.locator("button[aria-pressed]").count()).toBe(6);
+    await expect(picker.getByRole("button", { name: "More clients" })).toBeVisible();
+    const recipe = page.getByRole("region", { name: "Values for Any OpenAI-compatible app" });
+    await expect(recipe.getByLabel("Base URL", { exact: true })).toHaveValue(`${baseURL}/openai/v1`);
+
+    // The address copies to the clipboard as the whole value.
+    await recipe.getByRole("button", { name: "Copy Base URL" }).click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${baseURL}/openai/v1`);
+
+    // Picking a client opens its own values, with a link to its full steps.
+    await picker.getByRole("button", { name: "Open WebUI" }).click();
     await expect(picker.getByRole("button", { name: "Open WebUI", pressed: true })).toBeVisible();
-    expect(await picker.getByRole("button").count()).toBeGreaterThan(10);
-    const recipe = page.getByRole("region", { name: "Values for Open WebUI" });
-    await expect(recipe.getByLabel("URL", { exact: true })).toHaveValue(`${baseURL}/openai/v1`);
-    await expect(recipe.getByRole("link", { name: "Full steps for Open WebUI →" })).toHaveAttribute(
+    const openWebUI = page.getByRole("region", { name: "Values for Open WebUI" });
+    await expect(openWebUI.getByLabel("URL", { exact: true })).toHaveValue(`${baseURL}/openai/v1`);
+    await expect(openWebUI.getByRole("link", { name: "Full steps for Open WebUI →" })).toHaveAttribute(
       "href",
       "https://azizam.dev/docs/connect/open-webui/",
     );
 
-    // The address copies to the clipboard as the whole value.
-    await recipe.getByRole("button", { name: "Copy URL" }).click();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${baseURL}/openai/v1`);
+    // The reference addresses come after the picker and the recipe.
+    const reference = page.getByRole("heading", { level: 2, name: "Reference", exact: true });
+    await expect(reference).toBeVisible();
+    expect((await reference.boundingBox())!.y).toBeGreaterThan((await openWebUI.boundingBox())!.y);
 
     // Reference material is not on the page: no tool list, no JSON block, no setup steps.
     await expect(page.getByText("MCP tools this gateway offers")).toHaveCount(0);
@@ -55,8 +69,16 @@ test("owner signs in, opens Connect and copies an address from the recipe", asyn
     // Connect creates no key: the key hint links to Apps & keys, where keys are made.
     await expect(page.getByRole("link", { name: "Create a key" })).toHaveCount(0);
     await expect(
-      recipe.getByRole("link", { name: "Apps & keys", exact: true }),
+      openWebUI.getByRole("link", { name: "Apps & keys", exact: true }),
     ).toHaveAttribute("href", /^\/apps\/?$/);
+
+    // On a phone the whole address shows in its field: it wraps, and nothing is clipped at the end.
+    await page.setViewportSize({ width: 390, height: 900 });
+    expect(
+      await openWebUI.getByLabel("URL", { exact: true }).evaluate(
+        (field) => field.scrollWidth <= field.clientWidth && field.scrollHeight <= field.clientHeight,
+      ),
+    ).toBe(true);
   } finally {
     await context.close();
   }
@@ -72,7 +94,7 @@ test("Set up opens Connect for that app, and Back returns to Apps & keys", async
   await page.getByRole("link", { name: /^Set up / }).first().click();
   await expect(page).toHaveURL(/\/connect\/?\?app=/);
   await expect(page.getByRole("heading", { level: 1, name: /^Connect / })).toBeVisible();
-  await expect(page.getByRole("group", { name: "Setting up in" })).toBeVisible();
+  await expect(page.getByRole("group", { name: /^(Clients|Setting up: )/ })).toBeVisible();
   await page.getByRole("link", { name: "Back to Apps & keys", exact: true }).click();
   await expect(page).toHaveURL(/\/apps\/?$/);
 });
@@ -146,12 +168,14 @@ test("Connect shows an App's access and key, and Create key on an App with none 
 
   await page.getByRole("link", { name: `Set up ${name}`, exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: `Connect ${name}` })).toBeVisible();
-  const strip = page.getByRole("region", { name: `${name}: access and key` });
+  const strip = page.getByRole("region", { name: "This app: access and key" });
+  await expect(strip.getByRole("heading", { level: 2, name: "This app", exact: true })).toBeVisible();
   await expect(strip.getByText(/^Access plan:/)).toBeVisible();
   await expect(strip.getByText(/^(Last used|Never used)/)).toBeVisible();
   await expect(strip.getByRole("link", { name: "Rotate key", exact: true })).toBeVisible();
+  await expect(strip.getByRole("link", { name: "Add key", exact: true })).toBeVisible();
   // The App's own client is the one open in the picker, and its full steps link to the public docs.
-  const picker = page.getByRole("group", { name: "Setting up in" });
+  const picker = page.getByRole("group", { name: "Setting up: OpenWhispr" });
   await expect(picker.getByRole("button", { name: "OpenWhispr", pressed: true })).toBeVisible();
   const recipe = page.getByRole("region", { name: "Values for OpenWhispr" });
   await expect(recipe.getByRole("link", { name: "Full steps for OpenWhispr →" })).toHaveAttribute(
@@ -159,16 +183,29 @@ test("Connect shows an App's access and key, and Create key on an App with none 
     "https://azizam.dev/docs/connect/openwhispr/",
   );
 
-  // Revoke the only key from the App's menu: the App now has none.
+  // Back on Apps & keys, Revoke is red at rest: on the key row, in the App's menu, and on its confirm button.
   await page.getByRole("link", { name: "Back to Apps & keys", exact: true }).click();
   await expect(page).toHaveURL(/\/apps\/?$/);
+  const rowRevoke = page.getByRole("button", { name: `Revoke key ${name}`, exact: true });
+  const red = await rowRevoke.evaluate((el) => getComputedStyle(el).color);
   await page.getByRole("button", { name: `Actions for ${name}` }).click();
-  await page.getByRole("menuitem", { name: "Revoke keys", exact: true }).click();
-  await page.getByRole("button", { name: "Revoke keys", exact: true }).click();
+  const menuRevoke = page.getByRole("menuitem", { name: "Revoke keys", exact: true });
+  expect(await menuRevoke.evaluate((el) => getComputedStyle(el).color)).toBe(red);
+  await menuRevoke.click();
+  const confirm = page.getByRole("dialog").getByRole("button", { name: "Revoke keys", exact: true });
+  expect(await confirm.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(red);
+  // Revoke the only key: the App now has none.
+  await confirm.click();
   await expect(page.getByRole("button", { name: `Add key to ${name}` })).toBeVisible();
+  // On a phone a zero-key app keeps Set up on the same row as its menu, so its card stays short.
+  await page.setViewportSize({ width: 390, height: 900 });
+  const setUpLink = page.getByRole("link", { name: `Set up ${name}`, exact: true });
+  const menuButton = page.getByRole("button", { name: `Actions for ${name}` });
+  expect(Math.abs((await setUpLink.boundingBox())!.y - (await menuButton.boundingBox())!.y)).toBeLessThan(2);
+  await page.setViewportSize({ width: 1440, height: 1000 });
 
   await page.getByRole("link", { name: `Set up ${name}`, exact: true }).click();
-  const empty = page.getByRole("region", { name: `${name}: access and key` });
+  const empty = page.getByRole("region", { name: "This app: access and key" });
   await expect(empty.getByText("No keys yet", { exact: true })).toBeVisible();
   await empty.getByRole("link", { name: "Create key", exact: true }).click();
 

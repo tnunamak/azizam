@@ -117,9 +117,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** The client picker: every client in the data, as toggles. */
+/** The client picker: its toggles, named "Setting up: …" for the picked client and "Set up a client" with none. */
 async function picker() {
-  return within(await screen.findByRole("group", { name: "Setting up in" }));
+  return within(
+    await screen.findByRole("group", { name: /^(Clients|Setting up: )/ }),
+  );
 }
 
 describe("Connect", () => {
@@ -171,10 +173,9 @@ describe("Connect", () => {
     ).toHaveAttribute("href", "/apps/");
     expect(screen.queryByRole("link", { name: "Create a key" })).toBeNull();
     expect(screen.queryByText("Gateway automation")).toBeNull();
-    // An address on a public host works from anywhere, so the local-only line stays off.
-    expect(
-      screen.queryByText("It works only from this machine or this network."),
-    ).toBeNull();
+    // An address on a public host works from anywhere, so no reach note shows.
+    expect(screen.queryByText(/only works on the machine/)).toBeNull();
+    expect(screen.queryByText(/Works from devices on this network/)).toBeNull();
   });
 
   test("shows an owner the automation links as well", async () => {
@@ -187,15 +188,39 @@ describe("Connect", () => {
     );
   });
 
-  test("lists every client in the picker, and the open client's values with a link to its full steps", async () => {
+  test("with no client picked, shows the generic recipe and preselects no client", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
     renderPage(member);
-    const options = within(
-      await screen.findByRole("group", { name: "Setting up in" }),
+    expect(await screen.findByText("Any OpenAI-compatible app")).toBeVisible();
+    expect((await picker()).queryByRole("button", { pressed: true })).toBeNull();
+    expect(screen.getByLabelText("Base URL")).toHaveValue(
+      "https://gw.example/openai/v1",
     );
-    expect(options.getAllByRole("button")).toHaveLength(appGuides.apps.length);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Model")).toHaveValue("house-chat"),
+    );
+    // The key is never in the page; the key hint says where it goes.
+    expect(screen.getByText(/Paste a key from/)).toBeTruthy();
+    expect(document.body.innerHTML).not.toMatch(/opk_|oak_/);
+  });
+
+  test("shows the first six clients, then every client behind More clients", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    renderPage(member);
+    const options = await picker();
+    expect(options.getAllByRole("button", { pressed: false })).toHaveLength(6);
+    fireEvent.click(options.getByRole("button", { name: "More clients" }));
+    expect(options.getAllByRole("button", { pressed: false })).toHaveLength(
+      appGuides.apps.length,
+    );
+  });
+
+  test("picks a client and shows its values with a link to its full steps", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    renderPage(member);
+    fireEvent.click((await picker()).getByRole("button", { name: "Open WebUI" }));
     expect(
-      options.getByRole("button", { name: "Open WebUI", pressed: true }),
+      (await picker()).getByRole("button", { name: "Open WebUI", pressed: true }),
     ).toBeTruthy();
     expect(screen.getByLabelText("URL")).toHaveValue(
       "https://gw.example/openai/v1",
@@ -203,12 +228,19 @@ describe("Connect", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("Model IDs")).toHaveValue("house-chat"),
     );
-    // The key is never in the page; the key hint says where it goes.
-    expect(screen.getByText(/Paste a key from/)).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "Full steps for Open WebUI →" }),
     ).toHaveAttribute("href", "https://azizam.dev/docs/connect/open-webui/");
     expect(document.body.innerHTML).not.toMatch(/opk_|oak_/);
+  });
+
+  test("picks a client again to clear the pick, and the generic recipe returns", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    renderPage(member);
+    fireEvent.click((await picker()).getByRole("button", { name: "Open WebUI" }));
+    fireEvent.click((await picker()).getByRole("button", { name: "Open WebUI", pressed: true }));
+    expect(await screen.findByText("Any OpenAI-compatible app")).toBeVisible();
+    expect((await picker()).queryByRole("button", { pressed: true })).toBeNull();
   });
 
   test("changes the values when another client is chosen", async () => {
@@ -223,6 +255,9 @@ describe("Connect", () => {
         pressed: true,
       }),
     ).toBeTruthy();
+    expect(
+      screen.getByRole("group", { name: "Setting up: OpenWhispr" }),
+    ).toBeVisible();
     // OpenWhispr has two groups, each with its own Endpoint URL; both point at the same address.
     for (const field of screen.getAllByLabelText("Endpoint URL")) {
       expect(field).toHaveValue("https://gw.example/openai/v1");
@@ -232,21 +267,26 @@ describe("Connect", () => {
     ).toHaveAttribute("href", "https://azizam.dev/docs/connect/openwhispr/");
   });
 
-  test("finds a client by name and says so when none matches", async () => {
+  test("finds a client by name, past the first six, and says so when none matches", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
     renderPage(member);
     const search = await screen.findByRole("searchbox", {
-      name: "Find an app",
+      name: "Find a client",
     });
     fireEvent.change(search, { target: { value: "whispr" } });
-    expect((await picker()).getAllByRole("button")).toHaveLength(1);
+    expect((await picker()).getAllByRole("button", { pressed: false })).toHaveLength(1);
     fireEvent.change(search, { target: { value: "zzz" } });
-    expect(screen.getByText("No app matches “zzz”.")).toBeTruthy();
+    expect(screen.getByText("No client matches “zzz”.")).toBeTruthy();
+    fireEvent.change(search, { target: { value: "chatgpt" } });
+    expect((await picker()).getByRole("button", { name: "ChatGPT" })).toBeTruthy();
   });
 
   test("shows an MCP-only client its server address, how it signs in, and the MCP docs", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
     renderPage(member);
+    fireEvent.change(await screen.findByRole("searchbox", { name: "Find a client" }), {
+      target: { value: "ChatGPT" },
+    });
     fireEvent.click((await picker()).getByRole("button", { name: "ChatGPT" }));
     const recipe = await screen.findByRole("region", {
       name: "Values for ChatGPT",
@@ -300,7 +340,7 @@ describe("Connect", () => {
     ).toHaveAttribute("href", "/settings");
   });
 
-  test("marks an address on this machine or network as local only", async () => {
+  test("says a LAN address works from devices on this network, and an owner gets the public-address link", async () => {
     vi.spyOn(accountApi, "discovery").mockResolvedValue({
       ...discovery,
       recipes: {
@@ -308,15 +348,78 @@ describe("Connect", () => {
         openai: { canonical_base_url: "http://192.168.1.50:5000/openai/v1" },
       },
     });
-    renderPage(member);
+    renderPage(owner);
     expect(
-      await screen.findByText(
-        "It works only from this machine or this network.",
-      ),
-    ).toBeTruthy();
+      await screen.findByText("Works from devices on this network.", { exact: false }),
+    ).toBeVisible();
     expect(screen.getByLabelText("OpenAI-compatible address")).toHaveValue(
       "http://192.168.1.50:5000/openai/v1",
     );
+    expect(screen.getByRole("link", { name: "Set the public address" })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
+  });
+
+  test("says a loopback address works only on this machine, and asks an owner to set the public address", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue({
+      ...discovery,
+      recipes: {
+        ...discovery.recipes,
+        openai: { canonical_base_url: "http://127.0.0.1:18300/openai/v1" },
+      },
+    });
+    renderPage(owner);
+    const note = await screen.findByText(/only works on the machine running Azizam/);
+    expect(note).toHaveTextContent(
+      "127.0.0.1 only works on the machine running Azizam. For other devices, set the public address.",
+    );
+    expect(within(note).getByRole("link", { name: "set the public address" })).toHaveAttribute(
+      "href",
+      "/settings",
+    );
+    expect(screen.queryByText(/Works from devices on this network/)).toBeNull();
+  });
+
+  test("gives a member the loopback note in words, with no public-address link", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue({
+      ...discovery,
+      recipes: {
+        ...discovery.recipes,
+        openai: { canonical_base_url: "http://localhost:18300/openai/v1" },
+      },
+    });
+    renderPage(member);
+    expect(await screen.findByText(/only works on the machine running Azizam/)).toHaveTextContent(
+      "localhost only works on the machine running Azizam. For other devices, set the public address.",
+    );
+    expect(screen.queryByRole("link", { name: /public address/i })).toBeNull();
+  });
+
+  test("puts a missing chat model in its row: an owner is told to add one in Models", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    vi.spyOn(productApi, "models").mockResolvedValue({
+      aliases: [],
+      models: [],
+    } as unknown as ModelsCatalog);
+    renderPage(owner);
+    expect(await screen.findByText(/No chat model available\./)).toBeVisible();
+    expect(screen.getByText(/Add a model in/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "Models" })).toHaveAttribute("href", "/models");
+  });
+
+  test("tells a member to ask the person who set up the gateway for the missing model", async () => {
+    vi.spyOn(accountApi, "discovery").mockResolvedValue(discovery);
+    vi.spyOn(productApi, "models").mockResolvedValue({
+      aliases: [],
+      models: [],
+    } as unknown as ModelsCatalog);
+    renderPage(member);
+    expect(await screen.findByText(/No chat model available\./)).toBeVisible();
+    expect(
+      screen.getByText(/Ask the person who set up this gateway to add one\./),
+    ).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Models" })).toBeNull();
   });
 
   test("does not list sign-in connections: Apps & keys is the one list of apps", async () => {
@@ -397,26 +500,36 @@ describe("Connect", () => {
         }),
       ).toBeVisible();
       const strip = screen.getByRole("region", {
-        name: "OpenWhispr laptop: access and key",
+        name: "This app: access and key",
       });
+      expect(within(strip).getByRole("heading", { name: "This app" })).toBeVisible();
       expect(within(strip).getByText("Access plan: Local only")).toBeVisible();
       expect(within(strip).getByText("opk_test…")).toBeVisible();
       expect(within(strip).getByText(/Last used/)).toBeVisible();
+      // One key, so no count; the actions are Rotate key and Add key side by side.
       expect(
         within(strip).getByRole("link", { name: "Rotate key" }),
       ).toHaveAttribute("href", "/apps/?app=saved-app&action=rotate");
       expect(
+        within(strip).getByRole("link", { name: "Add key" }),
+      ).toHaveAttribute("href", "/apps/?app=saved-app&action=create-key");
+      expect(
         screen.getByRole("link", { name: "Back to Apps & keys" }),
       ).toHaveAttribute("href", "/apps/");
+      expect(
+        screen.getByText("Set up OpenWhispr to use this app."),
+      ).toBeVisible();
       expect(
         (await picker()).getByRole("button", {
           name: "OpenWhispr",
           pressed: true,
         }),
       ).toBeTruthy();
-      expect(
-        screen.getAllByText("Paste the key you saved for this app.")[0],
-      ).toBeVisible();
+      // The recipe names the key by its masked start, and says the full key is the one saved.
+      const recipe = screen.getByRole("region", { name: "Values for OpenWhispr" });
+      // OpenWhispr has two groups, so its key hint appears once per group.
+      expect(within(recipe).getAllByText(/the secret you saved when you created it/)[0]).toBeVisible();
+      expect(within(recipe).getAllByText("opk_test…")[0]).toBeVisible();
     });
 
     test("an App with no keys says so and offers Create key, never only a key to paste", async () => {
@@ -425,9 +538,10 @@ describe("Connect", () => {
       sessionWith([zeroKeyApp]);
       renderPage(member);
       const strip = await screen.findByRole("region", {
-        name: "Phone: access and key",
+        name: "This app: access and key",
       });
       expect(within(strip).getByText("No keys yet")).toBeVisible();
+      expect(within(strip).queryByRole("link", { name: "Add key" })).toBeNull();
       expect(
         within(strip).getByRole("link", { name: "Create key" }),
       ).toHaveAttribute("href", "/apps/?app=zero-app&action=create-key");
@@ -452,7 +566,7 @@ describe("Connect", () => {
       sessionWith([savedApp]);
       renderPage(owner);
       expect(
-        await screen.findByText("From 192.168.1.50 no key is needed"),
+        await screen.findByText("Requests from 192.168.1.50 don’t need a key."),
       ).toBeVisible();
     });
 
@@ -462,9 +576,9 @@ describe("Connect", () => {
       sessionWith([savedApp]);
       renderPage(member);
       await screen.findByRole("region", {
-        name: "OpenWhispr laptop: access and key",
+        name: "This app: access and key",
       });
-      expect(screen.queryByText(/no key is needed/)).toBeNull();
+      expect(screen.queryByText(/don’t need a key/)).toBeNull();
       expect(listTrustedAddresses).not.toHaveBeenCalled();
     });
 

@@ -1,12 +1,14 @@
 "use client";
 
 import { useId, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { Check, Copy, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { copyText } from "@/components/ui/copy-button";
 import { Badge } from "@/components/ui/badge";
 import {
+  anyOpenAIGuide,
   appGuides,
   clientById,
   resolveKeyGuide,
@@ -17,34 +19,44 @@ import {
 } from "@/lib/app-guides";
 import { clientDocsUrl, MCP_DOCS_URL } from "@/lib/docs";
 
+/** The first clients the picker shows; the rest sit behind "More clients" until a search or that button shows them. */
+const shownFirst = 6;
+
 /**
  * The values one client needs (lib/app-guides.json): the addresses, the key's
  * place and a model name, each to copy. The steps and notes live on the public
- * docs page, one link away. Every client renders through this one component.
+ * docs page, one link away. With no client picked, the generic recipe shows.
  */
 export function AppGuide({
-  appId,
-  onAppChange,
+  clientId,
+  onClientChange,
   values,
   keyHint,
+  owner,
   loading = false,
 }: {
-  appId: string;
-  onAppChange: (id: string) => void;
+  /** The picked client's id, or null when none is picked. */
+  clientId: string | null;
+  /** Picks a client, or clears the pick (null) to show the generic recipe. */
+  onClientChange: (id: string | null) => void;
   values: GuideValues;
   /** Where the key goes, in words. The key itself is never shown here. */
   keyHint: ReactNode;
+  /** An owner adds a missing model in Models; anyone else asks the owner. */
+  owner: boolean;
   /** True while model names are still loading: no "none available" yet. */
   loading?: boolean;
 }) {
-  const app = clientById(appId) ?? appGuides.apps[0];
+  const client = clientById(clientId) ?? null;
   return (
     <div className="flex min-w-0 flex-col gap-5">
-      <ClientPicker selectedId={app.id} onSelect={onAppChange} />
+      <ClientPicker selected={client} onSelect={onClientChange} />
       <ClientValues
-        app={app}
+        recipe={client ?? anyOpenAIGuide}
+        generic={client === null}
         values={values}
         keyHint={keyHint}
+        owner={owner}
         loading={loading}
       />
     </div>
@@ -52,22 +64,26 @@ export function AppGuide({
 }
 
 /**
- * Every client, key or MCP, as a toggle, so none hides behind a menu. The
- * search narrows the list by name or kind; the chosen client stays selected.
+ * The clients, as toggles. The first few show in data order, then "More
+ * clients"; the search finds any of them. Pressing the picked client again
+ * clears the pick.
  */
 function ClientPicker({
-  selectedId,
+  selected,
   onSelect,
 }: {
-  selectedId: string;
-  onSelect: (id: string) => void;
+  selected: ClientGuide | null;
+  onSelect: (id: string | null) => void;
 }) {
   const labelId = useId();
   const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState(false);
   const words = query.trim().toLowerCase();
-  const shown = appGuides.apps.filter((app) =>
+  const matching = appGuides.apps.filter((app) =>
     `${app.name} ${app.kind}`.toLowerCase().includes(words),
   );
+  const shown = words || expanded ? matching : matching.slice(0, shownFirst);
+  const collapsible = !words && appGuides.apps.length > shownFirst;
   return (
     <div
       role="group"
@@ -76,12 +92,12 @@ function ClientPicker({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p id={labelId} className="text-label">
-          Setting up in
+          {selected ? `Setting up: ${selected.name}` : "Clients"}
         </p>
         <Input
           type="search"
-          aria-label="Find an app"
-          placeholder="Find an app"
+          aria-label="Find a client"
+          placeholder="Find a client"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           className="h-9 w-full sm:w-56"
@@ -89,24 +105,35 @@ function ClientPicker({
       </div>
       <div className="flex flex-wrap gap-2">
         {shown.map((app) => {
-          const selected = app.id === selectedId;
+          const isSelected = app.id === selected?.id;
           return (
             <Button
               key={app.id}
               type="button"
               size="sm"
-              variant={selected ? "default" : "outline"}
-              aria-pressed={selected}
-              onClick={() => onSelect(app.id)}
+              variant={isSelected ? "default" : "outline"}
+              aria-pressed={isSelected}
+              onClick={() => onSelect(isSelected ? null : app.id)}
             >
               {app.name}
             </Button>
           );
         })}
+        {collapsible ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? "Fewer clients" : "More clients"}
+          </Button>
+        ) : null}
       </div>
       {shown.length === 0 ? (
         <p className="text-muted-foreground text-meta">
-          No app matches “{query.trim()}”.
+          No client matches “{query.trim()}”.
         </p>
       ) : null}
     </div>
@@ -114,27 +141,34 @@ function ClientPicker({
 }
 
 function ClientValues({
-  app,
+  recipe,
+  generic,
   values,
   keyHint,
+  owner,
   loading,
 }: {
-  app: ClientGuide;
+  recipe: ClientGuide;
+  /** True for the recipe with no client picked: it is titled, since no picker names it. */
+  generic: boolean;
   values: GuideValues;
   keyHint: ReactNode;
+  owner: boolean;
   loading: boolean;
 }) {
-  const key = app.key ? resolveKeyGuide(app.key, values) : null;
+  const key = recipe.key ? resolveKeyGuide(recipe.key, values) : null;
   const groups = key
     ? [...new Set(key.fields.map((field) => field.group ?? ""))]
     : [];
   const unverified =
-    app.key?.status === "unverified" || app.mcp?.status === "unverified";
+    recipe.key?.status === "unverified" || recipe.mcp?.status === "unverified";
+  const hasDocs = Boolean(recipe.key?.docs);
   return (
     <section
-      aria-label={`Values for ${app.name}`}
+      aria-label={`Values for ${recipe.name}`}
       className="flex min-w-0 flex-col gap-4"
     >
+      {generic ? <p className="text-body font-medium">{recipe.name}</p> : null}
       {key
         ? groups.map((group) => (
             <div key={group} className="flex flex-col gap-3">
@@ -146,48 +180,41 @@ function ClientValues({
                     key={`${group}-${field.label}`}
                     field={field}
                     keyHint={keyHint}
+                    owner={owner}
                     loading={loading}
                   />
                 ))}
             </div>
           ))
         : null}
-      {key && !loading && key.missingTasks.length > 0 ? (
-        <p role="note" className="text-meta flex items-start gap-2">
-          <TriangleAlert
-            aria-hidden="true"
-            className="text-warning mt-0.5 size-4 shrink-0"
-          />
-          {app.name} needs a {key.missingTasks.join(" and a ")} model, and none
-          is available to you. Ask the owner to add one.
+      {recipe.mcp ? (
+        <McpRow auth={recipe.mcp.auth} appName={recipe.name} url={values.mcp_url} />
+      ) : null}
+      {hasDocs || recipe.mcp || unverified ? (
+        <p className="text-meta flex flex-wrap items-center gap-x-4 gap-y-2">
+          {hasDocs ? (
+            <a
+              href={clientDocsUrl(recipe.id)}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="underline underline-offset-4"
+            >
+              Full steps for {recipe.name} →
+            </a>
+          ) : null}
+          {recipe.mcp ? (
+            <a
+              href={MCP_DOCS_URL}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="underline underline-offset-4"
+            >
+              MCP docs →
+            </a>
+          ) : null}
+          {unverified ? <Badge variant="outline">From third-party guides</Badge> : null}
         </p>
       ) : null}
-      {app.mcp ? (
-        <McpRow auth={app.mcp.auth} appName={app.name} url={values.mcp_url} />
-      ) : null}
-      <p className="text-meta flex flex-wrap items-center gap-x-4 gap-y-2">
-        <a
-          href={clientDocsUrl(app.id)}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="underline underline-offset-4"
-        >
-          Full steps for {app.name} →
-        </a>
-        {app.mcp ? (
-          <a
-            href={MCP_DOCS_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="underline underline-offset-4"
-          >
-            MCP docs →
-          </a>
-        ) : null}
-        {unverified ? (
-          <Badge variant="outline">From third-party guides</Badge>
-        ) : null}
-      </p>
     </section>
   );
 }
@@ -221,10 +248,12 @@ function McpRow({
 function GuideField({
   field,
   keyHint,
+  owner,
   loading,
 }: {
   field: ResolvedField;
   keyHint: ReactNode;
+  owner: boolean;
   loading: boolean;
 }) {
   const id = useId();
@@ -235,13 +264,53 @@ function GuideField({
           {keyHint}
         </p>
       ) : field.missing ? (
-        <p id={id} className="text-muted-foreground text-meta">
-          {loading ? "Loading model names…" : "No model available."}
-        </p>
+        <MissingModel id={id} task={field.missingTask} owner={owner} loading={loading} />
       ) : (
         <CopyValue id={id} label={field.label} value={field.value} />
       )}
     </FieldRow>
+  );
+}
+
+/** The warning sits in the row it explains, and says what this person can do about it. */
+function MissingModel({
+  id,
+  task,
+  owner,
+  loading,
+}: {
+  id: string;
+  task?: string;
+  owner: boolean;
+  loading: boolean;
+}) {
+  if (loading)
+    return (
+      <p id={id} className="text-muted-foreground text-meta">
+        Loading model names…
+      </p>
+    );
+  return (
+    <p id={id} className="text-meta flex items-start gap-2">
+      <TriangleAlert
+        aria-hidden="true"
+        className="text-warning mt-0.5 size-4 shrink-0"
+      />
+      <span>
+        No {task ? `${task} ` : ""}model available.{" "}
+        {owner ? (
+          <>
+            Add a model in{" "}
+            <Link prefetch={false} href="/models" className="underline underline-offset-4">
+              Models
+            </Link>
+            .
+          </>
+        ) : (
+          "Ask the person who set up this gateway to add one."
+        )}
+      </span>
+    </p>
   );
 }
 
@@ -265,6 +334,7 @@ function FieldRow({
   );
 }
 
+/** A value to copy. A textarea, so a long address wraps on a phone instead of clipping its end. */
 function CopyValue({
   id,
   label,
@@ -278,12 +348,13 @@ function CopyValue({
   return (
     <div className="min-w-0">
       <div className="border-input bg-card focus-within:border-ring rounded-control flex min-w-0 items-center border">
-        <Input
+        <textarea
           id={id}
           value={value}
           readOnly
+          rows={1}
           onFocus={(event) => event.currentTarget.select()}
-          className="h-8 min-w-0 border-0 bg-transparent font-mono text-sm focus-visible:-outline-offset-2 sm:text-sm"
+          className="field-sizing-content min-h-8 max-sm:min-h-11 max-sm:py-3 min-w-0 flex-1 resize-none px-3 py-1.5 font-mono text-sm break-all bg-transparent outline-none"
         />
         <Button
           type="button"

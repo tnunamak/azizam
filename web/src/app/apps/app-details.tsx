@@ -24,9 +24,18 @@ const childIndent = "pl-11";
 /** The band that sets a child line apart from the app's header. */
 const childBand = "border-t bg-muted/30";
 
+/** A separator between the parts of one line. */
+function Dot() {
+  return (
+    <span aria-hidden="true" className="text-muted-foreground">
+      ·
+    </span>
+  );
+}
+
 /**
  * The app's keys, one row each, then a footer that adds a key. An app with no
- * keys shows only "No keys yet" and the footer.
+ * keys shows only the footer; its header's meta line already says "0 keys".
  */
 export function AppKeyRows({
   app,
@@ -67,22 +76,11 @@ export function AppKeyRows({
       <div
         className={`${childIndent} text-meta flex flex-wrap items-center gap-x-3 gap-y-1 py-2 pr-4`}
       >
-        {noKeys ? (
-          <>
-            <span className="text-muted-foreground">No keys yet</span>
-            {/* Hidden on a phone, so a wrapped line never starts with a dot. */}
-            <span
-              aria-hidden="true"
-              className="text-muted-foreground max-sm:hidden"
-            >
-              ·
-            </span>
-          </>
-        ) : null}
+        {/* The -ml-3 lines the icon up with the key names above it, with or without keys. */}
         <Button
           variant="ghost"
           size="sm"
-          className="text-muted-foreground"
+          className="-ml-3 text-muted-foreground"
           disabled={busy || !app.can_mint_keys}
           aria-label={`Add key to ${appName}`}
           onClick={(event) => onAddKey(event.currentTarget)}
@@ -123,11 +121,13 @@ function KeyRow({
     >
       <div className="min-w-0">
         <p className="text-body truncate">{credential.display_name}</p>
-        <p className="text-muted-foreground text-meta flex flex-wrap items-center gap-x-3 gap-y-0.5">
+        <p className="text-muted-foreground text-meta flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <span className="font-mono">{keyStart(credential.prefix)}</span>
+          <Dot />
           <span>
             Created <RelativeTime ts={credential.created_at} />
           </span>
+          <Dot />
           <span>
             {credential.last_used_at != null ? (
               <>
@@ -150,10 +150,11 @@ function KeyRow({
         >
           Rotate
         </Button>
+        {/* The ghost variant sets its own text colour, and cn does not merge classes, so the red is marked important. */}
         <Button
           variant="ghost"
           size="sm"
-          className="text-destructive hover:text-destructive"
+          className="text-destructive!"
           disabled={busy}
           aria-label={`Revoke key ${credential.display_name}`}
           onClick={() => onRevoke(credential)}

@@ -102,7 +102,7 @@ function openMenu() {
 /** The owner's keyless access sits in the App's own menu, which opens the dialog that changes it. */
 async function openTrustedAddresses() {
   openMenu();
-  fireEvent.click(await screen.findByRole("menuitem", { name: "Manage keyless access" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Allow keyless access…" }));
 }
 
 it("offers keyless access to the owner only", async () => {
@@ -111,11 +111,11 @@ it("offers keyless access to the owner only", async () => {
   await screen.findByRole("heading", { name: "Living room display" });
   openMenu();
   await screen.findByRole("menuitem", { name: "Remove app" });
-  expect(screen.queryByRole("menuitem", { name: "Manage keyless access" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: "Allow keyless access…" })).toBeNull();
   expect(screen.queryByText("Keyless access from:")).toBeNull();
 });
 
-it("shows the app's keyless addresses as chips on its row, and Manage keyless access in its menu", async () => {
+it("shows the app's keyless addresses as chips on its row, and Allow keyless access… in its menu", async () => {
   vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
   entries = [
     {
@@ -130,10 +130,10 @@ it("shows the app's keyless addresses as chips on its row, and Manage keyless ac
   expect(await screen.findByText("192.168.1.0/24")).toBeVisible();
   expect(screen.getByText("Keyless access from:")).toBeVisible();
   openMenu();
-  expect(await screen.findByRole("menuitem", { name: "Manage keyless access" })).toBeVisible();
+  expect(await screen.findByRole("menuitem", { name: "Allow keyless access…" })).toBeVisible();
 });
 
-it("drops the keyless row for an app with none, and keeps Manage keyless access in its menu", async () => {
+it("drops the keyless row for an app with none, and keeps Allow keyless access… in its menu", async () => {
   vi.mocked(accountApi.session).mockResolvedValue(snapshot("owner"));
   renderApps();
   await screen.findByRole("heading", { name: "Living room display" });
@@ -141,7 +141,7 @@ it("drops the keyless row for an app with none, and keeps Manage keyless access 
   expect(screen.queryByText("Keyless access from:")).toBeNull();
   expect(screen.queryByText("none")).toBeNull();
   openMenu();
-  expect(await screen.findByRole("menuitem", { name: "Manage keyless access" })).toBeVisible();
+  expect(await screen.findByRole("menuitem", { name: "Allow keyless access…" })).toBeVisible();
 });
 
 it("shows the keyless hint once, under the App that has addresses", async () => {
@@ -169,7 +169,7 @@ it("starts empty, adds an address with a note, and removes it", async () => {
   await screen.findByRole("heading", { name: "Living room display" });
   await openTrustedAddresses();
   expect(
-    await screen.findByText(/No address is trusted for this app/),
+    await screen.findByText(/Until you add an address, every request to this app needs a key/),
   ).toBeVisible();
 
   fireEvent.change(screen.getByLabelText("IP address or range"), {
@@ -189,7 +189,7 @@ it("starts empty, adds an address with a note, and removes it", async () => {
   );
   await waitFor(() =>
     expect(
-      screen.getByText(/No address is trusted for this app/),
+      screen.getByText(/Until you add an address, every request to this app needs a key/),
     ).toBeVisible(),
   );
 });
@@ -199,7 +199,7 @@ it("shows the gateway's sentence when an address is refused", async () => {
   renderApps();
   await screen.findByRole("heading", { name: "Living room display" });
   await openTrustedAddresses();
-  await screen.findByText(/No address is trusted/);
+  await screen.findByText(/Until you add an address, every request to this app needs a key/);
   vi.mocked(adminFetch).mockRejectedValueOnce(
     new Error("A range of every address would trust the whole internet."),
   );
@@ -217,7 +217,7 @@ it("preserves the refused address and note until a successful retry", async () =
   renderApps();
   await screen.findByRole("heading", { name: "Living room display" });
   await openTrustedAddresses();
-  await screen.findByText(/No address is trusted/);
+  await screen.findByText(/Until you add an address, every request to this app needs a key/);
   const address = screen.getByLabelText("IP address or range");
   const note = screen.getByLabelText("Note (optional)");
   const submit = screen.getByRole("button", { name: "Trust address" });

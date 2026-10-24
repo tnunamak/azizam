@@ -62,11 +62,12 @@ import {
   CopyField,
 } from "@/components/product";
 import { cn } from "@/lib/cn";
+import { keyStart } from "@/lib/key-hint";
 import { keyPromptNote } from "@/lib/prompt-memory";
 import { useUnsavedSecret } from "@/lib/unsaved-work";
 import { api, queryKeys, type AccessPlan, type Credential } from "@/lib/api";
 import { productApi } from "@/lib/product-api";
-import { guideIdForAppName, keyApps, suggestedModel } from "@/lib/app-guides";
+import { guideIdForAppName, suggestedModel } from "@/lib/app-guides";
 import {
   listTrustedAddresses,
   trustedAddressesKey,
@@ -83,6 +84,8 @@ const accountKey = ["account", "session"];
 const SAME_AS_PERSON = "person";
 type Reveal = {
   secret: string;
+  /** The key's masked start ("opk_n2ib…"), which the recipe names once the key is saved. */
+  start: string;
   appId: string;
   app: string;
   oldIds: string[];
@@ -135,10 +138,10 @@ function AccessPlanName({ app }: { app: AccountApp }) {
   );
 }
 
-/** A separator between the parts of one line. It is hidden on a phone, so a wrapped line never starts or ends on one. */
+/** A separator between the parts of one line. It shows on a phone too, so "1 key · Access plan" reads as one line. */
 function Separator() {
   return (
-    <span aria-hidden="true" className="text-muted-foreground max-sm:hidden">
+    <span aria-hidden="true" className="text-muted-foreground">
       ·
     </span>
   );
@@ -151,6 +154,16 @@ function mintBlockedReason(app: AccountApp): string {
   if (!app.access_plan)
     return "This app has no access plan. Ask the owner to choose one.";
   return "You can't create keys for this app. Ask the owner to update its access.";
+}
+
+/** A new key's name: the name it is given if no key of the app has it, else "Key 2", "Key 3" and so on, so no two
+ * keys of one app share a name. */
+function newKeyName(app: AccountApp, name: string): string {
+  const taken = new Set(app.credentials.map((key) => key.display_name));
+  if (!taken.has(name)) return name;
+  let number = 2;
+  while (taken.has(`Key ${number}`)) number += 1;
+  return `Key ${number}`;
 }
 
 /** Keys and addresses the cut-over would remove from this app. Each one has a remedy the gateway names: keep it,
@@ -232,7 +245,8 @@ function AppsContents() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [plan, setPlan] = useState(SAME_AS_PERSON);
-  const [guideApp, setGuideApp] = useState(keyApps[0].id);
+  // The client picked in the new key's recipe. None until the person picks one, so no client is preselected.
+  const [guideApp, setGuideApp] = useState<string | null>(null);
   const [accessApp, setAccessApp] = useState<AccountApp | null>(null);
   const [accessPlan, setAccessPlan] = useState(SAME_AS_PERSON);
   const [createdApp, setCreatedApp] = useState<AccountApp | null>(null);
@@ -503,10 +517,11 @@ function AppsContents() {
         });
       }
       const appName = formatAppName(app.name, accountData?.user?.email);
-      const key = await accountApi.mintKey(app.id, appName);
+      const key = await accountApi.mintKey(app.id, newKeyName(app, appName));
       setGuideApp(guideIdForAppName(app.name));
       setReveal({
         secret: key.api_key,
+        start: keyStart(key.api_key),
         appId: app.id,
         app: appName,
         oldIds: [],
@@ -589,6 +604,7 @@ function AppsContents() {
     setSaved(false);
     setReveal({
       secret,
+      start: keyStart(secret),
       appId: app.id,
       app: formatAppName(app.name, accountData?.user?.email),
       oldIds: [],
@@ -647,11 +663,12 @@ function AppsContents() {
       if (action.kind === "rotate") {
         const key = await accountApi.mintKey(
           action.app.id,
-          `${appName} replacement`,
+          newKeyName(action.app, `${appName} replacement`),
         );
         setGuideApp(guideIdForAppName(action.app.name));
         setReveal({
           secret: key.api_key,
+          start: keyStart(key.api_key),
           appId: action.app.id,
           app: appName,
           oldIds: ids,
@@ -773,12 +790,13 @@ function AppsContents() {
     setMintingAppId(app.id);
     setError(null);
     try {
-      const key = await accountApi.mintKey(app.id, appName);
+      const key = await accountApi.mintKey(app.id, newKeyName(app, appName));
       rememberAppFocus(app.id);
       setSaved(false);
       setGuideApp(guideIdForAppName(app.name));
       setReveal({
         secret: key.api_key,
+        start: keyStart(key.api_key),
         appId: app.id,
         app: appName,
         oldIds: [],
@@ -844,7 +862,7 @@ function AppsContents() {
     <div className="space-y-8">
       <PageHeader
         title="Apps & keys"
-        subtitle="Each app has its own keys."
+        subtitle="An app is anything that connects to this gateway: a chat app, a script, a phone. Each app has its own keys and plan."
         primaryAction={
           <Button
             ref={newAppButton}
@@ -903,7 +921,6 @@ function AppsContents() {
         <EmptyState
           icon={KeyRound}
           title="Connect your first app"
-          description="Create a key for an app you already use."
           action={<Button onClick={startNewApp}>New app</Button>}
         />
       ) : (
@@ -992,7 +1009,8 @@ function AppsContents() {
                     "ring-ring ring-offset-background ring-2 ring-offset-2",
                 )}
               >
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+                {/* A narrower gap on a phone keeps a zero-key card's menu on the Set up row instead of wrapping it below. */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-4 py-3 sm:gap-x-3">
                   <AppWindow
                     aria-hidden="true"
                     className="text-muted-foreground size-4 shrink-0"
@@ -1016,8 +1034,14 @@ function AppsContents() {
                       ))}
                     </p>
                   </div>
-                  {/* On a phone the app's actions drop under its name, aligned with it; the menu stays top right. */}
-                  <div className="flex shrink-0 flex-wrap items-center gap-2 max-sm:order-last max-sm:basis-full max-sm:pl-7">
+                  {/* On a phone a keyed app's actions drop under its name, aligned with it, so its header keeps the menu
+                      top right. A zero-key app keeps "Set up" beside the menu, which keeps its card short. */}
+                  <div
+                    className={cn(
+                      "flex shrink-0 flex-wrap items-center gap-2",
+                      app.credentials.length > 0 && "max-sm:order-last max-sm:basis-full max-sm:pl-7",
+                    )}
+                  >
                     {primary}
                     <Button asChild variant="outline" size="sm">
                       <Link
@@ -1079,6 +1103,7 @@ function AppsContents() {
                           Rotate keys
                         </DropdownMenuItem>
                         <DropdownMenuItem
+                          variant="destructive"
                           disabled={!app.credentials.length}
                           onSelect={() => {
                             rememberAppFocus(app.id);
@@ -1095,7 +1120,7 @@ function AppsContents() {
                               setTrustingApp(app);
                             }}
                           >
-                            Manage keyless access
+                            Allow keyless access…
                           </DropdownMenuItem>
                         ) : null}
                         {viewer.admin && (
@@ -1408,17 +1433,23 @@ function AppsContents() {
               )}
               <section aria-labelledby="setup-heading" className="space-y-3 border-t pt-5">
                 <h3 id="setup-heading" className="text-body font-medium">
-                  Set up your app
+                  Set up a client
                 </h3>
                 <AppGuide
-                  appId={guideApp}
-                  onAppChange={setGuideApp}
+                  clientId={guideApp}
+                  onClientChange={setGuideApp}
                   values={guideValues}
+                  owner={viewer.admin}
                   loading={catalogPending || (ownPlanLimits && viewer.admin && previewPending)}
                   keyHint={
-                    saved
-                      ? "Paste the key you saved."
-                      : "Paste the key from above."
+                    saved ? (
+                      <>
+                        Use key <span className="font-mono">{reveal.start}</span> (the secret you
+                        saved when you created it).
+                      </>
+                    ) : (
+                      "Paste the key from above."
+                    )
                   }
                 />
                 <p className="text-muted-foreground text-meta">

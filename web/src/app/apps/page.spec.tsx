@@ -906,8 +906,9 @@ it("shows a member their plan, read-only, and never sets one", async () => {
 
 it.each([
   ["OpenWhispr laptop", "OpenWhispr"],
-  ["My laptop", "Open WebUI"],
-])("opens the reveal for %s with the %s guide chosen, and the key only in its own field", async (name, appName) => {
+  // "My laptop" names no client, so none is picked and the generic recipe shows.
+  ["My laptop", null],
+])("opens the reveal for %s, with the client %s picked, and the key only in its own field", async (name, appName) => {
   vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("member") });
   vi.mocked(accountApi.createApp).mockResolvedValue({ ...app, id: "guide", name });
   vi.mocked(accountApi.mintKey).mockReset().mockResolvedValue(minted(name));
@@ -915,22 +916,30 @@ it.each([
   await openNewApp(name);
   fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
   const dialog = within(await screen.findByRole("dialog", { name: `New key for ${name}` }));
-  expect(dialog.getByRole("group", { name: "Setting up in" })).toBeVisible();
-  expect(dialog.getByRole("button", { name: appName, pressed: true })).toBeVisible();
-  expect(dialog.getByRole("heading", { name: "Set up your app" })).toBeVisible();
+  if (appName) {
+    expect(dialog.getByRole("group", { name: `Setting up: ${appName}` })).toBeVisible();
+    expect(dialog.getByRole("button", { name: appName, pressed: true })).toBeVisible();
+  } else {
+    expect(dialog.getByRole("group", { name: "Clients" })).toBeVisible();
+    expect(dialog.queryByRole("button", { pressed: true })).toBeNull();
+    expect(dialog.getByText("Any OpenAI-compatible app")).toBeVisible();
+  }
+  expect(dialog.getByRole("heading", { name: "Set up a client" })).toBeVisible();
   expect(dialog.getByLabelText("Your key")).toHaveValue("test-key-only");
   // The key field of the guide shows a hint, never the key.
-  const guide = dialog.getByRole("heading", { name: "Set up your app" }).closest("section")!;
+  const guide = dialog.getByRole("heading", { name: "Set up a client" }).closest("section")!;
   expect(guide.textContent).toContain("Paste the key from above.");
-  const values = [...guide.querySelectorAll("input")].map((input) => input.value);
+  const values = [...guide.querySelectorAll("textarea")].map((field) => field.value);
   expect(values.length).toBeGreaterThan(0);
   expect(values).not.toContain("test-key-only");
   expect(guide.textContent).not.toContain("test-key-only");
   expect(dialog.getByRole("link", { name: "Connect" })).toHaveAttribute("href", expect.stringMatching(/^\/connect\/?\?app=/));
-  expect(dialog.getByRole("link", { name: `Full steps for ${appName} →` })).toHaveAttribute(
-    "href",
-    expect.stringMatching(/^https:\/\/azizam\.dev\/docs\/connect\//),
-  );
+  if (appName) {
+    expect(dialog.getByRole("link", { name: `Full steps for ${appName} →` })).toHaveAttribute(
+      "href",
+      expect.stringMatching(/^https:\/\/azizam\.dev\/docs\/connect\//),
+    );
+  }
   // The sticky action saves the key and closes the dialog.
   fireEvent.click(dialog.getByRole("button", { name: "I’ve saved the key" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -948,7 +957,7 @@ it("fills the guide with the person's own model names, and warns when a task has
     const models = dialog.getAllByLabelText("Model").map((el) => (el as HTMLInputElement).value);
     expect(models).toEqual(["house-whisper", "house-chat"]);
   });
-  expect(dialog.queryByText(/needs a .* model, and none is available/)).toBeNull();
+  expect(dialog.queryByText(/model available/)).toBeNull();
 });
 
 it("fills the guide only with names the new app's own plan allows", async () => {
@@ -978,7 +987,7 @@ it("fills the guide only with names the new app's own plan allows", async () => 
   fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
   const dialog = within(await screen.findByRole("dialog", { name: "New key for OpenWhispr laptop" }));
   // The person's catalog has house-chat; the app's plan does not, so the guide must not suggest it.
-  expect(await dialog.findByText(/needs a .* model, and none is available/)).toBeVisible();
+  expect(await dialog.findByText(/No chat model available\./)).toBeVisible();
   expect(api.accessPlans.preview).toHaveBeenCalledWith("plan_local");
   const models = dialog.getAllByLabelText("Model").map((el) => (el as HTMLInputElement).value);
   expect(models).toContain("house-whisper");
@@ -1012,14 +1021,14 @@ it("does not suggest a name the check could not tell is allowed", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
   const dialog = within(await screen.findByRole("dialog", { name: "New key for OpenWhispr laptop" }));
   // The person's catalog has house-chat; the app's plan does not, so the guide must not suggest it.
-  expect(await dialog.findByText(/needs a .* model, and none is available/)).toBeVisible();
+  expect(await dialog.findByText(/No chat model available\./)).toBeVisible();
   expect(api.accessPlans.preview).toHaveBeenCalledWith("plan_local");
   const models = dialog.getAllByLabelText("Model").map((el) => (el as HTMLInputElement).value);
   expect(models).toContain("house-whisper");
   expect(models).not.toContain("house-chat");
 });
 
-it("says which model task is missing once the catalog has loaded", async () => {
+it("puts each missing model in its own row, and tells a member to ask the person who set up the gateway", async () => {
   vi.mocked(productApi.models).mockResolvedValue({ aliases: [], models: [] } as unknown as ModelsCatalog);
   vi.mocked(accountApi.session).mockResolvedValue({ ...snapshot, user: person("member") });
   vi.mocked(accountApi.createApp).mockResolvedValue({ ...app, id: "guide", name: "OpenWhispr laptop" });
@@ -1028,9 +1037,12 @@ it("says which model task is missing once the catalog has loaded", async () => {
   await openNewApp("OpenWhispr laptop");
   fireEvent.click(screen.getByRole("button", { name: "Create app and key" }));
   const dialog = within(await screen.findByRole("dialog", { name: "New key for OpenWhispr laptop" }));
+  expect(await dialog.findByText(/No transcription model available\./)).toBeVisible();
+  expect(dialog.getByText(/No chat model available\./)).toBeVisible();
   expect(
-    await dialog.findByText(/OpenWhispr needs a transcription and a chat model, and none is available to you\./),
-  ).toBeVisible();
+    dialog.getAllByText(/Ask the person who set up this gateway to add one\./),
+  ).toHaveLength(2);
+  expect(dialog.queryByRole("link", { name: "Models" })).toBeNull();
 });
 
 it("gives an owner 'Change access plan' that sets the plan and refreshes", async () => {
@@ -1133,7 +1145,7 @@ it("retains a rejected new app's name and access plan for a safe retry", async (
 });
 
 
-it("groups each app with its own keys under its name, and says No keys yet for an app with none", async () => {
+it("groups each app with its own keys under its name, and an app with none shows only Add key", async () => {
   vi.mocked(accountApi.session).mockResolvedValue({
     ...snapshot,
     apps: [twoKeys, { ...app, id: "phone", name: "Phone" }],
@@ -1146,6 +1158,36 @@ it("groups each app with its own keys under its name, and says No keys yet for a
   expect(
     within(within(laptop).getByRole("list", { name: "Keys for My laptop" })).getAllByRole("listitem"),
   ).toHaveLength(2);
-  expect(within(phone).getByText("No keys yet")).toBeVisible();
+  expect(within(phone).getByText("0 keys")).toBeVisible();
+  expect(within(phone).getByRole("button", { name: "Add key to Phone" })).toBeVisible();
   expect(within(phone).queryByRole("list", { name: /^Keys for/ })).toBeNull();
+});
+
+it("names a second key of an app Key 2 when the app's own name is already a key's name", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [{ ...app, credentials: [{ ...twoKeys.credentials[0], display_name: "My laptop" } as Credential] }],
+  });
+  vi.mocked(accountApi.mintKey).mockResolvedValue(mintedKey);
+  renderApps(member);
+  await screen.findByRole("heading", { name: "My laptop" });
+  openMenu("My laptop");
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Create another key" }));
+  await screen.findByRole("heading", { name: "New key for My laptop" });
+  expect(accountApi.mintKey).toHaveBeenCalledWith("saved-app", "Key 2");
+});
+
+it("marks Revoke destructive at rest, on the key row and in the app's menu", async () => {
+  vi.mocked(accountApi.session).mockResolvedValue({
+    ...snapshot,
+    apps: [{ ...app, credentials: [{ ...twoKeys.credentials[0], display_name: "Laptop" } as Credential] }],
+  });
+  renderApps(member);
+  await screen.findByRole("heading", { name: "My laptop" });
+  expect(screen.getByRole("button", { name: "Revoke key Laptop" })).toHaveClass("text-destructive!");
+  openMenu("My laptop");
+  expect(await screen.findByRole("menuitem", { name: "Revoke keys" })).toHaveAttribute(
+    "data-variant",
+    "destructive",
+  );
 });

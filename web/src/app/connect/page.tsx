@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
 import { PageHeader } from "@/components/product/page-header";
 import { EmptyState } from "@/components/product/empty-state";
@@ -20,14 +21,14 @@ import {
 } from "@/lib/account-api";
 import { productApi } from "@/lib/product-api";
 import {
-  appGuides,
+  clientById,
   guideIdForAppName,
   suggestedModel,
   type GuideValues,
 } from "@/lib/app-guides";
 import { MCP_DOCS_URL } from "@/lib/docs";
 import { keyStart } from "@/lib/key-hint";
-import { isLocalOnlyAddress } from "@/lib/private-address";
+import { addressReach } from "@/lib/private-address";
 import {
   listTrustedAddresses,
   trustedAddressesKey,
@@ -59,6 +60,14 @@ function useRequestedAppId(): string | null {
 function listed(names: string[]): string {
   if (names.length < 2) return names.join("");
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/** The key the app uses most recently (or made last, if never used). The strip and the recipe both name it. */
+function newestKey(app: AccountApp) {
+  return [...app.credentials].sort(
+    (a, b) =>
+      (b.last_used_at ?? b.created_at) - (a.last_used_at ?? a.created_at),
+  )[0];
 }
 
 function ConnectSkeleton() {
@@ -105,6 +114,17 @@ export default function ConnectPage() {
   const setupName = setupApp
     ? formatAppName(setupApp.name, session?.user?.email)
     : "";
+  // The client the person picks, and the app it was picked for. Until they pick one, a client is the one the app's
+  // name points at, if the name names one; otherwise none is chosen and the generic recipe shows.
+  const [picked, setPicked] = useState<{ app: string; client: string | null } | null>(null);
+  const appKey = setupApp?.id ?? "";
+  const clientId =
+    picked && picked.app === appKey
+      ? picked.client
+      : setupApp
+        ? guideIdForAppName(setupApp.name)
+        : null;
+  const clientName = clientById(clientId)?.name;
 
   return (
     <div className="page-read">
@@ -112,7 +132,9 @@ export default function ConnectPage() {
         title={setupApp ? `Connect ${setupName}` : "Connect"}
         subtitle={
           setupApp
-            ? "Paste this address and your key."
+            ? clientName
+              ? `Set up ${clientName} to use this app.`
+              : "Set up a client to use this app."
             : "Use this gateway from other apps and AI agents."
         }
       />
@@ -126,7 +148,7 @@ export default function ConnectPage() {
           </p>
         ) : viewer.authenticated ? (
           <p className="text-meta">
-            Each app has its own key. To set one up,{" "}
+            Each app has its own keys. To set one up,{" "}
             <Link prefetch={false} href="/apps/" className="underline">
               choose the app in Apps &amp; keys
             </Link>
@@ -159,7 +181,8 @@ export default function ConnectPage() {
             origin={origin}
             admin={viewer.admin}
             app={setupApp}
-            appName={setupName}
+            clientId={clientId}
+            onClientChange={(client) => setPicked({ app: appKey, client })}
           />
         )}
       </div>
@@ -172,14 +195,16 @@ function ConnectDetails({
   origin,
   admin,
   app,
-  appName,
+  clientId,
+  onClientChange,
 }: {
   discovery: GatewayDiscovery;
   origin: string;
   admin: boolean;
   /** The app this page sets up, when the link named one. */
   app: AccountApp | null;
-  appName: string;
+  clientId: string | null;
+  onClientChange: (id: string | null) => void;
 }) {
   const address = (id: string, fallback: string) =>
     absolute(discovery.recipes[id]?.canonical_base_url ?? fallback, origin);
@@ -190,10 +215,6 @@ function ConnectDetails({
     mcp: absolute(discovery.mcp?.url ?? "/mcp", origin),
   };
   const signIn = discovery.mcp?.sign_in ?? false;
-  // The client the person picks. Until they pick one, it is the guide the app's name points at.
-  const [pickedGuide, setPickedGuide] = useState<string | null>(null);
-  const guideId =
-    pickedGuide ?? (app ? guideIdForAppName(app.name) : appGuides.apps[0].id);
   const { data: catalog, isPending: catalogPending } = useQuery({
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
@@ -213,9 +234,13 @@ function ConnectDetails({
     chat_model: suggestedModel(catalogRows, "chat"),
     transcription_model: suggestedModel(catalogRows, "transcribe"),
   };
+  const newest = app ? newestKey(app) : undefined;
   const keyHint = app ? (
-    app.credentials.length ? (
-      "Paste the key you saved for this app."
+    newest ? (
+      <>
+        Use key <span className="font-mono">{keyStart(newest.prefix)}</span> (the
+        secret you saved when you created it).
+      </>
     ) : (
       "No key yet. Create one above, then paste it here."
     )
@@ -230,18 +255,46 @@ function ConnectDetails({
   );
   const setup = (
     <AppGuide
-      appId={guideId}
-      onAppChange={setPickedGuide}
+      clientId={clientId}
+      onClientChange={onClientChange}
       values={values}
       keyHint={keyHint}
+      owner={admin}
       loading={catalogPending}
     />
   );
-  const anyLocal = Object.values(endpoints).some(isLocalOnlyAddress);
-  const endpointsSection = (
+  const reference = [endpoints.openai, endpoints.anthropic, endpoints.ollama, endpoints.mcp].map(
+    (address) => ({ address, reach: addressReach(address) }),
+  );
+  const loopback = reference.find((entry) => entry.reach === "loopback");
+  const onLan = reference.some((entry) => entry.reach === "lan");
+  const publicLink = (label: string) => (
+    <Link
+      prefetch={false}
+      href="/settings"
+      className="underline underline-offset-4"
+    >
+      {label}
+    </Link>
+  );
+  // Only what this address can reach: this machine, or this network. The public-address link is the owner's.
+  const reachNote = loopback ? (
+    <>
+      {`${new URL(loopback.address).hostname} only works on the machine running Azizam. For other devices, `}
+      {admin ? publicLink("set the public address") : "set the public address"}.
+    </>
+  ) : onLan ? (
+    <>
+      Works from devices on this network.
+      {admin ? <> {publicLink("Set the public address")}</> : null}
+    </>
+  ) : admin ? (
+    publicLink("Set the public address")
+  ) : null;
+  const referenceSection = (
     <SettingsSection
-      title="Endpoints"
-      description="Reference: each address this gateway serves."
+      title="Reference"
+      description="Each address this gateway serves."
     >
       <div className="flex flex-col gap-4 p-4">
         <div className="flex flex-col gap-2">
@@ -259,10 +312,8 @@ function ConnectDetails({
         />
         <CopyField label="Ollama-compatible address" value={endpoints.ollama} />
         <CopyField label="MCP server address" value={endpoints.mcp} />
-        {anyLocal ? (
-          <p className="text-muted-foreground text-meta">
-            It works only from this machine or this network.
-          </p>
+        {reachNote ? (
+          <p className="text-muted-foreground text-meta">{reachNote}</p>
         ) : null}
       </div>
     </SettingsSection>
@@ -312,22 +363,15 @@ function ConnectDetails({
       <a href="/openapi.json" className="underline underline-offset-4">
         OpenAPI document
       </a>
-      <Link
-        prefetch={false}
-        href="/settings"
-        className="underline underline-offset-4"
-      >
-        Set the public address
-      </Link>
     </p>
   ) : null;
 
   if (app) {
     return (
       <>
-        <AppStrip app={app} appName={appName} addresses={keyless} />
+        <AppStrip app={app} addresses={keyless} />
         <div className="bg-card rounded-panel border p-4">{setup}</div>
-        {endpointsSection}
+        {referenceSection}
         {mcpSection}
         {automation}
       </>
@@ -335,13 +379,13 @@ function ConnectDetails({
   }
   return (
     <>
-      {endpointsSection}
       <SettingsSection
-        title="Set up an app"
-        description="Pick an app, then paste these values into it."
+        title="Set up a client"
+        description="Pick a client, then paste these values into it."
       >
         <div className="p-4">{setup}</div>
       </SettingsSection>
+      {referenceSection}
       {mcpSection}
       {automation}
     </>
@@ -350,22 +394,17 @@ function ConnectDetails({
 
 /**
  * The app this page sets up: its access plan, its newest key (masked, with
- * when it was last used) and the one action its key needs. Keyless addresses
+ * when it was last used) and the actions its key needs. Keyless addresses
  * are listed only for an owner, who is the only one who can see them.
  */
 function AppStrip({
   app,
-  appName,
   addresses,
 }: {
   app: AccountApp;
-  appName: string;
   addresses: string[];
 }) {
-  const newest = [...app.credentials].sort(
-    (a, b) =>
-      (b.last_used_at ?? b.created_at) - (a.last_used_at ?? a.created_at),
-  )[0];
+  const newest = newestKey(app);
   const plan = app.access_plan;
   const planName = plan
     ? plan.same_as_person
@@ -374,22 +413,28 @@ function AppStrip({
     : "none yet";
   const count = app.credentials.length;
   const appHref = `/apps/?app=${encodeURIComponent(app.id)}`;
+  const dot = (
+    <span aria-hidden="true" className="text-muted-foreground">
+      ·
+    </span>
+  );
   return (
     <section
-      aria-label={`${appName}: access and key`}
+      aria-label="This app: access and key"
       className="bg-card rounded-panel flex flex-col gap-3 border p-4"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h2 className="text-body font-medium break-words">{appName}</h2>
+        <h2 className="text-body font-medium">This app</h2>
         <p className="text-muted-foreground text-meta">
           Access plan: {planName}
         </p>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <p className="text-meta flex flex-wrap items-center gap-x-3 gap-y-1">
+        <p className="text-meta flex flex-wrap items-center gap-x-2 gap-y-1">
           {newest ? (
             <>
               <span className="font-mono">{keyStart(newest.prefix)}</span>
+              {dot}
               <span className="text-muted-foreground">
                 {newest.last_used_at != null ? (
                   <>
@@ -400,7 +445,10 @@ function AppStrip({
                 )}
               </span>
               {count > 1 ? (
-                <span className="text-muted-foreground">{count} keys</span>
+                <>
+                  {dot}
+                  <span className="text-muted-foreground">{count} keys</span>
+                </>
               ) : null}
             </>
           ) : (
@@ -420,16 +468,24 @@ function AppStrip({
             </Link>
           </Button>
         ) : (
-          <Button asChild variant="outline" size="sm">
-            <Link prefetch={false} href={`${appHref}&action=rotate`}>
-              {count === 1 ? "Rotate key" : "Rotate keys"}
-            </Link>
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link prefetch={false} href={`${appHref}&action=rotate`}>
+                {count === 1 ? "Rotate key" : "Rotate keys"}
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              <Link prefetch={false} href={`${appHref}&action=create-key`}>
+                <Plus aria-hidden="true" />
+                Add key
+              </Link>
+            </Button>
+          </div>
         )}
       </div>
       {addresses.length > 0 ? (
         <p className="text-muted-foreground text-meta">
-          From {listed(addresses)} no key is needed
+          Requests from {listed(addresses)} don’t need a key.
         </p>
       ) : null}
     </section>

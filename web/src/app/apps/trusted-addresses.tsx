@@ -246,8 +246,7 @@ export function TrustedAddressesDialog({
           </p>
         ) : data.length === 0 ? (
           <p className="text-muted-foreground text-meta">
-            No address is trusted for this app. Requests without a key are
-            refused.
+            Until you add an address, every request to this app needs a key.
           </p>
         ) : (
           <ul className="divide-y" aria-label="Trusted addresses">
