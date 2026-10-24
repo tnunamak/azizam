@@ -107,16 +107,18 @@ function useMoreToRight(ref: RefObject<HTMLElement | null>, count: number): bool
 
 /**
  * A capability that is not working: a small dot after its name, and its word for screen readers. Choosing
- * it explains the fault in the composer. Below 1024 px the owner's one-row gateway banner is the one place
- * the fault shows, so the owner's dot stays off there.
+ * it explains the fault in the composer. The owner sees no dot: the gateway panel (or, below 1024 px, its
+ * one-row banner) is the one place the fault shows for them.
  */
 function StateNote({ state, word, ownerQuiet }: { state: CapabilityStateKey; word: string; ownerQuiet: boolean }) {
   return (
-    <span className={cn("inline-flex items-center", ownerQuiet && "max-lg:hidden")}>
-      <span
-        aria-hidden="true"
-        className={cn("size-1.5 shrink-0 rounded-full", state === "down" ? "bg-destructive" : "bg-muted-foreground/60")}
-      />
+    <span className="inline-flex items-center">
+      {ownerQuiet ? null : (
+        <span
+          aria-hidden="true"
+          className={cn("size-1.5 shrink-0 rounded-full", state === "down" ? "bg-destructive" : "bg-muted-foreground/60")}
+        />
+      )}
       <span className="sr-only">{word}</span>
     </span>
   );
@@ -248,8 +250,9 @@ export function HomeComposer({
   const chips = loading || !selected ? (
     <ChooserSkeleton />
   ) : (
-    <div className="flex min-w-0 items-center gap-2 sm:justify-center">
-      {/* On a phone the row scrolls chip by chip; the fade on its trailing edge says there is more. */}
+    // On a phone the row bleeds to the screen's edges, so a chip is cut by the screen, never by the page's
+    // padding, and it scrolls chip by chip; the fade on its trailing edge says there is more.
+    <div className="flex min-w-0 items-center gap-2 max-sm:-mx-(--page-pad) sm:justify-center">
       <div className="relative flex min-w-0">
         <Segmented<string>
           ref={chooserRef}
@@ -259,6 +262,7 @@ export function HomeComposer({
           onChange={onKindChange}
           scroll
           pill
+          className="max-sm:scroll-px-(--page-pad) max-sm:px-(--page-pad)"
         />
         {moreToRight ? (
           <span

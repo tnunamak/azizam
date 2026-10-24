@@ -11,8 +11,11 @@ import { AudioFace, MediaBadge } from "@/components/product/audio-cover";
 import { homeApi, type HomeCreation } from "./home-api";
 import { parseEpochSeconds } from "./home-model";
 
-/** A tile's caption: the title in up to two lines at 13/18, then "Kind · when" at 12 (DESIGN "Home"). */
-export const CAPTION_TITLE = "text-foreground text-label mt-2 line-clamp-2 break-words";
+/**
+ * A tile's caption: the title in up to two lines at 13/18, always two lines tall so every "Kind · when" in a
+ * row sits on one baseline, then "Kind · when" at 12 (DESIGN "Home").
+ */
+export const CAPTION_TITLE = "text-foreground text-label mt-2 line-clamp-2 min-h-9 break-words";
 export const CAPTION_META = "text-muted-foreground text-badge mt-0.5 block truncate";
 
 /**

@@ -142,6 +142,14 @@ async function stubSession(page: Page, request: APIRequestContext, persona: Pers
   );
 }
 
+/** The one-time request history notice is due for this person (the History journey makes the real case). */
+export async function seedHistoryNoticeDue(page: Page, request: APIRequestContext) {
+  const real = await (await request.get("/me/api/retention")).json();
+  await page.route("**/me/api/retention", (route) =>
+    fulfilJson(route, { ...real, keep: false, notice_due: true, ...("household_off" in real ? { household_off: false } : {}) }),
+  );
+}
+
 /** Robin, a member with a week of work: a picture being made (started from Home in this tab), pictures, a voice clip and a chat. */
 export async function seedReturningMember(page: Page, request: APIRequestContext) {
   const persona = { name: "Robin Okafor", ownerName: "Sam" };

@@ -4,7 +4,7 @@ import type { Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, ownerApi, test } from "./fixtures/isolation";
 import { fulfilJson } from "./fixtures/intercept";
-import { seedFirstVisitMember, seedOwner, seedReturningMember } from "./fixtures/home-seed";
+import { seedFirstVisitMember, seedHistoryNoticeDue, seedOwner, seedReturningMember } from "./fixtures/home-seed";
 
 /*
  * The signed-in Home, end to end: the composer and chooser, Make's hand-off to Try, Recent, the
@@ -175,6 +175,23 @@ test("at 1440 px Recent fills Home's 960 px column, and the 760 px composer sits
   const leftInset = composer!.x - boxes[0].left;
   const rightInset = boxes[5].right - (composer!.x + composer!.width);
   expect(Math.abs(leftInset - rightInset)).toBeLessThanOrEqual(1);
+  // The sizes the design names, as the browser computes them: a 16 px prompt, 13/18 titles that always
+  // keep two lines, and 12 px "Kind · when".
+  const sizes = await page.evaluate(() => {
+    const px = (element: Element | null) => (element ? getComputedStyle(element) : null);
+    const tile = document.querySelector("[data-slot='recent-tile']");
+    const spans = tile ? Array.from(tile.querySelectorAll("p, span")) : [];
+    const title = spans.find((node) => node.className.includes("line-clamp-2")) ?? null;
+    const meta = spans.find((node) => node.className.includes("text-badge")) ?? null;
+    return {
+      prompt: px(document.getElementById("home-prompt"))?.fontSize,
+      title: px(title)?.fontSize,
+      titleLine: px(title)?.lineHeight,
+      titleHeight: title?.getBoundingClientRect().height,
+      meta: px(meta)?.fontSize,
+    };
+  });
+  expect(sizes).toEqual({ prompt: "16px", title: "13px", titleLine: "18px", titleHeight: 36, meta: "12px" });
 });
 
 test("H4 the facts line shows the cost and wait its row knows, and leaves out what it does not", async ({ isolated }) => {
@@ -357,6 +374,26 @@ for (const viewport of LAYOUTS) {
   }
 }
 
+test("at 390 px the phone tab bar never covers the end of Home, with the request history notice showing", async ({ isolated }) => {
+  const member = await isolated.member();
+  const { page } = member;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seedReturningMember(page, member.context.request);
+  await seedHistoryNoticeDue(page, member.context.request);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Request history is available." })).toBeVisible();
+  // One app per line at this width, so three apps never wrap two and one.
+  const apps = page.getByRole("region", { name: "Your apps" }).getByRole("listitem");
+  await expect(apps).toHaveCount(2);
+  const lefts = await apps.evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().left)));
+  expect(new Set(lefts).size).toBe(1);
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const last = await apps.last().boundingBox();
+  const nav = await page.getByRole("navigation", { name: "Phone navigation" }).boundingBox();
+  expect(last && nav).toBeTruthy();
+  expect(last!.y + last!.height).toBeLessThanOrEqual(nav!.y);
+});
+
 const SHOTS = process.env.HOME_SHOTS_DIR;
 test.describe("built pages for the design side-by-side check", () => {
   test.skip(!SHOTS, "set HOME_SHOTS_DIR to save the built pages");
@@ -394,6 +431,18 @@ test.describe("built pages for the design side-by-side check", () => {
         await expect(page.getByRole("list", { name: "Recent work" })).toBeVisible();
         await save(page, "home-member-returning");
       });
+      if (viewport.width !== 768)
+        test(`saves the returning member Home with the request history notice at ${suffix}`, async ({ isolated }) => {
+          const member = await isolated.member();
+          const { page } = member;
+          await page.setViewportSize(viewport);
+          await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+          await seedReturningMember(page, member.context.request);
+          await seedHistoryNoticeDue(page, member.context.request);
+          await page.goto("/");
+          await expect(page.getByRole("heading", { name: "Request history is available." })).toBeVisible();
+          await save(page, "home-notice");
+        });
       test(`saves the owner Home at ${suffix}`, async ({ page }) => {
         await page.setViewportSize(viewport);
         await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });

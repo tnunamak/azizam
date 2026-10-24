@@ -22,8 +22,8 @@ const ROW = "text-meta flex items-start gap-3 py-2 leading-6";
 const RULE = "shadow-[inset_0_1px_0_var(--color-border)]";
 
 /**
- * One thing that needs the owner: its state icon, the fact, the cause when known; the whole row opens the
- * fix. Something turned off is quieter than a fault: muted, regular weight, beside the working line.
+ * One thing that needs the owner: its state icon and the fact; the cause is on the page the row opens, which
+ * is the fix. Something turned off is quieter than a fault: muted, regular weight, beside the working line.
  */
 function NeedRow({ need }: { need: GatewayNeed }) {
   const { icon: Icon, className } = TONE[need.tone];
@@ -39,7 +39,6 @@ function NeedRow({ need }: { need: GatewayNeed }) {
         <Icon aria-hidden="true" className={cn("mt-1 size-4 shrink-0", className)} />
         <span className="min-w-0 flex-1">
           <span className={cn("block", quiet ? "text-muted-foreground" : "font-medium")}>{need.fact}</span>
-          {need.detail ? <span className="text-muted-foreground block">{need.detail}</span> : null}
         </span>
         <ChevronRight aria-hidden="true" className="text-muted-foreground mt-1 size-4 shrink-0" />
       </Link>
@@ -79,7 +78,7 @@ export function OwnerPanel({ needs, working }: { needs: GatewayNeed[]; working: 
       <Link
         prefetch={false}
         href="/status/"
-        className="bg-card text-meta flex min-h-10 items-center gap-3 rounded-panel px-3 py-2 max-sm:min-h-11 lg:hidden"
+        className="bg-muted text-meta flex min-h-10 items-center gap-3 rounded-panel px-3 py-2 max-sm:min-h-11 lg:hidden"
       >
         <FirstIcon aria-hidden="true" className={cn("size-4 shrink-0", first ? TONE[first.tone].className : "text-success")} />
         <span className="min-w-0 flex-1 truncate font-medium">{first?.fact ?? QUIET}</span>
@@ -88,7 +87,7 @@ export function OwnerPanel({ needs, working }: { needs: GatewayNeed[]; working: 
           <ChevronRight aria-hidden="true" className="size-4" />
         </span>
       </Link>
-      <div className="bg-card rounded-panel px-4 py-2 max-lg:hidden">
+      <div className="bg-muted rounded-panel px-4 py-2 max-lg:hidden">
         {shown.length ? (
           <ul>
             {shown.map((need) => (

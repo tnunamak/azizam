@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Video } from "lucide-react";
+import { ChevronRight, Pause, Play, Video } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
 import { api, queryKeys } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -90,7 +90,8 @@ function YourApps({ home }: { home: HomeSnapshot }) {
         }
       />
       {apps.length ? (
-        <ul className="flex flex-wrap gap-x-8 gap-y-2">
+        // One app per line at 480 px and below, so three apps never wrap two and one.
+        <ul className="flex flex-wrap gap-x-8 gap-y-2 max-[30rem]:flex-col">
           {apps.slice(0, 3).map((app) => {
             const name = formatAppName(app.name, home.user.email);
             const used = lastUsed(app);
@@ -162,8 +163,27 @@ function samplePeaks(kind: string): number[] {
 }
 
 /**
+ * Each medium's own soft two-stop well, from the capability hues: speech teal, music amber to rose (rose
+ * leads in dark, where amber over the deep-water page turns olive). Dark wells are a 22% tint on the surface.
+ */
+function audioWell(kind: string): string {
+  if (kind === "speech" || kind === "voice")
+    return "bg-linear-to-br from-capability-chat/22 to-capability-chat/8 dark:from-capability-chat/22 dark:to-capability-chat/10";
+  return "bg-linear-to-br from-capability-voice/22 to-capability-video/18 dark:from-capability-video/22 dark:to-capability-voice/12";
+}
+
+/** The sample a card's play disc plays: only speech has one the web app ships (home-sample-voice.mp3). */
+function sampleAudio(row: HomeCapability): string | null {
+  const kind = kindOf(row);
+  return (row.output_modalities ?? []).includes("audio") && (kind === "speech" || kind === "voice")
+    ? "/home-sample-voice.mp3"
+    : null;
+}
+
+/**
  * What a kind of work gives back, by the modality the row says it makes: a picture, a clip's poster, a
- * waveform or a reply. The pictures are samples the web app ships (home-sample-*.webp), not anyone's work.
+ * waveform in the medium's own well, or a reply. The pictures and the voice clip are samples the web app
+ * ships (home-sample-*), not anyone's work.
  */
 function SampleFace({ row }: { row: HomeCapability }) {
   const outputs = row.output_modalities ?? [];
@@ -185,8 +205,8 @@ function SampleFace({ row }: { row: HomeCapability }) {
   }
   if (outputs.includes("audio"))
     return (
-      <span className={cn("flex size-full items-center justify-center", tint)}>
-        <Waveform peaks={samplePeaks(kindOf(row))} className={cn("h-1/3 w-3/4 flex-none", tone)} />
+      <span className={cn("text-foreground/60 flex size-full items-center justify-center", audioWell(kindOf(row)))}>
+        <Waveform peaks={samplePeaks(kindOf(row))} className="h-1/3 w-3/4 flex-none" />
       </span>
     );
   if (outputs.includes("text"))
@@ -203,56 +223,96 @@ function SampleFace({ row }: { row: HomeCapability }) {
   );
 }
 
+/** The sample disc: 36 px, white with a dark glyph, as on Recent's dark audio tile. It plays the sample. */
+const SAMPLE_DISC =
+  "pointer-events-auto flex size-9 items-center justify-center bg-sample-disc text-sample-disc-foreground rounded-full shadow-sm transition-opacity hover:opacity-90 focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none [&_svg]:size-4 [&_svg]:translate-x-px [&_svg]:fill-current max-sm:size-11";
+
 /**
- * Nothing to show yet, so the chooser is a row of cards under the composer: each card's face is what that
- * kind of work gives back, then its name and one facts line. Choosing one chooses that kind and focuses the
- * box. The composer shows no chips meanwhile: these cards are the chooser, not a repeat of it.
+ * Nothing to show yet, so the chooser is a row of cards under the composer, on the composer's 760 px edges:
+ * each card's face is what that kind of work gives back, then its name and a facts slot of two lines, so
+ * every caption ends on one baseline. Choosing one chooses that kind and focuses the box. The composer shows
+ * no chips meanwhile: these cards are the chooser, not a repeat of it. A face that has a sample to hear has
+ * its own play button, beside the card's button rather than inside it.
  */
 function FirstVisitList({
   rows,
   chosen,
-  lead,
   onChoose,
 }: {
   rows: HomeCapability[];
   chosen: string | null;
-  lead: string | null;
   onChoose: (kind: string) => void;
 }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState<string | null>(null);
   return (
-    <section aria-labelledby="make-here-heading" className="space-y-4">
+    <section aria-labelledby="make-here-heading">
       <h2 id="make-here-heading" className="sr-only">
         What you can make here
       </h2>
-      {lead ? <p className="text-muted-foreground text-meta">{lead}</p> : null}
+      <audio ref={audioRef} preload="none" onEnded={() => setPlaying(null)} onPause={() => setPlaying(null)} className="sr-only" />
       <div
         role="group"
         aria-label="What to make"
         className={cn("grid gap-x-4 gap-y-6", STARTER_COLUMNS[Math.min(rows.length, STARTER_COLUMNS.length - 1)])}
       >
         {rows.map((row) => {
-          const { icon: Icon, tone } = capabilityMeta(kindOf(row));
+          const kind = kindOf(row);
+          const { icon: Icon, tone } = capabilityMeta(kind);
           const facts = listFacts(row);
+          const sample = sampleAudio(row);
           return (
-            <button
-              key={kindOf(row)}
-              type="button"
-              aria-pressed={chosen === kindOf(row)}
-              onClick={() => {
-                onChoose(kindOf(row));
-                window.requestAnimationFrame(() => document.getElementById("home-prompt")?.focus());
-              }}
-              className="group min-w-0 text-left"
-            >
-              <span className="bg-muted rounded-media ring-offset-background group-hover:ring-border group-aria-pressed:ring-ring relative block aspect-4/3 overflow-hidden ring-2 ring-transparent ring-offset-2 transition-shadow duration-(--motion-fast)">
-                <SampleFace row={row} />
-              </span>
-              <span className="text-foreground text-meta mt-3 flex items-center gap-1.5 font-medium">
-                <Icon aria-hidden="true" className={cn("size-4 shrink-0", tone)} />
-                {capabilityLabel(row)}
-              </span>
-              {facts ? <span className="text-muted-foreground text-badge mt-0.5 block">{facts}</span> : null}
-            </button>
+            <div key={kind} className="relative min-w-0">
+              <button
+                type="button"
+                aria-pressed={chosen === kind}
+                onClick={() => {
+                  onChoose(kind);
+                  window.requestAnimationFrame(() => document.getElementById("home-prompt")?.focus());
+                }}
+                className="group block w-full min-w-0 text-left"
+              >
+                <span className="bg-muted rounded-media relative block aspect-4/3 overflow-hidden">
+                  <SampleFace row={row} />
+                  {/* The chosen ring is drawn inside the face, so it never hangs outside the grid. */}
+                  <span
+                    aria-hidden="true"
+                    className="rounded-media group-hover:shadow-[inset_0_0_0_2px_var(--color-border)] group-aria-pressed:shadow-[inset_0_0_0_2px_var(--color-ring)] pointer-events-none absolute inset-0 transition-shadow duration-(--motion-fast)"
+                  />
+                </span>
+                <span className="text-foreground text-meta mt-3 flex items-center gap-1.5 font-medium">
+                  <Icon aria-hidden="true" className={cn("size-4 shrink-0", tone)} />
+                  {capabilityLabel(row)}
+                </span>
+                <span className="text-muted-foreground text-badge mt-0.5 line-clamp-2 min-h-8">{facts}</span>
+              </button>
+              {sample ? (
+                <span className="pointer-events-none absolute inset-x-0 top-0 flex aspect-4/3 items-center justify-center">
+                  <button
+                    type="button"
+                    className={SAMPLE_DISC}
+                    aria-label={playing === kind ? `Pause the ${capabilityLabel(row)} sample` : `Play a ${capabilityLabel(row)} sample`}
+                    onClick={async () => {
+                      const audio = audioRef.current;
+                      if (!audio) return;
+                      if (playing === kind) {
+                        audio.pause();
+                        return;
+                      }
+                      audio.src = sample;
+                      try {
+                        await audio.play();
+                        setPlaying(kind);
+                      } catch {
+                        setPlaying(null);
+                      }
+                    }}
+                  >
+                    {playing === kind ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
+                  </button>
+                </span>
+              ) : null}
+            </div>
           );
         })}
       </div>
@@ -373,6 +433,9 @@ export default function HomePage() {
   const ownerViews = model.views.filter((view) => !appPlumbingCapabilities.has(view.key));
   const needs = gatewayNeeds({ engineFault, providerFault, noEngine, capabilities: ownerViews });
   const chosenRow = selectedRow(rows, model.views, kind);
+  // A first visit's cards are the chooser when there is a choice to make; one mode stays a single chip.
+  const cardsChoose = firstVisit && rows.length > 1;
+  const lead = firstVisit && !isOwner && ownerName ? `${ownerName} set up this gateway for the household.` : null;
   const warning = refusal ? (refusal.warnings ?? []).find((text) => CAP_WARNING.test(text)) ?? "" : null;
 
   if (homeError) {
@@ -429,7 +492,7 @@ export default function HomePage() {
       paidOff={refusal != null}
       kind={kind}
       onKindChange={setKind}
-      chooser={!firstVisit}
+      chooser={!cardsChoose}
     />
   ) : (
     <p className="text-meta text-muted-foreground text-center">
@@ -466,6 +529,8 @@ export default function HomePage() {
           "min-w-0 space-y-10",
           // The first visit's cards are the chooser, so they sit close under the composer; Recent sits apart.
           firstVisit ? "mt-8 sm:mt-10" : "mt-14 sm:mt-18 lg:mt-20",
+          // A member's first visit keeps the composer's 760 px edges all the way down: one set of edges.
+          firstVisit && !isOwner && "mx-auto max-w-(--content-composer)",
           isOwner && "lg:grid lg:grid-cols-[minmax(0,1fr)_18.75rem] lg:items-start lg:gap-x-8 lg:space-y-0",
         )}
       >
@@ -476,14 +541,11 @@ export default function HomePage() {
         ) : null}
         <div className="min-w-0 space-y-10 lg:col-start-1 lg:row-start-1">
           {firstVisit ? (
-            rows.length ? (
-              <FirstVisitList
-                rows={rows}
-                chosen={chosenRow ? kindOf(chosenRow) : null}
-                lead={!isOwner && ownerName ? `${ownerName} set up this gateway for the household.` : null}
-                onChoose={setKind}
-              />
-            ) : null
+            <div className="space-y-4">
+              {/* Who set this up: a quiet centred line over the row, not a section intro. */}
+              {lead ? <p className="text-muted-foreground text-label text-center font-normal">{lead}</p> : null}
+              {cardsChoose ? <FirstVisitList rows={rows} chosen={chosenRow ? kindOf(chosenRow) : null} onChoose={setKind} /> : null}
+            </div>
           ) : (
             <Recent
               items={items}

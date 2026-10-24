@@ -50,6 +50,9 @@
   /* The play disc on an audio face: the dark scrim on the light face, a white disc on the dark one. */
   --media-disc: rgb(5 15 18 / 64%);
   --media-disc-foreground: #ffffff;
+  /* A sample's play disc on a first-visit card: white with a dark glyph in both themes. */
+  --sample-disc: rgb(255 255 255 / 85%);
+  --sample-disc-foreground: #0c1f25;
   --subtle-foreground: #4a5c62;
   /* Home's composer surface, and Make: ink at rest so it is always findable, the link colour once there is
      something to make. */
@@ -387,6 +390,8 @@
   --color-overlay: var(--overlay);
   --color-media-disc: var(--media-disc);
   --color-media-disc-foreground: var(--media-disc-foreground);
+  --color-sample-disc: var(--sample-disc);
+  --color-sample-disc-foreground: var(--sample-disc-foreground);
   --color-composer: var(--composer);
   --color-composer-edge: var(--composer-edge);
   --color-composer-edge-hover: var(--composer-edge-hover);
