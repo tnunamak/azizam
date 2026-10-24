@@ -126,6 +126,13 @@ def has_current_copy(record: Mapping[str, Any]) -> bool:
     return record["generated_at"] is not None and record["generated_template"] == TEMPLATE_VERSION
 
 
+def has_picture(kind: str, record: Mapping[str, Any]) -> bool:
+    """Whether the person has a picture of this kind: the one the gateway made, or the sign-in picture."""
+    if kind == SHOWN_GENERATED:
+        return has_current_copy(record)
+    return bool(record["picture_url"])
+
+
 def shown_kind(record: Mapping[str, Any]) -> str | None:
     """The picture the person's avatar shows: the one they had made, the sign-in picture, or None (the palette)."""
     choice = record["choice"]
@@ -134,6 +141,11 @@ def shown_kind(record: Mapping[str, Any]) -> str | None:
     if choice in VARIANTS:
         return None
     return SHOWN_SIGN_IN if record["picture_url"] else None
+
+
+def _preview_path(kind: str, stamp: Any) -> str:
+    """The path that previews one of the person's own pictures, whichever avatar they show."""
+    return f"/me/api/profile/avatar/picture?kind={kind}&v={int(stamp or 0)}"
 
 
 def picture_path(person_id: str, record: Mapping[str, Any], *, viewer_id: str) -> str | None:
@@ -151,15 +163,14 @@ def picture_path(person_id: str, record: Mapping[str, Any], *, viewer_id: str) -
 def public_view(person_id: str, record: Mapping[str, Any], *, viewer_id: str) -> dict[str, Any]:
     """What the browser may see: the choice and a gateway path for the picture shown.
 
-    For the person, it also says whether a sign-in picture is on file, and gives the path of the picture the
-    gateway made (None when there is none), so the picker can show both whichever one is chosen.
+    For the person, it also gives a preview path for each picture they have (None when there is none), so the
+    picker can show both whichever one is chosen.
     """
     view: dict[str, Any] = {"choice": record["choice"], "person_id": person_id,
                             "picture_url": picture_path(person_id, record, viewer_id=viewer_id)}
     if person_id == viewer_id:
-        view["sign_in_available"] = bool(record["picture_url"])
-        view["made_picture_url"] = (f"/me/api/profile/avatar/picture?made=1&v={int(record['generated_at'])}"
-                                    if has_current_copy(record) else None)
+        view["sign_in_picture_url"] = _preview_path(SHOWN_SIGN_IN, record["picture_set_at"]) if record["picture_url"] else None
+        view["made_picture_url"] = _preview_path(SHOWN_GENERATED, record["generated_at"]) if has_current_copy(record) else None
     return view
 
 

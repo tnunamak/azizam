@@ -250,26 +250,26 @@ def create_me_avatar_router(
         missing = _error("avatar_picture_unavailable", "No picture to show.", 404)
         if person_id != viewer_id and not await asyncio.to_thread(_is_admin, viewer_id):
             return missing
-        if request.query_params.get("made") == "1":
-            # The person's own kept picture, whichever avatar they show now: the picker previews it beside the others.
-            if person_id != viewer_id:
-                return missing
-            record = await asyncio.to_thread(avatars.get, viewer_id, path=db())
-            data = await asyncio.to_thread(avatars.read_generated, viewer_id, path=db())
-            content_type = image_type(data) if data is not None and avatars.has_current_copy(record) else None
-            return _picture(data, content_type) if data is not None and content_type else missing
+        # ``kind`` asks for one of the person's own pictures, whichever avatar they show now: the picker previews
+        # both beside the palette. Without it, the picture shown is the one the person chose.
+        requested = request.query_params.get("kind")
+        if requested is not None and (requested not in {avatars.SHOWN_GENERATED, avatars.SHOWN_SIGN_IN}
+                                      or person_id != viewer_id):
+            return missing
 
-        async def shown() -> dict | None:
-            # The record to show right now: others see a picture only when the person chose it.
+        async def current() -> dict | None:
+            # The record right now. Others see a picture only when the person chose it.
             record = await asyncio.to_thread(avatars.get, person_id, path=db())
-            if person_id != viewer_id and record["choice"] not in avatars.SHOWN_TO_OTHERS:
+            if requested is None and person_id != viewer_id and record["choice"] not in avatars.SHOWN_TO_OTHERS:
                 return None
             return record
 
-        record = await shown()
-        if record is None or avatars.shown_kind(record) is None:
+        record = await current()
+        if record is None:
             return missing
-        kind = avatars.shown_kind(record)
+        kind = avatars.shown_kind(record) if requested is None else requested
+        if kind is None or not avatars.has_picture(kind, record):
+            return missing
         if kind == avatars.SHOWN_GENERATED:
             data = await asyncio.to_thread(avatars.read_generated, person_id, path=db())
             content_type = image_type(data) if data is not None else None
@@ -285,8 +285,8 @@ def create_me_avatar_router(
                 task.add_done_callback(lambda _done, key=key: inflight.pop(key, None))
             entry = await asyncio.shield(task)
             # The choice or the picture may have changed while we waited: answer as a request made now would.
-            again = await shown()
-            if again is None or avatars.shown_kind(again) != kind or again["picture_url"] != url:
+            again = await current()
+            if again is None or again["picture_url"] != url or (requested is None and avatars.shown_kind(again) != kind):
                 return missing
         if entry.data is None or entry.content_type is None:
             return missing

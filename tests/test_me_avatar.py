@@ -89,7 +89,7 @@ def rig(tmp_path: Path) -> Rig:
 def test_default_is_auto_with_the_person_id_and_no_picture(rig: Rig) -> None:
     alice = rig.person("alice")
     body = rig.as_(alice).client.get("/me/api/profile/avatar").json()
-    assert body == {"choice": "auto", "person_id": alice, "picture_url": None, "sign_in_available": False,
+    assert body == {"choice": "auto", "person_id": alice, "picture_url": None, "sign_in_picture_url": None,
                     "made_picture_url": None}
 
 
@@ -107,7 +107,7 @@ def test_put_needs_the_user_action_header_like_other_member_writes(rig: Rig) -> 
     assert avatars.get(alice, path=rig.db)["choice"] == "auto"
     saved = client.put("/me/api/profile/avatar", json={"choice": "v3"}, headers=ACTION)
     assert saved.status_code == 200
-    assert saved.json() == {"choice": "v3", "person_id": alice, "picture_url": None, "sign_in_available": False,
+    assert saved.json() == {"choice": "v3", "person_id": alice, "picture_url": None, "sign_in_picture_url": None,
                             "made_picture_url": None}
     assert client.get("/me/api/profile/avatar").json()["choice"] == "v3"
 

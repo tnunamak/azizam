@@ -211,7 +211,7 @@ def test_a_person_keeps_their_own_job_picture_as_their_avatar(rig: Rig, generati
     body = saved.json()
     assert body["choice"] == "generated"
     assert body["picture_url"].startswith("/me/api/profile/avatar/picture?v=")
-    assert body["sign_in_available"] is False
+    assert body["sign_in_picture_url"] is None
     picture = client.get("/me/api/profile/avatar/picture")
     assert picture.status_code == 200 and picture.content == PNG
     assert picture.headers["content-type"] == "image/png"
@@ -296,7 +296,7 @@ def test_remove_returns_to_the_sign_in_picture_when_there_is_one(rig: Rig, gener
     body = removed.json()
     assert body["choice"] == "auto"
     assert body["picture_url"].startswith("/me/api/profile/avatar/picture?v=")
-    assert body["sign_in_available"] is True
+    assert body["sign_in_picture_url"].startswith("/me/api/profile/avatar/picture?kind=sign-in&v=")
     assert client.get("/me/api/profile/avatar/picture").content == SIGN_IN_PNG
     assert avatars.get(alice, path=rig.db)["generated_at"] is None
 
@@ -307,7 +307,7 @@ def test_remove_returns_to_the_palette_when_there_is_no_picture(rig: Rig, genera
     client = rig.as_(alice).client
     client.post("/me/api/profile/avatar/generated", json={"asset_id": "img_alice1"}, headers=ACTION)
     body = client.delete("/me/api/profile/avatar/generated", headers=ACTION).json()
-    assert body == {"choice": "auto", "person_id": alice, "picture_url": None, "sign_in_available": False,
+    assert body == {"choice": "auto", "person_id": alice, "picture_url": None, "sign_in_picture_url": None,
                     "made_picture_url": None}
     assert client.get("/me/api/profile/avatar/picture").status_code == 404
 
@@ -322,12 +322,26 @@ def test_the_person_previews_the_kept_picture_while_another_avatar_is_shown(rig:
     client.put("/me/api/profile/avatar", json={"choice": "v3"}, headers=ACTION)
     view = client.get("/me/api/profile/avatar").json()
     assert view["choice"] == "v3" and view["picture_url"] is None
-    assert view["made_picture_url"].startswith("/me/api/profile/avatar/picture?made=1&v=")
+    assert view["made_picture_url"].startswith("/me/api/profile/avatar/picture?kind=generated&v=")
     preview = client.get(view["made_picture_url"])
     assert preview.status_code == 200 and preview.content == PNG
     # Only the person sees the kept picture while they show another avatar; an admin sees the chosen one only.
-    assert rig.as_(admin).client.get(f"/me/api/profile/avatar/picture?made=1&person={alice}").status_code == 404
+    assert rig.as_(admin).client.get(f"/me/api/profile/avatar/picture?kind=generated&person={alice}").status_code == 404
     assert rig.as_(admin).client.get(f"/me/api/profile/avatar/picture?person={alice}").status_code == 404
+
+
+def test_the_person_previews_the_sign_in_picture_while_the_kept_one_shows(rig: Rig, generation: FakeGeneration) -> None:
+    alice = rig.person("alice", picture=PICTURE)
+    admin = rig.person("ada")
+    _make_admin(rig.db, admin)
+    generation.add_job_picture(alice, "img_alice1")
+    client = rig.as_(alice).client
+    client.post("/me/api/profile/avatar/generated", json={"asset_id": "img_alice1"}, headers=ACTION)
+    view = client.get("/me/api/profile/avatar").json()
+    assert view["choice"] == "generated" and view["picture_url"].startswith("/me/api/profile/avatar/picture?v=")
+    preview = client.get(view["sign_in_picture_url"])
+    assert preview.status_code == 200 and preview.content == SIGN_IN_PNG
+    assert rig.as_(admin).client.get(f"/me/api/profile/avatar/picture?kind=sign-in&person={alice}").status_code == 404
 
 
 def test_a_picture_from_an_older_template_is_not_shown(rig: Rig, generation: FakeGeneration) -> None:
