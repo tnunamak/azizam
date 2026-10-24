@@ -168,13 +168,16 @@ test("named provider is first, keyboard focus is visible, and provider text wrap
   await expect.poll(() => provider.evaluate(
       (element) => getComputedStyle(element).outlineStyle,
     )).not.toBe("none");
-  // The name box sits under the provider button, so it is the next stop; then the email field, then the password.
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("checkbox", { name: "Show my name on this browser next time" })).toBeFocused();
+  // With a password form too, the form comes next: its email, its password, its Sign in. The name box follows that Sign in,
+  // so it covers both ways in (DESIGN.md 4.9).
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("Email", { exact: true })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("Password", { exact: true })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("checkbox", { name: "Show my name on this browser next time" })).toBeFocused();
   await page.getByRole("heading", { level: 1 }).click();
   for (const theme of ["light", "dark"] as const) {
     for (const width of [1440, 390]) {
