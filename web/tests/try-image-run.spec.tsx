@@ -192,7 +192,7 @@ describe("Make a picture", () => {
       const downloadUrl = `/me/api/media/${assetId}/file?sig=test-signature`;
       fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
         if (routes[url]) return routes[url](url, init);
-        if (url === `/me/api/media/${assetId}/download?scope=me`)
+        if (url === `/me/api/media/${assetId}/download`)
           return json({ asset_id: assetId, download_url: downloadUrl });
         if (url.startsWith("/me/api/media?"))
           return json({
@@ -227,7 +227,7 @@ describe("Make a picture", () => {
       const assetId = `img_${"f".repeat(64)}`;
       fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
         if (routes[url]) return routes[url](url, init);
-        if (url === `/me/api/media/${assetId}/download?scope=me`) return json({ asset_id: assetId });
+        if (url === `/me/api/media/${assetId}/download`) return json({ asset_id: assetId });
         if (url.startsWith("/me/api/media?"))
           return json({
             assets: [
@@ -247,7 +247,7 @@ describe("Make a picture", () => {
       await vi.advanceTimersByTimeAsync(20_000);
       expect(await screen.findByText(/may still be finishing/)).toBeVisible();
       expect(screen.queryByAltText("Generated result")).toBeNull();
-      expect(calls(`/me/api/media/${assetId}/download?scope=me`)).toHaveLength(1);
+      expect(calls(`/me/api/media/${assetId}/download`)).toHaveLength(1);
     });
   });
 

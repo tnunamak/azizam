@@ -547,7 +547,7 @@ async function recentCreation(
 ) {
   if ((typeof prompt !== "string" || !prompt) && !jobId) return null;
   try {
-    const response = await networkFetch("/me/api/media?kind=image&limit=5&scope=me", {
+    const response = await networkFetch("/me/api/media?kind=image&limit=5", {
       credentials: "same-origin",
     });
     if (!response.ok) return null;
@@ -587,7 +587,7 @@ async function recentCreation(
 async function pictureDownloadUrl(assetId: string): Promise<string | null> {
   try {
     const response = await networkFetch(
-      `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
+      `/me/api/media/${encodeURIComponent(assetId)}/download`,
       { credentials: "same-origin" },
     );
     if (!response.ok) return null;

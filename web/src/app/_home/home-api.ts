@@ -181,7 +181,7 @@ export const homeApi = {
   },
   mediaDownload: (assetId: string) =>
     homeRequest<{ download_url?: string }>(
-      `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
+      `/me/api/media/${encodeURIComponent(assetId)}/download`,
     ),
   setup: productApi.setup,
   dismissSetup: () =>
