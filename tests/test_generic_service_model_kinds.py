@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 
-from gateway import admin_store
+from gateway import admin_store, extension_packages, service_registry
 from gateway.admin_runtime import EXTENSION_PACKAGE_INDEX_SETTING_KEY
 from tests.registry_test_helpers import write_service_registry_for_test
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
@@ -48,6 +48,18 @@ def _stored_model_kind(gateway, service_id="box"):
     stored = _stored(gateway, service_id)
     assert stored is not None
     return stored["config"]["models"][0]["kind"]
+
+
+def _stored_models(gateway, service_id="box"):
+    stored = _stored(gateway, service_id)
+    assert stored is not None
+    return stored["config"]["models"]
+
+
+def _stored_name(gateway, service_id="box"):
+    stored = _stored(gateway, service_id)
+    assert stored is not None
+    return stored["name"]
 
 
 def test_adding_a_kind_the_record_does_not_offer_is_refused_at_its_row(gateway):
@@ -110,6 +122,57 @@ def test_editing_a_record_to_offer_the_kind_is_saved(gateway):
 
     assert edited.status_code == 200, edited.text
     assert _stored_model_kind(gateway) == "speech"
+
+
+def test_a_name_edit_that_sends_a_legacy_row_back_as_stored_is_saved(gateway):
+    owner, *_ = owner_and_admin(gateway)
+    assert _add(owner, capabilities=["chat"], models=[CHAT_ROW]).status_code == 201
+    _seed_stored_kind(gateway, "box", "speech")
+
+    stored_models = _stored_models(gateway)
+
+    edited = _edit(owner, name="Renamed", host="10.0.0.9", port=8080, capabilities=["chat"], models=stored_models)
+
+    assert edited.status_code == 200, edited.text
+    assert _stored_name(gateway) == "Renamed"
+    assert _stored_model_kind(gateway) == "speech"
+
+
+def test_a_name_only_patch_of_a_legacy_row_is_saved(gateway):
+    owner, *_ = owner_and_admin(gateway)
+    assert _add(owner, capabilities=["chat"], models=[CHAT_ROW]).status_code == 201
+    _seed_stored_kind(gateway, "box", "speech")
+
+    edited = _edit(owner, name="Renamed")
+
+    assert edited.status_code == 200, edited.text
+    assert _stored_name(gateway) == "Renamed"
+    assert _stored_model_kind(gateway) == "speech"
+
+
+def test_a_models_change_on_a_legacy_row_is_still_checked(gateway):
+    owner, *_ = owner_and_admin(gateway)
+    assert _add(owner, capabilities=["chat"], models=[CHAT_ROW]).status_code == 201
+    _seed_stored_kind(gateway, "box", "speech")
+    before = _durable_state(gateway)
+
+    refused = _edit(owner, host="10.0.0.9", port=8080, capabilities=["chat"], models=[SPEECH_ROW])
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["field"] == "models.0.kind"
+    assert _durable_state(gateway) == before
+
+
+def test_a_capability_change_that_leaves_a_model_kind_unoffered_is_refused_on_patch(gateway):
+    owner, *_ = owner_and_admin(gateway)
+    assert _add(owner, capabilities=["chat", "speech"], models=[SPEECH_ROW]).status_code == 201
+    before = _durable_state(gateway)
+
+    refused = _edit(owner, capabilities=["chat"])
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["field"] == "models.0.kind"
+    assert _durable_state(gateway) == before
 
 
 def _registry(client):
@@ -245,3 +308,72 @@ def test_an_import_accepts_a_kind_the_package_record_offers(gateway, tmp_path):
 
     assert imported.status_code == 200, imported.text
     assert _stored_model_kind(gateway, "voice-box") == "speech"
+
+
+def test_reenabling_an_installed_package_whose_kinds_are_unchanged_passes(gateway, tmp_path):
+    """A record stored before the check, with the models and capabilities its package still has, is not refused."""
+    owner, *_ = owner_and_admin(gateway)
+    source = _voice_package(tmp_path, capabilities="chat", kind="speech")
+    review = extension_packages.validate_extension_package_source(
+        source, install_root=gateway.path.parent / "extensions" / "installed", credentials={})
+    installed = extension_packages.imported_registry_records(review)["services"]["voice-box"]
+    registry = service_registry.normalize_service_registry({})
+    registry["services"]["voice-box"] = installed
+    write_service_registry_for_test(registry, path=gateway.path)
+
+    enabled = _enable_package(owner, source)
+
+    assert enabled.status_code == 200, enabled.text
+    assert _stored_model_kind(gateway, "voice-box") == "speech"
+
+
+def _store_left_out(gateway, service_id="held-box"):
+    """Store a record the registry leaves out: its models are not model records, so it does not validate."""
+    snapshot = admin_store.get_service_registry_with_generation(path=gateway.path)
+    assert snapshot is not None
+    registry = snapshot["value"]
+    registry["services"][service_id] = {
+        "id": service_id, "name": "Held box", "kind": "engine", "enabled": True, "capabilities": ["chat"],
+        "config": {"host": "10.0.0.11", "port": 8080, "models": ["not a model record"]},
+    }
+    write_service_registry_for_test(registry, path=gateway.path)
+
+
+def _left_out_record(client, service_id="held-box"):
+    excluded = client.get("/admin/api/operator/service-registry").json()["excluded"]
+    return next(item["record"] for item in excluded if item["id"] == service_id)
+
+
+def _fix_left_out(client, record, service_id="held-box"):
+    return client.put(f"/admin/api/operator/service-registry/excluded/services/{service_id}",
+                      json={"record": record}, headers=_write_headers(client))
+
+
+def test_fixing_a_left_out_record_refuses_a_kind_it_does_not_offer(gateway):
+    owner, *_ = owner_and_admin(gateway)
+    assert _add(owner, capabilities=["chat"], models=[CHAT_ROW]).status_code == 201
+    _store_left_out(gateway)
+    record = _left_out_record(owner)
+    record["config"]["models"] = [{"id": "voice-2", "model_group": "voice-2", "upstream_model": "voice-2", "kind": "speech"}]
+    before = _durable_state(gateway)
+
+    refused = _fix_left_out(owner, record)
+
+    assert refused.status_code == 400, refused.text
+    error = refused.json()["error"]
+    assert (error["code"], error["field"]) == ("invalid_engine", "services.held-box.config.models.0.kind")
+    assert error["message"] == "This engine doesn’t offer Voice."
+    assert _durable_state(gateway) == before
+
+
+def test_fixing_a_left_out_record_with_a_kind_it_offers_is_saved(gateway):
+    owner, *_ = owner_and_admin(gateway)
+    assert _add(owner, capabilities=["chat"], models=[CHAT_ROW]).status_code == 201
+    _store_left_out(gateway)
+    record = _left_out_record(owner)
+    record["config"]["models"] = [{"id": "chat-2", "model_group": "chat-2", "upstream_model": "chat-2", "kind": "chat"}]
+
+    fixed = _fix_left_out(owner, record)
+
+    assert fixed.status_code == 200, fixed.text
+    assert _stored_model_kind(gateway, "held-box") == "chat"

@@ -536,6 +536,30 @@ def test_a_capability_cannot_be_unticked_while_a_model_is_kinded_for_it(gateway,
     assert {row["public_name"]: row.get("kind") for row in view["models"]} == {"embed-model": "embed"}
 
 
+def _store_model_kind(gateway, service_id, kind):
+    """Store a model kind the way a save from before the check did: straight into the registry, unchecked."""
+    registry = _registry(gateway)
+    registry["services"][service_id]["config"]["models"][0]["kind"] = kind
+    _put_registry(gateway, registry)
+
+
+def test_an_engine_rename_keeps_a_stored_kind_it_does_not_offer_and_is_saved(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    _silent(fake_upstreams, "legacy-kind.fk.test")
+    created = _create(owner, {"definition": "openai-compatible", "name": "Legacy Kind", "disabled": True,
+                              "values": {"address": "http://legacy-kind.fk.test/v1"}, "capabilities": ["chat"],
+                              "models": [{"id": "chat-up", "public_name": "chat-model", "kind": "chat"}]})
+    assert created.status_code == 201, created.text
+    _store_model_kind(gateway, "legacy-kind", "speech")
+
+    saved = _edit(owner, "legacy-kind", {"definition": "openai-compatible", "name": "Renamed Kind",
+                                         "values": {"address": "http://legacy-kind.fk.test/v1"}})
+
+    assert saved.status_code == 200, saved.text
+    assert _record(gateway, "legacy-kind")["name"] == "Renamed Kind"
+    assert _record(gateway, "legacy-kind")["config"]["models"][0]["kind"] == "speech"
+
+
 def test_create_answers_with_the_new_engine_id(gateway, fake_upstreams):
     owner, *_ = owner_and_admin(gateway)
     _silent(fake_upstreams, "named.fk.test")
