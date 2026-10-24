@@ -318,7 +318,9 @@
 # registered). The two tests whose arrangement moved to the snapshot build keep their count.
 # collect-only 16877 -> 16878 (2026-10-23).
 # Train r104: collect-only measured 17215.
-pytest = 17215
+# Walkthrough A16/A17 (Usage totals and local counts): +5 pytest cases in tests/test_me_media.py for recorded decision costs,
+# unreported remote receipts, served-here requests, pre-routing refusals and the cost rule. collect-only measured 17220 (2026-10-24).
+pytest = 17220
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -359,7 +361,10 @@ pytest = 17215
 # Train r103 step 5 (account chooser): 3362 + 89 (3321 - 3232) = 3451, provisional until the final vitest list.
 # Walkthrough A17 (Usage cost labels): +1 vitest case in src/app/usage/page.spec.tsx for the four cost states
 # on one page. `vitest list` measured 3452 on 2026-10-24. Playwright stays at 566 (545 + 3 + 18), measured the same day.
-vitest = 3452
+# Walkthrough A16/A17 (Usage local counts): +5 vitest cases in src/app/usage/page.spec.tsx for local-only months, local
+# requests beside paid totals, a no-paid month with local requests, a pre-routing failure and the CSV zero rule.
+# `vitest list` measured 3457 on 2026-10-24.
+vitest = 3457
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
