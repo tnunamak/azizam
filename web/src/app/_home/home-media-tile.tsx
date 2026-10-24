@@ -12,10 +12,12 @@ import { homeApi, type HomeCreation } from "./home-api";
 import { parseEpochSeconds } from "./home-model";
 
 /**
- * A tile's caption: the title in up to two lines at 13/18, always two lines tall so every "Kind · when" in a
- * row sits on one baseline, then "Kind · when" at 12 (DESIGN "Home").
+ * A tile's caption: the title in up to two lines at 13/18, then "Kind · when" at 12 directly under it (DESIGN
+ * "Home"). The row is as tall as its tallest caption, and the title takes the spare height, so every
+ * "Kind · when" in a row shares one baseline. A one-line title in a row with a two-line title sits lower, with
+ * its "Kind · when" still under it, rather than reserving an empty line in every tile.
  */
-export const CAPTION_TITLE = "text-foreground text-label mt-2 line-clamp-2 min-h-9 break-words";
+export const CAPTION_TITLE = "text-foreground text-label mt-auto pt-2 line-clamp-2 break-words";
 export const CAPTION_META = "text-muted-foreground text-badge mt-0.5 block truncate";
 
 /**
@@ -274,7 +276,7 @@ export function MediaTile({ creation, className }: { creation: HomeCreation; cla
   // apart, so its link covers the tile only and the caption stays text.
   const linkName = prompt ? `Open ${label} in Library: ${prompt}` : `Open ${label} in Library`;
   const captionText = (
-    <span className="block min-w-0">
+    <span className="flex min-h-0 min-w-0 flex-1 flex-col">
       <span className={CAPTION_TITLE}>{title}</span>
       <span className={CAPTION_META}>
         {label}
@@ -295,7 +297,7 @@ export function MediaTile({ creation, className }: { creation: HomeCreation; cla
   );
   if (creation.kind === "audio") {
     return (
-      <li className={cn("min-w-0", className)} data-slot="recent-tile">
+      <li className={cn("flex min-w-0 flex-col", className)} data-slot="recent-tile">
         <div className={tile}>
           {media}
           <MediaBadge icon={AudioLines} className="absolute bottom-2 left-2 z-10" />
@@ -306,8 +308,8 @@ export function MediaTile({ creation, className }: { creation: HomeCreation; cla
     );
   }
   return (
-    <li className={cn("min-w-0", className)} data-slot="recent-tile">
-      <Link prefetch={false} href={href} className="group block min-w-0">
+    <li className={cn("flex min-w-0 flex-col", className)} data-slot="recent-tile">
+      <Link prefetch={false} href={href} className="group flex min-h-0 min-w-0 flex-1 flex-col">
         <div className={tile}>
           {media}
           {creation.kind === "video" ? <MediaBadge icon={Video} className="absolute bottom-2 left-2" /> : null}

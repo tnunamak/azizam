@@ -175,8 +175,8 @@ test("at 1440 px Recent fills Home's 960 px column, and the 760 px composer sits
   const leftInset = composer!.x - boxes[0].left;
   const rightInset = boxes[5].right - (composer!.x + composer!.width);
   expect(Math.abs(leftInset - rightInset)).toBeLessThanOrEqual(1);
-  // The sizes the design names, as the browser computes them: a 16 px prompt, 13/18 titles that always
-  // keep two lines, and 12 px "Kind · when".
+  // The sizes the design names, as the browser computes them: a 16 px prompt, 13/18 titles of one or two
+  // lines, and 12 px "Kind · when".
   const sizes = await page.evaluate(() => {
     const px = (element: Element | null) => (element ? getComputedStyle(element) : null);
     const tile = document.querySelector("[data-slot='recent-tile']");
@@ -187,20 +187,24 @@ test("at 1440 px Recent fills Home's 960 px column, and the 760 px composer sits
       prompt: px(document.getElementById("home-prompt"))?.fontSize,
       title: px(title)?.fontSize,
       titleLine: px(title)?.lineHeight,
-      titleHeight: title?.getBoundingClientRect().height,
       meta: px(meta)?.fontSize,
     };
   });
-  expect(sizes).toEqual({ prompt: "16px", title: "13px", titleLine: "18px", titleHeight: 36, meta: "12px" });
-  // Every tile's "Kind · when" sits on one baseline, whether its title takes one line or two.
-  const metaBottoms = await tiles.evaluateAll((items) =>
+  expect(sizes).toEqual({ prompt: "16px", title: "13px", titleLine: "18px", meta: "12px" });
+  // Each "Kind · when" sits 2 px under its own title, and every one in the row shares a baseline. The row is as
+  // tall as its tallest caption, so a one-line title beside a two-line title sits lower, with its line under it.
+  const captions = await tiles.evaluateAll((items) =>
     items.map((item) => {
+      const title = item.querySelector(".line-clamp-2")?.getBoundingClientRect();
       const metas = Array.from(item.querySelectorAll("span, p")).filter((node) => node.className.includes("text-badge"));
-      return Math.round(metas[metas.length - 1]?.getBoundingClientRect().bottom ?? -1);
+      const meta = metas[metas.length - 1]?.getBoundingClientRect();
+      return { gap: title && meta ? meta.top - title.bottom : -1, bottom: meta ? Math.round(meta.bottom) : -1 };
     }),
   );
-  expect(metaBottoms).not.toContain(-1);
-  expect(new Set(metaBottoms).size).toBe(1);
+  expect(captions.map((caption) => caption.gap)).not.toContain(-1);
+  for (const caption of captions) expect(Math.abs(caption.gap - 2)).toBeLessThanOrEqual(0.5);
+  expect(captions.map((caption) => caption.bottom)).not.toContain(-1);
+  expect(new Set(captions.map((caption) => caption.bottom)).size).toBe(1);
 });
 
 test("H4 the facts line shows the cost and wait its row knows, and leaves out what it does not", async ({ isolated }) => {

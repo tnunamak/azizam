@@ -70,7 +70,7 @@ function MakingTileView({
   const copy = MAKING_COPY[making];
   const { icon: Icon, tone, tint } = capabilityMeta(MAKING_CAPABILITY[making]);
   return (
-    <li className={cn("min-w-0", className)} data-slot="recent-tile" data-making="true">
+    <li className={cn("flex min-w-0 flex-col", className)} data-slot="recent-tile" data-making="true">
       <div
         role="status"
         aria-label={copy}
@@ -103,8 +103,8 @@ function MakingTileView({
         ) : null}
       </div>
       <p className={CAPTION_TITLE}>{copy}</p>
+      {risk ? <p className="text-warning text-badge mt-0.5">{risk}</p> : null}
       <p className={CAPTION_META}>{overdue ? timeLeft : timeLeft ? capitalise(timeLeft) : "Making"}</p>
-      {risk ? <p className="text-warning text-badge">{risk}</p> : null}
     </li>
   );
 }
@@ -120,18 +120,18 @@ function capitalise(text: string): string {
 function ChatTileView({ item, className }: { item: Extract<RecentItem, { kind: "chat" }>; className?: string }) {
   const { chat } = item;
   return (
-    <li className={cn("min-w-0", className)} data-slot="recent-tile">
+    <li className={cn("flex min-w-0 flex-col", className)} data-slot="recent-tile">
       <Link
         prefetch={false}
         href={`/usage/?receipt=${encodeURIComponent(chat.request_id)}`}
         aria-label={`Open chat: ${chat.title}`}
-        className="group block min-w-0"
+        className="group flex min-h-0 min-w-0 flex-1 flex-col"
       >
         <div className="bg-muted group-hover:bg-accent rounded-media flex aspect-square w-full flex-col overflow-hidden p-4 transition-colors duration-(--motion-fast)">
           <MessageSquare aria-hidden="true" className="text-capability-chat size-4 shrink-0" />
           <p className="text-foreground text-label mt-3 line-clamp-3 font-normal">{chat.title}</p>
         </div>
-        <span className="block min-w-0">
+        <span className="flex min-h-0 min-w-0 flex-1 flex-col">
           <span className={CAPTION_TITLE}>Chat</span>
           <span className={CAPTION_META}>
             <RelativeTime ts={chat.created_at} fallback="" />
