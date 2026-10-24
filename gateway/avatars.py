@@ -121,12 +121,16 @@ def list_stored(*, path: Path) -> dict[str, dict[str, Any]]:
     return {row["user_id"]: _record(row) for row in rows}
 
 
+def has_current_copy(record: Mapping[str, Any]) -> bool:
+    """Whether the person has a picture the gateway made from the current template."""
+    return record["generated_at"] is not None and record["generated_template"] == TEMPLATE_VERSION
+
+
 def shown_kind(record: Mapping[str, Any]) -> str | None:
     """The picture the person's avatar shows: the one they had made, the sign-in picture, or None (the palette)."""
     choice = record["choice"]
     if choice == GENERATED:
-        current = record["generated_template"] == TEMPLATE_VERSION and record["generated_at"] is not None
-        return SHOWN_GENERATED if current else None
+        return SHOWN_GENERATED if has_current_copy(record) else None
     if choice in VARIANTS:
         return None
     return SHOWN_SIGN_IN if record["picture_url"] else None
@@ -145,12 +149,17 @@ def picture_path(person_id: str, record: Mapping[str, Any], *, viewer_id: str) -
 
 
 def public_view(person_id: str, record: Mapping[str, Any], *, viewer_id: str) -> dict[str, Any]:
-    """What the browser may see: the choice, a gateway path for the picture shown, and for the person
-    whether a sign-in picture is on file (the picker offers it only then)."""
+    """What the browser may see: the choice and a gateway path for the picture shown.
+
+    For the person, it also says whether a sign-in picture is on file, and gives the path of the picture the
+    gateway made (None when there is none), so the picker can show both whichever one is chosen.
+    """
     view: dict[str, Any] = {"choice": record["choice"], "person_id": person_id,
                             "picture_url": picture_path(person_id, record, viewer_id=viewer_id)}
     if person_id == viewer_id:
         view["sign_in_available"] = bool(record["picture_url"])
+        view["made_picture_url"] = (f"/me/api/profile/avatar/picture?made=1&v={int(record['generated_at'])}"
+                                    if has_current_copy(record) else None)
     return view
 
 

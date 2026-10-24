@@ -250,6 +250,14 @@ def create_me_avatar_router(
         missing = _error("avatar_picture_unavailable", "No picture to show.", 404)
         if person_id != viewer_id and not await asyncio.to_thread(_is_admin, viewer_id):
             return missing
+        if request.query_params.get("made") == "1":
+            # The person's own kept picture, whichever avatar they show now: the picker previews it beside the others.
+            if person_id != viewer_id:
+                return missing
+            record = await asyncio.to_thread(avatars.get, viewer_id, path=db())
+            data = await asyncio.to_thread(avatars.read_generated, viewer_id, path=db())
+            content_type = image_type(data) if data is not None and avatars.has_current_copy(record) else None
+            return _picture(data, content_type) if data is not None and content_type else missing
 
         async def shown() -> dict | None:
             # The record to show right now: others see a picture only when the person chose it.
