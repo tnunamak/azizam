@@ -149,7 +149,8 @@ def test_the_protocol_policy_projections_are_unchanged() -> None:
 def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # MOSS, FLUX.2 Klein, FIBO and keyframe workflows add schemas, never routes or policy.
     # Removing precisely these additions must recover the data-hygiene document,
-    # which adds the reviewed missing/retryable output responses and the App key security schemes.
+    # which adds the reviewed missing/retryable output responses, the App key security schemes, and the security each
+    # operation declares (API reference security; the route graph leaves that security out of each route's extra).
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
              "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
@@ -162,6 +163,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # The edit transport documents repeated image[] parts for pictures. The sign-in box (Login.remember) is
         # nullable: true keeps a name, false takes it off, null leaves the list alone. The remembered list's entry for
         # the person signed in on the browser carries "you": true.
-        assert route_graph.openapi_digest(proxy.app) == "d83ab20045d0d89fb42b06bf65fc9a1f66163dfe1b195d2dd0f0cc4bc305cba9"
+        assert route_graph.openapi_digest(proxy.app) == "0b8e2afe2a1af80bf7e3cac5af6cf1305ece275aae02fa7115fc05041ff385f3"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

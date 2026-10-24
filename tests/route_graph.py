@@ -27,6 +27,17 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def _extra_digest(extra: Any) -> str | None:
+    """The digest of a route's OpenAPI extra, leaving out the ``security`` its API reference entry declares.
+
+    test_headless_access.py checks each declared security against the path that enforces it, so the graph does not
+    repeat it. An extra that is only that security reads as no extra.
+    """
+    if isinstance(extra, dict):
+        extra = {key: value for key, value in extra.items() if key != "security"} or None
+    return None if extra is None else _digest(extra)
+
+
 def _route_row(route: Any) -> dict[str, Any]:
     response_class = getattr(route, "response_class", None)
     extra = getattr(route, "openapi_extra", None)
@@ -41,7 +52,7 @@ def _route_row(route: Any) -> dict[str, Any]:
         "include_in_schema": getattr(route, "include_in_schema", None),
         "response_class": getattr(response_class, "__name__", None),
         "status_code": getattr(route, "status_code", None),
-        "openapi_extra": None if extra is None else _digest(extra),
+        "openapi_extra": _extra_digest(extra),
     }
 
 
