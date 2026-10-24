@@ -1035,12 +1035,13 @@ def _receipt_of(job: Mapping[str, Any], receipts: Mapping[str, Mapping[str, Any]
     return next((receipts[key] for key in _job_receipt_ids(job) if key in receipts), None)
 
 
-def _label_receipt(receipt: Mapping[str, Any] | None, scope: _MediaScope, apps: _Apps) -> Mapping[str, Any] | None:
-    """The receipt that may describe a Library item. A job's lookup can reach a receipt through the parent link its
+def _label_receipt(receipt: Mapping[str, Any] | None, viewer: Viewer, apps: _Apps) -> Mapping[str, Any] | None:
+    """The receipt that may describe a job's item. A job's lookup can reach a receipt through the parent link its
     client chose, so the receipt describes the item only when the viewer may read it (D51). Otherwise the item takes
-    the neutral source its job records, never the source of another person's request.
+    the neutral source its job records, never the source of another person's request. The Library and the usage
+    summary both check it this way.
     """
-    if receipt is None or record_ownership.owns_record("receipt", receipt, viewer=_library_viewer(scope), apps=apps):
+    if receipt is None or record_ownership.owns_record("receipt", receipt, viewer=viewer, apps=apps):
         return receipt
     return None
 
@@ -1157,7 +1158,7 @@ def _media_entries(
     deleted = _deleted_asset_ids(scope, admin_db_path)
     hidden = media_jobs.hidden_assets(scope.user_ids, path=media_jobs_path) if scope.user_ids else set()
     for job, receipt in _scoped_jobs(scope, jobs_path=media_jobs_path, receipts_path=receipts_path):
-        receipt = _label_receipt(receipt, scope, apps)
+        receipt = _label_receipt(receipt, _library_viewer(scope), apps)
         job_source = None
         for asset in _iter_job_assets(job):
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")
@@ -1835,6 +1836,8 @@ def _usage_summary(
     _reject_forbidden_source_filter(source_filter, app_ids, sources, scoped_users)
     connections = {str(source["connection_id"]): source for source in sources if source.get("kind") == "connection"}
     apps = _Apps(admin_db_path)  # apps and credential links, read once for the whole summary
+    # The usage page reads a job's receipt as the signed-in person, as the Library does (D51).
+    viewer = Viewer(person_id=actor.user_id, auth_kind="session")
     now = datetime.now(timezone.utc)
     start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
     # The unary plus keeps SQLite on the created_at index: with it the planner reads every top-level receipt.
@@ -1951,6 +1954,8 @@ def _usage_summary(
                     _annotate_receipt_source(job_receipt, sources, admin_db_path, apps, connections)
             if job_receipt is not None:
                 break
+        # A parent link can reach a receipt this viewer may not read. It then decides nothing about the job.
+        job_receipt = _label_receipt(job_receipt, viewer, apps)
         if job_receipt is not None:
             job_in_scope = _receipt_in_scope(job_receipt, media_scope)
             if job_in_scope:
