@@ -1034,6 +1034,7 @@ def merge_imported_records(
             continue
         validate_protocol_dispatch_local_only(raw)
         record = normalize_service_record(service_id, raw)
+        _refuse_unoffered_record_kinds(service_id, record)
         _merge_imported_record(out["services"], service_id, record, "service")
 
     for raw_id, raw in (protocol_frontends or {}).items():
@@ -1915,23 +1916,68 @@ _PROTOCOL_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
-def refuse_unoffered_kinds(models: Iterable[Any], record_capabilities: Iterable[str]) -> None:
+def refuse_unoffered_kinds(
+    models: Iterable[Any], record_capabilities: Iterable[str], *, path: str = "models",
+) -> None:
     """A model's kind must be one its record's capabilities serve. Otherwise the catalog binds the model to nothing.
 
     Every save of a service record runs this, from the engine page and the generic service API alike, so a
-    refusal names the same row and field whichever form made the record.
+    refusal names the same row and field whichever form made the record. ``path`` is the list the rows sit in;
+    a save of many records names the record in it, as ``services.<id>.config.models``.
     """
     offered = offered_model_kinds(record_capabilities)
     for index, row in enumerate(models):
         kind = row.get("kind") if isinstance(row, Mapping) else None
         if not kind:
             continue
-        field = f"models.{index}.kind"
+        field = f"{path}.{index}.kind"
         if kind not in MODEL_KIND_LABELS:
             name = row.get("model_group") or row.get("upstream_model") or ""
             raise engine_check.DraftError(f"The capability of “{name}” is not one of the choices.", field=field)
         if kind not in offered:
             raise engine_check.DraftError(f"This engine doesn’t offer {MODEL_KIND_LABELS[kind]}.", field=field)
+
+
+def _refuse_unoffered_record_kinds(service_id: str, record: Mapping[str, Any]) -> None:
+    """Refuse a record whose model kinds it does not offer, at a field that names the record too."""
+    config = record.get("config")
+    models = config.get("models") if isinstance(config, Mapping) else None
+    refuse_unoffered_kinds(
+        models if isinstance(models, list) else [], record.get("capabilities") or [],
+        path=f"services.{service_id}.config.models",
+    )
+
+
+def refuse_unoffered_kinds_in_registry(
+    registry: Mapping[str, Any], *, before: Mapping[str, Any] | None = None,
+) -> None:
+    """Check the model kinds of the records a whole-registry save adds or changes.
+
+    A stored record that the save leaves with the same models and capabilities is not checked, so a record
+    stored before the check loads and saves as it is. A new record, or one whose models or capabilities
+    changed, must pass. Both sides are compared as they would be stored, as ``validate_protocol_dispatch_registry`` does.
+    """
+    previous = (before or {}).get("services") or {}
+    for service_id, service in (registry.get("services") or {}).items():
+        if not isinstance(service, Mapping):
+            continue
+        old = previous.get(service_id)
+        if isinstance(old, Mapping) and _same_kind_inputs(service_id, service, old):
+            continue
+        _refuse_unoffered_record_kinds(service_id, service)
+
+
+def _same_kind_inputs(service_id: str, left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """Whether two rows offer the same models and capabilities: the only inputs the kind check reads."""
+    try:
+        return _kind_inputs(service_id, left) == _kind_inputs(service_id, right)
+    except (TypeError, ValueError):
+        return False
+
+
+def _kind_inputs(service_id: str, record: Mapping[str, Any]) -> tuple[Any, frozenset[str]]:
+    stored = normalize_service_record(service_id, record, check_secrets=False)
+    return stored["config"].get("models"), frozenset(stored["capabilities"])
 
 
 def upsert_service_in_registry(

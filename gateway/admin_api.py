@@ -1553,13 +1553,16 @@ def _validate_service_registry(
     try:
         payload = record_carriers.restore_echoed_registry(payload, before)  # a read written back unchanged (decision D27)
         service_registry.validate_protocol_dispatch_registry(payload, before=before)
-        return service_registry.normalize_service_registry(payload)
+        registry = service_registry.normalize_service_registry(payload)
     except Exception as exc:  # noqa: BLE001
         raise _RouteError(
             status.HTTP_400_BAD_REQUEST,
             "invalid_service_registry",
             f"invalid service registry: {exc}",
         ) from exc
+    # Not inside the try above: a refused model kind keeps its own code and field (engine_check.DraftError).
+    service_registry.refuse_unoffered_kinds_in_registry(registry, before=before)
+    return registry
 
 
 def _validate_service_form(
@@ -2580,6 +2583,10 @@ def create_admin_router(
             )
         except _RouteError as exc:
             return exc.as_response()
+        except engine_check.DraftError as exc:
+            return engine_admin.EngineRouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+            ).as_response()
         except PermissionError as exc:
             return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
@@ -3098,6 +3105,10 @@ def create_admin_router(
                 ).as_response()
         except _RouteError as exc:
             return exc.as_response()
+        except engine_check.DraftError as exc:
+            return engine_admin.EngineRouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+            ).as_response()
         except service_registry.ServiceRegistryConflict as exc:
             return _RouteError(
                 status.HTTP_409_CONFLICT,
