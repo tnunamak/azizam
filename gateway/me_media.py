@@ -1445,6 +1445,11 @@ def _job_in_scope(job: Mapping[str, Any], scope: _MediaScope) -> bool:
     return _receipt_in_scope(job, scope)
 
 
+def _has_own_scope(record: Mapping[str, Any]) -> bool:
+    """Whether a record names the App or owner that decides who may read it, as ``_receipt_in_scope`` reads it."""
+    return bool(record.get("app_id")) or isinstance(record.get("owner_key_hash"), str)
+
+
 # Nothing recorded where the request came from.
 _UNKNOWN_SOURCE = {"kind": "unknown", "label": "Source unknown", "profile": None, "client_hint": None}
 
@@ -1785,8 +1790,11 @@ def _fold_media_jobs(
     receipt takes the failure its record shows, when the viewer can read that record. Receipts outside any
     job pass through unchanged.
     """
-    # Only the job records the viewer can read: any other record, and every link it names, is ignored.
-    readable = {job_id: job for job_id, job in jobs.items() if _job_in_scope(job, job_scope)}
+    # A record that names an App or owner the viewer cannot read is ignored, with every link it names. A record
+    # that names neither takes its receipt's scope instead: only readable receipts can stand for it.
+    readable = {
+        job_id: job for job_id, job in jobs.items() if _job_in_scope(job, job_scope) or not _has_own_scope(job)
+    }
     by_request_id = {receipt["request_id"]: receipt for receipt in receipts}
     members_by_job: dict[str, list[dict[str, Any]]] = {}
     for receipt in receipts:
@@ -1805,7 +1813,7 @@ def _fold_media_jobs(
         display = submit if submit is not None else min(counted, key=_attempt_order)
         attempts = [member for member in counted if member is not submit]
         failed = (submit is not None and not attempts and job is not None
-                  and job.get("status") == media_jobs.STATUS_FAILED)
+                  and job.get("status") == media_jobs.STATUS_FAILED and _job_in_scope(job, job_scope))
         folded[display["request_id"]] = _job_request(display, counted, submit=submit is not None, failed=failed)
         in_jobs.update(member["request_id"] for member in members)
     return [
@@ -2000,8 +2008,9 @@ def _usage_summary(
     receipts_by_id: dict[str, Mapping[str, Any]] = {}
     for receipt in receipts:
         receipts_by_id.setdefault(str(receipt["request_id"]), receipt)
-    # A job record the viewer cannot read is dropped here, before any lookup, so it cannot change their counts.
-    jobs = [job for job in succeeded_jobs.result() if _job_in_scope(job, media_scope)]
+    # A job record that names an App or owner the viewer cannot read is dropped here, before any lookup, so it cannot
+    # change their counts. A record that names neither is decided by its receipt, below.
+    jobs = [job for job in succeeded_jobs.result() if _job_in_scope(job, media_scope) or not _has_own_scope(job)]
     # Receipts older than the month (or out of the month's scope) in one read, not one per job.
     older = receipt_store.get_many(
         [request_id for job in jobs for request_id in _job_receipt_ids(job) if request_id not in receipts_by_id],
@@ -2030,11 +2039,12 @@ def _usage_summary(
             ):
                 made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
             continue
-        in_jobs.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
-        if int(job.get("created_at") or 0) >= start:
-            source = _source_projection(None, admin_db_path, metadata=job, visible_app_ids=app_ids, apps=apps)
-            if _source_matches_filter(source, source_filter):
-                made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
+        if _job_in_scope(job, media_scope):
+            in_jobs.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
+            if int(job.get("created_at") or 0) >= start:
+                source = _source_projection(None, admin_db_path, metadata=job, visible_app_ids=app_ids, apps=apps)
+                if _source_matches_filter(source, source_filter):
+                    made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
     if asset_catalog_provider and asset_metadata_reader:
         for asset_id in asset_catalog_provider():
             if asset_id in in_jobs:

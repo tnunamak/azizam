@@ -1847,7 +1847,8 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(again_id, first_id)
         self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 1))
         [row] = usage["receipts"]
-        self.assertEqual(row["status"], "failed")
+        # The worker's failed attempt records its own status, which the failed count reads.
+        self.assertEqual(row["status"], "error")
 
     def test_a_request_outside_any_job_is_counted_as_before(self) -> None:
         self._receipt(self.app_a["id"], "req_plain_chat", intent="chat.completions",
