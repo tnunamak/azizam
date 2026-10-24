@@ -292,7 +292,7 @@ const bytes = (text: string, type: string, headers: Record<string, string> = {})
   });
 
 const fetchMock = vi.fn();
-type Answer = (url: string, init?: RequestInit) => Response | undefined;
+type Answer = (url: string, init?: RequestInit) => Response | Promise<Response> | undefined;
 let answer: Answer = () => undefined;
 let catalog: unknown = workflowsCatalog;
 
@@ -338,6 +338,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
@@ -678,6 +679,63 @@ describe("workflow jobs", () => {
     expect(screen.getByText("Ready")).toBeVisible();
     expect(screen.getByRole("link", { name: "Download video" })).toHaveAttribute("href", "https://media.example.test/completed?sig=fixture");
     expect(screen.getByText("No receipt was returned.")).toBeVisible();
+  });
+
+  it("a receipt lookup that answers late does not overwrite the receipt a later job check found", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    let pollBody: unknown = { id: "job_async_try", object: "video", status: "queued" };
+    let receiptLookups = 0;
+    answer = (url, init) => {
+      if (init?.method === "POST")
+        return json({ id: "job_async_try", object: "video", status: "queued", request_id: "receipt_async_try" });
+      if (url.endsWith("/v1/videos/job_async_try")) return json(pollBody);
+      if (url.endsWith("/v1/videos/job_async_try/content")) return bytes("fake completed video bytes", "video/mp4");
+      if (url.includes("/me/api/receipts/receipt_async_try")) {
+        receiptLookups += 1;
+        // The first lookup never answers, and ignores the cancel signal it is given.
+        if (receiptLookups === 1) return new Promise<Response>(() => {});
+        return json({ request_id: "receipt_async_try" });
+      }
+      return undefined;
+    };
+    await openWorkflow("video.generate.async");
+    setValue(screen.getByRole("textbox", { name: /^prompt Required$/i }), "A teal fish.");
+    await user.click(runButton());
+    expect(await screen.findByText("Waiting to start")).toBeVisible();
+
+    pollBody = { id: "job_async_try", object: "video", status: "completed" };
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await screen.findByRole("link", { name: "Download video" })).toBeVisible();
+    expect(await screen.findByRole("link", { name: "View receipt" })).toBeVisible();
+    expect(receiptLookups).toBe(2);
+
+    // The first lookup's ten seconds run out after the later check has found the receipt.
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    expect(screen.getByRole("link", { name: "View receipt" })).toBeVisible();
+    expect(screen.queryByText("Receipt couldn’t be checked.")).toBeNull();
+  });
+
+  it("leaving Try cancels a receipt lookup that is still waiting", async () => {
+    const user = userEvent.setup();
+    let lookupSignal: AbortSignal | undefined;
+    answer = (url, init) => {
+      if (init?.method === "POST")
+        return json({ id: "job_async_try", object: "video", status: "queued", request_id: "receipt_async_try" });
+      if (url.includes("/me/api/receipts/receipt_async_try")) {
+        lookupSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      }
+      return undefined;
+    };
+    await openWorkflow("video.generate.async");
+    setValue(screen.getByRole("textbox", { name: /^prompt Required$/i }), "A teal fish.");
+    await user.click(runButton());
+    expect(await screen.findByText("Waiting to start")).toBeVisible();
+    expect(lookupSignal?.aborted).toBe(false);
+
+    cleanup();
+    expect(lookupSignal?.aborted).toBe(true);
   });
 });
 

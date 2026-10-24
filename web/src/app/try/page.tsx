@@ -717,10 +717,13 @@ const RECEIPT_CHECK_MS = 10_000;
  * Checks a receipt for at most RECEIPT_CHECK_MS. The check's fetches are
  * aborted at the deadline; the wait also ends there, so a fetch that ignores
  * the abort cannot hold the answer's receipt line open. A check that did not
- * finish reads as "could not be checked", which offers Check again.
+ * finish reads as "could not be checked", which offers Check again. The
+ * caller's controller can also abort the check before then.
  */
-async function timedReceipt(lookup: ReceiptLookup): Promise<ReceiptCheck> {
-  const controller = new AbortController();
+async function timedReceipt(
+  lookup: ReceiptLookup,
+  controller = new AbortController(),
+): Promise<ReceiptCheck> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<ReceiptCheck>((resolve) => {
     timer = setTimeout(() => {
@@ -1380,6 +1383,8 @@ export default function TryPage() {
   const initializedWorkflowId = useRef<string | null>(null);
   const chunks = useRef<Blob[]>([]);
   const runIds = useRef<Partial<Record<TryTab, number>>>({});
+  // The receipt lookup in flight for each tab. A newer lookup for the tab cancels it.
+  const receiptChecks = useRef<Partial<Record<TryTab, AbortController>>>({});
   const [running, setRunning] = useState<TryTab | null>(null);
   const [results, setResults] = useState<Partial<Record<TryTab, Result>>>({});
   const [errors, setErrors] = useState<Partial<Record<TryTab, TryError>>>({});
@@ -1454,12 +1459,14 @@ export default function TryPage() {
   useEffect(() => {
     mounted.current = true;
     const urls = objectUrls.current;
+    const checks = receiptChecks.current;
     return () => {
       mounted.current = false;
       keyGeneration.current += 1;
       if (recorder.current?.state === "recording") recorder.current.stop();
       stream.current?.getTracks().forEach((track) => track.stop());
       urls.forEach((url) => URL.revokeObjectURL(url));
+      for (const check of Object.values(checks)) check?.abort();
     };
   }, []);
 
@@ -2225,7 +2232,7 @@ export default function TryPage() {
         },
       }));
       // The answer is on screen before its receipt is looked up; the lookup gives up after ten seconds.
-      void timedReceipt(lookup).then((checked) => {
+      lookUpReceipt(tab, lookup, (checked) => {
         if (superseded()) return;
         setResults((current) => current[tab]?.runId === runId
           ? { ...current, [tab]: { ...current[tab]!, ...checked,
@@ -2373,8 +2380,28 @@ export default function TryPage() {
     }
   }
 
+  /**
+   * Looks up a tab's receipt in the background, then hands the answer to
+   * `apply`. A newer lookup for the same tab cancels this one, and leaving
+   * Try cancels it too, so a late answer never overwrites a newer one.
+   */
+  function lookUpReceipt(
+    tab: TryTab,
+    lookup: ReceiptLookup,
+    apply: (checked: ReceiptCheck) => void,
+  ) {
+    receiptChecks.current[tab]?.abort();
+    const controller = new AbortController();
+    receiptChecks.current[tab] = controller;
+    void timedReceipt(lookup, controller).then((checked) => {
+      if (!mounted.current || receiptChecks.current[tab] !== controller) return;
+      delete receiptChecks.current[tab];
+      apply(checked);
+    });
+  }
+
   /** Checks a result's receipt again after the check itself failed. */
-  async function recheckReceipt(tab: TryTab) {
+  function recheckReceipt(tab: TryTab) {
     const lookup = results[tab]?.receiptLookup;
     if (!lookup) return;
     const update = (patch: Partial<Result>) =>
@@ -2385,13 +2412,13 @@ export default function TryPage() {
           : current;
       });
     update({ checkingReceipt: true });
-    const receipt = await timedReceipt(lookup);
-    if (!mounted.current) return;
-    update({
-      checkingReceipt: false,
-      receiptId: receipt.receiptId,
-      ...(receipt.receiptLookup ? {} : { receiptLookup: undefined }),
-    });
+    lookUpReceipt(tab, lookup, (receipt) =>
+      update({
+        checkingReceipt: false,
+        receiptId: receipt.receiptId,
+        ...(receipt.receiptLookup ? {} : { receiptLookup: undefined }),
+      }),
+    );
   }
 
   function editFailedRun(tab: TryTab) {
@@ -2450,8 +2477,7 @@ export default function TryPage() {
           checkingReceipt: true,
         },
       }));
-      void timedReceipt(lookup).then((checked) => {
-        if (!mounted.current) return;
+      lookUpReceipt("workflow", lookup, (checked) => {
         setResults((current) => current.workflow?.runId === previous.runId
           ? { ...current, workflow: { ...current.workflow!, ...checked,
               receiptLookup: checked.receiptLookup, checkingReceipt: false } }
