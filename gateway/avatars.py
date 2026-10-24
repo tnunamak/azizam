@@ -179,7 +179,8 @@ def public_view(person_id: str, record: Mapping[str, Any], *, viewer_id: str, de
         view["made_picture_url"] = _preview_path(SHOWN_GENERATED, record["generated_at"]) if has_current_copy(record) else None
         # The automatic default is being made: the page shows that until its picture is kept or it fails.
         view["generating"] = record["default_job_id"] is not None
-        view["default_due"] = default_due_now
+        if default_due_now is not None:
+            view["default_due"] = default_due_now
     return view
 
 
