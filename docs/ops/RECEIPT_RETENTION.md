@@ -25,10 +25,14 @@ A fresh store starts at installation. Usage marks the month as partial when
 the floor cuts into it; the floor is a conservative boundary, not a reconstruction
 of pre-upgrade history.
 
-Usage spend sums finite, nonnegative `metadata.litellm.response_cost` values
-on the selected receipts. It does not reconcile the provider ledger.
+Usage spend sums finite, nonnegative cost values on the selected receipts: the
+provider's `metadata.litellm.response_cost` when it reported one, otherwise the
+receipt's `cost.usd`. It does not reconcile the provider ledger.
 A zero `remote_spend` with `remote_spend_available=false` means no usable cost
 was recorded. It does not mean that service was free.
+`local_requests` counts requests whose receipt names a backend, records no charge,
+and shows the request was served (it succeeded, or it reached the backend). A
+request that failed before routing is not counted there; it has no recorded cost.
 Check `spend_measured_requests`, `spend_total_requests` and
 `unknown_paid_requests` as well as the total. Retaining all receipts does not
 guarantee that every provider charge has a recorded receipt cost.
