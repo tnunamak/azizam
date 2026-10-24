@@ -253,6 +253,11 @@ test("Home and Library render a frame from posterless video", async ({
       },
     });
   });
+  // The live snapshot, with the recent chats earlier tests left on the shared gateway taken out: this test is about the video tile.
+  await page.route("**/me/api/home", async (route) => {
+    const response = await route.fetch();
+    await fulfilJson(route, { ...(await response.json()), recent_chats: [] }, { response });
+  });
   await page.route("**/me/api/media?**", (route) =>
     fulfilJson(route, {
         assets: [
