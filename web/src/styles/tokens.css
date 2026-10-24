@@ -47,7 +47,19 @@
   --media-badge: rgb(5 15 18 / 64%);
   --media-badge-foreground: #ffffff;
   --media-badge-hover: rgb(5 15 18 / 80%);
+  /* The play disc on an audio face: the dark scrim on the light face, a white disc on the dark one. */
+  --media-disc: rgb(5 15 18 / 64%);
+  --media-disc-foreground: #ffffff;
   --subtle-foreground: #4a5c62;
+  /* Home's composer surface, and Make: ink at rest so it is always findable, the link colour once there is
+     something to make. */
+  --composer: #ffffff;
+  --composer-edge: var(--border);
+  --composer-edge-hover: var(--input);
+  --make-rest: #10232a;
+  --make-rest-foreground: #ffffff;
+  --make: #0a6676;
+  --make-foreground: #ffffff;
 
   /* States: always paired with an icon and a word. D1.5: each state has
      a text colour (4.5:1 or better on page and card) and a fill for
@@ -104,13 +116,13 @@
   --radius-card: 8px; /* cards, panels, dialogs and popovers */
   --radius-badge: 4px; /* status badges and chips */
   --radius-media: 6px; /* creation tiles */
-  --radius-composer: 14px; /* Home's composer only: the one object the page leads with */
+  --radius-composer: 18px; /* Home's composer only: the one object the page leads with */
 
   /* Elevation: borders build structure; shadows only lift overlays */
   --shadow-overlay: 0 16px 48px rgb(8 28 34 / 18%), 0 2px 6px rgb(8 28 34 / 8%);
   --shadow-float: 0 6px 20px rgb(8 28 34 / 14%);
-  /* Home's composer: a low, wide lift so the one place to start reads above the page (DESIGN "Composer") */
-  --shadow-composer: 0 1px 2px rgb(8 28 34 / 6%), 0 10px 30px -6px rgb(8 28 34 / 12%);
+  /* Home's composer: a hairline and a soft lift so the one place to start reads above the page (DESIGN "Composer") */
+  --shadow-composer: 0 1px 2px rgb(15 40 50 / 6%), 0 8px 24px -8px rgb(15 40 50 / 14%);
 
   /* Motion */
   --motion-duration: 200ms;
@@ -128,7 +140,8 @@
   --page-pad: 2rem;
   --page-top: 2rem;
   --content-read: 720px; /* settings, detail, Status and the Try form */
-  --content-home: 960px; /* Home's one column: the greeting, the composer and the sections below share its edges */
+  --content-home: 960px; /* Home's one column: its sections share these edges */
+  --content-composer: 760px; /* Home's composer, centred inside the column */
   --space-section: 2rem; /* between sections, always */
   --space-heading: 0.75rem; /* a section heading to its content */
   --space-title: 1.5rem; /* the page header to the first section */
@@ -196,6 +209,16 @@
   --media-stage: #050f12;
   --media-stage-foreground: #e3eef0;
   --subtle-foreground: #9fb2b9;
+  --media-disc: rgb(255 255 255 / 85%);
+  --media-disc-foreground: #0c1f25;
+  /* 5% lighter than the page, with no edge (DESIGN "Composer"). */
+  --composer: color-mix(in srgb, var(--background) 95%, white);
+  --composer-edge: transparent;
+  --composer-edge-hover: transparent;
+  --make-rest: #e3ecee;
+  --make-rest-foreground: #0c1f25;
+  --make: #8cc8cb;
+  --make-foreground: #0c1f25;
   --success: #6fd39b;
   --success-tint: #12352a;
   --success-fill: #4cc283;
@@ -246,6 +269,11 @@
   --text-title--line-height: 2rem;
   --text-title--font-weight: 600;
   --text-title--letter-spacing: -0.015em;
+  /* Home's greeting: below the composer in rank, so medium weight (DESIGN "Home"). */
+  --text-greeting: 1.75rem;
+  --text-greeting--line-height: 2.125rem;
+  --text-greeting--font-weight: 500;
+  --text-greeting--letter-spacing: -0.015em;
   --text-verdict: 1.25rem;
   --text-verdict--line-height: 1.75rem;
   --text-verdict--font-weight: 600;
@@ -357,6 +385,15 @@
   --color-capability-decide: var(--capability-decide);
   --color-capability-embed: var(--capability-embed);
   --color-overlay: var(--overlay);
+  --color-media-disc: var(--media-disc);
+  --color-media-disc-foreground: var(--media-disc-foreground);
+  --color-composer: var(--composer);
+  --color-composer-edge: var(--composer-edge);
+  --color-composer-edge-hover: var(--composer-edge-hover);
+  --color-make-rest: var(--make-rest);
+  --color-make-rest-foreground: var(--make-rest-foreground);
+  --color-make: var(--make);
+  --color-make-foreground: var(--make-foreground);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);

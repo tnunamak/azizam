@@ -30,7 +30,7 @@ import { productApi, type ModelsCatalog } from "@/lib/product-api";
 import { modelDisplayName, prettifyModelId } from "@/lib/model-name";
 import type { CapabilityStateKey, CapabilityView } from "@/lib/capability-state";
 import type { HomeCapability } from "./home-api";
-import { storeHomeHandoff } from "./handoff";
+import { rememberMade, storeHomeHandoff } from "./handoff";
 import {
   capabilityIs,
   capabilityLabel,
@@ -105,24 +105,35 @@ function useMoreToRight(ref: RefObject<HTMLElement | null>, count: number): bool
   return more;
 }
 
-/** A capability that is not working: its word in muted type, with a small dot. It never boxes in the name. */
-function StateNote({ state, word }: { state: CapabilityStateKey; word: string }) {
+/**
+ * A capability that is not working: a small dot after its name, and its word for screen readers. Choosing
+ * it explains the fault in the composer. On a phone the owner's gateway row is the one place the fault
+ * shows, so the owner's dot stays off there.
+ */
+function StateNote({ state, word, phoneQuiet }: { state: CapabilityStateKey; word: string; phoneQuiet: boolean }) {
   return (
-    <span className="text-muted-foreground inline-flex items-center gap-1.5 font-normal">
+    <span className={cn("inline-flex items-center", phoneQuiet && "max-sm:hidden")}>
       <span
         aria-hidden="true"
         className={cn("size-1.5 shrink-0 rounded-full", state === "down" ? "bg-destructive" : "bg-muted-foreground/60")}
       />
-      {word}
+      <span className="sr-only">{word}</span>
     </span>
   );
 }
 
+/** The row the composer works with: the one chosen, else the first that can run now, else the first. */
+export function selectedRow(rows: HomeCapability[], views: CapabilityView[], chosen: string | null): HomeCapability | null {
+  const viewByKind = new Map(views.map((view) => [view.key, view]));
+  const usableRow = rows.find((row) => USABLE.has(viewByKind.get(kindOf(row))?.state ?? "ready"));
+  return rows.find((row) => kindOf(row) === chosen) ?? usableRow ?? rows[0] ?? null;
+}
+
 export function ChooserSkeleton() {
   return (
-    <div role="status" aria-label="Loading what you can make" aria-busy="true" className="flex min-w-0 gap-1 overflow-hidden">
+    <div role="status" aria-label="Loading what you can make" aria-busy="true" className="flex min-w-0 gap-2 overflow-hidden sm:justify-center">
       {[0, 1, 2, 3, 4].map((item) => (
-        <Skeleton key={item} className="rounded-control h-7 w-20 shrink-0 motion-reduce:animate-none max-sm:h-11" />
+        <Skeleton key={item} className="h-8 w-23 shrink-0 rounded-full motion-reduce:animate-none max-sm:h-11" />
       ))}
     </div>
   );
@@ -142,6 +153,7 @@ export function HomeComposer({
   paidOff,
   kind: chosenKind,
   onKindChange,
+  chooser = true,
 }: {
   rows: HomeCapability[];
   views: CapabilityView[];
@@ -153,11 +165,12 @@ export function HomeComposer({
   /** The kind of work chosen (the page owns the choice, so a list row can choose it too). */
   kind: string | null;
   onKindChange: (kind: string) => void;
+  /** Whether the chips under the box show. A first visit's cards are the chooser instead. */
+  chooser?: boolean;
 }) {
   const router = useRouter();
   const viewByKind = new Map(views.map((view) => [view.key, view]));
-  const usableRow = rows.find((row) => USABLE.has(viewByKind.get(kindOf(row))?.state ?? "ready"));
-  const selected = rows.find((row) => kindOf(row) === chosenKind) ?? usableRow ?? rows[0] ?? null;
+  const selected = selectedRow(rows, views, chosenKind);
   const kind = selected ? kindOf(selected) : "";
   const recommended = selected?.use_name ?? selected?.recommended_model ?? selected?.title ?? null;
   const [modelChoice, setModelChoice] = useState<Record<string, string>>({});
@@ -197,7 +210,7 @@ export function HomeComposer({
       value: kindOf(row),
       label: capabilityLabel(row),
       icon: capabilityMeta(kindOf(row)).icon,
-      badge: state && !USABLE.has(state.state) ? <StateNote state={state.state} word={state.word} /> : null,
+      badge: state && !USABLE.has(state.state) ? <StateNote state={state.state} word={state.word} phoneQuiet={owner} /> : null,
     };
   });
   const shown = options.slice(0, CHOOSER_SHOWN);
@@ -210,6 +223,7 @@ export function HomeComposer({
     if (!canMake || !model || !selected) return;
     const text = recording ? "" : prompt.trim();
     storeHomeHandoff({ capability: kind, model, prompt: text });
+    if (text) rememberMade({ capability: kind, prompt: text });
     const params = new URLSearchParams({ capability: kind, model });
     // Try runs a kind without a tab of its own through its workflow, so the chosen workflow must travel too.
     const workflow = model === recommended ? (selected.workflow ?? null) : (catalogRowFor(model)?.workflow ?? null);
@@ -231,148 +245,170 @@ export function HomeComposer({
   };
   const placeholder = promptPlaceholder(kind);
 
+  const chips = loading || !selected ? (
+    <ChooserSkeleton />
+  ) : (
+    <div className="flex min-w-0 items-center gap-2 sm:justify-center">
+      {/* On a phone the row scrolls chip by chip; the fade on its trailing edge says there is more. */}
+      <div className="relative flex min-w-0">
+        <Segmented<string>
+          ref={chooserRef}
+          label="What to make"
+          value={kind}
+          options={shown}
+          onChange={onKindChange}
+          scroll
+          pill
+        />
+        {moreToRight ? (
+          <span
+            aria-hidden="true"
+            data-slot="chooser-fade"
+            className="from-background pointer-events-none absolute inset-y-0 right-0 w-6 bg-linear-to-l to-transparent"
+          />
+        ) : null}
+      </div>
+      {more.length ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" className={cn(CHIP, "text-muted-foreground")}>
+              More
+              <ChevronDown aria-hidden="true" className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuRadioGroup value={kind} onValueChange={onKindChange}>
+              {more.map((option) => (
+                <DropdownMenuRadioItem key={option.value} value={option.value}>
+                  {option.label}
+                  {option.badge}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+    </div>
+  );
+
   return (
-    <ComposerFrame>
-      <div className="flex min-w-0 items-center gap-1 px-2 pt-2">
-        {loading || !selected ? (
-          <ChooserSkeleton />
+    <div className="mx-auto w-full max-w-(--content-composer) min-w-0 space-y-3">
+      <ComposerFrame>
+        {notice ? (
+          <p role="status" className="text-meta flex flex-wrap items-center gap-x-3 gap-y-2 px-5 pt-4">
+            <span>{notice.text}</span>
+            {notice.action ? (
+              <Link
+                prefetch={false}
+                href={notice.action.href}
+                className="text-link inline-flex items-center font-medium underline-offset-4 hover:underline max-sm:min-h-11"
+              >
+                {notice.action.label}
+              </Link>
+            ) : null}
+          </p>
+        ) : null}
+        {recording ? (
+          <p className="text-heading text-muted-foreground min-h-24 px-5 pt-4 font-normal sm:min-h-26">
+            Transcription works on a recording. Open Try to choose one.
+          </p>
         ) : (
           <>
-            {/* On a phone the row scrolls inside itself; the fade on its trailing edge says there is more. */}
-            <div className="relative flex min-w-0">
-              <Segmented<string>
-                ref={chooserRef}
-                label="What to make"
-                value={kind}
-                options={shown}
-                onChange={onKindChange}
-                scroll
-              />
-              {moreToRight ? (
-                <span
-                  aria-hidden="true"
-                  data-slot="chooser-fade"
-                  className="from-card pointer-events-none absolute inset-y-0 right-0 w-10 bg-linear-to-l to-transparent"
-                />
-              ) : null}
-            </div>
-            {more.length ? (
-              <DropdownMenu>
+            <label htmlFor="home-prompt" className="sr-only">
+              {placeholder}
+            </label>
+            {/* One box for the whole page: it keeps what was typed while the list loads. */}
+            <Textarea
+              id="home-prompt"
+              rows={3}
+              placeholder={placeholder}
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              onKeyDown={onKeyDown}
+              className="text-heading placeholder:text-muted-foreground min-h-24 resize-none border-0 bg-transparent px-5 pt-4 pb-1 font-normal shadow-none focus-visible:ring-0 sm:min-h-26"
+            />
+          </>
+        )}
+        <form onSubmit={startWork} className="flex items-center gap-2 px-3 pb-3">
+          {/* The model and what a run costs read as one group; on a phone the facts sit under the model. */}
+          <div className="flex min-w-0 flex-1 flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-3">
+            {selected ? (
+              <DropdownMenu onOpenChange={setPickerOpen}>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="text-muted-foreground shrink-0">
-                    More
-                    <ChevronDown aria-hidden="true" />
-                  </Button>
+                  <button type="button" className={cn(CHIP, "bg-muted hover:bg-accent max-w-full min-w-0 border-transparent sm:max-w-[60%]")}>
+                    <span className="truncate">{model ? nameOf(model) : ""}</span>
+                    <ChevronDown aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
+                  </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuRadioGroup value={kind} onValueChange={onKindChange}>
-                    {more.map((option) => (
-                      <DropdownMenuRadioItem key={option.value} value={option.value}>
-                        {option.label}
-                        {option.badge}
+                <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
+                  <DropdownMenuRadioGroup
+                    value={model ?? ""}
+                    onValueChange={(value) => setModelChoice((current) => ({ ...current, [kind]: value }))}
+                  >
+                    {pickerNames.map((name) => (
+                      <DropdownMenuRadioItem key={name} value={name}>
+                        {nameOf(name)}
                       </DropdownMenuRadioItem>
                     ))}
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
+            ) : (
+              <Skeleton className="h-8 w-28 rounded-full motion-reduce:animate-none" />
+            )}
+            {factsLine ? (
+              <p className="text-muted-foreground text-meta min-w-0 truncate max-sm:px-1">{factsLine}</p>
             ) : null}
-          </>
-        )}
-      </div>
-      {notice ? (
-        <p role="status" className="text-meta flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-3">
-          <span>{notice.text}</span>
-          {notice.action ? (
-            <Link
-              prefetch={false}
-              href={notice.action.href}
-              className="text-link inline-flex items-center font-medium underline-offset-4 hover:underline max-sm:min-h-11"
-            >
-              {notice.action.label}
-            </Link>
-          ) : null}
-        </p>
-      ) : null}
-      {recording ? (
-        <p className="text-meta text-muted-foreground px-4 pt-3 pb-6">Transcription works on a recording. Open Try to choose one.</p>
-      ) : (
-        <>
-          <label htmlFor="home-prompt" className="sr-only">
-            {placeholder}
-          </label>
-          {/* One box for the whole page: it keeps what was typed while the list loads. */}
-          <Textarea
-            id="home-prompt"
-            rows={2}
-            placeholder={placeholder}
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            onKeyDown={onKeyDown}
-            className="text-body placeholder:text-muted-foreground min-h-20 resize-none border-0 bg-transparent px-4 pt-3 pb-1 shadow-none focus-visible:ring-0 sm:min-h-16"
-          />
-        </>
-      )}
-      <form onSubmit={startWork} className="flex items-center gap-2 px-2 pb-2">
-        {/* The model and what a run costs read as one group; on a phone the facts sit under the model. */}
-        <div className="flex min-w-0 flex-1 flex-col items-start sm:flex-row sm:items-center sm:gap-2">
-          {selected ? (
-            <DropdownMenu onOpenChange={setPickerOpen}>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="max-w-full min-w-0 justify-start font-medium sm:max-w-[60%]">
-                  <span className="truncate">{model ? nameOf(model) : ""}</span>
-                  <ChevronDown aria-hidden="true" className="text-muted-foreground shrink-0" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
-                <DropdownMenuRadioGroup
-                  value={model ?? ""}
-                  onValueChange={(value) => setModelChoice((current) => ({ ...current, [kind]: value }))}
-                >
-                  {pickerNames.map((name) => (
-                    <DropdownMenuRadioItem key={name} value={name}>
-                      {nameOf(name)}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+          </div>
+          {recording ? (
+            <Button type="button" className="shrink-0" disabled={!runnable || !model} onClick={() => startWork()}>
+              Open in Try
+            </Button>
           ) : (
-            <Skeleton className="ml-1 h-8 w-28 motion-reduce:animate-none" />
+            <button
+              type="submit"
+              data-slot="button"
+              data-variant="default"
+              aria-disabled={!canMake}
+              onClick={(event) => {
+                if (!canMake) event.preventDefault();
+              }}
+              className={cn(MAKE, canMake ? MAKE_READY : MAKE_RESTING)}
+            >
+              {verb}
+              <ArrowUp aria-hidden="true" className="size-4" />
+            </button>
           )}
-          {factsLine ? (
-            <p className="text-muted-foreground text-meta min-w-0 truncate max-sm:-mt-2 max-sm:px-2.5 max-sm:pb-1.5">{factsLine}</p>
-          ) : null}
-        </div>
-        {recording ? (
-          <Button type="button" className="shrink-0" disabled={!runnable || !model} onClick={() => startWork()}>
-            Open in Try
-          </Button>
-        ) : (
-          <Button type="submit" className={cn("shrink-0", MAKE_RESTING)} disabled={!canMake} aria-label={verb}>
-            {verb}
-            <ArrowUp aria-hidden="true" />
-          </Button>
-        )}
-      </form>
-    </ComposerFrame>
+        </form>
+      </ComposerFrame>
+      {chooser ? chips : null}
+    </div>
   );
 }
 
-/**
- * Before there is anything to send, Make rests as a pale tint of the action colour rather than a
- * washed-out grey (that read as broken). It is still the page's one primary button, so it keeps its variant.
- */
-const MAKE_RESTING = "disabled:bg-primary/12! disabled:text-link! disabled:opacity-100!";
+/** A pill in the composer's world: the model chip, the chooser's More and (in Segmented) the chooser. */
+const CHIP =
+  "border-border text-foreground text-meta hover:bg-muted inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 font-medium whitespace-nowrap transition-colors duration-(--motion-fast) max-sm:min-h-11";
 
 /**
- * The page's one lifted object (DESIGN "Composer"): a hairline at rest, the 3:1 control edge on hover and
- * the focus colour while someone is typing in it.
+ * Make is always findable: a solid ink pill at rest (it says what it will do, and pressing it does nothing
+ * yet: aria-disabled, never a faded button), then the action colour once there is something to make.
+ */
+const MAKE =
+  "focus-visible:ring-ring inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full px-4 text-meta font-semibold whitespace-nowrap transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none max-sm:min-h-11 xl:h-9";
+const MAKE_RESTING = "bg-make-rest text-make-rest-foreground cursor-default";
+const MAKE_READY = "bg-make text-make-foreground hover:bg-make/90 cursor-pointer";
+
+/**
+ * The page's one lifted object (DESIGN "Composer"). Light: a hairline and a soft shadow, the 3:1 control
+ * edge on hover. Dark: a surface 5% lighter than the page, with no edge. Both show the focus colour while
+ * someone is typing in it.
  */
 function ComposerFrame({ children }: { children: ReactNode }) {
   return (
     <div
       data-slot="composer"
-      className="bg-card border-border dark:border-input/40 hover:border-input focus-within:border-ring! rounded-composer shadow-composer w-full min-w-0 border transition-colors duration-(--motion-fast)"
+      className="bg-composer border-composer-edge hover:border-composer-edge-hover focus-within:border-ring! rounded-composer shadow-composer w-full min-w-0 border transition-colors duration-(--motion-fast)"
     >
       {children}
     </div>
