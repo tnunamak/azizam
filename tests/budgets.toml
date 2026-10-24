@@ -377,7 +377,11 @@ pytest = 17242
 # passed (2026-10-23). Measured value.
 # Sign-in round 3: the round before added six cases after this ceiling was set (page.spec.tsx +1, chooser.spec.tsx +5).
 # This round adds none. `vitest list`: 231 files, 3439 cases (measured 2026-10-23).
-vitest = 3439
+# Sign-in round 4 (2026-10-24): the round-3 commits after the 3439 measure added six more (page.spec.tsx +4,
+# chooser.spec.tsx +2), and this round adds three: page.spec.tsx +1 (focus on the password field after a refusal) and
+# components/shell/sign-in-frame.spec.tsx +2 (the footer waits while the page is busy). Full run: 231 files, 3448 cases,
+# all passed.
+vitest = 3448
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -422,7 +426,12 @@ vitest = 3439
 # the 44 px targets, and a 40-character name, at 1440 and 390 px) and +9 in e2e/signin-built.spec.ts (the round-3 captures,
 # skipped unless SIGNIN_SHOTS_DIR is set). --list: playwright.config.ts 605, live-data 3, household 18: 626, measured
 # 2026-10-23.
-playwright = 626
+# Sign-in round 4 (2026-10-24): +12 cases in e2e/signin-shell.spec.ts (focus rings on Email, the remember checkbox and the
+# owner's link, in light and dark; the forget link beside the owner's link; the theme switch's icon; the loading column at
+# 1440 and 390 px; the footer's wait while a provider opens and while a password sign-in runs) and +4 in
+# e2e/signin-built.spec.ts (the password form while it signs in, and the focus rings on Email, the remember checkbox and
+# the owner's link). --list: playwright.config.ts 621, live-data 3, household 18: 642, measured 2026-10-24.
+playwright = 642
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
