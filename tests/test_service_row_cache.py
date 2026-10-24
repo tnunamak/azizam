@@ -126,3 +126,54 @@ def test_a_failing_service_in_a_shared_probe_does_not_fail_a_reader_of_another_s
     assert [(row["key"], row["status"]) for row in only_b] == [("b", "up")]
     assert sorted((row["key"], row["status"]) for row in both) == [("a", "unknown"), ("b", "up")]
     assert next(row for row in both if row["key"] == "a")["last_error"] == "RuntimeError"
+
+
+def test_a_finished_fallback_probe_leaves_a_newer_probe_registered_for_its_service(monkeypatch):
+    """Reader 1's shared probe fails, and the probe it makes for "chat" on its own fails too. While that fallback probe
+    is in flight, reader 2 finds "chat" cold and starts a newer probe. When the fallback finishes, the newer probe must
+    stay registered, so reader 3 shares it and does not start a third probe."""
+    proxy._SERVICE_ROW_CACHE.clear()
+    proxy._SERVICE_ROW_PROBES.clear()
+    calls: list[list[str]] = []
+
+    async def scenario():
+        fallback_started = asyncio.Event()
+        newer_started = asyncio.Event()
+        fallback_gate = asyncio.Event()
+        newer_gate = asyncio.Event()
+
+        async def probe(config):
+            calls.append(sorted(config["backends"]))
+            if len(calls) == 1:
+                raise RuntimeError("shared probe broke")
+            if len(calls) == 2:
+                fallback_started.set()
+                await fallback_gate.wait()
+                raise RuntimeError("fallback probe broke")
+            if len(calls) == 3:
+                newer_started.set()
+                await newer_gate.wait()
+            return [{"service_id": "chat", "key": "chat", "live_status": "up", "status": "up", "source": "http"}]
+
+        monkeypatch.setattr(status_endpoint, "_backend_grid", probe)
+        services = {"chat": {"key": "chat"}}
+        reader_1 = asyncio.ensure_future(proxy._service_rows(services))
+        await asyncio.wait_for(fallback_started.wait(), timeout=5)
+        reader_2 = asyncio.ensure_future(proxy._service_rows(services))
+        await asyncio.wait_for(newer_started.wait(), timeout=5)
+        newer = proxy._SERVICE_ROW_PROBES["chat"]
+        fallback_gate.set()
+        fallback_rows = await reader_1
+        newer_still_registered = proxy._SERVICE_ROW_PROBES.get("chat") is newer
+        reader_3 = asyncio.ensure_future(proxy._service_rows(services))
+        await asyncio.sleep(0)
+        newer_gate.set()
+        return fallback_rows, newer_still_registered, await reader_2, await reader_3
+
+    fallback_rows, newer_still_registered, newer_rows, third_rows = asyncio.run(
+        asyncio.wait_for(scenario(), timeout=30))
+
+    assert [(row["key"], row["status"]) for row in fallback_rows] == [("chat", "unknown")]
+    assert newer_still_registered, "the finished fallback probe must not unregister the newer probe for its service"
+    assert [row["status"] for row in newer_rows + third_rows] == ["up", "up"]
+    assert len(calls) == 3, "reader 3 should share reader 2's probe, not start a third one"
