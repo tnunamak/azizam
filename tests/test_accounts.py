@@ -446,6 +446,22 @@ def test_both_with_no_provider_turned_on_reads_as_built_in_only(account_db, acco
     assert options["built_in"] is True and options["oidc"] is False
 
 
+def test_options_name_the_owner_only_by_a_clean_display_name(account_db, account_client):
+    # The sign-in page says who shares the gateway. An email is an identity, never a name to publish; with no clean name
+    # the answer is empty, and the page leaves the line out instead of printing a placeholder.
+    path, _ = account_db
+    client, _ = account_client
+    assert client.get("/auth/api/options").json()["owner_name"] == ""
+    emailed = admin_store.upsert_oidc_user("https://idp.example.test", "emailed", email="sam@example.test",
+                                           display_name="sam@example.test", path=path)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=emailed["id"], now=10**10, path=path)
+    assert client.get("/auth/api/options").json()["owner_name"] == ""
+    named = admin_store.upsert_oidc_user("https://idp.example.test", "named", email="robin@example.test",
+                                         display_name=" Sam Okafor ", path=path)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=named["id"], now=10**10 + 1, path=path)
+    assert client.get("/auth/api/options").json()["owner_name"] == "Sam Okafor"
+
+
 def test_options_do_not_report_fresh_sign_in_until_account_switcher_a2_ships(account_client):
     # The sign-in page shows its refused-sign-in screen only when the gateway says every single sign-on is fresh.
     client, _ = account_client
