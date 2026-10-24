@@ -25,6 +25,9 @@ import time
 from pathlib import Path
 from typing import Any, Mapping
 
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from gateway import admin_store, avatars, session_guard, session_policy, trusted_addresses
 from gateway import receipt_store
 from gateway.content_access import Own, ReceiptRecord, Viewer, decide
@@ -52,8 +55,8 @@ __all__ = [
 
 
 @lru_cache(maxsize=128)
-def _session_view_key(path: Path) -> bytes:
-    """A dedicated persistent key, purpose-separated once per process/store.
+def _server_secret(path: Path) -> bytes:
+    """The store's dedicated persistent 32-byte secret. Each purpose key is derived from it under its own label.
 
     Publish a complete private file without replacing a concurrent winner.
     Never follow a leaf symlink, including dangling links.
@@ -78,14 +81,24 @@ def _session_view_key(path: Path) -> bytes:
         key = handle.read(33)
     if len(key) != 32:
         raise ValueError("session view key must contain 32 bytes")
-    return hmac.new(key, b"azizam.session-view.v1", hashlib.sha256).digest()
+    return key
+
+
+def _session_view_key(path: Path) -> bytes:
+    """The key that makes session view ids: the secret at ``path``, derived under the session-view label."""
+    return hmac.new(_server_secret(path), b"azizam.session-view.v1", hashlib.sha256).digest()
+
+
+def _session_view_secret_path(admin_path: Path) -> Path:
+    """The secret file beside the admin store. The session-view and activity-cursor keys both derive from it."""
+    return admin_path.parent / ".session_view_secret"
 
 
 def session_view_key_problem(path: Path) -> str | None:
     """Why the session view key cannot be used right now, or None when it can. A key that cannot be read is not
     cached, so the next call reads the file again and a repaired file takes effect on the next request."""
     try:
-        _session_view_key(path.parent / ".session_view_secret")
+        _session_view_key(_session_view_secret_path(path))
     except (OSError, ValueError) as exc:
         return exc.__class__.__name__
     return None
@@ -96,7 +109,7 @@ def _session_view_field(session: AdminSession, path: Path) -> dict[str, str]:
     sessions included: the browser's pages compare it with the sign-in they show (web/src/lib/session-end.ts).
     When it cannot be made, the account is unavailable (503) rather than signed in without one."""
     try:
-        key = _session_view_key(path.parent / ".session_view_secret")
+        key = _session_view_key(_session_view_secret_path(path))
     except (OSError, ValueError):
         logging.getLogger(__name__).error("Session view id unavailable: dedicated key cannot be read")
         raise UserPortalError("session_view_unavailable",
@@ -401,13 +414,14 @@ def build_user_activity_snapshot(
     limit: int = USER_ACTIVITY_DEFAULT_LIMIT,
     path: Path = admin_store.DB_PATH,
     receipts_path: Path = receipt_store.DB_PATH,
-    before: tuple[int, str] | None = None,
+    cursor: str | None = None,
 ) -> dict[str, Any]:
     """Return the recent receipts the signed-in person made (D51).
 
     Owning an App does not make its requests the owner's. The candidates are the Apps the person owns and the
     receipts the person made, through any App. Each row is then read by its maker. Candidates are read newest first
-    in batches, each authorized before it counts toward the page; ``before`` resumes after a previous page's cursor.
+    in batches, each authorized before it counts toward the page. ``cursor`` is a previous page's ``next_cursor``;
+    one this person was not issued, or one that is malformed or expired, is refused with a 400.
     """
     if session is None:
         return {"authenticated": False, "receipts": []}
@@ -422,6 +436,7 @@ def build_user_activity_snapshot(
 
     safe_limit = max(1, min(int(limit or USER_ACTIVITY_DEFAULT_LIMIT), USER_ACTIVITY_MAX_LIMIT))
     user_id = str(user["id"])
+    before = _open_activity_cursor(cursor, viewer_id=user_id, admin_path=path) if cursor else None
     owned = _owned_app_ids(user_id, path=path)
     viewer = Viewer(person_id=user_id, auth_kind="session")
     sources = [_newest_receipts(receipts_path, app_ids=owned)] if owned else []
@@ -452,24 +467,78 @@ def build_user_activity_snapshot(
         "scope": "me",
         # A page ends at its size or at the scan limit. The cursor resumes after the last receipt read.
         "has_more": has_more,
-        "next_cursor": encode_activity_cursor(scan.last_key) if has_more and scan.last_key else None,
+        "next_cursor": (_seal_activity_cursor(scan.last_key, viewer_id=user_id, admin_path=path)
+                        if has_more and scan.last_key else None),
     }
 
 
-def encode_activity_cursor(key: tuple[int, str]) -> str:
-    raw = json.dumps({"created_at": key[0], "request_id": key[1]}, separators=(",", ":"))
-    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
+# An activity cursor is sealed with AES-GCM under a key derived from the store's secret, and it is bound to the person it
+# was issued to. The client cannot read the position it names, cannot take it to another person's feed, and cannot use
+# it after ACTIVITY_CURSOR_TTL_SECONDS. Every refused cursor gets the same 400.
+ACTIVITY_CURSOR_TTL_SECONDS = 60 * 60
+_ACTIVITY_CURSOR_LABEL = b"azizam.activity-cursor.v1"
+_ACTIVITY_CURSOR_NONCE_BYTES = 12
+_ACTIVITY_CURSOR_MAX_CHARS = 1024
 
 
-def decode_activity_cursor(raw: str | None) -> tuple[int, str] | None:
-    """The cursor a feed page returned, or None for the first page. A malformed cursor reads as the first page."""
-    if not raw:
-        return None
+def _activity_now() -> int:
+    return int(time.time())
+
+
+def _activity_cursor_aad(viewer_id: str) -> bytes:
+    return _ACTIVITY_CURSOR_LABEL + b"\0" + viewer_id.encode("utf-8")
+
+
+def _activity_cursor_key(admin_path: Path) -> bytes:
+    secret = _server_secret(_session_view_secret_path(admin_path))
+    return hmac.new(secret, _ACTIVITY_CURSOR_LABEL, hashlib.sha256).digest()
+
+
+def _activity_cursor_key_or_unavailable(admin_path: Path) -> bytes:
     try:
-        data = json.loads(base64.urlsafe_b64decode((raw + "=" * (-len(raw) % 4)).encode("ascii")).decode("utf-8"))
-        return int(data["created_at"]), str(data["request_id"])
-    except (KeyError, TypeError, ValueError):
-        return None
+        return _activity_cursor_key(admin_path)
+    except (OSError, ValueError):
+        logging.getLogger(__name__).error("Activity cursor unavailable: dedicated key cannot be read")
+        raise UserPortalError("activity_unavailable", "Your activity cannot be loaded right now. Try again.",
+                              status_code=503) from None
+
+
+def _seal_activity_cursor(position: tuple[int, str], *, viewer_id: str, admin_path: Path) -> str:
+    plaintext = json.dumps(
+        {"created_at": position[0], "exp": _activity_now() + ACTIVITY_CURSOR_TTL_SECONDS, "request_id": position[1]},
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    nonce = secrets.token_bytes(_ACTIVITY_CURSOR_NONCE_BYTES)
+    key = _activity_cursor_key_or_unavailable(admin_path)
+    sealed = AESGCM(key).encrypt(nonce, plaintext, _activity_cursor_aad(viewer_id))
+    return base64.urlsafe_b64encode(nonce + sealed).decode("ascii").rstrip("=")
+
+
+def _open_activity_cursor(cursor: str, *, viewer_id: str, admin_path: Path) -> tuple[int, str]:
+    """The feed position a cursor names. A cursor that is malformed, altered, issued to someone else or expired gets the
+    same 400, so the answer does not say which check failed."""
+    key = _activity_cursor_key_or_unavailable(admin_path)
+    refused = UserPortalError("invalid_cursor", "This page of activity is no longer valid. Load the newest page again.",
+                              status_code=400)
+    if len(cursor) > _ACTIVITY_CURSOR_MAX_CHARS:
+        raise refused
+    try:
+        blob = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+    except ValueError:
+        raise refused from None
+    # Only the spelling this server writes is accepted, so a cursor that decodes to the same bytes is refused too.
+    if base64.urlsafe_b64encode(blob).decode("ascii").rstrip("=") != cursor:
+        raise refused
+    try:
+        plaintext = AESGCM(key).decrypt(blob[:_ACTIVITY_CURSOR_NONCE_BYTES], blob[_ACTIVITY_CURSOR_NONCE_BYTES:],
+                                        _activity_cursor_aad(viewer_id))
+        data = json.loads(plaintext)
+        created_at, request_id, expires_at = data["created_at"], data["request_id"], data["exp"]
+    except (KeyError, TypeError, ValueError, InvalidTag):
+        raise refused from None
+    if not isinstance(expires_at, int) or expires_at < _activity_now():
+        raise refused
+    return created_at, request_id
 
 
 def _newest_receipts(receipts_path: Path, **filters: Any) -> Callable[[tuple[int, str] | None, int], list[dict[str, Any]]]:

@@ -1,10 +1,12 @@
 """The activity feed reads a bounded number of receipts per request (OV3 slice 1).
 
 Candidates are read newest first in batches, authorized as they arrive, and a request stops at its page size or at
-``USER_ACTIVITY_SCAN_LIMIT`` rows read. A cursor resumes after the last row read, with no gap and no repeat.
+``USER_ACTIVITY_SCAN_LIMIT`` rows read. A cursor resumes after the last row read, with no gap and no repeat. The cursor
+is sealed to the person it was issued to, so every refused cursor gets the same 400.
 """
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 from contextlib import closing
@@ -18,6 +20,7 @@ from gateway.admin_oidc import AdminSession
 
 N_ROWS = 2400
 READABLE_EVERY = 400  # with the newest row first, rows 0, 400, ... are the person's own; the rest are a member's
+REQUEST_IDS = [f"req_{index:05d}" for index in range(N_ROWS)]
 
 
 @pytest.fixture
@@ -29,11 +32,14 @@ def feed(tmp_path: Path, monkeypatch):
     bob = admin_store.upsert_oidc_user("https://people.test", "bob", path=admin_path, email="bob@example.test")
     alice_app = admin_store.create_app("Desktop", kind="personal", owner_user_id=alice["id"],
                                        access_plan="person", path=admin_path)["id"]
-    session = AdminSession(subject=alice["id"], email=alice["email"], role="none", issued_at=1, expires_at=4_000_000_000)
+    sessions = {
+        person: AdminSession(subject=user["id"], email=user["email"], role="none", issued_at=1, expires_at=4_000_000_000)
+        for person, user in (("alice", alice), ("bob", bob))
+    }
     rows = []
     readable: list[str] = []
     for index in range(N_ROWS):
-        request_id = f"req_{index:05d}"
+        request_id = REQUEST_IDS[index]
         maker = alice["id"] if index % READABLE_EVERY == 0 else bob["id"]
         if maker == alice["id"]:
             readable.append(request_id)
@@ -57,19 +63,28 @@ def feed(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(receipt_store, "recent", counting_recent)
 
-    def page(limit: int = 5, before: tuple[int, str] | None = None) -> dict[str, Any]:
+    def page(limit: int = 5, cursor: str | None = None, viewer: str = "alice") -> dict[str, Any]:
         scanned.clear()
         snapshot = user_runtime.build_user_activity_snapshot(
-            session, limit=limit, path=admin_path, receipts_path=receipts_path, before=before)
+            sessions[viewer], limit=limit, path=admin_path, receipts_path=receipts_path, cursor=cursor)
         snapshot["_scanned"] = sum(scanned)
         return snapshot
 
     return page, readable
 
 
-def _cursor_key(snapshot: dict[str, Any]) -> tuple[int, str] | None:
-    raw = snapshot["next_cursor"]
-    return user_runtime.decode_activity_cursor(raw) if raw else None
+def _clear_text(cursor: str) -> bytes:
+    return base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+
+
+def _refusal(call) -> user_runtime.UserPortalError:
+    with pytest.raises(user_runtime.UserPortalError) as refused:
+        call()
+    return refused.value
+
+
+def _tampered(cursor: str) -> str:
+    return cursor[:10] + ("A" if cursor[10] != "A" else "B") + cursor[11:]
 
 
 def test_a_mostly_unreadable_table_stays_within_the_scan_limit_and_the_page_holds_only_readable_rows(feed):
@@ -81,17 +96,29 @@ def test_a_mostly_unreadable_table_stays_within_the_scan_limit_and_the_page_hold
     assert first["has_more"] is True and first["next_cursor"]
 
 
-def test_following_cursors_returns_every_readable_row_once_in_order(feed):
+def test_the_next_cursor_names_no_receipt_in_clear_text(feed):
+    # This page stops at the scan limit, so its cursor is the position of a row the person may not read.
+    page, _ = feed
+    raw = _clear_text(page(limit=5)["next_cursor"])
+
+    assert not any(request_id.encode() in raw for request_id in REQUEST_IDS)
+    assert not any(str(1_000_000 + N_ROWS - index).encode() in raw for index in range(N_ROWS))
+    with pytest.raises(ValueError):
+        json.loads(raw)
+
+
+@pytest.mark.parametrize("limit", [2, 5, 10])
+def test_following_cursors_returns_every_readable_row_once_in_order(feed, limit):
     page, readable = feed
     seen: list[str] = []
     cursor = None
     for _ in range(N_ROWS):
-        snapshot = page(limit=5, before=cursor)
+        snapshot = page(limit=limit, cursor=cursor)
         assert snapshot["_scanned"] <= user_runtime.USER_ACTIVITY_SCAN_LIMIT
         seen.extend(row["request_id"] for row in snapshot["receipts"])
         if not snapshot["has_more"]:
             break
-        cursor = _cursor_key(snapshot)
+        cursor = snapshot["next_cursor"]
     else:
         pytest.fail("the feed never finished")
 
@@ -104,11 +131,60 @@ def test_a_page_of_readable_rows_stops_at_its_size_and_resumes_after_its_last_ro
     assert [row["request_id"] for row in first["receipts"]] == readable[:2]
     assert first["has_more"] is True
 
-    second = page(limit=2, before=_cursor_key(first))
+    second = page(limit=2, cursor=first["next_cursor"])
     assert [row["request_id"] for row in second["receipts"]] == readable[2:4]
 
 
-def test_a_malformed_cursor_reads_as_the_first_page():
-    assert user_runtime.decode_activity_cursor("not-a-cursor") is None
-    assert user_runtime.decode_activity_cursor(None) is None
-    assert user_runtime.decode_activity_cursor(user_runtime.encode_activity_cursor((7, "req_x"))) == (7, "req_x")
+def test_a_tampered_cursor_is_refused_with_a_400(feed):
+    page, _ = feed
+    cursor = page(limit=5)["next_cursor"]
+
+    refusal = _refusal(lambda: page(cursor=_tampered(cursor)))
+
+    assert (refusal.status_code, refusal.code) == (400, "invalid_cursor")
+
+
+def test_another_persons_cursor_is_refused_with_a_400(feed):
+    page, _ = feed
+    cursor = page(limit=5)["next_cursor"]
+
+    refusal = _refusal(lambda: page(cursor=cursor, viewer="bob"))
+
+    assert (refusal.status_code, refusal.code) == (400, "invalid_cursor")
+
+
+def test_an_expired_cursor_is_refused_with_a_400(feed, monkeypatch):
+    page, _ = feed
+    cursor = page(limit=5)["next_cursor"]
+    # Capture the real clock first: the patched clock must not call itself.
+    later = user_runtime._activity_now() + user_runtime.ACTIVITY_CURSOR_TTL_SECONDS + 2
+    monkeypatch.setattr(user_runtime, "_activity_now", lambda: later)
+
+    refusal = _refusal(lambda: page(cursor=cursor))
+
+    assert (refusal.status_code, refusal.code) == (400, "invalid_cursor")
+
+
+@pytest.mark.parametrize("cursor", ["not-a-cursor", "!!!!", "A", "x" * 2000])
+def test_a_malformed_cursor_is_refused_with_a_400(feed, cursor):
+    page, _ = feed
+
+    refusal = _refusal(lambda: page(cursor=cursor))
+
+    assert (refusal.status_code, refusal.code) == (400, "invalid_cursor")
+
+
+def test_every_way_a_cursor_is_refused_gives_the_same_400(feed, monkeypatch):
+    page, _ = feed
+    cursor = page(limit=5)["next_cursor"]
+    refusals = [
+        _refusal(lambda: page(cursor=_tampered(cursor))),
+        _refusal(lambda: page(cursor=cursor, viewer="bob")),
+        _refusal(lambda: page(cursor="not-a-cursor")),
+    ]
+    later = user_runtime._activity_now() + user_runtime.ACTIVITY_CURSOR_TTL_SECONDS + 2
+    monkeypatch.setattr(user_runtime, "_activity_now", lambda: later)
+    refusals.append(_refusal(lambda: page(cursor=cursor)))
+
+    assert {(refusal.status_code, refusal.code, refusal.message) for refusal in refusals} == {
+        (400, "invalid_cursor", refusals[0].message)}

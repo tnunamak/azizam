@@ -144,6 +144,13 @@ def test_member_browser_activity_and_receipt_detail_are_owner_scoped(people):
     assert foreign.json() == missing.json()
 
 
+def test_a_refused_activity_cursor_is_one_400_with_the_error_envelope(people):
+    responses = [people.client.get(f"/me/api/activity?cursor={cursor}", headers=people.alice.browser)
+                 for cursor in ("not-a-cursor", "x" * 2000)]
+    assert [response.status_code for response in responses] == [400, 400]
+    assert {response.json()["error"]["code"] for response in responses} == {"invalid_cursor"}
+
+
 @pytest.mark.parametrize("resource,id_field", [("receipts", "request_id"), ("media/jobs", "job_id")])
 def test_gateway_lists_and_details_do_not_cross_member_boundary(people, resource, id_field):
     alice, bob = people.alice, people.bob

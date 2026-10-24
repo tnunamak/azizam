@@ -237,7 +237,6 @@ from gateway.user_runtime import (
     UserPortalError,
     build_user_activity_snapshot,
     build_user_portal_snapshot,
-    decode_activity_cursor,
     session_view_key_problem,
     create_user_app,
     delete_user_app,
@@ -16702,14 +16701,17 @@ async def user_portal_activity(request: Request):
         limit = int(request.query_params.get("limit") or 0) or None
     except (TypeError, ValueError):
         limit = None
-    snapshot = await asyncio.to_thread(
-        build_user_activity_snapshot,
-        session,
-        limit=limit if limit else 20,
-        path=ADMIN_STORE.path,
-        receipts_path=receipt_store.DB_PATH,
-        before=decode_activity_cursor(request.query_params.get("cursor")),
-    )
+    try:
+        snapshot = await asyncio.to_thread(
+            build_user_activity_snapshot,
+            session,
+            limit=limit if limit else 20,
+            path=ADMIN_STORE.path,
+            receipts_path=receipt_store.DB_PATH,
+            cursor=request.query_params.get("cursor"),
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
     return JSONResponse(
         status_code=200,
         content=snapshot,
