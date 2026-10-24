@@ -43,7 +43,13 @@ type Snapshot = {
 };
 
 function snapshot(
-  avatar: { choice: string; picture_url: string | null; sign_in_picture_url?: string | null; made_picture_url?: string | null },
+  avatar: {
+    choice: string;
+    picture_url: string | null;
+    sign_in_picture_url?: string | null;
+    made_picture_url?: string | null;
+    default_due?: boolean;
+  },
   name = "Alex Owner",
 ): Snapshot {
   return {
@@ -71,6 +77,8 @@ let saveResponse: (choice: string) => Promise<Response>;
 beforeEach(() => {
   clients.forEach((client) => client.clear());
   resetSessionCache();
+  // A tab remembers its last automatic-picture ask; each case starts with a tab that has not asked.
+  window.sessionStorage.clear();
   current = snapshot({ choice: "auto", picture_url: null });
   saves = [];
   saveResponse = (choice) =>
@@ -109,6 +117,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -132,6 +141,7 @@ describe("the viewer", () => {
       sign_in_picture_url: PICTURE,
       made_picture_url: null,
       generating: false,
+      default_due: false,
     });
   });
 
@@ -352,7 +362,7 @@ describe("making a picture of yourself", () => {
   });
 
   it("asks the gateway for the automatic picture on a signed-in load with no picture, and shows it while it is made", async () => {
-    current = snapshot({ choice: "auto", picture_url: null });
+    current = snapshot({ choice: "auto", picture_url: null, default_due: true });
     const asks: string[] = [];
     const making = {
       choice: "auto", person_id: PERSON, picture_url: null, sign_in_picture_url: null, made_picture_url: null,
@@ -383,5 +393,51 @@ describe("making a picture of yourself", () => {
     });
     await openAvatarDialog();
     expect(asks).toEqual([]);
+  });
+
+  it("does not ask for the automatic picture when the session says it is not due", async () => {
+    current = snapshot({ choice: "auto", picture_url: null, default_due: false });
+    const asks: string[] = [];
+    answer({
+      "POST /me/api/profile/avatar/default": () => {
+        asks.push("asked");
+        return json({ choice: "auto", person_id: PERSON, picture_url: null, default_due: false });
+      },
+    });
+    await openAvatarDialog();
+    expect(asks).toEqual([]);
+  });
+
+  it("asks at most once in five minutes in a tab, and a deferred ask stays due for a later load", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-24T12:00:00Z"));
+    current = snapshot({ choice: "auto", picture_url: null, default_due: true });
+    const asks: string[] = [];
+    answer({
+      "GET /me/api/profile/avatar/generator": () => json({ available: true }),
+      "POST /me/api/profile/avatar/default": () => {
+        asks.push("asked");
+        // Busy: nothing starts and no attempt is recorded, so the picture is still due.
+        return json({ choice: "auto", person_id: PERSON, picture_url: null, sign_in_picture_url: null,
+          made_picture_url: null, generating: false, default_due: true });
+      },
+    });
+    const firstLoad = render(<AppShell><h1>Home</h1></AppShell>);
+    await waitFor(() => expect(asks).toEqual(["asked"]));
+    firstLoad.unmount();
+
+    // Another page load in the same tab, a minute later: the tab asked a minute ago, so it does not ask again.
+    vi.setSystemTime(new Date("2026-10-24T12:01:00Z"));
+    render(<AppShell><h1>Home</h1></AppShell>);
+    await screen.findAllByRole("button", { name: "Account menu: Alex Owner" });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(asks).toEqual(["asked"]);
+
+    // Five minutes after the first ask, the tab may ask again.
+    cleanup();
+    vi.setSystemTime(new Date("2026-10-24T12:05:01Z"));
+    render(<AppShell><h1>Home</h1></AppShell>);
+    await waitFor(() => expect(asks).toEqual(["asked", "asked"]));
+    vi.useRealTimers();
   });
 });

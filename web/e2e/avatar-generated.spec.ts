@@ -61,13 +61,10 @@ for (const view of views) {
       await page.emulateMedia({ colorScheme: view.theme, reducedMotion: "reduce" });
       await page.addInitScript((value) => localStorage.setItem("theme", value), view.theme);
       await page.route("**/me/api/session", async (route) => {
-        // The automatic picture's request reads the session first, so such a read can still be in flight when the test
-        // ends. Its response is then disposed, and nothing is waiting for the answer.
-        const response = await route.fetch().catch(() => undefined);
-        const body = await response?.json().catch(() => undefined);
-        if (!response || !body) return;
+        const response = await route.fetch();
+        const body = await response.json();
         if (body.user) body.user.avatar = { ...state.avatar, person_id: body.user.id };
-        await fulfilJson(route, body, { response }).catch(() => undefined);
+        await fulfilJson(route, body, { response });
       });
       if (state.route)
         await page.route("**/me/api/profile/avatar/generator", (route) => fulfilJson(route, { available: true }));

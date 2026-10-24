@@ -35,7 +35,7 @@ function watchApi(page: Page) {
 
 const primary = (page: Page) => page.locator("main [data-variant='default']");
 
-test("H1 H12 a member's cold load makes at most seven Home and avatar requests, and typing waits for none of them", async ({ isolated }) => {
+test("H1 H12 a member's cold load makes at most five Home requests, and typing waits for none of them", async ({ isolated }) => {
   const member = await isolated.member();
   const { page } = member;
   const paths = watchApi(page);
@@ -54,10 +54,9 @@ test("H1 H12 a member's cold load makes at most seven Home and avatar requests, 
   await expect(page.getByRole("button", { name: /^(Make|Send)$/ })).toBeEnabled();
   await expect(box).toHaveValue("A lake at dawn");
   const counted = paths.filter((item) => item.startsWith("/me/api/") || item.startsWith("/gateway/v1/"));
-  // Four for Home itself, and the request history notice's own read of /me/api/retention (r103). A member with no
-  // picture yet adds two on every signed-in load for the automatic avatar: the session read that gives the POST its
-  // CSRF token, then the default POST itself (the avatar lane). The avatar asks once per load.
-  expect(counted.length).toBeLessThanOrEqual(7);
+  // Four for Home itself, and the request history notice's own read of /me/api/retention (r103). The automatic avatar
+  // asks only while its picture is due (the session says so), so a load that is not due adds nothing.
+  expect(counted.length).toBeLessThanOrEqual(5);
   expect(counted.filter((item) => item.startsWith("/me/api/home")).length).toBe(1);
   expect(counted.filter((item) => item.startsWith("/me/api/profile/avatar/default")).length).toBeLessThanOrEqual(1);
   expect(counted.filter((item) => item.startsWith("/gateway/v1/"))).toEqual([]);

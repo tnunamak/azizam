@@ -23,6 +23,8 @@ export interface Viewer {
     made_picture_url?: string | null;
     /** The automatic picture is being made for this person. */
     generating?: boolean;
+    /** The automatic picture is still due and an image route exists, so the page may ask for it. */
+    default_due?: boolean;
   } | null;
   serviceAdmin?: boolean;
   name: string;
@@ -64,6 +66,7 @@ export async function fetchViewer(): Promise<Viewer> {
           sign_in_picture_url: snapshot.user.avatar.sign_in_picture_url ?? null,
           made_picture_url: snapshot.user.avatar.made_picture_url ?? null,
           generating: snapshot.user.avatar.generating === true,
+          default_due: snapshot.user.avatar.default_due === true,
         },
       }),
       name: formatPersonName(snapshot.user.name, "Your account"),

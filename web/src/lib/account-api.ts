@@ -59,6 +59,8 @@ export interface AvatarSetting {
   made_picture_url?: string | null;
   /** The automatic picture is being made for the person (their own view only). */
   generating?: boolean;
+  /** The automatic picture is still due and an image route exists, so the page may ask for it (their own view only). */
+  default_due?: boolean;
 }
 
 /** A make job as the make page reads it: its state, and its pictures once it has succeeded. */
