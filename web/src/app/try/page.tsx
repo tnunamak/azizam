@@ -173,6 +173,12 @@ type WorkflowOption = {
     javascript?: string;
   };
 };
+/** A workflow's inputs as the person left them: its JSON, its attached files, and the words it last ran with. */
+type WorkflowDraft = {
+  json: string;
+  files: Record<string, File | null>;
+  base: string | undefined;
+};
 type CatalogState = "idle" | "loading" | "ready" | "empty" | "error";
 type CatalogSection = "models" | "workflows";
 
@@ -556,6 +562,27 @@ async function recentCreation(
   }
 }
 
+/**
+ * The address a recovered picture loads from. The download route answers with
+ * JSON; its `download_url` is the picture, so an image must not load the route
+ * itself. Null when the answer does not name one.
+ */
+async function pictureDownloadUrl(assetId: string): Promise<string | null> {
+  try {
+    const response = await networkFetch(
+      `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
+      { credentials: "same-origin" },
+    );
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { download_url?: unknown };
+    return typeof payload.download_url === "string" && payload.download_url
+      ? payload.download_url
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function publicRequest(path: string, key: string, init: RequestInit) {
   const started = performance.now();
   const response = await networkFetch(publicPath(path), {
@@ -601,6 +628,8 @@ function receiptFrom(response: Response, payload: unknown) {
 
 /** Where a run's receipt can be found: its request id, or its creations. */
 type ReceiptLookup = { requestId: string | null; assetIds: string[] };
+/** What a receipt check found; receiptLookup is set when the check itself failed. */
+type ReceiptCheck = { receiptId: string | null; receiptLookup?: ReceiptLookup };
 
 function receiptLookup(
   response: Response,
@@ -635,14 +664,15 @@ function receiptLookup(
  */
 async function checkReceipt(
   lookup: ReceiptLookup,
-): Promise<{ receiptId: string | null; receiptLookup?: ReceiptLookup }> {
+  signal?: AbortSignal,
+): Promise<ReceiptCheck> {
   let failed = false;
   /** The id when its receipt exists; null when it does not. Throws on failure. */
   async function verify(requestId: string | null) {
     if (!requestId) return null;
     const receipt = await networkFetch(
       `/me/api/receipts/${encodeURIComponent(requestId)}`,
-      { credentials: "same-origin" },
+      { credentials: "same-origin", signal },
     );
     if (receipt.ok) return requestId;
     if (receipt.status === 404) return null;
@@ -658,6 +688,7 @@ async function checkReceipt(
     try {
       const detail = await networkFetch(`/me/api/media/${encodeURIComponent(id)}`, {
         credentials: "same-origin",
+        signal,
       });
       if (!detail.ok) {
         if (detail.status !== 404) failed = true;
@@ -679,16 +710,26 @@ async function checkReceipt(
   return failed ? { receiptId: null, receiptLookup: lookup } : { receiptId: null };
 }
 
-/** Bound receipt waiting even when a fetch does not settle. */
-async function timedReceipt(lookup: ReceiptLookup) {
+/** How long a receipt check may take before the answer says it could not be checked. */
+const RECEIPT_CHECK_MS = 10_000;
+
+/**
+ * Checks a receipt for at most RECEIPT_CHECK_MS. The check's fetches are
+ * aborted at the deadline; the wait also ends there, so a fetch that ignores
+ * the abort cannot hold the answer's receipt line open. A check that did not
+ * finish reads as "could not be checked", which offers Check again.
+ */
+async function timedReceipt(lookup: ReceiptLookup): Promise<ReceiptCheck> {
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<ReceiptCheck>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve({ receiptId: null, receiptLookup: lookup });
+    }, RECEIPT_CHECK_MS);
+  });
   try {
-    return await Promise.race([
-      checkReceipt(lookup),
-      new Promise<{ receiptId: string | null; receiptLookup: ReceiptLookup }>((resolve) => {
-        timer = setTimeout(() => resolve({ receiptId: null, receiptLookup: lookup }), 10_000);
-      }),
-    ]);
+    return await Promise.race([checkReceipt(lookup, controller.signal), deadline]);
   } finally {
     clearTimeout(timer);
   }
@@ -1491,13 +1532,33 @@ export default function TryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedCapabilityKey, requestedWorkflow]);
 
+  // What a person typed or attached for each workflow, kept while Try shows another one.
+  const [workflowDrafts, setWorkflowDrafts] = useState<Record<string, WorkflowDraft>>({});
   useEffect(() => {
+    // The values read here are the ones shown when the workflow changed: the workflow being left.
+    const previous = initializedWorkflowId.current;
+    if (previous && previous !== selectedWorkflow?.id) {
+      const draft: WorkflowDraft = {
+        json: prompt.workflow,
+        files: workflowFiles,
+        base: baseWords.workflow,
+      };
+      setWorkflowDrafts((drafts) => ({ ...drafts, [previous]: draft }));
+    }
     if (!selectedWorkflow) {
       initializedWorkflowId.current = null;
       return;
     }
     if (initializedWorkflowId.current === selectedWorkflow.id) return;
     initializedWorkflowId.current = selectedWorkflow.id;
+    setWorkflowChecked(false);
+    const draft = workflowDrafts[selectedWorkflow.id];
+    if (draft) {
+      setPrompt((current) => ({ ...current, workflow: draft.json }));
+      setBaseWords((current) => ({ ...current, workflow: draft.base }));
+      setWorkflowFiles(draft.files);
+      return;
+    }
     const body = workflowExampleBody(selectedWorkflow);
     const inputs = workflowDefaults(
       selectedWorkflow.inputs,
@@ -1511,7 +1572,7 @@ export default function TryPage() {
     }));
     setBaseWords((current) => ({ ...current, workflow: example }));
     setWorkflowFiles({});
-    setWorkflowChecked(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWorkflow]);
 
   useEffect(() => {
@@ -2124,9 +2185,6 @@ export default function TryPage() {
       }
       if (superseded()) return;
       const lookup = receiptLookup(result.response, result.payload, result.requestId);
-      const receipt = tab === "chat"
-        ? { receiptId: null, receiptLookup: lookup }
-        : await checkReceipt(lookup);
       if (superseded()) return;
       const oldUrls = [
         results[tab]?.audioUrl,
@@ -2152,28 +2210,27 @@ export default function TryPage() {
                 catalog[tab]?.find((option) => option.id === selectedModel[tab])
                   ?.locality,
             ),
-            receipt.receiptId,
+            null,
             request,
           ),
-          receiptLookup: receipt.receiptLookup,
+          receiptLookup: lookup,
           imageModel: tab === "image"
             ? runCatalog.image?.find((option) => option.id === selectedModel.image)?.label ?? selectedModel.image
             : undefined,
-          checkingReceipt: tab === "chat",
+          checkingReceipt: true,
           runId,
           promptNotSaved,
           historyOff: forget,
         },
       }));
-      if (tab === "chat") {
-        void timedReceipt(lookup).then((checked) => {
-          if (superseded()) return;
-          setResults((current) => current[tab]?.runId === runId
-            ? { ...current, [tab]: { ...current[tab]!, ...checked,
-                receiptLookup: checked.receiptLookup, checkingReceipt: false } }
-            : current);
-        });
-      }
+      // The answer is on screen before its receipt is looked up; the lookup gives up after ten seconds.
+      void timedReceipt(lookup).then((checked) => {
+        if (superseded()) return;
+        setResults((current) => current[tab]?.runId === runId
+          ? { ...current, [tab]: { ...current[tab]!, ...checked,
+              receiptLookup: checked.receiptLookup, checkingReceipt: false } }
+          : current);
+      });
     } catch (error) {
       if (superseded()) return;
       const lost =
@@ -2295,15 +2352,11 @@ export default function TryPage() {
           outcome.jobId,
         );
         if (!assetId) throw new LostRequestError("image", outcome.jobId);
+        const downloadUrl = await pictureDownloadUrl(assetId);
+        if (!downloadUrl) throw new LostRequestError("image", outcome.jobId);
         return {
           response: new Response(null),
-          payload: {
-            data: [
-              {
-                url: `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
-              },
-            ],
-          } as unknown,
+          payload: { data: [{ url: downloadUrl }] } as unknown,
           elapsedMs: Math.round(performance.now() - clock),
         };
       }
@@ -2379,10 +2432,8 @@ export default function TryPage() {
       }
       const requestId =
         previous.receiptId ?? job.requestId ?? previous.job.requestId;
-      const receipt = await checkReceipt({
-        requestId: requestId ?? null,
-        assetIds: [],
-      });
+      const lookup: ReceiptLookup = { requestId: requestId ?? null, assetIds: [] };
+      // The output is on screen before its receipt is looked up, as for a run.
       setResults((current) => ({
         ...current,
         workflow: {
@@ -2393,10 +2444,18 @@ export default function TryPage() {
             payload instanceof Blob
               ? `${payload.type ? `${payload.type} · ` : ""}${payload.size} bytes`
               : JSON.stringify(payload, null, 2),
-          receiptId: receipt.receiptId,
-          receiptLookup: receipt.receiptLookup,
+          receiptId: previous.receiptId,
+          receiptLookup: lookup,
+          checkingReceipt: true,
         },
       }));
+      void timedReceipt(lookup).then((checked) => {
+        if (!mounted.current) return;
+        setResults((current) => current.workflow?.runId === previous.runId
+          ? { ...current, workflow: { ...current.workflow!, ...checked,
+              receiptLookup: checked.receiptLookup, checkingReceipt: false } }
+          : current);
+      });
     } catch (error) {
       setJobError(
         error instanceof Error

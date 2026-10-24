@@ -188,8 +188,12 @@ describe("Make a picture", () => {
         throw dropped();
       };
       const assetId = `img_${"e".repeat(64)}`;
+      // The download route answers with JSON; the picture itself is at its download_url.
+      const downloadUrl = `/me/api/media/${assetId}/file?sig=test-signature`;
       fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
         if (routes[url]) return routes[url](url, init);
+        if (url === `/me/api/media/${assetId}/download?scope=me`)
+          return json({ asset_id: assetId, download_url: downloadUrl });
         if (url.startsWith("/me/api/media?"))
           return json({
             assets: [
@@ -209,9 +213,41 @@ describe("Make a picture", () => {
       await vi.advanceTimersByTimeAsync(20_000);
       expect(await screen.findByAltText("Generated result")).toHaveAttribute(
         "src",
-        `/me/api/media/${assetId}/download?scope=me`,
+        downloadUrl,
       );
       expect(screen.queryByText(/may still be finishing/)).toBeNull();
+    });
+
+    it("never loads the download route as a picture when the Library gives no address for it", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      routes[SUBMIT] = () => {
+        throw dropped();
+      };
+      const assetId = `img_${"f".repeat(64)}`;
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (routes[url]) return routes[url](url, init);
+        if (url === `/me/api/media/${assetId}/download?scope=me`) return json({ asset_id: assetId });
+        if (url.startsWith("/me/api/media?"))
+          return json({
+            assets: [
+              {
+                asset_id: assetId,
+                kind: "image",
+                prompt: "A calm teal fish mark on a white card.",
+                created_at: Date.now() / 1000,
+                available: true,
+              },
+            ],
+          });
+        if (url.includes("/me/api/receipts/")) return json({}, 404);
+        return json(url.includes("workflows") ? { workflows: [] } : models);
+      });
+      await startRun(user);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await screen.findByText(/may still be finishing/)).toBeVisible();
+      expect(screen.queryByAltText("Generated result")).toBeNull();
+      expect(calls(`/me/api/media/${assetId}/download?scope=me`)).toHaveLength(1);
     });
   });
 

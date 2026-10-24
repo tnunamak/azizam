@@ -409,8 +409,9 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
     await upload(/main picture/i, "old.png");
     await switchTo("Flux2 Klein 4B Edit");
     expect(screen.queryByText("old.png")).toBeNull();
+    // Switching back restores this workflow's own draft, so its earlier picture is still there.
     await switchTo("Qwen-Image 2.1 Multi-Reference Edit");
-    expect(screen.queryByText("old.png")).toBeNull();
+    expect(screen.getByText("old.png")).toBeVisible();
     await upload(/second picture/i, "new-second.png");
     await upload(/main picture/i, "new-main.png");
     fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture|^Description/ }), {
@@ -420,6 +421,29 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
     await waitFor(() => expect(posts()).toHaveLength(1));
     expect((posts()[0][1].body as FormData).getAll("image[]").map((file) => (file as File).name))
       .toEqual(["new-main.png", "new-second.png"]);
+  });
+
+  it("restores what was typed and attached for a workflow when switching back to it", async () => {
+    activeCatalog = { workflows: [...multirefCatalog.workflows, ...catalog.workflows] };
+    await openWorkflow(owner, "Qwen-Image 2.1 Multi-Reference Edit");
+    const description = () => screen.getByRole("textbox", { name: /Describe the picture|^Description/ });
+    fireEvent.change(description(), { target: { value: "Keep the tones warm" } });
+    await userEvent.upload(
+      screen.getByRole("group", { name: /main picture/i })
+        .querySelector<HTMLInputElement>("input[data-media-file-input]")!,
+      new File(["kept"], "kept.png", { type: "image/png" }),
+    );
+    const switchTo = async (name: string) => {
+      await userEvent.click(screen.getByRole("combobox", { name: "Model" }));
+      await userEvent.click(await screen.findByRole("option", { name: new RegExp(name) }));
+    };
+    await switchTo("Flux2 Klein 4B Edit");
+    // Another workflow starts from its own example, with none of this workflow's pictures or words.
+    expect(screen.queryByText("kept.png")).toBeNull();
+    expect(description()).not.toHaveValue("Keep the tones warm");
+    await switchTo("Qwen-Image 2.1 Multi-Reference Edit");
+    expect(description()).toHaveValue("Keep the tones warm");
+    expect(screen.getByText("kept.png")).toBeVisible();
   });
 
   it("discards a Library download that finishes after a model switch", async () => {

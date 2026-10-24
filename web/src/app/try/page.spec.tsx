@@ -598,6 +598,78 @@ test("receipt lookup times out after ten seconds and can be retried", async () =
     vi.useRealTimers();
   }
 });
+/** A speech answer whose request id has a receipt that never comes back. Returns the signals its receipt fetches carried. */
+function speechWithPendingReceipt() {
+  const signals: AbortSignal[] = [];
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url.includes("workflows")) return response({ workflows: [] });
+    if (url === "/me/api/models/catalog") {
+      return response({ aliases: [], models: [{
+        id: "speech-a",
+        name: "Voice model",
+        capability: "speech",
+        speech_voices: { voices: [{ id: "v", name: "Voice" }], default_voice: "v", allow_other: false },
+      }] });
+    }
+    if (url === "/openai/v1/audio/speech") {
+      return new Response(new Blob(["RIFF"], { type: "audio/wav" }), {
+        status: 200,
+        headers: { "content-type": "audio/wav", "x-azizam-request-id": "req_speech_pending" },
+      });
+    }
+    if (url.startsWith("/me/api/receipts/")) {
+      if (init?.signal) signals.push(init.signal);
+      return new Promise<Response>(() => {});
+    }
+    return response({});
+  });
+  return signals;
+}
+/** jsdom has no object URLs; a finished audio answer needs one to play. */
+function stubObjectUrls() {
+  const create = vi.fn(() => "blob:try-audio");
+  const original = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: create });
+  return () => {
+    if (original) Object.defineProperty(URL, "createObjectURL", original);
+    else Reflect.deleteProperty(URL, "createObjectURL");
+  };
+}
+test("a finished audio result shows before its receipt is looked up", async () => {
+  const restoreUrls = stubObjectUrls();
+  mocks.params = new URLSearchParams("capability=speech");
+  speechWithPendingReceipt();
+  render(<TryPage />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Voice model"));
+  await takeExampleIfEmpty();
+  fireEvent.click(screen.getByRole("button", { name: "Run" }));
+  expect(await screen.findByRole("heading", { name: "Speech result" })).toBeVisible();
+  expect(screen.getByLabelText("Generated audio")).toBeInTheDocument();
+  expect(screen.getByText("Checking receipt...")).toBeVisible();
+  restoreUrls();
+});
+test("a receipt check gives up after ten seconds, aborts its request, and offers Check again", async () => {
+  const restoreUrls = stubObjectUrls();
+  mocks.params = new URLSearchParams("capability=speech");
+  const signals = speechWithPendingReceipt();
+  render(<TryPage />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Voice model"));
+  vi.useFakeTimers();
+  try {
+    await takeExampleIfEmpty();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Run" })));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText("Checking receipt...")).toBeVisible();
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(screen.getByText("Receipt couldn’t be checked.")).toBeVisible();
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+  } finally {
+    vi.useRealTimers();
+    restoreUrls();
+  }
+});
 test("recorded mp4 uploads its real type and filename", async () => {
   mocks.params = new URLSearchParams("capability=transcribe");
   const stt = { aliases: [], models: [{ id: "stt", name: "Words", capability: "transcribe" }] };

@@ -361,7 +361,7 @@ function WorkflowInputControl({
     <span className="text-muted-foreground text-xs">
       {hint ? <span>{hint}</span> : null}
       {hint && detail ? " " : null}
-      {detail ? <span>{detail}</span> : null}
+      {detail ? <span data-slot="input-detail">{detail}</span> : null}
     </span>
   ) : null;
   const problemLine = problem ? (

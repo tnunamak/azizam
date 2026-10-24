@@ -2,6 +2,23 @@ import { expect, test } from "./fixtures/isolation";
 import AxeBuilder from "@axe-core/playwright";
 import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
 import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
+import type { Locator } from "@playwright/test";
+
+/**
+ * The text a person reads. An owner also sees each input's technical detail
+ * (data-slot="input-detail"), which is for owners, so it is left out here.
+ */
+async function plainText(locator: Locator) {
+  return locator.evaluate((node) => {
+    const detail = [...node.querySelectorAll<HTMLElement>('[data-slot="input-detail"]')];
+    const shown = detail.map((element) => element.style.display);
+    detail.forEach((element) => (element.style.display = "none"));
+    const text = (node as HTMLElement).innerText;
+    detail.forEach((element, index) => (element.style.display = shown[index]));
+    return text;
+  });
+}
+
 
 /** A person who has not written a prompt takes the tab's example first. Written words are never replaced. */
 async function takeExampleIfEmpty(page: import("@playwright/test").Page) {
@@ -811,7 +828,7 @@ test("an image-to-video workflow offers a picture picker, checks before it runs 
       (el) => getComputedStyle(el, "::placeholder").fontStyle,
     ),
   ).toBe("italic");
-  const visible = (await page.locator("main").innerText()).replace(/\s+/g, " ");
+  const visible = (await plainText(page.locator("main"))).replace(/\s+/g, " ");
   for (const jargon of [
     "Request body",
     "Writes prompt",
