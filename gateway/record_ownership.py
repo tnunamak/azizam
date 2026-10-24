@@ -20,9 +20,9 @@ def _job_readable(job: Mapping[str, Any], *, viewer: Viewer) -> bool:
     if isinstance(connection, str) and connection:
         origin = ContentOrigin("mcp_grant", connection_id=connection)
     elif viewer.auth_kind == "app_key" and app_id and app_id == viewer.app_id:
-        # Jobs record no credential of a key. A key on an App is the only writer of that App's rows through its own
-        # API, and a session never runs under a key App, so App attribution stands for the creating credential here.
-        # Rows of another App, and rows of another maker, still deny.
+        # The stamped credential is not compared: a rotated key of the App writes the App's rows as well. A key on an App
+        # is the only writer of that App's rows through its own API, and a session never runs under a key App, so App
+        # attribution stands for the creating credential here. Rows of another App, and rows of another maker, still deny.
         origin = ContentOrigin("app_key", credential_id=viewer.credential_id or app_id)
     row = JobRecord(
         person_id=str(job.get("maker_person_id") or "") or None, app_id=app_id, origin=origin,
