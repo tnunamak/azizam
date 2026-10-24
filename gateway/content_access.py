@@ -176,10 +176,11 @@ class ReceiptRecord:
 @dataclass(frozen=True)
 class JobRecord:
     owner_keys: frozenset[str] = frozenset()
-    person_id: str | None = None  # the maker of the job's creating receipt (D51)
+    person_id: str | None = None  # the maker stamped on the job at creation, from the authenticated request (D51)
     app_id: str | None = None
     origin: ContentOrigin | None = None
     owner_key_hash: str | None = None  # the creating key of an App-less job (the legacy runtime key)
+    credential_id: str | None = None  # the stamped creating credential; with no person, it is the job's maker
     job_id: str | None = None
     available: bool = True
     kind: Literal["job"] = field(default="job", init=False)
@@ -312,6 +313,10 @@ def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
         if action == "read" and (_content_read(viewer, record) or _appless_legacy_key(viewer, record)):
             return OWN
     elif isinstance(record, JobRecord):
+        # A job with no stamped maker (a row from before the stamp, or one made without an authenticated request)
+        # has no reader under any App. Its App's key is not a maker, so the person-less rule below never reaches it.
+        if record.person_id is None and record.credential_id is None:
+            return DENY
         if action == "read" and (_content_read(viewer, record) or _appless_legacy_key(viewer, record)):
             return OWN
         if action == "cancel" and ((_self(viewer, record) and _content_read(viewer, record))

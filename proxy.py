@@ -2325,8 +2325,10 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
         if result.identity is not None:
             # Receipts this request makes name the person it ran as, and no one else (REQUEST_RETENTION.md 13.3).
             # A media job it creates is stamped with the same person and the credential or grant that authenticated it.
+            # An App-less legacy key has no credential row, so its key hash is the credential that made the job (D52).
             note_maker(result.identity.app_id, result.identity.person_id,
-                       credential_id=result.identity.credential_id, connection_id=result.identity.connection_id)
+                       credential_id=result.identity.credential_id or result.identity.key_hash or None,
+                       connection_id=result.identity.connection_id)
     return result
 
 

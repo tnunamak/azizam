@@ -27,7 +27,7 @@ see the workstream note for suggested integration points.
 
 from __future__ import annotations
 
-from gateway import request_connections
+from gateway import request_connections, request_source
 from gateway.compat import get_env
 from gateway.sqlite_startup import connect, store_startup
 
@@ -57,7 +57,7 @@ DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB
 # starts new work, and the old job keeps its history without the request ID.
 REPLAY_WINDOW_S = 14 * 24 * 3600
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
 PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
@@ -152,7 +152,10 @@ ADMIN_ONLY_FIELDS = frozenset(
 # Metadata bag and the raw event payloads are internal-only. They are the
 # place where adapter-specific breadcrumbs live (prompt_id, queue position,
 # probe response codes, etc.) and they have already passed the safety guard.
-INTERNAL_ONLY_FIELDS = frozenset({"metadata", "owner_key_hash", "owner_scope", "input_hash", "creating_receipt_id"})
+INTERNAL_ONLY_FIELDS = frozenset({
+    "metadata", "owner_key_hash", "owner_scope", "input_hash", "creating_receipt_id",
+    "maker_person_id", "maker_credential_id", "maker_connection_id",
+})
 
 # Metadata/event keys that smell like raw payloads, secrets, or media bytes.
 # Sourced from ``gateway.redaction`` so receipts and media jobs share one
@@ -215,6 +218,11 @@ class MediaJob:
     previous_attempts: list[dict[str, Any]] = field(default_factory=list)
     # Durable provenance, independent of the reusable request/idempotency key.
     creating_receipt_id: str | None = None
+    # Who made the job, stamped once at creation from the authenticated request (never from the body or a parent
+    # link). Reads authorize from these alone. A job with none of them has no maker and no reader.
+    maker_person_id: str | None = None
+    maker_credential_id: str | None = None
+    maker_connection_id: str | None = None
     error_code: str | None = None
     error_category: str | None = None
     retryable: bool | None = None
@@ -260,6 +268,9 @@ class MediaJob:
             "api_key_name": self.api_key_name,
             "parent_request_id": self.parent_request_id,
             "creating_receipt_id": self.creating_receipt_id,
+            "maker_person_id": self.maker_person_id,
+            "maker_credential_id": self.maker_credential_id,
+            "maker_connection_id": self.maker_connection_id,
             "metadata": dict(self.metadata),
             "owner_scope": self.owner_scope,
             "input_hash": self.input_hash,
@@ -426,7 +437,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
             "INSERT INTO media_jobs_schema_version(version) VALUES (?)",
             (SCHEMA_VERSION,),
         )
-    elif previous_version not in (1, 2, 3, 4, SCHEMA_VERSION):
+    elif previous_version not in (1, 2, 3, 4, 5, SCHEMA_VERSION):
         raise sqlite3.DatabaseError(
             f"media_jobs schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
@@ -444,6 +455,11 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     destination_columns = {r[1] for r in conn.execute("PRAGMA table_info(retention_fact_destinations)")}
     if "created_at" not in destination_columns:
         conn.execute("ALTER TABLE retention_fact_destinations ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
+    # Version 6: the maker stamp. Rows made before it keep NULL, which means no maker and no reader (fail closed).
+    job_columns = {r[1] for r in conn.execute("PRAGMA table_info(media_jobs)")}
+    for column in ("maker_person_id", "maker_credential_id", "maker_connection_id"):
+        if column not in job_columns:
+            conn.execute(f"ALTER TABLE media_jobs ADD COLUMN {column} TEXT")
     if previous_version is None or previous_version < SCHEMA_VERSION:
         _backfill_asset_origins(conn)
     _repair_event_sequences(conn)
@@ -573,6 +589,9 @@ def _coerce_to_job(job_or_dict: Any) -> MediaJob:
             api_key_name=data.get("api_key_name"),
             parent_request_id=data.get("parent_request_id"),
             creating_receipt_id=data.get("creating_receipt_id"),
+            maker_person_id=data.get("maker_person_id"),
+            maker_credential_id=data.get("maker_credential_id"),
+            maker_connection_id=data.get("maker_connection_id"),
             metadata=dict(data.get("metadata") or {}),
             owner_scope=data.get("owner_scope"),
             input_hash=data.get("input_hash"),
@@ -687,6 +706,8 @@ def create(
     record.owner_scope = stored_owner_key(record.owner_key_hash, app_id=record.app_id) or "unscoped"
     # Never accept a caller-supplied digest as proof that the input matches.
     record.input_hash = _input_hash(record, input_data)
+    # The maker is the person and credential of the authenticated request, never a field of the submission.
+    record.maker_person_id, record.maker_credential_id, record.maker_connection_id = request_source.job_maker(record.app_id)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         if record.request_id:
@@ -706,9 +727,11 @@ def create(
             if existing:
                 data = json.loads(existing[0])
                 previous = _coerce_to_job(data)
+                # A replay returns the stored job, so it must be the same maker's job, or one maker reads another's.
                 if (not previous.owner_scope or not previous.input_hash
                         or previous.owner_scope != record.owner_scope or previous.intent != record.intent
-                        or previous.input_hash != record.input_hash):
+                        or previous.input_hash != record.input_hash
+                        or (previous.maker_person_id or None) != (record.maker_person_id or None)):
                     raise IdempotencyConflict()
                 conn.rollback()
                 return _coerce_to_job(data)
@@ -760,6 +783,10 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
         if job.request_id and job.request_id != previous[1]:
             job.request_id = previous[1] or ""
         data = json.loads(previous[0])
+        # The maker is stamped once, by create(). A later write, from a copy made before the stamp, keeps the stored one.
+        job.maker_person_id = data.get("maker_person_id")
+        job.maker_credential_id = data.get("maker_credential_id")
+        job.maker_connection_id = data.get("maker_connection_id")
         preserved = ("accepted_at",) if new_attempt else (*PHASE_FIELDS, "attempt_number", "previous_attempts")
         stale_attempt = data.get("attempt_number") != job.attempt_number
         for name in preserved:
@@ -776,8 +803,9 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
     conn.execute(
         "INSERT INTO media_jobs "
         "(job_id, request_id, intent, workflow, backend, status, progress, error, "
-        " created_at, updated_at, app_profile, api_key_name, parent_request_id, job_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        " created_at, updated_at, app_profile, api_key_name, parent_request_id, job_json, "
+        " maker_person_id, maker_credential_id, maker_connection_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(job_id) DO UPDATE SET request_id=excluded.request_id, intent=excluded.intent, "
         "workflow=excluded.workflow, backend=excluded.backend, status=excluded.status, "
         "progress=excluded.progress, error=excluded.error, created_at=excluded.created_at, "
@@ -799,6 +827,9 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
             job.api_key_name,
             job.parent_request_id,
             _job_payload(job),
+            job.maker_person_id,
+            job.maker_credential_id,
+            job.maker_connection_id,
         ),
     )
     conn.execute("DELETE FROM media_job_asset_origins WHERE job_id=?", (job.job_id,))

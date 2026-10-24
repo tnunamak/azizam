@@ -587,7 +587,7 @@ def test_audience_contract_is_independent_of_implementation_tables():
     admin_keys = {"workflow", "backend", "app_profile", "app_id", "api_key_name"}
     internal_keys = {
         "metadata", "owner_key_hash", "owner_scope", "input_hash",
-        "creating_receipt_id",
+        "creating_receipt_id", "maker_person_id", "maker_credential_id", "maker_connection_id",
     }
 
     assert set(job.to_dict("client")) == client_keys

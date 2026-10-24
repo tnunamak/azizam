@@ -21,6 +21,7 @@ from gateway.api import create_gateway_router
 from gateway.discovery import WorkflowRegistry
 from gateway.receipts import RouteReceipt
 from gateway.voice_audio import SampleLimits
+from gateway import request_source
 
 
 @pytest.fixture
@@ -126,8 +127,10 @@ def test_rotation_media_and_record_http_scopes(owners, monkeypatch):
     receipts = owners.root / "receipts.db"
     media_jobs.init_db(db)
     receipt_store.init_db(receipts)
-    job = media_ingestion.index_sync_assets(request_id="azizam-new", intent="image.generate", app_id=owners.first["id"],
-        owner_key_hash=owners.credentials[0]["hash"], assets=[{"asset_id": asset}], path=db)
+    with request_source.acting_as(app_id=owners.first["id"], person_id=owners.user["id"],
+                                  credential_id=owners.credentials[0]["hash"]):
+        job = media_ingestion.index_sync_assets(request_id="azizam-new", intent="image.generate", app_id=owners.first["id"],
+            owner_key_hash=owners.credentials[0]["hash"], assets=[{"asset_id": asset}], path=db)
     assert job.owner_key_hash == principal
     receipt = RouteReceipt(request_id="azizam-new", protocol="openai.images", intent="image.generate", app_id=owners.first["id"], owner_key_hash=owners.credentials[0]["hash"])
     receipt_store.begin(receipt, path=receipts)

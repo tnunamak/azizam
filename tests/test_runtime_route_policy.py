@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import media_jobs, receipt_store  # noqa: E402
+from gateway import media_jobs, receipt_store, request_source  # noqa: E402
 from gateway.access_plans import AccessPlan  # noqa: E402
 from tests.support.access import access, plan_for, auth_identity  # noqa: E402
 
@@ -551,6 +551,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "intent": "image.generate",
             "status": proxy.media_jobs.STATUS_SUCCEEDED,
             "owner_key_hash": proxy.hash_api_key(RAW_KEY),
+            "maker_credential_id": proxy.hash_api_key(RAW_KEY),
         }
         payload = {"created": 123, "data": [{"url": "https://example.test/i.png"}]}
 
