@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import time
 from html import escape
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -20,11 +21,13 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.testclient import WebSocketDenialResponse
 
 import proxy
-from gateway import accounts, admin_store, frontend_mount, metrics_writer, operation_security, providers, receipt_store, runtime_auth
+from gateway import accounts, admin_store, frontend_mount, metrics_writer, operation_security, providers, receipt_store, runtime_auth, thumbnails
 from tests.support.app_keys import issue_app_key
 from gateway.admin_api import _require_admin
 from gateway.admin_oidc import CookieConfig, csrf_token_for_session, encode_session_cookie, session_from_claims
-from gateway.owner_openapi import OWNER_OPERATIONS, augment_owner_openapi, walk_routes
+from gateway.owner_openapi import (
+    OWNER_AND_ADMINS_NOTE, OWNER_AND_ADMINS_TAG, OWNER_ONLY_NOTE, OWNER_ONLY_TAG, OWNER_OPERATIONS,
+    augment_owner_openapi, walk_routes)
 from gateway.ui_routes import UiRoute
 from gateway.ui_static import UIStaticFiles
 import test_proxy_admin_integration as admin_integration
@@ -126,7 +129,7 @@ def test_owner_schema_describes_nested_mounts_and_rejects_unsupported_http_route
         leaf = APIRoute("/reset", endpoint, methods=["POST"], include_in_schema=False)
         schema = {"paths": {}}
         augment_owner_openapi(schema, [Mount("/admin", routes=[Mount("/api/extension", routes=[leaf])])])
-        assert schema["paths"][key.split(" ", 1)[1]]["post"]["security"] == [{"OwnerBearer": []}]
+        assert schema["paths"][key.split(" ", 1)[1]]["post"]["security"] == operation_security.security_for(operation_security.OWNER)
         assert leaf.path == "/reset" and leaf.include_in_schema is False
         with pytest.raises(ValueError, match="requires an APIRoute"):
             augment_owner_openapi({"paths": {}}, [Route(key.split(" ", 1)[1], endpoint, methods=["POST"])])
@@ -205,8 +208,9 @@ def test_openapi_snapshot_and_security():
     for key, metadata in OWNER_OPERATIONS.items():
         method, path = key.split(" ", 1)
         operation = schema["paths"][path][method.lower()]
-        assert operation["security"] == [{"OwnerBearer": []}]
-        assert operation["tags"] == [metadata["tag"], "Owner only"]
+        assert operation["security"] == operation_security.security_for(operation_security.OWNER)
+        audience = OWNER_ONLY_TAG if metadata["owner_only"] else OWNER_AND_ADMINS_TAG
+        assert operation["tags"] == [metadata["tag"], audience]
         path_names = set(re.findall(r"\{([^}]+)\}", path))
         assert path_names == {parameter["name"] for parameter in operation["parameters"]
                               if parameter["in"] == "path"}
@@ -225,7 +229,8 @@ def test_openapi_declares_each_header_that_carries_an_app_key():
     # The declared headers are the ones the proxy reads, and it reads no query key unless the owner turns that on.
     header_names = {scheme["name"] for scheme in schemes.values() if scheme.get("in") == "header"}
     assert header_names == set(runtime_auth.CLIENT_KEY_HEADERS)
-    assert not [scheme for scheme in schemes.values() if scheme.get("in") == "query"]
+    # The only query scheme is the signed link's: no App key is read from the query string.
+    assert {name for name, scheme in schemes.items() if scheme.get("in") == "query"} == {operation_security.SIGNED_LINK_SCHEME}
     for header in header_names:
         assert proxy.get_client_api_key_from_headers({header: "app-key-fixture"}) == "app-key-fixture"
     assert proxy.get_client_api_key_from_headers({"authorization": "Bearer app-key-fixture"}) == "app-key-fixture"
@@ -323,13 +328,105 @@ def test_each_self_authenticating_operation_refuses_a_call_without_credentials(p
     assert self_authenticating <= probed, sorted(endpoint.__name__ for endpoint in self_authenticating - probed)
 
 
-def test_every_owner_operation_is_tagged_and_opens_with_the_owner_note():
+# One operation per declared mode, probed with the credential its declaration names. Each probe reads, except the
+# browser-session probe, which signs out a throwaway person (the principals fixture makes that person's session).
+MODE_PROBES = {
+    operation_security.OWNER: ("GET", "/v1/status"),
+    operation_security.BROWSER_SESSION: ("POST", "/auth/api/sign-out-everywhere"),
+    operation_security.OPTIONAL_SESSION: ("GET", "/auth/api/remembered"),
+    operation_security.PUBLIC: ("GET", "/auth/api/options"),
+    operation_security.SIGNED_URL: ("GET", "/v1/assets/{asset_id}/thumbnail"),
+    operation_security.APP_KEY: ("GET", "/gateway/v1/aliases"),
+    operation_security.APP_KEY_OR_SESSION: ("GET", "/gateway/v1/requests"),
+}
+# The refusal each mode gives a call with no credential. PUBLIC and OPTIONAL_SESSION admit such a call.
+REFUSED = {
+    operation_security.OWNER: {401, 403}, operation_security.BROWSER_SESSION: {401, 403},
+    operation_security.APP_KEY: {401, 403}, operation_security.APP_KEY_OR_SESSION: {401, 403},
+    operation_security.SIGNED_URL: {400, 403},
+}
+ASSET_ID = "img_" + "a" * 64
+
+
+def _credential(case, mode, name):
+    """The part of a request that proves one declared requirement, with the real credential that requirement names."""
+    if name == "AppKeyBearer":
+        return {"headers": {"Authorization": f"Bearer {case.app_key}"}}
+    if name == "AppKeyApiKey":
+        return {"headers": {"api-key": case.app_key}}
+    if name == "AppKeyXApiKey":
+        return {"headers": {"x-api-key": case.app_key}}
+    if name == "OwnerBearer":
+        return {"headers": case._auth()}
+    if name == "BrowserSession":
+        # An owner operation takes the owner's session; the sign-out takes a throwaway person's; the rest take a member's.
+        cookie, headers = {operation_security.OWNER: (case.owner_cookie, case.owner_headers),
+                           operation_security.BROWSER_SESSION: (case.probe_cookie, case.probe_headers)}.get(
+            mode, (case.member_cookie, case.member_headers))
+        return {"cookie": cookie, "headers": headers}
+    if name == operation_security.SIGNED_LINK_SCHEME:
+        expires = int(time.time()) + 600
+        return {"query": {"expires": expires, "sig": proxy._sign_asset_token(ASSET_ID, expires, thumbnails.THUMB_MODE)}}
+    raise AssertionError(f"no credential for {name}")
+
+
+@pytest.mark.parametrize("mode", list(MODE_PROBES))
+def test_each_declared_mode_is_enforced_as_declared(mode, principals):
+    """A call with no credential is refused, or admitted for PUBLIC and OPTIONAL_SESSION. A call with each declared
+    credential gets past authentication: not 401 or 403."""
+    method, template = MODE_PROBES[mode]
+    declared = proxy.app.openapi()["paths"][template][method.lower()]["security"]
+    assert declared == operation_security.security_for(mode)
+    path = re.sub(r"\{[^}]+\}", ASSET_ID, template)
+    body = {} if method == "POST" else None
+    client = principals.client
+    client.cookies.clear()
+    anonymous = client.request(method, path, json=body, follow_redirects=False).status_code
+    if mode in {operation_security.PUBLIC, operation_security.OPTIONAL_SESSION}:
+        assert anonymous not in {401, 403}, (mode, anonymous)
+    else:
+        assert anonymous in REFUSED[mode], (mode, anonymous)
+    for requirement in declared:
+        for name in requirement:
+            credential = _credential(principals, mode, name)
+            client.cookies.clear()
+            if "cookie" in credential:
+                client.cookies.set(*credential["cookie"])
+            response = client.request(method, path, json=body, headers=credential.get("headers", {}),
+                                      params=credential.get("query"), follow_redirects=False)
+            assert response.status_code not in {401, 403}, (mode, name, response.status_code, response.text[:200])
+
+
+# The request history takes an App key or the signed-in session of the person who made the request. The maker's
+# delete-everything is left out of the admitted calls: it would empty that person's history.
+REQUEST_HISTORY = [("GET", "/gateway/v1/requests"), ("GET", "/gateway/v1/requests/missing-fixture-id"),
+                   ("DELETE", "/gateway/v1/requests/missing-fixture-id"), ("DELETE", "/gateway/v1/requests")]
+
+
+@pytest.mark.parametrize("method,path", REQUEST_HISTORY, ids=[f"{m} {p}" for m, p in REQUEST_HISTORY])
+def test_request_history_refuses_a_call_without_credentials(method, path, principals):
+    principals.client.cookies.clear()
+    assert principals.client.request(method, path, follow_redirects=False).status_code == 401
+
+
+@pytest.mark.parametrize("method,path", REQUEST_HISTORY[:3], ids=[f"{m} {p}" for m, p in REQUEST_HISTORY[:3]])
+def test_request_history_admits_the_makers_own_session(method, path, principals):
+    principals.client.cookies.clear()
+    principals.client.cookies.set(*principals.member_cookie)
+    response = principals.client.request(method, path, headers=principals.member_headers, follow_redirects=False)
+    assert response.status_code not in {401, 403}, (method, path, response.status_code)
+
+
+def test_every_owner_operation_is_tagged_and_opens_with_its_audience_note():
     owner = [(path, method, operation) for path, method, operation in _operations(proxy.app.openapi())
-             if operation.get("security") == [{"OwnerBearer": []}]]
+             if {"OwnerBearer": []} in operation.get("security", [])]
     assert len(owner) >= len(OWNER_OPERATIONS)
     for path, method, operation in owner:
-        assert "Owner only" in operation["tags"], (method, path)
-        assert operation["description"].startswith("Owner only: needs the owner's sign-in."), (method, path)
+        owner_only = OWNER_OPERATIONS.get(f"{method.upper()} {path}", {}).get("owner_only", False)
+        tag, note = (OWNER_ONLY_TAG, OWNER_ONLY_NOTE) if owner_only else (OWNER_AND_ADMINS_TAG, OWNER_AND_ADMINS_NOTE)
+        audience_tags = [t for t in operation["tags"] if t in {OWNER_ONLY_TAG, OWNER_AND_ADMINS_TAG}]
+        assert audience_tags == [tag], (method, path, audience_tags)
+        assert operation["description"].startswith(note), (method, path)
 
 
 def test_every_scheme_a_requirement_names_is_declared_in_components():
@@ -338,7 +435,7 @@ def test_every_scheme_a_requirement_names_is_declared_in_components():
     used = {name for _, _, operation in _operations(schema) for requirement in operation.get("security", [])
             for name in requirement}
     assert used <= declared, sorted(used - declared)
-    assert {"AppKeyBearer", "AppKeyApiKey", "AppKeyXApiKey", "OwnerBearer", "BrowserSession"} <= used
+    assert {"AppKeyBearer", "AppKeyApiKey", "AppKeyXApiKey", "OwnerBearer", "BrowserSession", "SignedLink"} <= used
 
 
 def test_public_paths_and_the_gateway_key_layer_have_the_security_the_gateway_enforces():
@@ -346,7 +443,9 @@ def test_public_paths_and_the_gateway_key_layer_have_the_security_the_gateway_en
         if proxy.is_public_path(path):
             assert operation["security"] == [], (method, path)
         elif path.startswith(proxy.KEY_LAYER_PREFIXES):
-            assert operation["security"] == operation_security.security_for(operation_security.APP_KEY), (method, path)
+            mode = (operation_security.APP_KEY_OR_SESSION if operation_security.session_passes_key_layer(path)
+                    else operation_security.APP_KEY)
+            assert operation["security"] == operation_security.security_for(mode), (method, path)
 
 
 def test_account_routes_under_me_stay_out_of_the_reference():
@@ -360,16 +459,22 @@ def _digest(value):
 def test_existing_data_plane_schema_is_byte_equivalent():
     """Digests were captured from the unmodified base commit, before the overlay.
 
-    /v1/status is the one path re-captured since: it is owner-only now, so its tags and description note changed on purpose.
+    /v1/status is the one path re-captured since: it takes the owner and admins audience, so its tags and description note
+    changed on purpose.
     """
     schema = proxy.app.openapi()
     baseline = json.loads((FIXTURES / "headless_data_plane_hashes.json").read_text())
     for path, expected in baseline["paths"].items():
         operation = copy.deepcopy(schema["paths"][path])
         for method_operation in operation.values():
-            # Each operation's security is checked by its own tests (API reference security), not by this digest.
             if isinstance(method_operation, dict):
+                signed = {operation_security.SIGNED_LINK_SCHEME: []} in method_operation.get("security", [])
+                # Each operation's security is checked by its own tests (API reference security), not by this digest.
                 method_operation.pop("security", None)
+                if signed and "parameters" in method_operation:
+                    # A signed link's sig and expires parameters are documented overlay, like its security.
+                    method_operation["parameters"] = [p for p in method_operation["parameters"]
+                                                      if not (p.get("in") == "query" and p.get("name") in {"sig", "expires"})]
         if path == "/gateway/v1/media/jobs/{job_id}/events":
             # The per-job cursor is an additive opt-in; the legacy query and
             # every other part of the original operation remain unchanged.
@@ -378,6 +483,16 @@ def test_existing_data_plane_schema_is_byte_equivalent():
         assert _digest(operation) == expected, path
     for name, expected in baseline["schemas"].items():
         assert _digest(schema["components"]["schemas"][name]) == expected, name
+
+
+def _session_headers(session):
+    """The headers a browser session carries on a write: the CSRF token and the action headers, as the member's do."""
+    return {
+        "Accept": "application/json",
+        "x-azizam-csrf": csrf_token_for_session(session, signing_key=b"s" * 32),
+        "x-azizam-admin-action": "1",
+        "x-azizam-user-action": "1",
+    }
 
 
 @pytest.fixture(scope="module")
@@ -411,6 +526,19 @@ def principals():
             "x-azizam-admin-action": "1",
             "x-azizam-user-action": "1",
         }
+        # The owner's session: the owner role is granted in the store, which the session's roles are read from.
+        owner = admin_store.upsert_oidc_user("https://idp.example", "headless-owner", email="owner@example.com", path=case.db)
+        admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], path=case.db)
+        owner_session = session_from_claims({"sub": owner["id"], "email": owner["email"]}, role="owner", cookie=cookie,
+                                            idle_seconds=30 * 86400, absolute_seconds=90 * 86400)
+        case.owner_cookie = (cookie.name, encode_session_cookie(owner_session, signing_key=b"s" * 32))
+        case.owner_headers = _session_headers(owner_session)
+        # A person whose sign-in the sign-out probe ends. No other test signs this person in.
+        probe = admin_store.upsert_oidc_user("https://idp.example", "headless-probe", email="probe@example.com", path=case.db)
+        probe_session = session_from_claims({"sub": probe["id"], "email": probe["email"]}, role="none", cookie=cookie,
+                                            idle_seconds=30 * 86400, absolute_seconds=90 * 86400)
+        case.probe_cookie = (cookie.name, encode_session_cookie(probe_session, signing_key=b"s" * 32))
+        case.probe_headers = _session_headers(probe_session)
         # Initialize the category store before measuring request-side effects.
         case.client.get("/admin/api/categories/history", headers=case._auth())
         yield case

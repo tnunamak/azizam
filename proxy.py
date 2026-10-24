@@ -14363,8 +14363,7 @@ async def _maker_browser_session_request(request: Request) -> bool:
     the session cookie and no Authorization header, so the key layer does not gate it; the router reads the session
     and checks the user-action header and CSRF token on every write.
     """
-    path = request.url.path
-    if path != "/gateway/v1/requests" and not path.startswith("/gateway/v1/requests/"):
+    if not operation_security.session_passes_key_layer(request.url.path):
         return False
     # Any credential the key layer would read, in any form it reads one, keeps the call on that layer: a key
     # presented with a session cookie is judged as the key, never as the session.
@@ -14375,7 +14374,8 @@ async def _maker_browser_session_request(request: Request) -> bool:
 
 
 # The paths whose every operation passes the App key layer before its handler runs, whether or not the handler
-# checks the caller itself. The API reference gives these operations the App key security (fill_security).
+# checks the caller itself. The API reference gives these operations the App key security (fill_security), and on
+# operation_security.SESSION_KEY_LAYER_PATHS a browser session as well.
 KEY_LAYER_PREFIXES = ("/gateway/v1", "/native/")
 
 
@@ -26380,7 +26380,7 @@ async def list_models(request: Request):
 
 @app.get("/v1/status", openapi_extra=operation_security.openapi_extra(operation_security.OWNER))
 async def v1_status(request: Request):
-    """Consolidated admin-only status JSON for the dashboard."""
+    """Consolidated status JSON for the dashboard."""
     try:
         (await asyncio.to_thread(ADMIN_AUTH, request))
     except AdminAuthError as exc:
@@ -31844,6 +31844,7 @@ def _gateway_openapi() -> dict[str, Any]:
     augment_owner_openapi(schema, app.routes)
     augment_app_key_openapi(schema)
     operation_security.augment_schemes(schema, cookie_name=ADMIN_AUTH.cookie.name)
+    operation_security.augment_signed_links(schema)
     operation_security.fill_security(schema, is_public=is_public_path, key_layer_prefixes=KEY_LAYER_PREFIXES)
     app.openapi_schema = schema
     return schema
