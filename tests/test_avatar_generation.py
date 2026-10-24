@@ -859,6 +859,36 @@ def _real_make_app(proxy, db: Path, person_id: str) -> FastAPI:
     return app
 
 
+def _gateway_route_app(proxy, db: Path, person_id: str) -> FastAPI:
+    """The avatar routes with the gateway's own route check and its own make start, on throwaway stores."""
+    generation = AvatarGeneration(model_for=proxy._avatar_picture_model, start=proxy._avatar_start_job,
+                                  own_picture_file=lambda _person_id, _asset_id: None)
+    app = FastAPI()
+    app.include_router(create_me_avatar_router(
+        session_provider=_session_for({"subject": person_id}), mutation_validator=_validator,
+        admin_db_path=db, generation=generation))
+    return app
+
+
+def _database_text(db: Path) -> str:
+    """The whole admin database as SQL text, so a test can tell whether a request wrote anything."""
+    with sqlite3.connect(db) as conn:
+        return "\n".join(conn.iterdump())
+
+
+def test_reading_the_generator_writes_nothing_and_answers_from_the_catalog(real_make, monkeypatch) -> None:
+    """A read never creates the person's session App. Availability comes from the catalog and the person's access."""
+    proxy, db, alice, _jobs = real_make
+    monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context",
+                        lambda _auth: [FakeCapability(avatar_generation.IMAGE_INTENT, "picture-route", sort_key=(1,))])
+    before = _database_text(db)
+    client = TestClient(_gateway_route_app(proxy, db, alice))
+    assert client.get("/me/api/profile/avatar/generator").json() == {"available": True}
+    assert client.get("/me/api/profile/avatar/generator").json() == {"available": True}
+    assert admin_store.get_session_app_for_user(alice, path=db) is None
+    assert _database_text(db) == before
+
+
 def test_a_person_picture_job_is_scheduled_on_the_loop_and_runs_to_its_picture(real_make, monkeypatch) -> None:
     from gateway import media_jobs
 
@@ -887,6 +917,8 @@ def test_a_person_picture_job_is_scheduled_on_the_loop_and_runs_to_its_picture(r
     assert job is not None and job["status"] == "succeeded"
     assert job_id not in proxy._image_media_job_scheduled
     assert job_id not in proxy._SESSION_MAKE_RUNTIME._gates
+    # The make start is what creates the person's session App, as a make page request does.
+    assert admin_store.get_session_app_for_user(alice, path=db) is not None
 
 
 def test_a_job_that_cannot_be_scheduled_outside_the_loop_leaves_no_marker_or_gate(real_make) -> None:
