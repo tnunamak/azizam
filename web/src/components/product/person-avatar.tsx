@@ -367,6 +367,8 @@ export function AvatarPicker({
                   key={result.assetId}
                   className="border-border flex flex-col items-center gap-2 rounded-lg border p-2"
                 >
+                  {/* A signed link to a picture the person made, drawn as the Library draws its own. */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={result.src}
                     alt={`New avatar ${index + 1}`}

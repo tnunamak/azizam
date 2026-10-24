@@ -19,7 +19,7 @@ const STOPPED = new Set(["succeeded", "failed", "canceled", "cancelled"]);
  */
 function useAvatarGeneration(onSaved: (saved: AvatarSetting) => void): AvatarGenerationView {
   const [jobId, setJobId] = useState<string | null>(null);
-  const generator = useQuery({
+  const { data: generatorData } = useQuery({
     queryKey: ["avatars", "generator"],
     queryFn: accountApi.avatarGenerator,
     retry: false,
@@ -29,7 +29,7 @@ function useAvatarGeneration(onSaved: (saved: AvatarSetting) => void): AvatarGen
     mutationFn: accountApi.startAvatarGeneration,
     onSuccess: ({ job }) => setJobId(job.job_id),
   });
-  const job = useQuery({
+  const { data: jobData } = useQuery({
     queryKey: ["avatars", "job", jobId],
     queryFn: () => accountApi.makeJob(jobId ?? ""),
     enabled: jobId !== null,
@@ -37,12 +37,12 @@ function useAvatarGeneration(onSaved: (saved: AvatarSetting) => void): AvatarGen
     refetchInterval: (query) =>
       query.state.data && STOPPED.has(query.state.data.job.status) ? false : 1_000,
   });
-  const status = job.data?.job.status ?? "";
+  const status = jobData?.job.status ?? "";
   const succeeded = status === "succeeded";
-  const pictures = useQuery({
+  const { data: pictureData, isError: picturesFailed } = useQuery({
     queryKey: ["avatars", "pictures", jobId],
     queryFn: async () => {
-      const made = (job.data?.job.assets ?? []).filter((asset) => asset.media_type?.startsWith("image/"));
+      const made = (jobData?.job.assets ?? []).filter((asset) => asset.media_type?.startsWith("image/"));
       const links = await Promise.all(
         made.map(async (asset) => ({
           assetId: asset.asset_id,
@@ -69,11 +69,11 @@ function useAvatarGeneration(onSaved: (saved: AvatarSetting) => void): AvatarGen
     },
   });
   return {
-    available: generator.data?.available === true,
+    available: generatorData?.available === true,
     making: start.isPending || (jobId !== null && !STOPPED.has(status)),
-    results: succeeded ? (pictures.data ?? []) : [],
+    results: succeeded ? (pictureData ?? []) : [],
     failed:
-      start.isError || status === "failed" || status === "canceled" || status === "cancelled" || pictures.isError,
+      start.isError || status === "failed" || status === "canceled" || status === "cancelled" || picturesFailed,
     onMake: () => {
       setJobId(null);
       start.mutate();
