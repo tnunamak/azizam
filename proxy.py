@@ -23839,6 +23839,8 @@ async def gateway_image_generations_media_job(request: Request):
             job_id = str(existing.get("job_id") or "")
             if job_id and _has_image_media_job_payload(job_id):
                 _schedule_image_media_job(job_id)
+        # A same-key replay answers the job it already made, so its receipt belongs to that job, not to a new request.
+        receipt.job_id = str(existing["job_id"])
         response = _image_media_job_response(existing, request)
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
@@ -23944,6 +23946,8 @@ async def gateway_image_generations_media_job(request: Request):
 
     if created.job_id != job.job_id:
         _delete_image_media_job_payload(job.job_id)
+        # A concurrent retry with the same key lost the race: its receipt belongs to the job that won.
+        receipt.job_id = created.job_id
         created_dict = created.to_dict("internal")
         response = _image_media_job_response(created_dict, request)
         await run_receipt_write(finish_image_route_receipt, receipt, response)
