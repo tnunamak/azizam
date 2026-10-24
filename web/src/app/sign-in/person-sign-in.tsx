@@ -264,7 +264,7 @@ export function PlainSignIn({
         </Label>
       </div>
       {/* 26 px: the 16 px box and the 10 px gap, so the helper starts where the label does. */}
-      <p id={rememberHelpId} className="text-muted-foreground text-meta mt-0.5 pl-[26px]">
+      <p id={rememberHelpId} className="text-muted-foreground text-meta text-pretty mt-0.5 pl-[26px]">
         Show my name here next time. Turn off on a shared computer.
       </p>
     </div>
