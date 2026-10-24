@@ -86,7 +86,8 @@ it.each([
           ? `Continue with ${label}`
           : "Continue with single sign-on",
     });
-    expect(provider).toHaveAttribute("data-variant", "default");
+    // The sign-in primary is the Home's Make colour (`--make`), the same token as the Home's Make button.
+    expect(provider).toHaveAttribute("data-variant", "make");
     // The name box is on by default, so the single sign-on start says so: remember=1 (Addendum 2).
     expect(provider).toHaveAttribute("href", `${options.oidc_url}&remember=1`);
     expect(screen.getByRole("button", { name: "Sign in" })).toHaveAttribute(

@@ -17,10 +17,13 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        // The Home's Make colour (`--make`). The sign-in page's primary action uses it, so the two match.
+        make: "bg-make text-make-foreground hover:bg-make/90",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+        // In dark the edge is the field edge (`--input`, 3:1 on the page). Light keeps the hairline (`--border`).
         outline:
-          "border border-border bg-card text-foreground hover:border-input hover:bg-muted",
+          "border border-border bg-card text-foreground hover:border-input hover:bg-muted dark:border-input",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground",
         ghost: "text-foreground hover:bg-muted",

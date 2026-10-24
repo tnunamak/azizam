@@ -276,7 +276,7 @@ export function PlainSignIn({
       <div className="mt-8">
         <ProviderNotices error={providerError} />
         {hasProvider && (
-          <Button size="xl" className="w-full whitespace-normal!" asChild>
+          <Button size="xl" variant="make" className="w-full whitespace-normal!" asChild>
             <a href={withRemember(data.oidc_url, rememberOn && remember)}>
               {providerLabel}
             </a>
@@ -352,7 +352,7 @@ export function PlainSignIn({
             <Button
               type="submit"
               size="xl"
-              variant={hasProvider ? "outline" : "default"}
+              variant={hasProvider ? "outline" : "make"}
               className="w-full whitespace-normal!"
               disabled={login.isPending}
             >
@@ -529,6 +529,7 @@ export function PersonPassword({
         <Button
           type="submit"
           size="xl"
+          variant="make"
           className="w-full whitespace-normal!"
           disabled={attempt.isPending || tooMany}
         >
