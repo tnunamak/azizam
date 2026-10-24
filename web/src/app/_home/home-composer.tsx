@@ -112,7 +112,8 @@ function useMoreToRight(ref: RefObject<HTMLElement | null>, count: number): bool
  */
 function StateNote({ state, word, ownerQuiet }: { state: CapabilityStateKey; word: string; ownerQuiet: boolean }) {
   return (
-    <span className="inline-flex items-center">
+    // Relative, so the word for screen readers stays inside the chooser's scroll box and never widens the page.
+    <span className="relative inline-flex items-center">
       {ownerQuiet ? null : (
         <span
           aria-hidden="true"

@@ -436,6 +436,13 @@ for (const viewport of LAYOUTS) {
       if (viewport.width === 390) {
         expect(scrolls).toBe(true);
         await expect(page.locator("[data-slot='chooser-fade']")).toBeVisible();
+        // The row bleeds to the screen's right edge, so a chip is cut by the screen, never by the page's
+        // padding; its first chip still starts on the page's left edge, and the page never scrolls sideways.
+        const row = (await group.boundingBox())!;
+        const composer = (await page.locator("[data-slot='composer']").boundingBox())!;
+        expect(Math.round(row.x + row.width)).toBe(390);
+        expect(Math.abs(boxes[0].left - composer.x)).toBeLessThanOrEqual(1);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
       }
     });
   }
