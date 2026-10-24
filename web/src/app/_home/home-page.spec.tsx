@@ -408,9 +408,9 @@ describe("H9 the owner panel holds operations, never content", () => {
     });
     renderHome({ role: "owner", admin: true, name: "Sam Okafor" });
     const panel = await screen.findByRole("region", { name: "Your gateway" });
-    // The phone row says it in two words; the wide panel names what works.
+    // The phone row says it in two words; the wide panel counts what works against what is on.
     await waitFor(() => expect(within(panel).getByText("Everything is working")).toBeVisible());
-    expect(within(panel).getByText(/^(Images and Chat|Chat and Images) are working$/)).toBeVisible();
+    expect(within(panel).getByText("2 of 2 working")).toBeVisible();
     expect(within(panel).getAllByRole("link", { name: /Open Status/ })[0].getAttribute("href")).toMatch(/^\/status\/?$/);
     expect(within(panel).queryAllByRole("link", { name: /Open Engines/ })).toHaveLength(0);
   });

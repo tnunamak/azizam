@@ -116,7 +116,7 @@ export function OwnerPanel({ needs, working }: { needs: GatewayNeed[]; working: 
           {working || !needs.length ? (
             <p className={cn(ROW, "text-muted-foreground")}>
               <CircleCheck aria-hidden="true" className="text-success mt-1 size-4 shrink-0" />
-              <span>{working ?? QUIET}</span>
+              <span className="text-balance">{working ?? QUIET}</span>
             </p>
           ) : null}
         </div>

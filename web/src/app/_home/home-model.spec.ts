@@ -211,9 +211,9 @@ describe("H9 the owner's panel names operational facts only", () => {
     expect(needs).toEqual([]);
   });
 
-  it("sums up what works in one line", () => {
-    expect(workingLine([view("chat", "Chat", "ready", "Ready")])).toBe("Chat is working");
-    expect(workingLine([view("image", "Images", "ready", "Ready")])).toBe("Images are working");
+  it("counts what works against what is on, in one line", () => {
+    expect(workingLine([view("chat", "Chat", "ready", "Ready")])).toBe("1 of 1 working");
+    expect(workingLine([view("image", "Images", "ready", "Ready"), view("chat", "Chat", "ready", "Ready")])).toBe("2 of 2 working");
     expect(
       workingLine([
         view("chat", "Chat", "ready", "Ready"),
@@ -221,7 +221,11 @@ describe("H9 the owner's panel names operational facts only", () => {
         view("speech", "Voice", "ready", "Ready"),
         view("video", "Video", "down", "Down"),
       ]),
-    ).toBe("Chat, Images and Voice are working");
+    ).toBe("3 of 4 working");
+    // Off is not on, so it is not counted; a fault is on, so it is.
+    expect(
+      workingLine([view("chat", "Chat", "ready", "Ready"), view("sfx", "Sound effects", "off", "Off"), view("video", "Video", "down", "Down")]),
+    ).toBe("1 of 2 working");
     expect(workingLine([view("video", "Video", "down", "Down")])).toBeNull();
   });
 });

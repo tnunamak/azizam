@@ -422,6 +422,10 @@ test("at 1440 px the owner's panel is a quiet muted block, and the fault shows t
   await expect(panel.getByRole("link", { name: /^Video is down/ })).toBeVisible();
   // One line per row: the cause is on the page the row opens.
   await expect(panel).not.toContainText("not accepting");
+  // The working line counts what works against what is on (Video is down; Sound effects is off, so not counted).
+  const working = panel.getByText("4 of 5 working");
+  await expect(working).toBeVisible();
+  expect(await working.evaluate((node) => getComputedStyle(node).textWrap)).toBe("balance");
   const block = panel.locator("ul").first().locator("..");
   const look = await block.evaluate((node) => {
     const probe = document.createElement("div");

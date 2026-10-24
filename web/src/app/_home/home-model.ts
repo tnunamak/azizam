@@ -337,11 +337,16 @@ export function gatewayNeeds(input: {
   return needs;
 }
 
-/** The one line for everything that works: "Chat, Images and Voice are working". Null when nothing is ready. */
+/**
+ * The owner's one line for what works, counted from the data: "4 of 5 working". What is off or blocked is not on,
+ * so it is not counted (the panel's own row names it); a fault is on, so it counts against the working ones.
+ * Null when nothing works.
+ */
 export function workingLine(views: CapabilityView[]): string | null {
-  const ready = views.filter((view) => view.state === "ready" || view.state === "busy").map((view) => view.label);
-  if (!ready.length) return null;
-  return `${joinNames(ready)} ${ready.length === 1 && !/s$/i.test(ready[0]) ? "is" : "are"} working`;
+  const on = views.filter((view) => !NOT_OFFERED.has(view.state));
+  const working = on.filter((view) => view.state === "ready" || view.state === "busy").length;
+  if (!working) return null;
+  return `${working} of ${on.length} working`;
 }
 
 /** Greeting from the time of day, in two parts so the name can be quieter; a first-time member is welcomed instead. */
