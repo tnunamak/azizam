@@ -987,6 +987,24 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(labels[own_asset], self.service_app["name"])
         self.assertEqual(labels[foreign_asset], self.app_a["name"])
 
+    def test_usage_counts_a_job_under_its_own_app_when_its_parent_link_names_a_receipt_the_viewer_may_not_read(self) -> None:
+        # The client chooses the parent link, so Bob's receipt is reachable from Alice's job. The receipt is outside her
+        # scope, so it must not decide whether her job is counted or which source it has. Her job's own App does.
+        self._receipt(self.app_b["id"], "req_bob_parent", maker_person_id=self.bob["id"])
+        with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+            media_jobs.create(media_jobs.MediaJob(
+                request_id="req_alice_child", parent_request_id="req_bob_parent", app_id=self.app_a["id"],
+                intent="image.generate", workflow="wf.image", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                assets=[{"asset_id": "img_" + "e" * 64, "media_type": "image/png"}],
+            ), path=self.jobs_db)
+
+        usage = self.client.get("/me/api/usage/summary")
+        self.assertEqual(usage.status_code, 200, usage.text)
+        self.assertEqual(usage.json()["media_count"], 1)
+        own_source = self.client.get(f"/me/api/usage/summary?source=app:{self.app_a['id']}")
+        self.assertEqual(own_source.status_code, 200, own_source.text)
+        self.assertEqual(own_source.json()["media_count"], 1)
+
     def test_owner_library_does_not_recover_foreign_source_from_job_identity(self) -> None:
         keyed_asset = "img_" + "8" * 64
         service_asset = "img_" + "7" * 64
