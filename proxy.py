@@ -26659,7 +26659,7 @@ def _protocol_loopback_source_headers(request: Request) -> dict[str, str]:
     headers = {
         key: value
         for key, value in request.headers.items()
-        if key.lower() not in {"authorization", "x-api-key", "api-key"}
+        if key.lower() not in {"authorization", *CLIENT_KEY_HEADERS}
     }
     api_key = _resolve_client_api_key(request)
     if api_key:
