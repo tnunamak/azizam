@@ -11,13 +11,15 @@ import type { DetectedModel } from "@/lib/engines-api";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { FormField, Tag } from "./form";
+import { FormField, NativeSelect, Tag } from "./form";
 
 export interface ModelDraft {
   id: string;
   public_name: string;
   context_window: string;
   use: string;
+  /** What the model is for, from the gateway's kinds. "" keeps every capability its engine offers. */
+  kind: string;
   on: boolean;
   /** Still the server's suggestion: shows the Suggested tag. */
   suggestedName: boolean;
@@ -32,6 +34,7 @@ export function draftsFromCheck(models: DetectedModel[], on = true): ModelDraft[
     public_name: m.public_name,
     context_window: m.context_window == null ? "" : String(m.context_window),
     use: m.use,
+    kind: m.kind ?? "",
     on,
     suggestedName: true,
     reportedWindow: m.context_window != null,
@@ -63,6 +66,8 @@ export function modelsBody(models: ModelDraft[]) {
     public_name: effectiveName(m),
     context_window: m.context_window.trim() === "" ? null : Number(m.context_window),
     enabled: m.on,
+    // Sent only when a kind is chosen: without one, every capability the engine offers still applies.
+    ...(m.kind ? { kind: m.kind } : {}),
   }));
 }
 
@@ -70,12 +75,15 @@ export function ModelsBlock({
   models,
   onChange,
   emptyText,
+  kinds,
   readOnly,
   error,
 }: {
   models: ModelDraft[];
   onChange: (next: ModelDraft[]) => void;
   emptyText: string;
+  /** The kinds a model may be given, from the gateway: each id with its builder label. */
+  kinds: { id: string; label: string }[];
   readOnly?: boolean;
   /** A message from the server about the list as a whole, for example after a refused Save. */
   error?: string;
@@ -112,7 +120,7 @@ export function ModelsBlock({
     setAddError(null);
     onChange([
       ...models,
-      { id: name, public_name: name, context_window: "", use: "Not known yet", on: true, suggestedName: false, reportedWindow: false, byName: true },
+      { id: name, public_name: name, context_window: "", use: "Not known yet", kind: "", on: true, suggestedName: false, reportedWindow: false, byName: true },
     ]);
     setByName("");
   }
@@ -167,7 +175,7 @@ export function ModelsBlock({
                   {model.byName && <Tag>Added by name</Tag>}
                 </span>
               </div>
-              <div className="grid gap-3 pl-7 sm:grid-cols-2">
+              <div className="grid gap-3 pl-7 sm:grid-cols-3">
                 <FormField
                   label="Name apps use"
                   tag={model.suggestedName ? <Tag tone="suggest">Suggested</Tag> : undefined}
@@ -204,6 +212,26 @@ export function ModelsBlock({
                       />
                       <span className="text-meta text-muted-foreground">tokens</span>
                     </div>
+                  )}
+                </FormField>
+                <FormField
+                  label="Capability"
+                  help="What apps may use this model for. Leave it on “All the engine offers” unless the engine serves this model for one thing only."
+                >
+                  {(control) => (
+                    <NativeSelect
+                      {...control}
+                      value={model.kind}
+                      disabled={readOnly}
+                      onChange={(event) => update(index, { kind: event.target.value })}
+                    >
+                      <option value="">All the engine offers</option>
+                      {kinds.map((kind) => (
+                        <option key={kind.id} value={kind.id}>
+                          {kind.label}
+                        </option>
+                      ))}
+                    </NativeSelect>
                   )}
                 </FormField>
               </div>

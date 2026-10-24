@@ -371,7 +371,9 @@
 # dispatch-stamped submit beside a priced remote attempt, and a legacy job that names its readable creator and has failed.
 # collect-only measured 17251 (2026-10-24).
 # Train r106 after merging A17 round 7 (+2 Usage fold cases): 17401 + 2 = 17403.
-pytest = 17403
+# Per-model kinds (2026-10-24): +10 cases in tests/test_registered_model_kinds.py and +1 route case in
+# tests/test_engine_admin_routes.py; collect-only measured 17414 (scripts/run-hermetic-pytest.sh --collect-only -q).
+pytest = 17414
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -474,7 +476,8 @@ pytest = 17403
 # requests beside paid totals, a no-paid month with local requests, a pre-routing failure and the CSV zero rule.
 # `vitest list` measured 3457 on 2026-10-24.
 # Train r106 (2026-10-24): vitest list is 3530 cases on the merged tree (vitest list --root web).
-vitest = 3530
+# Per-model kinds (2026-10-24): +4 models-block cases, +1 wizard case, +1 Try guard case; vitest list measured 3536.
+vitest = 3536
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).

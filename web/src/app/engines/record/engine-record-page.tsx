@@ -186,6 +186,7 @@ export function EngineRecordPage({
           key={version}
           view={engine}
           definition={definition}
+          modelKinds={definitions?.model_kinds ?? []}
           onRefresh={async () => {
             const refreshed = await refetchEngine();
             return refreshed.isSuccess ? refreshed.data?.revision : undefined;
@@ -247,6 +248,7 @@ function storedTests(view: EngineView): Record<string, TestState> {
 function RecordForm({
   view,
   definition,
+  modelKinds,
   onRefresh,
   onSaved,
   onDiscard,
@@ -255,6 +257,7 @@ function RecordForm({
 }: {
   view: EngineView;
   definition: EngineDefinition;
+  modelKinds: { id: string; label: string }[];
   onRefresh: () => Promise<string | undefined>;
   onSaved: (message: string) => Promise<void>;
   onDiscard: () => Promise<void>;
@@ -320,6 +323,7 @@ function RecordForm({
       public_name: m.public_name,
       context_window: m.context_window == null ? "" : String(m.context_window),
       use: m.use ?? view.check.model_use?.[m.id] ?? "",
+      kind: m.kind ?? "",
       on: m.enabled !== false,
       suggestedName: false,
       reportedWindow: false,
@@ -1027,6 +1031,7 @@ function RecordForm({
                 <ModelsBlock
                   models={models}
                   onChange={setModels}
+                  kinds={modelKinds}
                   readOnly={settingsLocked || commands.length > 0 || saving}
                   error={refusedHere("models")}
                   emptyText={nativeMode ? "No models are listed yet. Add a model using the public name the server accepts." : "No models are listed yet. Check the server to find them, or add a model by the name the server uses."}

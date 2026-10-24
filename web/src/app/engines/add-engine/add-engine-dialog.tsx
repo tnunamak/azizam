@@ -713,7 +713,7 @@ function Wizard({
             know better.
           </Note>
         )}
-        <ModelsBlock models={models} onChange={setModels} emptyText="The server listed no models. Add a model by name below." />
+        <ModelsBlock models={models} onChange={setModels} emptyText="The server listed no models. Add a model by name below." kinds={definitionsData.model_kinds ?? []} />
       </Frame>
     );
   }

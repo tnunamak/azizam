@@ -8,9 +8,14 @@ afterEach(() => cleanup());
 
 const detected = (id: string, public_name = id) => ({ id, public_name, context_window: null, use: "Chat" });
 
+const kinds = [
+  { id: "chat", label: "Chat" },
+  { id: "embed", label: "Embeddings" },
+];
+
 function Harness({ initial }: { initial: ModelDraft[] }) {
   const [models, setModels] = useState(initial);
-  return <ModelsBlock models={models} onChange={setModels} emptyText="No models." />;
+  return <ModelsBlock models={models} onChange={setModels} emptyText="No models." kinds={kinds} />;
 }
 
 describe("Add a model by name says why nothing happened", () => {
@@ -93,5 +98,48 @@ describe("the model list on a phone", () => {
     expect(fields).toHaveLength(2);
     for (const field of fields) expect(field).toHaveAccessibleDescription("The model’s maximum input and output size in tokens. Leave empty if unknown.");
     expect(within(document.body).getAllByText("The model’s maximum input and output size in tokens. Leave empty if unknown.")).toHaveLength(2);
+  });
+});
+
+describe("each model says what it is for", () => {
+  it("a probed model's kind is pre-filled and saved with the model", () => {
+    const models = draftsFromCheck([{ ...detected("nomic"), kind: "embed" }]);
+    expect(models[0].kind).toBe("embed");
+    expect(modelsBody(models)[0].kind).toBe("embed");
+  });
+
+  it("a model with no kind saves no kind, so every capability its engine offers still applies", () => {
+    const models = draftsFromCheck([detected("alpha")]);
+    expect(models[0].kind).toBe("");
+    expect(modelsBody(models)[0]).not.toHaveProperty("kind");
+  });
+
+  it("the Capability pick-list offers the engine's kinds, and choosing one sets it", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={draftsFromCheck([detected("alpha")])} />);
+    const pick = screen.getByLabelText("Capability");
+    expect(pick.tagName).toBe("SELECT");
+    expect(within(pick).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "All the engine offers",
+      "Chat",
+      "Embeddings",
+    ]);
+    expect(pick).toHaveValue("");
+    await user.selectOptions(pick, "embed");
+    expect(pick).toHaveValue("embed");
+  });
+
+  it("a read-only model shows its kind and cannot change it", () => {
+    render(
+      <ModelsBlock
+        models={draftsFromCheck([{ ...detected("nomic"), kind: "embed" }])}
+        onChange={() => undefined}
+        emptyText="No models."
+        kinds={kinds}
+        readOnly
+      />,
+    );
+    expect(screen.getByLabelText("Capability")).toHaveValue("embed");
+    expect(screen.getByLabelText("Capability")).toBeDisabled();
   });
 });
