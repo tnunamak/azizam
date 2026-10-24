@@ -3560,6 +3560,23 @@
       }
     },
     "securitySchemes": {
+      "AppKeyApiKey": {
+        "description": "The same App key, sent in the `api-key` header instead of Authorization.",
+        "in": "header",
+        "name": "api-key",
+        "type": "apiKey"
+      },
+      "AppKeyBearer": {
+        "description": "An App key from Apps, sent as `Authorization: Bearer <key>`. A request that sends no key is admitted only from a client address the owner trusted for an App.",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "AppKeyXApiKey": {
+        "description": "The same App key, sent in the `x-api-key` header instead of Authorization.",
+        "in": "header",
+        "name": "x-api-key",
+        "type": "apiKey"
+      },
       "OwnerBearer": {
         "description": "Admin automation credential with the required owner/admin role. App keys are rejected.",
         "scheme": "bearer",
