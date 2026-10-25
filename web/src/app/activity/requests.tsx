@@ -100,7 +100,7 @@ const requestNames: Record<string, string> = {
   sfx: "Sound effect",
   audio: "Audio",
   decide: "Decision",
-  embed: "Embedding",
+  embed: "Document search",
   rerank: "Rerank",
 };
 function requestSummary(receipt: Receipt) {

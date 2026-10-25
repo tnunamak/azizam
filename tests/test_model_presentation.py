@@ -1,10 +1,13 @@
 """Catalog presentation must preserve placement evidence and hide registry IDs."""
 
+import re
+from pathlib import Path
+
 import pytest
 
 from gateway.capabilities import Capability
 from gateway.models_catalog import build_models_catalog
-from gateway.model_presentation import (engine_label, model_locality, service_capability_labels, service_health_endpoint,
+from gateway.model_presentation import (CAPABILITY_LABELS, engine_label, model_locality, service_capability_labels, service_health_endpoint,
                                        service_presentation)
 
 # A capability of each product kind. The intent sets the `/v1/models` type;
@@ -708,6 +711,16 @@ def test_classification_follows_the_model_list_type():
 def test_embeddings_capability_uses_the_voice_glossary_label():
     # The engine keeps its configured name; the capability uses the glossary term.
     service = {"name": "Document search", "capabilities": ["embeddings"]}
-    assert service_capability_labels(service) == ["Embeddings"]
-    assert engine_label(service, "household-embedding") == "Document search (embeddings)"
-    assert service_presentation(service, "household-embedding")["capability_title"] == "Embeddings"
+    assert service_capability_labels(service) == ["Document search"]
+    assert engine_label(service, "household-embedding") == "Document search"
+    assert service_presentation(service, "household-embedding")["capability_title"] == "Document search"
+
+
+def test_embeddings_label_passes_the_member_jargon_sweep_list():
+    # Same word list the nightly sweep applies to member screens (plain terms:
+    # whole words, case-insensitive, optional plural "s"; "re:" lines: regexes).
+    lines = (Path(__file__).resolve().parents[1] / "web/e2e/sweep/lists/member-jargon.txt").read_text().splitlines()
+    patterns = [re.compile(line[3:]) if line.startswith("re:") else re.compile(rf"\b{re.escape(line)}s?\b", re.I)
+                for line in map(str.strip, lines) if line and not line.startswith("#")]
+    label = CAPABILITY_LABELS["embed"]
+    assert [p.pattern for p in patterns if p.search(label)] == []

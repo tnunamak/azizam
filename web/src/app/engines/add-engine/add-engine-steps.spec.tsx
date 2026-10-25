@@ -55,9 +55,9 @@ describe("f: what a detected server can do", () => {
     expect(within(dialog).getByText("Reached the server. No key needed. Found 3 models.")).toBeVisible();
     const group = within(dialog).getByRole("group", { name: "What this server can do" });
     const boxes = within(group).getAllByRole("checkbox");
-    expect(boxes.map((b) => b.getAttribute("aria-label") ?? b.closest("label")?.textContent)).toEqual(["Chat", "Embeddings"]);
+    expect(boxes.map((b) => b.getAttribute("aria-label") ?? b.closest("label")?.textContent)).toEqual(["Chat", "Document search"]);
     expect(within(group).getByRole("checkbox", { name: "Chat" })).toBeChecked();
-    expect(within(group).getByRole("checkbox", { name: "Embeddings" })).toBeChecked();
+    expect(within(group).getByRole("checkbox", { name: "Document search" })).toBeChecked();
     expect(within(group).getAllByText("Likely")).toHaveLength(2);
     for (const gone of ["Images", "Reranking", "Speech to text", "Text to speech", "Live voice"]) {
       expect(within(group).queryByText(gone)).toBeNull();
@@ -85,18 +85,18 @@ describe("f: what a detected server can do", () => {
     await user.type(within(dialog).getByLabelText(/^Address/), "http://192.168.1.50:8080/v1");
     await user.click(within(dialog).getByRole("button", { name: "Continue" }));
     await within(dialog).findByText(/^Step 3 of 5/);
-    expect(within(dialog).getByRole("checkbox", { name: "Embeddings" })).not.toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "Document search" })).not.toBeChecked();
     const result = testResult("embeddings_pass");
     const test = vi.spyOn(enginesApi, "test").mockResolvedValue(result);
-    await user.click(within(dialog).getByRole("button", { name: "Run a real test for Embeddings" }));
+    await user.click(within(dialog).getByRole("button", { name: "Run a real test for Document search" }));
     const at = clockTime(result.at);
     expect(await within(dialog).findByText(`Test passed at ${at}. Ticked for you.`)).toBeVisible();
     expect(test.mock.calls[0][0]).toMatchObject({ definition: "openai-compatible", capability: "embeddings" });
     expect(test.mock.calls[0][0]).not.toHaveProperty("service_id");
     const group = within(dialog).getByRole("group", { name: "What this server can do" });
-    expect(within(group).getByRole("checkbox", { name: "Embeddings" })).toBeChecked();
+    expect(within(group).getByRole("checkbox", { name: "Document search" })).toBeChecked();
     expect(within(group).getAllByText("Likely")).toHaveLength(2);
-    expect(within(group).getByText(/^A test of embeddings.*passed at .* using unsaved settings\./)).toBeVisible();
+    expect(within(group).getByText(/^A test of document search.*passed at .* using unsaved settings\./)).toBeVisible();
     expect(within(group).getByText("POST http://192.168.1.50:8080/v1/embeddings")).toBeVisible();
     expect(
       within(group).getByText("Tested your unsaved changes from the gateway’s computer. The test did not save your changes and is not listed in Activity."),
@@ -147,7 +147,7 @@ describe("g, h: models, name and create", () => {
     expect(recap).toHaveTextContent("KindAny OpenAI-compatible server");
     expect(recap).toHaveTextContent("Addresshttp://192.168.1.50:8080/v1");
     expect(recap).toHaveTextContent("KeyNo key supplied.");
-    expect(recap).toHaveTextContent("Will offerChat, Embeddings");
+    expect(recap).toHaveTextContent("Will offerChat, Document search");
     expect(recap).toHaveTextContent("Models3 offered");
     await user.clear(name);
     await user.type(name, "garage-gpu");
@@ -169,7 +169,7 @@ describe("g, h: models, name and create", () => {
     });
     expect(onAdded.mock.calls[0][0]).toMatchObject({
       serviceId: "garage-gpu",
-      message: "Added “garage-gpu”. It is on, with Chat and Embeddings.",
+      message: "Added “garage-gpu”. It is on, with Chat and Document search.",
     });
   });
 
@@ -204,7 +204,7 @@ describe("g, h: models, name and create", () => {
   it("h2b: the Capability pick-list offers only the kinds of the capabilities ticked for this engine", async () => {
     const user = userEvent.setup();
     const dialog = await toStep3(user, /Any OpenAI-compatible server/, "oai_ok", "http://192.168.1.50:8080/v1");
-    await user.click(within(within(dialog).getByRole("group", { name: "What this server can do" })).getByRole("checkbox", { name: "Embeddings" }));
+    await user.click(within(within(dialog).getByRole("group", { name: "What this server can do" })).getByRole("checkbox", { name: "Document search" }));
     await user.click(within(dialog).getByRole("button", { name: "Continue" }));
     const picks = await within(dialog).findAllByLabelText("Capability");
     expect(picks).toHaveLength(3);
@@ -226,7 +226,7 @@ describe("g, h: models, name and create", () => {
     await user.type(within(dialog).getByLabelText(/^Address/), "http://192.168.1.50:8080/v1");
     await user.click(within(dialog).getByRole("button", { name: "Continue" }));
     await within(dialog).findByText(/^Step 3 of 5/);
-    await user.click(within(within(dialog).getByRole("group", { name: "What this server can do" })).getByRole("checkbox", { name: "Embeddings" }));
+    await user.click(within(within(dialog).getByRole("group", { name: "What this server can do" })).getByRole("checkbox", { name: "Document search" }));
     await user.click(within(dialog).getByRole("button", { name: "Continue" }));
     // The probed embedding model keeps its kind, so the pick-list shows what the form sends.
     const picks = await within(dialog).findAllByLabelText("Capability");
@@ -238,8 +238,8 @@ describe("g, h: models, name and create", () => {
     const create = vi
       .spyOn(enginesApi, "create")
       .mockRejectedValue(
-        new ApiError("invalid_engine", "This engine doesn’t offer Embeddings.", 400, {
-          error: { code: "invalid_engine", message: "This engine doesn’t offer Embeddings.", field: "models.2.kind" },
+        new ApiError("invalid_engine", "This engine doesn’t offer Document search.", 400, {
+          error: { code: "invalid_engine", message: "This engine doesn’t offer Document search.", field: "models.2.kind" },
         }),
       );
     await user.click(within(dialog).getByRole("button", { name: "Add engine" }));
@@ -247,14 +247,14 @@ describe("g, h: models, name and create", () => {
     const refused = await within(dialog).findAllByLabelText("Capability");
     expect(refused[2]).toHaveAttribute("aria-invalid", "true");
     expect(refused[0]).not.toHaveAttribute("aria-invalid");
-    expect(within(dialog).getAllByText("This engine doesn’t offer Embeddings.")).toHaveLength(1);
+    expect(within(dialog).getAllByText("This engine doesn’t offer Document search.")).toHaveLength(1);
     expect(onAdded).not.toHaveBeenCalled();
   });
 
   it("h3: the Name step asks who can use the models, with the ticked capabilities and public names, before Add engine", async () => {
     const user = userEvent.setup();
     const dialog = await toStep3(user, /Any OpenAI-compatible server/, "oai_ok", "http://192.168.1.50:8080/v1");
-    await user.click(within(dialog).getByRole("checkbox", { name: "Embeddings" }));
+    await user.click(within(dialog).getByRole("checkbox", { name: "Document search" }));
     await user.click(within(dialog).getByRole("button", { name: "Continue" }));
     const pub = within(dialog).getAllByLabelText("Name apps use");
     await user.clear(pub[0]);

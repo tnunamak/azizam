@@ -78,7 +78,7 @@ class EngineFormKindTests(unittest.TestCase):
     def test_the_definitions_api_offers_the_kinds_with_builder_labels(self) -> None:
         kinds = load_engine_catalog().public()["model_kinds"]
         self.assertEqual([kind["id"] for kind in kinds], list(capability_ids.MODEL_KINDS))
-        self.assertEqual({kind["id"]: kind["label"] for kind in kinds}["embed"], "Embeddings")
+        self.assertEqual({kind["id"]: kind["label"] for kind in kinds}["embed"], "Document search")
 
 
 class ProbedModelKindTests(unittest.TestCase):
@@ -105,7 +105,7 @@ class KindOfferTests(unittest.TestCase):
 
     def test_the_speech_kind_is_labelled_voice_as_the_voice_glossary_names_it(self) -> None:
         labels = {kind["id"]: kind["label"] for kind in load_engine_catalog().public()["model_kinds"]}
-        self.assertEqual(labels, {"chat": "Chat", "embed": "Embeddings", "speech": "Voice", "transcribe": "Transcription"})
+        self.assertEqual(labels, {"chat": "Chat", "embed": "Document search", "speech": "Voice", "transcribe": "Transcription"})
 
     def test_the_form_refuses_a_kind_no_capability_of_the_engine_serves(self) -> None:
         rows = [{"model_group": "chat-model", "kind": "chat"}, {"model_group": "voice-model", "kind": "speech"}]

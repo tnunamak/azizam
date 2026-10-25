@@ -585,8 +585,8 @@ it("offers exact service capabilities and clears incompatible capability when sw
   await pick(user, "Model or workflow", "Vectors model");
   expect(screen.getByRole("combobox", { name: "Capability" })).toHaveTextContent("Choose capability");
   await user.click(screen.getByRole("combobox", { name: "Capability" }));
-  expect(screen.getAllByRole("option").map((node) => node.textContent)).toEqual(["Embeddings"]);
-  await user.click(screen.getByRole("option", { name: "Embeddings" }));
+  expect(screen.getAllByRole("option").map((node) => node.textContent)).toEqual(["Document search"]);
+  await user.click(screen.getByRole("option", { name: "Document search" }));
   await showPreview(user);
   expect((vi.mocked(adminFetch).mock.calls[0][1]!.body as { snapshot: Snapshot }).snapshot.people.sam[0].grants).toEqual([{ capability: "text.embeddings", service: "model:vectors@r1" }]);
 });

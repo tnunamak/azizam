@@ -9,7 +9,7 @@ from collections.abc import Iterable
 CAPABILITY_LABELS = {
     "chat": "Chat", "image": "Images", "video": "Video", "speech": "Voice",
     "transcribe": "Transcription", "music": "Music", "sfx": "Sound effects",
-    "audio": "Audio", "decide": "Decisions", "embed": "Embeddings", "rerank": "Reranking",
+    "audio": "Audio", "decide": "Decisions", "embed": "Document search", "rerank": "Reranking",
 }
 # The kinds a registered model may declare: the one capability it serves, with
 # its builder label. The kinds they share with the catalog take the catalog's

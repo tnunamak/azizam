@@ -39,7 +39,7 @@ const capabilities = [
   { id: "chat.completions", label: "Chat" }, { id: "image.generate", label: "Images" }, { id: "image.edit", label: "Image editing" },
   { id: "video.generate", label: "Video" }, { id: "speech.synthesis", label: "Voice" },
   { id: "speech.transcription", label: "Transcription" }, { id: "music.generate", label: "Music" },
-  { id: "sound.generate", label: "Sound effects" }, { id: "embed", label: "Embeddings" }, { id: "text.embeddings", label: "Embeddings" },
+  { id: "sound.generate", label: "Sound effects" }, { id: "embed", label: "Document search" }, { id: "text.embeddings", label: "Document search" },
 ];
 const emptySnapshot = (): Snapshot => ({ id: "owner-rules", categories: {}, people: {}, apps: {}, services: {}, completeness_gate: true, retained: {} });
 const allPlans = (snapshot: Snapshot) => [...Object.values(snapshot.people), ...Object.values(snapshot.apps)].flat();

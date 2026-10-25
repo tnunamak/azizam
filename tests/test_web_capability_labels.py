@@ -43,5 +43,5 @@ def test_gateway_capability_labels_use_the_voice_glossary_terms():
     assert labels["speech"] == "Voice"
     assert labels["audio"] == "Audio"
     assert labels["decide"] == "Decisions"
-    assert labels["embed"] == "Embeddings"
+    assert labels["embed"] == "Document search"
     assert labels["rerank"] == "Reranking"

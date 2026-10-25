@@ -159,7 +159,7 @@ export function modelTitle(row: CatalogRow): string | undefined {
   const id = letters(row.id);
   const task = letters(taskLabel(row));
   const serverTask = letters(row.capability_title ?? "");
-  // "Embeddings · Embed" only names the task twice; "embed" is the task too.
+  // "Document search · Embed" only names the task twice; "embed" is the task too.
   const plain = (word: string) => (word.startsWith("embed") ? "embed" : word);
   const known = new Set([id, task, serverTask, letters(row.capability ?? "")].map(plain));
   for (const candidate of [row.title ?? row.display_name, row.recommended_model]) {

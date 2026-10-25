@@ -194,7 +194,7 @@ export function useCapabilityViews(
       : undefined;
   const requests = owner && activity.data ? requestsFromActivity(activity.data) : requestsFromHome(home);
   // A member's summary covers what they use; embeddings and decisions are
-  // what their apps use behind the scenes, so they never read "Embeddings down".
+  // what their apps use behind the scenes, so they never read "Document search down".
   const rows = (
     home ? home.capabilities : []
   ).filter(

@@ -10,7 +10,7 @@ const detected = (id: string, public_name = id) => ({ id, public_name, context_w
 
 const kinds = [
   { id: "chat", label: "Chat" },
-  { id: "embed", label: "Embeddings" },
+  { id: "embed", label: "Document search" },
   { id: "speech", label: "Voice" },
   { id: "transcribe", label: "Transcription" },
 ];
@@ -127,8 +127,10 @@ describe("each model says what it is for", () => {
     expect(within(pick).getAllByRole("option").map((option) => option.textContent)).toEqual([
       "All the engine offers",
       "Chat",
-      "Embeddings",
+      "Document search",
     ]);
+    expect(screen.getByText(/Turns text into numbers for search \(embeddings\)\./)).toBeVisible();
+    expect(pick).toHaveAccessibleDescription(expect.stringContaining("Turns text into numbers for search (embeddings)."));
     expect(pick).toHaveValue("");
     await user.selectOptions(pick, "embed");
     expect(pick).toHaveValue("embed");
@@ -160,6 +162,7 @@ describe("each model says what it is for", () => {
       />,
     );
     expect(capabilityOptions(screen.getByLabelText("Capability"))).toEqual(["All the engine offers", "Chat", "Voice"]);
+    expect(screen.queryByText("Turns text into numbers for search (embeddings).")).toBeNull();
   });
 
   it("a model keeps its kind in the pick-list when the engine no longer offers it, so the refusal can name it", () => {
@@ -173,7 +176,7 @@ describe("each model says what it is for", () => {
       />,
     );
     expect(screen.getByLabelText("Capability")).toHaveValue("embed");
-    expect(capabilityOptions(screen.getByLabelText("Capability"))).toEqual(["All the engine offers", "Chat", "Embeddings"]);
+    expect(capabilityOptions(screen.getByLabelText("Capability"))).toEqual(["All the engine offers", "Chat", "Document search"]);
   });
 
   it("a refused kind shows its message under that model's Capability control and no other", () => {
@@ -184,14 +187,14 @@ describe("each model says what it is for", () => {
         emptyText="No models."
         kinds={kinds}
         offeredKinds={["chat"]}
-        kindError={{ index: 0, message: "This engine doesn’t offer Embeddings." }}
+        kindError={{ index: 0, message: "This engine doesn’t offer Document search." }}
       />,
     );
     const [first, second] = screen.getAllByLabelText("Capability");
     expect(first).toHaveAttribute("aria-invalid", "true");
-    expect(first).toHaveAccessibleDescription(expect.stringContaining("This engine doesn’t offer Embeddings."));
+    expect(first).toHaveAccessibleDescription(expect.stringContaining("This engine doesn’t offer Document search."));
     expect(second).not.toHaveAttribute("aria-invalid");
-    expect(screen.getAllByText("This engine doesn’t offer Embeddings.")).toHaveLength(1);
+    expect(screen.getAllByText("This engine doesn’t offer Document search.")).toHaveLength(1);
   });
 });
 

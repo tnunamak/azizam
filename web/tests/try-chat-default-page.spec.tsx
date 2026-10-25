@@ -265,7 +265,7 @@ describe("a chat model with unknown capability fields is an ordinary chat choice
   });
 });
 
-describe("Embeddings offers the rows the catalog says embed, and no chat-kind model", () => {
+describe("Document search offers the rows the catalog says embed, and no chat-kind model", () => {
   it("a model the catalog gives only chat is not offered for embeddings beside one that embeds", async () => {
     const chatKind = chatRow("chat-kind", "Chat-kind model", ["text"]);
     const embedder = {

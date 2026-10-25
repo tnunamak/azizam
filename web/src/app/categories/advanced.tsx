@@ -22,7 +22,7 @@ type Snapshot = { id: string; categories: Record<string, Category>; people: Reco
 export type Revision = { revision: number; parent_revision: number | null; created_at: string; activated_at?: string | null; author: string; reason: string; snapshot: Snapshot };
 const root = "/admin/api/categories";
 const plain = (value: string) => value.replace(/[_-]/g, " ").replace(/^./, (letter) => letter.toUpperCase());
-const capabilityNames: Record<string, string> = { "chat": "Chat", "chat.completions": "Chat", "image.generate": "Images", "image.edit": "Image editing", "text.embeddings": "Embeddings", "video.generate": "Video", "speech.synthesis": "Voice", "speech.transcription": "Transcription", "music.generate": "Music", "sound.generate": "Sound effects", "embed": "Embeddings" };
+const capabilityNames: Record<string, string> = { "chat": "Chat", "chat.completions": "Chat", "image.generate": "Images", "image.edit": "Image editing", "text.embeddings": "Document search", "video.generate": "Video", "speech.synthesis": "Voice", "speech.transcription": "Transcription", "music.generate": "Music", "sound.generate": "Sound effects", "embed": "Document search" };
 const capabilityName = (value: string) => capabilityNames[value] ?? value;
 function time(value?: string | null) {
   const date = value ? new Date(value) : null;

@@ -9,7 +9,7 @@ export const capabilityLabels = {
   sfx: "Sound effects",
   audio: "Audio",
   decide: "Decisions",
-  embed: "Embeddings",
+  embed: "Document search",
   rerank: "Reranking",
 } as const;
 
