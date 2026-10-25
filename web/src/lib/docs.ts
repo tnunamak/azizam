@@ -11,5 +11,5 @@ export function clientDocsUrl(clientId: string): string {
   return `${DOCS_BASE}/connect/${encodeURIComponent(clientId)}/`;
 }
 
-/** The public MCP setup page: `/docs/mcp/`. */
-export const MCP_DOCS_URL = `${DOCS_BASE}/mcp/`;
+/** The public MCP setup page: `/docs/api/mcp/`. */
+export const MCP_DOCS_URL = `${DOCS_BASE}/api/mcp/`;
