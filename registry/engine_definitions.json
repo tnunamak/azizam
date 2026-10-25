@@ -17,7 +17,7 @@
       "real_test": "chat"
     },
     "embeddings": {
-      "label": "Embeddings",
+      "label": "Document search",
       "noun": "embedding",
       "record_capabilities": [
         "embeddings"
