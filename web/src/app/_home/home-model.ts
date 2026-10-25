@@ -26,9 +26,9 @@ export function chooserRows(rows: HomeCapability[]): HomeCapability[] {
   return rows.filter((row) => !appPlumbingCapabilities.has(kindOf(row)));
 }
 
-/** The name a person reads for a kind of work; a kind this UI does not name uses the gateway's title. */
+/** Use the gateway's label when present; older or partial rows use the shared term. */
 export function capabilityLabel(row: HomeCapability): string {
-  return knownCapabilityLabel(kindOf(row)) ?? row.capability_title ?? row.capability;
+  return row.capability_title ?? knownCapabilityLabel(kindOf(row)) ?? row.capability;
 }
 
 /** How often, and when last, this person got a result from each kind of work. */

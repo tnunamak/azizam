@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 import { capabilityLabels } from "./terms";
 import { capabilityMeta } from "@/components/product/readiness";
 import { humanCapabilities, humanCapability } from "@/app/engines/engine-groups";
+import { capabilityLabel as homeCapabilityLabel } from "@/app/_home/home-model";
+import type { HomeCapability } from "@/app/_home/home-api";
 import { statusSummaryCopy } from "./status-copy";
 import { capabilityLabel } from "./use-capability-views";
 
@@ -9,6 +11,16 @@ it.each(Object.entries(capabilityLabels))(
   "%s uses its shared capability label on web surfaces",
   (id, label) => {
     expect(capabilityLabel(id)).toBe(label);
+    expect(capabilityLabel(id, "Gateway supplied label")).toBe("Gateway supplied label");
+    const homeRow = {
+      capability: id,
+      capability_title: label,
+      icon_key: id,
+    } as HomeCapability;
+    expect(homeCapabilityLabel(homeRow)).toBe(label);
+    expect(homeCapabilityLabel({ ...homeRow, capability_title: "Gateway supplied label" })).toBe(
+      "Gateway supplied label",
+    );
     expect(humanCapability(id)).toBe(label);
     expect(humanCapabilities([id])).toEqual([label]);
     expect(capabilityMeta(id).label).toBe(label);

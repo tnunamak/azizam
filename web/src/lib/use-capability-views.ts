@@ -18,7 +18,7 @@ import { homeApi, type HomeSnapshot } from "@/app/_home/home-api";
 import { appPlumbingCapabilities, capabilityLabelFor } from "@/lib/terms";
 
 export function capabilityLabel(key: string, title?: string | null): string {
-  return capabilityLabelFor(key) ?? title ?? key;
+  return title ?? capabilityLabelFor(key) ?? key;
 }
 
 export interface ActivityRecord {
