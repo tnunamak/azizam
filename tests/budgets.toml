@@ -415,7 +415,8 @@
 # collect-only measured 17560 (scripts/run-hermetic-pytest.sh --collect-only -q).
 # Restored the member jargon regression: collect-only measured 17561.
 # Train r108 (F2/F3 + L1, 2026-10-24): hermetic collect-only remeasured 17568 on this tree.
-pytest = 17568
+# Sign-out token fix (2026-10-25): full counts measured at pytest 17572 and Vitest 3576.
+pytest = 17572
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -529,7 +530,7 @@ pytest = 17568
 # Train r107, the automatic picture's cue and its five-minute backoff per tab (2026-10-24): two cases in
 # src/components/shell/account-avatar.spec.tsx. The full run passed all 3564.
 # L1 capability labels (2026-10-24): +11 cases in src/lib/terms.spec.ts; the full run passed all 3575 (--root web).
-vitest = 3575
+vitest = 3576
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
