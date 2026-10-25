@@ -105,13 +105,13 @@ const taskLabels: Record<Task, string> = {
   image: terms.image,
   video: terms.video,
   music: terms.music,
-  sfx: terms.sound_effects,
+  sfx: terms.sfx,
   speech: terms.speech,
   audio: terms.audio,
   transcribe: terms.transcribe,
   decide: taskNames.decisions,
   embed: taskNames.embeddings,
-  rerank: terms.reranking,
+  rerank: terms.rerank,
 };
 
 /** One plain sentence per task: what an app uses it for. */
@@ -159,7 +159,7 @@ export function modelTitle(row: CatalogRow): string | undefined {
   const id = letters(row.id);
   const task = letters(taskLabel(row));
   const serverTask = letters(row.capability_title ?? "");
-  // "Embeddings · Embed" only names the task twice; "embed" is the task too.
+  // "Document search · Embed" only names the task twice; "embed" is the task too.
   const plain = (word: string) => (word.startsWith("embed") ? "embed" : word);
   const known = new Set([id, task, serverTask, letters(row.capability ?? "")].map(plain));
   for (const candidate of [row.title ?? row.display_name, row.recommended_model]) {

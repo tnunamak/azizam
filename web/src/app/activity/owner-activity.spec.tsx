@@ -499,7 +499,7 @@ it.each([
   ["speech.synthesis", "Voice"],
   ["image.generate", "Image"],
   ["decide", "Decision"],
-  ["embed", "Embedding"],
+  ["embed", "Document search"],
   ["audio.sfx", "Sound effect"],
   ["video.generate", "Video"],
   ["audio.transcriptions", "Transcription"],

@@ -34,7 +34,7 @@ function row(id: string, intent: string, paid = false) {
     image: "Images",
     speech: "Voice",
     transcribe: "Transcription",
-    embed: "Embeddings",
+    embed: "Document search",
   }[capability];
   return {
     id,

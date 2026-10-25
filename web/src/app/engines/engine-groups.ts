@@ -1,32 +1,17 @@
 import type { CurrentHealthService, Service } from "@/lib/api";
+import { capabilityLabelFor } from "@/lib/terms";
 
-const CAPABILITY_LABELS: Record<string, string> = {
-  chat: "Chat",
+const NON_CAPABILITY_LABELS: Record<string, string> = {
   completions: "Text",
   text: "Text",
-  audio: "Audio",
-  transcriptions: "Transcription",
-  generations: "Images",
-  videos: "Video",
   realtime: "Realtime",
-  image: "Images",
-  images: "Images",
-  video: "Video",
-  speech: "Voice",
-  tts: "Voice",
-  transcribe: "Transcription",
-  transcription: "Transcription",
-  stt: "Transcription",
-  embeddings: "Embeddings",
-  embed: "Embeddings",
-  rerank: "Reranking",
-  decide: "Decisions",
-  decisions: "Decisions",
 };
 
 export function humanCapability(capability: string): string {
+  const normalized = capability.toLowerCase();
   return (
-    CAPABILITY_LABELS[capability.toLowerCase()] ??
+    capabilityLabelFor(normalized) ??
+    NON_CAPABILITY_LABELS[normalized] ??
     capability
       .replace(/[._-]+/g, " ")
       .replace(/\b\w/g, (letter) => letter.toUpperCase())
@@ -38,7 +23,8 @@ export function humanCapabilities(capabilities: string[]): string[] {
   for (const capability of capabilities) {
     // Summaries use the stable public capability vocabulary. Custom registry
     // tags remain available in Details and Advanced fields.
-    const label = CAPABILITY_LABELS[capability.toLowerCase()];
+    const normalized = capability.toLowerCase();
+    const label = capabilityLabelFor(normalized) ?? NON_CAPABILITY_LABELS[normalized];
     if (!label) continue;
     if (!labels.includes(label)) labels.push(label);
   }

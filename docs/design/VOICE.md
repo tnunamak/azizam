@@ -31,7 +31,7 @@ Applies to every word in the product UI. Marketing pages (azizam.dev) follow it 
 | **Model** | An AI model a request runs on | backend, route |
 | **Model name** | The exact string to paste into an app | alias (for members), model id |
 | **Alias** | Builder surfaces only: another accepted model name | - |
-| **Capability** | What you can do: Chat, Images, Video, Voice, Transcription, Music, Sound effects, Embeddings | intent, resource class, kind |
+| **Capability** | What you can do: Chat, Images, Video, Voice, Transcription, Music, Sound effects, Audio, Decisions, Document search, Reranking | intent, resource class, kind |
 | **Workflow** | A configured multi-step process with inputs and outputs | pipeline, graph, binding |
 | **App** | Something that connects to the gateway: a chat app, a script, a phone. Each app has its own keys and plan | integration, consumer |
 | **Client** | The program you set up to use the gateway (Open WebUI, Codex) | app (for the program), integration |
@@ -47,6 +47,8 @@ Applies to every word in the product UI. Marketing pages (azizam.dev) follow it 
 | **Saved words and chats** | The setting that keeps each creation's prompt, and chats an app asks Azizam to keep. Its name in Settings and Your settings. Its switch reads "Keep the words you used to make things". Its states say "words": "Words aren’t kept", "Only you can see kept words" | prompt memory, prompt keeping, prompts or "Keep prompts" (as a setting name) |
 | **Spend** | Money recorded against providers | cost (for totals), billing |
 | **Cap** | A spend limit | quota, budget (in UI) |
+
+The word “embeddings” may appear only in owner technical helper text.
 
 ## Words that never appear in member surfaces
 

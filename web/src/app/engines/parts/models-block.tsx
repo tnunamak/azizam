@@ -228,7 +228,17 @@ export function ModelsBlock({
                 </FormField>
                 <FormField
                   label="Capability"
-                  help="What apps may use this model for. Leave it on “All the engine offers” unless the engine serves this model for one thing only."
+                  help={
+                    <>
+                      What apps may use this model for. Leave it on “All the engine offers” unless the engine serves this model for one thing only.
+                      {(offeredKinds.includes("embed") || model.kind === "embed") && (
+                        <>
+                          <br />
+                          Turns text into numbers for search (embeddings).
+                        </>
+                      )}
+                    </>
+                  }
                   error={kindError?.index === index ? kindError.message : undefined}
                 >
                   {(control) => (

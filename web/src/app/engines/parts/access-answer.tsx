@@ -18,7 +18,7 @@ const LINK_CLASS = "text-link text-meta inline-flex items-center font-medium und
 
 /**
  * The turned-on models as the access question names them: the public name, with
- * the work the check found the model does when it found any ("Embeddings" →
+ * the work the check found the model does when it found any ("Document search" →
  * embeddings), so a plan for chat is not counted for an embedding model.
  */
 export function accessModels(

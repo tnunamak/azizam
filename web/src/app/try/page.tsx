@@ -2660,8 +2660,8 @@ export default function TryPage() {
     }
     const vector = embeddingStats(payload);
     return vector
-      ? { title: "Embedding result", body: "Vector created.", vector, ...common }
-      : nothing("Embedding result", "result");
+      ? { title: "Document search result", body: "Vector created.", vector, ...common }
+      : nothing("Document search result", "result");
   }
 
   return (

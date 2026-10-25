@@ -33,7 +33,7 @@ describe("the kind of a route", () => {
     ["/openai/v1/chat/completions?stream=false", "conversation", "Chat"],
     ["/v1/responses", "conversation", "Chat"],
     ["/anthropic/v1/messages", "conversation", "Chat"],
-    ["/v1/embeddings", "embeddings", "Embeddings"],
+    ["/v1/embeddings", "embeddings", "Document search"],
     ["/v1/audio/transcriptions", "transcription", "Transcription"],
     ["/v1/images/generations", "media", "Picture"],
     ["/v1/images/edits", "media", "Picture"],
