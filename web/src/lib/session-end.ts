@@ -525,7 +525,7 @@ async function askGateway(end: EndKind, signal: AbortSignal): Promise<Answer> {
   if (response.ok) {
     // Only the gateway's own JSON answer ends the session. Any other 2xx (a captive portal, a proxy
     // page) is not an answer: the session decides.
-    if (body !== null) return { ended: true, next: nextPage(body), who };
+    if (typeof body?.next === "string") return { ended: true, next: nextPage(body), who };
     return (await sessionStillLive(signal))
       ? { ended: false, reason: "gateway-error" }
       : { ended: true, next: SIGN_IN_PATH, who };
@@ -570,9 +570,10 @@ async function readEndSessionToken(signal: AbortSignal): Promise<{
   if (response.status === 401) return { authenticated: false, csrf: null, who: null };
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   if (!response.ok) throw new GatewayStatus(response.status);
+  if (typeof body?.authenticated !== "boolean") throw new GatewayStatus(response.status);
   const csrf = typeof body?.csrf_token === "string" && body.csrf_token ? body.csrf_token : null;
   return {
-    authenticated: body?.authenticated === true,
+    authenticated: body.authenticated,
     csrf,
     who: personNameOf(body),
   };
