@@ -81,7 +81,7 @@ it("Escape is Keep working: it closes the confirm, returns focus to the opener, 
 it("Discard and switch ends the session and sends the person to the sign-in page", async () => {
   const user = userEvent.setup();
   vi.mocked(fetch).mockImplementation(async (input) => {
-    if (String(input) === "/me/api/session") return json({ authenticated: true, csrf_token: "fixture-csrf" });
+    if (String(input) === "/me/api/session/end-token") return json({ authenticated: true, csrf_token: "fixture-csrf" });
     if (String(input) === "/logout") return json({ next: "/sign-in/" });
     throw new Error("Unexpected URL: " + String(input));
   });

@@ -32,6 +32,13 @@ beforeEach(() => {
   replace = vi.spyOn(navigate, "replace").mockImplementation(() => {});
   routes = new Map();
   route("GET /me/api/session", () => json(signedIn));
+  route("GET /me/api/session/end-token", () =>
+    json({
+      authenticated: true,
+      csrf_token: "csrf-1",
+      user: { name: "Sam", email: "sam@example.test" },
+    }),
+  );
   route("POST /logout", () => json({ next: "/sign-in/" }));
   vi.stubGlobal(
     "fetch",
@@ -79,7 +86,9 @@ describe("ending the session", () => {
 
   it("a 403 gets one retry with a fresh token, then the sign-out completes", async () => {
     const tokens = ["stale", "fresh"];
-    route("GET /me/api/session", () => json({ ...signedIn, csrf_token: tokens.shift() }));
+    route("GET /me/api/session/end-token", () =>
+      json({ authenticated: true, csrf_token: tokens.shift(), user: { name: "Sam", email: "sam@example.test" } }),
+    );
     let posts = 0;
     route("POST /logout", () => {
       posts += 1;
@@ -114,6 +123,19 @@ describe("ending the session", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  it("a slow portal snapshot does not hold sign-out up or show the failure cover", async () => {
+    vi.useFakeTimers();
+    route("GET /me/api/session", hangs);
+    const ending = sessionEnd.endSession("sign-out");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await ending;
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "signing-out" });
+    expect(sent("GET /me/api/session")).toHaveLength(0);
+    expect(sent("GET /me/api/session/end-token")).toHaveLength(1);
+    expect(sent("POST /logout")).toHaveLength(1);
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
+  });
+
   it("a dropped connection is 'no answer'", async () => {
     route("POST /logout", offline);
     await sessionEnd.endSession("sign-out");
@@ -140,7 +162,7 @@ describe("ending the session", () => {
   });
 
   it("a browser with no session still ends cleanly: the gateway answers login_required", async () => {
-    route("GET /me/api/session", () => json({ authenticated: false }));
+    route("GET /me/api/session/end-token", () => json({ authenticated: false }));
     route("GET /admin/api/session", () => json({ error: { code: "login_required", message: "Sign in first." } }, 401));
     route("POST /logout", () => json({ error: { code: "login_required", message: "Sign in first." } }, 401));
     await sessionEnd.endSession("sign-out");
@@ -159,7 +181,7 @@ describe("ending the session", () => {
   });
 
   it("the owner's admin session supplies the token when the snapshot has none", async () => {
-    route("GET /me/api/session", () => json({ authenticated: true, session_view_id: "view-a" }));
+    route("GET /me/api/session/end-token", () => json({ authenticated: true }));
     route("GET /admin/api/session", () => json({ actor: { csrf_token: "admin-csrf" } }));
     await sessionEnd.endSession("sign-out");
     const [[, init]] = sent("POST /logout");
@@ -179,6 +201,63 @@ describe("ending the session", () => {
     route("POST /auth/api/sign-out-everywhere", () => json({ next: "https://elsewhere.example/" }));
     await sessionEnd.endSession("sign-out-everywhere");
     expect(replace).toHaveBeenCalledWith("/sign-in/?after=everywhere");
+  });
+
+  it("invalid JSON from the token route is a gateway error, not a completed sign-out", async () => {
+    route("GET /me/api/session/end-token", () => new Response("{", { status: 200 }));
+    route("GET /admin/api/session", () => json({ error: { code: "login_required" } }, 401));
+
+    await sessionEnd.endSession("sign-out");
+
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "failed", reason: "gateway-error" });
+    expect(JSON.parse(localStorage.getItem(sessionEnd.HANDOFF_KEY)!).state).toBe("LEAVING");
+    expect(sent("POST /logout")).toHaveLength(0);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("a token answer without boolean authenticated is a gateway error", async () => {
+    route("GET /me/api/session/end-token", () => json({}));
+    route("GET /admin/api/session", () => json({ error: { code: "login_required" } }, 401));
+
+    await sessionEnd.endSession("sign-out");
+
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "failed", reason: "gateway-error" });
+    expect(JSON.parse(localStorage.getItem(sessionEnd.HANDOFF_KEY)!).state).toBe("LEAVING");
+    expect(sent("POST /logout")).toHaveLength(0);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("a 500 from the token route is a gateway error", async () => {
+    route("GET /me/api/session/end-token", () => json({}, 500));
+
+    await sessionEnd.endSession("sign-out");
+
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "failed", reason: "gateway-error" });
+    expect(sent("POST /logout")).toHaveLength(0);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("a token route that times out is no-answer", async () => {
+    vi.useFakeTimers();
+    route("GET /me/api/session/end-token", hangs);
+    const ending = sessionEnd.endSession("sign-out");
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await ending;
+
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "failed", reason: "no-answer" });
+    expect(sent("POST /logout")).toHaveLength(0);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("an empty logout answer with a live session is a gateway error", async () => {
+    route("POST /logout", () => json({}));
+
+    await sessionEnd.endSession("sign-out");
+
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "failed", reason: "gateway-error" });
+    expect(JSON.parse(localStorage.getItem(sessionEnd.HANDOFF_KEY)!).state).toBe("LEAVING");
+    expect(replace).not.toHaveBeenCalled();
   });
 });
 
@@ -450,25 +529,28 @@ describe("the wipe does not wait on a cleanup step that hangs", () => {
 });
 
 describe("the sign-out while the session view key is down", () => {
-  // The snapshot cannot be identified (503 session_view_unavailable), but it still carries the CSRF token: the
-  // sign-out must use it, since the logout itself does not need the view key.
-  const unavailable = () =>
-    json({ error: { code: "session_view_unavailable", message: "Your sign-in cannot be checked right now. Try again." }, csrf_token: "csrf-503" }, 503);
+  // The full snapshot is unavailable, but the separate sign-out path still returns the CSRF token.
+  const endToken = () =>
+    json({ authenticated: true, csrf_token: "csrf-light", user: { name: "Sam", email: "sam@example.test" } });
 
-  it("sign-out sends the token the unavailable snapshot carries and ends the session", async () => {
-    routes.set("GET /me/api/session", unavailable);
+  it("sign-out uses the light token path and ends the session", async () => {
+    routes.set("GET /me/api/session", () => json({ error: { code: "session_view_unavailable" } }, 503));
+    routes.set("GET /me/api/session/end-token", endToken);
     await sessionEnd.endSession("sign-out");
     const [[, init]] = sent("POST /logout");
-    expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-503");
+    expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-light");
+    expect(sent("GET /me/api/session")).toHaveLength(0);
     expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
   });
 
-  it("sign out everywhere sends the token the unavailable snapshot carries and ends the session", async () => {
-    routes.set("GET /me/api/session", unavailable);
+  it("sign out everywhere also uses the light token path", async () => {
+    routes.set("GET /me/api/session", () => json({ error: { code: "session_view_unavailable" } }, 503));
+    routes.set("GET /me/api/session/end-token", endToken);
     routes.set("POST /auth/api/sign-out-everywhere", () => json({ next: "/sign-in/" }));
     await sessionEnd.endSession("sign-out-everywhere");
     const [[, init]] = sent("POST /auth/api/sign-out-everywhere");
-    expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-503");
+    expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-light");
+    expect(sent("GET /me/api/session")).toHaveLength(0);
     expect(replace).toHaveBeenCalledWith("/sign-in/?after=everywhere");
   });
 });

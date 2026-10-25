@@ -23,6 +23,9 @@ beforeEach(() => {
   replace = vi.spyOn(navigate, "replace").mockImplementation(() => {});
   routes = new Map();
   routes.set("GET /me/api/session", () => json(signedIn));
+  routes.set("GET /me/api/session/end-token", () =>
+    json({ authenticated: true, csrf_token: "csrf-1", user: { name: "Sam", email: "sam@example.test" } }),
+  );
   routes.set("POST /logout", () => json({ next: "/sign-in/" }));
   vi.stubGlobal(
     "fetch",
@@ -120,7 +123,7 @@ describe("R5 a tab that mirrors a sign-out whose starter vanished", () => {
 
 describe("R6 no CSRF token anywhere", () => {
   it("does not post /logout with an empty token (the replaced test 'does not submit logout after fallback failure')", async () => {
-    routes.set("GET /me/api/session", () => json({}));
+    routes.set("GET /me/api/session/end-token", () => json({}));
     routes.set("GET /admin/api/session", () => json({}));
     routes.set("POST /logout", () => json({ error: { code: "csrf_required" } }, 403));
     await sessionEnd.endSession("sign-out");

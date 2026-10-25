@@ -51,10 +51,11 @@ it("a sign-out that gets no answer leaves the failure screen; Try again reads a 
     .mockResolvedValueOnce(json({ error: { code: "csrf_required", message: "Refresh" } }, 403))
     .mockResolvedValueOnce(json({ next: "/sign-in/" }));
   vi.mocked(fetch).mockImplementation(async (input, init) => {
-    if (String(input) === "/me/api/session") {
+    if (String(input) === "/me/api/session/end-token") {
       sessionReads += 1;
       return json({ authenticated: true, csrf_token: "fixture-csrf-" + sessionReads });
     }
+    if (String(input) === "/me/api/session") return json({ authenticated: true, csrf_token: "fixture-csrf-1" });
     if (String(input) === "/logout") return logout(init);
     throw new Error("Unexpected URL: " + String(input));
   });
@@ -91,6 +92,7 @@ it("a sign-out that gets no answer leaves the failure screen; Try again reads a 
 it("uses the admin session's token when the member snapshot has none", async () => {
   const user = userEvent.setup();
   vi.mocked(fetch).mockImplementation(async (input) => {
+    if (String(input) === "/me/api/session/end-token") return json({ authenticated: true });
     if (String(input) === "/me/api/session") return json({ authenticated: true });
     if (String(input) === "/admin/api/session") return json({ actor: { csrf_token: "fixture-admin-csrf" } });
     if (String(input) === "/logout") return json({ next: "/sign-in/" });

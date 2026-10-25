@@ -11,6 +11,7 @@ from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
+import proxy
 
 from gateway import accounts, admin_store, browser_sessions, session_policy, step_up
 from gateway.admin_runtime import create_admin_service_account_key
@@ -103,6 +104,80 @@ def set_policy(g, **change):
 
 def set_password(g, email):
     admin_store.set_local_password_verifier(person_id(g, email), accounts.hash_password(PASSWORD), path=g.path)
+
+
+def test_anonymous_end_session_token_is_not_authenticated(sg):
+    response = sg.client().get("/me/api/session/end-token")
+
+    assert response.status_code == 200
+    assert response.json() == {"authenticated": False, "csrf_token": ""}
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_end_session_token_for_session_without_person_is_still_authenticated(sg):
+    client = sg.client()
+    session = browser_sessions.issue(
+        {"sub": "service_account:fixture", "email": "admin key"},
+        role="owner", cookie=proxy._browser_admin_cookie_config(), path=sg.path,
+        register=False, renewable=False,
+    )
+    put_cookie(client, encode_session_cookie(session, signing_key=SIGNING_KEY))
+
+    response = client.get("/me/api/session/end-token")
+
+    assert response.status_code == 200
+    assert response.json()["authenticated"] is True
+    assert response.json()["user"] is None
+
+
+def test_logout_token_path_does_not_wait_for_the_portal_snapshot(sg, monkeypatch):
+    client = owner_client(sg)
+    page = client.get("/me/api/session")
+    assert page.status_code == 200
+    page_csrf = page.json()["csrf_token"]
+    page_user = page.json()["user"]
+    build_snapshot = proxy.build_user_portal_snapshot
+    snapshot_calls = []
+
+    def slow_snapshot(*args, **kwargs):
+        snapshot_calls.append(True)
+        time.sleep(0.05)
+        return build_snapshot(*args, **kwargs)
+
+    monkeypatch.setattr(proxy, "build_user_portal_snapshot", slow_snapshot)
+
+    end_token = client.get("/me/api/session/end-token")
+    assert end_token.status_code == 200, end_token.text
+    assert end_token.headers["cache-control"] == "no-store"
+    assert end_token.json()["authenticated"] is True
+    assert end_token.json()["csrf_token"] == page_csrf
+    assert end_token.json()["user"] == {
+        "name": page_user["name"],
+        "email": page_user["email"],
+    }
+    assert snapshot_calls == []
+
+    ended = client.post("/logout", headers={
+        "x-azizam-csrf": end_token.json()["csrf_token"],
+        "accept": "application/json",
+    })
+    assert ended.status_code == 200, ended.text
+    assert snapshot_calls == []
+    assert client.get("/me/api/session").json()["authenticated"] is False
+
+
+def test_end_session_token_from_one_session_cannot_end_another(sg):
+    first, second = owner_client(sg), owner_client(sg)
+    first_token = first.get("/me/api/session/end-token").json()["csrf_token"]
+    second_token = second.get("/me/api/session/end-token").json()["csrf_token"]
+    assert first_token != second_token
+
+    response = second.post("/logout", headers={"x-azizam-csrf": first_token, "accept": "application/json"})
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "csrf_required"
+    assert signed_in_state(first)
+    assert signed_in_state(second)
 
 
 # ---------------------------------------------------------------------------

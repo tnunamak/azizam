@@ -1648,6 +1648,14 @@
     "schema": false
   },
   {
+    "auth": "session-view",
+    "gate": "Optional browser session; returns only its CSRF token and display name",
+    "handler": "proxy.user_portal_session_end_token",
+    "method": "GET",
+    "path": "/me/api/session/end-token",
+    "schema": false
+  },
+  {
     "auth": "session-only",
     "gate": "Browser session; mutations require CSRF/action header",
     "handler": "gateway.home_api.member_status",
