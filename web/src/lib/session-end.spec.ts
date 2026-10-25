@@ -32,6 +32,13 @@ beforeEach(() => {
   replace = vi.spyOn(navigate, "replace").mockImplementation(() => {});
   routes = new Map();
   route("GET /me/api/session", () => json(signedIn));
+  route("GET /me/api/session/end-token", () =>
+    json({
+      authenticated: true,
+      csrf_token: "csrf-1",
+      user: { name: "Sam", email: "sam@example.test" },
+    }),
+  );
   route("POST /logout", () => json({ next: "/sign-in/" }));
   vi.stubGlobal(
     "fetch",
@@ -79,7 +86,9 @@ describe("ending the session", () => {
 
   it("a 403 gets one retry with a fresh token, then the sign-out completes", async () => {
     const tokens = ["stale", "fresh"];
-    route("GET /me/api/session", () => json({ ...signedIn, csrf_token: tokens.shift() }));
+    route("GET /me/api/session/end-token", () =>
+      json({ authenticated: true, csrf_token: tokens.shift(), user: { name: "Sam", email: "sam@example.test" } }),
+    );
     let posts = 0;
     route("POST /logout", () => {
       posts += 1;
@@ -114,6 +123,19 @@ describe("ending the session", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  it("a slow portal snapshot does not hold sign-out up or show the failure cover", async () => {
+    vi.useFakeTimers();
+    route("GET /me/api/session", hangs);
+    const ending = sessionEnd.endSession("sign-out");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await ending;
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "signing-out" });
+    expect(sent("GET /me/api/session")).toHaveLength(0);
+    expect(sent("GET /me/api/session/end-token")).toHaveLength(1);
+    expect(sent("POST /logout")).toHaveLength(1);
+    expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
+  });
+
   it("a dropped connection is 'no answer'", async () => {
     route("POST /logout", offline);
     await sessionEnd.endSession("sign-out");
@@ -140,7 +162,7 @@ describe("ending the session", () => {
   });
 
   it("a browser with no session still ends cleanly: the gateway answers login_required", async () => {
-    route("GET /me/api/session", () => json({ authenticated: false }));
+    route("GET /me/api/session/end-token", () => json({ authenticated: false }));
     route("GET /admin/api/session", () => json({ error: { code: "login_required", message: "Sign in first." } }, 401));
     route("POST /logout", () => json({ error: { code: "login_required", message: "Sign in first." } }, 401));
     await sessionEnd.endSession("sign-out");
@@ -159,7 +181,7 @@ describe("ending the session", () => {
   });
 
   it("the owner's admin session supplies the token when the snapshot has none", async () => {
-    route("GET /me/api/session", () => json({ authenticated: true, session_view_id: "view-a" }));
+    route("GET /me/api/session/end-token", () => json({ authenticated: true }));
     route("GET /admin/api/session", () => json({ actor: { csrf_token: "admin-csrf" } }));
     await sessionEnd.endSession("sign-out");
     const [[, init]] = sent("POST /logout");

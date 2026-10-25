@@ -17,6 +17,7 @@ from gateway.admin_runtime import create_admin_service_account_key
 from gateway.admin_oidc import (
     AUTH_TIME_UNKNOWN, AdminSession, CookieConfig, csrf_token_for_session, decode_session_cookie, encode_session_cookie,
 )
+import proxy
 from gateway.session_policy import DAY, MINUTE
 from tests.support.access import store_plan
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
@@ -103,6 +104,41 @@ def set_policy(g, **change):
 
 def set_password(g, email):
     admin_store.set_local_password_verifier(person_id(g, email), accounts.hash_password(PASSWORD), path=g.path)
+
+
+def test_logout_token_path_does_not_wait_for_the_portal_snapshot(sg, monkeypatch):
+    client = owner_client(sg)
+    page = client.get("/me/api/session")
+    assert page.status_code == 200
+    page_csrf = page.json()["csrf_token"]
+    page_user = page.json()["user"]
+    build_snapshot = proxy.build_user_portal_snapshot
+    snapshot_calls = []
+
+    def slow_snapshot(*args, **kwargs):
+        snapshot_calls.append(True)
+        time.sleep(0.05)
+        return build_snapshot(*args, **kwargs)
+
+    monkeypatch.setattr(proxy, "build_user_portal_snapshot", slow_snapshot)
+
+    end_token = client.get("/me/api/session/end-token")
+    assert end_token.status_code == 200, end_token.text
+    assert end_token.json()["authenticated"] is True
+    assert end_token.json()["csrf_token"] == page_csrf
+    assert end_token.json()["user"] == {
+        "name": page_user["name"],
+        "email": page_user["email"],
+    }
+    assert snapshot_calls == []
+
+    ended = client.post("/logout", headers={
+        "x-azizam-csrf": end_token.json()["csrf_token"],
+        "accept": "application/json",
+    })
+    assert ended.status_code == 200, ended.text
+    assert snapshot_calls == []
+    assert client.get("/me/api/session").json()["authenticated"] is False
 
 
 # ---------------------------------------------------------------------------
