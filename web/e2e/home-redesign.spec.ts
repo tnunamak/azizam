@@ -367,6 +367,17 @@ test("at 768 px a first visit's chosen ring stays inside its card, and every cap
   const chat = group.getByRole("button", { name: "Chat About 1 s · no charge" });
   await chat.click();
   await expect(chat).toHaveAttribute("aria-pressed", "true");
+  // Faces settle as their pictures load, so wait until every face and caption lines up before measuring the rest.
+  await expect
+    .poll(() =>
+      group.evaluate((node) => {
+        const cards = Array.from(node.querySelectorAll<HTMLElement>("button[aria-pressed]"));
+        const faces = new Set(cards.map((card) => Math.round(card.firstElementChild!.getBoundingClientRect().height)));
+        const ends = new Set(cards.map((card) => Math.round(card.getBoundingClientRect().bottom)));
+        return `${faces.size}/${ends.size}`;
+      }),
+    )
+    .toBe("1/1");
   const shape = await group.evaluate((node) => {
     const cards = Array.from(node.querySelectorAll<HTMLElement>("button[aria-pressed]"));
     const ring = cards[0].querySelector<HTMLElement>("span.absolute.inset-0");
