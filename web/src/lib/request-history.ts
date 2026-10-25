@@ -122,7 +122,7 @@ export interface RequestKind {
 export function requestKind(route: string | null | undefined): RequestKind {
   const path = routeWords(route).toLowerCase();
   if (/\/(chat\/completions|responses|messages|api\/chat)$/.test(path)) return { shape: "conversation", label: "Chat" };
-  if (/\/(embeddings|api\/embed)$/.test(path)) return { shape: "embeddings", label: "Embeddings" };
+  if (/\/(embeddings|api\/embed)$/.test(path)) return { shape: "embeddings", label: "Document search" };
   if (/\/audio\/(transcriptions|translations)$/.test(path)) return { shape: "transcription", label: "Transcription" };
   if (/\/images\//.test(path)) return { shape: "media", label: "Picture" };
   if (/\/videos(\/|$)/.test(path)) return { shape: "media", label: "Video" };

@@ -161,8 +161,8 @@ const requestNouns: Record<UsageCapability, string> = {
   voice: "Voice",
   transcribe: "Transcription",
   decide: "Decision",
-  embed: "Embedding",
-  embeddings: "Embedding",
+  embed: "Document search",
+  embeddings: "Document search",
   rerank: "Rerank",
   other: "Other",
 };

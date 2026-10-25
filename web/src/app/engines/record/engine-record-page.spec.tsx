@@ -56,7 +56,7 @@ describe("i: the engine record page", () => {
     expect(screen.getByTestId("check-line")).toHaveTextContent(/^Reached the server\. A key was sent\. Acceptance was not recorded\. 2 models found\. Checked/);
     expect(screen.getAllByTestId("call-line")[0]).toHaveTextContent("Connection check: GET http://192.168.1.50:8080/v1/models");
     expect(screen.getByRole("checkbox", { name: "Chat" })).toBeChecked();
-    expect(screen.getAllByRole("checkbox", { name: /^(Chat|Embeddings|Images|Reranking|Speech to text|Text to speech|Live voice)$/ })).toHaveLength(2);
+    expect(screen.getAllByRole("checkbox", { name: /^(Chat|Document search|Images|Reranking|Speech to text|Text to speech|Live voice)$/ })).toHaveLength(2);
     expect(screen.queryByRole("checkbox", { name: "Images" })).toBeNull();
     expect(screen.getByText("2 of 2 models offered")).toBeVisible();
     expect(screen.queryByText(/Advanced JSON/)).toBeNull();
@@ -288,8 +288,8 @@ describe("who can use the models", () => {
       ],
     });
     const update = vi.spyOn(enginesApi, "update").mockRejectedValue(
-      new ApiError("invalid_engine", "This engine doesn’t offer Embeddings.", 400, {
-        error: { code: "invalid_engine", message: "This engine doesn’t offer Embeddings.", field: "models.1.kind" },
+      new ApiError("invalid_engine", "This engine doesn’t offer Document search.", 400, {
+        error: { code: "invalid_engine", message: "This engine doesn’t offer Document search.", field: "models.1.kind" },
       }),
     );
     const names = await screen.findAllByLabelText("Name apps use");
@@ -299,7 +299,7 @@ describe("who can use the models", () => {
     await waitFor(() => expect(update).toHaveBeenCalled());
     const picks = await screen.findAllByLabelText("Capability");
     expect(picks[1]).toHaveAttribute("aria-invalid", "true");
-    expect(picks[1]).toHaveAccessibleDescription(expect.stringContaining("This engine doesn’t offer Embeddings."));
+    expect(picks[1]).toHaveAccessibleDescription(expect.stringContaining("This engine doesn’t offer Document search."));
     expect(picks[0]).not.toHaveAttribute("aria-invalid");
   });
 

@@ -2063,6 +2063,21 @@ def ensure_session_app_for_user(
     return _row_to_dict(row)  # type: ignore[return-value]
 
 
+SESSION_APP_NAME = "Azizam"
+
+
+def repair_session_app_at_signin(user_id: str, *, path: Path = DB_PATH) -> None:
+    """Make sure a person who just signed in has a working session App.
+
+    The sign-in has already committed, so a failure here must not turn it into an
+    error: the person is signed in, and the next sign-in or make repairs the App.
+    """
+    try:
+        ensure_session_app_for_user(user_id, name=SESSION_APP_NAME, path=path)
+    except Exception as exc:  # noqa: BLE001 - a repair must not fail a committed sign-in
+        print(f"[admin_store] session App repair after sign-in did not finish: {type(exc).__name__}", flush=True)
+
+
 def get_session_app_for_user(user_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
     with _conn(path) as conn:
         row = conn.execute(

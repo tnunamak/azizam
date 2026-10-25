@@ -17,6 +17,7 @@ import {
   Waves,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { capabilityLabels } from "@/lib/terms";
 
 /* ------------------------------------------------------------------ */
 /* Capabilities                                                        */
@@ -32,73 +33,73 @@ export interface CapabilityMeta {
 
 const capabilityMetaMap: Record<string, CapabilityMeta> = {
   chat: {
-    label: "Chat",
+    label: capabilityLabels.chat,
     icon: MessageSquare,
     tone: "text-capability-chat",
     tint: "bg-capability-chat/12",
   },
   image: {
-    label: "Images",
+    label: capabilityLabels.image,
     icon: ImageIcon,
     tone: "text-capability-image",
     tint: "bg-capability-image/12",
   },
   video: {
-    label: "Video",
+    label: capabilityLabels.video,
     icon: Video,
     tone: "text-capability-video",
     tint: "bg-capability-video/12",
   },
   speech: {
-    label: "Voice",
+    label: capabilityLabels.speech,
     icon: AudioLines,
     tone: "text-capability-voice",
     tint: "bg-capability-voice/12",
   },
   voice: {
-    label: "Voice",
+    label: capabilityLabels.speech,
     icon: AudioLines,
     tone: "text-capability-voice",
     tint: "bg-capability-voice/12",
   },
   transcribe: {
-    label: "Transcription",
+    label: capabilityLabels.transcribe,
     icon: Mic,
     tone: "text-capability-transcribe",
     tint: "bg-capability-transcribe/12",
   },
   music: {
-    label: "Music",
+    label: capabilityLabels.music,
     icon: Music2,
     tone: "text-capability-voice",
     tint: "bg-capability-voice/12",
   },
   sfx: {
-    label: "Sound effects",
+    label: capabilityLabels.sfx,
     icon: Waves,
     tone: "text-capability-voice",
     tint: "bg-capability-voice/12",
   },
   audio: {
-    label: "Audio",
+    label: capabilityLabels.audio,
     icon: FileAudio,
     tone: "text-capability-voice",
     tint: "bg-capability-voice/12",
   },
   embed: {
-    label: "Embeddings",
+    label: capabilityLabels.embed,
     icon: Layers,
     tone: "text-capability-embed",
     tint: "bg-capability-embed/12",
   },
   rerank: {
-    label: "Reranking",
+    label: capabilityLabels.rerank,
     icon: ListFilter,
     tone: "text-capability-embed",
     tint: "bg-capability-embed/12",
   },
   decide: {
-    label: "Decisions",
+    label: capabilityLabels.decide,
     icon: GitBranch,
     tone: "text-capability-decide",
     tint: "bg-capability-decide/12",

@@ -15,26 +15,10 @@ import {
   type Verdict,
 } from "@/lib/capability-state";
 import { homeApi, type HomeSnapshot } from "@/app/_home/home-api";
-import { appPlumbingCapabilities } from "@/lib/terms";
-
-/** People see these names (VOICE glossary); the gateway's own titles still match. */
-const LABELS: Record<string, string> = {
-  chat: "Chat",
-  image: "Images",
-  video: "Video",
-  speech: "Voice",
-  voice: "Voice",
-  transcribe: "Transcription",
-  music: "Music",
-  sfx: "Sound effects",
-  audio: "Audio",
-  embed: "Embeddings",
-  rerank: "Reranking",
-  decide: "Decisions",
-};
+import { appPlumbingCapabilities, capabilityLabelFor } from "@/lib/terms";
 
 export function capabilityLabel(key: string, title?: string | null): string {
-  return LABELS[key] ?? title ?? key;
+  return title ?? capabilityLabelFor(key) ?? key;
 }
 
 export interface ActivityRecord {
@@ -210,7 +194,7 @@ export function useCapabilityViews(
       : undefined;
   const requests = owner && activity.data ? requestsFromActivity(activity.data) : requestsFromHome(home);
   // A member's summary covers what they use; embeddings and decisions are
-  // what their apps use behind the scenes, so they never read "Embeddings down".
+  // what their apps use behind the scenes, so they never read "Document search down".
   const rows = (
     home ? home.capabilities : []
   ).filter(
@@ -222,7 +206,7 @@ export function useCapabilityViews(
       {
         key,
         label: capabilityLabel(key, row.capability_title),
-        matchLabels: [row.capability_title ?? "", LABELS[key] ?? ""].filter(Boolean),
+        matchLabels: [row.capability_title ?? "", capabilityLabelFor(key) ?? ""].filter(Boolean),
         status: row.status,
         reason_code: row.reason_code,
         available: row.available,

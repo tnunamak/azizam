@@ -31,7 +31,15 @@ from gateway import log_scrub
 from gateway import admin_store, browser_sessions, engine_check, step_up, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway import session_guard
-from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, NotYourApp, access_model_summary
+from gateway.admin_api import (
+    ActorOutranked,
+    AdminAuthError,
+    AdminContext,
+    AdminKeyNameTaken,
+    NotYourApp,
+    ServiceLeftOut,
+    access_model_summary,
+)
 from gateway.admin_oidc import (
     SERVICE_ACCOUNT_SESSION_PREFIX,
     AdminSession,
@@ -1331,6 +1339,12 @@ class AdminSQLiteStore:
             # The way to fix a record that is left out: edit it, starting from what is stored.
             existing = left_out.record
         metadata_fields = {"name", "enabled", "disabled", "note", "acknowledge_warnings"}
+        if left_out is not None and set(data) <= metadata_fields:
+            fix_path = f"/admin/api/operator/service-registry/excluded/services/{sid}"
+            raise ServiceLeftOut(
+                f"Service {sid!r} is left out of the registry. Fix it with PUT {fix_path}.",
+                fix_path=fix_path,
+            )
         if existing is not None and "owner" not in actor.roles and set(data) - metadata_fields:
             raise PermissionError("Only the owner can change service settings.")
         if existing is not None and set(data) <= metadata_fields:

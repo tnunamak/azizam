@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, confirmWithPassword } from "@/lib/api";
 import { navigate } from "@/lib/navigate";
 import { reauthInvoker, settleReauth, type ReauthInfo } from "@/lib/reauth";
@@ -62,9 +62,18 @@ function ReauthForm({ info }: { info: ReauthInfo }) {
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const refocusPassword = useRef(false);
   const hasPassword = info.methods.includes("password");
   const hasProvider = info.methods.includes("oidc");
   const signInOnly = !hasPassword && !hasProvider;
+
+  useEffect(() => {
+    // The input is disabled during the request; restore focus after it is enabled.
+    if (!pending && refocusPassword.current) {
+      refocusPassword.current = false;
+      input.current?.focus();
+    }
+  }, [pending]);
 
   async function confirm() {
     if (pending || !password) return;
@@ -82,7 +91,7 @@ function ReauthForm({ info }: { info: ReauthInfo }) {
       );
       setPassword("");
       if (!(error instanceof ApiError && error.status >= 500)) {
-        requestAnimationFrame(() => input.current?.focus());
+        refocusPassword.current = true;
       }
     } finally {
       setPending(false);

@@ -117,7 +117,7 @@ def test_a_task_field_is_evidence_for_the_work_it_names():
                                    key=KeyInput(), fetch=fetch, baseline_token=TOKEN))
     embeddings = next(row for row in result["capabilities"] if row["id"] == "embeddings")
     assert embeddings["level"] == "likely" and "bge-m3" in embeddings["evidence"]
-    assert result["models"][0]["use"] == "Embeddings"
+    assert result["models"][0]["use"] == "Document search"
     assert result["models"][0]["kind"] == "embed", "the one kind the server's answer names is suggested for the wizard"
 
 

@@ -380,7 +380,7 @@ test.describe("Categories editor real fixture journeys", () => {
         await plan.locator(":scope > details > summary").click();
         await plan.getByLabel("Access plan name", { exact: true }).fill(kind.toLowerCase() + "-reviewed");
         await plan.getByRole("button", { name: "Add grant", exact: true }).click();
-        await pick(page, plan, "Capability", "Embeddings");
+        await pick(page, plan, "Capability", "Document search");
         await pick(page, plan, "Model or workflow", "Name unavailable");
         await plan.getByRole("button", { name: "Add requirement", exact: true }).click();
         await pick(page, plan, "Category", "Data handling");
@@ -428,7 +428,7 @@ test.describe("Categories editor real fixture journeys", () => {
       }));
       const changes = form.getByRole("region", { name: "Change preview", exact: true });
       await expect(changes.getByText("Who gains access", { exact: true }).locator(".."))
-        .toContainText("Person name unavailable · App name unavailable · Embeddings · Name unavailable");
+        .toContainText("Person name unavailable · App name unavailable · Document search · Name unavailable");
       await accessible(page, width);
       await turnOn(page, request, candidate);
       const selected = await active(request);
@@ -436,7 +436,7 @@ test.describe("Categories editor real fixture journeys", () => {
       await accessible(page, width);
       const current = await closeAndRead(page, candidate.revision);
       await expect(current.getByText("Data handling: Private", { exact: true })).toBeVisible();
-      await expect(current.getByText("Allows Embeddings with Name unavailable", { exact: true })).toHaveCount(4);
+      await expect(current.getByText("Allows Document search with Name unavailable", { exact: true })).toHaveCount(4);
       await expect(current.getByText("Access plan: Person reviewed", { exact: true })).toBeVisible();
       await expect(current.getByText("Access plan: App reviewed", { exact: true })).toBeVisible();
       await accessible(page, width);

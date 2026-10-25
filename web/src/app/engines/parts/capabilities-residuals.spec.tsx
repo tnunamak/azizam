@@ -6,7 +6,7 @@ afterEach(() => cleanup());
 
 const rows: CapabilityRow[] = [
   { id: "chat", label: "Chat", level: "likely" },
-  { id: "embeddings", label: "Embeddings", level: "likely" },
+  { id: "embeddings", label: "Document search", level: "likely" },
 ];
 
 function passed(via: "saved" | "draft"): TestState {
@@ -39,6 +39,6 @@ describe("per-row test evidence", () => {
     );
 
     expect(within(screen.getByLabelText("Real test of Chat")).getByText(/Tested the saved settings/)).toBeVisible();
-    expect(within(screen.getByLabelText("Real test of Embeddings")).getByText(/Tested your unsaved changes/)).toBeVisible();
+    expect(within(screen.getByLabelText("Real test of Document search")).getByText(/Tested your unsaved changes/)).toBeVisible();
   });
 });

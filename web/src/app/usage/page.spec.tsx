@@ -814,7 +814,7 @@ test("Usage chart legend names capabilities as Home and Try do", async () => {
     expect(screen.getAllByText(name).length).toBeGreaterThan(0);
   }
   expect(screen.queryByText("Decisions")).not.toBeInTheDocument();
-  expect(screen.queryByText("Embeddings")).not.toBeInTheDocument();
+  expect(screen.queryByText("Document search")).not.toBeInTheDocument();
 });
 
 test("Usage receipts show host paths only in owner technical details", async () => {
@@ -1332,7 +1332,7 @@ test("Usage model table shows names, never a path or packing tag, and a Cost in 
   expect(screen.getAllByText("Make a picture").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Choose an option").length).toBeGreaterThan(0);
   expect(screen.queryByText("Decisions", { exact: true })).toBeNull();
-  expect(screen.queryByText("Embeddings", { exact: true })).toBeNull();
+  expect(screen.queryByText("Document search", { exact: true })).toBeNull();
 });
 
 const manySources = [
