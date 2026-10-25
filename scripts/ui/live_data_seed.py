@@ -236,6 +236,7 @@ def seed(state: Path, port: int) -> dict[str, object]:
         "member_asset": member_asset,
         "service_app_id": service_app["id"],
         "member_app_id": member_app["id"],
+        "member_user_id": member["id"],
     }
     private_io.atomic_write_text(state / "live-data-manifest.json", json.dumps(manifest))
     manifest_path = os.environ.get("LIVE_DATA_MANIFEST_PATH")

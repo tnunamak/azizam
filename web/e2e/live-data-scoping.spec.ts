@@ -11,6 +11,7 @@ type Manifest = {
   owner_service_asset: string;
   service_app_id: string;
   member_app_id: string;
+  member_user_id: string;
 };
 
 async function manifest(): Promise<Manifest> {
@@ -113,10 +114,20 @@ test("member sees their own media, and cannot reach the owner's work in a servic
   expect(
     ownMedia.assets.map((asset: { asset_id: string }) => asset.asset_id).sort(),
   ).toEqual([data.member_asset, data.service_asset].sort());
-  // Sources are the Apps the member runs; Daisy's media is theirs without being an App of theirs.
-  expect(ownMedia.sources.map((source: { id: string }) => source.id)).toEqual([
-    `app:${data.member_app_id}`,
-  ]);
+  // The source list includes the member's Apps, including the keyless App created at sign-in. Daisy's media
+  // is theirs without being an App of theirs.
+  const sources = ownMedia.sources as Array<{
+    id: string;
+    label: string;
+    owner_user_id: string;
+  }>;
+  expect(sources.map((source) => source.id)).toContain(`app:${data.member_app_id}`);
+  expect(
+    sources.some(
+      (source) => source.label === "Azizam" && source.owner_user_id === data.member_user_id,
+    ),
+  ).toBe(true);
+  expect(sources.every((source) => source.owner_user_id === data.member_user_id)).toBe(true);
 
   expect(
     (await member.get("/me/api/media?source=local-network")).status(),
