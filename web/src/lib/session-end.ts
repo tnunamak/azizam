@@ -56,6 +56,7 @@ export const HANDOFF_KEY = "azizam.handoff";
 export const CHECK_CLASS = "session-check";
 const CHANNEL = "azizam-session";
 const SESSION_PATH = "/me/api/session";
+const END_SESSION_TOKEN_PATH = "/me/api/session/end-token";
 const ADMIN_SESSION_PATH = "/admin/api/session";
 const LOGOUT_PATH = "/logout";
 const SIGN_OUT_EVERYWHERE_PATH = "/auth/api/sign-out-everywhere";
@@ -499,7 +500,7 @@ async function gatewayAnswer(end: EndKind): Promise<Answer> {
 type TokenAnswer = { kind: "token"; token: string; who: SignedInName | null } | { kind: "ended" } | { kind: "refuse" };
 
 async function tokenFor(signal: AbortSignal): Promise<TokenAnswer> {
-  const seen = await readSession(signal);
+  const seen = await readEndSessionToken(signal);
   if (seen.csrf) return { kind: "token", token: seen.csrf, who: seen.who };
   const admin = await readAdmin(signal);
   if (admin.live) return admin.csrf ? { kind: "token", token: admin.csrf, who: seen.who } : { kind: "refuse" };
@@ -551,8 +552,30 @@ function post(path: string, token: string, signal: AbortSignal): Promise<Respons
 }
 
 async function sessionStillLive(signal: AbortSignal): Promise<boolean> {
-  if ((await readSession(signal)).authenticated) return true;
+  if ((await readEndSessionToken(signal)).authenticated) return true;
   return (await readAdmin(signal)).live;
+}
+
+/** The sign-out token path avoids building the Apps snapshot. */
+async function readEndSessionToken(signal: AbortSignal): Promise<{
+  authenticated: boolean;
+  csrf: string | null;
+  who: SignedInName | null;
+}> {
+  const response = await endingRequest(END_SESSION_TOKEN_PATH, {
+    credentials: "same-origin",
+    cache: "no-store",
+    signal,
+  });
+  if (response.status === 401) return { authenticated: false, csrf: null, who: null };
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!response.ok) throw new GatewayStatus(response.status);
+  const csrf = typeof body?.csrf_token === "string" && body.csrf_token ? body.csrf_token : null;
+  return {
+    authenticated: body?.authenticated === true,
+    csrf,
+    who: personNameOf(body),
+  };
 }
 
 /** A snapshot read. `unavailable` is set when the gateway says this sign-in cannot be identified right now (503

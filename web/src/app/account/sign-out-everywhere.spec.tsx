@@ -16,8 +16,8 @@ beforeEach(() => {
   replace = vi.spyOn(navigate, "replace").mockImplementation(() => {});
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
-    // A member has no admin session; the sign-out token comes from their own snapshot.
-    if (path === "/me/api/session")
+    // A member has no admin session; their CSRF token comes from the light sign-out endpoint.
+    if (path === "/me/api/session/end-token")
       return Response.json({ authenticated: true, csrf_token: "csrf-token" });
     sent.push({ path, method: init?.method ?? "GET", csrf: new Headers(init?.headers).get("x-azizam-csrf") });
     return signOut();

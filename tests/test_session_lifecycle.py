@@ -11,13 +11,13 @@ from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
+import proxy
 
 from gateway import accounts, admin_store, browser_sessions, session_policy, step_up
 from gateway.admin_runtime import create_admin_service_account_key
 from gateway.admin_oidc import (
     AUTH_TIME_UNKNOWN, AdminSession, CookieConfig, csrf_token_for_session, decode_session_cookie, encode_session_cookie,
 )
-import proxy
 from gateway.session_policy import DAY, MINUTE
 from tests.support.access import store_plan
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)

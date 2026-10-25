@@ -472,25 +472,28 @@ describe("the wipe does not wait on a cleanup step that hangs", () => {
 });
 
 describe("the sign-out while the session view key is down", () => {
-  // The snapshot cannot be identified (503 session_view_unavailable), but it still carries the CSRF token: the
-  // sign-out must use it, since the logout itself does not need the view key.
-  const unavailable = () =>
-    json({ error: { code: "session_view_unavailable", message: "Your sign-in cannot be checked right now. Try again." }, csrf_token: "csrf-503" }, 503);
+  // The full snapshot is unavailable, but the separate sign-out path still returns the CSRF token.
+  const endToken = () =>
+    json({ authenticated: true, csrf_token: "csrf-light", user: { name: "Sam", email: "sam@example.test" } });
 
-  it("sign-out sends the token the unavailable snapshot carries and ends the session", async () => {
-    routes.set("GET /me/api/session", unavailable);
+  it("sign-out uses the light token path and ends the session", async () => {
+    routes.set("GET /me/api/session", () => json({ error: { code: "session_view_unavailable" } }, 503));
+    routes.set("GET /me/api/session/end-token", endToken);
     await sessionEnd.endSession("sign-out");
     const [[, init]] = sent("POST /logout");
-    expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-503");
+    expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-light");
+    expect(sent("GET /me/api/session")).toHaveLength(0);
     expect(replace).toHaveBeenCalledWith("/sign-in/?after=sign-out");
   });
 
-  it("sign out everywhere sends the token the unavailable snapshot carries and ends the session", async () => {
-    routes.set("GET /me/api/session", unavailable);
+  it("sign out everywhere also uses the light token path", async () => {
+    routes.set("GET /me/api/session", () => json({ error: { code: "session_view_unavailable" } }, 503));
+    routes.set("GET /me/api/session/end-token", endToken);
     routes.set("POST /auth/api/sign-out-everywhere", () => json({ next: "/sign-in/" }));
     await sessionEnd.endSession("sign-out-everywhere");
     const [[, init]] = sent("POST /auth/api/sign-out-everywhere");
-    expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-503");
+    expect(new Headers(init?.headers).get("x-azizam-csrf")).toBe("csrf-light");
+    expect(sent("GET /me/api/session")).toHaveLength(0);
     expect(replace).toHaveBeenCalledWith("/sign-in/?after=everywhere");
   });
 });
