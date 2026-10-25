@@ -410,7 +410,8 @@
 # tests/test_avatar_generation.py. collect-only measures 17559 on the tree.
 # L1 capability labels (2026-10-24): two cross-layer checks added and one invalid member-copy check removed;
 # collect-only measured 17560 (scripts/run-hermetic-pytest.sh --collect-only -q).
-pytest = 17560
+# Restored the member jargon regression: collect-only measured 17561.
+pytest = 17561
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
