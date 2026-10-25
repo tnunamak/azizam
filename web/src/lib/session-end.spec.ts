@@ -202,6 +202,63 @@ describe("ending the session", () => {
     await sessionEnd.endSession("sign-out-everywhere");
     expect(replace).toHaveBeenCalledWith("/sign-in/?after=everywhere");
   });
+
+  it("invalid JSON from the token route is a gateway error, not a completed sign-out", async () => {
+    route("GET /me/api/session/end-token", () => new Response("{", { status: 200 }));
+    route("GET /admin/api/session", () => json({ error: { code: "login_required" } }, 401));
+
+    await sessionEnd.endSession("sign-out");
+
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "failed", reason: "gateway-error" });
+    expect(JSON.parse(localStorage.getItem(sessionEnd.HANDOFF_KEY)!).state).toBe("LEAVING");
+    expect(sent("POST /logout")).toHaveLength(0);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("a token answer without boolean authenticated is a gateway error", async () => {
+    route("GET /me/api/session/end-token", () => json({}));
+    route("GET /admin/api/session", () => json({ error: { code: "login_required" } }, 401));
+
+    await sessionEnd.endSession("sign-out");
+
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "failed", reason: "gateway-error" });
+    expect(JSON.parse(localStorage.getItem(sessionEnd.HANDOFF_KEY)!).state).toBe("LEAVING");
+    expect(sent("POST /logout")).toHaveLength(0);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("a 500 from the token route is a gateway error", async () => {
+    route("GET /me/api/session/end-token", () => json({}, 500));
+
+    await sessionEnd.endSession("sign-out");
+
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "failed", reason: "gateway-error" });
+    expect(sent("POST /logout")).toHaveLength(0);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("a token route that times out is no-answer", async () => {
+    vi.useFakeTimers();
+    route("GET /me/api/session/end-token", hangs);
+    const ending = sessionEnd.endSession("sign-out");
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await ending;
+
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "failed", reason: "no-answer" });
+    expect(sent("POST /logout")).toHaveLength(0);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("an empty logout answer with a live session is a gateway error", async () => {
+    route("POST /logout", () => json({}));
+
+    await sessionEnd.endSession("sign-out");
+
+    expect(sessionEnd.getSessionScreen()).toMatchObject({ kind: "failed", reason: "gateway-error" });
+    expect(JSON.parse(localStorage.getItem(sessionEnd.HANDOFF_KEY)!).state).toBe("LEAVING");
+    expect(replace).not.toHaveBeenCalled();
+  });
 });
 
 describe("the request guard", () => {

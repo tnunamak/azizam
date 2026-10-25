@@ -42,6 +42,7 @@ function json(body: unknown, status = 200) {
 
 /** A signed-in session that accepts its own sign-out. */
 async function answerSessionAndLogout(input: RequestInfo | URL): Promise<Response> {
+  if (String(input) === "/me/api/session/end-token") return json({ authenticated: true, csrf_token: "fixture-csrf" });
   if (String(input) === "/me/api/session") return json({ authenticated: true, csrf_token: "fixture-csrf" });
   if (String(input) === "/logout") return json({ next: "/sign-in/" });
   throw new Error("Unexpected URL: " + String(input));
