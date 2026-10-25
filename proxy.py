@@ -16464,6 +16464,34 @@ async def user_portal_session(request: Request):
     )
 
 
+@app.get("/me/api/session/end-token", include_in_schema=False)
+async def user_portal_session_end_token(request: Request):
+    """Return only the current session's CSRF token and the name needed by sign-out."""
+    session = await asyncio.to_thread(_oidc_session_from_request, request)
+    if session is None:
+        return JSONResponse(
+            {"authenticated": False, "csrf_token": ""},
+            headers={"cache-control": "no-store"},
+        )
+
+    user = await asyncio.to_thread(admin_store.get_user, session.subject, path=ADMIN_STORE.path)
+    who = None
+    if user is not None:
+        email = user.get("email") or session.email
+        who = {
+            "name": user.get("display_name") or email,
+            "email": email,
+        }
+    return JSONResponse(
+        {
+            "authenticated": True,
+            "csrf_token": _csrf_token_for_oidc_session(session),
+            "user": who,
+        },
+        headers={"cache-control": "no-store"},
+    )
+
+
 def _session_catalog_auth_contexts(session: Any, snapshot: Mapping[str, Any]) -> list[AuthContext]:
     """One discovery context per distinct plan pair of the person's Apps."""
     person_id = str(session.subject)

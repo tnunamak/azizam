@@ -105,6 +105,8 @@ beforeEach(() => {
     "fetch",
     vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.endsWith("/me/api/session/end-token"))
+        return jsonResponse({ authenticated: true, csrf_token: ownerSession.csrf_token, user: ownerSession.user });
       if (url.endsWith("/me/api/session")) return jsonResponse(ownerSession);
       if (url.endsWith("/.well-known/azizam")) {
         return jsonResponse({
@@ -187,6 +189,8 @@ describe("AppShell accessible names", () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementation((input) => {
       const url = String(input);
+      if (url.endsWith("/me/api/session/end-token"))
+        return jsonResponse({ authenticated: true, csrf_token: ownerSession.csrf_token, user: ownerSession.user });
       if (url.endsWith("/me/api/session")) return jsonResponse(ownerSession);
       if (url.endsWith("/logout")) return jsonResponse({}, { status: 403 });
       return jsonResponse({});

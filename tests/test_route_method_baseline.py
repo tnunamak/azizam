@@ -73,6 +73,7 @@ DELETED_PATHS = {
     "/logout", *(f"/admin/{name}{slash}" for name in ADMIN_SECTIONS for slash in ("", "/")),
 }
 NEW_PATHS = {"/setup/console"}
+SESSION_END_TOKEN_PATH = "/me/api/session/end-token"
 # Per-engine native pass-through (contract section 5): new since the baseline, off unless an engine enables it.
 NATIVE_PREFIX = "/native"
 # The access plan API replaced these admin routes (docs/design/ACCESS_PLANS.md): profiles, runtime
@@ -140,6 +141,8 @@ def _now_needs_a_key_any(old: str | None, new: str | None) -> bool:
 def _deliberate(key: str) -> str | None:
     """The reviewed class of a difference, or None if none may exist."""
     _method, path = key.split(" ", 1)
+    if path == SESSION_END_TOKEN_PATH:
+        return "session_end_token"
     if (path in {"/admin/api/me/retention/ledger", "/admin/api/requests/sample/retention/ledger",
                  "/admin/api/settings/retention/ledger", "/admin/api/settings/retention/systems/sample/facts"}
             or re.fullmatch(r"/admin/api/(engines|providers)/[^/]+/retention/(facts|ledger)", path)):
@@ -281,6 +284,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner command permission route
         if kind == "sessions" and key not in old:
             continue  # new session settings, step-up and sign-out-everywhere routes
+        if kind == "session_end_token" and key not in old:
+            continue  # lightweight member CSRF-token read for sign-out; tests/test_session_lifecycle.py covers it
         if kind == "remembered" and key not in old:
             continue  # new sign-in list and forget routes; tests/test_remembered_people.py covers them
         if kind == "retention_ledger" and key not in old:
@@ -330,7 +335,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "adopt", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar", "remembered", "request_history"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "adopt", "rename", "signin", "engines", "host_commands", "sessions", "session_end_token", "secret_entries", "native", "avatar", "remembered", "request_history"}:
             continue
         if kind == "retention_ledger" and key not in old:
             continue

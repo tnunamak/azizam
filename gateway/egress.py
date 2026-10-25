@@ -124,6 +124,7 @@ UNMANAGED_ME_ROUTES: dict[tuple[str, str], str] = {
     ("DELETE", "/me/api/prompt-memory/prompts"): "the person's own prompt memory: no service record content",
     ("GET", "/me/api/receipts/{request_id}"): "the signed-in person's own apps, keys, receipts and session: no service record content",
     ("GET", "/me/api/session"): "the signed-in person's own apps, keys, receipts and session: no service record content",
+    ("GET", "/me/api/session/end-token"): "the signed-in person's CSRF token and display name for ending their own session: no service record content",
     ("GET", "/me/api/status"): "the signed-in person's home page and connection test: no service record content",
     ("POST", "/me/api/try-key"): "the signed-in person's own apps, keys, receipts and session: no service record content",
     ("GET", "/me/api/usage/summary"): "the person's own media, jobs and usage: no service record content",

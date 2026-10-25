@@ -24,7 +24,7 @@ const leaSession = {
 beforeEach(() => {
   replace = vi.spyOn(navigate, "replace").mockImplementation(() => {});
   routes = new Map();
-  routes.set("GET /me/api/session", () => json(leaSession));
+  routes.set("GET /me/api/session/end-token", () => json(leaSession));
   routes.set("POST /logout", () => json({ next: "/sign-in/" }));
   routes.set("POST /auth/api/sign-out-everywhere", () => json({ next: "/sign-in/" }));
   routes.set("GET /auth/api/remembered", () => json({ remember: true, people: [lea, robin] }));
@@ -93,7 +93,7 @@ describe("the record of who left", () => {
   });
 
   it("a sign-out whose person is unknown to this tab records no tile", async () => {
-    routes.set("GET /me/api/session", () => json({ ...leaSession, user: undefined }));
+    routes.set("GET /me/api/session/end-token", () => json({ ...leaSession, user: undefined }));
     await sessionEnd.endSession("sign-out");
     expect(lastRecord()).toBe("{}");
   });
@@ -105,7 +105,7 @@ describe("the record of who left", () => {
   // changes with it.
   it("pins the name match today: a signed-in person who is not remembered is matched to another person named as their email's local part", async () => {
     const other = { ...robin, tile: "t_other", name: "lea" };
-    routes.set("GET /me/api/session", () =>
+    routes.set("GET /me/api/session/end-token", () =>
       json({ ...leaSession, user: { person_id: "usr_lea", name: "lea@example.test", email: "lea@example.test" } }),
     );
     routes.set("GET /auth/api/remembered", () => json({ remember: true, people: [robin, other] }));
