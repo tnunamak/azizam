@@ -60,6 +60,8 @@ ADDED_PATHS: dict[str, str] = {
     "/gateway/v1/me/retention": "a delegated App key or MCP grant reads the person's request history choice; writes need privacy permission; tests/test_request_history_routes.py covers it",
     "/me/api/retention": "the member's own request history choice, session only (D50: a member can turn history off); "
                          "tests/test_request_history_member_choice.py covers it",
+    "/me/api/session/end-token": "a lightweight read for the current session's CSRF token and name before sign-out; "
+                                  "tests/test_session_lifecycle.py covers the endpoint",
     "/me/api/credentials/{credential_id}/privacy-permission": "the accountable person changes request-history access for one of their own App keys after step-up; tests/test_request_history_privacy_permission.py covers it",
     "/me/api/mcp/connections/{grant_id}/privacy-permission": "the signed-in person changes request-history access for one of their own MCP grants after step-up; tests/test_request_history_privacy_permission.py covers it",
 }
