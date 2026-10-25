@@ -158,6 +158,21 @@ def test_editing_a_good_engine_keeps_the_excluded_record(live, monkeypatch):
     assert _stored(live)["services"]["good-engine"]["name"] == "Renamed"
 
 
+def test_metadata_patch_of_a_left_out_service_points_to_the_fix_flow(live, monkeypatch):
+    client = _running_partial(live, monkeypatch, {"good-engine": GOOD, "bad-engine": BAD})
+    before = _stored(live)
+
+    response = client.patch("/admin/api/operator/services/bad-engine", json={"name": "Renamed"},
+                            headers=_if_match(live))
+
+    assert response.status_code == 409, response.text[:300]
+    error = response.json()["error"]
+    assert error["code"] == "service_left_out"
+    assert "left out" in error["message"]
+    assert "PUT /admin/api/operator/service-registry/excluded/services/bad-engine" in error["message"]
+    assert _stored(live) == before
+
+
 def test_the_operator_can_remove_the_excluded_service(live, monkeypatch):
     client = _running_partial(live, monkeypatch, {"good-engine": GOOD, "bad-engine": BAD})
 

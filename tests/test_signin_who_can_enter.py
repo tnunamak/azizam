@@ -9,6 +9,7 @@ makes the group ``/Trusted`` administrators, no other rules.
 Each answer in the owner's question "Can any of my Keycloak users log in, and
 what access do they get?" is one test below.
 """
+import sqlite3
 import time
 from dataclasses import replace
 
@@ -183,6 +184,19 @@ def test_q1_an_invitation_that_names_their_verified_email_lets_them_finish_signi
     assert gateway.user("friend@example.test") is not None
     # Signing in is not accepting: the plan still arrives only with the invitation.
     assert admin_store.person_plan_id(gateway.user("friend@example.test")["id"], path=gateway.path) is None
+
+
+def test_successful_sso_sign_in_repairs_its_null_plan_session_app(gateway):
+    sub, email = "repair-session-app", "repair@example.test"
+    user = admin_store.upsert_oidc_user(gateway.config.issuer, sub, email=email, path=gateway.path)
+    app = admin_store.ensure_session_app_for_user(user["id"], name="Azizam", path=gateway.path)
+    with sqlite3.connect(gateway.path) as conn:
+        conn.execute("UPDATE apps SET access_plan=NULL WHERE id=?", (app["id"],))
+
+    _, response = signed_in(gateway, sub=sub, email=email, groups=["/Trusted"])
+
+    assert response.status_code == 302, response.text
+    assert admin_store.get_app(app["id"], path=gateway.path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
 
 
 def test_q1_an_invitation_for_another_email_lets_a_stranger_in_nowhere(gateway):

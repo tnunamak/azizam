@@ -1331,6 +1331,11 @@ class AdminSQLiteStore:
             # The way to fix a record that is left out: edit it, starting from what is stored.
             existing = left_out.record
         metadata_fields = {"name", "enabled", "disabled", "note", "acknowledge_warnings"}
+        if left_out is not None and set(data) <= metadata_fields:
+            raise ValueError(
+                f"Service {sid!r} is left out of the registry. Fix it with PUT "
+                f"/admin/api/operator/service-registry/excluded/services/{sid}."
+            )
         if existing is not None and "owner" not in actor.roles and set(data) - metadata_fields:
             raise PermissionError("Only the owner can change service settings.")
         if existing is not None and set(data) <= metadata_fields:
