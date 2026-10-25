@@ -299,7 +299,7 @@ describe("Connect", () => {
     ).toBeTruthy();
     expect(screen.getByRole("link", { name: "MCP docs →" })).toHaveAttribute(
       "href",
-      "https://azizam.dev/docs/mcp/",
+      "https://azizam.dev/docs/api/mcp/",
     );
   });
 
