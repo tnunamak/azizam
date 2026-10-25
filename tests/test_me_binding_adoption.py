@@ -10,6 +10,7 @@ A control-plane key or an API key cannot do either. Keeping and replacing ask fo
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import re
 import sqlite3
@@ -61,6 +62,30 @@ def _unproven_address(g, app_id, address, created_by=None):
     finally:
         conn.close()
     return entry_id
+
+
+@contextmanager
+def _as_preexisting_binding_on_signin_app(gateway, user_id):
+    """Temporarily unbind the App made at sign-in while seeding its older binding."""
+    app = admin_store.get_session_app_for_user(user_id, path=gateway.path)
+    assert app is not None
+    conn = sqlite3.connect(gateway.path)
+    try:
+        removed = conn.execute("DELETE FROM session_apps WHERE user_id = ?", (user_id,)).rowcount
+        assert removed == 1
+        conn.commit()
+    finally:
+        conn.close()
+
+    try:
+        yield app["id"]
+    finally:
+        conn = sqlite3.connect(gateway.path)
+        try:
+            conn.execute("INSERT INTO session_apps(user_id, app_id) VALUES (?, ?)", (user_id, app["id"]))
+            conn.commit()
+        finally:
+            conn.close()
 
 
 def _credential(g, key_id):
@@ -810,16 +835,10 @@ def test_keeping_an_address_asks_the_owner_to_confirm_the_administrators_on_reco
 
 def test_a_key_on_an_app_that_became_a_session_app_is_not_found_for_keep_or_replace(gateway):
     owner, owner_id, _plan, _admin = owner_and_admin(gateway)
-    app_id = _own_app(owner)
     before_the_cut_over(gateway.path)
-    key_id = _unproven_key(gateway, app_id)
-    # The App becomes the owner's signed-in App after its key exists: the key stays, and keep and replace must refuse it.
-    conn = sqlite3.connect(gateway.path)
-    try:
-        conn.execute("INSERT INTO session_apps(user_id, app_id) VALUES (?, ?)", (owner_id, app_id))
-        conn.commit()
-    finally:
-        conn.close()
+    # Keep the sign-in-created App, but seed its legacy key before restoring its session binding.
+    with _as_preexisting_binding_on_signin_app(gateway, owner_id) as app_id:
+        key_id = _unproven_key(gateway, app_id)
 
     kept = owner.post(f"/me/api/credentials/{key_id}/adopt", headers=_headers(owner), json=CONFIRM)
     replaced = owner.post(f"/me/api/credentials/{key_id}/replace", headers=_headers(owner))
@@ -1074,15 +1093,9 @@ def test_adding_an_address_again_without_the_user_action_header_writes_nothing(g
 
 def test_adding_an_address_again_on_a_session_app_is_not_found(gateway):
     owner, owner_id, _plan, _admin = owner_and_admin(gateway)
-    app_id = _own_app(owner)
     before_the_cut_over(gateway.path)
-    entry_id = _unproven_address(gateway, app_id, "10.0.0.54")
-    conn = sqlite3.connect(gateway.path)
-    try:
-        conn.execute("INSERT INTO session_apps(user_id, app_id) VALUES (?, ?)", (owner_id, app_id))
-        conn.commit()
-    finally:
-        conn.close()
+    with _as_preexisting_binding_on_signin_app(gateway, owner_id) as app_id:
+        entry_id = _unproven_address(gateway, app_id, "10.0.0.54")
 
     refused = owner.post(f"/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd", headers=_headers(owner))
 

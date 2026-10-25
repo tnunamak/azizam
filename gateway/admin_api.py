@@ -113,6 +113,14 @@ class AdminKeyNameTaken(ValueError):
     """The name of a new admin key is already in use."""
 
 
+class ServiceLeftOut(ValueError):
+    """A metadata-only edit of an excluded service must use its repair flow."""
+
+    def __init__(self, message: str, *, fix_path: str) -> None:
+        super().__init__(message)
+        self.fix_path = fix_path
+
+
 class ActorOutranked(PermissionError):
     """The App or key belongs to someone with more access than the administrator acting on it."""
 
@@ -2663,7 +2671,7 @@ def create_admin_router(
         The text is cleaned of the secret parts of the form that caused it (an address with user info, a header value).
         """
         msg = projection.scrub_text(str(exc)[:600], _body_secret_texts(body))
-        if "left out" in msg:
+        if isinstance(exc, ServiceLeftOut):
             code, http = "service_left_out", status.HTTP_409_CONFLICT
         elif "not found" in msg:
             code, http = "service_not_found", status.HTTP_404_NOT_FOUND

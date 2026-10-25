@@ -187,7 +187,12 @@ def test_the_enable_toggle_on_a_left_out_service_is_refused_with_the_error_and_s
     response = client.post("/admin/api/operator/services/bad-engine/enabled", json={"enabled": False}, headers=_if_match(live))
 
     assert response.status_code == 400, response.text[:200]
-    assert "left out" in response.json()["error"]["message"] and "bad-engine" in response.json()["error"]["message"]
+    error = response.json()["error"]
+    assert error["code"] == "invalid_service"
+    assert error["message"] == (
+        "service 'bad-engine' is left out of the registry "
+        "(service 'bad-engine' models[0] must be an object); fix it or remove it first"
+    )
     assert _stored(live) == before
 
 
