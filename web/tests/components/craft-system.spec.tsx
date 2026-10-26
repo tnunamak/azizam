@@ -99,7 +99,14 @@ describe("controls", () => {
     );
     expect(refresh).not.toContain("h-10");
     expect(classes(screen.getByRole("button", { name: "Save" }))).toEqual(
-      expect.arrayContaining(["h-10", "text-body!", "max-sm:min-h-11"]),
+      expect.arrayContaining([
+        "h-10",
+        "text-body!",
+        "max-sm:min-h-11",
+        "max-sm:h-auto",
+        "max-sm:max-w-full",
+        "max-sm:whitespace-normal",
+      ]),
     );
     expect(classes(screen.getByRole("button", { name: "Border" }))).toEqual(
       expect.arrayContaining(["border-input", "bg-card", "text-foreground"]),
@@ -137,7 +144,13 @@ describe("controls", () => {
     );
     expect(classes(screen.getByRole("button", { name: "Dot" }))).toContain("size-8");
     expect(classes(screen.getByRole("button", { name: "Wide" }))).toEqual(
-      expect.arrayContaining(["h-10", "max-sm:h-11", "text-body!"]),
+      expect.arrayContaining([
+        "h-10",
+        "max-sm:h-auto",
+        "max-sm:max-w-full",
+        "max-sm:whitespace-normal",
+        "text-body!",
+      ]),
     );
     expect(classes(screen.getByRole("button", { name: "Big" }))).toEqual(
       expect.arrayContaining(["size-10", "max-sm:size-11"]),

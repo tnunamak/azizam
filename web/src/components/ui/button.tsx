@@ -36,9 +36,9 @@ const buttonVariants = cva(
         default: "h-8 gap-1.5 px-3 font-medium has-[>svg]:px-2.5",
         xs: "h-8 gap-1 px-2 font-medium text-badge! has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: "h-8 gap-1.5 px-3 font-medium has-[>svg]:px-2.5",
-        md: "h-10 px-4 font-medium text-body! has-[>svg]:px-3.5",
-        // Large actions use the form height on desktop; 44 is phone-only.
-        lg: "h-10 max-sm:h-11 px-5 font-medium text-body! has-[>svg]:px-4",
+        md: "h-10 px-4 font-medium text-body! has-[>svg]:px-3.5 max-sm:h-auto max-sm:max-w-full max-sm:whitespace-normal",
+        // Large actions use form height on desktop; the phone's 44px minimum lets wrapped labels grow.
+        lg: "h-10 px-5 font-medium text-body! has-[>svg]:px-4 max-sm:h-auto max-sm:max-w-full max-sm:whitespace-normal",
         // The one primary action of a page that has nothing else to do (the sign-in page): 48 at every width, 16 px semibold.
         // `text-lg!` is important because the base's `text-meta` otherwise wins the cascade (14 px, measured).
         xl: "h-12 px-6 text-lg! font-semibold has-[>svg]:px-5",
