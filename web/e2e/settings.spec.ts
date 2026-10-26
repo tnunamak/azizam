@@ -548,6 +548,15 @@ for (const theme of ["dark"] as const) {
             .getByRole("option", { name: "Ask each time", exact: true })
             .click();
           await expect(plan).toContainText("Ask each time");
+          const receiptButton = page.getByRole("button", {
+            name: "Save receipt setting",
+            exact: true,
+          });
+          await expect(receiptButton).toHaveCSS("white-space", "normal");
+          await receiptButton.scrollIntoViewIfNeeded();
+          await page.screenshot({
+            path: `${process.env.UI_DEFAULTS_SHOTS_DIR ?? "test-results/screens"}/receipt-button-200pct-${width}-${theme}.png`,
+          });
           await expect(
             page.locator('[data-slot="select-content"]'),
           ).toHaveCount(0);

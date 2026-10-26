@@ -603,7 +603,9 @@ vitest = 3581
 # playwright.config.ts 663 + live-data 3 + household 18 = 684 (playwright test --list).
 # Train r107 (2026-10-24): the gate lists on the merged tree are 663 + 3 + 18 = 684 (playwright test --list).
 # Train r108 (2026-10-24): main Playwright run 663 total (615 passed, 48 skipped), live-data 3 passed, household --list 18; total 684.
-playwright = 684
+# Train r111 (2026-10-26): +4 cases for button contrast and long remembered-person names, each checked in both themes.
+# Gate lists: playwright.config.ts 667 + live-data 3 + household 18 = 688 (playwright test --list).
+playwright = 688
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
