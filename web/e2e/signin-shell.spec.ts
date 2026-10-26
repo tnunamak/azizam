@@ -390,6 +390,7 @@ test("a new gateway offers setup before asking for a password", async ({
 // Sign-in round 3: the primary's size and colour, the dark edge of an outline button, the remember row's gaps, the 44 px
 // targets, and a 40-character instance name with no spaces (the case that used to break the page).
 const UNBROKEN_NAME = "Okaforfamilygatewayforthewholehome2026xx";
+const UNBROKEN_PERSON_NAME = "JordanAlexandriaCameronRivera-MontgomeryAndersonWithoutAnySpacesOrBreaks";
 const TWO_SSO_PEOPLE = ["Robin Okafor", "June Okafor"].map((name, index) => ({
   tile: `tile-${index}`,
   name,
@@ -413,6 +414,64 @@ async function answerSignIn(
   );
 }
 
+async function setThemeBeforeNavigation(page: Page, theme: "light" | "dark") {
+  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+  await page.addInitScript((value) => localStorage.setItem("theme", value), theme);
+}
+
+async function expectTheme(page: Page, theme: "light" | "dark") {
+  await expect
+    .poll(() => page.locator("html").evaluate((element) => element.classList.contains("dark")))
+    .toBe(theme === "dark");
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test(`a long unbroken remembered-person name wraps on the password step (${theme})`, async ({
+    browser,
+    baseURL,
+    storageState,
+  }) => {
+    if (!baseURL) throw new Error("The sign-in fixture URL is unavailable");
+    const context = await browser.newContext({ baseURL, storageState });
+    const page = await context.newPage();
+    const person = {
+      tile: "tile-long-name",
+      name: UNBROKEN_PERSON_NAME,
+      avatar: { variant: "v1", initial: "J" },
+      hint: null,
+      provider: null,
+      method: "password",
+    };
+    const otherPerson = {
+      ...person,
+      tile: "tile-short-name",
+      name: "Jordan Rivera",
+    };
+    try {
+      await context.clearCookies();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await setThemeBeforeNavigation(page, theme);
+      await answerSignIn(page, { built_in: true, oidc: false }, [person, otherPerson]);
+      await page.goto("/");
+      await expectTheme(page, theme);
+      await page.getByRole("button", { name: UNBROKEN_PERSON_NAME }).click();
+      const heading = page.getByRole("heading", { level: 1, name: UNBROKEN_PERSON_NAME });
+      await expect(heading).toBeVisible();
+      await expect(page.getByLabel(`Password for ${UNBROKEN_PERSON_NAME}`)).toBeFocused();
+      expect(await heading.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      expect(await heading.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return range.getClientRects().length;
+      })).toBeGreaterThan(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: test.info().outputPath(`ds4-long-person-password-${theme}-390.png`), fullPage: true });
+    } finally {
+      await context.close();
+    }
+  });
+}
+
 /**
  * A design token's colour in the page's current theme, in the form the browser reports for that property: a background
  * by default, or a text or an outline colour.
@@ -433,6 +492,101 @@ async function tokenColour(
     },
     { name: token, prop: property },
   );
+}
+
+async function contrastRatio(page: Page, first: string, second: string) {
+  return page.evaluate(
+    ({ first, second }) => {
+      const context = document
+        .createElement("canvas")
+        .getContext("2d", { willReadFrequently: true })!;
+      const luminance = (colour: string) => {
+        context.clearRect(0, 0, 1, 1);
+        context.fillStyle = colour;
+        context.fillRect(0, 0, 1, 1);
+        const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+        const linear = (channel: number) => {
+          const value = channel / 255;
+          return value <= 0.04045
+            ? value / 12.92
+            : ((value + 0.055) / 1.055) ** 2.4;
+        };
+        return (
+          0.2126 * linear(red) +
+          0.7152 * linear(green) +
+          0.0722 * linear(blue)
+        );
+      };
+      const a = luminance(first);
+      const b = luminance(second);
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    },
+    { first, second },
+  );
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test(`design-system buttons keep contrast and render their text-size utilities (${theme})`, async ({
+    browser,
+    baseURL,
+    storageState,
+  }) => {
+    if (!baseURL) throw new Error("The signed-in design fixture URL is unavailable");
+    const context = await browser.newContext({ baseURL, storageState });
+    const page = await context.newPage();
+    try {
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await setThemeBeforeNavigation(page, theme);
+      await page.goto("/design/");
+      await expectTheme(page, theme);
+      const defaultButton = page.getByRole("button", { name: "New app" });
+      const outlineButton = page.locator('[data-slot="button"][data-variant="outline"]').first();
+      const largeButton = page.getByRole("button", { name: "Continue", exact: true });
+      await expect(defaultButton).toBeVisible();
+      await expect(outlineButton).toBeVisible();
+      await expect(largeButton).toHaveAttribute("data-size", "lg");
+      await expect(largeButton).toHaveCSS("font-size", "15px");
+
+      const primaryFill = await defaultButton.evaluate((element) => getComputedStyle(element).backgroundColor);
+      const primaryText = await defaultButton.evaluate((element) => getComputedStyle(element).color);
+      const pageSurface = await tokenColour(page, "background");
+      const cardSurface = await tokenColour(page, "card");
+      if (theme === "dark") {
+        expect(await contrastRatio(page, primaryFill, pageSurface)).toBeGreaterThanOrEqual(3);
+        expect(await contrastRatio(page, primaryFill, cardSurface)).toBeGreaterThanOrEqual(3);
+        expect(await contrastRatio(page, primaryFill, primaryText)).toBeGreaterThanOrEqual(4.5);
+      }
+
+      const outlineEdge = await outlineButton.evaluate((element) => getComputedStyle(element).borderTopColor);
+      for (const surface of [pageSurface, cardSurface]) {
+        expect(await contrastRatio(page, outlineEdge, surface)).toBeGreaterThanOrEqual(3);
+      }
+
+      // Test-only xs and md samples use the real Button's base class; lg above is a live component instance.
+      await page.evaluate(() => {
+        const template = document.querySelector<HTMLButtonElement>('[data-slot="button"][data-variant="default"]');
+        if (!template) throw new Error("Design system default Button is missing");
+        const proof = document.createElement("section");
+        proof.setAttribute("aria-label", "Button text-size rendering proof");
+        proof.style.cssText = "position:fixed;left:16px;bottom:16px;z-index:9999;display:flex;align-items:center;gap:8px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:12px";
+        for (const [size, utility] of [["xs", "text-badge!"], ["md", "text-body!"]] as const) {
+          const button = template.cloneNode(false) as HTMLButtonElement;
+          button.dataset.size = size;
+          button.classList.add(utility);
+          button.textContent = `${size} ${size === "xs" ? "12" : "15"} px sample`;
+          proof.append(button);
+        }
+        document.body.append(proof);
+      });
+      const sizeProof = page.getByRole("region", { name: "Button text-size rendering proof" });
+      await expect(sizeProof.locator('[data-size="xs"]')).toHaveCSS("font-size", "12px");
+      await expect(sizeProof.locator('[data-size="md"]')).toHaveCSS("font-size", "15px");
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({ path: test.info().outputPath(`ds-button-contrast-and-sizes-${theme}.png`) });
+    } finally {
+      await context.close();
+    }
+  });
 }
 
 /** Where a run of text starts, so a gap is measured between words and not between 44 px targets. */
