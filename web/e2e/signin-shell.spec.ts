@@ -414,40 +414,63 @@ async function answerSignIn(
   );
 }
 
-test("a long unbroken remembered-person name wraps on the password step", async ({ page }) => {
-  const person = {
-    tile: "tile-long-name",
-    name: UNBROKEN_PERSON_NAME,
-    avatar: { variant: "v1", initial: "J" },
-    hint: null,
-    provider: null,
-    method: "password",
-  };
-  const otherPerson = {
-    ...person,
-    tile: "tile-short-name",
-    name: "Jordan Rivera",
-  };
-  await page.setViewportSize({ width: 390, height: 844 });
-  for (const theme of ["light", "dark"] as const) {
-    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-    await page.addInitScript((value) => localStorage.setItem("theme", value), theme);
-    await answerSignIn(page, { built_in: true, oidc: false }, [person, otherPerson]);
-    await page.goto("/");
-    await page.getByRole("button", { name: UNBROKEN_PERSON_NAME }).click();
-    const heading = page.getByRole("heading", { level: 1, name: UNBROKEN_PERSON_NAME });
-    await expect(heading).toBeVisible();
-    await expect(page.getByLabel(`Password for ${UNBROKEN_PERSON_NAME}`)).toBeFocused();
-    expect(await heading.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-    expect(await heading.evaluate((element) => {
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      return range.getClientRects().length;
-    })).toBeGreaterThan(1);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await page.screenshot({ path: test.info().outputPath(`ds4-long-person-password-${theme}-390.png`), fullPage: true });
-  }
-});
+async function setThemeBeforeNavigation(page: Page, theme: "light" | "dark") {
+  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+  await page.addInitScript((value) => localStorage.setItem("theme", value), theme);
+}
+
+async function expectTheme(page: Page, theme: "light" | "dark") {
+  await expect
+    .poll(() => page.locator("html").evaluate((element) => element.classList.contains("dark")))
+    .toBe(theme === "dark");
+}
+
+for (const theme of ["light", "dark"] as const) {
+  test(`a long unbroken remembered-person name wraps on the password step (${theme})`, async ({
+    browser,
+    baseURL,
+    storageState,
+  }) => {
+    if (!baseURL) throw new Error("The sign-in fixture URL is unavailable");
+    const context = await browser.newContext({ baseURL, storageState });
+    const page = await context.newPage();
+    const person = {
+      tile: "tile-long-name",
+      name: UNBROKEN_PERSON_NAME,
+      avatar: { variant: "v1", initial: "J" },
+      hint: null,
+      provider: null,
+      method: "password",
+    };
+    const otherPerson = {
+      ...person,
+      tile: "tile-short-name",
+      name: "Jordan Rivera",
+    };
+    try {
+      await context.clearCookies();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await setThemeBeforeNavigation(page, theme);
+      await answerSignIn(page, { built_in: true, oidc: false }, [person, otherPerson]);
+      await page.goto("/");
+      await expectTheme(page, theme);
+      await page.getByRole("button", { name: UNBROKEN_PERSON_NAME }).click();
+      const heading = page.getByRole("heading", { level: 1, name: UNBROKEN_PERSON_NAME });
+      await expect(heading).toBeVisible();
+      await expect(page.getByLabel(`Password for ${UNBROKEN_PERSON_NAME}`)).toBeFocused();
+      expect(await heading.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      expect(await heading.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return range.getClientRects().length;
+      })).toBeGreaterThan(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: test.info().outputPath(`ds4-long-person-password-${theme}-390.png`), fullPage: true });
+    } finally {
+      await context.close();
+    }
+  });
+}
 
 /**
  * A design token's colour in the page's current theme, in the form the browser reports for that property: a background
@@ -502,17 +525,20 @@ async function contrastRatio(page: Page, first: string, second: string) {
   );
 }
 
-test("design-system buttons keep contrast and render their text-size utilities", async ({ browser, baseURL }) => {
-  const storageState = test.info().project.use.storageState;
-  if (!baseURL || typeof storageState !== "string") throw new Error("The signed-in design fixture is unavailable");
-  const context = await browser.newContext({ baseURL, storageState });
-  const page = await context.newPage();
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  try {
-    for (const theme of ["light", "dark"] as const) {
-      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-      await page.addInitScript((value) => localStorage.setItem("theme", value), theme);
+for (const theme of ["light", "dark"] as const) {
+  test(`design-system buttons keep contrast and render their text-size utilities (${theme})`, async ({
+    browser,
+    baseURL,
+    storageState,
+  }) => {
+    if (!baseURL) throw new Error("The signed-in design fixture URL is unavailable");
+    const context = await browser.newContext({ baseURL, storageState });
+    const page = await context.newPage();
+    try {
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await setThemeBeforeNavigation(page, theme);
       await page.goto("/design/");
+      await expectTheme(page, theme);
       const defaultButton = page.getByRole("button", { name: "New app" });
       const outlineButton = page.locator('[data-slot="button"][data-variant="outline"]').first();
       const largeButton = page.getByRole("button", { name: "Continue", exact: true });
@@ -557,11 +583,11 @@ test("design-system buttons keep contrast and render their text-size utilities",
       await expect(sizeProof.locator('[data-size="md"]')).toHaveCSS("font-size", "15px");
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({ path: test.info().outputPath(`ds-button-contrast-and-sizes-${theme}.png`) });
+    } finally {
+      await context.close();
     }
-  } finally {
-    await context.close();
-  }
-});
+  });
+}
 
 /** Where a run of text starts, so a gap is measured between words and not between 44 px targets. */
 async function textTop(locator: Locator) {
