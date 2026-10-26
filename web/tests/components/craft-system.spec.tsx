@@ -85,17 +85,24 @@ describe("controls", () => {
       <>
         <Button>Refresh</Button>
         <Button size="md">Save</Button>
+        <Button variant="outline">Border</Button>
         <Button size="icon" aria-label="More" />
       </>,
     );
     const refresh = classes(screen.getByRole("button", { name: "Refresh" }));
     expect(refresh).toEqual(expect.arrayContaining(["h-8", "text-meta"]));
     expect(refresh).toEqual(
+      expect.arrayContaining(["bg-primary", "text-primary-foreground"]),
+    );
+    expect(refresh).toEqual(
       expect.arrayContaining(["max-sm:min-h-11", "max-sm:min-w-11"]),
     );
     expect(refresh).not.toContain("h-10");
     expect(classes(screen.getByRole("button", { name: "Save" }))).toEqual(
-      expect.arrayContaining(["h-10", "text-body", "max-sm:min-h-11"]),
+      expect.arrayContaining(["h-10", "text-body!", "max-sm:min-h-11"]),
+    );
+    expect(classes(screen.getByRole("button", { name: "Border" }))).toEqual(
+      expect.arrayContaining(["border-input", "bg-card", "text-foreground"]),
     );
     expect(classes(screen.getByRole("button", { name: "More" }))).toContain(
       "size-8",
@@ -125,10 +132,12 @@ describe("controls", () => {
         <Button size="icon-lg" aria-label="Big" />
       </>,
     );
-    expect(classes(screen.getByRole("button", { name: "Tiny" }))).toContain("h-8");
+    expect(classes(screen.getByRole("button", { name: "Tiny" }))).toEqual(
+      expect.arrayContaining(["h-8", "text-badge!"]),
+    );
     expect(classes(screen.getByRole("button", { name: "Dot" }))).toContain("size-8");
     expect(classes(screen.getByRole("button", { name: "Wide" }))).toEqual(
-      expect.arrayContaining(["h-10", "max-sm:h-11"]),
+      expect.arrayContaining(["h-10", "max-sm:h-11", "text-body!"]),
     );
     expect(classes(screen.getByRole("button", { name: "Big" }))).toEqual(
       expect.arrayContaining(["size-10", "max-sm:size-11"]),
