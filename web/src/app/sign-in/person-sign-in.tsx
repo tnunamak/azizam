@@ -527,7 +527,7 @@ export function PersonPassword({
         <h1
           tabIndex={-1}
           id="sign-in-title"
-          className="text-3xl font-semibold tracking-[-0.02em] outline-none"
+          className="text-3xl font-semibold tracking-[-0.02em] min-w-0 break-words outline-none"
         >
           {person.name}
         </h1>

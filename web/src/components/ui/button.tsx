@@ -22,9 +22,9 @@ const buttonVariants = cva(
         make: "rounded-full! bg-make-rest text-make-rest-foreground hover:bg-make-rest/90",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-        // In dark the edge is the field edge (`--input`, 3:1 on the page). Light keeps the hairline (`--border`).
+        // A button edge is visible in both themes: `--input` is at least 3:1 against the page and card.
         outline:
-          "border border-border bg-card text-foreground hover:border-input hover:bg-muted dark:border-input",
+          "border border-input bg-card text-foreground hover:bg-muted",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground",
         ghost: "text-foreground hover:bg-muted",
@@ -34,11 +34,11 @@ const buttonVariants = cva(
       // (cn does not merge conflicting utilities).
       size: {
         default: "h-8 gap-1.5 px-3 font-medium has-[>svg]:px-2.5",
-        xs: "h-8 gap-1 px-2 font-medium text-badge has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
+        xs: "h-8 gap-1 px-2 font-medium text-badge! has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: "h-8 gap-1.5 px-3 font-medium has-[>svg]:px-2.5",
-        md: "h-10 px-4 font-medium text-body has-[>svg]:px-3.5",
+        md: "h-10 px-4 font-medium text-body! has-[>svg]:px-3.5",
         // Large actions use the form height on desktop; 44 is phone-only.
-        lg: "h-10 max-sm:h-11 px-5 font-medium text-body has-[>svg]:px-4",
+        lg: "h-10 max-sm:h-11 px-5 font-medium text-body! has-[>svg]:px-4",
         // The one primary action of a page that has nothing else to do (the sign-in page): 48 at every width, 16 px semibold.
         // `text-lg!` is important because the base's `text-meta` otherwise wins the cascade (14 px, measured).
         xl: "h-12 px-6 text-lg! font-semibold has-[>svg]:px-5",
