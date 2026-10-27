@@ -510,7 +510,8 @@ def test_existing_data_plane_schema_is_byte_equivalent():
     """Digests were captured from the unmodified base commit, before the overlay.
 
     /v1/status is the one path re-captured since: it takes the owner and admins audience, so its tags and description note
-    changed on purpose.
+    changed on purpose. Removing ace-step-1.5-2b-base (2026-10-26) re-captured the two audio.generate paths and
+    AudioGenerationRequest, and dropped its input schema.
     """
     schema = proxy.app.openapi()
     baseline = json.loads((FIXTURES / "headless_data_plane_hashes.json").read_text())

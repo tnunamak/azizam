@@ -86,7 +86,7 @@ management · [routing] request steering · [health] checks/status ·
 | proxy.py:451-461 | config | workflows_dir / video_workflows_dir constants |
 | proxy.py:455 | media | COMFY_DEFAULT_MODEL "flux2-klein-4b" |
 | proxy.py:505 | media | VIDEO_DEFAULT_WORKFLOW "video-ltx-13b-q8" |
-| proxy.py:15240 | media | AUDIO_DEFAULT_WORKFLOW "ace-step-1.5-2b-base" |
+| proxy.py:15240 | media | AUDIO_DEFAULT_WORKFLOW "ace-step-1.5-xl-turbo" |
 | proxy.py:2096, 5874, 12104, 12109 | media | "flux2-klein-4b-edit"/"-inpaint" inline literals in handlers |
 | proxy.py:3502-3508 | health | check_comfy_health() via Comfy-specific /system_stats |
 | proxy.py:3307-3320 | media | load_comfy_workflow(): workflow JSON selected by filename == model name |

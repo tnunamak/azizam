@@ -169,8 +169,7 @@ backends:
       # /v1/models reports the loaded model's declared metadata for them. Their
       # own model_metadata is the fallback when the loaded model is not observed.
       # The operator declares what this slot normally runs (the Qwen models:
-      # reasoning, vision, tool use). Loading text-only cydonia-24b here is a
-      # known exception the fallback does not describe.
+      # reasoning, vision, tool use).
       - id: current
         display_name: Current chat model
         description: Chat with the currently selected model.
@@ -929,13 +928,7 @@ roles:
 # through the same ensure_target() path as roles: (cold-swap on first use).
 # Use roles: for canonical workflows; use models: for ad-hoc/extra GGUFs you
 # want to expose without inventing a new role.
-models:
-  - id: cydonia-24b
-    display_name: Cydonia 24B
-    backend: kobold
-    path: /media/windows/AI Models/LLMs/GGUF/TheDrummer_Cydonia-24B-v4.3-Q6_K.gguf
-    mmproj: null # 24B Cydonia is text-only — no companion mmproj on disk
-    description: "TheDrummer Cydonia 24B v4.3 (Q6_K, text-only)"
+models: []
 videos:
   default_workflow: video-ltx-2.5-t2v
   # Workflow that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
@@ -1175,10 +1168,6 @@ audio:
   default_workflow: ace-step-1.5-xl-turbo
   workflows_dir: ./workflows/audio
   workflows:
-    ace-step-1.5-2b-base:
-      file: workflows/audio/ace-step-1.5-2b-base.json
-      max_seconds: 300
-      min_seconds: 1
     ace-step-1.5-xl-turbo:
       file: workflows/audio/ace-step-1.5-xl-turbo.json
       max_seconds: 300
@@ -1206,7 +1195,6 @@ audio:
     ace-step: ace-step-1.5-xl-turbo
     ace-step-1.5: ace-step-1.5-xl-turbo
     ace-step-xl: ace-step-1.5-xl-turbo
-    ace-step-2b: ace-step-1.5-2b-base
     tangoflux-sfx: tangoflux
     ambient: sa3-small-sfx
     sa3: sa3-small-sfx

@@ -49,9 +49,6 @@
               "com.azizam.workflow": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_2b_base"
-                  },
-                  {
                     "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
                   },
                   {
@@ -1479,95 +1476,6 @@
         "title": "SCAIL-2 Character Replace",
         "type": "object",
         "x-azizam-workflow-id": "video.edit.scail-2-replace"
-      },
-      "WorkflowInputs_audio_generate_ace_step_1_5_2b_base": {
-        "additionalProperties": false,
-        "description": "Portable audio.generate contract bound to the ACE-Step 1.5 2B Base ComfyUI workflow.",
-        "properties": {
-          "bpm": {
-            "description": "Set the tempo.",
-            "maximum": 300,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "cfg": {
-            "maximum": 20,
-            "minimum": 0,
-            "type": "number"
-          },
-          "cfg_scale": {
-            "maximum": 20,
-            "minimum": 0,
-            "type": "number"
-          },
-          "duration": {
-            "description": "Length in seconds.",
-            "maximum": 300,
-            "minimum": 1,
-            "type": "number"
-          },
-          "keyscale": {
-            "type": "string"
-          },
-          "language": {
-            "type": "string"
-          },
-          "lyrics": {
-            "description": "Enter the words to sing.",
-            "type": "string"
-          },
-          "min_p": {
-            "maximum": 1,
-            "minimum": 0,
-            "type": "number"
-          },
-          "prompt": {
-            "description": "Describe what you want to make.",
-            "type": "string"
-          },
-          "sampler": {
-            "type": "string"
-          },
-          "scheduler": {
-            "type": "string"
-          },
-          "seed": {
-            "description": "Reuse this number and the same settings for a similar result.",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "steps": {
-            "description": "More steps take longer.",
-            "maximum": 200,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "tags": {
-            "description": "Describe the genre, mood and instruments.",
-            "type": "string"
-          },
-          "temperature": {
-            "maximum": 2,
-            "minimum": 0,
-            "type": "number"
-          },
-          "timesignature": {
-            "type": "string"
-          },
-          "top_k": {
-            "maximum": 1000,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "top_p": {
-            "maximum": 1,
-            "minimum": 0,
-            "type": "number"
-          }
-        },
-        "title": "ACE-Step 1.5 2B Base",
-        "type": "object",
-        "x-azizam-workflow-id": "audio.generate.ace-step-1.5-2b-base"
       },
       "WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo": {
         "additionalProperties": false,
@@ -20033,9 +19941,6 @@
                       "com.azizam.workflow": {
                         "anyOf": [
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_2b_base"
-                          },
-                          {
                             "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
                           },
                           {
@@ -27314,9 +27219,6 @@
                       "com.azizam.workflow": {
                         "anyOf": [
                           {
-                            "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_2b_base"
-                          },
-                          {
                             "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_xl_turbo"
                           },
                           {
@@ -34260,220 +34162,6 @@
     }
   },
   "x-azizam-workflows": [
-    {
-      "aliases": [],
-      "description": "Portable audio.generate contract bound to the ACE-Step 1.5 2B Base ComfyUI workflow.",
-      "display_name": "ACE-Step 1.5 2B Base",
-      "execution": {
-        "async": {
-          "cancel": {
-            "method": "POST",
-            "path": "/gateway/v1/media/jobs/{job_id}/cancel"
-          },
-          "content": {
-            "method": "GET",
-            "path": "/gateway/v1/media/jobs/{job_id}/content"
-          },
-          "fields": {
-            "bpm": {
-              "field": "bpm",
-              "in": "extension"
-            },
-            "cfg": {
-              "field": "cfg",
-              "in": "extension"
-            },
-            "cfg_scale": {
-              "field": "cfg_scale",
-              "in": "extension"
-            },
-            "duration": {
-              "field": "duration",
-              "in": "body"
-            },
-            "keyscale": {
-              "field": "keyscale",
-              "in": "extension"
-            },
-            "language": {
-              "field": "language",
-              "in": "extension"
-            },
-            "lyrics": {
-              "field": "lyrics",
-              "in": "body"
-            },
-            "min_p": {
-              "field": "min_p",
-              "in": "extension"
-            },
-            "prompt": {
-              "field": "prompt",
-              "in": "body"
-            },
-            "sampler": {
-              "field": "sampler",
-              "in": "extension"
-            },
-            "scheduler": {
-              "field": "scheduler",
-              "in": "extension"
-            },
-            "seed": {
-              "field": "seed",
-              "in": "body"
-            },
-            "steps": {
-              "field": "steps",
-              "in": "extension"
-            },
-            "tags": {
-              "field": "tags",
-              "in": "body"
-            },
-            "temperature": {
-              "field": "temperature",
-              "in": "extension"
-            },
-            "timesignature": {
-              "field": "timesignature",
-              "in": "extension"
-            },
-            "top_k": {
-              "field": "top_k",
-              "in": "extension"
-            },
-            "top_p": {
-              "field": "top_p",
-              "in": "extension"
-            }
-          },
-          "kind": "media_job",
-          "poll": {
-            "method": "GET",
-            "path": "/gateway/v1/media/jobs/{job_id}"
-          },
-          "statuses": [
-            "queued",
-            "running",
-            "succeeded",
-            "failed",
-            "canceled"
-          ],
-          "submit": {
-            "body": {
-              "intent": "audio.generate",
-              "request": "<the sync request body>"
-            },
-            "content_type": "application/json",
-            "method": "POST",
-            "model": "ace-step-1.5-2b-base",
-            "path": "/gateway/v1/media/jobs"
-          },
-          "terminal": [
-            "succeeded",
-            "failed",
-            "canceled"
-          ]
-        },
-        "recommended": "async",
-        "sync": {
-          "content_type": "application/json",
-          "fields": {
-            "bpm": {
-              "field": "bpm",
-              "in": "extension"
-            },
-            "cfg": {
-              "field": "cfg",
-              "in": "extension"
-            },
-            "cfg_scale": {
-              "field": "cfg_scale",
-              "in": "extension"
-            },
-            "duration": {
-              "field": "duration",
-              "in": "body"
-            },
-            "keyscale": {
-              "field": "keyscale",
-              "in": "extension"
-            },
-            "language": {
-              "field": "language",
-              "in": "extension"
-            },
-            "lyrics": {
-              "field": "lyrics",
-              "in": "body"
-            },
-            "min_p": {
-              "field": "min_p",
-              "in": "extension"
-            },
-            "prompt": {
-              "field": "prompt",
-              "in": "body"
-            },
-            "sampler": {
-              "field": "sampler",
-              "in": "extension"
-            },
-            "scheduler": {
-              "field": "scheduler",
-              "in": "extension"
-            },
-            "seed": {
-              "field": "seed",
-              "in": "body"
-            },
-            "steps": {
-              "field": "steps",
-              "in": "extension"
-            },
-            "tags": {
-              "field": "tags",
-              "in": "body"
-            },
-            "temperature": {
-              "field": "temperature",
-              "in": "extension"
-            },
-            "timesignature": {
-              "field": "timesignature",
-              "in": "extension"
-            },
-            "top_k": {
-              "field": "top_k",
-              "in": "extension"
-            },
-            "top_p": {
-              "field": "top_p",
-              "in": "extension"
-            }
-          },
-          "method": "POST",
-          "model": "ace-step-1.5-2b-base",
-          "output": "audio bytes (see Content-Type)",
-          "path": "/v1/audio/generate"
-        }
-      },
-      "id": "audio.generate.ace-step-1.5-2b-base",
-      "inputs_schema": {
-        "$ref": "#/components/schemas/WorkflowInputs_audio_generate_ace_step_1_5_2b_base"
-      },
-      "intent": "audio.generate",
-      "outputs": [
-        {
-          "media_type": "audio/wav",
-          "name": "audio"
-        }
-      ],
-      "route_inputs": [],
-      "short_id": "ace-step-1.5-2b-base",
-      "typical_seconds": null
-    },
     {
       "aliases": [
         "music"
