@@ -24920,7 +24920,7 @@ async def videos_extend(request: Request):
 # =============================================================================
 
 _audio_cfg = config.get("audio", {}) or {}
-AUDIO_DEFAULT_WORKFLOW = _audio_cfg.get("default_workflow", "ace-step-1.5-2b-base")
+AUDIO_DEFAULT_WORKFLOW = _audio_cfg.get("default_workflow", "ace-step-1.5-xl-turbo")
 _AUDIO_WORKFLOWS_DIR_CFG = _audio_cfg.get("workflows_dir", "./workflows/audio")
 AUDIO_WORKFLOWS_DIR = Path(_AUDIO_WORKFLOWS_DIR_CFG)
 if not AUDIO_WORKFLOWS_DIR.is_absolute():

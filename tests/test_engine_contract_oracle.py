@@ -124,7 +124,8 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     assert old_engine["values"].pop("protocol_description") == ""
     assert old_engine["key"].pop("entry_id").startswith("ent_")
     assert old_engine["key"].pop("availability") == "unavailable"
-    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "e4be4df70e3ab15ee7db581f005d4188078d45e500356fe20b6391dbbf606a84"
+    # Re-captured 2026-10-26: ace-step-1.5-2b-base left the catalog; nothing else in this digest moved.
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "320021b33fe899e5376751dbc96387ac3d32006c55d7ad21a9bf1d29a43fc571"
 
 
 def test_litellm_compiler_and_current_are_frozen() -> None:

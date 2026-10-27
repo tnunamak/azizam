@@ -353,7 +353,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
         registry = WorkflowRegistry.from_directory(manifest_root)
         self.assertEqual(registry.errors, [])
         records = [record for record in registry.records() if "ace-step" in record.id]
-        self.assertEqual(len(records), 2)
+        self.assertEqual(len(records), 1)
         payload = build_workflows_catalog(
             records=records,
             capabilities=[
@@ -361,7 +361,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
                 for record in records
             ],
         )
-        self.assertEqual(len(payload["workflows"]), 2)
+        self.assertEqual(len(payload["workflows"]), 1)
         for row in payload["workflows"]:
             self.assertNotIn("denoise", [item["name"] for item in row["inputs"]], row["id"])
         for record in records:

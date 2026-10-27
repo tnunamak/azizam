@@ -1542,7 +1542,7 @@ def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
     """Mixed grants keep allowed handles and hide their restricted neighbors."""
     _activate_discovery_grants(gateway, {
         "current": ("chat.completions", "chat.messages", "models.list"),
-        "audio.generate.ace-step-1.5-2b-base": ("audio.generate",),
+        "audio.generate.ace-step-1.5-xl-turbo": ("audio.generate",),
         "image.generate.flux2-klein-4b": ("image.generate",),
         "supertonic": ("speech.synthesis",),
     })
@@ -1560,9 +1560,9 @@ def test_governed_discovery_keeps_only_permitted_resolved_services(gateway):
     assert "image-fast" in models and "image" not in models
     assert {item["id"] for item in get("/anthropic/v1/models")["data"]} == {"current"}
     assert {item["model"] for item in get("/api/tags")["models"]} == {"current"}
-    assert {item["id"] for item in get("/v1/audio/models")["data"]} == {"ace-step-1.5-2b-base"}
+    assert {item["id"] for item in get("/v1/audio/models")["data"]} == {"ace-step-1.5-xl-turbo"}
     assert {item["id"] for item in get("/gateway/v1/workflows")["workflows"]} == {
-        "image.generate.flux2-klein-4b", "audio.generate.ace-step-1.5-2b-base",
+        "image.generate.flux2-klein-4b", "audio.generate.ace-step-1.5-xl-turbo",
     }
     aliases = get("/gateway/v1/aliases")["operations"]
     assert {item["alias"] for item in aliases["images"]["stable"]} == {"image-fast"}

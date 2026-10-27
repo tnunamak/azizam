@@ -196,7 +196,7 @@ test("Home recent media carries content while requests stay in receipts", async 
           {
             asset_id: "polish-audio",
             kind: "audio",
-            model: "audio.generate.ace-step-1.5-2b-base",
+            model: "audio.generate.ace-step-1.5-xl-turbo",
             prompt: "A river moves beneath the willow trees",
             download_url: "/signed/polish-audio",
           },
@@ -227,7 +227,7 @@ test("Home recent media carries content while requests stay in receipts", async 
     page.locator('audio[src="/signed/polish-audio"]'),
   ).toHaveAttribute("preload", "none");
   await expect(page.locator("main")).not.toContainText(
-    "audio.generate.ace-step-1.5-2b-base",
+    "audio.generate.ace-step-1.5-xl-turbo",
   );
 });
 

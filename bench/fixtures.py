@@ -20,7 +20,7 @@ TOKENS = ["Your ", "gateway ", "is ", "connected."]
 TRANSCRIPT = "controlled transcription"
 MODELS = ["demo-chat", "demo-chat-heldout"]
 GATEWAY_MODELS = set(MODELS) | {
-    "ace-step-1.5-2b-base", "ace-step-1.5-xl-turbo", "anima-turbo", "current", "current-fast",
+    "ace-step-1.5-xl-turbo", "anima-turbo", "current", "current-fast",
     "face-likeness", "flux2-klein-4b", "flux2-klein-4b-edit", "flux2-klein-4b-inpaint",
     "flux2-klein-4b-seamless-tile", "image-identity", "krea2-turbo", "krea2-turbo-snofs",
     "qwen-image-2.1-edit", "qwen-image-2.1-edit-multiref", "qwen-image-2.1-inpaint",
