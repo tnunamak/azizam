@@ -167,6 +167,7 @@ export default function PeoplePage() {
   }, []);
   // The command palette links to /people?person=<id>: show that person's row.
   const [requestedPerson] = useState(() =>
+    // react-doctor-disable-next-line react-doctor/no-hydration-branch-on-browser-global -- /people is admin-only; AppShell withholds route children until the viewer query resolves.
     typeof window === "undefined"
       ? null
       : new URLSearchParams(window.location.search).get("person"),

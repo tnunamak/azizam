@@ -484,6 +484,7 @@ export default function HomePage() {
           message="Make pictures, chat and more with the apps you already use."
           action={{
             label: "Sign in",
+            // react-doctor-disable-next-line react-doctor/no-hydration-branch-on-browser-global -- RootPage renders null until the viewer query resolves, then mounts HomePage.
             href: `/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}`,
           }}
         />
