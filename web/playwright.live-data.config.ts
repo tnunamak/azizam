@@ -16,8 +16,9 @@ const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const stateRoot = process.env.UI_E2E_STATE_ROOT
   ? path.join(process.env.UI_E2E_STATE_ROOT, "live-data")
   : path.resolve(__dirname, "../.ui-e2e-state/live-data");
-// Legacy setup/spec consumers use these filenames. ci-local gives this config
-// a dedicated browser-${port} worktree, isolating its auth and manifest too.
+// Legacy setup/spec consumers use these filenames. ci-local shares one browser
+// worktree across configs, while this config gets a per-run state root and
+// distinct output filenames for its auth and manifest.
 const manifestPath = path.resolve(
   __dirname,
   "test-results/live-data-manifest.json",

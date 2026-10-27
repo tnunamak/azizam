@@ -21,12 +21,28 @@ were still stored.
   cache described below. Cache misses use `npm ci`. All Python environments
   install from the hashed lock and retain uv's download cache.
 - It writes receipts to `~/.tmp/azizam-ci-receipts/<tree>/`: `run.tsv`
-  (SHA, seed, layout), `steps.tsv` (step, exit code, whole seconds, wall
+  (`sha`, `tree`, `started`, `finished`, `seed`, `browser_workers`,
+  `py_workers`, `base_port`), `steps.tsv` (step, exit code, whole seconds, wall
   seconds, CPU seconds (user plus system), peak RSS kB), `cost.json` (totals,
   the `journey` section, and the critical path: the longest chain of steps, each starting when the
-  steps it waits for finish), `logs/`, `raw/` (each framework's report),
-  `cases.jsonl`, and browser evidence only when a run fails. A tree that
-  already passed is not run again (`--force` reruns it).
+  steps it waits for finish), `logs/`, `raw/` (framework reports and
+  per-config case receipts), and `cases.jsonl`. Playwright writes failure
+  traces and screenshots under disposable run scratch. `ci-local` deletes that
+  scratch on exit, including after a failed run, so those browser artifacts are
+  not retained in the receipt directory. A tree that already passed is not run
+  again (`--force` reruns it).
+- `run.tsv` is not a complete resource-attribution receipt. `started` is written
+  after lock acquisition and worktree setup; `finished` is written before the
+  cost report and exit cleanup. The file does not record lock wait, resolved
+  Playwright projects, `browser_servers`, execution-only time, or cleanup time.
+  The live-data config adds its Firefox project only when Firefox is installed,
+  while `ci-local` installs Chromium; the resolved project set can therefore
+  vary by host. Record the server count and resolved project set in worker
+  comparisons. The receipt should add `browser_servers`, `playwright_projects`
+  (per config), `lock_wait_s`, and separate `execution_started`,
+  `execution_finished`, `cleanup_started` and `cleanup_finished` timestamps.
+  For a sandboxed run, use the outer sandbox receipt for full command wall time,
+  CPU and cgroup memory.
 - Each step is measured by GNU time (`/usr/bin/time -q -o`), or by
   `scripts/ci/gate_cost.py run` (wait4) when GNU time is absent
   (`AZIZAM_CI_TIME` sets its path). Both report the step's own rusage, which
@@ -252,10 +268,11 @@ interrupted run, lock waiting, and a killed controller.
   `web/test-results` is a symlink to it. The step `e2e-tree-unchanged` fails
   the run if any other file in `web/` changed.
 - Every step writes a private receipt and log. The parent waits for every job,
-  aggregates receipts, rejects missing/nonzero/skipped steps, and retains logs
-  and case receipts. Browser traces and mutable state are deleted on exit,
-  including after failures. Interrupts terminate job process groups
-  before worktrees are removed. `setsid` is required.
+  aggregates receipts, rejects missing/nonzero/skipped steps, and retains logs,
+  raw reports and case receipts. Browser traces, screenshots, auth files and
+  mutable state are deleted on exit, including after failures. Interrupts
+  terminate job process groups before worktrees are removed. `setsid` is
+  required.
 
 ## Duration
 
