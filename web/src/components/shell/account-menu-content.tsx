@@ -174,6 +174,7 @@ export function AccountMenuContent({
             </DropdownMenuItem>
             {!viewer.authenticated && (
               <DropdownMenuItem asChild>
+                {/* react-doctor-disable-next-line react-doctor/no-hydration-branch-on-browser-global -- AccountMenuContent mounts only after the hydrated placeholder opens it; focus and hover only preload its chunk. */}
                 <a
                   href={`/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/" : window.location.pathname + window.location.search)}`}
                 >
