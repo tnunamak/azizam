@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,6 @@ from gateway import route_registry, service_registry
 from gateway.exclusive_pool import ExclusivePoolLeaseManager
 from gateway.mesh_api import MESH_PATH, MeshApiDeps, register_mesh_routes
 from gateway.mesh_manifest import load_mesh_manifest
-from tests.support.fake_upstream import HandlerTransport
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = load_mesh_manifest(ROOT / "manifests" / "workflows" / "mesh.generate.trellis-2.yml")
@@ -124,10 +124,23 @@ class Harness:
             services=lambda: harness.services,
             open_receipt=open_receipt,
             leases=harness.leases,
-            client_factory=lambda: httpx.AsyncClient(transport=HandlerTransport(harness.handler)),
+            client_factory=lambda: httpx.AsyncClient(transport=_Upstream(harness.handler)),
             new_request_id=lambda: "req-test",
         ))
         return app
+
+
+class _Upstream(httpx.AsyncBaseTransport):
+    """Routes requests to a sync or async handler (httpx's MockTransport awaits only sync results)."""
+
+    def __init__(self, handler) -> None:
+        self.handler = handler
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        result = self.handler(request)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
 
 class _Auth:
