@@ -172,4 +172,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # 11a33c8893667685514a89d367140fb52cf344f7218fa0a6eb527b5a0e45abd5.
         assert route_graph.openapi_digest(proxy.app) == "12a9dcd1e9b0f82210642af38c1b33128eaad5bbae9baf678aa951b753b51917"
     proxy.app.openapi_schema = None
+    # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
+    # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

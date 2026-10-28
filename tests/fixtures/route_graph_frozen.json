@@ -3682,7 +3682,7 @@
    "PUT": "/{path:path} unmatched_route"
   }
  },
- "openapi_sha256": "99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355",
+ "openapi_sha256": "e5ea75e4fef8be1aeab2664ca0897e496ac4bd792edc622e920db6cdb4fd2476",
  "policy": {
   "aliases": [
    {
@@ -4129,6 +4129,13 @@
     "capability_trust_tier": "stable",
     "intent": "image.generate",
     "protocol": "openai.images"
+   },
+   "/v1/meshes/generate": {
+    "capability_exposure": "default",
+    "capability_resource_tier": "batch",
+    "capability_trust_tier": "stable",
+    "intent": "mesh.generate",
+    "protocol": "openai.mesh"
    },
    "/v1/models": {
     "intent": "models.list",
