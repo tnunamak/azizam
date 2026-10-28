@@ -452,6 +452,7 @@ if ((browser_ready)); then
     ' _ "${browser_names[i]}" env FIRST_RUN_TIMING_OUT="$receipts/raw/first-run-ui.json" UI_E2E_PORT="${browser_ports[i]}" UI_E2E_WORKERS="$browser_workers" UI_E2E_POOL="$browser_servers" UI_E2E_GLOBAL=2 \
       UI_E2E_STATE_ROOT="$run/state/${browser_names[i]}" UI_E2E_RUN_ID="$seed" UI_E2E_PYTHON="$work/venv/bin/python" \
       CASE_RECEIPTS_FILE="$receipts/raw/${browser_names[i]}.cases.jsonl" \
+      PLAYWRIGHT_PROJECTS_FILE="$receipts/raw/${browser_names[i]}.projects.json" \
       ./node_modules/.bin/playwright test --config "${browser_configs[i]}"
   done
 fi
@@ -492,9 +493,8 @@ done
 step journey-clock "$run/python/scripts/ci/journey_clock.py" --compose "$receipts/raw/compose-bringup.json" \
   --first-run "$receipts/raw/first-run-ui.json" --out "$receipts/cost.json"
 step cases "$run/python/scripts/ci/merge_cases.py" --sha "$sha" --seed "$seed" --out "$receipts/cases.jsonl" "${merge_args[@]}"
-# Record the per-config Playwright projects represented by case receipts. A
-# configured project with no case receipt remains visible as '-' rather than
-# being inferred from this observed-case summary.
+# The reporter writes resolved project names before tests run, including
+# configured projects that produce no case receipt.
 python3 - "$receipts/run.tsv" "$receipts/raw" <<'PY' || echo "Playwright project summary unavailable"
 import json
 import sys
@@ -502,21 +502,37 @@ from pathlib import Path
 
 run_file, raw = Path(sys.argv[1]), Path(sys.argv[2])
 configs = ("e2e-main", "e2e-live-data", "e2e-household")
-parts = []
+
+def configured_projects(name):
+    path = raw / f"{name}.projects.json"
+    try:
+        projects = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return "?"
+    if not isinstance(projects, list) or any(
+        not isinstance(project, str) or not project for project in projects
+    ):
+        return "?"
+    return ",".join(sorted(set(projects))) or "-"
+
+configured_parts = []
+case_parts = []
 for name in configs:
-    projects = set()
-    path = raw / f"{name}.cases.jsonl"
-    if path.is_file():
-        for line in path.read_text().splitlines():
+    configured_parts.append(f"{name}={configured_projects(name)}")
+    case_projects = set()
+    cases_path = raw / f"{name}.cases.jsonl"
+    if cases_path.is_file():
+        for line in cases_path.read_text().splitlines():
             try:
                 project = json.loads(line).get("project")
             except (json.JSONDecodeError, AttributeError):
                 continue
             if isinstance(project, str) and project:
-                projects.add(project)
-    parts.append(f"{name}={','.join(sorted(projects)) or '-'}")
+                case_projects.add(project)
+    case_parts.append(f"{name}={','.join(sorted(case_projects)) or '-'}")
 with run_file.open("a") as handle:
-    handle.write(f"playwright_case_projects\t{';'.join(parts)}\n")
+    handle.write(f"playwright_projects\t{';'.join(configured_parts)}\n")
+    handle.write(f"playwright_case_projects\t{';'.join(case_parts)}\n")
 PY
 # Ratchets may only fall: compare with the target branch's budgets when it has them.
 policy_args=()

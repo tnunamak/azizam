@@ -24,8 +24,9 @@ were still stored.
   (`sha`, `tree`, `started`, `finished`, `seed`, `browser_workers`,
   `browser_servers`, `py_workers`, `base_port`, `lock_wait_s`,
   `execution_started`, `execution_finished`, `cleanup_started`,
-  `cleanup_finished`, `playwright_case_projects`), `steps.tsv` (step, exit code,
-  whole seconds, wall seconds, CPU seconds (user plus system), peak RSS kB),
+  `cleanup_finished`, `playwright_projects`, `playwright_case_projects`),
+  `steps.tsv` (step, exit code, whole seconds, wall seconds, CPU seconds (user
+  plus system), peak RSS kB),
   `cost.json` (totals,
   the `journey` section, and the critical path: the longest chain of steps, each starting when the
   steps it waits for finish), `logs/`, `raw/` (framework reports and
@@ -40,12 +41,14 @@ were still stored.
   the host lock. `execution_started` is written before the first job starts;
   `execution_finished` and `cleanup_started` are recorded at exit-trap entry,
   and `cleanup_finished` after process, worktree and run-directory cleanup.
-  `playwright_case_projects` lists projects with observed case receipts per
-  config; `-` means no project case was observed, not that none was selected.
+  `playwright_projects` lists the resolved projects per config before tests run,
+  including projects that produce no cases; `-` means the resolved list is
+  empty, and `?` means the reporter data is missing or invalid.
+  `playwright_case_projects` lists projects present in case receipts; `-` means
+  no case was observed for that config.
   The live-data config adds its Firefox project only when Firefox is installed,
-  while `ci-local` installs Chromium; the selected project set can therefore
-  vary by host. A failure before a test reports a case may leave its project
-  unobserved here. For a sandboxed run, use the outer sandbox receipt for full
+  while `ci-local` installs Chromium; the resolved project set can therefore
+  vary by host. For a sandboxed run, use the outer sandbox receipt for full
   command wall time, CPU and cgroup memory.
 - Each step is measured by GNU time (`/usr/bin/time -q -o`), or by
   `scripts/ci/gate_cost.py run` (wait4) when GNU time is absent

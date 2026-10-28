@@ -79,6 +79,19 @@ case $3 in
   playwright.live-data.config.ts) file=e2e/live-data-scoping.spec.ts ;;
   *) file=e2e/b.household.ts ;;
 esac
+if [[ -n ${PLAYWRIGHT_PROJECTS_FILE:-} && ${FAKE_NO_PROJECT_CONFIG:-} != "$3" ]]; then
+  case $3 in
+    playwright.config.ts)
+      projects='["chromium-global-state","chromium-global-state-2","chromium-try","chromium-people","chromium","chromium-first-run"'
+      if [[ ${UI_E2E_POOL:-1} -ge 2 ]]; then projects+=',"chromium-pool-1"'; fi
+      if [[ ${UI_E2E_POOL:-1} -ge 3 ]]; then projects+=',"chromium-pool-2"'; fi
+      projects+=']'
+      ;;
+    playwright.live-data.config.ts) projects='["chromium","firefox"]' ;;
+    *) projects='["chromium"]' ;;
+  esac
+  printf '%s\\n' "$projects" > "$PLAYWRIGHT_PROJECTS_FILE"
+fi
 if [[ ${FAKE_NO_CASE_CONFIG:-} != "$3" ]]; then
   printf '{"framework":"playwright","config":"%s","project":"chromium","id":"%s","file":"%s","titles":["a"],"status":"passed","duration_ms":5}\\n' \\
     "$3" "$3" "$PWD/$file" >> "$CASE_RECEIPTS_FILE"
@@ -298,6 +311,11 @@ def test_run_receipt_records_configuration_projects_and_cleanup(world: World) ->
     assert values["py_workers"] == "2"
     assert values["base_port"] == "18720"
     assert re.fullmatch(r"\d+", values["lock_wait_s"])
+    assert values["playwright_projects"] == (
+        "e2e-main=chromium,chromium-first-run,chromium-global-state,chromium-global-state-2,"
+        "chromium-people,chromium-pool-1,chromium-pool-2,chromium-try;"
+        "e2e-live-data=chromium,firefox;e2e-household=chromium"
+    )
     assert values["playwright_case_projects"] == (
         "e2e-main=chromium;e2e-live-data=chromium;e2e-household=chromium"
     )
@@ -315,19 +333,50 @@ def test_run_receipt_records_configuration_projects_and_cleanup(world: World) ->
     assert world.run_dirs() == []
 
 
-def test_run_receipt_marks_a_config_with_no_observed_project(world: World) -> None:
-    result = world.run(FAKE_NO_CASE_CONFIG="playwright.live-data.config.ts")
+def test_run_receipt_keeps_resolved_projects_when_config_has_no_case_receipts(world: World) -> None:
+    result = world.run(
+        "--browser-servers", "3", FAKE_NO_CASE_CONFIG="playwright.live-data.config.ts"
+    )
     assert result.returncode == 1, result.stdout + result.stderr
 
-    steps = dict(line.split("\t", 1) for line in (world.receipts / "steps.tsv").read_text().splitlines())
+    steps = dict(
+        line.split("\t", 1)
+        for line in (world.receipts / "steps.tsv").read_text().splitlines()
+    )
     assert steps["policy"].startswith("1\t")
 
     receipt = world.receipts / "run.tsv"
     values = dict(line.split("\t", 1) for line in receipt.read_text().splitlines())
+    assert values["playwright_projects"] == (
+        "e2e-main=chromium,chromium-first-run,chromium-global-state,chromium-global-state-2,"
+        "chromium-people,chromium-pool-1,chromium-pool-2,chromium-try;"
+        "e2e-live-data=chromium,firefox;e2e-household=chromium"
+    )
     assert values["playwright_case_projects"] == (
         "e2e-main=chromium;e2e-live-data=-;e2e-household=chromium"
     )
     assert "cleanup_finished" in values
+    assert world.run_dirs() == []
+
+
+def test_run_receipt_marks_missing_project_metadata_unknown(world: World) -> None:
+    result = world.run(
+        "--browser-servers", "3", FAKE_NO_PROJECT_CONFIG="playwright.live-data.config.ts"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    values = dict(
+        line.split("\t", 1)
+        for line in (world.receipts / "run.tsv").read_text().splitlines()
+    )
+    assert values["playwright_projects"] == (
+        "e2e-main=chromium,chromium-first-run,chromium-global-state,chromium-global-state-2,"
+        "chromium-people,chromium-pool-1,chromium-pool-2,chromium-try;"
+        "e2e-live-data=?;e2e-household=chromium"
+    )
+    assert values["playwright_case_projects"] == (
+        "e2e-main=chromium;e2e-live-data=chromium;e2e-household=chromium"
+    )
     assert world.run_dirs() == []
 
 
