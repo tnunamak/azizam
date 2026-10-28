@@ -723,6 +723,27 @@ backends:
       - generations
       - videos
     managed: false
+  # Image to 3D (TRELLIS.2, trellis.cpp). Serves POST /v1/meshes/generate through the
+  # mesh.generate.trellis-2 manifest (manifests/workflows/). The server loads its weights per request on
+  # GPU0 and frees them afterwards, so the route needs an exclusive pool. Capacity ships disabled: the
+  # route answers 503 until an operator declares the pool exclusive and sets a whole-envelope
+  # max_claim_bytes covering every accepted request (docs/design/TRELLIS_MESH_ROUTE_DESIGN.md).
+  trellis:
+    display_name: Image to 3D (Trellis)
+    description: Turn one image into a textured 3D model.
+    name: trellis.cpp (TRELLIS.2 image-to-3D)
+    host: 127.0.0.1
+    port: 8890
+    # The service serves its routes at the root; "/" keeps the default /v1 base path off.
+    base_path: /
+    health_endpoint: /health
+    timeout: 900
+    role: optional
+    managed: false
+    capabilities: [mesh.generate]
+    resource_capacity:
+      enabled: false
+
 images:
   # Durable media storage for Library and `response_format: "url"`.
   cache_dir: cache/images

@@ -1,0 +1,55 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: mesh.generate.trellis-2
+intent: mesh.generate
+capability: mesh
+display_name: TRELLIS.2 image to 3D
+purpose: One image to a textured 3D model
+description: Turns one image into a textured 3D model in GLB format.
+technical_description: Fixed mesh route bound to the trellis service over one multipart POST. The service returns raw GLB bytes.
+summary: Send one picture; receive one textured 3D model (model/gltf-binary).
+source: local
+trusted: true
+inputs:
+  image:
+    label: picture
+    help: The picture to turn into a 3D model. PNG, JPEG or WebP.
+    type: image
+    modality: image
+    required: true
+  seed:
+    label: variation number
+    help: Reuse this number and the same picture for a similar model.
+    type: integer
+    minimum: 0
+    maximum: 4294967295
+  resolution:
+    label: detail
+    help: Geometry resolution. Higher is slower.
+    type: integer
+    enum: [512, 1024, 1536]
+    default: 1024
+  bg_removal:
+    label: background removal
+    help: Leave empty to let the service choose.
+    type: string
+    enum: [threshold, birefnet]
+  extensions:
+    label: extensions
+    help: Reserved. Supplying it is refused until a service option is mapped to it.
+    type: object
+outputs:
+  mesh:
+    modality: mesh
+    media_type: model/gltf-binary
+bindings:
+  trellis:
+    transport:
+      kind: http-multipart
+      path: /generate
+    map:
+      image: image
+      seed: seed
+      resolution: resolution
+      bg_removal: bg_removal

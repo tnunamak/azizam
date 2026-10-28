@@ -111,6 +111,7 @@ from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
+from gateway import exclusive_pool, mesh_api, mesh_manifest
 from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
@@ -15267,6 +15268,49 @@ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a111
         catalog=_mcp_catalog,
         aliases=lambda: _gateway_aliases_provider(),
         owner_of=lambda auth: _asset_owner_key(auth if isinstance(auth, AuthContext) else None),
+    ),
+))
+
+# --- Image to 3D: POST /v1/meshes/generate (gateway/mesh_api.py) -------------
+# The manifest is bundled data; the lease manager is one per process (one gateway worker per physical pool).
+MESH_MANIFEST = mesh_manifest.load_mesh_manifest(
+    Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
+)
+MESH_LEASES = exclusive_pool.ExclusivePoolLeaseManager()
+
+
+def _live_service_registry() -> dict | None:
+    try:
+        return ADMIN_STORE.get_service_registry()
+    except Exception:  # noqa: BLE001 - an unreadable registry fails the route closed, not the gateway
+        return None
+
+
+def _mesh_open_receipt(auth: AuthContext, request_id: str, path: str) -> ReceiptLifecycleOwner:
+    identity = auth.identity
+    receipt = RouteReceipt(
+        protocol="openai.mesh", intent=mesh_api.MESH_INTENT, path=path, request_id=request_id,
+        app_profile=plan_ref(identity),
+        app_id=identity.app_id if identity else None,
+        api_key_name=identity.name if identity else None,
+        backend=MESH_MANIFEST.service_id, resolved_workflow=MESH_MANIFEST.id,
+        manifest_id=MESH_MANIFEST.id, manifest_version=MESH_MANIFEST.version,
+        manifest_hash=MESH_MANIFEST.manifest_hash,
+    )
+    return ReceiptLifecycleOwner(receipt)
+
+
+FRONTEND_TRANSLATORS.register_owned("mesh", lambda app: mesh_api.register_mesh_routes(
+    app, mesh_api.MeshApiDeps(
+        manifest=MESH_MANIFEST,
+        authenticate=lambda request, path: authenticate_request(request, path),
+        frontend_records=lambda: route_registry.protocol_frontend_records(
+            registry=_live_service_registry(), proxy_config=config),
+        services=lambda: (_live_service_registry() or {}).get("services") or {},
+        open_receipt=_mesh_open_receipt,
+        leases=MESH_LEASES,
+        client_factory=lambda: httpx.AsyncClient(follow_redirects=False),
+        new_request_id=new_request_id,
     ),
 ))
 
