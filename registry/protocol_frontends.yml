@@ -844,3 +844,32 @@ records:
         canonical: /native/{engine_id}/{native_path:path}
         translator: native
         intent: engine.native
+  # Image to 3D (gateway/mesh_api.py). The handler is source-defined and owned by this frontend
+  # (FRONTEND_TRANSLATORS.register_owned). This record alone owns method, path, protocol, intent, the
+  # workflow reference, the required capability, exposure and tiers, and public discovery. The row has
+  # no translator, so the frontend mount does not mount it: the handler checks this record before it
+  # reads the body. The bundled manifest is manifests/workflows/mesh.generate.trellis-2.yml.
+  - id: mesh
+    receipt_protocols: [openai.mesh]
+    name: Mesh generation (image to GLB)
+    protocol: openai
+    source: builtin
+    editable: false
+    enabled: true
+    strictness: exact
+    canonical: true
+    routes: [/v1/meshes]
+    intents: [mesh.generate]
+    registered_routes:
+      - methods: [POST]
+        canonical: /v1/meshes/generate
+        intent: mesh.generate
+        workflow: mesh.generate.trellis-2
+        capability: mesh.generate
+        runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+    public_discovery:
+      canonical_base_path: /v1/meshes
+      compatibility: "Image in, one textured GLB out (model/gltf-binary). TRELLIS.2 via trellis.cpp."
+      streaming: false
+      base_url_recipe: "Set the base URL to the gateway root; the route is POST /v1/meshes/generate."
+      endpoints: [/v1/meshes/generate]
