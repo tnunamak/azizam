@@ -22,8 +22,11 @@ were still stored.
   install from the hashed lock and retain uv's download cache.
 - It writes receipts to `~/.tmp/azizam-ci-receipts/<tree>/`: `run.tsv`
   (`sha`, `tree`, `started`, `finished`, `seed`, `browser_workers`,
-  `py_workers`, `base_port`), `steps.tsv` (step, exit code, whole seconds, wall
-  seconds, CPU seconds (user plus system), peak RSS kB), `cost.json` (totals,
+  `browser_servers`, `py_workers`, `base_port`, `lock_wait_s`,
+  `execution_started`, `execution_finished`, `cleanup_started`,
+  `cleanup_finished`, `playwright_case_projects`), `steps.tsv` (step, exit code,
+  whole seconds, wall seconds, CPU seconds (user plus system), peak RSS kB),
+  `cost.json` (totals,
   the `journey` section, and the critical path: the longest chain of steps, each starting when the
   steps it waits for finish), `logs/`, `raw/` (framework reports and
   per-config case receipts), and `cases.jsonl`. Playwright writes failure
@@ -33,16 +36,17 @@ were still stored.
   again (`--force` reruns it).
 - `run.tsv` is not a complete resource-attribution receipt. `started` is written
   after lock acquisition and worktree setup; `finished` is written before the
-  cost report and exit cleanup. The file does not record lock wait, resolved
-  Playwright projects, `browser_servers`, execution-only time, or cleanup time.
+  cost report and exit cleanup. `lock_wait_s` records whole seconds waiting for
+  the host lock. `execution_started` is written before the first job starts;
+  `execution_finished` and `cleanup_started` are recorded at exit-trap entry,
+  and `cleanup_finished` after process, worktree and run-directory cleanup.
+  `playwright_case_projects` lists projects with observed case receipts per
+  config; `-` means no project case was observed, not that none was selected.
   The live-data config adds its Firefox project only when Firefox is installed,
-  while `ci-local` installs Chromium; the resolved project set can therefore
-  vary by host. Record the server count and resolved project set in worker
-  comparisons. The receipt should add `browser_servers`, `playwright_projects`
-  (per config), `lock_wait_s`, and separate `execution_started`,
-  `execution_finished`, `cleanup_started` and `cleanup_finished` timestamps.
-  For a sandboxed run, use the outer sandbox receipt for full command wall time,
-  CPU and cgroup memory.
+  while `ci-local` installs Chromium; the selected project set can therefore
+  vary by host. A failure before a test reports a case may leave its project
+  unobserved here. For a sandboxed run, use the outer sandbox receipt for full
+  command wall time, CPU and cgroup memory.
 - Each step is measured by GNU time (`/usr/bin/time -q -o`), or by
   `scripts/ci/gate_cost.py run` (wait4) when GNU time is absent
   (`AZIZAM_CI_TIME` sets its path). Both report the step's own rusage, which

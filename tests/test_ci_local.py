@@ -79,8 +79,10 @@ case $3 in
   playwright.live-data.config.ts) file=e2e/live-data-scoping.spec.ts ;;
   *) file=e2e/b.household.ts ;;
 esac
-printf '{"framework":"playwright","config":"%s","project":"chromium","id":"%s","file":"%s","titles":["a"],"status":"passed","duration_ms":5}\\n' \\
-  "$3" "$3" "$PWD/$file" >> "$CASE_RECEIPTS_FILE"
+if [[ ${FAKE_NO_CASE_CONFIG:-} != "$3" ]]; then
+  printf '{"framework":"playwright","config":"%s","project":"chromium","id":"%s","file":"%s","titles":["a"],"status":"passed","duration_ms":5}\\n' \\
+    "$3" "$3" "$PWD/$file" >> "$CASE_RECEIPTS_FILE"
+fi
 # web/e2e/first-run.spec.ts writes its time where the gate asks (main config only).
 if [[ $3 == playwright.config.ts && -n ${FIRST_RUN_TIMING_OUT:-} && -z ${FAKE_NO_FIRST_RUN_TIME:-} ]]; then
   printf '{"elapsed_seconds": %s}\\n' "${FAKE_FIRST_RUN_S:-8}" > "$FIRST_RUN_TIMING_OUT"
@@ -278,6 +280,54 @@ def test_failed_runs_keep_logs_without_scratch(world: World) -> None:
         assert (world.receipts / "cases.jsonl").is_file()
         assert not (world.receipts / "test-results").exists()
     assert world.run().returncode == 0
+    assert world.run_dirs() == []
+
+
+def test_run_receipt_records_configuration_projects_and_cleanup(world: World) -> None:
+    result = world.run("--browser-servers", "3", "--py-workers", "2", "--port", "18720")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    receipt = world.receipts / "run.tsv"
+    lines = receipt.read_text().splitlines()
+    rows = [line.split("\t", 1) for line in lines]
+    fields = [field for field, _ in rows]
+    values = dict(rows)
+
+    assert len(fields) == len(set(fields))
+    assert values["browser_servers"] == "3"
+    assert values["py_workers"] == "2"
+    assert values["base_port"] == "18720"
+    assert re.fullmatch(r"\d+", values["lock_wait_s"])
+    assert values["playwright_case_projects"] == (
+        "e2e-main=chromium;e2e-live-data=chromium;e2e-household=chromium"
+    )
+
+    lifecycle = [
+        "started", "execution_started", "finished", "execution_finished",
+        "cleanup_started", "cleanup_finished",
+    ]
+    assert [fields.index(field) for field in lifecycle] == sorted(
+        fields.index(field) for field in lifecycle
+    )
+    timestamps = [values[field] for field in lifecycle]
+    assert all(re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value) for value in timestamps)
+    assert timestamps == sorted(timestamps)
+    assert world.run_dirs() == []
+
+
+def test_run_receipt_marks_a_config_with_no_observed_project(world: World) -> None:
+    result = world.run(FAKE_NO_CASE_CONFIG="playwright.live-data.config.ts")
+    assert result.returncode == 1, result.stdout + result.stderr
+
+    steps = dict(line.split("\t", 1) for line in (world.receipts / "steps.tsv").read_text().splitlines())
+    assert steps["policy"].startswith("1\t")
+
+    receipt = world.receipts / "run.tsv"
+    values = dict(line.split("\t", 1) for line in receipt.read_text().splitlines())
+    assert values["playwright_case_projects"] == (
+        "e2e-main=chromium;e2e-live-data=-;e2e-household=chromium"
+    )
+    assert "cleanup_finished" in values
     assert world.run_dirs() == []
 
 
