@@ -257,14 +257,22 @@ interrupted run, lock waiting, and a killed controller.
   It does not cover other service-registry sections or excluded records.
   Tests tagged `@access-plan-definition` also fail if they leave a changed plan
   definition; the check does not restore it or cover people, app, invite or
-  sign-in-rule holders. Providers and categories still have no generic
-  inventory or restore. Their specs own those writes; some keep supporting
-  records for the run or reach cleanup only after assertions.
+  sign-in-rule holders. Tests tagged `@provider-cap-state` must also carry
+  `@global-state`; they compare normalized global caps and non-empty cap values
+  for listed providers. Empty-cap provider membership remains the service
+  registry check's concern. Spend, connection status and timestamps, key status,
+  recommendations, catalog data, and access-plan references are outside this
+  projection. A malformed or incomplete provider response fails the check. It
+  does not restore caps or prove full provider isolation; tests own restoration
+  and cleanup. Categories and other provider state still have no generic
+  inventory or restore. Some specs keep supporting records for the run or reach
+  cleanup only after assertions.
   `scripts/e2e/prove-isolation` checks namespaced member data, setting
-  restoration, unfinished work and the two opt-in postconditions. It does not
-  inject skipped cleanup for other resource classes. Any broader guard must
-  account for declared residue and resource-specific cleanup; this is not
-  evidence of a production leak.
+  restoration, unfinished work, and three opt-in postconditions. Its provider
+  cap proof checks both global and per-provider changes, plus controls for
+  excluded status and spend fields. It does not inject skipped cleanup for other
+  resource classes. Any broader guard must account for declared residue and
+  resource-specific cleanup; this is not evidence of a production leak.
   `scripts/ci/policy.py` fails a gated spec that takes `test` from `@playwright/test`
   instead of `./fixtures/isolation`.
 - `--port BASE` defaults to `18640`. Each server reserves gateway +0, fake

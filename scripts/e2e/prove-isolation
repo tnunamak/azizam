@@ -27,6 +27,10 @@ EXPECTED_TEARDOWN = {
         "service registry changes left by the test:",
     "teardown fails a test that leaves an access plan definition":
         "access plan definitions left by the test:",
+    "teardown fails a test that leaves global provider caps":
+        "provider cap policy changes left by the test: global caps",
+    "teardown fails a test that leaves per-provider caps":
+        "provider cap policy changes left by the test: provider capproof-",
     "teardown fails a global-state test that leaves an untagged request open":
         "work left running",
     "teardown fails a test that leaves an upstream request open":

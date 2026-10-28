@@ -18,7 +18,9 @@
 // can also opt into `@service-registry-state`; that check detects leftover
 // service changes but does not restore them. Access-plan tests can opt into
 // `@access-plan-definition`; it checks plan definitions, not their holders.
-// Other resource classes remain spec-owned until they have resource-specific checks.
+// Provider cap tests can opt into `@provider-cap-state`; it checks normalized
+// global caps and non-empty caps for listed providers, not broader provider
+// state. Other resource classes remain spec-owned until they have checks.
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -37,6 +39,7 @@ export { expect };
 export const GLOBAL_STATE_TAG = "@global-state";
 export const SERVICE_REGISTRY_STATE_TAG = "@service-registry-state";
 export const ACCESS_PLAN_DEFINITION_TAG = "@access-plan-definition";
+export const PROVIDER_CAP_STATE_TAG = "@provider-cap-state";
 
 type Json = Record<string, unknown>;
 
@@ -82,6 +85,71 @@ async function accessPlanDefinitions(owner: OwnerApi): Promise<Json> {
   const plans = (await owner.get("/admin/api/access-plans"))
     .access_plans as Array<{ id: string; plan: Json }>;
   return Object.fromEntries(plans.map(({ id, plan }) => [id, plan]));
+}
+
+function isJsonRecord(value: unknown): value is Json {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizedProviderCaps(value: unknown, label: string): Json {
+  if (!isJsonRecord(value)) throw new Error(`${label} must be an object`);
+  const allowed = ["daily_usd", "monthly_usd"];
+  const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
+  if (unknown.length)
+    throw new Error(`${label} contains unsupported fields: ${unknown.sort().join(", ")}`);
+  const caps: Json = {};
+  for (const key of allowed) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    const amount = value[key];
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0)
+      throw new Error(`${label}.${key} must be a finite non-negative number`);
+    caps[key] = amount;
+  }
+  return Object.fromEntries(Object.entries(caps).sort(([left], [right]) => left.localeCompare(right)));
+}
+
+/** Project only stable cap policy from the owner-facing provider API. */
+export function providerCapPolicyProjection(payload: unknown): Json {
+  if (!isJsonRecord(payload)) throw new Error("provider response must be an object");
+  if (!isJsonRecord(payload.global)) throw new Error("provider response is missing global state");
+  if (!Object.prototype.hasOwnProperty.call(payload.global, "caps"))
+    throw new Error("provider response is missing global caps");
+  if (!Array.isArray(payload.providers)) throw new Error("provider response is missing providers");
+
+  const globalCaps = normalizedProviderCaps(payload.global.caps, "global caps");
+  const providers: Record<string, Json> = {};
+  const seen = new Set<string>();
+  for (const [index, rawProvider] of payload.providers.entries()) {
+    if (!isJsonRecord(rawProvider)) throw new Error(`provider ${index} must be an object`);
+    if (typeof rawProvider.id !== "string" || !rawProvider.id.trim())
+      throw new Error(`provider ${index} is missing its id`);
+    const id = rawProvider.id.trim();
+    if (seen.has(id)) throw new Error(`provider response contains duplicate id ${id}`);
+    seen.add(id);
+    if (!Object.prototype.hasOwnProperty.call(rawProvider, "caps"))
+      throw new Error(`provider ${id} is missing caps`);
+    const caps = normalizedProviderCaps(rawProvider.caps, `provider ${id} caps`);
+    if (Object.keys(caps).length) providers[id] = caps;
+  }
+  return {
+    global: globalCaps,
+    providers: Object.fromEntries(Object.entries(providers).sort(([left], [right]) => left.localeCompare(right))),
+  };
+}
+
+async function providerCapPolicy(owner: OwnerApi): Promise<Json> {
+  return providerCapPolicyProjection(await owner.get("/admin/api/providers"));
+}
+
+function changedProviderCapPolicies(before: Json, after: Json): string[] {
+  const changes: string[] = [];
+  if (!same(before.global, after.global)) changes.push("global caps");
+  const previous = before.providers as Json;
+  const current = after.providers as Json;
+  const ids = new Set([...Object.keys(previous), ...Object.keys(current)]);
+  for (const id of [...ids].sort())
+    if (!same(previous[id], current[id])) changes.push(`provider ${id}`);
+  return changes;
 }
 
 export const GLOBAL_SETTINGS: GlobalSetting[] = [
@@ -402,6 +470,7 @@ export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>(
   globalStateGuard: [
     async ({ request }, use, testInfo) => {
       const global = testInfo.tags.includes(GLOBAL_STATE_TAG);
+      const providerCaps = testInfo.tags.includes(PROVIDER_CAP_STATE_TAG);
       if (global) {
         // A global-state test needs the server to itself.
         expect(
@@ -409,6 +478,11 @@ export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>(
           `${GLOBAL_STATE_TAG} tests run in a one-worker lane or the global-state project, not ${testInfo.project.name} with ${testInfo.config.workers} workers`,
         ).toBe(true);
       }
+      if (providerCaps)
+        expect(
+          global,
+          `${PROVIDER_CAP_STATE_TAG} tests also require ${GLOBAL_STATE_TAG} serialization`,
+        ).toBe(true);
       const owner = await ownerApi(request);
       const before = await snapshot(owner);
       const registryBefore = testInfo.tags.includes(SERVICE_REGISTRY_STATE_TAG)
@@ -417,6 +491,7 @@ export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>(
       const plansBefore = testInfo.tags.includes(ACCESS_PLAN_DEFINITION_TAG)
         ? await accessPlanDefinitions(owner)
         : undefined;
+      const providerCapsBefore = providerCaps ? await providerCapPolicy(owner) : undefined;
       await use();
       // Every step below runs even if an earlier one fails, so one broken
       // restore never leaves the rest of the server dirty for the next test.
@@ -465,6 +540,14 @@ export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>(
             problems.push(
               `access plan definitions left by the test: ${touchedPlans.join(", ")}`,
             );
+        });
+      }
+      if (providerCapsBefore) {
+        await attempt("read provider cap policy after the test", async () => {
+          const providerCapsAfter = await providerCapPolicy(await ownerApi(request));
+          const touchedCaps = changedProviderCapPolicies(providerCapsBefore, providerCapsAfter);
+          if (touchedCaps.length)
+            problems.push(`provider cap policy changes left by the test: ${touchedCaps.join(", ")}`);
         });
       }
       if (global) await attempt("work left running", () => noWorkLeft(request));
