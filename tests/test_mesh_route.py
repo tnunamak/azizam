@@ -137,6 +137,7 @@ class _Upstream(httpx.AsyncBaseTransport):
         self.handler = handler
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        await request.aread()
         result = self.handler(request)
         if inspect.isawaitable(result):
             result = await result
@@ -364,17 +365,17 @@ def test_unexpected_fault_is_one_bounded_500() -> None:
 def test_client_disconnect_cancels_downstream_and_releases_the_lease() -> None:
     harness = Harness()
     events: list[str] = []
+    answer = harness.handler  # the scenario's sync handler, kept for the non-generate URLs
 
     async def hang(request: httpx.Request) -> httpx.Response:
-        url = str(request.url)
-        if url == f"{TRELLIS_URL}/generate":
+        if str(request.url) == f"{TRELLIS_URL}/generate":
             events.append("downstream-start")
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
                 events.append("downstream-cancelled")
                 raise
-        return harness.handler(request)
+        return answer(request)
 
     harness.handler = hang  # type: ignore[method-assign]
 
