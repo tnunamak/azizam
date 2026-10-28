@@ -1,14 +1,15 @@
 # Trellis mesh route design
 
-Status: **Planned — not implemented.**  This document is the canonical authority for
+Status: **Partially implemented on `feat/trellis-mesh-route`; not released.**  This document is the canonical authority for
 v1.  It supersedes earlier Trellis designs and rejects the historical prototype as a
-shippable implementation. This checkout is clean at `67a51bf`; it contains no
-Trellis route, helper, module, or coupled tests. The rejected prototype is preserved
-for fixture provenance only in local archive branch
+shippable implementation. The branch adds the route, manifest, validator, multipart
+executor, exclusive pool, capacity gate, frozen-snapshot updates, and tests. The
+remaining work is listed in "Implementation record" below. The rejected prototype is
+preserved for fixture provenance only in local archive branch
 `archive/trellis-prototype-0811` at commit
 `c6afef0ac1749ddcf2a4d5d491f70395e569578d`. It is not product lineage and must never
-be merged. The feature is GO only after this design is implemented and
-the proof gates below pass; no route exists today.
+be merged. The route answers 503 until an operator enables capacity for the trellis
+backend and the frontend record is seeded.
 
 ## Decision and boundary
 
@@ -249,3 +250,77 @@ code. Stop binary: if any acceptance item 1–50 is false, if the exclusive pool
 be truthfully declared, if any required deterministic test is absent/fails, or if an
 engine-specific code branch/control literal appears, v1 is unavailable and no route is
 claimed. Do not ship a partial safety claim.
+
+## Implementation record (feat/trellis-mesh-route, 2026-10-28)
+
+This record names what landed, where it departs from the design, and what the
+design still requires. The stop binary above applies: v1 is not complete, so no
+release claim follows from this branch.
+
+### Landed
+
+- `POST /v1/meshes/generate`, a source-defined route owned by the `mesh` protocol
+  frontend (`gateway/mesh_api.py`, mounted in `proxy.py` through
+  `FRONTEND_TRANSLATORS.register_owned`). Order: authenticate, read the frontend
+  record fail-closed, resolve the service and capacity fail-closed, open the
+  receipt, read and bind the multipart body, take the exclusive lease, post
+  downstream, return the GLB. Every refusal is a bounded public error.
+- Manifest `manifests/workflows/mesh.generate.trellis-2.yml`, checked by the closed
+  validator in `gateway/mesh_manifest.py`. It binds one service (`trellis`) over
+  `http-multipart` at `/generate`, maps `image`, `seed`, `resolution` and
+  `bg_removal`, and reserves `extensions` as an unmapped object input.
+- Closed multipart executor (`gateway/http_multipart.py`): one POST, no retries,
+  typed failures (connect, timeout, upstream status, malformed), bounded bodies.
+- Exclusive pool (`gateway/exclusive_pool.py`): closed capacity schema, RFC 6901
+  observer pointers, the VRAM equation, and a process-local per-pool lock held from
+  observation through downstream cleanup. Capacity is disabled by default, so the
+  route answers 503 `service_unavailable` until an operator enables it.
+- `proxy_config.yml` `backends.trellis` (127.0.0.1:8890, base path `/`, capacity
+  disabled) and the builtin `mesh` record in `registry/protocol_frontends.yml`.
+- Tests: `tests/test_mesh_manifest.py`, `tests/test_http_multipart.py`,
+  `tests/test_exclusive_pool.py`, `tests/test_mesh_route.py` (fail-closed cases for
+  auth, frontend record, service, observer, capacity, downstream errors, lease
+  release and client disconnect).
+- Frozen snapshots moved only for this route: route graph (`ADDED_PATHS`), the
+  route-graph policy row, the OpenAPI digests, `headless_openapi.json`,
+  `headless_non_control_routes.json`, and the engine-contract graph digest. The
+  route-policy inventory records the fail-closed 503 as an explicit contract,
+  `unavailable (contract)`. It is not a known-gap entry.
+
+### Deviations and why
+
+1. **Correction preconditions do not match.** The design's seed corrections name a
+   frontend hash (`e933a0546958…`), a dirty seed provenance (`b191ec76…`), and an
+   old Trellis service to clean up. Neither the shipped seed (`openai` hash
+   `97ddb5d8…`) nor the live admin database (`openai` hash `791af485…`, no Trellis
+   service) matches them. The replacement bodies are not specified. No correction
+   entries were invented, so the `seed_upgrades` exact-record-replace primitive is
+   not implemented.
+2. **Observer.** The design needs an existing service with a real VRAM observer.
+   The comfyui backend cannot serve as one at its default base path. The E2E proof
+   therefore used a scratch observer that reports GPU0 from `nvidia-smi`. Production
+   config stays disabled until an operator declares an observer.
+3. **Manifest location and validator.** The workflow manifest has its own closed
+   validator, because its shape differs from the ComfyUI `validate_manifest` shape.
+   It appears in the workflow catalog (`x-azizam-workflows`), and the catalog
+   snapshots moved accordingly.
+4. **Background removal default.** When a request omits `bg_removal`, the trellis
+   server runs `auto`. An RGB input without alpha selects BiRefNet. In this checkout
+   that model fails to load (`short read for tensor …relative_position_bias_table`)
+   with HTTP 500, and the route returns a bounded 502 `upstream_error`. The route
+   does not set a default. This needs a decision: set a manifest default, or fix or
+   replace `birefnet.gguf`.
+
+### Not yet implemented (design items still open)
+
+- Admin route override GET/PUT (`/admin/api/route-overrides/mesh-generate`), with
+  ETag/CAS and audit.
+- Discovery join: `Capability.protocol` and `output_media_types`, the live probe,
+  and awaitable providers.
+- `registry.seed_upgrades` exact-record-replace primitive, and the drift and CAS tests
+  for it.
+- UI whole-envelope safety label.
+- Cancellation tests not yet present: observer cancellation and downstream
+  connect, write and read cancellation. Lock-wait cancellation is covered in
+  `tests/test_exclusive_pool.py`, and client disconnect is covered in
+  `tests/test_mesh_route.py`.
