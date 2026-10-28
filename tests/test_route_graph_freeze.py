@@ -167,6 +167,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # nullable: true keeps a name, false takes it off, null leaves the list alone. The remembered list's entry for
         # the person signed in on the browser carries "you": true. The drain write takes the owner's bearer key alone.
         # Re-captured 2026-10-26 after ace-step-1.5-2b-base left the registry.
-        assert route_graph.openapi_digest(proxy.app) == "11a33c8893667685514a89d367140fb52cf344f7218fa0a6eb527b5a0e45abd5"
+        # Re-captured 2026-10-28 after the video removal (779db850f): the video paths, schemas and workflow list moved; nothing else.
+        assert route_graph.openapi_digest(proxy.app) == "6a61973b42c4099de4e44d9312ce819dca0c60e9b82a2115f49674049b3eb88e"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
