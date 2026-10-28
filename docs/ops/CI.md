@@ -252,6 +252,16 @@ interrupted run, lock waiting, and a killed controller.
   fails a test that leaves queued or running jobs, open fake-engine requests,
   or a changed owner-wide setting it did not tag `@global-state`. The fixture
   snapshots seven owner-wide settings before each test and restores them after.
+  Coverage boundary: tests tagged `@service-registry-state` also fail if they
+  leave a change in the service `services` map; the check does not restore it.
+  It does not cover other service-registry sections or excluded records.
+  Access plans, providers and categories have no generic inventory or restore.
+  Their specs own those writes; some keep supporting records for the run or
+  reach cleanup only after assertions. `scripts/e2e/prove-isolation` checks
+  namespaced member data, setting restoration, unfinished work and the opt-in
+  service-registry postcondition. It does not inject skipped cleanup for other
+  registry classes. Any broader guard must account for declared residue and
+  resource-specific cleanup; this is not evidence of a production leak.
   `scripts/ci/policy.py` fails a gated spec that takes `test` from `@playwright/test`
   instead of `./fixtures/isolation`.
 - `--port BASE` defaults to `18640`. Each server reserves gateway +0, fake

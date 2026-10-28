@@ -3,8 +3,67 @@
 // workers against one server. The `test.fail()` cases prove that teardown
 // fails a test which leaves state behind; Playwright reports them as passed
 // only when the fixture really failed them.
-import { request as playwrightRequest } from "@playwright/test";
-import { expect, test } from "./fixtures/isolation";
+import {
+  request as playwrightRequest,
+  type APIRequestContext,
+} from "@playwright/test";
+import {
+  expect,
+  GLOBAL_STATE_TAG,
+  SERVICE_REGISTRY_STATE_TAG,
+  test,
+} from "./fixtures/isolation";
+
+let leakedServiceId: string | undefined;
+
+async function createProofService(
+  request: APIRequestContext,
+  baseURL: string,
+  name: string,
+): Promise<string> {
+  const session = await (await request.get("/admin/api/session")).json();
+  const registry = await request.get("/admin/api/operator/service-registry");
+  const created = await request.post("/admin/api/operator/services", {
+    headers: {
+      "x-azizam-csrf": session.actor.csrf_token,
+      "if-match": registry.headers().etag,
+    },
+    data: {
+      definition: "openai-compatible",
+      name,
+      disabled: true,
+      values: {
+        address: `http://127.0.0.1:${Number(new URL(baseURL).port) + 1}/provider/v1`,
+      },
+    },
+  });
+  expect(created.status()).toBe(201);
+  const serviceId = (await created.json()).service_id as string;
+  expect(serviceId).toBeTruthy();
+  return serviceId;
+}
+
+async function removeProofService(
+  request: APIRequestContext,
+  serviceId: string,
+): Promise<void> {
+  const session = await (await request.get("/admin/api/session")).json();
+  const registry = await request.get("/admin/api/operator/service-registry");
+  const removed = await request.delete(
+    `/admin/api/operator/services/${serviceId}`,
+    {
+      headers: {
+        "x-azizam-csrf": session.actor.csrf_token,
+        "if-match": registry.headers().etag,
+      },
+    },
+  );
+  expect(removed.ok()).toBe(true);
+}
+
+test.afterAll(async ({ request }) => {
+  if (leakedServiceId) await removeProofService(request, leakedServiceId);
+});
 
 test("a member's requests are filed under its own namespace", async ({ isolated, request }) => {
   const member = await isolated.member();
@@ -42,6 +101,38 @@ test("teardown fails a test that changes a global setting without the tag", asyn
   });
   expect(saved.status()).toBe(200);
 });
+
+test(
+  "teardown fails a test that leaves a service registry record",
+  { tag: [GLOBAL_STATE_TAG, SERVICE_REGISTRY_STATE_TAG] },
+  async ({ isolated, request, baseURL }) => {
+    test.fail();
+    leakedServiceId = await createProofService(
+      request,
+      baseURL!,
+      isolated.name("Unclean service registry proof"),
+    );
+  },
+);
+
+test(
+  "a cleaned service registry record satisfies the opt-in guard",
+  { tag: [GLOBAL_STATE_TAG, SERVICE_REGISTRY_STATE_TAG] },
+  async ({ isolated, request, baseURL }) => {
+    const serviceId = await createProofService(
+      request,
+      baseURL!,
+      isolated.name("Clean service registry proof"),
+    );
+    try {
+      const registry = await request.get("/admin/api/operator/service-registry");
+      const services = (await registry.json()).service_registry.services;
+      expect(services[serviceId]).toBeTruthy();
+    } finally {
+      await removeProofService(request, serviceId);
+    }
+  },
+);
 
 test.describe("an open upstream request", () => {
   let namespace = "";

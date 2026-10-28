@@ -12,13 +12,12 @@
 // - Teardown fails the test if its member still has a queued or running media
 //   job, or if the fake engine still holds a request tagged with its namespace.
 //
-// A test that changes owner-only or global state (the settings in
-// GLOBAL_SETTINGS below, services, profiles, providers) carries the tag
-// `@global-state`. It must run where no other test runs at the same time (a
-// one-worker lane or the serial project). The fixture records the global
-// settings before it and restores them after it through the admin API, then
-// rereads them; a setting that does not come back fails the test. A test
-// without the tag that changes a global setting fails too.
+// A test that changes owner-only or global state carries `@global-state` and
+// runs on a one-worker lane. The fixture records the settings in
+// GLOBAL_SETTINGS before each test and restores them after it. A service test
+// can also opt into `@service-registry-state`; that check detects leftover
+// service changes but does not restore them. Other registry classes remain
+// spec-owned until they have resource-specific checks.
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -35,6 +34,7 @@ import {
 export { expect };
 
 export const GLOBAL_STATE_TAG = "@global-state";
+export const SERVICE_REGISTRY_STATE_TAG = "@service-registry-state";
 
 type Json = Record<string, unknown>;
 
@@ -69,6 +69,12 @@ const settingsPath = (name: string, field: string): GlobalSetting => ({
 
 const overrides = async (owner: OwnerApi) =>
   (await owner.get("/admin/api/operator/overrides")).overrides as Json;
+
+async function serviceRegistryEntries(owner: OwnerApi): Promise<Json> {
+  const registry = (await owner.get("/admin/api/operator/service-registry"))
+    .service_registry as Json;
+  return (registry.services ?? {}) as Json;
+}
 
 export const GLOBAL_SETTINGS: GlobalSetting[] = [
   settingsPath("instance", "instance"),
@@ -326,6 +332,11 @@ function changed(before: Snapshot, after: Snapshot): string[] {
   );
 }
 
+function changedRecordIds(before: Json, after: Json): string[] {
+  const ids = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return [...ids].filter((id) => !same(before[id], after[id])).sort();
+}
+
 export type Member = {
   email: string;
   password: string;
@@ -392,6 +403,9 @@ export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>(
       }
       const owner = await ownerApi(request);
       const before = await snapshot(owner);
+      const registryBefore = testInfo.tags.includes(SERVICE_REGISTRY_STATE_TAG)
+        ? await serviceRegistryEntries(owner)
+        : undefined;
       await use();
       // Every step below runs even if an earlier one fails, so one broken
       // restore never leaves the rest of the server dirty for the next test.
@@ -420,6 +434,17 @@ export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>(
         if (rechecked.length)
           problems.push(`global settings the fixture could not restore: ${rechecked.join(", ")}`);
       });
+      if (registryBefore) {
+        await attempt("read service registry after the test", async () => {
+          const owner2 = await ownerApi(request);
+          const registryAfter = await serviceRegistryEntries(owner2);
+          const touchedServices = changedRecordIds(registryBefore, registryAfter);
+          if (touchedServices.length)
+            problems.push(
+              `service registry changes left by the test: ${touchedServices.join(", ")}`,
+            );
+        });
+      }
       if (global) await attempt("work left running", () => noWorkLeft(request));
       if (!global && touched.length)
         problems.push(
