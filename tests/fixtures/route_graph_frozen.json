@@ -4130,6 +4130,13 @@
     "intent": "image.generate",
     "protocol": "openai.images"
    },
+   "/v1/meshes/generate": {
+    "capability_exposure": "default",
+    "capability_resource_tier": "batch",
+    "capability_trust_tier": "stable",
+    "intent": "mesh.generate",
+    "protocol": "openai.mesh"
+   },
    "/v1/models": {
     "intent": "models.list",
     "protocol": "openai.models"

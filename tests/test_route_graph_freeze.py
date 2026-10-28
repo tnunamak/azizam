@@ -172,4 +172,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-10-28 after the video removal (779db850f): the video paths, schemas and workflow list moved; nothing else.
         assert route_graph.openapi_digest(proxy.app) == "6a61973b42c4099de4e44d9312ce819dca0c60e9b82a2115f49674049b3eb88e"
     proxy.app.openapi_schema = None
+    # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
+    # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
