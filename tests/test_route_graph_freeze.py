@@ -25,6 +25,7 @@ ADDED_PATHS: dict[str, str] = {
     "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd": "a person adds an unkept address again on their own App in one step; tests/test_me_binding_adoption.py covers it",
     "/me/api/credentials/{credential_id}/replace": "a person replaces a key they cannot keep, on their own App; tests/test_me_binding_adoption.py covers it",
     "/me/api/apps/{app_id}/trusted-addresses/{entry_id}": "a person removes a trusted address from their own App; tests/test_me_binding_adoption.py covers it",
+    "/v1/meshes/generate": "source-defined mesh route owned by the mesh frontend: one image in, one GLB out, fail-closed until capacity is enabled; tests/test_mesh_route.py and tests/test_mesh_manifest.py cover it",
     "/admin/api/me/retention/ledger": "owner/admin offline retention ledger; tests/test_retention_slice6.py covers scope and no network reads",
     "/admin/api/requests/{request_id}/retention/ledger": "dated ledger for a request receipt; tests/test_retention_slice6.py covers revisions",
     "/admin/api/settings/retention/ledger": "owner/admin retention settings ledger; tests/test_retention_slice6.py covers it",
@@ -157,7 +158,8 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
              "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo",
              "image.generate.flux2-klein-snofs",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
-             "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid"}
+             "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid",
+             "mesh.generate.trellis-2"}
     records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()
     with monkeypatch.context() as patch:
         patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",
