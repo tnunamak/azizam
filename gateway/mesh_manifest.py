@@ -173,7 +173,7 @@ def _validate_bindings(raw: Any, inputs: Mapping[str, Any]) -> tuple[str, str, d
     if transport["kind"] != TRANSPORT_KIND:
         raise MeshManifestError(f"transport kind must be {TRANSPORT_KIND!r}")
     path = transport["path"]
-    if not isinstance(path, str) or not _TRANSPORT_PATH.fullmatch(path):
+    if not isinstance(path, str) or not _TRANSPORT_PATH.fullmatch(path) or {".", ".."} & set(path.split("/")):
         raise MeshManifestError("transport path must be a canonical slash-prefixed relative path")
 
     mapping = binding["map"]
