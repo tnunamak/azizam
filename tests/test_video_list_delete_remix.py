@@ -329,7 +329,7 @@ class TestVideosList(VideoRegistryTestCase):
         self.assertEqual(json.loads(response.body)["error"]["param"], "after")
 
     async def test_entry_shape_includes_required_fields(self) -> None:
-        self._seed("p1", created_at=1000, model="video-wan-2.2-ti2v-5b-q8", size="1280x704", seconds="3")
+        self._seed("p1", created_at=1000, model="video-ltx-2.5-t2v", size="960x512", seconds="3")
         client = _FakeVideoAsyncClient(history={"p1": _succeeded_history_entry()})
         with patch.object(proxy.httpx, "AsyncClient", lambda **_k: client):
             response = await proxy.proxy_graph_video_list(
@@ -337,8 +337,8 @@ class TestVideosList(VideoRegistryTestCase):
             )
         entry = json.loads(response.body)["data"][0]
         self.assertEqual(entry["object"], "video")
-        self.assertEqual(entry["model"], "video-wan-2.2-ti2v-5b-q8")
-        self.assertEqual(entry["size"], "1280x704")
+        self.assertEqual(entry["model"], "video-ltx-2.5-t2v")
+        self.assertEqual(entry["size"], "960x512")
         self.assertEqual(entry["seconds"], "3")
         self.assertEqual(entry["status"], "succeeded")
         self.assertEqual(entry["created_at"], 1000)
@@ -671,12 +671,6 @@ class TestVideosRemix(VideoRegistryTestCase):
             _JsonRemixRequest({"prompt": "x"}),
         )
         self.assertEqual(response.status_code, 404)
-
-    async def test_shipped_config_enables_remix_with_a_matching_alias(self) -> None:
-        self.assertEqual(proxy.VIDEO_REMIX_WORKFLOW, "video-bernini-r-remix")
-        self.assertEqual(
-            proxy._resolve_video_workflow("video-remix")[0], proxy.VIDEO_REMIX_WORKFLOW
-        )
 
 
 class TestVideoJobRecordGC(VideoRegistryTestCase):

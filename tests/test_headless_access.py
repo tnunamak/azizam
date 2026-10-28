@@ -511,7 +511,10 @@ def test_existing_data_plane_schema_is_byte_equivalent():
 
     /v1/status is the one path re-captured since: it takes the owner and admins audience, so its tags and description note
     changed on purpose. Removing ace-step-1.5-2b-base (2026-10-26) re-captured the two audio.generate paths and
-    AudioGenerationRequest, and dropped its input schema.
+    AudioGenerationRequest, and dropped its input schema. Removing video-bernini-r-remix and video-wan-2.2-ti2v-5b-q8
+    (2026-10-27) dropped the bernini-r-remix run path and three schemas from this baseline. The two video create paths and
+    VideoGenerationRequest lost those two extension entries, and both remix paths re-captured a description that no
+    longer names Bernini-R.
     """
     schema = proxy.app.openapi()
     baseline = json.loads((FIXTURES / "headless_data_plane_hashes.json").read_text())

@@ -360,23 +360,6 @@ def test_video_execution_error(tmp_path, record_testsuite_property):
 
 
 @pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg is needed to build the source clip")
-def test_video_remix(tmp_path, record_testsuite_property):
-    def setup(rig):
-        _video_comfy(rig, clip=_long_mp4())
-
-    async def drive(rig):
-        created = await rig.call("POST", "/v1/videos", label="create the source video",
-                                 json_body={"prompt": "waves at dusk", "model": "ltx-2.5-t2v"})
-        video_id = created.json()["id"]
-        await rig.call("GET", f"/v1/videos/{video_id}", label="status of the source")
-        await rig.call("POST", f"/v1/videos/{video_id}/remix", label="remix the source",
-                       json_body={"prompt": "the same waves at night", "seconds": "1.5"})
-
-    play("video_remix", tmp_path, record_testsuite_property, setup, drive,
-         description="POST /v1/videos/{id}/remix of a finished video: source download, upload, new prompt")
-
-
-@pytest.mark.skipif(not HAVE_FFMPEG, reason="ffmpeg is needed to build the source clip")
 def test_video_extend(tmp_path, record_testsuite_property):
     def setup(rig):
         _video_comfy(rig, clip=_long_mp4())

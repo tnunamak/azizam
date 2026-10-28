@@ -882,9 +882,6 @@
               "com.azizam.workflow": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_bernini_r_remix"
-                  },
-                  {
                     "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_rife_interpolate"
                   },
                   {
@@ -919,9 +916,6 @@
                   },
                   {
                     "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_t2v"
-                  },
-                  {
-                    "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_wan_2_2_ti2v_5b_q8"
                   }
                 ],
                 "description": "Inputs of the workflow named by `model`."
@@ -957,23 +951,6 @@
           "prompt"
         ],
         "type": "object"
-      },
-      "WorkflowExtensionInputs_video_edit_bernini_r_remix": {
-        "additionalProperties": false,
-        "description": "Change a video by describing the edit you want. The result is close to your request, not exact.",
-        "properties": {
-          "source_video": {
-            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video to restyle.",
-            "type": "string",
-            "x-azizam-asset": true
-          }
-        },
-        "required": [
-          "source_video"
-        ],
-        "title": "Bernini-R Remix",
-        "type": "object",
-        "x-azizam-workflow-id": "video.edit.bernini-r-remix"
       },
       "WorkflowExtensionInputs_video_edit_rife_interpolate": {
         "additionalProperties": false,
@@ -1293,73 +1270,6 @@
         "title": "MiniMax H3 T2V",
         "type": "object",
         "x-azizam-workflow-id": "video.generate.minimax-h3-t2v"
-      },
-      "WorkflowExtensionInputs_video_generate_wan_2_2_ti2v_5b_q8": {
-        "additionalProperties": false,
-        "description": "Make a short video from a description or picture.",
-        "properties": {
-          "cfg": {
-            "default": 5,
-            "description": "Adjust how closely the video follows your description.",
-            "maximum": 20,
-            "minimum": 0,
-            "type": "number"
-          },
-          "steps": {
-            "default": 20,
-            "description": "More steps take longer.",
-            "maximum": 100,
-            "minimum": 1,
-            "type": "integer"
-          }
-        },
-        "title": "WAN 2.2 TI2V 5B Q8",
-        "type": "object",
-        "x-azizam-workflow-id": "video.generate.wan-2.2-ti2v-5b-q8"
-      },
-      "WorkflowForm_video_edit_bernini_r_remix": {
-        "additionalProperties": false,
-        "description": "Change a video by describing the edit you want. The result is close to your request, not exact.",
-        "properties": {
-          "height": {
-            "default": 480,
-            "maximum": 720,
-            "minimum": 256,
-            "type": "integer"
-          },
-          "length": {
-            "default": 81,
-            "maximum": 121,
-            "minimum": 5,
-            "type": "integer"
-          },
-          "prompt": {
-            "type": "string"
-          },
-          "seed": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "source_video": {
-            "description": "The video to restyle.",
-            "format": "binary",
-            "type": "string",
-            "x-azizam-asset": true
-          },
-          "width": {
-            "default": 832,
-            "maximum": 1280,
-            "minimum": 256,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "source_video",
-          "prompt"
-        ],
-        "title": "Bernini-R Remix",
-        "type": "object",
-        "x-azizam-workflow-id": "video.edit.bernini-r-remix"
       },
       "WorkflowForm_video_edit_rife_interpolate": {
         "additionalProperties": false,
@@ -2803,49 +2713,6 @@
         "type": "object",
         "x-azizam-workflow-id": "image.generate.sdxl-seamless-tile"
       },
-      "WorkflowInputs_video_edit_bernini_r_remix": {
-        "additionalProperties": false,
-        "description": "Change a video by describing the edit you want. The result is close to your request, not exact.",
-        "properties": {
-          "height": {
-            "default": 480,
-            "maximum": 720,
-            "minimum": 256,
-            "type": "integer"
-          },
-          "length": {
-            "default": 81,
-            "maximum": 121,
-            "minimum": 5,
-            "type": "integer"
-          },
-          "prompt": {
-            "type": "string"
-          },
-          "seed": {
-            "minimum": 0,
-            "type": "integer"
-          },
-          "source_video": {
-            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The video to restyle.",
-            "type": "string",
-            "x-azizam-asset": true
-          },
-          "width": {
-            "default": 832,
-            "maximum": 1280,
-            "minimum": 256,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "source_video",
-          "prompt"
-        ],
-        "title": "Bernini-R Remix",
-        "type": "object",
-        "x-azizam-workflow-id": "video.edit.bernini-r-remix"
-      },
       "WorkflowInputs_video_edit_rife_interpolate": {
         "additionalProperties": false,
         "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
@@ -3406,65 +3273,6 @@
         "title": "MiniMax H3 T2V",
         "type": "object",
         "x-azizam-workflow-id": "video.generate.minimax-h3-t2v"
-      },
-      "WorkflowInputs_video_generate_wan_2_2_ti2v_5b_q8": {
-        "additionalProperties": false,
-        "description": "Make a short video from a description or picture.",
-        "properties": {
-          "cfg": {
-            "default": 5,
-            "description": "Adjust how closely the video follows your description.",
-            "maximum": 20,
-            "minimum": 0,
-            "type": "number"
-          },
-          "height": {
-            "description": "Video height in pixels.",
-            "maximum": 704,
-            "minimum": 64,
-            "type": "integer"
-          },
-          "image_strength": {
-            "description": "Adjust how strongly the starting picture shapes the video.",
-            "maximum": 1,
-            "minimum": 0,
-            "type": "number"
-          },
-          "length": {
-            "description": "Number of frames in the video.",
-            "minimum": 1,
-            "type": "integer"
-          },
-          "negative_prompt": {
-            "description": "Describe anything you want left out.",
-            "type": "string"
-          },
-          "prompt": {
-            "description": "Describe the scene, action, and mood.",
-            "type": "string"
-          },
-          "seed": {
-            "description": "Use the same number to repeat a variation with the same settings.",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "steps": {
-            "default": 20,
-            "description": "More steps take longer.",
-            "maximum": 100,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "width": {
-            "description": "Video width in pixels.",
-            "maximum": 1280,
-            "minimum": 64,
-            "type": "integer"
-          }
-        },
-        "title": "WAN 2.2 TI2V 5B Q8",
-        "type": "object",
-        "x-azizam-workflow-id": "video.generate.wan-2.2-ti2v-5b-q8"
       }
     },
     "securitySchemes": {
@@ -18757,111 +18565,6 @@
         ]
       }
     },
-    "/gateway/v1/workflows/bernini-r-remix/run": {
-      "post": {
-        "description": "Change a video by describing the edit you want. The result is close to your request, not exact.",
-        "operationId": "run_bernini_r_remix",
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/WorkflowForm_video_edit_bernini_r_remix"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "video/mp4": {
-                "schema": {
-                  "format": "binary",
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Rendered output."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
-                }
-              }
-            },
-            "description": "Invalid input. `error.message` names the field and the rule."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
-                }
-              }
-            },
-            "description": "Missing or invalid bearer token."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
-                }
-              }
-            },
-            "description": "Not permitted by the app profile."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
-                }
-              }
-            },
-            "description": "Unknown workflow, model, or job."
-          },
-          "502": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
-                }
-              }
-            },
-            "description": "Backend failed while rendering."
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GatewayErrorEnvelope"
-                }
-              }
-            },
-            "description": "Backend unavailable or disabled."
-          }
-        },
-        "security": [
-          {
-            "AppKeyBearer": []
-          },
-          {
-            "AppKeyApiKey": []
-          },
-          {
-            "AppKeyXApiKey": []
-          }
-        ],
-        "summary": "Run Bernini-R Remix",
-        "tags": [
-          "gateway-workflows"
-        ],
-        "x-azizam-workflow-id": "video.edit.bernini-r-remix"
-      }
-    },
     "/gateway/v1/workflows/rife-interpolate/run": {
       "post": {
         "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
@@ -19143,9 +18846,6 @@
             "multipart/form-data": {
               "schema": {
                 "oneOf": [
-                  {
-                    "$ref": "#/components/schemas/WorkflowForm_video_edit_bernini_r_remix"
-                  },
                   {
                     "$ref": "#/components/schemas/WorkflowForm_video_edit_rife_interpolate"
                   },
@@ -24009,9 +23709,6 @@
                       "com.azizam.workflow": {
                         "anyOf": [
                           {
-                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_bernini_r_remix"
-                          },
-                          {
                             "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_rife_interpolate"
                           },
                           {
@@ -24046,9 +23743,6 @@
                           },
                           {
                             "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_t2v"
-                          },
-                          {
-                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_wan_2_2_ti2v_5b_q8"
                           }
                         ],
                         "description": "Inputs of the workflow named by `model`."
@@ -26046,7 +25740,7 @@
     },
     "/openai/v1/videos/{video_id}/remix": {
       "post": {
-        "description": "Remix a completed video with a new prompt (Bernini-R); 501 unless videos.remix_workflow is set.",
+        "description": "Remix a completed video with a new prompt; 501 unless videos.remix_workflow is set.",
         "operationId": "videos_remix_openai_v1_videos__video_id__remix_post",
         "parameters": [
           {
@@ -31425,9 +31119,6 @@
                       "com.azizam.workflow": {
                         "anyOf": [
                           {
-                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_bernini_r_remix"
-                          },
-                          {
                             "$ref": "#/components/schemas/WorkflowExtensionInputs_video_edit_rife_interpolate"
                           },
                           {
@@ -31462,9 +31153,6 @@
                           },
                           {
                             "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_minimax_h3_t2v"
-                          },
-                          {
-                            "$ref": "#/components/schemas/WorkflowExtensionInputs_video_generate_wan_2_2_ti2v_5b_q8"
                           }
                         ],
                         "description": "Inputs of the workflow named by `model`."
@@ -33462,7 +33150,7 @@
     },
     "/v1/videos/{video_id}/remix": {
       "post": {
-        "description": "Remix a completed video with a new prompt (Bernini-R); 501 unless videos.remix_workflow is set.",
+        "description": "Remix a completed video with a new prompt; 501 unless videos.remix_workflow is set.",
         "operationId": "videos_remix_v1_videos__video_id__remix_post",
         "parameters": [
           {
@@ -37074,134 +36762,6 @@
       "typical_seconds": null
     },
     {
-      "aliases": [
-        "video-remix"
-      ],
-      "description": "Change a video by describing the edit you want. The result is close to your request, not exact.",
-      "display_name": "Bernini-R Remix",
-      "execution": {
-        "async": {
-          "cancel": {
-            "method": "DELETE",
-            "path": "/v1/videos/{video_id}"
-          },
-          "content": {
-            "method": "GET",
-            "path": "/v1/videos/{video_id}/content"
-          },
-          "fields": {
-            "height": {
-              "combine": [
-                "width",
-                "height"
-              ],
-              "field": "size",
-              "in": "body"
-            },
-            "length": {
-              "field": "seconds",
-              "in": "body"
-            },
-            "prompt": {
-              "field": "prompt",
-              "in": "body"
-            },
-            "seed": {
-              "field": "seed",
-              "in": "body"
-            },
-            "source_video": {
-              "field": "source_video",
-              "in": "extension"
-            },
-            "width": {
-              "combine": [
-                "width",
-                "height"
-              ],
-              "field": "size",
-              "in": "body"
-            }
-          },
-          "kind": "video",
-          "poll": {
-            "method": "GET",
-            "path": "/v1/videos/{video_id}"
-          },
-          "statuses": [
-            "queued",
-            "in_progress",
-            "completed",
-            "failed"
-          ],
-          "submit": {
-            "content_type": "application/json",
-            "method": "POST",
-            "model": "video-bernini-r-remix",
-            "path": "/v1/videos"
-          },
-          "terminal": [
-            "completed",
-            "failed"
-          ]
-        },
-        "recommended": "async",
-        "sync": {
-          "content_type": "multipart/form-data",
-          "fields": {
-            "height": {
-              "field": "height",
-              "in": "form"
-            },
-            "length": {
-              "field": "length",
-              "in": "form"
-            },
-            "prompt": {
-              "field": "prompt",
-              "in": "form"
-            },
-            "seed": {
-              "field": "seed",
-              "in": "form"
-            },
-            "source_video": {
-              "field": "source_video",
-              "in": "file"
-            },
-            "width": {
-              "field": "width",
-              "in": "form"
-            }
-          },
-          "method": "POST",
-          "output": "video bytes (blocks until rendered)",
-          "path": "/gateway/v1/workflows/bernini-r-remix/run"
-        }
-      },
-      "id": "video.edit.bernini-r-remix",
-      "inputs_schema": {
-        "$ref": "#/components/schemas/WorkflowInputs_video_edit_bernini_r_remix"
-      },
-      "intent": "video.edit",
-      "limits": {
-        "default_size": "832x480",
-        "frame_rate": 24,
-        "max_seconds": 4,
-        "max_size": "832x480",
-        "min_seconds": 1
-      },
-      "outputs": [
-        {
-          "media_type": "video/mp4",
-          "name": "video"
-        }
-      ],
-      "route_inputs": [],
-      "short_id": "bernini-r-remix",
-      "typical_seconds": 480.0
-    },
-    {
       "aliases": [],
       "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
       "display_name": "RIFE 2x Frame Interpolation",
@@ -38538,115 +38098,6 @@
       ],
       "short_id": "minimax-h3-t2v",
       "typical_seconds": 122.0
-    },
-    {
-      "aliases": [],
-      "description": "Make a short video from a description or picture.",
-      "display_name": "WAN 2.2 TI2V 5B Q8",
-      "execution": {
-        "async": {
-          "cancel": {
-            "method": "DELETE",
-            "path": "/v1/videos/{video_id}"
-          },
-          "content": {
-            "method": "GET",
-            "path": "/v1/videos/{video_id}/content"
-          },
-          "fields": {
-            "cfg": {
-              "field": "cfg",
-              "in": "extension"
-            },
-            "frame_rate": {
-              "in": "none"
-            },
-            "height": {
-              "combine": [
-                "width",
-                "height"
-              ],
-              "field": "size",
-              "in": "body"
-            },
-            "image_strength": {
-              "field": "image_strength",
-              "in": "body"
-            },
-            "length": {
-              "field": "seconds",
-              "in": "body"
-            },
-            "negative_prompt": {
-              "field": "negative_prompt",
-              "in": "body"
-            },
-            "prompt": {
-              "field": "prompt",
-              "in": "body"
-            },
-            "seed": {
-              "field": "seed",
-              "in": "body"
-            },
-            "steps": {
-              "field": "steps",
-              "in": "extension"
-            },
-            "width": {
-              "combine": [
-                "width",
-                "height"
-              ],
-              "field": "size",
-              "in": "body"
-            }
-          },
-          "kind": "video",
-          "poll": {
-            "method": "GET",
-            "path": "/v1/videos/{video_id}"
-          },
-          "statuses": [
-            "queued",
-            "in_progress",
-            "completed",
-            "failed"
-          ],
-          "submit": {
-            "content_type": "application/json",
-            "method": "POST",
-            "model": "video-wan-2.2-ti2v-5b-q8",
-            "path": "/v1/videos"
-          },
-          "terminal": [
-            "completed",
-            "failed"
-          ]
-        },
-        "recommended": "async",
-        "sync": null
-      },
-      "id": "video.generate.wan-2.2-ti2v-5b-q8",
-      "inputs_schema": {
-        "$ref": "#/components/schemas/WorkflowInputs_video_generate_wan_2_2_ti2v_5b_q8"
-      },
-      "intent": "video.generate",
-      "limits": {
-        "frame_rate": 24,
-        "max_seconds": 5,
-        "max_size": "1280x704",
-        "min_seconds": 1
-      },
-      "outputs": [
-        {
-          "media_type": "video/mp4",
-          "name": "video"
-        }
-      ],
-      "route_inputs": [],
-      "short_id": "wan-2.2-ti2v-5b-q8",
-      "typical_seconds": null
     }
   ]
 }

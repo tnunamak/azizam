@@ -353,7 +353,7 @@ class ExtensionRouteTests(H3RouteBase):
         self.assertEqual(r.json()["azizam_resolved_model"], "video-ltx-2.5-long")
 
     def test_a_model_without_a_chain_falls_back_to_the_default_extender(self) -> None:
-        proxy._video_job_records[SOURCE_PROMPT_ID].update({"model": "video-remix"})
+        proxy._video_job_records[SOURCE_PROMPT_ID].update({"model": "video-scail-2-replace"})
         r = self._extend(seconds=4)
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()["azizam_resolved_model"], "video-ltx-2.5-long")
