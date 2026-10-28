@@ -155,6 +155,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # operation declares (API reference security; the route graph leaves that security out of each route's extra).
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
              "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo",
+             "image.generate.flux2-klein-snofs",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
              "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid"}
     records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()

@@ -4,7 +4,7 @@ version: "0.1.0"
 id: image.generate.flux2-klein-snofs
 intent: image.generate
 display_name: FLUX.2 Klein 9B + SNOFS (uncensored)
-purpose: Uncensored photoreal images from a prompt
+purpose: Uncensored detailed images from a prompt
 description: Make a realistic photo-style picture from a description, without the usual content filtering. It only shows adults.
 source: local
 trusted: true
