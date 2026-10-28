@@ -25,6 +25,7 @@ ADDED_PATHS: dict[str, str] = {
     "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd": "a person adds an unkept address again on their own App in one step; tests/test_me_binding_adoption.py covers it",
     "/me/api/credentials/{credential_id}/replace": "a person replaces a key they cannot keep, on their own App; tests/test_me_binding_adoption.py covers it",
     "/me/api/apps/{app_id}/trusted-addresses/{entry_id}": "a person removes a trusted address from their own App; tests/test_me_binding_adoption.py covers it",
+    "/v1/meshes/generate": "source-defined mesh route owned by the mesh frontend: one image in, one GLB out, fail-closed until capacity is enabled; tests/test_mesh_route.py and tests/test_mesh_manifest.py cover it",
     "/admin/api/me/retention/ledger": "owner/admin offline retention ledger; tests/test_retention_slice6.py covers scope and no network reads",
     "/admin/api/requests/{request_id}/retention/ledger": "dated ledger for a request receipt; tests/test_retention_slice6.py covers revisions",
     "/admin/api/settings/retention/ledger": "owner/admin retention settings ledger; tests/test_retention_slice6.py covers it",
@@ -156,7 +157,8 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
              "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
-             "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid"}
+             "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid",
+             "mesh.generate.trellis-2"}
     records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()
     with monkeypatch.context() as patch:
         patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",
@@ -166,6 +168,8 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # nullable: true keeps a name, false takes it off, null leaves the list alone. The remembered list's entry for
         # the person signed in on the browser carries "you": true. The drain write takes the owner's bearer key alone.
         # Re-captured 2026-10-26 after ace-step-1.5-2b-base left the registry.
-        assert route_graph.openapi_digest(proxy.app) == "11a33c8893667685514a89d367140fb52cf344f7218fa0a6eb527b5a0e45abd5"
+        # Re-captured 2026-10-28 for POST /v1/meshes/generate (ADDED_PATHS). Without that path the digest is still
+        # 11a33c8893667685514a89d367140fb52cf344f7218fa0a6eb527b5a0e45abd5.
+        assert route_graph.openapi_digest(proxy.app) == "12a9dcd1e9b0f82210642af38c1b33128eaad5bbae9baf678aa951b753b51917"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

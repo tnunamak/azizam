@@ -80,7 +80,9 @@ def test_frontend_route_graph_is_frozen() -> None:
                    for method in (getattr(route, "methods", None) or {"WEBSOCKET"})
                    if path.startswith(("/v1/", "/openai/", "/anthropic/", "/ollama/", "/sdapi/", "/mcp")))
     assert graph
-    assert _digest(graph) == "5d23367340519397b1cfa0c82fb4b4f6fac6f0e98059e6ab642dc879824b66ca"
+    # Only addition since the freeze: POST /v1/meshes/generate (source-defined mesh frontend). Without that one row
+    # the digest is still 5d23367340519397b1cfa0c82fb4b4f6fac6f0e98059e6ab642dc879824b66ca.
+    assert _digest(graph) == "963290051e2e622bd481c6a0c380f91e93878d051c9301d4006d41c2a1926162"
 
 
 def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
