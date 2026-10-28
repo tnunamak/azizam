@@ -9,12 +9,14 @@ import {
 } from "@playwright/test";
 import {
   expect,
+  ACCESS_PLAN_DEFINITION_TAG,
   GLOBAL_STATE_TAG,
   SERVICE_REGISTRY_STATE_TAG,
   test,
 } from "./fixtures/isolation";
 
 let leakedServiceId: string | undefined;
+let leakedAccessPlanId: string | undefined;
 
 async function createProofService(
   request: APIRequestContext,
@@ -61,8 +63,45 @@ async function removeProofService(
   expect(removed.ok()).toBe(true);
 }
 
+async function createProofAccessPlan(
+  request: APIRequestContext,
+  name: string,
+): Promise<string> {
+  const session = await (await request.get("/admin/api/session")).json();
+  const created = await request.post("/admin/api/access-plans", {
+    headers: { "x-azizam-csrf": session.actor.csrf_token },
+    data: {
+      name,
+      can_use: { chat: { items: "all" } },
+      direct_engine_access: { engines: [], operations: [] },
+      paid_providers: [],
+      provider_fallback: false,
+      caps: { usd_per_request: null, usd_per_day: null, usd_per_month: null },
+      can_load_models: true,
+      receipt_detail: "basic",
+      media_metadata: "none",
+    },
+  });
+  expect(created.status()).toBe(201);
+  const planId = (await created.json()).access_plan.id as string;
+  expect(planId).toBeTruthy();
+  return planId;
+}
+
+async function removeProofAccessPlan(
+  request: APIRequestContext,
+  planId: string,
+): Promise<void> {
+  const session = await (await request.get("/admin/api/session")).json();
+  const removed = await request.delete(`/admin/api/access-plans/${planId}`, {
+    headers: { "x-azizam-csrf": session.actor.csrf_token },
+  });
+  expect(removed.ok()).toBe(true);
+}
+
 test.afterAll(async ({ request }) => {
   if (leakedServiceId) await removeProofService(request, leakedServiceId);
+  if (leakedAccessPlanId) await removeProofAccessPlan(request, leakedAccessPlanId);
 });
 
 test("a member's requests are filed under its own namespace", async ({ isolated, request }) => {
@@ -130,6 +169,37 @@ test(
       expect(services[serviceId]).toBeTruthy();
     } finally {
       await removeProofService(request, serviceId);
+    }
+  },
+);
+
+test(
+  "teardown fails a test that leaves an access plan definition",
+  { tag: [GLOBAL_STATE_TAG, ACCESS_PLAN_DEFINITION_TAG] },
+  async ({ isolated, request }) => {
+    test.fail();
+    leakedAccessPlanId = await createProofAccessPlan(
+      request,
+      isolated.name("Unclean access plan proof"),
+    );
+  },
+);
+
+test(
+  "a deleted access plan definition satisfies the opt-in guard",
+  { tag: [GLOBAL_STATE_TAG, ACCESS_PLAN_DEFINITION_TAG] },
+  async ({ isolated, request }) => {
+    const planId = await createProofAccessPlan(
+      request,
+      isolated.name("Clean access plan proof"),
+    );
+    try {
+      const planList = await request.get("/admin/api/access-plans");
+      expect(planList.status()).toBe(200);
+      const plans = (await planList.json()).access_plans as { id: string }[];
+      expect(plans.some((plan) => plan.id === planId)).toBe(true);
+    } finally {
+      await removeProofAccessPlan(request, planId);
     }
   },
 );

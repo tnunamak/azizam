@@ -25,6 +25,8 @@ EXPECTED_TEARDOWN = {
         "global settings this test changed: instance; tag it @global-state",
     "teardown fails a test that leaves a service registry record":
         "service registry changes left by the test:",
+    "teardown fails a test that leaves an access plan definition":
+        "access plan definitions left by the test:",
     "teardown fails a global-state test that leaves an untagged request open":
         "work left running",
     "teardown fails a test that leaves an upstream request open":

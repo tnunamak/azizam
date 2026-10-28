@@ -16,8 +16,9 @@
 // runs on a one-worker lane. The fixture records the settings in
 // GLOBAL_SETTINGS before each test and restores them after it. A service test
 // can also opt into `@service-registry-state`; that check detects leftover
-// service changes but does not restore them. Other registry classes remain
-// spec-owned until they have resource-specific checks.
+// service changes but does not restore them. Access-plan tests can opt into
+// `@access-plan-definition`; it checks plan definitions, not their holders.
+// Other resource classes remain spec-owned until they have resource-specific checks.
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -35,6 +36,7 @@ export { expect };
 
 export const GLOBAL_STATE_TAG = "@global-state";
 export const SERVICE_REGISTRY_STATE_TAG = "@service-registry-state";
+export const ACCESS_PLAN_DEFINITION_TAG = "@access-plan-definition";
 
 type Json = Record<string, unknown>;
 
@@ -74,6 +76,12 @@ async function serviceRegistryEntries(owner: OwnerApi): Promise<Json> {
   const registry = (await owner.get("/admin/api/operator/service-registry"))
     .service_registry as Json;
   return (registry.services ?? {}) as Json;
+}
+
+async function accessPlanDefinitions(owner: OwnerApi): Promise<Json> {
+  const plans = (await owner.get("/admin/api/access-plans"))
+    .access_plans as Array<{ id: string; plan: Json }>;
+  return Object.fromEntries(plans.map(({ id, plan }) => [id, plan]));
 }
 
 export const GLOBAL_SETTINGS: GlobalSetting[] = [
@@ -406,6 +414,9 @@ export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>(
       const registryBefore = testInfo.tags.includes(SERVICE_REGISTRY_STATE_TAG)
         ? await serviceRegistryEntries(owner)
         : undefined;
+      const plansBefore = testInfo.tags.includes(ACCESS_PLAN_DEFINITION_TAG)
+        ? await accessPlanDefinitions(owner)
+        : undefined;
       await use();
       // Every step below runs even if an earlier one fails, so one broken
       // restore never leaves the rest of the server dirty for the next test.
@@ -442,6 +453,17 @@ export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>(
           if (touchedServices.length)
             problems.push(
               `service registry changes left by the test: ${touchedServices.join(", ")}`,
+            );
+        });
+      }
+      if (plansBefore) {
+        await attempt("read access plan definitions after the test", async () => {
+          const owner2 = await ownerApi(request);
+          const plansAfter = await accessPlanDefinitions(owner2);
+          const touchedPlans = changedRecordIds(plansBefore, plansAfter);
+          if (touchedPlans.length)
+            problems.push(
+              `access plan definitions left by the test: ${touchedPlans.join(", ")}`,
             );
         });
       }
