@@ -277,6 +277,11 @@ release claim follows from this branch.
   route answers 503 `service_unavailable` until an operator enables it.
 - `proxy_config.yml` `backends.trellis` (127.0.0.1:8890, base path `/`, capacity
   disabled) and the builtin `mesh` record in `registry/protocol_frontends.yml`.
+- End-to-end proof (2026-10-28, scratch gateway, scratch VRAM observer): POST
+  `/v1/meshes/generate` returned HTTP 200, `model/gltf-binary`, 11,638,664 bytes,
+  glTF magic. Latency 56,579.856 ms from the request receipt. The GLB parses to one
+  mesh with 235,460 vertices and 293,730 faces. The input image was not recorded.
+  The evidence summary is `proof.txt` in the scratch directory, not in the repo.
 - Tests: `tests/test_mesh_manifest.py`, `tests/test_http_multipart.py`,
   `tests/test_exclusive_pool.py`, `tests/test_mesh_route.py` (fail-closed cases for
   auth, frontend record, service, observer, capacity, downstream errors, lease
@@ -320,7 +325,8 @@ release claim follows from this branch.
 - Discovery join: `Capability.protocol` and `output_media_types`, the live probe,
   and awaitable providers.
 - UI whole-envelope safety label.
-- Cancellation tests not yet present: observer cancellation and downstream
-  connect, write and read cancellation. Lock-wait cancellation is covered in
-  `tests/test_exclusive_pool.py`, and client disconnect is covered in
-  `tests/test_mesh_route.py`.
+- Cancellation tests for the observer, connect, write and read phases are in
+  `tests/test_mesh_route.py` (`test_disconnect_in_each_phase_releases_the_lease_and_leaves_no_task`).
+  Each case checks that the lease is released, no task survives, and a follow-up
+  request still gets the lease. Lock-wait cancellation is covered in
+  `tests/test_exclusive_pool.py`.
