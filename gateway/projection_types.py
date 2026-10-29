@@ -88,7 +88,7 @@ CONFIG_DESCRIPTOR_KEYS = (
 MODEL_ROW = Obj("ModelRow", {"url": URL, "url" + record_carriers.SECRETS_SUFFIX: URL_ENTRIES}, extras=JSON)
 
 # The record's operational blocks. Each names the fields production code reads; anything else is hidden.
-RESOURCES = Obj("Resources", {**{key: ANY_SCALAR for key in ("gpu_required", "vram_gb_estimate", "duration_class", "max_parallel")}, "gpu": JSON},
+RESOURCES = Obj("Resources", {**{key: ANY_SCALAR for key in ("gpu_required", "vram_gb_estimate", "duration_class", "max_parallel")}, "gpu": JSON, "management": JSON},
                 extras=HIDDEN)
 _RESIDENCY_OP = Obj("ResidencyOperation", {"op": SHORT, "args": HIDDEN}, extras=HIDDEN)
 RESIDENCY = Obj("Residency", {
@@ -116,7 +116,7 @@ ENGINE_CONNECTION = register(Obj("EngineConnection", {
 
 OFFERING = Obj("Offering", {
     "id": SHORT, "kind": SHORT, "upstream": ANY_SCALAR, "tasks": JSON, "inputs": JSON, "options": JSON,
-    "selection": JSON, "adjustments": JSON,
+    "selection": JSON, "adjustments": JSON, "resources": JSON,
     "start_profile": Obj("OfferingStartProfile", {"env": ENV}, extras=JSON),
 }, extras=HIDDEN)
 

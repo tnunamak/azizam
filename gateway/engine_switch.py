@@ -137,16 +137,25 @@ class SwitchController:
                 raise SwitchUnavailable("The plan permits only the already selected offering.")
             drain_timeout = max(0.01, float(spec.get("drain_timeout_s", 30)))
             await self._drain.clear_for_swap(scope, SwapDrainSettings(enabled=True, timeout_s=drain_timeout))
-            try:
-                if prepare is not None and not await prepare():
-                    raise SwitchUnavailable("residency could not be prepared")
-                await self._invoke(op, args)
-                selected = _value(await self._observe(observation))
-                ready = True if not ready_name else _value(await self._observe(str(ready_name))) is True
-                if selected != selected_identity or not ready:
-                    raise SwitchUnavailable("selection could not be verified")
-            except (asyncio.CancelledError, Exception) as exc:
-                await self._fail(service, spec, op, args, observation, previous, selected_identity, exc)
+            async def change():
+                try:
+                    if prepare is not None and not await prepare():
+                        raise SwitchUnavailable("residency could not be prepared")
+                    await self._invoke(op, args)
+                    selected = _value(await self._observe(observation))
+                    ready = True if not ready_name else _value(await self._observe(str(ready_name))) is True
+                    if selected != selected_identity or not ready:
+                        raise SwitchUnavailable("selection could not be verified")
+                except (asyncio.CancelledError, Exception) as exc:
+                    await self._fail(service, spec, op, args, observation, previous, selected_identity, exc)
+
+            from gateway.resource_management import managed_operation, management_policy
+            if management_policy(service) is not None:
+                # Admission precedes any mutation or restoration. Cancellation
+                # during the device queue cannot start a control operation.
+                await managed_operation(service, change, observe=self._observe, offering=offering)
+            else:
+                await change()
             handed_off = True
             return SwitchLease(self._drain.lease(scope, on_release=on_release))
         except SwapDeferred as exc:

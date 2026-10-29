@@ -24,6 +24,18 @@ class ResidencyController:
         self._observe = observe
 
     async def load(self, service: Mapping[str, Any]) -> bool:
+        from gateway.resource_management import management_policy, managed_operation
+
+        operation = (service.get("residency") or {}).get("load")
+        if not isinstance(operation, Mapping) or not operation.get("op"):
+            return False
+        if management_policy(service) is None:
+            return await self._load(service)
+        if _value(await self._observe("resident")) is True:
+            return True
+        return await managed_operation(service, lambda: self._load(service), observe=self._observe)
+
+    async def _load(self, service: Mapping[str, Any]) -> bool:
         config = service.get("residency") or {}
         operation = config.get("load")
         if not isinstance(operation, Mapping) or not operation.get("op"):

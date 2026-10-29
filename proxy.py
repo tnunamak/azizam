@@ -1690,6 +1690,19 @@ async def _ensure_target(
         bcfg = {**bcfg, "id": backend}
     driver = driver_for_service(backend, config.get("backends"))
     owned_process = process_config(bcfg).get("driver") == "process"
+    from gateway.resource_management import management_policy, managed_operation
+    resource_managed = management_policy(bcfg) is not None
+
+    async def resource_observe(name):
+        from gateway.engine_control import EngineControlRuntime
+        return await EngineControlRuntime({**bcfg, "id": backend},
+            drain=_swap_drain, lock_for=swap_lock_for).observe(name)
+
+    async def managed_call(operation):
+        offering = next((row for row in offerings_config(bcfg)
+                         if row.get("id") == (offering_id or model) or row.get("upstream") == model), None)
+        return await managed_operation({**bcfg, "id": backend}, operation,
+                                       observe=resource_observe, offering=offering)
 
     # Non-swap driver, or no model requested → just make the backend ready.
     if not (supports_swap(driver) and model):
@@ -1701,7 +1714,15 @@ async def _ensure_target(
             budget = max(HEALTH_CHECK_TIMEOUT, float(declared)) if declared is not None else HEALTH_CHECK_TIMEOUT
         except (TypeError, ValueError):
             budget = HEALTH_CHECK_TIMEOUT
-        ready = await driver.ensure_ready(bcfg, timeout_s=budget)
+        if resource_managed and process_config(bcfg).get("driver") not in {"none", "external"}:
+            async with swap_lock_for(backend):
+                if await driver.health(bcfg) == "healthy":
+                    ready = True
+                else:
+                    await _swap_drain.clear_for_swap(backend, SwapDrainSettings(enabled=True, timeout_s=30))
+                    ready = await managed_call(lambda: driver.ensure_ready(bcfg, timeout_s=budget))
+        else:
+            ready = await driver.ensure_ready(bcfg, timeout_s=budget)
         if not ready:
             print(
                 f"[proxy] ensure_target: backend '{backend}' unreachable via driver",
@@ -1791,17 +1812,21 @@ async def _ensure_target(
             target_profile=profile,
         )
         drain = _swap_drain_settings()
-        swapping = drain.enabled and driver.swap_required(bcfg, activation, ctx)
+        changes_target = driver.swap_required(bcfg, activation, ctx) if drain.enabled or resource_managed else False
+        swapping = (drain.enabled or resource_managed) and changes_target
         if swapping:
             # Raises SwapDeferred (lock released, nothing changed) on timeout.
-            await _swap_drain.clear_for_swap(backend, drain)
+            await _swap_drain.clear_for_swap(backend, drain if drain.enabled else
+                                             SwapDrainSettings(enabled=True, timeout_s=30))
         try:
-            ready = await driver.swap(
-                bcfg,
-                activation,
-                ctx=ctx,
-                warned_models=_pin_mismatch_warned,
-            )
+            async def perform_swap():
+                return await driver.swap(
+                    bcfg,
+                    activation,
+                    ctx=ctx,
+                    warned_models=_pin_mismatch_warned,
+                )
+            ready = await managed_call(perform_swap) if resource_managed and changes_target else await perform_swap()
         finally:
             if swapping:
                 # The loaded-state cache predates the swap; re-probe on next read.
@@ -1824,6 +1849,7 @@ async def _ensure_target_leased(
     Raises SwapDeferred.
     """
     from gateway.engine_contract_view import offerings_config, process_config
+    from gateway.resource_management import management_policy
 
     bcfg = (config.get("backends") or {}).get(backend) or {}
     declared_offerings = offerings_config(bcfg)
@@ -1832,7 +1858,7 @@ async def _ensure_target_leased(
         (item.get("selection") or {}).get("implicit_load") is False
         for item in declared_offerings
     )
-    if not _swap_drain_settings().enabled and process_config(bcfg).get("driver") != "process" and not contract_lease:
+    if not _swap_drain_settings().enabled and process_config(bcfg).get("driver") != "process" and not contract_lease and management_policy(bcfg) is None:
         ready = await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile)
         return ready, None
     return await _ensure_target(
@@ -14044,7 +14070,9 @@ async def _status_payload_with_protocol_issues(payload: Mapping[str, Any]) -> Ma
     if issues:
         sources["engine_protocol"] = {"tone": "warn", "reasons": [
             f"{issue.get('file') or issue.get('engine_id')}: {issue['reason']}" for issue in issues]}
-    return {**payload, "protocol_issues": issues, "health_sources": sources}
+    from gateway.resource_management import RESOURCE_COORDINATOR
+    return {**payload, "protocol_issues": issues, "health_sources": sources,
+            "resource_management": RESOURCE_COORDINATOR.snapshot()}
 
 
 async def _build_status_snapshot() -> dict[str, Any]:
