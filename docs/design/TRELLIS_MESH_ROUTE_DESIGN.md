@@ -295,7 +295,9 @@ release claim follows from this branch.
    `97ddb5d8…`) nor the live admin database (`openai` hash `791af485…`, no Trellis
    service) matches them. The replacement bodies are not specified. No correction
    entries were invented, so the `seed_upgrades` exact-record-replace primitive is
-   not implemented.
+   not implemented. **Lead decision (2026-10-28): N/A for v1.** No record exists in
+   the shipped seed or the live database that these corrections would replace, so
+   the primitive has no caller. It is out of scope for v1.
 2. **Observer.** The design needs an existing service with a real VRAM observer.
    The comfyui backend cannot serve as one at its default base path. The E2E proof
    therefore used a scratch observer that reports GPU0 from `nvidia-smi`. Production
@@ -317,8 +319,6 @@ release claim follows from this branch.
   ETag/CAS and audit.
 - Discovery join: `Capability.protocol` and `output_media_types`, the live probe,
   and awaitable providers.
-- `registry.seed_upgrades` exact-record-replace primitive, and the drift and CAS tests
-  for it.
 - UI whole-envelope safety label.
 - Cancellation tests not yet present: observer cancellation and downstream
   connect, write and read cancellation. Lock-wait cancellation is covered in
