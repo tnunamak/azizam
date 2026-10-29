@@ -1,18 +1,19 @@
-"""Video remix (Bernini-R) and character replace (SCAIL-2) on the video routes.
+"""Video remix checks and character replace (SCAIL-2) on the video routes.
 
 Drives the real FastAPI routes against a fake ComfyUI, with the shipped
 proxy_config.yml and workflow JSON, and inspects the graph the gateway submits.
+Remix is off in the shipped config, so only its checks that run before a
+workflow is submitted are tested here. See RemixRouteTests.
 """
 
 from __future__ import annotations
 
 import base64
 import contextlib
-import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,11 +22,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.access import access_context, authenticated  # noqa: E402
+from tests.support.access import authenticated  # noqa: E402
 from gateway import video_inputs  # noqa: E402
 from _fake_comfy_video import (  # noqa: E402
     NEW_PROMPT_ID,
-    SOURCE_BYTES,
+    SOURCE_BYTES,  # noqa: F401 -- imported by test_video_extend.py from this module
     SOURCE_PROMPT_ID,
     FakeComfy,
 )
@@ -35,6 +36,10 @@ NEW_ID = f"video_{NEW_PROMPT_ID}"
 PROBE_24 = video_inputs.VideoProbe(fps=24.0, duration=3.5, frames=84, width=832, height=480)
 NS = "com.azizam.workflow"
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+# Stand-in for videos.remix_workflow. The shipped config leaves remix off, and
+# the route's checks below its 501 gate need a truthy value. No test in this
+# module lets a request reach submission under this id.
+REMIX_STAND_IN = "video-remix-stand-in"
 
 
 @pytest.mark.usefixtures("isolated_receipts")
@@ -72,63 +77,26 @@ class RemixReplaceBase(unittest.TestCase):
         self.assertEqual(self.comfy.submitted, [])
 
 
-class RemixRouteTests(RemixReplaceBase):
-    def test_missing_source_video_retains_the_reference_hint(self) -> None:
-        response = self.client.post("/v1/videos", json={"model": "video-remix", "prompt": "p"})
-        self.assertEqual(response.status_code, 400, response.text)
-        self.assertEqual(response.json()["error"]["message"],
-                         "source_video is required for this model: pass a video id, URL or data URI")
-        self.assertEqual(self.comfy.uploads, [])
+class RemixShippedStateTests(RemixReplaceBase):
+    def test_shipped_config_leaves_remix_off(self) -> None:
+        self.assertIsNone(proxy.VIDEO_REMIX_WORKFLOW)
+        r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x"})
+        self.assertEqual(r.status_code, 501, r.text)
+        self.assertEqual(r.json()["error"]["code"], "video_remix_not_configured")
         self.assertEqual(self.comfy.submitted, [])
 
-    def test_remix_creates_a_new_job_that_points_at_the_source(self) -> None:
-        r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "make it snowy"})
-        self.assertEqual(r.status_code, 200, r.text)
-        body = r.json()
-        self.assertEqual(body["id"], NEW_ID)
-        self.assertEqual(body["object"], "video")
-        self.assertEqual((body["status"], body["progress"]), ("queued", 0))
-        self.assertEqual(body["remixed_from_video_id"], SOURCE_ID)
-        self.assertEqual(body["model"], "video-remix")
-        self.assertEqual(body["azizam_resolved_model"], "video-bernini-r-remix")
-        self.assertEqual(body["prompt"], "make it snowy")
-        self.assertEqual(body["size"], "832x480")
-        self.assertEqual(body["seconds"], "3.4")
-        # the source bytes were fetched from ComfyUI /view and re-uploaded as the input
-        self.assertEqual(self.comfy.uploads[0][1], SOURCE_BYTES)
-        g = self.graph
-        self.assertEqual(g["1"]["inputs"]["file"], "up1_source_00001_.mp4")
-        self.assertEqual(g["10"]["inputs"]["value"], "make it snowy")
-        self.assertEqual(g["22"]["inputs"]["value"], 81)
-        self.assertAlmostEqual(g["2"]["inputs"]["duration"], 81.5 / 24, places=3)
-        self.assertNotIn("_meta", g)
 
-    def test_remix_record_is_tracked_for_status_and_list(self) -> None:
-        self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x"})
-        record = proxy._video_job_records[NEW_PROMPT_ID]
-        self.assertEqual(record["remixed_from_video_id"], SOURCE_ID)
-        self.assertEqual(record["model"], "video-remix")
-        status = self.client.get(f"/v1/videos/{NEW_ID}").json()
-        self.assertEqual(status["remixed_from_video_id"], SOURCE_ID)
-        self.assertEqual(status["azizam_resolved_model"], "video-bernini-r-remix")
+class RemixRouteTests(RemixReplaceBase):
+    """Remix input checks. Each one runs before a workflow is submitted.
 
-    def test_client_model_name_is_echoed(self) -> None:
-        r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x", "model": "bernini-r"})
-        self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["model"], "bernini-r")
-        self.assertEqual(r.json()["azizam_resolved_model"], "video-bernini-r-remix")
+    setUp sets REMIX_STAND_IN so the checks run past the 501 gate. It also adds the `video-remix` alias that the
+    config asks for. Without the alias, model lookup returns model_not_found (404) before the source checks run.
+    """
 
-    def test_seed_and_seconds_are_accepted(self) -> None:
-        r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x", "seed": 9, "seconds": 2})
-        self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(self.graph["30"]["inputs"]["value"], 9)
-        self.assertEqual(self.graph["22"]["inputs"]["value"], 49)
-
-    def test_seconds_beyond_the_source_is_rejected(self) -> None:
-        r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x", "seconds": 4})
-        self.assertEqual(r.status_code, 400)
-        self.assertEqual(r.json()["error"]["param"], "seconds")
-        self.assertEqual(self.comfy.uploads, [])
+    def setUp(self) -> None:
+        super().setUp()
+        self.stack.enter_context(patch.object(proxy, "VIDEO_REMIX_WORKFLOW", REMIX_STAND_IN))
+        self.stack.enter_context(patch.dict(proxy.VIDEO_ALIASES, {"video-remix": "video-scail-2-replace"}))
 
     def test_remix_requires_prompt(self) -> None:
         r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={})
@@ -138,19 +106,23 @@ class RemixRouteTests(RemixReplaceBase):
     def test_unknown_source_is_404(self) -> None:
         r = self.client.post("/v1/videos/video_nope/remix", json={"prompt": "x"})
         self.assertEqual(r.status_code, 404, r.text)
+        self.assertEqual(r.json()["error"]["message"], "video_id not found")
         self.assertEqual(self.comfy.submitted, [])
 
     def test_source_not_completed_is_rejected_with_video_not_ready(self) -> None:
         self.comfy.history[SOURCE_PROMPT_ID] = {"status": {"completed": False}, "outputs": {}}
-        r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x"})
+        # The stand-in target (SCAIL) also needs a reference image. Without one it refuses before it checks the source.
+        reference = "data:image/png;base64," + base64.b64encode(PNG).decode()
+        r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x", "extensions": {NS: {"reference_image": reference}}})
         self.assertEqual(r.status_code, 400, r.text)
-        self.assertEqual(r.json()["error"]["code"], "video_not_ready")
+        self.assertEqual(r.json()["error"].get("code"), "video_not_ready", r.text)
 
     def test_other_keys_video_is_hidden(self) -> None:
         proxy._video_job_records[SOURCE_PROMPT_ID]["owner_key_hash"] = "sha256:someone-else"
         with patch.object(proxy, "_asset_owner_key", return_value="sha256:me"):
             r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x"})
         self.assertEqual(r.status_code, 404)
+        self.assertEqual(r.json()["error"]["message"], "video_id not found")
 
     def test_source_video_cannot_be_overridden_by_an_extension(self) -> None:
         r = self.client.post(
@@ -160,46 +132,11 @@ class RemixRouteTests(RemixReplaceBase):
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["error"]["code"], "invalid_workflow_extension")
 
-    def test_remix_is_501_when_not_configured(self) -> None:
-        with patch.object(proxy, "VIDEO_REMIX_WORKFLOW", None):
-            r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x"})
-        self.assertEqual(r.status_code, 501)
-        self.assertEqual(r.json()["error"]["code"], "video_remix_not_configured")
-
-    def test_source_that_is_not_a_readable_video_is_rejected(self) -> None:
-        self.stack.enter_context(patch.object(proxy.video_inputs, "probe_video", lambda *a, **k: None))
-        self.stack.enter_context(patch.object(proxy.shutil, "which", lambda _n: "/usr/bin/ffprobe"))
-        r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x"})
-        self.assertEqual(r.status_code, 400, r.text)
-        self.assertIn("not a readable video", r.json()["error"]["message"])
-        self.assertEqual(self.comfy.uploads, [])
-
 
 class EditRouteTests(RemixReplaceBase):
-    def test_upload_remix_has_no_source_video_id(self) -> None:
-        r = self.client.post(
-            "/v1/videos/edits",
-            data={"prompt": "to watercolor"},
-            files={"video": ("clip.mp4", b"uploaded-clip-bytes", "video/mp4")},
-        )
-        self.assertEqual(r.status_code, 200, r.text)
-        body = r.json()
-        self.assertIsNone(body["remixed_from_video_id"])
-        self.assertEqual(body["azizam_resolved_model"], "video-bernini-r-remix")
-        self.assertEqual(self.comfy.uploads[0][0], "source.mp4")
-        self.assertEqual(self.comfy.uploads[0][1], b"uploaded-clip-bytes")
-        self.assertEqual(self.graph["10"]["inputs"]["value"], "to watercolor")
-
-    def test_existing_video_by_id_sets_remixed_from(self) -> None:
-        r = self.client.post("/v1/videos/edits", json={"prompt": "x", "video": {"id": SOURCE_ID}})
-        self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["remixed_from_video_id"], SOURCE_ID)
-        self.assertEqual(self.comfy.uploads[0][1], SOURCE_BYTES)
-
-    def test_form_style_video_id_reference(self) -> None:
-        r = self.client.post("/v1/videos/edits", data={"prompt": "x", "video[id]": SOURCE_ID})
-        self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["remixed_from_video_id"], SOURCE_ID)
+    def setUp(self) -> None:
+        super().setUp()
+        self.stack.enter_context(patch.object(proxy, "VIDEO_REMIX_WORKFLOW", REMIX_STAND_IN))
 
     def test_missing_video_and_prompt_are_rejected(self) -> None:
         self.assertEqual(self.client.post("/v1/videos/edits", json={"prompt": "x"}).json()["error"]["param"], "video")
@@ -207,19 +144,6 @@ class EditRouteTests(RemixReplaceBase):
             self.client.post("/v1/videos/edits", json={"video": {"id": SOURCE_ID}}).json()["error"]["param"],
             "prompt",
         )
-
-    def test_url_source_is_downloaded(self) -> None:
-        fetched = proxy.media_fetch.FetchedMedia(b"url-clip", "clip.webm", "video/webm")
-        fetch = self.stack.enter_context(patch.object(proxy, "_fetch_media_url", AsyncMock(return_value=fetched)))
-        r = self.client.post(
-            "/v1/videos/edits",
-            json={"prompt": "x", "video": "https://example.test/a/clip.webm?sig=1"},
-        )
-        self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(self.comfy.uploads[0][:2], ("source.webm", b"url-clip"))
-        fetch.assert_awaited_once()
-        self.assertEqual(fetch.call_args.args, ("https://example.test/a/clip.webm?sig=1", access_context()))
-        self.assertEqual(fetch.call_args.kwargs["request"].headers["host"], "testserver")
 
 
 class CharacterReplaceTests(RemixReplaceBase):
@@ -305,8 +229,6 @@ class CharacterReplaceTests(RemixReplaceBase):
             self.assertEqual(proxy._resolve_video_workflow(name)[0], "video-scail-2-replace")
         res = proxy.resolve_model_for_operation("videos", "character-replace")
         self.assertEqual(res.effective_model, "video-scail-2-replace")
-        for name in ("video-remix", "bernini-r"):
-            self.assertEqual(proxy._resolve_video_workflow(name)[0], proxy.VIDEO_REMIX_WORKFLOW)
 
     def test_unknown_extension_and_route_managed_input_are_rejected(self) -> None:
         r = self.client.post("/v1/videos", json=self._body(bogus=1))

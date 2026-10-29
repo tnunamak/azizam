@@ -21,12 +21,35 @@ were still stored.
   cache described below. Cache misses use `npm ci`. All Python environments
   install from the hashed lock and retain uv's download cache.
 - It writes receipts to `~/.tmp/azizam-ci-receipts/<tree>/`: `run.tsv`
-  (SHA, seed, layout), `steps.tsv` (step, exit code, whole seconds, wall
-  seconds, CPU seconds (user plus system), peak RSS kB), `cost.json` (totals,
+  (`sha`, `tree`, `started`, `finished`, `seed`, `browser_workers`,
+  `browser_servers`, `py_workers`, `base_port`, `lock_wait_s`,
+  `execution_started`, `execution_finished`, `cleanup_started`,
+  `cleanup_finished`, `playwright_projects`, `playwright_case_projects`),
+  `steps.tsv` (step, exit code, whole seconds, wall seconds, CPU seconds (user
+  plus system), peak RSS kB),
+  `cost.json` (totals,
   the `journey` section, and the critical path: the longest chain of steps, each starting when the
-  steps it waits for finish), `logs/`, `raw/` (each framework's report),
-  `cases.jsonl`, and browser evidence only when a run fails. A tree that
-  already passed is not run again (`--force` reruns it).
+  steps it waits for finish), `logs/`, `raw/` (framework reports and
+  per-config case receipts), and `cases.jsonl`. Playwright writes failure
+  traces and screenshots under disposable run scratch. `ci-local` deletes that
+  scratch on exit, including after a failed run, so those browser artifacts are
+  not retained in the receipt directory. A tree that already passed is not run
+  again (`--force` reruns it).
+- `run.tsv` is not a complete resource-attribution receipt. `started` is written
+  after lock acquisition and worktree setup; `finished` is written before the
+  cost report and exit cleanup. `lock_wait_s` records whole seconds waiting for
+  the host lock. `execution_started` is written before the first job starts;
+  `execution_finished` and `cleanup_started` are recorded at exit-trap entry,
+  and `cleanup_finished` after process, worktree and run-directory cleanup.
+  `playwright_projects` lists the resolved projects per config before tests run,
+  including projects that produce no cases; `-` means the resolved list is
+  empty, and `?` means the reporter data is missing or invalid.
+  `playwright_case_projects` lists projects present in case receipts; `-` means
+  no case was observed for that config.
+  The live-data config adds its Firefox project only when Firefox is installed,
+  while `ci-local` installs Chromium; the resolved project set can therefore
+  vary by host. For a sandboxed run, use the outer sandbox receipt for full
+  command wall time, CPU and cgroup memory.
 - Each step is measured by GNU time (`/usr/bin/time -q -o`), or by
   `scripts/ci/gate_cost.py run` (wait4) when GNU time is absent
   (`AZIZAM_CI_TIME` sets its path). Both report the step's own rusage, which
@@ -229,6 +252,27 @@ interrupted run, lock waiting, and a killed controller.
   fails a test that leaves queued or running jobs, open fake-engine requests,
   or a changed owner-wide setting it did not tag `@global-state`. The fixture
   snapshots seven owner-wide settings before each test and restores them after.
+  Coverage boundary: tests tagged `@service-registry-state` also fail if they
+  leave a change in the service `services` map; the check does not restore it.
+  It does not cover other service-registry sections or excluded records.
+  Tests tagged `@access-plan-definition` also fail if they leave a changed plan
+  definition; the check does not restore it or cover people, app, invite or
+  sign-in-rule holders. Tests tagged `@provider-cap-state` must also carry
+  `@global-state`; they compare normalized global caps and non-empty cap values
+  for listed providers. Empty-cap provider membership remains the service
+  registry check's concern. Spend, connection status and timestamps, key status,
+  recommendations, catalog data, and access-plan references are outside this
+  projection. A malformed or incomplete provider response fails the check. It
+  does not restore caps or prove full provider isolation; tests own restoration
+  and cleanup. Categories and other provider state still have no generic
+  inventory or restore. Some specs keep supporting records for the run or reach
+  cleanup only after assertions.
+  `scripts/e2e/prove-isolation` checks namespaced member data, setting
+  restoration, unfinished work, and three opt-in postconditions. Its provider
+  cap proof checks both global and per-provider changes, plus controls for
+  excluded status and spend fields. It does not inject skipped cleanup for other
+  resource classes. Any broader guard must account for declared residue and
+  resource-specific cleanup; this is not evidence of a production leak.
   `scripts/ci/policy.py` fails a gated spec that takes `test` from `@playwright/test`
   instead of `./fixtures/isolation`.
 - `--port BASE` defaults to `18640`. Each server reserves gateway +0, fake
@@ -252,10 +296,11 @@ interrupted run, lock waiting, and a killed controller.
   `web/test-results` is a symlink to it. The step `e2e-tree-unchanged` fails
   the run if any other file in `web/` changed.
 - Every step writes a private receipt and log. The parent waits for every job,
-  aggregates receipts, rejects missing/nonzero/skipped steps, and retains logs
-  and case receipts. Browser traces and mutable state are deleted on exit,
-  including after failures. Interrupts terminate job process groups
-  before worktrees are removed. `setsid` is required.
+  aggregates receipts, rejects missing/nonzero/skipped steps, and retains logs,
+  raw reports and case receipts. Browser traces, screenshots, auth files and
+  mutable state are deleted on exit, including after failures. Interrupts
+  terminate job process groups before worktrees are removed. `setsid` is
+  required.
 
 ## Duration
 

@@ -1025,8 +1025,8 @@ VIDEO_ALIASES = {
     for k, v in (videos_cfg.get("aliases", {}) or {}).items()
 }
 # Workflow id that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
-# Unset means both routes return a clear 501 (video_remix_not_configured). Keep
-# the `video-remix` stable alias pointing at the same workflow.
+# Unset means both routes return a clear 501 (video_remix_not_configured). The
+# routes submit as `video-remix`, so that alias must point at the same workflow.
 VIDEO_REMIX_WORKFLOW = videos_cfg.get("remix_workflow") or None
 # Long video (extensions, `shots`, `seconds` past a model's native length).
 # `extend_workflow` names the chain workflow POST /v1/videos/extensions runs;
@@ -9457,7 +9457,7 @@ def _tracked_video_fields(prompt_id: str, auth_context: AuthContext | None = Non
 def _hold_video_progress(prompt_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Never report lower progress than an earlier poll did for the same job.
 
-    Multi-stage graphs (LTX upscale, Bernini high+low) restart the sampler bar
+    Multi-stage graphs (LTX upscale, two-pass samplers) restart the sampler bar
     in each stage, and a queue-only poll reports a flat 25. OpenAI's `progress`
     only moves forward, so keep a high-water mark per job. Terminal states
     report 100 and are left alone.
@@ -12642,7 +12642,7 @@ async def proxy_graph_video_remix(
 
     Same contract as OpenAI's remix: JSON `{"prompt": ...}`, a new video job
     back, `remixed_from_video_id` set to the source. The gateway runs
-    `videos.remix_workflow` (Bernini-R). `model` is optional; when absent the
+    `videos.remix_workflow` (501 while it is unset). `model` is optional; when absent the
     resource reports `video-remix`. Gateway extras (`seed`, `seconds`, `size`,
     `negative_prompt`) are accepted as top-level fields.
     """
@@ -24883,7 +24883,7 @@ async def videos_delete(video_id: str, request: Request):
 
 
 async def videos_remix(video_id: str, request: Request):
-    """Remix a completed video with a new prompt (Bernini-R); 501 unless videos.remix_workflow is set."""
+    """Remix a completed video with a new prompt; 501 unless videos.remix_workflow is set."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}/remix"))
     if isinstance(auth_context, Response):
         return auth_context

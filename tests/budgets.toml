@@ -530,7 +530,8 @@ pytest = 17575
 # Train r107, the automatic picture's cue and its five-minute backoff per tab (2026-10-24): two cases in
 # src/components/shell/account-avatar.spec.tsx. The full run passed all 3564.
 # L1 capability labels (2026-10-24): +11 cases in src/lib/terms.spec.ts; the full run passed all 3575 (--root web).
-vitest = 3581
+# Train r113 (2026-10-29): +1 Vitest in web/tests/e2e-case-receipts.spec.ts (CI receipt reporter, 061543d23); the r113 gate counted 3582.
+vitest = 3582
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).

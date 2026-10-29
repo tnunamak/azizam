@@ -2,7 +2,7 @@
 // One JSON line per attempt, appended to $CASE_RECEIPTS_FILE as each attempt
 // ends: a retry or a second run into the same file repeats the test ID, so
 // scripts/ci/merge_cases.py sees it as an attempt above 0.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { FullConfig, Reporter, TestCase, TestResult } from "@playwright/test/reporter";
 
@@ -11,6 +11,14 @@ export default class CaseReceipts implements Reporter {
 
   onBegin(config: FullConfig) {
     this.config = path.basename(config.configFile ?? "");
+    const projectsOutput = process.env.PLAYWRIGHT_PROJECTS_FILE;
+    if (projectsOutput) {
+      // Setup-only projects do not appear in onTestEnd case receipts.
+      writeFileSync(
+        projectsOutput,
+        JSON.stringify(config.projects.map((project) => project.name)) + "\n",
+      );
+    }
   }
 
   onTestEnd(test: TestCase, result: TestResult) {
