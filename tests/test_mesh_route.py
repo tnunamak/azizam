@@ -86,6 +86,8 @@ class Harness:
         self.observer_status = 200
         self.downstream_mode: Any = "ok"
         self.leases = ExclusivePoolLeaseManager()
+        self.hook: Any = None  # stalls the upstream transport; see _Upstream
+        self.events: list[str] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -124,7 +126,7 @@ class Harness:
             services=lambda: harness.services,
             open_receipt=open_receipt,
             leases=harness.leases,
-            client_factory=lambda: httpx.AsyncClient(transport=_Upstream(harness.handler)),
+            client_factory=lambda: httpx.AsyncClient(transport=_Upstream(harness.handler, harness.hook)),
             new_request_id=lambda: "req-test",
         ))
         return app
@@ -133,10 +135,13 @@ class Harness:
 class _Upstream(httpx.AsyncBaseTransport):
     """Routes requests to a sync or async handler (httpx's MockTransport awaits only sync results)."""
 
-    def __init__(self, handler) -> None:
+    def __init__(self, handler, hook=None) -> None:
         self.handler = handler
+        self.hook = hook  # optional async hook that may stall before the body is read
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self.hook is not None:
+            await self.hook(request)
         await request.aread()
         result = self.handler(request)
         if inspect.isawaitable(result):
@@ -422,6 +427,135 @@ def test_client_disconnect_cancels_downstream_and_releases_the_lease() -> None:
     assert seen == ["downstream-start", "downstream-cancelled"]
     assert harness.leases.active_claims() == 0
     assert receipts and receipts[-1]["exc"] == "CancelledError"
+
+
+async def _stall(events: list[str], name: str) -> None:
+    events.append(f"{name}-start")
+    try:
+        await asyncio.Event().wait()
+    except asyncio.CancelledError:
+        events.append(f"{name}-cancelled")
+        raise
+
+
+class _StalledGlb(httpx.AsyncByteStream):
+    """A 200 whose body starts and then stops: the route is stuck in the read phase."""
+
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    async def __aiter__(self):
+        yield GLB[:8]
+        await _stall(self.events, "read")
+
+
+@pytest.mark.parametrize("phase", ["observer", "connect", "write", "read"])
+def test_disconnect_in_each_phase_releases_the_lease_and_leaves_no_task(phase: str) -> None:
+    """Cancel while the observer, the connect, the upload or the response read is in flight.
+
+    In every phase the lease must be released (no claim left, and a follow-up request still
+    runs), no downstream task may survive the request, and the stalled call must see its own
+    cancellation. The phases are: observer GET, transport stalls before any bytes are sent
+    (connect), the request body is partly consumed and then stops (write), and the 200 stalls
+    mid-body (read).
+    """
+    harness = Harness()
+    events = harness.events
+    answer = harness.handler
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if phase == "observer" and url.startswith(OBSERVER_URL):
+            await _stall(events, "observer")
+        if phase == "read" and url == f"{TRELLIS_URL}/generate":
+            return httpx.Response(200, stream=_StalledGlb(events), headers={"content-type": "model/gltf-binary"})
+        return answer(request)
+
+    async def hook(request: httpx.Request) -> None:
+        if str(request.url) != f"{TRELLIS_URL}/generate":
+            return
+        if phase == "connect":
+            await _stall(events, "connect")
+        if phase == "write":
+            async for _chunk in request.stream:  # one chunk goes out, then the upload stops
+                await _stall(events, "write")
+
+    harness.handler = handler  # type: ignore[method-assign]
+    harness.hook = hook if phase in ("connect", "write") else None
+
+    def scope_for(body: bytes, boundary: str) -> dict:
+        return {
+            "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST",
+            "scheme": "http", "path": MESH_PATH, "raw_path": MESH_PATH.encode(), "query_string": b"",
+            "headers": [(b"content-type", f"multipart/form-data; boundary={boundary}".encode()),
+                        (b"content-length", str(len(body)).encode())],
+            "client": ("127.0.0.1", 1), "server": ("testserver", 80), "root_path": "",
+        }
+
+    async def drive() -> tuple[list[dict], list[dict], int]:
+        app = harness.app()
+        body, boundary = _multipart_body()
+
+        # 1. The client disconnects once the stalled phase has started.
+        disconnect = asyncio.Event()
+        sent = False
+
+        async def receive_then_disconnect() -> dict:
+            nonlocal sent
+            if not sent:
+                sent = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await disconnect.wait()
+            return {"type": "http.disconnect"}
+
+        async def watch() -> None:
+            while f"{phase}-start" not in events:
+                await asyncio.sleep(0.01)
+            disconnect.set()
+
+        cancelled_sends: list[dict] = []
+
+        async def send_cancelled(message: dict) -> None:
+            cancelled_sends.append(message)
+
+        async def run_cancelled() -> None:
+            try:
+                await app(scope_for(body, boundary), receive_then_disconnect, send_cancelled)
+            except asyncio.CancelledError:
+                cancelled_sends.append({"type": "cancelled"})
+
+        await asyncio.wait_for(asyncio.gather(run_cancelled(), watch()), timeout=10)
+        leftover = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
+        claims_after_cancel = harness.leases.active_claims()
+
+        # 2. With the stall removed, the next request must get the lease and succeed.
+        harness.hook = None
+        harness.handler = answer  # type: ignore[method-assign]
+        follow_sends: list[dict] = []
+        follow_sent = False
+
+        async def receive_once() -> dict:
+            nonlocal follow_sent
+            if not follow_sent:
+                follow_sent = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            await asyncio.Event().wait()
+            return {"type": "http.disconnect"}
+
+        async def send_follow(message: dict) -> None:
+            follow_sends.append(message)
+
+        await asyncio.wait_for(app(scope_for(body, boundary), receive_once, send_follow), timeout=10)
+        assert claims_after_cancel == 0
+        return cancelled_sends, follow_sends, len(leftover)
+
+    cancelled_sends, follow_sends, leftover = asyncio.run(drive())
+    assert events == [f"{phase}-start", f"{phase}-cancelled"]
+    assert leftover == 0
+    assert harness.leases.active_claims() == 0
+    assert [m for m in follow_sends if m["type"] == "http.response.start"][0]["status"] == 200
+    assert harness.receipts[0]["exc"] == "CancelledError"
+    assert harness.receipts[-1]["outcome"] == ("succeeded", "succeeded")
 
 
 def _multipart_body() -> tuple[bytes, str]:
