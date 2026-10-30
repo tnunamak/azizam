@@ -95,8 +95,9 @@ class VideoLimitsDiscoveryTests(unittest.TestCase):
         for row in matching:
             self.assertEqual(row["limits"]["max_total_seconds"], 33)
             self.assertEqual(row["limits"]["segment_seconds"], 8)
-        # A model that cannot chain publishes no cap.
-        self.assertNotIn("max_total_seconds", by_workflow["video.generate.wan-2.2-ti2v-5b-q8"]["limits"])
+        # A model that cannot chain publishes no cap. SCAIL is an edit, so by_workflow (video.generate only) lacks it.
+        scail = next(r for r in rows if r.get("workflow") == "video.edit.scail-2-replace")
+        self.assertNotIn("max_total_seconds", scail.get("limits", {}))
 
     def test_video_alias_carries_the_same_published_limits_as_its_target(self) -> None:
         with patch.object(proxy, "_gateway_aliases_provider", return_value={

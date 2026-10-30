@@ -1,0 +1,101 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.generate.flux2-klein-snofs
+intent: image.generate
+display_name: FLUX.2 Klein 9B + SNOFS (uncensored)
+purpose: Uncensored detailed images from a prompt
+description: Make a realistic photo-style picture from a description, without the usual content filtering. It only shows adults.
+source: local
+trusted: true
+typical_seconds: 20  # the same graph as flux2-klein (measured 2026-10-21, 20 s warm) plus one LoRA node; not timed yet
+inputs:
+  prompt:
+    label: description
+    help: Describe what you want to make.
+    type: string
+    required: true
+  width:
+    label: width
+    help: Picture width in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+  height:
+    label: height
+    help: Picture height in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+  steps:
+    label: steps
+    help: More steps take longer.
+    type: integer
+    minimum: 1
+    maximum: 100
+  guidance:
+    label: prompt guidance
+    type: number
+    minimum: 0
+    maximum: 20
+  seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
+    type: integer
+    minimum: 0
+  lora_strength:
+    label: style strength
+    help: How strongly the added style applies. 1.0 is the usual setting.
+    type: number
+    minimum: 0
+    maximum: 1.5
+    default: 1.0
+  batch_size:
+    label: number of pictures
+    help: How many pictures to make at once.
+    type: integer
+    minimum: 1
+    maximum: 8
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/flux2-klein-snofs.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+      width:
+        - node: "27"
+          input: width
+      height:
+        - node: "27"
+          input: height
+      steps:
+        - node: "31"
+          input: steps
+      guidance:
+        - node: "35"
+          input: guidance
+      seed:
+        - node: "31"
+          input: seed
+      lora_strength:
+        - node: "11"
+          input: strength_model
+      batch_size:
+        - node: "27"
+          input: batch_size
+requires:
+  custom_nodes:
+    - RMBG
+  models:
+    - role: diffusion_model
+      path: unet/flux-2-klein-9b-Q8_0.gguf
+    - role: text_encoder
+      path: text_encoders/qwen_3_8b_fp8mixed.safetensors
+    - role: lora
+      path: loras/klein_snofs_v1_4.safetensors
+    - role: vae
+      path: vae/flux2-vae.safetensors

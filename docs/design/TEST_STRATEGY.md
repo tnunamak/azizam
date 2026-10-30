@@ -5,6 +5,8 @@ Base: `main` at `a97c0ce7` (release 20.1, includes `chore/fast-gate`: pytest-xdi
 Inputs: research in `~/code/divan/test-suite-excellence/` and `~/code/divan/testing/`; the audit in `~/Documents/azizam/test-overhaul/audit/` (`consolidated.md`, `sensitive-audit.md`, `measurements.md`, `mutation-raw/`, the `dot/azizam-tso-*` proposals); the v1 review `audit/dot/judge-design.md` and the v3 review `audit/dot/judge-v3.md` (both resolved in section 9). `audit/mutation.md` does not exist; scores below come from `mutation-raw/`.
 v3 inputs: `testing/gateway-tests-should-default-to-fake-provider-and-replay-lanes-with-live-canaries-and-quality-evals-separate-opt-in-and-budgeted.md` and `testing/browser-e2e-suites-stay-non-flaky-through-isolated-data-deterministic-fixtures-web-first-assertions-and-first-attempt-flake-measurement.md`. Both are unverified worker reports; their numbers are context, not targets. Section 11 gives the disposition of every recommendation.
 
+This is a historical design baseline, not the current operational contract. The `exists` notes and source references describe the dated tree above. For the current runner and receipt behavior, use [`docs/ops/CI.md`](../ops/CI.md) and verify implementation details against the current source.
+
 Owner rules, applied everywhere:
 - No automatic retries. A first failure stays a failure.
 - No coverage gate. Count and time are budgets.

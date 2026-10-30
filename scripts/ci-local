@@ -125,6 +125,7 @@ fi
 lock=$HOME/.tmp/azizam-ci.lock
 mkdir -p "${lock%/*}"
 exec 9>>"$lock"
+lock_wait_started=$SECONDS
 if ! flock -n 9; then
   # A scheduled run (scripts/test-scheduled) starts no new task while this file
   # exists, so this gate waits for at most the task that is running now.
@@ -135,6 +136,7 @@ if ! flock -n 9; then
   flock 9
   rm -f "$gate_waiting"
 fi
+lock_wait_s=$((SECONDS - lock_wait_started))
 printf 'pid %s sha %s since %s\n' "$$" "$sha" "$(date -u +%FT%TZ)" > "$lock"
 
 if [[ -f $receipts/PASS && $force == 0 ]]; then
@@ -185,7 +187,11 @@ stop_recorded_groups() {
   done
 }
 cleanup() {
-  local pid directory deadline=$((SECONDS + 20))
+  local pid directory cleanup_started cleanup_finished deadline=$((SECONDS + 20))
+  cleanup_started=$(date -u +%FT%TZ)
+  if [[ -f $receipts/run.tsv ]]; then
+    printf 'execution_finished\t%s\ncleanup_started\t%s\n' "$cleanup_started" "$cleanup_started" >> "$receipts/run.tsv"
+  fi
   trap '' INT TERM
   # Stop supervisors first: a live multi-step job could start another timeout
   # group after the recorded-group sweep has already expanded its file list.
@@ -210,6 +216,10 @@ cleanup() {
     git worktree remove --force "$directory" >/dev/null 2>&1 || true
   done
   remove_run_dir "$run"
+  cleanup_finished=$(date -u +%FT%TZ)
+  if [[ -f $receipts/run.tsv ]]; then
+    printf 'cleanup_finished\t%s\n' "$cleanup_finished" >> "$receipts/run.tsv"
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -222,13 +232,15 @@ add_worktree "$work"
 add_worktree "$run/python"
 add_worktree "$run/fresh"
 started=$(date -u +%FT%TZ)
-printf 'sha\t%s\ntree\t%s\nstarted\t%s\nseed\t%s\nbrowser_workers\t%s\npy_workers\t%s\nbase_port\t%s\n' "$sha" "$tree" "$started" "$seed" "$browser_workers" "$py_workers" "$port" > "$receipts/run.tsv"
+printf 'sha\t%s\ntree\t%s\nstarted\t%s\nseed\t%s\nbrowser_workers\t%s\nbrowser_servers\t%s\npy_workers\t%s\nbase_port\t%s\nlock_wait_s\t%s\n' \
+  "$sha" "$tree" "$started" "$seed" "$browser_workers" "$browser_servers" "$py_workers" "$port" "$lock_wait_s" > "$receipts/run.tsv"
 
 # Cost per step (scripts/ci/gate_cost.py reports it): GNU time when present, else wait4.
 gate_time=${AZIZAM_CI_TIME:-/usr/bin/time}
 cost_mode=wait4
 if [[ -x $gate_time ]]; then cost_mode=gnu-time; fi
 failed=0
+printf 'execution_started\t%s\n' "$(date -u +%FT%TZ)" >> "$receipts/run.tsv"
 step() {
   local name=$1; shift
   local start=$SECONDS start_us=${EPOCHREALTIME/./} rc=0 elapsed_us
@@ -440,6 +452,7 @@ if ((browser_ready)); then
     ' _ "${browser_names[i]}" env FIRST_RUN_TIMING_OUT="$receipts/raw/first-run-ui.json" UI_E2E_PORT="${browser_ports[i]}" UI_E2E_WORKERS="$browser_workers" UI_E2E_POOL="$browser_servers" UI_E2E_GLOBAL=2 \
       UI_E2E_STATE_ROOT="$run/state/${browser_names[i]}" UI_E2E_RUN_ID="$seed" UI_E2E_PYTHON="$work/venv/bin/python" \
       CASE_RECEIPTS_FILE="$receipts/raw/${browser_names[i]}.cases.jsonl" \
+      PLAYWRIGHT_PROJECTS_FILE="$receipts/raw/${browser_names[i]}.projects.json" \
       ./node_modules/.bin/playwright test --config "${browser_configs[i]}"
   done
 fi
@@ -480,6 +493,47 @@ done
 step journey-clock "$run/python/scripts/ci/journey_clock.py" --compose "$receipts/raw/compose-bringup.json" \
   --first-run "$receipts/raw/first-run-ui.json" --out "$receipts/cost.json"
 step cases "$run/python/scripts/ci/merge_cases.py" --sha "$sha" --seed "$seed" --out "$receipts/cases.jsonl" "${merge_args[@]}"
+# The reporter writes resolved project names before tests run, including
+# configured projects that produce no case receipt.
+python3 - "$receipts/run.tsv" "$receipts/raw" <<'PY' || echo "Playwright project summary unavailable"
+import json
+import sys
+from pathlib import Path
+
+run_file, raw = Path(sys.argv[1]), Path(sys.argv[2])
+configs = ("e2e-main", "e2e-live-data", "e2e-household")
+
+def configured_projects(name):
+    path = raw / f"{name}.projects.json"
+    try:
+        projects = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return "?"
+    if not isinstance(projects, list) or any(
+        not isinstance(project, str) or not project for project in projects
+    ):
+        return "?"
+    return ",".join(sorted(set(projects))) or "-"
+
+configured_parts = []
+case_parts = []
+for name in configs:
+    configured_parts.append(f"{name}={configured_projects(name)}")
+    case_projects = set()
+    cases_path = raw / f"{name}.cases.jsonl"
+    if cases_path.is_file():
+        for line in cases_path.read_text().splitlines():
+            try:
+                project = json.loads(line).get("project")
+            except (json.JSONDecodeError, AttributeError):
+                continue
+            if isinstance(project, str) and project:
+                case_projects.add(project)
+    case_parts.append(f"{name}={','.join(sorted(case_projects)) or '-'}")
+with run_file.open("a") as handle:
+    handle.write(f"playwright_projects\t{';'.join(configured_parts)}\n")
+    handle.write(f"playwright_case_projects\t{';'.join(case_parts)}\n")
+PY
 # Ratchets may only fall: compare with the target branch's budgets when it has them.
 policy_args=()
 if [[ -n ${target_tip:-} ]] && git cat-file -e "$target_tip:tests/budgets.toml" 2>/dev/null; then

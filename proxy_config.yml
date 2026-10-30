@@ -932,10 +932,9 @@ models: []
 videos:
   default_workflow: video-ltx-2.5-t2v
   # Workflow that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
-  # Unset means both return 501 video_remix_not_configured. Keep the
-  # `video-remix` alias below (and in model_aliases.videos.stable) pointing at
-  # the same workflow.
-  remix_workflow: video-bernini-r-remix
+  # Unset (the shipped state) means both return 501 video_remix_not_configured.
+  # To enable remix, name a workflow here and add a `video-remix` alias for it:
+  # the routes submit as `video-remix` by default.
   # Long video. POST /v1/videos/extensions runs this chain workflow (unset: 501
   # video_extend_not_configured). `max_total_seconds` caps the stitched length of
   # any chain, source included; beyond it requests get 400
@@ -1043,26 +1042,11 @@ videos:
       frame_rate: 24
       length_step: 17
       length_offset: 5
-    # Video-conditioned workflows. Both need extension inputs (`source_video`,
+    # Video-conditioned workflows. They need extension inputs (`source_video`,
     # and `reference_image` for character replace), so `requires_extensions`
     # makes the create route insist on them. `source_video_input` names the
     # input that is probed for fps and length. Output frame rate follows the
     # source clip; frames are Wan 4k+1, capped at `max_length`.
-    # Bernini-R remix (Wan 2.2 14B high+low Q4_K_M GGUF, lightx2v 6 steps):
-    # 81 frames at 832x480 = 462 s warm on the 3090 (benchmarked at 3.4 s).
-    video-bernini-r-remix:
-      file: workflows/videos/video-bernini-r-remix.json
-      requires_extensions: true
-      source_video_input: source_video
-      min_seconds: 1
-      max_seconds: 4
-      default_seconds: 3.4
-      max_size: 832x480
-      default_size: 832x480
-      frame_rate: 24
-      length_step: 4
-      length_offset: 1
-      max_length: 97
     # SCAIL-2 character replace (Wan 2.1 14B Q4_K_M GGUF + SAM3.1 tracking):
     # one 81-frame segment at 832x448 = 303 s warm. The driving video must
     # have at least 81 frames; longer clips use their first 81 frames.
@@ -1114,13 +1098,6 @@ videos:
       default_size: 960x544
       size_multiple: 32
       frame_rate: 24
-    video-wan-2.2-ti2v-5b-q8:
-      file: workflows/video-wan-2.2-ti2v-5b-q8.json
-      min_seconds: 1
-      max_seconds: 5
-      max_size: 1280x704
-      frame_rate: 24
-      # Same 8N+1 latent stride as LTX. Granularity ~0.333s at 24 fps.
   aliases:
     # `default` is substituted only when `model` is OMITTED from the request
     # body, so a client sending the literal string "default" -- which works for
@@ -1158,10 +1135,6 @@ videos:
     video-ltx-2.3-pure-distilled: video-ltx-2.5-t2v
     video-ltx-2.3-detail: video-ltx-2.5-t2v
     video-ltx-2.3-long: video-ltx-2.5-long
-    wan-2.2: video-wan-2.2-ti2v-5b-q8
-    wan-2.2-ti2v-5b: video-wan-2.2-ti2v-5b-q8
-    video-remix: video-bernini-r-remix
-    bernini-r: video-bernini-r-remix
     character-replace: video-scail-2-replace
     scail-2: video-scail-2-replace
 audio:
@@ -1271,7 +1244,6 @@ model_aliases:
       video-fast: video-ltx-2.5-t2v          # same graph as `video`; 960x512 default is the quick setting
       video-long: video-ltx-2.5-long
       video-quality: video-minimax-h3-t2v  # slower, highest quality; input_reference switches to image-to-video (r/StableDiffusion, Oct 2026)
-      video-remix: video-bernini-r-remix     # needs extensions.source_video; also what POST /v1/videos/{id}/remix runs
       character-replace: video-scail-2-replace  # needs extensions.source_video + reference_image
     openai:
       # Exact names are also mirrored into videos.aliases (media jobs read that

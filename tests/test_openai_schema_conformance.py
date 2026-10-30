@@ -284,17 +284,23 @@ def _conforms_to_video_resource(test: unittest.TestCase, payload: dict) -> None:
 
 
 class RemixReplaceConformanceTests(RemixReplaceBase):
-    """New remix, edit and character-replace paths return the OpenAI video shape."""
+    """New extension, storyboard and character-replace paths return the OpenAI video shape."""
 
     def setUp(self) -> None:
         super().setUp()
         _patch_route_stores(self)
 
-    def test_remix_resource_conforms_and_keeps_gateway_fields(self) -> None:
-        r = self.client.post(f"/v1/videos/{rr.SOURCE_ID}/remix", json={"prompt": "make it snowy"})
+    def _create_character_replace(self) -> str:
+        r = self.client.post("/v1/videos", json={
+            "model": "character-replace",
+            "prompt": "a woman in a red raincoat",
+            "extensions": {rr.NS: {
+                "source_video": {"video_id": rr.SOURCE_ID},
+                "reference_image": "data:image/png;base64," + base64.b64encode(rr.PNG).decode(),
+            }},
+        })
         self.assertEqual(r.status_code, 200, r.text)
-        _conforms_to_video_resource(self, r.json())
-        self.assertEqual(r.json()["remixed_from_video_id"], rr.SOURCE_ID)
+        return r.json()["id"]
 
     def test_extension_and_storyboard_resources_conform(self) -> None:
         """Extensions reuse the VideoResource shape; `seconds` is the stitched total."""
@@ -312,19 +318,6 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
         _conforms_to_video_resource(self, shots.json())
         status = self.client.get(f"/v1/videos/{rr.NEW_ID}")
         _conforms_to_video_resource(self, status.json())
-
-    def test_edit_resources_conform(self) -> None:
-        upload = self.client.post(
-            "/v1/videos/edits",
-            data={"prompt": "to watercolor"},
-            files={"video": ("clip.mp4", b"clip", "video/mp4")},
-        )
-        self.assertEqual(upload.status_code, 200, upload.text)
-        _conforms_to_video_resource(self, upload.json())
-        self.assertIsNone(upload.json()["remixed_from_video_id"])
-        by_id = self.client.post("/v1/videos/edits", json={"prompt": "x", "video": {"id": rr.SOURCE_ID}})
-        self.assertEqual(by_id.status_code, 200, by_id.text)
-        _conforms_to_video_resource(self, by_id.json())
 
     def test_character_replace_resource_conforms_and_echoes_the_model(self) -> None:
         r = self.client.post(
@@ -345,8 +338,7 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
         self.assertEqual(body["azizam_resolved_model"], "video-scail-2-replace")
 
     def test_job_lifecycle_is_monotonic_and_content_waits_for_completion(self) -> None:
-        r = self.client.post(f"/v1/videos/{rr.SOURCE_ID}/remix", json={"prompt": "x"})
-        video_id = r.json()["id"]
+        video_id = self._create_character_replace()
         seen: list[tuple[str, int]] = []
 
         def poll() -> dict:
@@ -354,8 +346,8 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
             self.assertEqual(resp.status_code, 200, resp.text)
             body = resp.json()
             _conforms_to_video_resource(self, body)
-            self.assertEqual(body["model"], "video-remix")
-            self.assertEqual(body["remixed_from_video_id"], rr.SOURCE_ID)
+            self.assertEqual(body["model"], "character-replace")
+            self.assertIsNone(body["remixed_from_video_id"])
             seen.append((body["status"], body["progress"]))
             return body
 
@@ -386,8 +378,7 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
         self.assertEqual(progress, sorted(progress))
 
     def test_failed_job_reports_failed_status_with_an_error_object(self) -> None:
-        r = self.client.post(f"/v1/videos/{rr.SOURCE_ID}/remix", json={"prompt": "x"})
-        video_id = r.json()["id"]
+        video_id = self._create_character_replace()
         self.comfy.history[rr.NEW_PROMPT_ID] = {
             "status": {"completed": False, "status_str": "error", "messages": [
                 ["execution_error", {"exception_message": "out of memory", "node_id": "18"}],
