@@ -143,3 +143,56 @@ def test_the_admin_api_refuses_a_personal_app_and_an_unoffered_period(manager, d
         store.update_app(app_id=manager.app["id"], data={"request_history": {"keep": True, "retention": "1_year"}},
                          actor=_admin({"owner", "admin"}, owner["id"]))
     assert _setting(manager.app["id"], db) == {"keep": False, "retention": "7_days"}
+
+
+# -- over the real routes ---------------------------------------------------------------------------
+
+from tests.test_rename_apps_keys import ACT, csrf, me_headers, member_client  # noqa: E402
+from tests.test_session_lifecycle import owner_client, sg  # noqa: E402,F401  (sg is a fixture)
+
+
+def _person_id(email):
+    import proxy
+
+    return next(user["id"] for user in admin_store.list_users(path=proxy.ADMIN_STORE.path) if user["email"] == email)
+
+
+def test_the_manager_sets_their_shared_apps_history_over_me_and_nobody_else_can(sg):
+    owner = owner_client(sg)
+    manager = member_client(sg, sub="manager")
+    created = owner.post("/admin/api/apps", headers=csrf(owner), json={
+        "name": "Kids tablet", "kind": "service", "access_plan": "person",
+        "owner_user_id": _person_id("manager@example.test")})
+    assert created.status_code == 201, created.text
+    app_id = created.json()["app"]["id"]
+    stranger = member_client(sg, sub="stranger")
+
+    set_by_manager = manager.patch(f"/me/api/apps/{app_id}", headers=me_headers(manager),
+                                   json={"request_history": {"keep": True, "retention": "7_days"}})
+    set_by_stranger = stranger.patch(f"/me/api/apps/{app_id}", headers=me_headers(stranger),
+                                     json={"request_history": {"keep": False, "retention": "1_day"}})
+    set_by_member_over_admin = manager.patch(f"/admin/api/apps/{app_id}", headers=me_headers(manager),
+                                             json={"request_history": {"keep": False, "retention": "1_day"}})
+
+    assert set_by_manager.status_code == 200, set_by_manager.text
+    assert set_by_manager.json()["app"]["request_history"]["keep"] is True
+    assert set_by_stranger.status_code == 404
+    assert set_by_member_over_admin.status_code == 403
+    assert _setting(app_id, __import__("proxy").ADMIN_STORE.path) == {"keep": True, "retention": "7_days"}
+
+
+def test_the_owner_sets_a_shared_apps_history_over_the_admin_api(sg):
+    owner = owner_client(sg)
+    created = owner.post("/admin/api/apps", headers=csrf(owner), json={
+        "name": "Voice", "kind": "service", "access_plan": "person"})
+    app_id = created.json()["app"]["id"]
+    assert created.json()["app"]["request_history"] == {"keep": False, "retention": "7_days"}
+
+    changed = owner.patch(f"/admin/api/apps/{app_id}", headers=csrf(owner),
+                          json={"request_history": {"keep": True, "retention": "30_days"}})
+
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["app"]["request_history"] == {"keep": True, "retention": "30_days"}
+    refused = owner.patch(f"/admin/api/apps/{app_id}", headers=csrf(owner),
+                          json={"request_history": {"keep": True, "retention": "1_year"}})
+    assert refused.status_code == 400
