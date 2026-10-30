@@ -2291,7 +2291,8 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
             return []
 
         with patch.object(proxy, "build_local_capabilities", fake_build), \
-             patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
+             patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})), \
+             fake_mesh_pool():
             result = asyncio.run(proxy._gateway_capabilities_provider(_StubScope()))  # type: ignore[arg-type]
 
         self.assertTrue(sentinel, "build_local_capabilities was not invoked")
@@ -2312,7 +2313,8 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
             return projected
 
         with patch.object(proxy, "_capability_for_access", spy_project), \
-             patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
+             patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})), \
+             fake_mesh_pool():
             result = asyncio.run(proxy._gateway_capabilities_provider(_StubScope()))  # type: ignore[arg-type]
 
         self.assertEqual(len(result), len(seen))
@@ -2335,7 +2337,8 @@ class TestClientCapabilityListingFollowsPolicy(unittest.TestCase):
         ]
         with patch.object(proxy, "build_local_capabilities", lambda cfg, **kwargs: local), \
              patch.object(proxy, "project_capabilities", lambda caps, **kwargs: list(caps)), \
-             patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
+             patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})), \
+             fake_mesh_pool():
             capabilities = asyncio.run(proxy._gateway_capabilities_provider(_Request()))  # type: ignore[arg-type]
         return summarize_capabilities(capabilities, "client")["capabilities"]
 

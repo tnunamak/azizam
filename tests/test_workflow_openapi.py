@@ -34,7 +34,7 @@ from gateway.mesh_manifest import (  # noqa: E402
     load_mesh_manifest,
     sniff_image,
 )
-from tests.test_mesh_route import Harness  # noqa: E402
+from tests.support.mesh_pool import fake_mesh_pool  # noqa: E402
 
 MANIFESTS = ROOT / "manifests" / "workflows"
 MESH_MANIFEST = MANIFESTS / "mesh.generate.trellis-2.yml"
@@ -113,7 +113,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         # instead, so this test never reaches a real trellis or observer.
         with authenticated(), \
              patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})), \
-             patch.object(proxy, "MESH_DEPS", Harness().deps()):
+             fake_mesh_pool():
             rows = self.client.get("/gateway/v1/capabilities").json()["capabilities"]
         names = {
             value
