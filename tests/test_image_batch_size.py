@@ -68,3 +68,14 @@ def test_batch_size_two_returns_two_images_for_one_request(fake_comfy):
     assert response.status_code == 200
     assert len(fake_comfy.captured[0]) == 2
     assert response.headers["X-Image-Returned"] == "2"
+
+
+@pytest.mark.parametrize("n, batch, expected", [(1, 1, 1), (2, 2, 4), (6, 2, 10)])
+def test_n_times_batch_size_is_the_image_count_capped_at_ten(fake_comfy, n, batch, expected):
+    manifest, graph, meta = _krea_manifest_and_graph()
+    graph["6"]["inputs"]["batch_size"] = batch
+
+    response = _generate(graph, meta, manifest, n=n)
+
+    assert response.status_code == 200
+    assert len(fake_comfy.captured[0]) == expected
