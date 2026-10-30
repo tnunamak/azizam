@@ -269,7 +269,8 @@ class WorkflowOpenApiTests(unittest.TestCase):
 
     def test_mesh_example_carries_the_picture_and_supported_scalars_only(self) -> None:
         with authenticated():
-            mesh = self.client.get("/gateway/v1/workflows/mesh.generate.trellis-2").json()
+            listing = self.client.get("/me/api/workflows").json()["workflows"]
+        (mesh,) = [w for w in listing if w["id"] == "mesh.generate.trellis-2"]
         example = mesh["example_request"]
         self.assertEqual(example["content_type"], "multipart/form-data")
         self.assertEqual(set(example["files"]), {"image"})
@@ -280,7 +281,8 @@ class WorkflowOpenApiTests(unittest.TestCase):
 
     def test_mesh_example_fields_bind_through_the_mesh_route(self) -> None:
         with authenticated():
-            mesh = self.client.get("/gateway/v1/workflows/mesh.generate.trellis-2").json()
+            listing = self.client.get("/me/api/workflows").json()["workflows"]
+        (mesh,) = [w for w in listing if w["id"] == "mesh.generate.trellis-2"]
         example = mesh["example_request"]
         manifest = load_mesh_manifest(MESH_MANIFEST)
         field_to_input = {field: name for name, field in manifest.mapping.items()}
