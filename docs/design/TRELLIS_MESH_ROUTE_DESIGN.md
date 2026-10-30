@@ -336,10 +336,11 @@ release claim follows from this branch.
   service health and the observer facts, through `discovery_capability`. The probe
   acquires no capacity. The row is added after the shared projection, with the
   caller's policy view.
-- Capability mapping: `mesh.generate` maps to the `image` capability
-  (`gateway/capability_ids.py`). Before this, no plan could reach the route, because
-  the intent had no capability and the evaluator refused it. A first-class 3D
-  capability is a follow-up.
+- Capability mapping: `mesh.generate` maps to the `mesh` capability, labelled
+  "3D models" (`gateway/capability_ids.py`). A plan grants it on its own; a plan
+  that allows only images is refused the route. The starter plan gains `mesh` once
+  when its database is upgraded (`gateway/admin_store.py`, step `starter-plan-mesh`).
+  Before this, the intent was mapped to `image` and the row had no title.
 - Observer service: `docs/ops/vram-observer.service` is the systemd user unit for
   the observer (port 8891, GPU 0). It is not installed or started in this release.
   The gateway's trellis route answers 503 while the observer is down.
