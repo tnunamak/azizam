@@ -25,6 +25,8 @@ describe("normalizeCapability", () => {
     expect(normalizeCapability("stt")).toBe("transcribe");
     expect(normalizeCapability("default")).toBe("chat");
     expect(normalizeCapability("image.generate")).toBe("image");
+    expect(normalizeCapability("mesh.generate")).toBe("mesh");
+    expect(taskNames.mesh).toBe("Make a 3D model");
     expect(normalizeCapability("something-new")).toBe("other");
   });
 });
