@@ -148,13 +148,17 @@ def test_the_admin_api_refuses_a_personal_app_and_an_unoffered_period(manager, d
 # -- over the real routes ---------------------------------------------------------------------------
 
 from tests.test_rename_apps_keys import ACT, csrf, me_headers, member_client  # noqa: E402
-from tests.test_session_lifecycle import owner_client, sg  # noqa: E402,F401  (sg is a fixture)
+from tests.test_session_lifecycle import gateway, owner_client, sg  # noqa: E402,F401  (fixtures)
+
+
+def _admin_db():
+    import proxy
+
+    return proxy.ADMIN_STORE.path
 
 
 def _person_id(email):
-    import proxy
-
-    return next(user["id"] for user in admin_store.list_users(path=proxy.ADMIN_STORE.path) if user["email"] == email)
+    return next(user["id"] for user in admin_store.list_users(path=_admin_db()) if user["email"] == email)
 
 
 def test_the_manager_sets_their_shared_apps_history_over_me_and_nobody_else_can(sg):
@@ -178,7 +182,7 @@ def test_the_manager_sets_their_shared_apps_history_over_me_and_nobody_else_can(
     assert set_by_manager.json()["app"]["request_history"]["keep"] is True
     assert set_by_stranger.status_code == 404
     assert set_by_member_over_admin.status_code == 403
-    assert _setting(app_id, __import__("proxy").ADMIN_STORE.path) == {"keep": True, "retention": "7_days"}
+    assert _setting(app_id, _admin_db()) == {"keep": True, "retention": "7_days"}
 
 
 def test_the_owner_sets_a_shared_apps_history_over_the_admin_api(sg):
