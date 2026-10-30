@@ -255,8 +255,14 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
         return out
 
     if intent == "mesh.generate" and mode == "sync":  # one picture part, plain text fields
+        # An input no service binding maps (the reserved extensions) is refused by the route, so it is
+        # not a form field here either.
+        bound = _bound_input_names(record)
         for name in inputs:
-            out[name] = {"in": "file" if is_asset[name] else "form", "field": name}
+            if name not in bound:
+                out[name] = {"in": "none"}
+            else:
+                out[name] = {"in": "file" if is_asset[name] else "form", "field": name}
         return out
 
     if intent == "video.edit" and mode == "sync":  # run route: plain form
@@ -329,6 +335,19 @@ def gateway_route(record: WorkflowRecord) -> str | None:
     binding = (record.manifest.get("bindings") or {}).get("gateway")
     route = binding.get("route") if isinstance(binding, Mapping) else None
     return route if isinstance(route, str) and route.startswith("/") else None
+
+
+def _bound_input_names(record: WorkflowRecord) -> set[str]:
+    """Manifest inputs some service binding maps to a service field."""
+    bindings = record.manifest.get("bindings")
+    if not isinstance(bindings, Mapping):
+        return set()
+    names: set[str] = set()
+    for binding in bindings.values():
+        mapping = binding.get("map") if isinstance(binding, Mapping) else None
+        if isinstance(mapping, Mapping):
+            names.update(str(name) for name in mapping)
+    return names
 
 
 def _native_route_image_inputs(
