@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Label } from "@/components/ui/label";
 import {
@@ -11,10 +12,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { accountApi, type AccountApp } from "@/lib/account-api";
-import { periodWords } from "@/lib/request-history";
-
-// The gateway checks the same ids (registry/retention.yml, request_history choices).
-const PERIODS = ["1_day", "7_days", "30_days"];
+import { periodWords, requestHistoryKey } from "@/lib/request-history";
 
 export function RequestHistorySetting({
   app,
@@ -26,6 +24,11 @@ export function RequestHistorySetting({
   const [setting, setSetting] = useState(app.request_history);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The same answer the History page reads: the periods the gateway offers and the household's off state.
+  const { data: policy } = useQuery({
+    queryKey: requestHistoryKey,
+    queryFn: accountApi.requestHistory,
+  });
 
   if (!setting) return null;
 
@@ -43,9 +46,16 @@ export function RequestHistorySetting({
     }
   }
 
-  const sentence = setting.keep
-    ? `Requests from this app are kept for ${periodWords(setting.retention)}. ${setting.manager_name || "The person who manages this App"} can read them in Request history.`
-    : "Requests from this app are not kept.";
+  const householdOff = policy?.household_off === true;
+  const choices = policy?.choices ?? [];
+  const reader = setting.manager_name
+    ? `Only ${setting.manager_name}, who manages this app, can read them in Request history.`
+    : "Only the person who manages this app can read them in Request history.";
+  const sentence = householdOff
+    ? "Off for the household: nothing new is kept."
+    : setting.keep
+      ? `Requests and replies from this app are kept for up to ${periodWords(setting.retention)}. ${reader} The household's limits can shorten this or stop it.`
+      : "Requests from this app are not kept.";
 
   return (
     <div className="space-y-2 pr-4 pb-3 pl-11">
@@ -53,8 +63,8 @@ export function RequestHistorySetting({
         <Switch
           id={`request-history-${app.id}`}
           aria-label="Keep request history"
-          checked={setting.keep}
-          disabled={busy}
+          checked={setting.keep && !householdOff}
+          disabled={busy || householdOff}
           onCheckedChange={(keep) =>
             void save({ keep, retention: setting.retention })
           }
@@ -67,13 +77,13 @@ export function RequestHistorySetting({
           onValueChange={(retention) =>
             void save({ keep: setting.keep, retention })
           }
-          disabled={busy}
+          disabled={busy || householdOff || choices.length === 0}
         >
           <SelectTrigger aria-label="Keep request history for" className="w-40">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PERIODS.map((id) => (
+            {choices.map((id) => (
               <SelectItem key={id} value={id}>
                 {periodWords(id)}
               </SelectItem>

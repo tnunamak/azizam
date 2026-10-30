@@ -27,7 +27,9 @@ const shared: AccountApp = {
 } as AccountApp;
 
 // The gateway's answer to GET /me/api/retention. The choices and the household state come from here.
-function policy(overrides: Partial<RequestHistoryChoice> = {}): RequestHistoryChoice {
+function policy(
+  overrides: Partial<RequestHistoryChoice> = {},
+): RequestHistoryChoice {
   return {
     keep: true,
     retention: "7_days",
@@ -76,7 +78,11 @@ it("shows the switch off and says nothing is kept until it is turned on", () => 
 it("says what is kept, for how long at most, who reads it, and that household limits can shorten it", async () => {
   renderSetting({
     ...shared,
-    request_history: { keep: true, retention: "7_days", manager_name: "Tim Nunamaker" },
+    request_history: {
+      keep: true,
+      retention: "7_days",
+      manager_name: "Tim Nunamaker",
+    },
   });
 
   expect(
@@ -156,9 +162,11 @@ it("picks a period from the offered choices, never free text", async () => {
     },
   });
 
-  await userEvent.click(
-    await screen.findByRole("combobox", { name: "Keep request history for" }),
-  );
+  const period = await screen.findByRole("combobox", {
+    name: "Keep request history for",
+  });
+  await waitFor(() => expect(period).toBeEnabled());
+  await userEvent.click(period);
   expect(
     screen.getAllByRole("option").map((option) => option.textContent),
   ).toEqual(["1 day", "7 days", "30 days"]);
@@ -185,9 +193,11 @@ it("offers only the periods the gateway says it offers", async () => {
     },
   });
 
-  await userEvent.click(
-    await screen.findByRole("combobox", { name: "Keep request history for" }),
-  );
+  const period = await screen.findByRole("combobox", {
+    name: "Keep request history for",
+  });
+  await waitFor(() => expect(period).toBeEnabled());
+  await userEvent.click(period);
   expect(
     screen.getAllByRole("option").map((option) => option.textContent),
   ).toEqual(["1 day", "30 days"]);
