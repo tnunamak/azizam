@@ -50,7 +50,7 @@ from typing import Any, Callable, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 # Schema 7 replaced profiles with access plans (gateway.access_plan_migration).
 _PRE_ACCESS_PLANS_VERSION = 6
 _ACCESS_PLANS_VERSION = 7
@@ -84,6 +84,9 @@ _GENERATED_AVATAR_VERSION = 19
 # Schema 20 keeps the automatic default for a person with no picture (gateway/avatars.py): the make job it started,
 # and when the one automatic attempt was made. Two plain columns, so an ALTER is enough.
 _AVATAR_DEFAULT_VERSION = 20
+# Schema 21 gives a service App its own request-history setting: off by default, and a period from the request
+# history group's choices (gateway/retention.py). Two plain columns, so an ALTER is enough.
+_APP_HISTORY_VERSION = 21
 # The OIDC client secret lives in the encrypted secret store; the
 # oidc_provider_config setting holds only this reference to it.
 OIDC_CLIENT_SECRET_REF = "client_secret_ref"
@@ -163,6 +166,9 @@ CREATE TABLE IF NOT EXISTS apps (
   access_plan TEXT,
   created_at INTEGER NOT NULL,
   disabled_at INTEGER,
+  -- A service App's request history: kept under its manager when on, for history_period (a request_history choice).
+  history_keep INTEGER NOT NULL DEFAULT 0 CHECK(history_keep IN (0, 1)),
+  history_period TEXT NOT NULL DEFAULT '7_days',
   FOREIGN KEY(owner_user_id) REFERENCES users(id)
 );
 
@@ -599,6 +605,8 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         _rebuild_user_avatars(conn)
     if row is not None and int(row[0]) < _AVATAR_DEFAULT_VERSION:
         _add_avatar_default_columns(conn)
+    if row is not None and int(row[0]) < _APP_HISTORY_VERSION:
+        _add_app_history_columns(conn)
     if row is not None and _ACCESS_PLANS_VERSION <= int(row[0]) < SCHEMA_VERSION:
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
@@ -652,6 +660,18 @@ def _add_avatar_default_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE user_avatars ADD COLUMN default_job_id TEXT")
     if "default_attempted_at" not in columns:
         conn.execute("ALTER TABLE user_avatars ADD COLUMN default_attempted_at INTEGER")
+
+
+def _add_app_history_columns(conn: sqlite3.Connection) -> None:
+    """Schema 21: a service App's request-history setting, off by default. ``_SCHEMA`` has the columns for a fresh
+    database. A database that predates the apps table gets them when ``_SCHEMA`` creates the table."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='apps'").fetchone() is None:
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(apps)").fetchall()}
+    if "history_keep" not in columns:
+        conn.execute("ALTER TABLE apps ADD COLUMN history_keep INTEGER NOT NULL DEFAULT 0 CHECK(history_keep IN (0, 1))")
+    if "history_period" not in columns:
+        conn.execute("ALTER TABLE apps ADD COLUMN history_period TEXT NOT NULL DEFAULT '7_days'")
 
 
 def access_plans_backup_path(path: Path) -> Path:
@@ -2203,6 +2223,8 @@ def update_app(
     name: str | None = None,
     access_plan: str | None = None,
     owner_user_id: str | None = None,
+    history_keep: bool | None = None,
+    history_period: str | None = None,
     session: session_guard.BrowserSession | None = None,
     audit: Mapping[str, Any] | None = None,
     path: Path = DB_PATH,
@@ -2211,7 +2233,9 @@ def update_app(
 
     ``name`` is already cleaned (``clean_name``); a name another of the person's active Apps has, or the Try
     page's, raises ``NameRejected``. ``owner_user_id`` makes the write apply only to that person's App (``None``
-    when it is not there). ``session`` is the browser sign-in that asked, checked in this transaction.
+    when it is not there). ``history_keep`` and ``history_period`` set a shared App's request-history setting; the
+    period must be one of the request history group's choices. ``session`` is the browser sign-in that asked,
+    checked in this transaction.
     ``audit`` (``action``, ``actor_kind``, ``actor_id``, ``actor_label``, extra ``metadata``) is written in the same
     transaction with the name the row had in it (``previous_name``), so a concurrent rename cannot make it wrong.
     """
@@ -2225,6 +2249,16 @@ def update_app(
     if access_plan is not None:
         assignments.append("access_plan = ?")
         params.append(access_plan)
+    if history_keep is not None:
+        assignments.append("history_keep = ?")
+        params.append(1 if history_keep else 0)
+    if history_period is not None:
+        from gateway import retention
+
+        if history_period not in retention.bundled().choices(retention.REQUEST_HISTORY):
+            raise ValueError("the request history period must be one of the request history choices")
+        assignments.append("history_period = ?")
+        params.append(history_period)
     if not assignments:
         record = get_app(app_id, path=path)
         if audit is not None and record is not None:
@@ -2251,7 +2285,11 @@ def update_app(
         )
         if audit is not None:
             _audit_in_write(conn, audit, target_kind="app", target_id=app_id, metadata={
-                **({"name": name, "previous_name": current["name"]} if name is not None else {})})
+                **({"name": name, "previous_name": current["name"]} if name is not None else {}),
+                **({"request_history": {
+                    **({"keep": bool(history_keep)} if history_keep is not None else {}),
+                    **({"period": history_period} if history_period is not None else {}),
+                }} if history_keep is not None or history_period is not None else {})})
         conn.commit()
         row = conn.execute(
             "SELECT * FROM apps WHERE id = ?", (app_id,)
