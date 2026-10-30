@@ -2764,6 +2764,7 @@ export default function TryPage() {
         </label>
         <div
           className="overflow-x-auto pb-1 max-sm:hidden"
+          role="region"
           tabIndex={0}
           aria-label="Try capability tabs"
         >

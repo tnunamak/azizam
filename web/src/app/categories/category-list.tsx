@@ -366,7 +366,7 @@ function PresetDialog({ presets, snapshot, busy, error, onClose, onAdd }: {
               <p className="text-meta text-muted-foreground">{preset.description}</p>
               <p className="text-meta text-muted-foreground">{preset.visibility === "owner" ? "At first only you can see it." : "At first everyone can see it."}</p>
             </div>
-            {added ? <span className="text-meta text-muted-foreground" aria-label={preset.label + " is already added"}>Added</span>
+            {added ? <span className="text-meta text-muted-foreground">Added<span className="sr-only">: {preset.label} is already added</span></span>
               : <Button variant="outline" disabled={busy} aria-label={"Add " + preset.label} onClick={() => void onAdd(preset)}>Add</Button>}
           </li>;
         })}

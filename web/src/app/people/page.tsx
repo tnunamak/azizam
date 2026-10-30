@@ -375,6 +375,7 @@ export default function PeoplePage() {
   return (
     <div
       ref={container}
+      role="group"
       tabIndex={-1}
       aria-label="People workspace"
       onPointerDownCapture={(event) => {
