@@ -202,3 +202,13 @@ def test_image_size_is_bounded() -> None:
     with pytest.raises(MeshInputError) as error:
         sniff_image(PNG + b"\x00" * 100, max_bytes=len(PNG))
     assert error.value.code == "image_too_large"
+
+
+def test_the_generic_validator_accepts_the_mesh_picture() -> None:
+    # The mesh manifest lives with the other workflow manifests, so the generic validator must read its image type.
+    from gateway.manifests import validate_inputs
+
+    manifest = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    result = validate_inputs(manifest, {"image": "data:image/png;base64,AAAA"})
+    assert result.rejected == {}
+    assert validate_inputs(manifest, {"image": 7}).rejected == {"image": "image must be an asset reference"}
