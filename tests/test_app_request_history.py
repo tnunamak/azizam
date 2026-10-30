@@ -256,3 +256,117 @@ def test_an_app_whose_manager_changed_after_the_decision_refuses_and_commits_not
 
     assert (outcome.kept, outcome.reason) == (False, "app_disabled")
     assert committed == []
+
+
+# ---------------------------- what changes between the decision and the write
+
+
+def _household(db, document):
+    admin_store.put_operator_setting("retention", document, path=db.path)
+
+
+def _set_cutoff(db, person_id, cutoff_at):
+    conn = sqlite3.connect(db.path)
+    retention.ensure_erasure_cutoff_table(conn)
+    conn.execute("INSERT INTO prompt_memory_erasure_cutoffs(person_id, grp, cutoff_at) VALUES (?, ?, ?)",
+                 (person_id, "request_history", cutoff_at))
+    conn.commit()
+    conn.close()
+
+
+def _write_direct(db, decision):
+    committed: list = []
+    kept = retention.write(
+        retention.REQUEST_HISTORY, admin_path=db.path, person_id=decision.person_id,
+        created_at=decision.created_at or NOW, decision=decision,
+        commit=lambda deadline, parts: committed.append((deadline, parts)),
+    )
+    return kept, committed
+
+
+def test_the_managers_erasure_cutoff_after_the_decision_refuses_the_app_history(db):
+    _turn_on(db)
+    now = int(time.time())
+    decision = _decide(db, now=now)
+    _set_cutoff(db, db.manager, now + 1)
+
+    outcome, committed = _write(db, decision)
+
+    assert (outcome.kept, outcome.reason) == (False, "erasure_cutoff")
+    assert committed == []
+
+
+def test_the_kill_switch_turned_on_after_the_decision_refuses_the_write(db):
+    _turn_on(db)
+    decision = _decide(db, now=int(time.time()))
+    _household(db, {"never_keep": True})
+
+    outcome, committed = _write(db, decision)
+
+    assert (outcome.kept, outcome.reason) == (False, "server_disabled")
+    assert committed == []
+
+
+def test_the_household_cap_shortened_after_the_decision_shortens_the_deadline(db):
+    _turn_on(db, period="30_days")
+    now = int(time.time())
+    decision = _decide(db, now=now)
+    assert decision.kept_until == now + 30 * DAY
+    _household(db, {"groups": {"request_history": {"retention_cap": "1_day"}}})
+
+    kept, committed = _write_direct(db, decision)
+
+    assert kept is True
+    assert committed == [(now + DAY, ("accepted", "received"))]
+
+
+def test_the_app_period_shortened_after_the_decision_shortens_the_deadline(db):
+    _turn_on(db, period="30_days")
+    now = int(time.time())
+    decision = _decide(db, now=now)
+    admin_store.update_app(db.app, history_period="1_day", path=db.path)
+
+    kept, committed = _write_direct(db, decision)
+
+    assert kept is True
+    assert committed == [(now + DAY, ("accepted", "received"))]
+
+
+def test_the_manager_disabled_after_the_decision_refuses_the_app_history(db):
+    _turn_on(db)
+    decision = _decide(db, now=int(time.time()))
+    conn = sqlite3.connect(db.path)
+    changed = conn.execute("UPDATE account_access SET disabled_at=? WHERE user_id=?",
+                           (int(time.time()), db.manager)).rowcount
+    conn.commit()
+    conn.close()
+    assert changed == 1
+
+    outcome, committed = _write(db, decision)
+
+    assert (outcome.kept, outcome.reason) == (False, "app_disabled")
+    assert committed == []
+
+
+def test_the_managers_own_parts_choice_does_not_narrow_the_apps_history(db):
+    _turn_on(db)
+    request_history.set_member_choice(db.manager, keep=True, retention_id="7_days", parts=["accepted"],
+                                      admin_path=db.path, now=NOW - 100)
+    decision = _decide(db, now=int(time.time()))
+
+    kept, committed = _write_direct(db, decision)
+
+    assert kept is True
+    assert committed[0][1] == ("accepted", "received")
+
+
+def test_a_direct_write_keeps_the_app_history_under_the_manager_for_the_deadline(db):
+    _turn_on(db, period="7_days")
+    now = int(time.time())
+    decision = _decide(db, now=now)
+
+    kept, committed = _write_direct(db, decision)
+
+    assert decision.person_id == db.manager
+    assert kept is True
+    assert committed == [(now + 7 * DAY, ("accepted", "received"))]
