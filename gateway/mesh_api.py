@@ -56,10 +56,11 @@ from gateway.mesh_manifest import (
     downstream_form,
     sniff_image,
 )
-from gateway import operation_security
+from gateway import client_errors, operation_security
 from gateway.availability import AvailabilityProjection
 from gateway.capabilities import EXPOSURE_CLASSES, RESOURCE_TIERS, TRUST_TIERS, Capability, ResourceEstimate
 from gateway.capability_ids import CAPABILITY_LABELS
+from gateway.request_forms import read_form
 from gateway.service_registry import service_base_url
 
 LOG = logging.getLogger("azizam.mesh")
@@ -93,6 +94,12 @@ class MeshApiDeps:
     # route_policy(auth, frontend_row) -> a policy decision for this caller on this route (the same evaluator the
     # other Try workflows use). A decision with ``denied`` true refuses the request with 403 before the body is read.
     route_policy: Callable[[Any, Mapping[str, Any]], Any]
+
+
+def _retry_after_headers(spec: ExclusivePoolSpec) -> dict[str, str]:
+    """``Retry-After`` for a busy pool, written as the number the gateway chose (client_errors.retry_after)."""
+    seconds = client_errors.retry_after(str(spec.retry_after_seconds))
+    return {"Retry-After": seconds} if seconds is not None else {}
 
 
 def _error(status: int, code: str, message: str, *, param: str | None = None,
@@ -188,8 +195,8 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
     async def _serve(request: Request, request_id: str, owner: Any, service: Mapping[str, Any],
                      spec: ExclusivePoolSpec) -> Response:
         try:
-            form = await request.form(max_files=2, max_fields=len(manifest.inputs) + 2,
-                                      max_part_size=MAX_IMAGE_BYTES + 1)
+            form = await read_form(request, max_files=2, max_fields=len(manifest.inputs) + 2,
+                                   max_part_size=MAX_IMAGE_BYTES + 1)
         except Exception:  # noqa: BLE001 - any malformed or oversized multipart is one 400
             owner.report(status="failed", reason="invalid_multipart")
             return _error(400, "invalid_multipart", "The request body is not valid multipart form data.",
@@ -280,11 +287,11 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
             owner.report(status="failed", reason="capacity")
             LOG.info("mesh capacity refused: %s", error.status.value)
             return _error(503, "resource_unavailable", "The GPU is busy. Try again shortly.",
-                          headers={"Retry-After": str(spec.retry_after_seconds)}, request_id=request_id)
+                          headers=_retry_after_headers(spec), request_id=request_id)
         except PoolObserverError:
             owner.report(status="failed", reason="observer")
             return _error(503, "resource_unavailable", "The GPU is busy. Try again shortly.",
-                          headers={"Retry-After": str(spec.retry_after_seconds)}, request_id=request_id)
+                          headers=_retry_after_headers(spec), request_id=request_id)
         except MultipartFailure as failure:
             return _downstream_failure(owner, request_id, failure)
         except Exception:  # noqa: BLE001 - an unexpected fault is one bounded 500; detail stays in the log

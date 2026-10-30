@@ -1298,9 +1298,10 @@ def test_availability_projection_is_presentation_only_not_a_routing_input():
                 importers.add(path.relative_to(root).as_posix())
             elif isinstance(node, ast.Import) and any(a.name == "gateway.availability" for a in node.names):
                 importers.add(path.relative_to(root).as_posix())
-    # Discovery, Home/Status, admin Status, and catalog presentation only.
+    # Discovery, Home/Status, admin Status, and catalog presentation only. The mesh module builds its discovery
+    # row's projection (discovery_capability); the route's own gate (service_problem) never reads it.
     assert importers <= {"gateway/home_api.py", "gateway/admin_api.py", "gateway/models_catalog.py",
-                         "gateway/capabilities.py"}
+                         "gateway/capabilities.py", "gateway/mesh_api.py"}
 
     tree = ast.parse((root / "proxy.py").read_text())
     names = {"availability_evidence_snapshot", "project_capabilities", "_runtime_availability_evidence",

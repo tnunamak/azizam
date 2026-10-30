@@ -3368,6 +3368,12 @@
       "method": "UIROUTE",
       "path": "",
       "access": "none"
+    },
+    {
+      "handler": "gateway.mesh_api.register_mesh_routes.<locals>.generate_mesh",
+      "method": "POST",
+      "path": "/v1/meshes/generate",
+      "access": "own-account"
     }
   ],
   "event_types": {
