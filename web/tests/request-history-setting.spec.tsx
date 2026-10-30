@@ -233,3 +233,64 @@ it("shows nothing for an app the gateway gives no history setting (a personal ap
 
   expect(container).toBeEmptyDOMElement();
 });
+
+const savedOn: AccountApp = {
+  ...shared,
+  request_history: {
+    keep: true,
+    retention: "7_days",
+    manager_name: "Tim Nunamaker",
+  },
+} as AccountApp;
+
+it("treats the household setting as unknown while it loads: no active copy, and no way to change the setting", async () => {
+  let answer: (value: RequestHistoryChoice) => void = () => {};
+  vi.mocked(accountApi.requestHistory).mockReturnValue(
+    new Promise((resolve) => {
+      answer = resolve;
+    }),
+  );
+  renderSetting(savedOn);
+
+  expect(
+    await screen.findByText("Checking the household setting…"),
+  ).toBeVisible();
+  expect(
+    screen.queryByText(/Requests and replies from this app are kept/),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("switch", { name: "Keep request history" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByRole("combobox", { name: "Keep request history for" }),
+  ).toBeDisabled();
+
+  answer(policy());
+
+  expect(
+    await screen.findByText(/Requests and replies from this app are kept for up to 7 days/),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("switch", { name: "Keep request history" }),
+  ).toBeEnabled();
+});
+
+it("says the household setting is unavailable, and offers no way to change the setting, when it cannot be read", async () => {
+  vi.mocked(accountApi.requestHistory).mockRejectedValue(new Error("down"));
+  renderSetting(savedOn);
+
+  expect(
+    await screen.findByText(
+      "The household setting could not be read. Try again later.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByText(/Requests and replies from this app are kept/),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("switch", { name: "Keep request history" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByRole("combobox", { name: "Keep request history for" }),
+  ).toBeDisabled();
+});
