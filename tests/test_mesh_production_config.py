@@ -49,3 +49,14 @@ def test_the_observer_port_is_not_the_trellis_port_or_another_backend_port():
     ports = [entry.get("port") for entry in BACKENDS.values() if isinstance(entry, dict)]
     assert ports.count(8891) == 1
     assert BACKENDS["trellis"]["port"] == 8890
+
+
+def test_the_observer_unit_runs_the_observer_on_the_configured_port_and_gpu():
+    unit = (Path(__file__).resolve().parents[1] / "docs/ops/vram-observer.service").read_text(encoding="utf-8")
+    exec_line = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+
+    assert "-m gateway.vram_observer" in exec_line
+    assert f"--port {BACKENDS['vram-observer']['port']}" in exec_line
+    assert "--gpu 0" in exec_line
+    assert "--host" not in exec_line
+    assert "WantedBy=default.target" in unit
