@@ -28,7 +28,7 @@ from typing import Any, Mapping
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from gateway import admin_store, avatars, session_guard, session_policy, trusted_addresses
+from gateway import admin_store, avatars, retention, session_guard, session_policy, trusted_addresses
 from gateway import receipt_store
 from gateway.content_access import Own, ReceiptRecord, Viewer, decide
 from gateway import content_makers
@@ -272,6 +272,13 @@ def _cutover_view(
     return view, counts
 
 
+def _request_history_view(app: Mapping[str, Any], *, path: Path) -> dict[str, Any]:
+    """A shared App's request-history setting, and the name of the person who reads it: its manager."""
+    manager = admin_store.get_user(str(app["owner_user_id"]), path=path) or {}
+    return {"keep": bool(app["history_keep"]), "retention": str(app["history_period"]),
+            "manager_name": manager.get("display_name") or manager.get("email") or ""}
+
+
 def _app_payload(
     app: Mapping[str, Any],
     *,
@@ -295,6 +302,8 @@ def _app_payload(
         "active_credentials": len(credentials),
         "created_at": app.get("created_at"),
     }
+    if app.get("kind") == "service":
+        payload["request_history"] = _request_history_view(app, path=path)
     # Sent to the owner only: the owner is the one who lists and keeps an App's trusted addresses. Keys carry
     # their remedy in `credentials`, so the Apps page counts those itself.
     if addresses_to_check is not None:
@@ -1159,6 +1168,43 @@ def rename_user_app(
     app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
     return _rename_app(user, app, name, browser_session=session_guard.BrowserSession.of(session, str(user["id"])),
                        via=None, path=path)
+
+
+def set_user_app_request_history(
+    session: AdminSession,
+    app_id: str,
+    request_history: Any,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> dict[str, Any]:
+    """Turn a shared App's request history on or off, and choose how long it is kept, as the person who manages it.
+
+    The App must be the signed-in person's own and a shared (service) one: a personal App keeps no such history. The
+    write checks in its own transaction that the sign-in is still live, and it is audited.
+    """
+    if (not isinstance(request_history, Mapping) or not isinstance(request_history.get("keep"), bool)
+            or not isinstance(request_history.get("retention"), str)):
+        raise UserPortalError("request_history_invalid", "Send whether to keep request history and for how long.",
+                              status_code=400)
+    keep, period = request_history["keep"], request_history["retention"]
+    user = _user_from_session(session, path=path)
+    app = _app_belongs_to_user(app_id, str(user["id"]), path=path)
+    if app.get("kind") != "service":
+        raise UserPortalError("not_a_shared_app", "Only a shared app keeps request history for the person who manages it.",
+                              status_code=400)
+    if period not in retention.bundled().choices(retention.REQUEST_HISTORY):
+        raise UserPortalError("request_history_period_invalid", "Choose a period the gateway offers.", status_code=400)
+    try:
+        updated = admin_store.update_app(
+            str(app["id"]), history_keep=keep, history_period=period, owner_user_id=str(user["id"]),
+            session=session_guard.BrowserSession.of(session, str(user["id"])),
+            audit={"action": "app.request_history", "actor_kind": "user", "actor_id": str(user["id"]), "metadata": {}},
+            path=path)
+    except session_guard.SessionEnded as exc:
+        raise UserPortalError(exc.code, exc.message, status_code=exc.status_code) from None
+    if updated is None:
+        raise UserPortalError("app_not_found", "App not found for this account", status_code=404)
+    return {"app": _app_payload(updated, path=path)}
 
 
 def rename_user_app_key(

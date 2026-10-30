@@ -197,8 +197,10 @@ class RequestHistoryMiddleware:
         admin_path = self._admin_path()
         person_id = getattr(identity, "person_id", None)
         member = retention.member_choice(admin_path, person_id, GROUP) if person_id else None
+        # A shared App's own setting decides when no person is signed in to it (a service key). A personal App has none.
+        app_history = None if person_id else retention.app_history_choice(admin_path, getattr(identity, "app_id", None))
         return retention.decide(KIND, person_id=person_id, member=member, household_policy=_household_policy(admin_path),
-                                request_body=None, request_forget=forget, now=now)
+                                request_body=None, request_forget=forget, now=now, app_history=app_history)
 
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         if scope["type"] != "http" or not is_captured(scope["method"], scope["path"]):
