@@ -31,6 +31,13 @@ export default defineConfig({
     // first renders past Testing Library's 1 s wait. 8 workers: 28-29 s wall
     // and ~225 CPU-s for the full suite, against 22 s and ~290 CPU-s at 23.
     maxWorkers: 8,
+    // Node 25+ defines its own globalThis.localStorage, which is undefined unless
+    // --localstorage-file is given. It shadows jsdom's storage, so every test
+    // that touches storage fails. Turn Node's off and let jsdom supply it.
+    poolOptions: {
+      forks: { execArgv: ["--no-experimental-webstorage"] },
+      threads: { execArgv: ["--no-experimental-webstorage"] },
+    },
     clearMocks: true,
     restoreMocks: true,
     // Undo every vi.stubGlobal before the next test, so a stub cannot outlive its test.
