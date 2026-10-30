@@ -200,3 +200,21 @@ def test_the_owner_sets_a_shared_apps_history_over_the_admin_api(sg):
     refused = owner.patch(f"/admin/api/apps/{app_id}", headers=csrf(owner),
                           json={"request_history": {"keep": True, "retention": "1_year"}})
     assert refused.status_code == 400
+
+
+def test_a_name_and_a_history_setting_in_one_body_are_refused_and_nothing_is_saved(sg):
+    owner = owner_client(sg)
+    manager = member_client(sg, sub="manager")
+    created = owner.post("/admin/api/apps", headers=csrf(owner), json={
+        "name": "Kids tablet", "kind": "service", "access_plan": "person",
+        "owner_user_id": _person_id("manager@example.test")})
+    app_id = created.json()["app"]["id"]
+
+    both = manager.patch(f"/me/api/apps/{app_id}", headers=me_headers(manager),
+                         json={"name": "Renamed", "request_history": {"keep": True, "retention": "1_day"}})
+
+    assert both.status_code == 400, both.text
+    assert "request_history_with_name" in both.text
+    assert "Send the name or the request history setting, not both." in both.text
+    assert _setting(app_id, _admin_db()) == {"keep": False, "retention": "7_days"}
+    assert admin_store.get_app(app_id, path=_admin_db())["name"] == "Kids tablet"
