@@ -315,6 +315,9 @@ class AdminSQLiteStore:
         record["accountable_person"] = (
             {"id": owner_id, "name": owner.get("display_name") or owner.get("email")} if owner else None
         )
+        if record.get("kind") == "service":
+            record["request_history"] = {"keep": bool(record.get("history_keep")),
+                                         "retention": record.get("history_period")}
         if assignment != PERSON:
             plan_id = assignment
         elif listing is None:
@@ -444,7 +447,7 @@ class AdminSQLiteStore:
         before = admin_store.get_app(app_id, path=self.path)
         if before is None:
             return None
-        if "access_plan" in data or "owner_user_id" in data:
+        if "access_plan" in data or "owner_user_id" in data or "request_history" in data:
             self._require_owner_or_accountable(actor, str(before.get("owner_user_id") or ""))
         self._require_actor_not_outranked(
             actor, self._app_holder_roles(before),
@@ -459,11 +462,22 @@ class AdminSQLiteStore:
             access_plan = str(data.get("access_plan") or "").strip()
             if not access_plan:
                 raise ValueError("an app's access plan cannot be cleared; turn the app off instead")
+        history_keep = history_period = None
+        if "request_history" in data:
+            if before.get("kind") != "service":
+                raise ValueError("only a shared app keeps request history for the person who manages it")
+            setting = data.get("request_history")
+            if (not isinstance(setting, Mapping) or not isinstance(setting.get("keep"), bool)
+                    or not isinstance(setting.get("retention"), str)):
+                raise ValueError("request_history needs keep (true or false) and retention (a request history period)")
+            history_keep, history_period = setting["keep"], setting["retention"]
 
         record = admin_store.update_app(
             app_id,
             name=name,
             access_plan=access_plan,
+            history_keep=history_keep,
+            history_period=history_period,
             session=actor.browser_session,
             audit={
                 "action": "app.update", "actor_kind": actor.actor_kind, "actor_id": actor.audit_actor_id,

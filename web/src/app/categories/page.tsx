@@ -54,7 +54,7 @@ function OwnerCategories() {
       <summary className="flex min-h-8 w-fit cursor-pointer items-center max-sm:min-h-11">How categories work</summary>
       <div className="text-muted-foreground mt-2 max-w-2xl space-y-3">{HOW_IT_WORKS.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}</div>
     </details>
-    {activePending && <div aria-busy="true" aria-label="Loading categories"><StatusLine tone="unknown" text="Loading categories" compact /></div>}
+    {activePending && <div role="status" aria-busy="true" aria-label="Loading categories"><StatusLine tone="unknown" text="Loading categories" compact /></div>}
     {activeError && <Callout as="div" severity="critical" title="Couldn't load categories" headerAction={<Button variant="outline" onClick={() => void activeRefetch()}>Try again</Button>} />}
     {ready && <CategoryList active={active ?? null} catalog={catalogData?.services ?? []} presets={catalogData?.presets ?? []} catalogLoading={catalogLoading} catalogError={catalogError}
       onCatalogRetry={() => void catalogRefetch()} onSaved={activeRefetch} adding={adding} onAddingChange={setAdding} picking={picking} onPickingChange={setPicking} />}

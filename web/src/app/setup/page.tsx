@@ -47,7 +47,12 @@ export default function SetupPage() {
         </CardHeader>
         <CardContent className="min-w-0 space-y-6">
           {isPending ? (
-            <div aria-label="Loading setup" className="space-y-4">
+            <div
+              role="status"
+              aria-label="Loading setup"
+              aria-busy="true"
+              className="space-y-4"
+            >
               <Skeleton className="h-11 w-full" />
               <Skeleton className="h-11 w-full" />
               <Skeleton className="h-11 w-full" />

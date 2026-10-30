@@ -298,7 +298,7 @@ function WorkflowSummary({ workflow }: { workflow: WorkflowRow }) {
   const required = inputSummary(workflow, true);
   const optional = inputSummary(workflow, false);
   return (
-    <div aria-label="What you need and get" className="space-y-1 text-meta">
+    <div role="group" aria-label="What you need and get" className="space-y-1 text-meta">
       <p>Needs: {required || (workflow.inputs.length ? "no required inputs" : "inputs not listed")}</p>
       {optional && <p>Optional: {optional}</p>}
       <p>Makes: {outputSummary(workflow)}</p>
@@ -618,6 +618,7 @@ function DetailSheet({
                     </ul>
                     <div
                       className="mt-3 hidden max-w-full overflow-x-auto rounded-panel border sm:block [&>div]:overflow-visible"
+                      role="region"
                       tabIndex={0}
                       aria-label="Scrollable inputs"
                     >
@@ -1042,7 +1043,7 @@ function WorkflowGroups({
   onDetail: (id: string) => void;
 }) {
   return (
-    <div aria-label={label} className="space-y-(--space-section)">
+    <div role="group" aria-label={label} className="space-y-(--space-section)">
       {groups.map((group) => (
         <section
           key={group.output}

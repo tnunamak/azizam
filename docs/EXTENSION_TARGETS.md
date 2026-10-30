@@ -61,6 +61,12 @@ An async media request made with `mode:forget` runs from process memory; it
 cannot resume after a gateway restart. No prompt text or workflow graph is
 recorded in receipts or media-job metadata.
 
+Image count is `n × batch_size`. `n` (1..10) counts prompts; a workflow's
+`batch_size` control (manifest maximum applies) counts the pictures one prompt
+makes. The gateway returns every picture up to 10 per request and adds a
+`X-Proxy-Warning` when the product is capped. The round loop still sizes each
+ComfyUI run to free VRAM, so a `batch_size: 2` request may take two runs.
+
 Variant semantics are not a separate extension family. Use top-level `n` where
 the public protocol owns batch count, and use manifest-backed `seed` or
 route-native `seed` where the selected route already supports it. Do not add

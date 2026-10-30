@@ -256,6 +256,7 @@ from gateway.user_runtime import (
     rename_person_key,
     rename_user_app,
     rename_user_app_key,
+    set_user_app_request_history,
     replace_user_app_key,
     request_user_access,
     revoke_user_app_key,
@@ -7671,6 +7672,19 @@ def _default_image_response_format(requested_model: Any) -> str:
     return "b64_json"
 
 
+# The public `n` range (1..10) also bounds the images one request may return.
+MAX_IMAGES_PER_REQUEST = 10
+
+
+def _requested_batch_size(workflow: Mapping[str, Any], meta: Mapping[str, Any]) -> int:
+    """The batch_size the bound graph asks for, 1 when the workflow has no batch node."""
+    node = (workflow or {}).get(meta.get("batch_size_node") or "") or {}
+    value = (node.get("inputs") or {}).get("batch_size")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return 1
+
+
 async def _generate_images_with_adaptive_batching(
     request: Request,
     client: httpx.AsyncClient,
@@ -7714,14 +7728,26 @@ async def _generate_images_with_adaptive_batching(
     response_headers: dict[str, str] = {}
     models_freed = False
 
+    # `n` counts prompts and a workflow's batch_size counts the pictures one
+    # prompt makes, so the request wants n * batch_size images. Read the bound
+    # batch before the rounds below overwrite it with their own latent size.
+    per_prompt = _requested_batch_size(base_workflow, meta)
+    images_total = n_requested * per_prompt
+    if images_total > MAX_IMAGES_PER_REQUEST:
+        images_total = MAX_IMAGES_PER_REQUEST
+        warnings.append(
+            f"n={n_requested} x batch_size={per_prompt} exceeds the "
+            f"{MAX_IMAGES_PER_REQUEST}-image limit; returning {MAX_IMAGES_PER_REQUEST}"
+        )
+
     images_collected: list[bytes] = []
-    images_remaining = n_requested
+    images_remaining = images_total
     rounds_run = 0
     seed_offset = 0
 
     # Soft cap on rounds — each round produces at least 1 image, so worst case
-    # we run n_requested rounds. Add a small extra buffer for retry-on-OOM.
-    max_rounds = max(1, n_requested + 2)
+    # we run images_total rounds. Add a small extra buffer for retry-on-OOM.
+    max_rounds = max(1, images_total + 2)
 
     while images_remaining > 0 and rounds_run < max_rounds:
         rounds_run += 1
@@ -7987,7 +8013,7 @@ async def _generate_images_with_adaptive_batching(
                 flush=True,
             )
 
-    images_collected = images_collected[:n_requested]
+    images_collected = images_collected[:images_total]
     if not images_collected:
         return Response(
             content=json.dumps({"error": {"message": "No images generated", "type": "api_error"}}),
@@ -7995,9 +8021,10 @@ async def _generate_images_with_adaptive_batching(
             media_type="application/json",
         )
 
-    if len(images_collected) < n_requested:
+    if len(images_collected) < images_total:
+        batch_note = f" x batch_size={per_prompt}" if per_prompt > 1 else ""
         warnings.append(
-            f"requested n={n_requested} but produced {len(images_collected)} after {rounds_run} round(s)"
+            f"requested n={n_requested}{batch_note} but produced {len(images_collected)} after {rounds_run} round(s)"
         )
 
     if image_transform is not None:
@@ -8021,7 +8048,7 @@ async def _generate_images_with_adaptive_batching(
             response_headers["X-Image-Background-Removal-Source"] = background_removal_decision.source
 
     print(
-        f"[proxy] {_graph_adapter().label} generated {len(images_collected)}/{n_requested} image(s) "
+        f"[proxy] {_graph_adapter().label} generated {len(images_collected)}/{images_total} image(s) "
         f"across {rounds_run} round(s)",
         flush=True,
     )
@@ -14950,13 +14977,23 @@ def _mcp_store_asset(request: Request, auth: Any, content: bytes, kind: str, suf
     }
 
 
-def _mcp_read_asset(request: Request, auth: Any, asset_id: str) -> bytes | None:
+def _mcp_read_asset(request: Request, auth: Any, asset_id: str, *, max_bytes: int | None = None) -> bytes | None:
     path = asset_cache_path(asset_id)
     if path is None or not path.exists():
         return None
     if not _asset_access_allowed(asset_id, auth if isinstance(auth, AuthContext) else None):
         return None
-    return media_delivery.deliver_bytes(path.read_bytes(), path.suffix, "none")
+    if max_bytes is None:
+        raw = path.read_bytes()
+    else:
+        with path.open("rb") as source:
+            raw = source.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            return None
+        # This path is only used by the preview encoder, which applies image
+        # orientation before re-encoding without metadata.
+        return raw
+    return media_delivery.deliver_bytes(raw, path.suffix, "none")
 
 
 def _mcp_allowed_origins(_request: Request) -> list[str]:
@@ -15079,6 +15116,8 @@ def _mount_mcp(app: FastAPI) -> None:
             visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
             store_asset=_mcp_store_asset,
             read_asset=_mcp_read_asset,
+            read_preview_asset=lambda request, auth, asset_id: _mcp_read_asset(
+                request, auth, asset_id, max_bytes=mcp_server.MCP_PREVIEW_SOURCE_MAX_BYTES),
             public_base_url=lambda request: _public_base_url(request),
             server_version=str((config.get("proxy") or {}).get("version") or "1"),
             allowed_origins=_mcp_allowed_origins,
@@ -17011,6 +17050,18 @@ async def user_portal_rename_app(app_id: str, request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    # A shared App's request-history setting, sent by its manager, is the same route's other field (the App's name).
+    if isinstance(body, Mapping) and "request_history" in body:
+        if "name" in body:
+            exc = UserPortalError("request_history_with_name",
+                                  "Send the name or the request history setting, not both.")
+            return _user_action_response_error(exc)
+        try:
+            payload = await asyncio.to_thread(
+                set_user_app_request_history, session, app_id, body["request_history"], path=ADMIN_STORE.path)
+        except UserPortalError as exc:
+            return _user_action_response_error(exc)
+        return JSONResponse(status_code=200, content=payload, headers={"cache-control": "no-store"})
     name = body.get("name") if isinstance(body, Mapping) else None
     try:
         payload = await asyncio.to_thread(
@@ -25777,11 +25828,27 @@ async def _context_window_for_model_id(
 async def _annotate_model_context_windows(
     data: list[Any], *, observed_windows: dict[str, int] | None = None,
 ) -> None:
+    entries = {item.get("id"): item for item in data
+               if isinstance(item, dict) and isinstance(item.get("id"), str)}
     for item in data:
         if not isinstance(item, dict):
             continue
         model_id = item.get("id")
         if not isinstance(model_id, str) or not model_id:
+            continue
+        resolves_to = item.get("azizam_resolves_to")
+        target = resolves_to.get("chat") if isinstance(resolves_to, Mapping) else None
+        if isinstance(resolves_to, Mapping) and "chat" in resolves_to and not target:
+            item.pop("context_window", None)
+            continue
+        if isinstance(target, str) and target and target != model_id:
+            # A stable alias follows its served model, even if a same-named
+            # legacy role has a different context window.
+            found = await _context_window_for_model_id(target, entries.get(target))
+            if found is not None:
+                item["context_window"] = found
+            else:
+                item.pop("context_window", None)
             continue
         found = await _context_window_for_model_id(model_id, item, observed_windows=observed_windows)
         if found is not None:

@@ -243,6 +243,8 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
     assert prompt_memory.get(asset_id, member["id"])["prompt_text"] == "video-full-secret"
     assert prompt_memory.get(asset_id, member["id"])["metadata"]["workflow"] == "video-full-workflow-secret"
     assert prompt_memory.get(asset_id, owner["id"]) is None
+    # The video bytes are fake; keep the Library read off the real ffprobe.
+    monkeypatch.setattr(me_media, "_embedded_provenance", lambda *_a, **_kw: {})
     def library(person_id):
         return me_media._media_items(
             request=Request({"type": "http", "method": "GET", "path": "/me/api/media", "headers": []}),
