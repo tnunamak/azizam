@@ -48,6 +48,7 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 from gateway.access_plans import AccessPlan  # noqa: E402
 from tests.support.access import access, access_context, authenticated, plan_for, auth_identity  # noqa: E402
+from tests.support.mesh_pool import fake_mesh_pool  # noqa: E402
 from gateway import receipt_store  # noqa: E402
 from gateway.capabilities import Capability, summarize_capabilities  # noqa: E402
 
