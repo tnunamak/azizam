@@ -7,6 +7,7 @@ request's own forget, then the App setting. Library prompts and conversations fo
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from gateway import accounts, admin_store, request_history, retention
-from gateway.request_history_capture import RequestHistoryMiddleware
+from gateway.request_history_capture import RequestHistoryMiddleware, _kept_record
 from tests.support.access import service_app, store_plan
 
 NOW = 1_700_000_000
@@ -364,9 +365,31 @@ def test_a_direct_write_keeps_the_app_history_under_the_manager_for_the_deadline
     _turn_on(db, period="7_days")
     now = int(time.time())
     decision = _decide(db, now=now)
+    media_path = db.path.parent / "media.db"
+    record_id = "ahr-direct-write"
+    committed: list = []
 
-    kept, committed = _write_direct(db, decision)
+    def persist(deadline, parts):
+        # The middleware's own path: the record is shaped by _kept_record and inserted in the write transaction.
+        committed.append((deadline, parts))
+        record = _kept_record({
+            "record_id": record_id, "request_id": None, "person_id": decision.person_id, "app_id": db.app,
+            "origin_kind": "service_key", "origin_id": db.app, "created_at": now, "policy_version": "test",
+            "parts": {"accepted": {"body": {"model": "test-model"}}, "received": {"body": {"ok": True}}},
+            "omissions_by_part": {},
+        }, parts, deadline)
+        with request_history.write_transaction(media_path) as conn:
+            request_history.insert_record(conn, record)
+
+    kept = retention.write(
+        retention.REQUEST_HISTORY, admin_path=db.path, person_id=decision.person_id,
+        created_at=decision.created_at or NOW, decision=decision, commit=persist,
+    )
 
     assert decision.person_id == db.manager
     assert kept is True
     assert committed == [(now + 7 * DAY, ("accepted", "received"))]
+    stored = request_history.get_row(record_id, path=media_path)
+    assert stored["person_id"] == db.manager
+    assert json.loads(stored["parts_json"]).keys() == {"accepted", "received"}
+    assert stored["kept_until"] == now + 7 * DAY
