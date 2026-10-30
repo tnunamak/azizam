@@ -743,13 +743,16 @@ backends:
     capabilities: [mesh.generate]
     # Exclusive pool on GPU0 (CUDA device 0, which trellis-cpp.service pins with CUDA_VISIBLE_DEVICES=0). The
     # observer below reports that device's free and total memory; the route refuses when claim plus reserve
-    # does not fit. Provisional values: replaced by the measured peak in the proof (docs/design/TRELLIS_MESH_ROUTE_DESIGN.md).
+    # does not fit. Measured 2026-10-30 (nvidia-smi on the trellis-server pid, sampled every 0.25 s, teapot.jpg):
+    # resolution 1024 grew GPU0 use by 6934 MiB (1972 -> 8906 MiB); resolution 1536 by 4940 MiB (1972 -> 6912 MiB).
+    # Claim = largest measured increase (6934 MiB) x 1.1, rounded up to a whole 256 MiB = 7680 MiB.
+    # Reserve: 1 GiB, kept from the first estimate. Details: docs/design/TRELLIS_MESH_ROUTE_DESIGN.md.
     resource_capacity:
       enabled: true
       mode: exclusive-route-pool
       pool_id: gpu0
-      max_claim_bytes: 12884901888 # 12 GiB, provisional
-      reserve_bytes: 1073741824 # 1 GiB, provisional
+      max_claim_bytes: 8053063680 # 7680 MiB (measured 2026-10-30, see above)
+      reserve_bytes: 1073741824 # 1 GiB
       retry_after_seconds: 30
       timeout_seconds: 5
       observer:

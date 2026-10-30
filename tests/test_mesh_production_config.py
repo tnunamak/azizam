@@ -60,3 +60,13 @@ def test_the_observer_unit_runs_the_observer_on_the_configured_port_and_gpu():
     assert "--gpu 0" in exec_line
     assert "--host" not in exec_line
     assert "WantedBy=default.target" in unit
+
+
+def test_the_claim_covers_the_largest_measured_increase_with_a_ten_percent_margin():
+    # Measured 2026-10-30 on GPU0 (teapot.jpg): resolution 1024 grew use by 6934 MiB, 1536 by 4940 MiB.
+    largest_increase_mib = 6934
+    claim = BACKENDS["trellis"]["resource_capacity"]["max_claim_bytes"]
+
+    assert claim == 7680 * MIB
+    assert claim >= largest_increase_mib * 1.1 * MIB
+    assert claim - largest_increase_mib * MIB < 1024 * MIB

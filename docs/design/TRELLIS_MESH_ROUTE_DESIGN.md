@@ -336,6 +336,34 @@ release claim follows from this branch.
   service health and the observer facts, through `discovery_capability`. The probe
   acquires no capacity. The row is added after the shared projection, with the
   caller's policy view.
+- Capability mapping: `mesh.generate` maps to the `image` capability
+  (`gateway/capability_ids.py`). Before this, no plan could reach the route, because
+  the intent had no capability and the evaluator refused it. A first-class 3D
+  capability is a follow-up.
+- Observer service: `docs/ops/vram-observer.service` is the systemd user unit for
+  the observer (port 8891, GPU 0). It is not installed or started in this release.
+  The gateway's trellis route answers 503 while the observer is down.
+
+#### Measured VRAM (2026-10-30)
+
+Measured by the lead on GPU0 with `nvidia-smi` sampled every 0.25 s on the
+trellis-server pid, input `teapot.jpg`. Baseline is the resident trellis-server use
+before the request.
+
+| Resolution | Baseline (MiB) | Peak (MiB) | Increase (MiB) | HTTP | Bytes | Time |
+|---|---|---|---|---|---|---|
+| 1024 | 1972 | 8906 | 6934 | 200 | 11,516,828 | 429 s (box loaded by test suites) |
+| 1536 | 1972 | 6912 | 4940 | 200 | 12,441,456 | 148 s |
+| 512 | not sampled | not sampled | not sampled | 200 | 4,316,092 | not recorded |
+
+- The GLB uses `EXT_texture_webp` (required), two WebP images, one mesh, one
+  material, and 76k vertices at 512. It uses no Draco, meshopt, or KTX2.
+- Claim: the largest measured increase, 6934 MiB, times 1.1 is 7627.4 MiB. Rounded
+  up to a whole 256 MiB, that is 7680 MiB = 8,053,063,680 bytes
+  (`max_claim_bytes`).
+- Reserve: 1 GiB (`reserve_bytes`), unchanged from the first estimate.
+- Not measured: the peak at 512 (the UI lane's default request). Its increase is
+  expected to be below the 1024 one, but the claim has no direct evidence for it.
 
 ### Out of scope for this release (lead decision, 2026-10-30)
 
