@@ -911,7 +911,7 @@ function ReceiptsList({
       </CardHeader>
       <CardContent>
         {loading && !receipts.length ? (
-          <div aria-label="Loading receipts" className="space-y-3">
+          <div role="status" aria-label="Loading receipts" aria-busy="true" className="space-y-3">
             {[0, 1, 2].map((item) => (
               <Skeleton key={item} className="h-16 w-full" />
             ))}

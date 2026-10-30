@@ -275,7 +275,7 @@ export function AdvancedRules() {
     {editing && <CategoriesEditor peopleUnavailable={peopleIsPending ? "Loading people…" : peopleIsError ? "People couldn't be loaded. Try again." : ""} appsUnavailable={appsIsPending ? "Loading apps…" : appsIsError ? "Apps couldn't be loaded. Try again." : ""} catalog={catalogData?.services ?? []} catalogLoading={catalogIsFetching} catalogError={catalogIsError} onCatalogRetry={() => { void catalogRefetch(); }} active={activeData ?? null} owner={ownerSessionError ? "" : ownerSession?.actor?.subject ?? ""} ownerLoading={ownerSessionFetching} paused={!knownBase || activeIsFetching} people={(peopleData ?? []).map((person) => ({ id: person.id, label: personName(person.id) }))} apps={(appsData ?? []).map((app) => ({ id: app.id, label: appName(app.id) }))} onClose={() => setEditing(false)} onActivated={refresh} />}
     {editing && ownerSessionError && <Button variant="outline" onClick={() => void ownerSessionRefetch()}>Refresh owner identity</Button>}
     {message && (message.error ? <Callout as="div" severity="critical" title={message.text} /> : <p role="status" className="text-meta">{message.text}</p>)}
-    {activeIsPending && <div aria-busy="true" aria-label="Loading category rules"><StatusLine tone="unknown" text="Loading category rules" compact /></div>}
+    {activeIsPending && <div role="status" aria-busy="true" aria-label="Loading category rules"><StatusLine tone="unknown" text="Loading category rules" compact /></div>}
     {activeIsError && <Callout as="div" severity="critical" title={activeData ? "Couldn't refresh category rules" : "Couldn't load category rules"} headerAction={<Button variant="outline" onClick={() => void activeRefetch()}>Try again</Button>}>
       {activeData && <p>The rules already loaded are still shown. Changes are paused until they can be refreshed.</p>}
     </Callout>}
@@ -286,7 +286,7 @@ export function AdvancedRules() {
     </>}
     {!editing && <section aria-labelledby="category-history" className="space-y-3">
       <h2 id="category-history" className="text-heading">History</h2>
-      {historyIsPending && <div aria-busy="true" aria-label="Loading category history"><StatusLine tone="unknown" text="Loading category history" compact /></div>}
+      {historyIsPending && <div role="status" aria-busy="true" aria-label="Loading category history"><StatusLine tone="unknown" text="Loading category history" compact /></div>}
       {historyIsError && <Callout as="div" severity="critical" title="Couldn't load category history" headerAction={<Button variant="outline" onClick={() => void historyRefetch()}>Try again</Button>} />}
       {historyData && <>
         {historyData.history.length > 0 && <div className="space-y-2">
