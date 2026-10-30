@@ -255,6 +255,7 @@ from gateway.user_runtime import (
     rename_person_key,
     rename_user_app,
     rename_user_app_key,
+    set_user_app_request_history,
     replace_user_app_key,
     request_user_access,
     revoke_user_app_key,
@@ -16943,6 +16944,14 @@ async def user_portal_rename_app(app_id: str, request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    # A shared App's request-history setting, sent by its manager, is the same route's other field (the App's name).
+    if isinstance(body, Mapping) and "request_history" in body:
+        try:
+            payload = await asyncio.to_thread(
+                set_user_app_request_history, session, app_id, body["request_history"], path=ADMIN_STORE.path)
+        except UserPortalError as exc:
+            return _user_action_response_error(exc)
+        return JSONResponse(status_code=200, content=payload, headers={"cache-control": "no-store"})
     name = body.get("name") if isinstance(body, Mapping) else None
     try:
         payload = await asyncio.to_thread(
