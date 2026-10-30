@@ -78,6 +78,7 @@ import { AppGuide } from "@/components/product/app-guide";
 import { TrustedAddressesDialog } from "./trusted-addresses";
 import { RenameAppDialog, RenameKeysDialog } from "./rename";
 import { AppKeyRows, KeylessAccessRow } from "./app-details";
+import { RequestHistorySetting } from "./request-history-setting";
 
 const accountKey = ["account", "session"];
 /** "person": the app uses its person's own plan ("Same as you"). */
@@ -1170,6 +1171,13 @@ function AppsContents() {
                     setError(null);
                   }}
                 />
+                {app.kind === "service" ? (
+                  <RequestHistorySetting
+                    key={app.id}
+                    app={app}
+                    onSaved={putApp}
+                  />
+                ) : null}
                 {owner ? (
                   <KeylessAccessRow
                     appName={appName}
