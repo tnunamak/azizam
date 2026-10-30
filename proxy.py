@@ -25709,11 +25709,27 @@ async def _context_window_for_model_id(
 async def _annotate_model_context_windows(
     data: list[Any], *, observed_windows: dict[str, int] | None = None,
 ) -> None:
+    entries = {item.get("id"): item for item in data
+               if isinstance(item, dict) and isinstance(item.get("id"), str)}
     for item in data:
         if not isinstance(item, dict):
             continue
         model_id = item.get("id")
         if not isinstance(model_id, str) or not model_id:
+            continue
+        resolves_to = item.get("azizam_resolves_to")
+        target = resolves_to.get("chat") if isinstance(resolves_to, Mapping) else None
+        if isinstance(resolves_to, Mapping) and "chat" in resolves_to and not target:
+            item.pop("context_window", None)
+            continue
+        if isinstance(target, str) and target and target != model_id:
+            # A stable alias follows its served model, even if a same-named
+            # legacy role has a different context window.
+            found = await _context_window_for_model_id(target, entries.get(target))
+            if found is not None:
+                item["context_window"] = found
+            else:
+                item.pop("context_window", None)
             continue
         found = await _context_window_for_model_id(model_id, item, observed_windows=observed_windows)
         if found is not None:
