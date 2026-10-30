@@ -2785,10 +2785,6 @@
             ],
             "type": "string"
           },
-          "extensions": {
-            "description": "Reserved. Supplying it is refused until a service option is mapped to it.",
-            "type": "object"
-          },
           "image": {
             "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture to turn into a 3D model. PNG, JPEG or WebP.",
             "type": "string",
@@ -37075,8 +37071,7 @@
               "in": "form"
             },
             "extensions": {
-              "field": "extensions",
-              "in": "form"
+              "in": "none"
             },
             "image": {
               "field": "image",
