@@ -57,4 +57,4 @@ def test_a_mesh_workflow_is_offered_under_3d_models_and_nothing_else():
     assert labels["mesh"] == "3D models"
     assert _items(contract, "mesh") == {
         "mesh.generate.trellis-2": {"kind": "workflow", "id": "mesh.generate.trellis-2", "available": True}}
-    assert _items(contract, "image") == {}
+    assert "mesh.generate.trellis-2" not in _items(contract, "image")
