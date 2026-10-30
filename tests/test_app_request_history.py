@@ -8,6 +8,7 @@ request's own forget, then the App setting. Library prompts and conversations fo
 from __future__ import annotations
 
 import sqlite3
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -196,14 +197,15 @@ def test_the_managers_own_switch_does_not_gate_the_apps_history(db):
                                 household_policy=None, request_body=None, now=NOW)
     assert personal.reason == "member_disabled"
 
-    outcome, committed = _write(db, _decide(db))
+    decision = _decide(db, now=int(time.time()))
+    outcome, committed = _write(db, decision)
     assert (outcome.kept, outcome.reason) == (True, "kept")
-    assert len(committed) == 1 and committed[0][0] == NOW + 7 * DAY
+    assert len(committed) == 1 and committed[0][0] == decision.kept_until
 
 
 def test_turning_the_app_setting_off_after_the_decision_refuses_the_write(db):
     _turn_on(db)
-    decision = _decide(db)
+    decision = _decide(db, now=int(time.time()))
     admin_store.update_app(db.app, history_keep=False, path=db.path)
     outcome, committed = _write(db, decision)
     assert (outcome.kept, outcome.reason) == (False, "app_off")
@@ -212,7 +214,7 @@ def test_turning_the_app_setting_off_after_the_decision_refuses_the_write(db):
 
 def test_disabling_the_app_after_the_decision_refuses_the_write(db):
     _turn_on(db)
-    decision = _decide(db)
+    decision = _decide(db, now=int(time.time()))
     admin_store.disable_app(db.app, path=db.path)
     outcome, committed = _write(db, decision)
     assert (outcome.kept, outcome.reason) == (False, "app_disabled")
@@ -221,7 +223,7 @@ def test_disabling_the_app_after_the_decision_refuses_the_write(db):
 
 def test_removing_the_manager_after_the_decision_refuses_the_write(db):
     _turn_on(db)
-    decision = _decide(db)
+    decision = _decide(db, now=int(time.time()))
     accounts.change_person(db.manager, "owner", remove=True, path=db.path)
     outcome, committed = _write(db, decision)
     assert (outcome.kept, outcome.reason) == (False, "app_disabled")
