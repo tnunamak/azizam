@@ -104,8 +104,8 @@ def test_another_persons_app_or_a_disabled_one_is_refused_as_the_rename_is(manag
 
 
 def _admin(roles, actor_id):
-    return AdminContext(subject=actor_id, actor_kind="user", actor_id=actor_id, audit_actor_id=actor_id,
-                        actor_label="actor", roles=frozenset(roles))
+    return AdminContext(subject=actor_id, actor_kind="user", actor_id=actor_id, actor_label="actor",
+                        roles=frozenset(roles))
 
 
 def test_the_household_owner_can_set_it_through_the_admin_api(manager, db):
