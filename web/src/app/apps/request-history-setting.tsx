@@ -25,7 +25,7 @@ export function RequestHistorySetting({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The same answer the History page reads: the periods the gateway offers and the household's off state.
-  const { data: policy } = useQuery({
+  const { data: policy, isError } = useQuery({
     queryKey: requestHistoryKey,
     queryFn: accountApi.requestHistory,
   });
@@ -46,16 +46,22 @@ export function RequestHistorySetting({
     }
   }
 
+  // Until the household's answer is known, nothing about the setting can be trusted: no active copy, no change.
+  const known = policy !== undefined;
   const householdOff = policy?.household_off === true;
   const choices = policy?.choices ?? [];
   const reader = setting.manager_name
     ? `Only ${setting.manager_name}, who manages this app, can read them in Request history.`
     : "Only the person who manages this app can read them in Request history.";
-  const sentence = householdOff
-    ? "Off for the household: nothing new is kept."
-    : setting.keep
-      ? `Requests and replies from this app are kept for up to ${periodWords(setting.retention)}. ${reader} The household's limits can shorten this or stop it.`
-      : "Requests from this app are not kept.";
+  const sentence = !known
+    ? isError
+      ? "The household setting could not be read. Try again later."
+      : "Checking the household setting…"
+    : householdOff
+      ? "Off for the household: nothing new is kept."
+      : setting.keep
+        ? `Requests and replies from this app are kept for up to ${periodWords(setting.retention)}. ${reader} The household's limits can shorten this or stop it.`
+        : "Requests from this app are not kept.";
 
   return (
     <div className="space-y-2 pr-4 pb-3 pl-11">
@@ -63,8 +69,8 @@ export function RequestHistorySetting({
         <Switch
           id={`request-history-${app.id}`}
           aria-label="Keep request history"
-          checked={setting.keep && !householdOff}
-          disabled={busy || householdOff}
+          checked={known && setting.keep && !householdOff}
+          disabled={busy || !known || householdOff}
           onCheckedChange={(keep) =>
             void save({ keep, retention: setting.retention })
           }
@@ -77,7 +83,7 @@ export function RequestHistorySetting({
           onValueChange={(retention) =>
             void save({ keep: setting.keep, retention })
           }
-          disabled={busy || householdOff || choices.length === 0}
+          disabled={busy || !known || householdOff || choices.length === 0}
         >
           <SelectTrigger aria-label="Keep request history for" className="w-40">
             <SelectValue />

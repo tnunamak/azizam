@@ -64,14 +64,14 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it("shows the switch off and says nothing is kept until it is turned on", () => {
+it("shows the switch off and says nothing is kept until it is turned on", async () => {
   renderSetting();
 
   expect(
     screen.getByRole("switch", { name: "Keep request history" }),
   ).not.toBeChecked();
   expect(
-    screen.getByText("Requests from this app are not kept."),
+    await screen.findByText("Requests from this app are not kept."),
   ).toBeVisible();
 });
 
@@ -268,7 +268,9 @@ it("treats the household setting as unknown while it loads: no active copy, and 
   answer(policy());
 
   expect(
-    await screen.findByText(/Requests and replies from this app are kept for up to 7 days/),
+    await screen.findByText(
+      /Requests and replies from this app are kept for up to 7 days/,
+    ),
   ).toBeVisible();
   expect(
     screen.getByRole("switch", { name: "Keep request history" }),
