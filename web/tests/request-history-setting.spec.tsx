@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { RequestHistorySetting } from "@/app/apps/request-history-setting";
@@ -51,7 +51,7 @@ function renderSetting(app: AccountApp = shared, onSaved = vi.fn()) {
       <RequestHistorySetting app={app} onSaved={onSaved} />
     </QueryClientProvider>,
   );
-  return { onSaved };
+  return { onSaved, client };
 }
 
 beforeEach(() => {
@@ -280,6 +280,34 @@ it("treats the household setting as unknown while it loads: no active copy, and 
 it("says the household setting is unavailable, and offers no way to change the setting, when it cannot be read", async () => {
   vi.mocked(accountApi.requestHistory).mockRejectedValue(new Error("down"));
   renderSetting(savedOn);
+
+  expect(
+    await screen.findByText(
+      "The household setting could not be read. Try again later.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.queryByText(/Requests and replies from this app are kept/),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("switch", { name: "Keep request history" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByRole("combobox", { name: "Keep request history for" }),
+  ).toBeDisabled();
+});
+
+it("stops claiming capture when a later read of the household setting fails", async () => {
+  vi.mocked(accountApi.requestHistory).mockResolvedValue(policy());
+  const { client } = renderSetting(savedOn);
+  expect(
+    await screen.findByText(
+      /Requests and replies from this app are kept for up to 7 days/,
+    ),
+  ).toBeVisible();
+
+  vi.mocked(accountApi.requestHistory).mockRejectedValue(new Error("down"));
+  await act(() => client.refetchQueries());
 
   expect(
     await screen.findByText(

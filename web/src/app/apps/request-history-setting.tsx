@@ -47,7 +47,8 @@ export function RequestHistorySetting({
   }
 
   // Until the household's answer is known, nothing about the setting can be trusted: no active copy, no change.
-  const known = policy !== undefined;
+  // A failed refetch counts as unknown too: the cached answer may no longer hold.
+  const known = policy !== undefined && !isError;
   const householdOff = policy?.household_off === true;
   const choices = policy?.choices ?? [];
   const reader = setting.manager_name
