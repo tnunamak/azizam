@@ -8020,9 +8020,9 @@ async def _generate_images_with_adaptive_batching(
         )
 
     if len(images_collected) < images_total:
+        batch_note = f" x batch_size={per_prompt}" if per_prompt > 1 else ""
         warnings.append(
-            f"requested {images_total} image(s) (n={n_requested} x batch_size={per_prompt}) "
-            f"but produced {len(images_collected)} after {rounds_run} round(s)"
+            f"requested n={n_requested}{batch_note} but produced {len(images_collected)} after {rounds_run} round(s)"
         )
 
     if image_transform is not None:
