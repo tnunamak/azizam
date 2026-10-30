@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 from gateway import route_registry, service_registry
 from gateway.exclusive_pool import ExclusivePoolLeaseManager
-from gateway.mesh_api import MESH_PATH, MeshApiDeps, register_mesh_routes
+from gateway.mesh_api import MESH_PATH, MeshApiDeps, discovery_capability, register_mesh_routes
 from gateway.mesh_manifest import load_mesh_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +88,29 @@ class Harness:
         self.leases = ExclusivePoolLeaseManager()
         self.hook: Any = None  # stalls the upstream transport; see _Upstream
         self.events: list[str] = []
+        # Route policy for the caller: None allows; a callable returns a decision-like object to deny.
+        self.route_policy: Any = None
+
+    def deps(self) -> MeshApiDeps:
+        def authenticate(request: Request, path: str) -> Any:
+            if not self.authenticated:
+                return JSONResponse({"error": {"message": "Missing or invalid API key.", "code": "unauthorized"}}, status_code=401)
+            return _Auth()
+
+        def open_receipt(auth: Any, rid: str, path: str) -> Owner:
+            return Owner(self.receipts, rid)
+
+        return MeshApiDeps(
+            manifest=MANIFEST,
+            authenticate=authenticate,
+            frontend_records=lambda: self.frontends,
+            services=lambda: self.services,
+            open_receipt=open_receipt,
+            leases=self.leases,
+            client_factory=lambda: httpx.AsyncClient(transport=_Upstream(self.handler, self.hook)),
+            new_request_id=lambda: "req-test",
+            route_policy=lambda auth: self.route_policy(auth) if self.route_policy else None,
+        )
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -108,27 +131,8 @@ class Harness:
         return httpx.Response(404)
 
     def app(self) -> FastAPI:
-        harness = self
-
-        def authenticate(request: Request, path: str) -> Any:
-            if not harness.authenticated:
-                return JSONResponse({"error": {"message": "Missing or invalid API key.", "code": "unauthorized"}}, status_code=401)
-            return _Auth()
-
-        def open_receipt(auth: Any, rid: str, path: str) -> Owner:
-            return Owner(harness.receipts, rid)
-
         app = FastAPI()
-        register_mesh_routes(app, MeshApiDeps(
-            manifest=MANIFEST,
-            authenticate=authenticate,
-            frontend_records=lambda: harness.frontends,
-            services=lambda: harness.services,
-            open_receipt=open_receipt,
-            leases=harness.leases,
-            client_factory=lambda: httpx.AsyncClient(transport=_Upstream(harness.handler, harness.hook)),
-            new_request_id=lambda: "req-test",
-        ))
+        register_mesh_routes(app, self.deps())
         return app
 
 
@@ -566,3 +570,54 @@ def _multipart_body() -> tuple[bytes, str]:
         f'--{boundary}--\r\n'.encode(),
     ]
     return b"".join(parts), boundary
+
+
+# --- route policy: the same access rules as the other Try workflows -----------
+
+class _Denied:
+    denied = True
+    allowed = False
+    code = "MODEL_NOT_IN_PLAN"
+    reasons = ("This isn't in your access plan.",)
+    side = "person"
+    sources = ("access_plan:general",)
+
+
+def test_route_policy_denial_is_403_before_the_body_receipt_or_downstream() -> None:
+    harness = Harness()
+    harness.route_policy = lambda auth: _Denied()
+    client = _client(harness)
+
+    response = _post(client, **_multipart({"seed": "42"}))
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "MODEL_NOT_IN_PLAN"
+    assert harness.receipts == []
+    assert harness.downstream == []
+
+
+def test_route_policy_runs_after_authentication_and_before_the_body_is_read() -> None:
+    harness = Harness()
+    seen: list[Any] = []
+    harness.route_policy = lambda auth: seen.append(auth) or _Denied()
+    client = _client(harness)
+
+    # A malformed multipart body would be a 400 if the body were read first; the denial must win.
+    response = client.post(MESH_PATH, content=b"not multipart", headers={"content-type": "text/plain"})
+    assert response.status_code == 403
+    assert len(seen) == 1
+
+    harness.authenticated = False
+    seen.clear()
+    assert _post(_client(harness), **_multipart()).status_code == 401
+    assert seen == []
+
+
+def test_route_policy_allow_keeps_the_success_path() -> None:
+    harness = Harness()
+    harness.route_policy = lambda auth: None
+
+    response = _post(_client(harness), **_multipart())
+
+    assert response.status_code == 200
+    assert response.content == GLB
