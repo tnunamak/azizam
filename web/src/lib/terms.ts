@@ -50,6 +50,7 @@ export const taskNames = {
   chat: capabilityLabels.chat,
   image: "Make a picture",
   video: "Make a video",
+  mesh: "Make a 3D model",
   speech: "Read text aloud",
   transcribe: "Transcribe a recording",
   music: "Make music",
