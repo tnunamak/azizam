@@ -34,7 +34,7 @@ export function capabilitySummary(tiles: HomeCapability[]): string {
     if (!matching.length) return [];
     const plural =
       matching.length > 1 ||
-      ["images", "decisions", "embeddings"].includes(matching[0]);
+      ["images", "decisions", "embeddings", "3D models"].includes(matching[0]);
     const description = status === "idle" ? "ready to start" : status;
     return [`${joinNames(matching)} ${plural ? "are" : "is"} ${description}`];
   });
