@@ -346,7 +346,7 @@ export function Requests() {
         )}
       </div>
       {isPending ? (
-        <div aria-label="Loading requests" aria-busy="true" className="relative">
+        <div role="group" aria-label="Loading requests" aria-busy="true" className="relative">
           <span className="absolute right-4 top-3 z-10"><DelayedSpinner /></span>
           <Card aria-hidden="true" className="gap-0 overflow-hidden p-0! max-sm:p-0!">
             <Table dense className="table-fixed">
