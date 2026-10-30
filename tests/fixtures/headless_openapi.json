@@ -2787,11 +2787,12 @@
           },
           "extensions": {
             "description": "Reserved. Supplying it is refused until a service option is mapped to it.",
-            "type": "string"
+            "type": "object"
           },
           "image": {
-            "description": "The picture to turn into a 3D model. PNG, JPEG or WebP.",
-            "type": "string"
+            "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference. The picture to turn into a 3D model. PNG, JPEG or WebP.",
+            "type": "string",
+            "x-azizam-asset": true
           },
           "resolution": {
             "default": 1024,
@@ -37066,7 +37067,34 @@
       "execution": {
         "async": null,
         "recommended": "sync",
-        "sync": null
+        "sync": {
+          "content_type": "multipart/form-data",
+          "fields": {
+            "bg_removal": {
+              "field": "bg_removal",
+              "in": "form"
+            },
+            "extensions": {
+              "field": "extensions",
+              "in": "form"
+            },
+            "image": {
+              "field": "image",
+              "in": "file"
+            },
+            "resolution": {
+              "field": "resolution",
+              "in": "form"
+            },
+            "seed": {
+              "field": "seed",
+              "in": "form"
+            }
+          },
+          "method": "POST",
+          "output": "model/gltf-binary (GLB bytes)",
+          "path": "/v1/meshes/generate"
+        }
       },
       "id": "mesh.generate.trellis-2",
       "inputs_schema": {

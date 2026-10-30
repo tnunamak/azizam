@@ -175,4 +175,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
+    # Re-captured 2026-10-30: the mesh workflow's picture is a multipart file part and its sync route is documented
+    # (WorkflowInputs_mesh_generate_trellis_2 and x-azizam-workflows only; no path or method changed).
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
