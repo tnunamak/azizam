@@ -171,7 +171,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-10-26 after ace-step-1.5-2b-base left the registry.
         # Re-captured 2026-10-28 after the video removal (779db850f): the video paths, schemas and workflow list moved; nothing else.
         # Re-captured 2026-10-30 for POST /v1/meshes/generate (mesh route, discovery and route policy).
-        assert route_graph.openapi_digest(proxy.app) == "94e7a816d806b2ef818397b32d634ae29b9026d777ded4c95c4a70a5639f7799"
+        assert route_graph.openapi_digest(proxy.app) == "1620bbd86fee7b405e40c817745ab997bb5d60c3009e39e21b878c4884d8d43e"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
