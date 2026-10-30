@@ -135,8 +135,12 @@ class Capability:
     title: str | None = None
     description: str | None = None
     capability: str | None = None
+    # The public protocol a client calls the route with (e.g. ``openai.mesh``), and the media types it returns.
+    protocol: str | None = None
+    output_media_types: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "output_media_types", tuple(self.output_media_types))
         if self.execution not in EXECUTION_MODES:
             raise ValueError(
                 f"execution must be one of {EXECUTION_MODES!r}, got {self.execution!r}"
@@ -264,6 +268,10 @@ def summarize_capability(capability: Capability, audience: str) -> dict[str, Any
         summary["workflow"] = capability.workflow
     if capability.limits:
         summary["limits"] = dict(capability.limits)
+    if capability.protocol is not None:
+        summary["protocol"] = capability.protocol
+    if capability.output_media_types:
+        summary["output_media_types"] = list(capability.output_media_types)
 
     if audience == "client":
         return summary

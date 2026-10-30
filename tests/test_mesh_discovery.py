@@ -87,7 +87,7 @@ def test_the_probe_reaches_the_service_health_and_the_observer_facts() -> None:
     (lambda h: _set_service(h, "trellis", lambda r: r.update(enabled=False)), "disabled"),
     (lambda h: _set_service(h, "trellis", lambda r: r.update(capabilities=["images"])), "capability"),
     (lambda h: _set_service(h, "trellis", lambda r: r["config"].update(resource_capacity={"enabled": False})), "exclusive"),
-    (lambda h: _set_service(h, "trellis", lambda r: r.pop("config")), "exclusive"),
+    (lambda h: _set_service(h, "trellis", lambda r: r.pop("config")), "resource_capacity"),
     (lambda h: _set_service(h, "trellis", lambda r: r.update(enabled=True, capabilities=["mesh.generate"],
                                                              config={**r.get("config", {}), "base_url": None,
                                                                      "host": None})), "base"),

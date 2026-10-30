@@ -109,7 +109,7 @@ class Harness:
             leases=self.leases,
             client_factory=lambda: httpx.AsyncClient(transport=_Upstream(self.handler, self.hook)),
             new_request_id=lambda: "req-test",
-            route_policy=lambda auth: self.route_policy(auth) if self.route_policy else None,
+            route_policy=lambda auth, row: self.route_policy(auth) if self.route_policy else None,
         )
 
     def handler(self, request: httpx.Request) -> httpx.Response:

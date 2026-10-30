@@ -35,6 +35,7 @@ from gateway.exclusive_pool import (
     ExclusivePoolSpec,
     PoolCapacityError,
     PoolObserverError,
+    PoolObservation,
     observation_from_document,
     parse_resource_capacity,
 )
@@ -56,6 +57,8 @@ from gateway.mesh_manifest import (
     sniff_image,
 )
 from gateway import operation_security
+from gateway.availability import AvailabilityProjection
+from gateway.capabilities import EXPOSURE_CLASSES, RESOURCE_TIERS, TRUST_TIERS, Capability, ResourceEstimate
 from gateway.service_registry import service_base_url
 
 LOG = logging.getLogger("azizam.mesh")
@@ -63,6 +66,7 @@ LOG = logging.getLogger("azizam.mesh")
 MESH_PATH = "/v1/meshes/generate"
 FRONTEND_ID = "mesh"
 CAPABILITY = "mesh.generate"
+MESH_PROTOCOL = "openai.mesh"
 MAX_IMAGE_BYTES = 25 * MIB
 MAX_GLB_BYTES = 512 * MIB
 _HEALTH_TIMEOUT_SECONDS = 5.0
@@ -85,6 +89,9 @@ class MeshApiDeps:
     # A fresh client per request, closed when the request's work ends or is cancelled.
     client_factory: Callable[[], httpx.AsyncClient]
     new_request_id: Callable[[], str]
+    # route_policy(auth, frontend_row) -> a policy decision for this caller on this route (the same evaluator the
+    # other Try workflows use). A decision with ``denied`` true refuses the request with 403 before the body is read.
+    route_policy: Callable[[Any, Mapping[str, Any]], Any]
 
 
 def _error(status: int, code: str, message: str, *, param: str | None = None,
@@ -107,24 +114,31 @@ def _unavailable(request_id: str) -> JSONResponse:
     return _error(503, "service_unavailable", "This route is not available.", request_id=request_id)
 
 
-def route_record_problem(records: list[Mapping[str, Any]], manifest: MeshManifest) -> str | None:
-    """Why the frontend record does not describe this route, or None when it does. Reads no default."""
+def route_row(records: list[Mapping[str, Any]], manifest: MeshManifest) -> tuple[Mapping[str, Any] | None, str | None]:
+    """The frontend row for this route and why it is not usable, or (None, reason). Reads no default."""
     record = next((item for item in records if item.get("id") == FRONTEND_ID), None)
     if record is None:
-        return "frontend record is absent"
+        return None, "frontend record is absent"
     if record.get("enabled") is not True:
-        return "frontend record is disabled"
+        return None, "frontend record is disabled"
     rows = [row for row in record.get("registered_routes") or ()
             if isinstance(row, Mapping) and str(row.get("canonical") or "").strip() == MESH_PATH]
     if len(rows) != 1:
-        return "frontend record must hold exactly one row for the route"
+        return None, "frontend record must hold exactly one row for the route"
     row = rows[0]
     methods = row.get("methods")
     if not isinstance(methods, list) or [str(m).upper() for m in methods] != ["POST"]:
-        return "frontend row must name only POST"
+        return None, "frontend row must name only POST"
     if row.get("intent") != MESH_INTENT or row.get("workflow") != manifest.id or row.get("capability") != CAPABILITY:
-        return "frontend row disagrees with the bundled manifest"
-    return None
+        return None, "frontend row disagrees with the bundled manifest"
+    tiers = row.get("runtime_policy")
+    if not isinstance(tiers, Mapping) or tiers.get("protocol") != MESH_PROTOCOL:
+        return None, "frontend row names another protocol"
+    if (tiers.get("capability_exposure") not in EXPOSURE_CLASSES
+            or tiers.get("capability_trust_tier") not in TRUST_TIERS
+            or tiers.get("capability_resource_tier") not in RESOURCE_TIERS):
+        return None, "frontend row has no valid route tiers"
+    return row, None
 
 
 def service_problem(services: Mapping[str, Mapping[str, Any]], manifest: MeshManifest) -> tuple[str | None, ExclusivePoolSpec | None, Mapping[str, Any] | None]:
@@ -156,14 +170,17 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         gate = await asyncio.to_thread(deps.authenticate, request, MESH_PATH)
         if isinstance(gate, Response):
             return gate
-        record_problem = route_record_problem(deps.frontend_records(), manifest)
-        if record_problem is not None:
+        row, record_problem = route_row(deps.frontend_records(), manifest)
+        if row is None:
             LOG.warning("mesh route refused: %s", record_problem)
             return _unavailable(request_id)
         problem, spec, service = service_problem(deps.services(), manifest)
         if problem is not None or spec is None or service is None:
             LOG.warning("mesh route refused: %s", problem)
             return _unavailable(request_id)
+        decision = deps.route_policy(gate, row)
+        if decision is not None and decision.denied:
+            return _policy_refusal(decision, request_id)
         async with deps.open_receipt(gate, request_id, MESH_PATH) as owner:
             return await _serve(request, request_id, owner, service, spec)
 
@@ -228,11 +245,11 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
 
     async def _lease_and_post(client: httpx.AsyncClient, request_id: str, base: str, config: Mapping[str, Any],
                               spec: ExclusivePoolSpec, fields: Mapping[str, str], image: Any) -> bytes:
-        observer_url = _observer_url(deps, spec)
+        observer_problem, observer_url = _observer_problem(deps, spec)
 
         async def observe() -> Any:
-            if not observer_url.startswith(("http://", "https://")):
-                raise PoolObserverError("observer service is not available")
+            if observer_problem is not None:
+                raise PoolObserverError(observer_problem)
             try:
                 response = await client.get(observer_url, timeout=spec.timeout_seconds)
             except httpx.HTTPError as error:
@@ -288,10 +305,107 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         return _error(502, "upstream_error", "The mesh service failed.", request_id=request_id)
 
 
+def _policy_refusal(decision: Any, request_id: str) -> JSONResponse:
+    """403 in the OpenAI error shape, as the other Try workflows refuse a plan denial."""
+    reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
+    return _error(403, decision.code or "policy_denied", reason, request_id=request_id)
+
+
 def _observer_url(deps: MeshApiDeps, spec: ExclusivePoolSpec) -> str:
     config = _config_of(deps.services().get(spec.observer_service))
     base = service_base_url(config)
     return base + spec.observer_path
+
+
+def _observer_problem(deps: MeshApiDeps, spec: ExclusivePoolSpec) -> tuple[str | None, str]:
+    """Whether the observer service may be asked at all, and the URL to ask. Reads no capacity."""
+    record = deps.services().get(spec.observer_service)
+    if not isinstance(record, Mapping) or record.get("enabled") is False:
+        return "observer service is disabled or absent", ""
+    url = _observer_url(deps, spec)
+    if not url.startswith(("http://", "https://")):
+        return "observer service is not available", ""
+    return None, url
+
+
+async def discovery_capability(deps: MeshApiDeps) -> Capability:
+    """The mesh row for the capability listing. Its facts come from the route's own frontend row and the service
+    record; its state comes from one live probe of the service health and the observer's facts. It acquires no
+    capacity and dispatches nothing, and it reports an unavailable row, never an error, when a fact is missing."""
+    manifest = deps.manifest
+    row, problem = route_row(deps.frontend_records(), manifest)
+    tiers = (row or {}).get("runtime_policy") or {}
+    spec: ExclusivePoolSpec | None = None
+    service: Mapping[str, Any] | None = None
+    if problem is None:
+        problem, spec, service = service_problem(deps.services(), manifest)
+    if problem is None and spec is not None and service is not None:
+        problem = await _probe_pool(deps, spec, service)
+    available = problem is None
+    projection = AvailabilityProjection(
+        service_id=manifest.service_id,
+        enabled=bool(service is not None and service.get("enabled") is not False),
+        configured=service is not None,
+        up=(available if service is not None else None),
+        status="ready" if available else "unavailable",
+        reason="Service health and observer facts answered." if available else str(problem),
+        measured=service is not None and spec is not None,
+        evidence={"kind": "live_probe"},
+    )
+    return Capability(
+        intent=MESH_INTENT,
+        backend=manifest.service_id,
+        workflow=manifest.id,
+        capability=CAPABILITY,
+        title="Image to 3D",
+        input_modalities=("image",),
+        output_modalities=("mesh",),
+        execution="sync",
+        protocol=MESH_PROTOCOL,
+        output_media_types=(MESH_MEDIA_TYPE,),
+        exposure=tiers.get("capability_exposure", "disabled"),
+        trust_tier=tiers.get("capability_trust_tier", "experimental"),
+        resource_tier=tiers.get("capability_resource_tier", "batch"),
+        lifecycle="warm" if available else "stopped",
+        health="healthy" if available else "unhealthy",
+        resources=ResourceEstimate(gpu_required=True),
+        caveats=() if available else (problem,),
+        availability=projection.to_public_dict(),
+    )
+
+
+async def _probe_pool(deps: MeshApiDeps, spec: ExclusivePoolSpec, service: Mapping[str, Any]) -> str | None:
+    """The reason the pool cannot take work now, or None. One health GET and one observer GET; nothing is leased."""
+    config = _config_of(service)
+    base = service_base_url(config)
+    if not base:
+        return "service has no base URL"
+    observer_problem, observer_url = _observer_problem(deps, spec)
+    if observer_problem is not None:
+        return observer_problem
+    async with deps.client_factory() as client:
+        health_url = base + str(config.get("health_endpoint") or "/health")
+        try:
+            health = await client.get(health_url, timeout=_HEALTH_TIMEOUT_SECONDS)
+        except Exception:  # noqa: BLE001 - any failure to ask is one bounded reason, never the raw error
+            return "service health did not answer"
+        if not 200 <= health.status_code < 300:
+            return "service health did not answer with 2xx"
+        try:
+            observed = await client.get(observer_url, timeout=spec.timeout_seconds)
+        except Exception:  # noqa: BLE001
+            return "observer did not answer"
+        if observed.status_code != 200:
+            return "observer did not answer with 200"
+        try:
+            document = observed.json()
+        except ValueError:
+            return "observer answer is not JSON"
+    try:
+        observation_from_document(document, spec)
+    except PoolObserverError as error:
+        return f"observer facts are not usable: {error}"
+    return None
 
 
 def _split_form(form: Any, manifest: MeshManifest) -> tuple[dict[str, str], UploadFile | None]:
