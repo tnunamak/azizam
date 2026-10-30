@@ -416,7 +416,8 @@
 # Restored the member jargon regression: collect-only measured 17561.
 # Train r108 (F2/F3 + L1, 2026-10-24): hermetic collect-only remeasured 17568 on this tree.
 # Sign-out response hardening (2026-10-25): +3 pytest and +5 Vitest; measured at 17575 and 3581 (`vitest list --root web`).
-pytest = 17575
+# Rest of train r113 (MCP image previews, GPU memory observation, alias context; 2026-10-30): the gate collected 17616.
+pytest = 17616
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

@@ -95,7 +95,7 @@ class McpAuthorizationWiringTests(unittest.TestCase):
             tools = self.post(token, "tools/list", modern=modern)
             self.assertEqual(tools.status_code, 200, tools.text)
             self.assertEqual([t["name"] for t in tools.json()["result"]["tools"]],
-                             ["capabilities", "run", "job", "rename_app", "rename_key", "requests", "retention"])
+                             ["capabilities", "run", "job", "view_asset", "rename_app", "rename_key", "requests", "retention"])
         discover = self.post(token, "server/discover", modern=True).json()["result"]
         self.assertIn(MODERN, discover["supportedVersions"])
         # Dispatched in process to GET /gateway/v1/media/jobs/{id}. A stand-in
