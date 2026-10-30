@@ -23,6 +23,7 @@ import {
   Pause,
   Play,
   Layers,
+  Box,
 } from "lucide-react";
 import {
   WorkflowInputs,
@@ -41,6 +42,8 @@ import {
   type WorkflowJob,
 } from "./workflow-media";
 import { outputKindOf } from "./workflow-input-meta";
+import { MESH_CAPABILITY, meshDetailChoices, meshModeState } from "./mesh-mode";
+import { MeshMode } from "./mesh-panel";
 import { costFrom } from "./result-cost";
 import { chatDefaultChoice } from "./chat-default";
 import { runImageJob } from "./image-job";
@@ -95,7 +98,8 @@ type TryTab =
   | "transcribe"
   | "decide"
   | "embed"
-  | "workflow";
+  | "workflow"
+  | "mesh";
 type TryKey = { id: string; secret: string; appName: string };
 type TryError = {
   message: string;
@@ -239,6 +243,7 @@ const DEFAULTS: Record<TryTab, { model: string; prompt: string }> = {
   decide: { model: "", prompt: "" },
   embed: { model: "", prompt: "" },
   workflow: { model: "", prompt: "{}" },
+  mesh: { model: "", prompt: "" },
 };
 const TRY_TABS = Object.keys(DEFAULTS) as TryTab[];
 /**
@@ -354,6 +359,12 @@ const TAB_ITEMS: Array<{
     icon: GitBranch,
     help: "Run a workflow with its required inputs.",
   },
+  {
+    value: "mesh",
+    label: "Photo to 3D",
+    icon: Box,
+    help: "Turn a picture into a 3D model you can turn around and download.",
+  },
 ];
 
 const INTENT_TABS: Record<string, TryTab> = {
@@ -429,6 +440,7 @@ const EMPTY_NOUN: Record<TryTab, string> = {
   decide: "decision models",
   embed: "embedding models",
   workflow: "workflows",
+  mesh: "3D models",
 };
 
 function baseUrl() {
@@ -1466,6 +1478,15 @@ export default function TryPage() {
     active: running !== null,
   });
   const owner = viewer.admin;
+  // The Photo to 3D tab exists only while the catalog lists its workflow as runnable for this viewer.
+  const meshWorkflow = catalog.mesh?.[0]?.workflow;
+  const meshState = meshWorkflow
+    ? meshModeState(meshWorkflow.availability, { owner, engineBinding: meshWorkflow.engine_binding })
+    : "hidden";
+  const meshShown = meshState !== "hidden";
+  const shownTabs = TAB_ITEMS.filter((tab) => tab.value !== "mesh" || meshShown);
+  // A tab that disappears while open falls back to Chat.
+  const displayedTab: TryTab = shownTabs.some((tab) => tab.value === activeTab) ? activeTab : "chat";
   const workflowAvailability = selectedWorkflow
     ? workflowAvailabilityView(selectedWorkflow.availability, {
         owner,
@@ -1891,7 +1912,11 @@ export default function TryPage() {
       let unknownCount = 0;
       if (section === "workflows") {
         if (!response.ok) throw new Error("Workflow catalog unavailable");
-        grouped = { workflow: groupWorkflows(await response.json()) };
+        const all = groupWorkflows(await response.json());
+        grouped = {
+          workflow: all.filter((option) => option.workflow?.capability !== MESH_CAPABILITY),
+          mesh: all.filter((option) => option.workflow?.capability === MESH_CAPABILITY),
+        };
       } else if (response.ok) {
         const payload = await response.json();
         grouped = groupCatalog(payload);
@@ -1918,8 +1943,8 @@ export default function TryPage() {
       if (!current()) return false;
       const merged =
         section === "workflows"
-          ? { ...catalogRef.current, workflow: grouped.workflow }
-          : { ...grouped, workflow: catalogRef.current.workflow };
+          ? { ...catalogRef.current, workflow: grouped.workflow, mesh: grouped.mesh }
+          : { ...grouped, workflow: catalogRef.current.workflow, mesh: catalogRef.current.mesh };
       catalogRef.current = merged;
       setCatalog(merged);
       if (section === "models") setUnknownModelCount(unknownCount);
@@ -2719,7 +2744,7 @@ export default function TryPage() {
         </p>
       ) : null}
 
-      <Tabs value={activeTab} onValueChange={(value) => chooseTab(value as TryTab)}>
+      <Tabs value={displayedTab} onValueChange={(value) => chooseTab(value as TryTab)}>
         {/* A phone has no room for seven task names in a row, and a strip
             that scrolls hides the ones past the edge. A select lists them
             all (P4); wider screens keep the tabs. */}
@@ -2727,10 +2752,10 @@ export default function TryPage() {
           <span className="text-sm font-medium">Task</span>
           <select
             className="border-input bg-card rounded-control min-h-11 w-full border px-3 text-base"
-            value={activeTab}
+            value={displayedTab}
             onChange={(event) => chooseTab(event.target.value as TryTab)}
           >
-            {TAB_ITEMS.map((tab) => (
+            {shownTabs.map((tab) => (
               <option key={tab.value} value={tab.value}>
                 {tab.label}
               </option>
@@ -2739,11 +2764,12 @@ export default function TryPage() {
         </label>
         <div
           className="overflow-x-auto pb-1 max-sm:hidden"
+          role="region"
           tabIndex={0}
           aria-label="Try capability tabs"
         >
           <TabsList aria-label="Try capability" className="min-w-max">
-            {TAB_ITEMS.map((tab) => (
+            {shownTabs.map((tab) => (
               <TabsTrigger
                 key={tab.value}
                 value={tab.value}
@@ -2757,7 +2783,20 @@ export default function TryPage() {
             ))}
           </TabsList>
         </div>
-        {TAB_ITEMS.map((tab) => {
+        {shownTabs.map((tab) => {
+          if (tab.value === "mesh") {
+            // Kept mounted while another tab is open, so a picture in flight is not cancelled by a tab switch.
+            return (
+              <TabsContent key="mesh" value="mesh" className="mt-4" forceMount>
+                <MeshMode
+                  busy={meshState === "busy"}
+                  active={displayedTab === "mesh"}
+                  detail={meshDetailChoices(meshWorkflow?.inputs ?? [])}
+                  getSecret={async () => (key?.secret ?? (await prepareKey())?.secret ?? null)}
+                />
+              </TabsContent>
+            );
+          }
           const currentResult = results[tab.value];
           const currentError = errors[tab.value];
           const section: CatalogSection =

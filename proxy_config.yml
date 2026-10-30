@@ -723,6 +723,58 @@ backends:
       - generations
       - videos
     managed: false
+  # Image to 3D (TRELLIS.2, trellis.cpp). Serves POST /v1/meshes/generate through the
+  # mesh.generate.trellis-2 manifest (manifests/workflows/). The server loads its weights per request on
+  # GPU0 and frees them afterwards, so the route needs an exclusive pool. Capacity ships disabled: the
+  # route answers 503 until an operator declares the pool exclusive and sets a whole-envelope
+  # max_claim_bytes covering every accepted request (docs/design/TRELLIS_MESH_ROUTE_DESIGN.md).
+  trellis:
+    display_name: Image to 3D (Trellis)
+    description: Turn one image into a textured 3D model.
+    name: trellis.cpp (TRELLIS.2 image-to-3D)
+    host: 127.0.0.1
+    port: 8890
+    # The service serves its routes at the root; "/" keeps the default /v1 base path off.
+    base_path: /
+    health_endpoint: /health
+    timeout: 900
+    role: optional
+    managed: false
+    capabilities: [mesh.generate]
+    # Exclusive pool on GPU0 (CUDA device 0, which trellis-cpp.service pins with CUDA_VISIBLE_DEVICES=0). The
+    # observer below reports that device's free and total memory; the route refuses when claim plus reserve
+    # does not fit. Measured 2026-10-30 (nvidia-smi on the trellis-server pid, sampled every 0.25 s, teapot.jpg):
+    # resolution 1024 grew GPU0 use by 6934 MiB (1972 -> 8906 MiB); resolution 1536 by 4940 MiB (1972 -> 6912 MiB).
+    # Claim = largest measured increase (6934 MiB) x 1.1, rounded up to a whole 256 MiB = 7680 MiB.
+    # Reserve: 1 GiB, kept from the first estimate. Details: docs/design/TRELLIS_MESH_ROUTE_DESIGN.md.
+    resource_capacity:
+      enabled: true
+      mode: exclusive-route-pool
+      pool_id: gpu0
+      max_claim_bytes: 8053063680 # 7680 MiB (measured 2026-10-30, see above)
+      reserve_bytes: 1073741824 # 1 GiB
+      retry_after_seconds: 30
+      timeout_seconds: 5
+      observer:
+        service: vram-observer
+        path: /vram
+        free_pointer: /memory_free_bytes
+        total_pointer: /memory_total_bytes
+  # Loopback observer for the trellis pool: `python -m gateway.vram_observer --port 8891` (nvidia-smi, GPU0).
+  # It is a read-only fact source with no route of its own, so the pool refuses whenever it does not answer.
+  vram-observer:
+    display_name: GPU0 VRAM observer
+    description: Reports free and total memory for GPU0 to the exclusive image-to-3D pool.
+    name: VRAM observer (nvidia-smi, GPU0)
+    host: 127.0.0.1
+    port: 8891
+    base_path: /
+    health_endpoint: /health
+    timeout: 5
+    role: optional
+    managed: false
+    capabilities: []
+
 images:
   # Durable media storage for Library and `response_format: "url"`.
   cache_dir: cache/images

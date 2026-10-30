@@ -55,6 +55,8 @@ INTENT_CAPABILITIES = {
     "video.edit": "video",
     "video.extend": "video",
     "image.analyze": "image",
+    # Image-to-3D (TRELLIS.2) takes an image in; plans grant it by workflow under images.
+    "mesh.generate": "image",
     # Route spellings protocol frontends use for the same work.
     "embedding": "embed",
     "images.generate": "image",

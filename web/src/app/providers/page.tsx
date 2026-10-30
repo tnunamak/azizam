@@ -1097,6 +1097,7 @@ function DetailCard({
           )}
           <div
             className="mt-5 max-w-full overflow-x-auto rounded-panel border"
+            role="region"
             tabIndex={0}
             aria-label={`${provider.name} models`}
           >
@@ -1829,6 +1830,7 @@ function AddProviderDialog({
           </DialogDescription>
         </DialogHeader>
         <div
+          role="group"
           className="grid grid-cols-2 gap-2 sm:grid-cols-4"
           aria-label="Provider setup steps"
         >

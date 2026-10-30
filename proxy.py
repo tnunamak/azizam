@@ -111,6 +111,7 @@ from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
+from gateway import exclusive_pool, mesh_api, mesh_manifest
 from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
@@ -255,6 +256,7 @@ from gateway.user_runtime import (
     rename_person_key,
     rename_user_app,
     rename_user_app_key,
+    set_user_app_request_history,
     replace_user_app_key,
     request_user_access,
     revoke_user_app_key,
@@ -7670,6 +7672,19 @@ def _default_image_response_format(requested_model: Any) -> str:
     return "b64_json"
 
 
+# The public `n` range (1..10) also bounds the images one request may return.
+MAX_IMAGES_PER_REQUEST = 10
+
+
+def _requested_batch_size(workflow: Mapping[str, Any], meta: Mapping[str, Any]) -> int:
+    """The batch_size the bound graph asks for, 1 when the workflow has no batch node."""
+    node = (workflow or {}).get(meta.get("batch_size_node") or "") or {}
+    value = (node.get("inputs") or {}).get("batch_size")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return 1
+
+
 async def _generate_images_with_adaptive_batching(
     request: Request,
     client: httpx.AsyncClient,
@@ -7713,14 +7728,26 @@ async def _generate_images_with_adaptive_batching(
     response_headers: dict[str, str] = {}
     models_freed = False
 
+    # `n` counts prompts and a workflow's batch_size counts the pictures one
+    # prompt makes, so the request wants n * batch_size images. Read the bound
+    # batch before the rounds below overwrite it with their own latent size.
+    per_prompt = _requested_batch_size(base_workflow, meta)
+    images_total = n_requested * per_prompt
+    if images_total > MAX_IMAGES_PER_REQUEST:
+        images_total = MAX_IMAGES_PER_REQUEST
+        warnings.append(
+            f"n={n_requested} x batch_size={per_prompt} exceeds the "
+            f"{MAX_IMAGES_PER_REQUEST}-image limit; returning {MAX_IMAGES_PER_REQUEST}"
+        )
+
     images_collected: list[bytes] = []
-    images_remaining = n_requested
+    images_remaining = images_total
     rounds_run = 0
     seed_offset = 0
 
     # Soft cap on rounds — each round produces at least 1 image, so worst case
-    # we run n_requested rounds. Add a small extra buffer for retry-on-OOM.
-    max_rounds = max(1, n_requested + 2)
+    # we run images_total rounds. Add a small extra buffer for retry-on-OOM.
+    max_rounds = max(1, images_total + 2)
 
     while images_remaining > 0 and rounds_run < max_rounds:
         rounds_run += 1
@@ -7986,7 +8013,7 @@ async def _generate_images_with_adaptive_batching(
                 flush=True,
             )
 
-    images_collected = images_collected[:n_requested]
+    images_collected = images_collected[:images_total]
     if not images_collected:
         return Response(
             content=json.dumps({"error": {"message": "No images generated", "type": "api_error"}}),
@@ -7994,9 +8021,10 @@ async def _generate_images_with_adaptive_batching(
             media_type="application/json",
         )
 
-    if len(images_collected) < n_requested:
+    if len(images_collected) < images_total:
+        batch_note = f" x batch_size={per_prompt}" if per_prompt > 1 else ""
         warnings.append(
-            f"requested n={n_requested} but produced {len(images_collected)} after {rounds_run} round(s)"
+            f"requested n={n_requested}{batch_note} but produced {len(images_collected)} after {rounds_run} round(s)"
         )
 
     if image_transform is not None:
@@ -8020,7 +8048,7 @@ async def _generate_images_with_adaptive_batching(
             response_headers["X-Image-Background-Removal-Source"] = background_removal_decision.source
 
     print(
-        f"[proxy] {_graph_adapter().label} generated {len(images_collected)}/{n_requested} image(s) "
+        f"[proxy] {_graph_adapter().label} generated {len(images_collected)}/{images_total} image(s) "
         f"across {rounds_run} round(s)",
         flush=True,
     )
@@ -13977,14 +14005,24 @@ async def _gateway_capabilities_provider(request: Request) -> list[Capability]:
     capabilities = (await asyncio.to_thread(_gateway_capabilities_for_auth_context, _auth_context_from_scope(request)))
     try:
         service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
-        return project_capabilities(
+        projected = project_capabilities(
             capabilities,
             service_records=service_records,
             evidence=await _capabilities_availability_evidence(capabilities, service_records),
             workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
         )
     except Exception:  # noqa: BLE001
-        return capabilities
+        projected = capabilities
+    return [*projected, *await _mesh_discovery_rows(_auth_context_from_scope(request))]
+
+
+async def _mesh_discovery_rows(auth_context: AuthContext) -> list[Capability]:
+    """The mesh row with this caller's policy view, as the other workflow rows get. Its state is its own live probe,
+    so it is added after the shared projection, which would otherwise overwrite it."""
+    row = await mesh_api.discovery_capability(MESH_DEPS)
+    live_registry = _live_service_registry()
+    viewed = _capability_for_access(row, auth_context, protocol=mesh_api.MESH_PROTOCOL, registry=live_registry)
+    return [] if category_enforcement.is_hidden(viewed.policy_reasons) else [viewed]
 
 
 async def _capabilities_availability_evidence(
@@ -14324,6 +14362,8 @@ _SECURITY_HEADERS = {
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
         "media-src 'self' blob: data:; "
+        # Photo to 3D loads the generated model from a blob: URL it fetches itself.
+        "connect-src 'self' blob:; "
         "frame-ancestors 'none'"
     ),
 }
@@ -15281,6 +15321,61 @@ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a111
         owner_of=lambda auth: _asset_owner_key(auth if isinstance(auth, AuthContext) else None),
     ),
 ))
+
+# --- Image to 3D: POST /v1/meshes/generate (gateway/mesh_api.py) -------------
+# The manifest is bundled data; the lease manager is one per process (one gateway worker per physical pool).
+MESH_MANIFEST = mesh_manifest.load_mesh_manifest(
+    Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
+)
+MESH_LEASES = exclusive_pool.ExclusivePoolLeaseManager()
+
+
+def _live_service_registry() -> dict | None:
+    try:
+        return ADMIN_STORE.get_service_registry()
+    except Exception:  # noqa: BLE001 - an unreadable registry fails the route closed, not the gateway
+        return None
+
+
+def _mesh_open_receipt(auth: AuthContext, request_id: str, path: str) -> ReceiptLifecycleOwner:
+    identity = auth.identity
+    receipt = RouteReceipt(
+        protocol="openai.mesh", intent=mesh_api.MESH_INTENT, path=path, request_id=request_id,
+        app_profile=plan_ref(identity),
+        app_id=identity.app_id if identity else None,
+        api_key_name=identity.name if identity else None,
+        backend=MESH_MANIFEST.service_id, resolved_workflow=MESH_MANIFEST.id,
+        manifest_id=MESH_MANIFEST.id, manifest_version=MESH_MANIFEST.version,
+        manifest_hash=MESH_MANIFEST.manifest_hash,
+    )
+    return ReceiptLifecycleOwner(receipt)
+
+
+def _mesh_route_policy(auth: AuthContext, row: Mapping[str, Any]) -> PolicyDecision:
+    """The same plan evaluation the other Try workflows run, from the route's own frontend tiers. Reads no receipt."""
+    tiers = row["runtime_policy"]
+    return evaluate_and_apply(auth.identity, make_policy_request(
+        protocol=mesh_api.MESH_PROTOCOL, intent=mesh_api.MESH_INTENT, workflow=MESH_MANIFEST.id,
+        backend=MESH_MANIFEST.service_id,
+        capability_exposure=tiers["capability_exposure"],
+        capability_trust_tier=tiers["capability_trust_tier"],
+        capability_resource_tier=tiers["capability_resource_tier"],
+    ))
+
+
+MESH_DEPS = mesh_api.MeshApiDeps(
+    manifest=MESH_MANIFEST,
+    authenticate=lambda request, path: authenticate_request(request, path),
+    frontend_records=lambda: route_registry.protocol_frontend_records(
+        registry=_live_service_registry(), proxy_config=config),
+    services=lambda: (_live_service_registry() or {}).get("services") or {},
+    open_receipt=_mesh_open_receipt,
+    leases=MESH_LEASES,
+    client_factory=lambda: httpx.AsyncClient(follow_redirects=False),
+    new_request_id=new_request_id,
+    route_policy=_mesh_route_policy,
+)
+FRONTEND_TRANSLATORS.register_owned("mesh", lambda app: mesh_api.register_mesh_routes(app, MESH_DEPS))
 
 # --- identity scene + likeness check (gateway/identity_api.py) ----------------
 IDENTITY_CFG = config.get("identity", {}) or {}
@@ -16955,6 +17050,18 @@ async def user_portal_rename_app(app_id: str, request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    # A shared App's request-history setting, sent by its manager, is the same route's other field (the App's name).
+    if isinstance(body, Mapping) and "request_history" in body:
+        if "name" in body:
+            exc = UserPortalError("request_history_with_name",
+                                  "Send the name or the request history setting, not both.")
+            return _user_action_response_error(exc)
+        try:
+            payload = await asyncio.to_thread(
+                set_user_app_request_history, session, app_id, body["request_history"], path=ADMIN_STORE.path)
+        except UserPortalError as exc:
+            return _user_action_response_error(exc)
+        return JSONResponse(status_code=200, content=payload, headers={"cache-control": "no-store"})
     name = body.get("name") if isinstance(body, Mapping) else None
     try:
         payload = await asyncio.to_thread(

@@ -335,12 +335,16 @@ turns them into core work:
 - Hosted provider marketplace behavior.
 - Full plugin marketplace/signing infrastructure.
 - Scheduler preemption and multi-worker event storage.
-- Trellis mesh route v1 (`POST /v1/meshes/generate`). It is planned, not
-  implemented: this checkout has no Trellis route, helper, module, or tests.
-  Do not start it until the fixed-route design's proof gates can be met,
-  including an operator-declared exclusive route pool with an explicit
-  whole-envelope capacity claim. See
-  `docs/design/TRELLIS_MESH_ROUTE_DESIGN.md`.
+- Trellis mesh route v1 (`POST /v1/meshes/generate`). Partly implemented on
+  `feat/trellis-mesh-route` (unreleased): the route, manifest, multipart
+  executor, exclusive pool, and capacity gate exist and are tested. It answers
+  503 until an operator declares exclusive capacity for the trellis backend.
+  Still open: the admin route override and its CAS, the discovery join, the
+  `seed_upgrades` exact-record-replace primitive, the UI safety label, and some
+  cancellation tests. The design's stop rule applies until all 50 acceptance
+  items hold. The default background-removal model (BiRefNet) fails to load on
+  this host. See `docs/design/TRELLIS_MESH_ROUTE_DESIGN.md`, "Implementation
+  record".
 
 ## Not Authoritative
 

@@ -95,7 +95,7 @@ The gateway injects the following headers on all HTML/admin/portal responses:
 | `X-Content-Type-Options` | `nosniff` |
 | `X-Frame-Options` | `SAMEORIGIN` |
 | `Referrer-Policy` | `strict-origin-when-cross-origin` |
-| `Content-Security-Policy` | `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'` |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' blob:; frame-ancestors 'none'` |
 
 `unsafe-inline` is required because the admin UI uses inline scripts and styles.
 If you need a stricter CSP for compliance purposes, add nonce-based overrides
