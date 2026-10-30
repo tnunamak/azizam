@@ -144,16 +144,16 @@ class TestFlux2KleinSnofsWorkflow(unittest.TestCase):
         original = copy.deepcopy(self.workflow)
         result = validate_inputs(
             self.manifest,
-            {"prompt": "A photograph of an adult", "width": 768, "height": 1024,
-             "steps": 4, "guidance": 1.5, "seed": 7, "lora_strength": 0.8, "batch_size": 2},
+            {"prompt": "A photograph of an adult", "width": 896, "height": 1024,
+             "steps": 9, "guidance": 1.5, "seed": 7, "lora_strength": 0.8, "batch_size": 2},
         )
         self.assertTrue(result.ok, result.rejected)
         out = apply_backend_binding(self.manifest, "comfyui", self.workflow, result.accepted)
         self.assertEqual(self.workflow, original)
         self.assertEqual(out["6"]["inputs"]["text"], "A photograph of an adult")
-        self.assertEqual((out["27"]["inputs"]["width"], out["27"]["inputs"]["height"]), (768, 1024))
+        self.assertEqual((out["27"]["inputs"]["width"], out["27"]["inputs"]["height"]), (896, 1024))
         self.assertEqual(out["27"]["inputs"]["batch_size"], 2)
-        self.assertEqual((out["31"]["inputs"]["steps"], out["31"]["inputs"]["seed"]), (4, 7))
+        self.assertEqual((out["31"]["inputs"]["steps"], out["31"]["inputs"]["seed"]), (9, 7))
         self.assertEqual(out["35"]["inputs"]["guidance"], 1.5)
         self.assertEqual(out["11"]["inputs"]["strength_model"], 0.8)
 

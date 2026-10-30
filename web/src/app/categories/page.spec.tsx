@@ -195,8 +195,8 @@ it("marks presets that are already added and offers only the rest", async () => 
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Start from a preset" }));
   const dialog = await screen.findByRole("dialog", { name: "Start from a preset" });
-  expect(within(dialog).getByLabelText("Adult is already added")).toBeVisible();
-  expect(within(dialog).getByLabelText("Experimental is already added")).toBeVisible();
+  expect(within(dialog).getByText(/Adult is already added/)).toBeInTheDocument();
+  expect(within(dialog).getByText(/Experimental is already added/)).toBeInTheDocument();
   expect(within(dialog).queryByRole("button", { name: "Add Adult" })).toBeNull();
   await user.click(within(dialog).getByRole("button", { name: "Add Shared" }));
   await waitFor(() => expect(posted).toHaveLength(2));

@@ -97,7 +97,7 @@ RETENTION_DECISIONS = frozenset({"kept", "not_kept", "failed"})
 RETENTION_REASONS = frozenset({
     "kept", "server_disabled", "request_forget", "no_person",
     "member_disabled", "no_scope", "no_content", "storage_unavailable",
-    "erasure_cutoff", "expired",
+    "erasure_cutoff", "expired", "app_off", "app_disabled",
     "write_failed", "incomplete",
 })
 RETENTION_LIMITS = frozenset({"member_choice", "owner_cap", "prior_policy", "unbounded_store"})

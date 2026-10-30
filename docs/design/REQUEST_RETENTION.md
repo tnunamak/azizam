@@ -271,6 +271,40 @@ two kinds added:
    ∩ the household parts ∩ the kind's allowed parts. `readers` is the
    narrower of the member's and the household's value.
 
+**Shared App request history (the one opt-in exception to step 3).** A
+service App (a shared key, such as a household LibreChat or a kiosk) has no
+person, so its requests are not kept by default. Request history for a
+shared App can be turned on. When it is on, its requests and replies are
+kept under the App's manager (`apps.owner_user_id`) as `request_history`
+rows, and the manager's Request history, Delete my history, byte cap and
+maintenance apply to them unchanged.
+
+- **Who turns it on.** The App's manager, through `PATCH /me/api/apps/{id}`
+  with `request_history`. The household owner, or an administrator who
+  answers for the App, does the same through `PATCH /admin/api/apps/{id}`.
+  Each change is audited (`app.request_history`). A personal App has no
+  such setting, and the route refuses it.
+- **Who reads it.** The manager only. The household owner role and the
+  administrators grant no content read of these rows (the owner-role rule
+  above). The App's name labels the rows on the manager's Request history page.
+- **Default.** Off (`history_keep` 0). The period starts at `7_days`.
+- **Period and cap.** The App's period, shortened by the household's
+  request history cap. The deadline is the earlier of the two, as for a
+  member's own history.
+- **Parts.** The kind's default: requests and replies. The manager's own
+  parts choice and the manager's own switch do not apply to an App's
+  rows. Only the App's setting and its state decide them.
+- **Order.** Steps 1 and 2 still run first. The App's setting then takes
+  the place of step 3 for the App's requests, and of steps 5 and 6 for
+  them. Library prompts and conversations for a service App do not change.
+- **Refusals.** `app_off` when the App's request history is off.
+  `app_disabled` when the App is disabled, or its manager is disabled,
+  removed, or no longer the App's manager. The write re-reads the App, its
+  manager and the cutoffs under the household lock before it commits, so a
+  change between the decision and the write refuses it, and a refused write
+  commits nothing. A kill switch or erasure cutoff set after the decision
+  refuses it too.
+
 A decision is made before anything persists. That covers the database, the
 execution spool, the STT workspace and anything sent to LiteLLM
 (`PROMPT_MEMORY.md` "Code challenges": an off request is memory-only).
@@ -471,7 +505,8 @@ delegated credential reads only with the privacy permission, which the
 person grants (section 10).
 
 These have no person and can never read content: the owner role, admin and
-automation keys, service Apps, keys minted for someone else, trusted
+automation keys, service Apps (except the manager-read request history a
+service App can opt into, section 3.3), keys minted for someone else, trusted
 addresses and signed URLs. This is the existing prompt-memory rule, extended
 to the new kinds (`CORE_CONTRACTS.md:610` "The owner role grants no prompt
 access through these APIs"; `PROMPT_MEMORY.md` viewer table;
@@ -1133,6 +1168,8 @@ at write time (section 12).
   carry other people's words (section 4). To debug a shared app, the owner
   points it at a personal key for the session. The UI says so in one
   sentence.
+  This is the debug window rule only. A shared App's request history is a
+  separate opt-in (section 3.3), and debug windows do not use it.
 - **Secrets.** Parts follow the secret floor (section 3.5). The `received`
   part of an error reply follows the engine check's existing rule
   (`engine_check.guarded_fetch`, `gateway/engine_check.py:598`; D44

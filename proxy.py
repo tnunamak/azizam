@@ -257,6 +257,7 @@ from gateway.user_runtime import (
     rename_person_key,
     rename_user_app,
     rename_user_app_key,
+    set_user_app_request_history,
     replace_user_app_key,
     request_user_access,
     revoke_user_app_key,
@@ -7672,6 +7673,19 @@ def _default_image_response_format(requested_model: Any) -> str:
     return "b64_json"
 
 
+# The public `n` range (1..10) also bounds the images one request may return.
+MAX_IMAGES_PER_REQUEST = 10
+
+
+def _requested_batch_size(workflow: Mapping[str, Any], meta: Mapping[str, Any]) -> int:
+    """The batch_size the bound graph asks for, 1 when the workflow has no batch node."""
+    node = (workflow or {}).get(meta.get("batch_size_node") or "") or {}
+    value = (node.get("inputs") or {}).get("batch_size")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return 1
+
+
 async def _generate_images_with_adaptive_batching(
     request: Request,
     client: httpx.AsyncClient,
@@ -7715,14 +7729,26 @@ async def _generate_images_with_adaptive_batching(
     response_headers: dict[str, str] = {}
     models_freed = False
 
+    # `n` counts prompts and a workflow's batch_size counts the pictures one
+    # prompt makes, so the request wants n * batch_size images. Read the bound
+    # batch before the rounds below overwrite it with their own latent size.
+    per_prompt = _requested_batch_size(base_workflow, meta)
+    images_total = n_requested * per_prompt
+    if images_total > MAX_IMAGES_PER_REQUEST:
+        images_total = MAX_IMAGES_PER_REQUEST
+        warnings.append(
+            f"n={n_requested} x batch_size={per_prompt} exceeds the "
+            f"{MAX_IMAGES_PER_REQUEST}-image limit; returning {MAX_IMAGES_PER_REQUEST}"
+        )
+
     images_collected: list[bytes] = []
-    images_remaining = n_requested
+    images_remaining = images_total
     rounds_run = 0
     seed_offset = 0
 
     # Soft cap on rounds — each round produces at least 1 image, so worst case
-    # we run n_requested rounds. Add a small extra buffer for retry-on-OOM.
-    max_rounds = max(1, n_requested + 2)
+    # we run images_total rounds. Add a small extra buffer for retry-on-OOM.
+    max_rounds = max(1, images_total + 2)
 
     while images_remaining > 0 and rounds_run < max_rounds:
         rounds_run += 1
@@ -7988,7 +8014,7 @@ async def _generate_images_with_adaptive_batching(
                 flush=True,
             )
 
-    images_collected = images_collected[:n_requested]
+    images_collected = images_collected[:images_total]
     if not images_collected:
         return Response(
             content=json.dumps({"error": {"message": "No images generated", "type": "api_error"}}),
@@ -7996,9 +8022,10 @@ async def _generate_images_with_adaptive_batching(
             media_type="application/json",
         )
 
-    if len(images_collected) < n_requested:
+    if len(images_collected) < images_total:
+        batch_note = f" x batch_size={per_prompt}" if per_prompt > 1 else ""
         warnings.append(
-            f"requested n={n_requested} but produced {len(images_collected)} after {rounds_run} round(s)"
+            f"requested n={n_requested}{batch_note} but produced {len(images_collected)} after {rounds_run} round(s)"
         )
 
     if image_transform is not None:
@@ -8022,7 +8049,7 @@ async def _generate_images_with_adaptive_batching(
             response_headers["X-Image-Background-Removal-Source"] = background_removal_decision.source
 
     print(
-        f"[proxy] {_graph_adapter().label} generated {len(images_collected)}/{n_requested} image(s) "
+        f"[proxy] {_graph_adapter().label} generated {len(images_collected)}/{images_total} image(s) "
         f"across {rounds_run} round(s)",
         flush=True,
     )
@@ -16962,6 +16989,18 @@ async def user_portal_rename_app(app_id: str, request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    # A shared App's request-history setting, sent by its manager, is the same route's other field (the App's name).
+    if isinstance(body, Mapping) and "request_history" in body:
+        if "name" in body:
+            exc = UserPortalError("request_history_with_name",
+                                  "Send the name or the request history setting, not both.")
+            return _user_action_response_error(exc)
+        try:
+            payload = await asyncio.to_thread(
+                set_user_app_request_history, session, app_id, body["request_history"], path=ADMIN_STORE.path)
+        except UserPortalError as exc:
+            return _user_action_response_error(exc)
+        return JSONResponse(status_code=200, content=payload, headers={"cache-control": "no-store"})
     name = body.get("name") if isinstance(body, Mapping) else None
     try:
         payload = await asyncio.to_thread(
