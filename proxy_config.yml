@@ -741,8 +741,36 @@ backends:
     role: optional
     managed: false
     capabilities: [mesh.generate]
+    # Exclusive pool on GPU0 (CUDA device 0, which trellis-cpp.service pins with CUDA_VISIBLE_DEVICES=0). The
+    # observer below reports that device's free and total memory; the route refuses when claim plus reserve
+    # does not fit. Provisional values: replaced by the measured peak in the proof (docs/design/TRELLIS_MESH_ROUTE_DESIGN.md).
     resource_capacity:
-      enabled: false
+      enabled: true
+      mode: exclusive-route-pool
+      pool_id: gpu0
+      max_claim_bytes: 12884901888 # 12 GiB, provisional
+      reserve_bytes: 1073741824 # 1 GiB, provisional
+      retry_after_seconds: 30
+      timeout_seconds: 5
+      observer:
+        service: vram-observer
+        path: /vram
+        free_pointer: /memory_free_bytes
+        total_pointer: /memory_total_bytes
+  # Loopback observer for the trellis pool: `python -m gateway.vram_observer --port 8891` (nvidia-smi, GPU0).
+  # It is a read-only fact source with no route of its own, so the pool refuses whenever it does not answer.
+  vram-observer:
+    display_name: GPU0 VRAM observer
+    description: Reports free and total memory for GPU0 to the exclusive image-to-3D pool.
+    name: VRAM observer (nvidia-smi, GPU0)
+    host: 127.0.0.1
+    port: 8891
+    base_path: /
+    health_endpoint: /health
+    timeout: 5
+    role: optional
+    managed: false
+    capabilities: []
 
 images:
   # Durable media storage for Library and `response_format: "url"`.
