@@ -229,3 +229,11 @@ def test_removing_the_manager_after_the_decision_refuses_the_write(db):
     outcome, committed = _write(db, decision)
     assert (outcome.kept, outcome.reason) == (False, "app_disabled")
     assert committed == []
+
+
+def test_a_receipt_can_say_why_a_shared_apps_history_was_not_kept():
+    from gateway import receipts
+
+    for reason in ("app_off", "app_disabled"):
+        entry = {"kind": "request_history", "decision": "not_kept", "reason": reason}
+        assert receipts.validate_retention([entry]) == [entry]
