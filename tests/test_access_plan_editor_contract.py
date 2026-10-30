@@ -38,3 +38,16 @@ def test_new_plan_document_is_a_valid_local_only_plan():
     assert plan.paid_providers == frozenset()
     assert not plan.direct_engine_access.granted
     assert all(grant.all_items for grant in plan.can_use.values())
+
+
+def test_a_mesh_workflow_is_offered_under_3d_models_and_nothing_else():
+    registry = _registry()
+    registry["workflows"] = {"mesh.generate.trellis-2": {
+        "id": "mesh.generate.trellis-2", "enabled": True, "manifest": {"intent": "mesh.generate"},
+    }}
+    contract = access_plan_editor_contract(registry)
+    labels = {entry["id"]: entry["label"] for entry in contract["capabilities"]}
+    assert labels["mesh"] == "3D models"
+    assert _items(contract, "mesh") == {
+        "mesh.generate.trellis-2": {"kind": "workflow", "id": "mesh.generate.trellis-2", "available": True}}
+    assert _items(contract, "image") == {}
