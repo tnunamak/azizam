@@ -181,7 +181,8 @@ def _write(db, decision):
         committed.append(values)
 
     history, _ = retention.write_media_capture(
-        admin_path=db.path, person_id=decision.person_id, created_at=NOW, decision=decision, prompts=[],
+        admin_path=db.path, person_id=decision.person_id, created_at=decision.created_at or NOW,
+        decision=decision, prompts=[],
         commit=commit,
     )
     return history, committed
