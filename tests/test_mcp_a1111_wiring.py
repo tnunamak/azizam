@@ -6,6 +6,7 @@ from contextlib import nullcontext
 
 import sys
 import io
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -46,7 +47,7 @@ class ProxyWiringTests(unittest.TestCase):
         with authenticated():
             tools = self.client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()["result"]["tools"]
             self.assertEqual([t["name"] for t in tools],
-                             ["capabilities", "run", "job", "rename_app", "rename_key", "requests", "retention"])
+                             ["capabilities", "run", "job", "view_asset", "rename_app", "rename_key", "requests", "retention"])
             rows = _tool(self.client, "capabilities", {})["structuredContent"]["workflows"]
             targets = {r["target"] for r in rows}
             self.assertTrue({"krea2-turbo", "speech"} <= targets, targets)
@@ -120,13 +121,43 @@ class ProxyWiringTests(unittest.TestCase):
         self.assertIn("sig=", stored["url"])
         self.assertEqual(stored["media_type"], "image/png")
         self.assertEqual(proxy._mcp_read_asset(request, owner, stored["asset_id"]), png)
+        self.assertEqual(proxy._mcp_read_asset(request, owner, stored["asset_id"], max_bytes=len(png)), png)
+        self.assertIsNone(proxy._mcp_read_asset(request, owner, stored["asset_id"], max_bytes=len(png) - 1))
         self.assertIsNone(proxy._mcp_read_asset(request, other, stored["asset_id"]))
+        self.assertIsNone(proxy._mcp_read_asset(request, other, stored["asset_id"], max_bytes=len(png)))
         self.assertIsNone(proxy._mcp_read_asset(request, owner, "img_" + "0" * 64))
 
     def test_the_adapters_are_listed_in_llms_txt(self) -> None:
         text = self.client.get("/llms.txt").text
         self.assertIn("/mcp", text)
         self.assertIn("/sdapi/v1/txt2img", text)
+
+    def test_preview_applies_orientation_before_cropping_and_strips_metadata(self) -> None:
+        from starlette.requests import Request
+        from gateway import mcp_server
+
+        request = Request({"type": "http", "method": "POST", "path": "/mcp", "query_string": b"", "scheme": "https",
+                           "headers": [(b"host", b"gw.example")], "client": ("127.0.0.1", 1)})
+        owner = access_context(name="owner-a", key_hash="sha256:owner-a", app_id="app_a")
+        source = Image.new("RGB", (200, 100), "blue")
+        source.paste("red", (0, 0, 100, 100))
+        exif = Image.Exif()
+        exif[274] = 6
+        exif[270] = "private-metadata-sentinel"
+        data = io.BytesIO()
+        source.save(data, format="JPEG", exif=exif)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "oriented.jpg"
+            path.write_bytes(data.getvalue())
+            with patch.object(proxy, "asset_cache_path", return_value=path), \
+                 patch.object(proxy, "_asset_access_allowed", return_value=True):
+                raw = proxy._mcp_read_asset(request, owner, "img_" + "a" * 64, max_bytes=1024 * 1024)
+        preview = mcp_server._reduced_image_preview(raw, "image/jpeg", (0, 0, 100, 100))
+        self.assertEqual((preview.source_width, preview.source_height), (100, 200))
+        with Image.open(io.BytesIO(preview.content)) as image:
+            self.assertGreater(image.getpixel((50, 50))[0], 200)
+            self.assertNotIn(b"private-metadata-sentinel", preview.content)
+            self.assertFalse(image.getexif())
 
 
 if __name__ == "__main__":
