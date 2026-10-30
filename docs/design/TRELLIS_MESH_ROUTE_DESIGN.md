@@ -318,13 +318,32 @@ release claim follows from this branch.
    does not set a default. This needs a decision: set a manifest default, or fix or
    replace `birefnet.gguf`.
 
-### Not yet implemented (design items still open)
+### Landed 2026-10-30 (feat/trellis-mesh-live)
 
-- Admin route override GET/PUT (`/admin/api/route-overrides/mesh-generate`), with
-  ETag/CAS and audit.
-- Discovery join: `Capability.protocol` and `output_media_types`, the live probe,
-  and awaitable providers.
-- UI whole-envelope safety label.
+- VRAM observer: `gateway/vram_observer.py` serves `GET /vram` on loopback
+  (`python -m gateway.vram_observer --port 8891`). It reads `nvidia-smi` for GPU0
+  with a timeout and refuses (503, no numbers) any answer it cannot read exactly.
+  It keeps no history and makes no decision. `proxy_config.yml` declares it as
+  backend `vram-observer` and enables `backends.trellis` capacity against it.
+- Route policy: `POST /v1/meshes/generate` evaluates the caller's access plans with
+  the evaluator the other Try workflows use, after authentication and before the
+  body is read. A denial is 403 in the OpenAI error shape.
+- Session auth: the Try page calls workflow routes with the App key as a bearer,
+  not with the browser session (`web/src/app/try/page.tsx`, `publicRequest`). The
+  mesh route authenticates the same way, so no new auth path was added.
+- Discovery: `Capability.protocol` and `output_media_types` are set on the mesh row
+  (`openai.mesh`, `model/gltf-binary`). Its state comes from one live probe of the
+  service health and the observer facts, through `discovery_capability`. The probe
+  acquires no capacity. The row is added after the shared projection, with the
+  caller's policy view.
+
+### Out of scope for this release (lead decision, 2026-10-30)
+
+- Admin route override GET/PUT (`/admin/api/route-overrides/mesh-generate`) with
+  ETag/CAS and audit: **lead decision: follow-up after Try experiment.**
+- UI whole-envelope safety label: **lead decision: follow-up after Try experiment.**
+
+### Cancellation coverage
 - Cancellation tests for the observer, connect, write and read phases are in
   `tests/test_mesh_route.py` (`test_disconnect_in_each_phase_releases_the_lease_and_leaves_no_task`).
   Each case checks that the lease is released, no task survives, and a follow-up
