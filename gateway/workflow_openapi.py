@@ -81,6 +81,7 @@ _JSON_TYPES = {
     "integer": "integer",
     "number": "number",
     "boolean": "boolean",
+    "object": "object",
 }
 
 

@@ -261,7 +261,10 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertEqual(mesh["sync"]["fields"]["image"], {"in": "file", "field": "image"})
         self.assertEqual(mesh["sync"]["fields"]["seed"], {"in": "form", "field": "seed"})
         self.assertEqual(mesh["sync"]["output"], "model/gltf-binary (GLB bytes)")
-        form = self.spec["components"]["schemas"][schema_name("mesh.generate.trellis-2", "WorkflowForm_")]
+        from gateway.workflow_openapi import workflow_inputs_schema
+
+        (mesh_record,) = [r for r in self.registry.records() if r.id == "mesh.generate.trellis-2"]
+        form = workflow_inputs_schema(mesh_record, form=True)
         self.assertEqual(form["properties"]["image"]["format"], "binary")
         self.assertEqual(form["required"], ["image"])
 
