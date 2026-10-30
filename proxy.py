@@ -14937,13 +14937,23 @@ def _mcp_store_asset(request: Request, auth: Any, content: bytes, kind: str, suf
     }
 
 
-def _mcp_read_asset(request: Request, auth: Any, asset_id: str) -> bytes | None:
+def _mcp_read_asset(request: Request, auth: Any, asset_id: str, *, max_bytes: int | None = None) -> bytes | None:
     path = asset_cache_path(asset_id)
     if path is None or not path.exists():
         return None
     if not _asset_access_allowed(asset_id, auth if isinstance(auth, AuthContext) else None):
         return None
-    return media_delivery.deliver_bytes(path.read_bytes(), path.suffix, "none")
+    if max_bytes is None:
+        raw = path.read_bytes()
+    else:
+        with path.open("rb") as source:
+            raw = source.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            return None
+        # This path is only used by the preview encoder, which applies image
+        # orientation before re-encoding without metadata.
+        return raw
+    return media_delivery.deliver_bytes(raw, path.suffix, "none")
 
 
 def _mcp_allowed_origins(_request: Request) -> list[str]:
@@ -15066,6 +15076,8 @@ def _mount_mcp(app: FastAPI) -> None:
             visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
             store_asset=_mcp_store_asset,
             read_asset=_mcp_read_asset,
+            read_preview_asset=lambda request, auth, asset_id: _mcp_read_asset(
+                request, auth, asset_id, max_bytes=mcp_server.MCP_PREVIEW_SOURCE_MAX_BYTES),
             public_base_url=lambda request: _public_base_url(request),
             server_version=str((config.get("proxy") or {}).get("version") or "1"),
             allowed_origins=_mcp_allowed_origins,
