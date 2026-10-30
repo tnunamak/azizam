@@ -33,6 +33,12 @@ export interface AccountApp {
   credentials: Credential[];
   /** Trusted addresses on this app that the cut-over would remove, each with a remedy. Sent to the owner only. */
   addresses_to_check?: number;
+  /** Service apps only: whether its requests are kept, for how long, and who can read them. */
+  request_history?: {
+    keep: boolean;
+    retention: string;
+    manager_name: string;
+  };
 }
 /** A replacement: the new key (its secret, shown once, in `credential.api_key`) and the id of the key it replaced. */
 export interface ReplacedKey {
@@ -235,6 +241,15 @@ export const accountApi = {
     accountRequest<{ app: AccountApp }>(
       `/me/api/apps/${encodeURIComponent(appId)}`,
       { method: "PATCH", body: { name } },
+    ).then((r) => r.app),
+  /** Set a shared app's request history. The answer is the saved app: show what it now says. */
+  setRequestHistory: (
+    appId: string,
+    choice: { keep: boolean; retention: string },
+  ) =>
+    accountRequest<{ app: AccountApp }>(
+      `/me/api/apps/${encodeURIComponent(appId)}`,
+      { method: "PATCH", body: { request_history: choice } },
     ).then((r) => r.app),
   /** Rename a key. The answer is the saved record: show its label, not the one sent. */
   renameKey: (credentialId: string, displayName: string) =>
