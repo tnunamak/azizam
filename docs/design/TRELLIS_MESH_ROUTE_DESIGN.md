@@ -1,14 +1,15 @@
 # Trellis mesh route design
 
-Status: **Planned — not implemented.**  This document is the canonical authority for
+Status: **Partially implemented on `feat/trellis-mesh-route`; not released.**  This document is the canonical authority for
 v1.  It supersedes earlier Trellis designs and rejects the historical prototype as a
-shippable implementation. This checkout is clean at `67a51bf`; it contains no
-Trellis route, helper, module, or coupled tests. The rejected prototype is preserved
-for fixture provenance only in local archive branch
+shippable implementation. The branch adds the route, manifest, validator, multipart
+executor, exclusive pool, capacity gate, frozen-snapshot updates, and tests. The
+remaining work is listed in "Implementation record" below. The rejected prototype is
+preserved for fixture provenance only in local archive branch
 `archive/trellis-prototype-0811` at commit
 `c6afef0ac1749ddcf2a4d5d491f70395e569578d`. It is not product lineage and must never
-be merged. The feature is GO only after this design is implemented and
-the proof gates below pass; no route exists today.
+be merged. The route answers 503 until an operator enables capacity for the trellis
+backend and the frontend record is seeded.
 
 ## Decision and boundary
 
@@ -249,3 +250,130 @@ code. Stop binary: if any acceptance item 1–50 is false, if the exclusive pool
 be truthfully declared, if any required deterministic test is absent/fails, or if an
 engine-specific code branch/control literal appears, v1 is unavailable and no route is
 claimed. Do not ship a partial safety claim.
+
+## Implementation record (feat/trellis-mesh-route, 2026-10-28)
+
+This record names what landed, where it departs from the design, and what the
+design still requires. The stop binary above applies: v1 is not complete, so no
+release claim follows from this branch.
+
+### Landed
+
+- `POST /v1/meshes/generate`, a source-defined route owned by the `mesh` protocol
+  frontend (`gateway/mesh_api.py`, mounted in `proxy.py` through
+  `FRONTEND_TRANSLATORS.register_owned`). Order: authenticate, read the frontend
+  record fail-closed, resolve the service and capacity fail-closed, open the
+  receipt, read and bind the multipart body, take the exclusive lease, post
+  downstream, return the GLB. Every refusal is a bounded public error.
+- Manifest `manifests/workflows/mesh.generate.trellis-2.yml`, checked by the closed
+  validator in `gateway/mesh_manifest.py`. It binds one service (`trellis`) over
+  `http-multipart` at `/generate`, maps `image`, `seed`, `resolution` and
+  `bg_removal`, and reserves `extensions` as an unmapped object input.
+- Closed multipart executor (`gateway/http_multipart.py`): one POST, no retries,
+  typed failures (connect, timeout, upstream status, malformed), bounded bodies.
+- Exclusive pool (`gateway/exclusive_pool.py`): closed capacity schema, RFC 6901
+  observer pointers, the VRAM equation, and a process-local per-pool lock held from
+  observation through downstream cleanup. Capacity is disabled by default, so the
+  route answers 503 `service_unavailable` until an operator enables it.
+- `proxy_config.yml` `backends.trellis` (127.0.0.1:8890, base path `/`, capacity
+  disabled) and the builtin `mesh` record in `registry/protocol_frontends.yml`.
+- End-to-end proof (2026-10-28, scratch gateway, scratch VRAM observer): POST
+  `/v1/meshes/generate` returned HTTP 200, `model/gltf-binary`, 11,638,664 bytes,
+  glTF magic. Latency 56,579.856 ms from the request receipt. The GLB parses to one
+  mesh with 235,460 vertices and 293,730 faces. The input image was not recorded.
+  The evidence summary is `proof.txt` in the scratch directory, not in the repo.
+- Tests: `tests/test_mesh_manifest.py`, `tests/test_http_multipart.py`,
+  `tests/test_exclusive_pool.py`, `tests/test_mesh_route.py` (fail-closed cases for
+  auth, frontend record, service, observer, capacity, downstream errors, lease
+  release and client disconnect).
+- Frozen snapshots moved only for this route: route graph (`ADDED_PATHS`), the
+  route-graph policy row, the OpenAPI digests, `headless_openapi.json`,
+  `headless_non_control_routes.json`, and the engine-contract graph digest. The
+  route-policy inventory records the fail-closed 503 as an explicit contract,
+  `unavailable (contract)`. It is not a known-gap entry.
+
+### Deviations and why
+
+1. **Correction preconditions do not match.** The design's seed corrections name a
+   frontend hash (`e933a0546958…`), a dirty seed provenance (`b191ec76…`), and an
+   old Trellis service to clean up. Neither the shipped seed (`openai` hash
+   `97ddb5d8…`) nor the live admin database (`openai` hash `791af485…`, no Trellis
+   service) matches them. The replacement bodies are not specified. No correction
+   entries were invented, so the `seed_upgrades` exact-record-replace primitive is
+   not implemented. **Lead decision (2026-10-28): N/A for v1.** No record exists in
+   the shipped seed or the live database that these corrections would replace, so
+   the primitive has no caller. It is out of scope for v1.
+2. **Observer.** The design needs an existing service with a real VRAM observer.
+   The comfyui backend cannot serve as one at its default base path. The E2E proof
+   therefore used a scratch observer that reports GPU0 from `nvidia-smi`. Production
+   config stays disabled until an operator declares an observer.
+3. **Manifest location and validator.** The workflow manifest has its own closed
+   validator, because its shape differs from the ComfyUI `validate_manifest` shape.
+   It appears in the workflow catalog (`x-azizam-workflows`), and the catalog
+   snapshots moved accordingly.
+4. **Background removal default.** When a request omits `bg_removal`, the trellis
+   server runs `auto`. An RGB input without alpha selects BiRefNet. In this checkout
+   that model fails to load (`short read for tensor …relative_position_bias_table`)
+   with HTTP 500, and the route returns a bounded 502 `upstream_error`. The route
+   does not set a default. This needs a decision: set a manifest default, or fix or
+   replace `birefnet.gguf`.
+
+### Landed 2026-10-30 (feat/trellis-mesh-live)
+
+- VRAM observer: `gateway/vram_observer.py` serves `GET /vram` on loopback
+  (`python -m gateway.vram_observer --port 8891`). It reads `nvidia-smi` for GPU0
+  with a timeout and refuses (503, no numbers) any answer it cannot read exactly.
+  It keeps no history and makes no decision. `proxy_config.yml` declares it as
+  backend `vram-observer` and enables `backends.trellis` capacity against it.
+- Route policy: `POST /v1/meshes/generate` evaluates the caller's access plans with
+  the evaluator the other Try workflows use, after authentication and before the
+  body is read. A denial is 403 in the OpenAI error shape.
+- Session auth: the Try page calls workflow routes with the App key as a bearer,
+  not with the browser session (`web/src/app/try/page.tsx`, `publicRequest`). The
+  mesh route authenticates the same way, so no new auth path was added.
+- Discovery: `Capability.protocol` and `output_media_types` are set on the mesh row
+  (`openai.mesh`, `model/gltf-binary`). Its state comes from one live probe of the
+  service health and the observer facts, through `discovery_capability`. The probe
+  acquires no capacity. The row is added after the shared projection, with the
+  caller's policy view.
+- Capability mapping: `mesh.generate` maps to the `image` capability
+  (`gateway/capability_ids.py`). Before this, no plan could reach the route, because
+  the intent had no capability and the evaluator refused it. A first-class 3D
+  capability is a follow-up.
+- Observer service: `docs/ops/vram-observer.service` is the systemd user unit for
+  the observer (port 8891, GPU 0). It is not installed or started in this release.
+  The gateway's trellis route answers 503 while the observer is down.
+
+#### Measured VRAM (2026-10-30)
+
+Measured by the lead on GPU0 with `nvidia-smi` sampled every 0.25 s on the
+trellis-server pid, input `teapot.jpg`. Baseline is the resident trellis-server use
+before the request.
+
+| Resolution | Baseline (MiB) | Peak (MiB) | Increase (MiB) | HTTP | Bytes | Time |
+|---|---|---|---|---|---|---|
+| 1024 | 1972 | 8906 | 6934 | 200 | 11,516,828 | 429 s (box loaded by test suites) |
+| 1536 | 1972 | 6912 | 4940 | 200 | 12,441,456 | 148 s |
+| 512 | not sampled | not sampled | not sampled | 200 | 4,316,092 | not recorded |
+
+- The GLB uses `EXT_texture_webp` (required), two WebP images, one mesh, one
+  material, and 76k vertices at 512. It uses no Draco, meshopt, or KTX2.
+- Claim: the largest measured increase, 6934 MiB, times 1.1 is 7627.4 MiB. Rounded
+  up to a whole 256 MiB, that is 7680 MiB = 8,053,063,680 bytes
+  (`max_claim_bytes`).
+- Reserve: 1 GiB (`reserve_bytes`), unchanged from the first estimate.
+- Not measured: the peak at 512 (the UI lane's default request). Its increase is
+  expected to be below the 1024 one, but the claim has no direct evidence for it.
+
+### Out of scope for this release (lead decision, 2026-10-30)
+
+- Admin route override GET/PUT (`/admin/api/route-overrides/mesh-generate`) with
+  ETag/CAS and audit: **lead decision: follow-up after Try experiment.**
+- UI whole-envelope safety label: **lead decision: follow-up after Try experiment.**
+
+### Cancellation coverage
+- Cancellation tests for the observer, connect, write and read phases are in
+  `tests/test_mesh_route.py` (`test_disconnect_in_each_phase_releases_the_lease_and_leaves_no_task`).
+  Each case checks that the lease is released, no task survives, and a follow-up
+  request still gets the lease. Lock-wait cancellation is covered in
+  `tests/test_exclusive_pool.py`.

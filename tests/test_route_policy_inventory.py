@@ -44,7 +44,7 @@ HTTP_REQUEST_TIMEOUT = 60  # HTTP: generous, so host load never turns a slow ans
 # A row passes only with one of these outcomes. Refusals prove a decision;
 # non-executable contracts are route-specific answers that run nothing.
 REFUSALS = {"denied", "refused", "closed", "refused (wrapped)", "refused (queued)"}
-NON_EXECUTABLE = {"scoped-empty", "metadata (contract)", "unsupported (contract)"}
+NON_EXECUTABLE = {"scoped-empty", "metadata (contract)", "unsupported (contract)", "unavailable (contract)"}
 PROVED = REFUSALS | NON_EXECUTABLE
 OUT_OF_FIXTURE = "not run (out of fixture)"
 
@@ -815,6 +815,28 @@ def _unsupported_contract(method, template, response, row):
         row["detail"] = ""
 
 
+def _unavailable_contract(method, template, response, row, gateway):
+    """A capacity-gated route with no seeded registry refuses before any backend call.
+
+    The mesh route checks auth first, then fails closed with 503 when its frontend
+    record, service, or capacity is absent. This harness seeds none of them, so the
+    503 proves nothing runs. Only this exact answer qualifies; a backend call or a
+    dispatched receipt still makes the row a violation.
+    """
+    if (method, template) != ("POST", "/v1/meshes/generate") or response.status_code != 503:
+        return
+    if gateway.calls or row.get("dispatched") != "no":
+        return
+    try:
+        error = response.json().get("error") or {}
+    except ValueError:
+        return
+    if error.get("code") == "service_unavailable":
+        row["outcome"] = "unavailable (contract)"
+        row["rule"] = "fail-closed 503 before any backend call; nothing runs"
+        row["detail"] = ""
+
+
 def _queued_job_contract(method, template, response, row, gateway):
     """Home's make queue answers 202 before policy; only the worker's refusal proves it."""
     if (method, template) != ("POST", "/me/api/make/jobs") or response.status_code != 202:
@@ -1172,6 +1194,7 @@ def _http_inventory(gateway, title=None, report=True):
                 _record_receipts(gateway, before, row)
                 _connection_test_contract(method, template, response, row, gateway)
                 _queued_job_contract(method, template, response, row, gateway)
+                _unavailable_contract(method, template, response, row, gateway)
             except Exception as exc:
                 row["outcome"] = "VIOLATION"
                 row["rule"] = "unexpected exception"

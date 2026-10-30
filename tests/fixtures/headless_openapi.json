@@ -2773,6 +2773,50 @@
         "type": "object",
         "x-azizam-workflow-id": "image.generate.sdxl-seamless-tile"
       },
+      "WorkflowInputs_mesh_generate_trellis_2": {
+        "additionalProperties": false,
+        "description": "Send one picture; receive one textured 3D model (model/gltf-binary).",
+        "properties": {
+          "bg_removal": {
+            "description": "Leave empty to let the service choose.",
+            "enum": [
+              "threshold",
+              "birefnet"
+            ],
+            "type": "string"
+          },
+          "extensions": {
+            "description": "Reserved. Supplying it is refused until a service option is mapped to it.",
+            "type": "string"
+          },
+          "image": {
+            "description": "The picture to turn into a 3D model. PNG, JPEG or WebP.",
+            "type": "string"
+          },
+          "resolution": {
+            "default": 1024,
+            "description": "Geometry resolution. Higher is slower.",
+            "enum": [
+              512,
+              1024,
+              1536
+            ],
+            "type": "integer"
+          },
+          "seed": {
+            "description": "Reuse this number and the same picture for a similar model.",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "image"
+        ],
+        "title": "TRELLIS.2 image to 3D",
+        "type": "object",
+        "x-azizam-workflow-id": "mesh.generate.trellis-2"
+      },
       "WorkflowInputs_video_edit_rife_interpolate": {
         "additionalProperties": false,
         "description": "Make a video play more smoothly by adding frames. The length and sound stay the same.",
@@ -30354,6 +30398,33 @@
         "summary": "Images Content"
       }
     },
+    "/v1/meshes/generate": {
+      "post": {
+        "operationId": "generate_mesh_v1_meshes_generate_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Generate Mesh"
+      }
+    },
     "/v1/messages": {
       "post": {
         "description": "Anthropic Messages-compatible frontend over chat completions.",
@@ -36986,6 +37057,38 @@
         }
       ],
       "short_id": "sdxl-seamless-tile",
+      "typical_seconds": null
+    },
+    {
+      "aliases": [],
+      "description": "Send one picture; receive one textured 3D model (model/gltf-binary).",
+      "display_name": "TRELLIS.2 image to 3D",
+      "execution": {
+        "async": null,
+        "recommended": "sync",
+        "sync": null
+      },
+      "id": "mesh.generate.trellis-2",
+      "inputs_schema": {
+        "$ref": "#/components/schemas/WorkflowInputs_mesh_generate_trellis_2"
+      },
+      "intent": "mesh.generate",
+      "outputs": [
+        {
+          "media_type": "model/gltf-binary",
+          "name": "mesh"
+        }
+      ],
+      "route_inputs": [
+        {
+          "description": "WIDTHxHEIGHT, e.g. 960x512.",
+          "field": "size",
+          "in": "body",
+          "name": "size",
+          "type": "string"
+        }
+      ],
+      "short_id": "trellis-2",
       "typical_seconds": null
     },
     {
