@@ -9,18 +9,19 @@ from __future__ import annotations
 import asyncio
 import os
 import stat
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from gateway.engine_contract_view import connection_config, observations_config, residency_config
+from gateway.engine_contract_view import connection_config, observations_config, residency_config, offerings_config
 from gateway.engine_credentials import credential_headers
 from gateway.engine_observations import ObservationReader
 from gateway.engine_residency import ResidencyController
 from gateway.engine_switch import SwitchController
-from gateway.swap_drain import SwapDrain
+from gateway.swap_drain import SwapDrain, SwapDrainSettings
 
 
 class EngineControlRuntime:
@@ -184,18 +185,47 @@ class EngineControlRuntime:
                                        on_acquired=on_acquired, on_release=on_release,
                                        prepare=prepare)
 
+    def _residency_service(self):
+        return {**self.service, "residency": residency_config(self.service)}
+
     async def load(self) -> bool:
         controller = ResidencyController(invoke=self.invoke, observe=self.observe)
-        return await controller.load({**self.service, "residency": residency_config(self.service)})
+        return await controller.load(self._residency_service())
+
+    async def _residency_change(self, name: str) -> bool:
+        from gateway.resource_management import managed_operation, management_policy
+
+        operation_spec = residency_config(self.service).get(name)
+        if not isinstance(operation_spec, Mapping) or not operation_spec.get("op"):
+            return False
+        sid = str(self.service["id"])
+        scopes = {sid}
+        for offering in offerings_config(self.service):
+            spec = (offering.get("selection") or {}).get("switch") or {}
+            scope = spec.get("exclusive_scope", "engine")
+            scopes.add(sid if scope == "engine" else str(scope))
+        async with AsyncExitStack() as stack:
+            for scope in sorted(scopes):
+                await stack.enter_async_context(self._lock_for(scope))
+            for scope in sorted(scopes):
+                await self._drain.clear_for_swap(scope, SwapDrainSettings(enabled=True, timeout_s=30))
+            controller = ResidencyController(invoke=self.invoke, observe=self.observe)
+            async def operation():
+                return await getattr(controller, name)(self._residency_service())
+            if name == "wake" and management_policy(self.service) is not None:
+                return await managed_operation(self.service, operation, observe=self.observe)
+            from gateway.lifecycle_drivers import _finish_even_if_cancelled
+            return await _finish_even_if_cancelled(operation())
 
     async def unload(self) -> bool:
-        controller = ResidencyController(invoke=self.invoke, observe=self.observe)
-        return await controller.unload({**self.service, "residency": residency_config(self.service)})
+        return await self._residency_change("unload")
 
     async def sleep(self) -> bool:
-        controller = ResidencyController(invoke=self.invoke, observe=self.observe)
-        return await controller.sleep({**self.service, "residency": residency_config(self.service)})
+        return await self._residency_change("sleep")
 
     async def wake(self) -> bool:
-        controller = ResidencyController(invoke=self.invoke, observe=self.observe)
-        return await controller.wake({**self.service, "residency": residency_config(self.service)})
+        return await self._residency_change("wake")
+
+    async def reconcile_resources(self) -> bool:
+        from gateway.resource_management import RESOURCE_COORDINATOR
+        return await RESOURCE_COORDINATOR.reconcile(self.service, observe=self.observe)

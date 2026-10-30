@@ -42,6 +42,7 @@ import yaml
 
 from gateway import lifecycle_drivers
 from gateway import http_tls
+from gateway.resource_awareness import ResourceObserver, age_resource_view
 from gateway.http_tls import tls_context
 from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload, connect_failure_kind
 from gateway.model_presentation import declared_health_success, service_health_endpoint, starts_on_demand
@@ -64,6 +65,7 @@ _SNAPSHOT_BUILD: Callable[[], Awaitable[dict]] | None = None  # registered by op
 _SNAPSHOT_WANTED_UNTIL = 0.0  # monotonic: the refresher runs while now is before this
 _SNAPSHOT_CLOSED = False  # set by stop_snapshot at shutdown, so no read starts a refresher after it
 _SECTION_AT: dict[str, float] = {}  # when each section last answered, monotonic time
+_RESOURCE_OBSERVER = ResourceObserver(fresh_s=SNAPSHOT_FRESH_S)
 # The 24-hour backend history has its own light sampler, which runs as long as the gateway does. It probes the HTTP
 # health URLs only, so it starts no process; the snapshot's status grid keeps the lifecycle checks.
 BACKEND_SAMPLE_INTERVAL_S = 60.0
@@ -1021,19 +1023,23 @@ async def _gpu_workloads(
 
 # --- per-service VRAM attribution ----------------------------------------
 
-def _get_compute_apps() -> list[dict]:
+def _get_compute_apps(*, diagnostics: dict | None = None) -> list[dict]:
     """nvidia-smi compute apps: (pid, gpu_uuid, used_memory_mb)."""
     rc, out, _ = _run([
         "nvidia-smi",
         "--query-compute-apps=pid,gpu_uuid,used_memory,process_name",
         "--format=csv,noheader,nounits",
     ])
+    if diagnostics is not None:
+        diagnostics["complete"] = rc == 0
     if rc != 0 or not out.strip():
         return []
     rows: list[dict] = []
     for line in out.strip().splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 3:
+            if diagnostics is not None:
+                diagnostics["complete"] = False
             continue
         try:
             rows.append({
@@ -1043,6 +1049,8 @@ def _get_compute_apps() -> list[dict]:
                 "process_name": parts[3] if len(parts) > 3 else "",
             })
         except ValueError:
+            if diagnostics is not None:
+                diagnostics["complete"] = False
             continue
     return rows
 
@@ -1109,7 +1117,7 @@ def _listening_pids() -> dict[int, set[int]]:
     return ports
 
 
-def _service_pids(config: Optional[Mapping[str, Any]]) -> dict[str, set[int]]:
+def _service_pids(config: Optional[Mapping[str, Any]], *, candidates: dict | None = None) -> dict[str, set[int]]:
     """Map backend key -> PIDs that belong to it, derived from `config`.
 
     1. `lifecycle.driver_config.unit`: every PID in that unit's cgroup.
@@ -1132,7 +1140,10 @@ def _service_pids(config: Optional[Mapping[str, Any]]) -> dict[str, set[int]]:
     out: dict[str, set[int]] = {}
     claimed: set[int] = set()
     for svc, cgroup in _unit_cgroups(units).items():
-        pids = _cgroup_pids(cgroup) - claimed
+        pids = _cgroup_pids(cgroup)
+        if candidates is not None:
+            candidates[svc] = set(pids)
+        pids -= claimed
         if pids:
             out[svc] = pids
             claimed |= pids
@@ -1143,6 +1154,8 @@ def _service_pids(config: Optional[Mapping[str, Any]]) -> dict[str, set[int]]:
             for pid in listening.get(port, ()):
                 cgroup = _proc_service_cgroup(pid)
                 pids |= _cgroup_pids(cgroup) if cgroup else {pid}
+            if candidates is not None:
+                candidates[svc] = set(pids)
             pids -= claimed
             if pids:
                 out[svc] = pids
@@ -1341,9 +1354,11 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
     """
     if not gpus:
         return {"per_gpu": [], "errors": ["gpus unavailable"]}
-    apps = _get_compute_apps()
+    compute_diagnostics: dict = {}
+    apps = _get_compute_apps(diagnostics=compute_diagnostics)
     pid_to_service: dict[int, str] = {}
-    svc_pids = _service_pids(config)
+    candidates: dict[str, set[int]] = {}
+    svc_pids = _service_pids(config, candidates=candidates)
     for svc, pids in svc_pids.items():
         for pid in pids:
             pid_to_service[pid] = svc
@@ -1512,6 +1527,8 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
     return {
         "per_gpu": out_gpus,
         "raw_compute_apps": apps,
+        "compute_apps_complete": compute_diagnostics.get("complete", False),
+        "service_pid_candidates": {k: sorted(v) for k, v in candidates.items()},
         "service_pids": {k: sorted(v) for k, v in svc_pids.items()},
         "multi_gpu_pids": {
             str(pid): {str(idx): mb for idx, mb in gmap.items()}
@@ -4127,6 +4144,13 @@ async def build_status_payload(config: dict) -> dict:
     sh_reasons.sort(key=lambda r: -sev_rank.get(r[0], 0))
     system_health_reasons: list[str] = [m for _s, m in sh_reasons]
 
+    resource_awareness = _RESOURCE_OBSERVER.observe(
+        gpus_raw, vram_attr, config.get("backends") or {},
+        now=_now(),
+        sampled_at=min(_SECTION_AT.get("gpus", _now()), _SECTION_AT.get("vram_attribution", _now())),
+        trustworthy=not any(name in errors for name in ("gpus", "vram_attribution")),
+    )
+
     return {
         "generated_at": int(time.time()),
         "cache_age_s": 0,
@@ -4147,6 +4171,7 @@ async def build_status_payload(config: dict) -> dict:
         "backends": backends or [],
         "gpus": gpus,
         "vram_attribution": vram_attr,
+        "resource_awareness": resource_awareness,
         "ram_attribution": ram_attr,
         "repo_state": repo_state,
         "comfy_custom_nodes": comfy_custom_nodes,
@@ -4423,6 +4448,8 @@ async def get_cached_status(config: dict) -> dict:
     age = round(now - _SNAPSHOT["built"], 2)
     data = dict(_SNAPSHOT["payload"])
     data["cache_age_s"] = age
+    if "resource_awareness" in data:
+        data["resource_awareness"] = age_resource_view(data["resource_awareness"], max(0, age))
     data["snapshot"] = {
         "built_at": _SNAPSHOT["built_at"],
         "age_s": age,
