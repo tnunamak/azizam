@@ -35,7 +35,8 @@ def test_a_healthy_pool_lists_the_mesh_row_with_its_media_type_and_route_tiers()
     assert capability.intent == "mesh.generate"
     assert capability.backend == "trellis"
     assert capability.workflow == "mesh.generate.trellis-2"
-    assert capability.capability == "mesh.generate"
+    assert capability.capability == "mesh"
+    assert capability.title == "3D models"
     assert capability.protocol == "openai.mesh"
     assert capability.output_media_types == ("model/gltf-binary",)
     assert capability.input_modalities == ("image",)
@@ -88,7 +89,7 @@ def test_the_probe_reaches_the_service_health_and_the_observer_facts() -> None:
     (lambda h: _set_service(h, "trellis", lambda r: r.update(capabilities=["images"])), "capability"),
     (lambda h: _set_service(h, "trellis", lambda r: r["config"].update(resource_capacity={"enabled": False})), "exclusive"),
     (lambda h: _set_service(h, "trellis", lambda r: r.pop("config")), "resource_capacity"),
-    (lambda h: _set_service(h, "trellis", lambda r: r.update(enabled=True, capabilities=["mesh.generate"],
+    (lambda h: _set_service(h, "trellis", lambda r: r.update(enabled=True, capabilities=["mesh"],
                                                              config={**r.get("config", {}), "base_url": None,
                                                                      "host": None})), "base"),
     (lambda h: setattr(h, "frontends", [f for f in h.frontends if f.get("id") != "mesh"]), "frontend"),

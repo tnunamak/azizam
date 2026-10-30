@@ -10,6 +10,7 @@ CAPABILITY_LABELS = {
     "chat": "Chat", "image": "Images", "video": "Video", "speech": "Voice",
     "transcribe": "Transcription", "music": "Music", "sfx": "Sound effects",
     "audio": "Audio", "decide": "Decisions", "embed": "Document search", "rerank": "Reranking",
+    "mesh": "3D models",
 }
 # The kinds a registered model may declare: the one capability it serves, with
 # its builder label. The kinds they share with the catalog take the catalog's
@@ -33,7 +34,7 @@ PROTOCOL_CAPABILITIES = {
     "video.generate": "video", "embeddings": "embed", "text.embeddings": "embed",
     "rerank": "rerank", "text.rerank": "rerank", "decisions": "decide",
     "decision.systemone": "decide", "music": "music", "sfx": "sfx", "audio": "audio",
-    "audio.generate": "audio",
+    "audio.generate": "audio", "mesh": "mesh",
 }
 
 # The one mapping from a route intent to a capability (design §2.2, RT M4).
@@ -55,8 +56,7 @@ INTENT_CAPABILITIES = {
     "video.edit": "video",
     "video.extend": "video",
     "image.analyze": "image",
-    # Image-to-3D (TRELLIS.2) takes an image in; plans grant it by workflow under images.
-    "mesh.generate": "image",
+    "mesh.generate": "mesh",
     # Route spellings protocol frontends use for the same work.
     "embedding": "embed",
     "images.generate": "image",

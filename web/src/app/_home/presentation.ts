@@ -14,6 +14,7 @@ export function capabilitySummary(tiles: HomeCapability[]): string {
     chat: "chat",
     image: "images",
     video: "video",
+    mesh: "3D models",
     voice: "voice",
     speech: "speech",
     music: "music",

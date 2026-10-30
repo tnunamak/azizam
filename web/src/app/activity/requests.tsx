@@ -94,6 +94,7 @@ const requestNames: Record<string, string> = {
   chat: "Chat",
   image: "Image",
   video: "Video",
+  mesh: "3D model",
   speech: "Voice",
   transcribe: "Transcription",
   music: "Music",
@@ -183,7 +184,7 @@ function outcomeSummary(receipt: Receipt) {
   }
   if (label === "Failed") return "We couldn't tell where this stopped. Try again.";
   // Only media lands in Library; a chat or embedding result cannot be found there.
-  const media = ["image", "video", "speech", "sfx", "music", "audio"].includes(
+  const media = ["image", "video", "mesh", "speech", "sfx", "music", "audio"].includes(
     requestCapability(receipt.intent ?? (receipt as { capability?: string }).capability, receipt.path) ?? "",
   );
   const next = media ? "Check Library for a result before trying again." : "Try again.";

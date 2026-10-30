@@ -59,13 +59,14 @@ from gateway.mesh_manifest import (
 from gateway import operation_security
 from gateway.availability import AvailabilityProjection
 from gateway.capabilities import EXPOSURE_CLASSES, RESOURCE_TIERS, TRUST_TIERS, Capability, ResourceEstimate
+from gateway.capability_ids import CAPABILITY_LABELS
 from gateway.service_registry import service_base_url
 
 LOG = logging.getLogger("azizam.mesh")
 
 MESH_PATH = "/v1/meshes/generate"
 FRONTEND_ID = "mesh"
-CAPABILITY = "mesh.generate"
+CAPABILITY = "mesh"
 MESH_PROTOCOL = "openai.mesh"
 MAX_IMAGE_BYTES = 25 * MIB
 MAX_GLB_BYTES = 512 * MIB
@@ -357,7 +358,7 @@ async def discovery_capability(deps: MeshApiDeps) -> Capability:
         backend=manifest.service_id,
         workflow=manifest.id,
         capability=CAPABILITY,
-        title="Image to 3D",
+        title=CAPABILITY_LABELS[CAPABILITY],
         input_modalities=("image",),
         output_modalities=("mesh",),
         execution="sync",

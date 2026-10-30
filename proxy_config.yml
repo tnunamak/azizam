@@ -740,7 +740,7 @@ backends:
     timeout: 900
     role: optional
     managed: false
-    capabilities: [mesh.generate]
+    capabilities: [mesh]
     # Exclusive pool on GPU0 (CUDA device 0, which trellis-cpp.service pins with CUDA_VISIBLE_DEVICES=0). The
     # observer below reports that device's free and total memory; the route refuses when claim plus reserve
     # does not fit. Measured 2026-10-30 (nvidia-smi on the trellis-server pid, sampled every 0.25 s, teapot.jpg):

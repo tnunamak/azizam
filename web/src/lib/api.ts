@@ -182,7 +182,7 @@ export interface User {
 
 export type CapabilityId =
   | "chat" | "image" | "video" | "speech" | "transcribe" | "music"
-  | "sfx" | "audio" | "decide" | "embed" | "rerank";
+  | "sfx" | "audio" | "decide" | "embed" | "rerank" | "mesh";
 
 export type PlanItem = { model: string } | { workflow: string };
 

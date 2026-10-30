@@ -3,7 +3,7 @@
 
 export type AvailabilityStatus = "ready" | "idle" | "starting" | "busy" | "degraded" | "unknown" | "unavailable";
 
-export type CapabilityIconKey = "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
+export type CapabilityIconKey = "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
 
 export type SetupEvent = "settings_copied" | "external_client_confirmed" | "receipt_viewed";
 
@@ -52,7 +52,7 @@ export interface CatalogAvailability {
 
 export interface CapabilitySummary {
   capability_title?: string;
-  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
+  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
   recommended_model?: string;
   use_names?: Array<string>;
   summary?: string;
@@ -96,13 +96,13 @@ export interface CostHint {
 
 export interface HomeCapability {
   capability_title?: string;
-  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
+  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
   recommended_model?: string;
   use_names?: Array<string>;
   summary?: string;
   secondary_profile?: boolean;
   title?: string;
-  capability: string;
+  capability?: string;
   use_name?: string;
   intent: string;
   input_modalities: Array<string>;
@@ -240,7 +240,7 @@ export interface MemberStatusAvailability {
 
 export interface MemberStatusCapability {
   capability_title?: string;
-  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
+  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
   recommended_model?: string;
   use_names?: Array<string>;
   summary?: string;
@@ -277,7 +277,7 @@ export interface MemberStatus {
 }
 
 export interface CatalogCapability {
-  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
+  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
   capability: string;
   intent: string;
   label: string;
@@ -345,7 +345,7 @@ export interface CatalogRow {
   capability?: string;
   recommended?: boolean;
   capability_title?: string;
-  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
+  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank" | "mesh";
   recommended_model?: string;
   use_names?: Array<string>;
   title?: string;

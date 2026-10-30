@@ -865,7 +865,7 @@ records:
         canonical: /v1/meshes/generate
         intent: mesh.generate
         workflow: mesh.generate.trellis-2
-        capability: mesh.generate
+        capability: mesh
         runtime_policy: {protocol: openai.mesh, intent: mesh.generate, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
     public_discovery:
       canonical_base_path: /v1/meshes

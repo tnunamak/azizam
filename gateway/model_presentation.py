@@ -157,6 +157,7 @@ RECOMMENDED_ALIASES = {
 CAPABILITY_DESCRIPTIONS = {
     "image": "Generate or edit images from your prompts.",
     "video": "Video from a prompt or image.",
+    "mesh": "A 3D model from one picture.",
     "music": "Songs and instrumentals from a prompt.",
     "sfx": "Sound effects from a description.",
     "speech": "Turn text into spoken audio.",
