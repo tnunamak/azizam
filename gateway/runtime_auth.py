@@ -37,7 +37,12 @@ __all__ = [
     "hash_api_key",
     "make_policy_request",
     "normalize_key_hash",
+    "CLIENT_KEY_HEADERS",
 ]
+
+# Headers, besides ``Authorization: Bearer``, that carry an App key. The proxy reads them in this order,
+# and the OpenAPI reference declares each one (gateway/app_key_openapi.py).
+CLIENT_KEY_HEADERS = ("x-api-key", "api-key")
 
 
 def hash_api_key(api_key: str) -> str:
@@ -78,6 +83,9 @@ class RuntimeIdentity:
     connection_id: str | None = None
     trusted_address: str | None = None
     credential_id: str | None = None
+    # The accountable person may explicitly let this delegated credential read
+    # and delete their request history across Apps and browser sessions.
+    privacy_permission: bool = False
     # Keep derived media bound even if a credential is deleted while work is in flight.
     browser_session: AdminSession | None = field(default=None, repr=False)
     auth_kind: Literal["session", "app_key", "mcp_grant", "trusted_address", "service_key"] = "app_key"

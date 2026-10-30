@@ -8,6 +8,7 @@ long-video report); these tests pin the contract and the arithmetic.
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import time
@@ -297,7 +298,7 @@ class ExtensionRouteTests(RemixReplaceBase):
         self.assertEqual(self.comfy.submitted, [])
 
     def test_model_that_cannot_extend_is_rejected(self) -> None:
-        r = self._extend(model="bernini-r", seconds=4)
+        r = self._extend(model="video-scail-2-replace", seconds=4)
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["error"]["code"], "video_extend_not_supported")
 
@@ -508,10 +509,15 @@ class CreateLongVideoTests(RemixReplaceBase):
         self.assertEqual(self.comfy.submitted, [])
 
     def test_model_without_a_chain_rejects_shots_and_long_seconds(self) -> None:
-        r = self._create(model="video-wan-2.2-ti2v-5b-q8", shots=[{"prompt": "a", "seconds": 3}])
+        # Character replace has no chain workflow, and its inputs must come first.
+        inputs = {NS: {
+            "source_video": {"video_id": SOURCE_ID},
+            "reference_image": "data:image/png;base64," + base64.b64encode(PNG).decode(),
+        }}
+        r = self._create(model="video-scail-2-replace", shots=[{"prompt": "a", "seconds": 3}], extensions=inputs)
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["error"]["code"], "long_video_not_supported")
-        r = self._create(model="video-wan-2.2-ti2v-5b-q8", prompt="x", seconds=30)
+        r = self._create(model="video-scail-2-replace", prompt="x", seconds=30, extensions=inputs)
         self.assertEqual(r.status_code, 400)
 
     def test_state_ledger_prefixes_every_segment(self) -> None:

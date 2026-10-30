@@ -200,11 +200,17 @@
     "capabilities": [
      {
       "id": "chat",
-      "label": "Chat"
+      "label": "Chat",
+      "kinds": [
+       "chat"
+      ]
      },
      {
       "id": "embeddings",
-      "label": "Embeddings"
+      "label": "Document search",
+      "kinds": [
+       "embed"
+      ]
      }
     ]
    },
@@ -376,11 +382,17 @@
     "capabilities": [
      {
       "id": "chat",
-      "label": "Chat"
+      "label": "Chat",
+      "kinds": [
+       "chat"
+      ]
      },
      {
       "id": "embeddings",
-      "label": "Embeddings"
+      "label": "Document search",
+      "kinds": [
+       "embed"
+      ]
      }
     ]
    }
@@ -394,7 +406,25 @@
     "sent": "One short text, “hello”",
     "cost": "About one token"
    }
-  }
+  },
+  "model_kinds": [
+   {
+    "id": "chat",
+    "label": "Chat"
+   },
+   {
+    "id": "embed",
+    "label": "Document search"
+   },
+   {
+    "id": "speech",
+    "label": "Voice"
+   },
+   {
+    "id": "transcribe",
+    "label": "Transcription"
+   }
+  ]
  },
  "checks": {
   "oai_ok": {
@@ -421,9 +451,9 @@
     },
     {
      "id": "embeddings",
-     "label": "Embeddings",
+     "label": "Document search",
      "level": "likely",
-     "evidence": "Its model list marks “nomic-embed-text-v1.5” as a embedding model.",
+     "evidence": "Its model list marks “nomic-embed-text-v1.5” as a document search model.",
      "ticked": true,
      "real_test": "embeddings",
      "sent_to": "POST http://192.168.1.50:8080/v1/embeddings"
@@ -446,7 +476,7 @@
      "id": "nomic-embed-text-v1.5",
      "public_name": "nomic-embed-text-v1.5",
      "context_window": 8192,
-     "use": "Embeddings"
+     "use": "Document search"
     }
    ],
    "shapes": [
@@ -498,9 +528,9 @@
     },
     {
      "id": "embeddings",
-     "label": "Embeddings",
+     "label": "Document search",
      "level": "likely",
-     "evidence": "Its model list marks “nomic-embed-text-v1.5” as a embedding model.",
+     "evidence": "Its model list marks “nomic-embed-text-v1.5” as a document search model.",
      "ticked": true,
      "real_test": "embeddings",
      "sent_to": "POST http://192.168.1.50:8080/v1/embeddings"
@@ -523,7 +553,7 @@
      "id": "nomic-embed-text-v1.5",
      "public_name": "nomic-embed-text-v1.5",
      "context_window": 8192,
-     "use": "Embeddings"
+     "use": "Document search"
     }
    ],
    "shapes": [
@@ -590,7 +620,7 @@
     },
     {
      "id": "embeddings",
-     "label": "Embeddings",
+     "label": "Document search",
      "level": "needs_key",
      "evidence": "Not known yet. The server needs a key first.",
      "ticked": false
@@ -653,7 +683,7 @@
     },
     {
      "id": "embeddings",
-     "label": "Embeddings",
+     "label": "Document search",
      "level": "needs_key",
      "evidence": "Not known yet. The server needs a key first.",
      "ticked": false
@@ -714,7 +744,7 @@
     },
     {
      "id": "embeddings",
-     "label": "Embeddings",
+     "label": "Document search",
      "level": "needs_key",
      "evidence": "Not known yet. The server needs a key first.",
      "ticked": false
@@ -867,7 +897,7 @@
     },
     {
      "id": "embeddings",
-     "label": "Embeddings",
+     "label": "Document search",
      "level": "none",
      "evidence": "The server answered every standard request with “not supported” or “not found”.",
      "ticked": false,
@@ -942,7 +972,7 @@
     },
     {
      "id": "embeddings",
-     "label": "Embeddings",
+     "label": "Document search",
      "level": "none",
      "evidence": "The server answered every standard request with “not supported” or “not found”.",
      "ticked": false,
@@ -1037,9 +1067,9 @@
     },
     {
      "id": "embeddings",
-     "label": "Embeddings",
+     "label": "Document search",
      "level": "likely",
-     "evidence": "Its model list marks “nomic-embed-text:latest” as a embedding model.",
+     "evidence": "Its model list marks “nomic-embed-text:latest” as a document search model.",
      "ticked": true,
      "real_test": "embeddings",
      "sent_to": "POST http://192.168.1.50:11434/v1/embeddings"
@@ -1056,7 +1086,7 @@
      "id": "nomic-embed-text:latest",
      "public_name": "nomic-embed-text-latest",
      "context_window": null,
-     "use": "Embeddings"
+     "use": "Document search"
     }
    ],
    "shapes": [
@@ -1131,7 +1161,7 @@
     },
     {
      "id": "embeddings",
-     "label": "Embeddings",
+     "label": "Document search",
      "level": "none",
      "evidence": "The server answered every standard request with “not supported” or “not found”.",
      "ticked": false,
@@ -1183,7 +1213,7 @@
   },
   "embeddings_pass": {
    "capability": "embeddings",
-   "label": "Embeddings",
+   "label": "Document search",
    "sent": "One short text, “hello”",
    "sent_to": "POST http://192.168.1.50:8080/v1/embeddings",
    "seconds": 0.4,

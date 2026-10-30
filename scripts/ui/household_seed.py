@@ -318,7 +318,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
     if scenario not in SCENARIOS:
         raise ValueError(f"unknown household scenario {scenario!r}; use one of {SCENARIOS}")
     import metrics_store
-    from gateway import accounts, admin_store, media_jobs, providers, receipt_store
+    from gateway import accounts, admin_store, avatars, media_jobs, providers, receipt_store
     from gateway.local_owner import hash_password
     from gateway.receipts import RouteReceipt
     from gateway.runtime_auth import hash_api_key
@@ -407,6 +407,10 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             now=now, path=paths["admin"],
         )
         people[slug] = user
+        if slug == "robin":
+            # A person with no avatar choice gets an automatic picture, a make job whose picture joins their Library.
+            # Robin keeps a palette avatar, so the Library that web/e2e/library-pick.household.ts counts is the seeded one.
+            avatars.set_choice(user["id"], "v1", path=paths["admin"])
         admin_store.set_local_password_verifier(
             user["id"], hash_password(PASSWORD), path=paths["admin"]
         )
@@ -480,8 +484,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             prefix=f"fixture_{slug}",
             display_name="Desktop" if slug == "codex" else "Household app key",
             now=now - (45 - index) * 86400,
-            path=paths["admin"],
-        )
+            path=paths["admin"], created_by=app["owner_user_id"])
         if slug != "telegram":
             admin_store.touch_credential_last_used(
                 cred["id"], now=now - index * 3600, path=paths["admin"]
@@ -500,7 +503,8 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             (now - 4 * 86400, people["casey"]["id"]),
         )
         conn.execute(
-            "UPDATE credentials SET last_used_at=?,revoked_at=? WHERE app_id=?",
+            # Keys already revoked by disabling their person keep that revocation; a key is revoked once.
+            "UPDATE credentials SET last_used_at=?,revoked_at=COALESCE(revoked_at,?) WHERE app_id=?",
             (now - 4 * 86400, now - 3 * 86400, apps["casey"]["id"]),
         )
         conn.execute(
@@ -1151,8 +1155,10 @@ def _scenario_running(ctx):
                 error=error, app_id=apps[slug]["id"], owner_key_hash=hashes[slug],
                 created_at=now - accepted_s, updated_at=now - 3 if status == "running" else now - accepted_s + 41,
                 metadata={"model": model},
+                maker_person_id=ctx["people"][slug]["id"], maker_credential_id=hashes[slug],
             ),
             path=paths["media_jobs"],
+            maker_from_request=False,
         )
 
     receipt("req_household_running_chat", "robin", "chat.completions", "/v1/chat/completions",
@@ -1276,8 +1282,11 @@ def _media(state, paths, apps, hashes, now, rng, people):
                 created_at=ts,
                 updated_at=ts + max(1, latency_ms // 1000),
                 metadata={"model": entry["model"]},
+                # The maker is the person whose App made it, through that App's key (the seed writes no request).
+                maker_person_id=maker, maker_credential_id=hashes[owner],
             ),
             path=paths["media_jobs"],
+            maker_from_request=False,
         )
         with sqlite3.connect(paths["metrics"]) as conn:
             metrics_store_tags = {

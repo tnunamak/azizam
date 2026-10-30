@@ -511,7 +511,7 @@ async function libraryFile(
     throw new TooBigError(noun, pick.size_bytes);
   }
   const link = await networkFetch(
-    `/me/api/media/${encodeURIComponent(pick.asset_id)}/download?scope=me`,
+    `/me/api/media/${encodeURIComponent(pick.asset_id)}/download`,
     { credentials: "same-origin", signal },
   );
   if (!link.ok) throw new Error("Library download failed");
@@ -591,7 +591,6 @@ function LibraryPicker({
     const query = new URLSearchParams({
       kind,
       limit: String(PAGE_SIZE),
-      scope: "me",
     });
     if (cursor) query.set("cursor", cursor);
     return `/me/api/media?${query}`;

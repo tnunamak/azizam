@@ -32,14 +32,19 @@ class PrivateTmpError(RuntimeError):
     """The private temporary directory cannot be made safe; the gateway must not start without it."""
 
 
-def configured_dir() -> Path:
-    """Where the directory is: ``AZIZAM_PRIVATE_TMPDIR``, else ``private-tmp`` beside the admin database (``data/``)."""
+def configured_dir(admin_db: Path | None = None) -> Path:
+    """Where the directory is: ``AZIZAM_PRIVATE_TMPDIR``, else ``private-tmp`` beside the admin database (``data/``).
+
+    ``admin_db`` names the database the directory sits beside; the gateway passes nothing and gets its own.
+    """
     explicit = os.environ.get("AZIZAM_PRIVATE_TMPDIR", "").strip()
     if explicit:
         return Path(os.path.abspath(os.path.expanduser(explicit)))
-    from gateway import admin_store
+    if admin_db is None:
+        from gateway import admin_store
 
-    return Path(os.path.abspath(admin_store.DB_PATH.parent / "private-tmp"))
+        admin_db = admin_store.DB_PATH
+    return Path(os.path.abspath(admin_db.parent / "private-tmp"))
 
 
 def current() -> Path:

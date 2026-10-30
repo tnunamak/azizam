@@ -11,8 +11,8 @@ test("the real seeded registry agrees on chat readiness across Home and Models",
 }) => {
   const home = await (await request.get("/me/api/home")).json();
   const catalog = await (await request.get("/me/api/models/catalog")).json();
-  const chat = home.aliases.find(
-    (alias: { id: string }) => alias.id === "fast",
+  const chat = home.capabilities.find(
+    (row: { icon_key?: string; use_names?: string[] }) => row.icon_key === "chat" && row.use_names?.includes("fast"),
   );
   const model = catalog.aliases.find(
     (alias: { id: string }) => alias.id === "fast",
@@ -35,7 +35,8 @@ async function fixture(
     await request.get("/me/api/home")
   ).json()) as HomeSnapshot;
   const user = { ...home.user, name };
-  const aliases: HomeSnapshot["aliases"] = [
+  // What each permitted capability answers with, which the stub turns into capability rows.
+  const aliases: Array<{ id: string; operation: string; available: boolean; status: "ready" | "unavailable"; reason_code: string }> = [
     {
       id: "default",
       operation: "chat",
@@ -69,7 +70,8 @@ async function fixture(
     fulfilJson(route, {
         ...home,
         user,
-        aliases,
+        // Recent chats come from the shared gateway, which earlier tests write to. These tests are about media.
+        recent_chats: [],
         // The server chooses one recommendation per permitted capability.
         capabilities: aliases.map((alias) => {
           const presentation = {
@@ -99,9 +101,9 @@ async function fixture(
             },
             speech: {
               capability: "speech",
-              capability_title: "Speech",
+              capability_title: "Voice",
               icon_key: "speech",
-              recommended_model: "Speech model",
+              recommended_model: "Voice model",
               intent: "speech.synthesize",
               summary: "Turn text into spoken audio.",
             },
@@ -118,7 +120,6 @@ async function fixture(
             reason_code: alias.reason_code,
           };
         }),
-        new_app_aliases: aliases.filter((alias) => alias.operation === "chat"),
         apps: [
           {
             id: "polish-app",
@@ -143,10 +144,6 @@ async function fixture(
             })),
           },
         ],
-        credential_aliases: {
-          "chat-key": aliases.filter((alias) => alias.operation === "chat"),
-          "image-key": aliases.filter((alias) => alias.operation === "images"),
-        },
         status: {
           state: "unavailable",
           reason_code: "unavailable_disabled",
@@ -159,87 +156,10 @@ async function fixture(
   await page.route("**/admin/api/setup-progress", (route) =>
     fulfilJson(route, { complete: true, steps: [] }),
   );
-  await page.route("**/me/api/media?limit=12", (route) =>
+  await page.route("**/me/api/media?limit=8", (route) =>
     fulfilJson(route, { assets: [] }),
   );
   return home;
-}
-
-for (const theme of ["light", "dark"] as const) {
-  for (const width of [1440, 390]) {
-    test(`Home content truth: ${theme} at ${width}px`, async ({
-      page,
-      request,
-    }) => {
-      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-      await page.addInitScript(
-        (value) => localStorage.setItem("theme", value),
-        theme,
-      );
-      await fixture(page, request);
-      await page.goto("/");
-      await expect(page.locator("main")).not.toContainText("Hello,");
-      // D1.1: each task row says its own state. The disabled and unavailable
-      // capabilities are named on their rows and are not offered as links.
-      const tasks = page.getByRole("region", { name: "Make something" });
-      const picture = tasks.getByRole("listitem").filter({
-        hasText: "Make a picture",
-      });
-      await expect(picture).toContainText("Off");
-      await expect(picture).toContainText("Turned off by the owner.");
-      await expect(picture.getByRole("link")).toHaveCount(0);
-      const video = tasks.getByRole("listitem").filter({
-        hasText: "Make a video",
-      });
-      await expect(video).toContainText("Down");
-      await expect(video.getByRole("link")).toHaveCount(0);
-      await expect(page.getByRole("status").first()).not.toContainText(
-        /everything works/i,
-      );
-      await expect(
-        page.getByText("Some services are unavailable or not measured yet.", {
-          exact: true,
-        }),
-      ).toHaveCount(0);
-      await expect(
-        page.getByText("Here’s how to use your AI.", { exact: true }),
-      ).toHaveCount(0);
-      // Only the usable tasks (chat, speech) open Try.
-      await expect(page.locator('a[href*="/try/?capability="]')).toHaveCount(2);
-      await expect(
-        page.getByText("Unavailable right now", { exact: true }),
-      ).toHaveCount(0);
-      await expect(page.locator("main")).not.toContainText("face-likeness");
-      await expect(page.locator("main")).not.toContainText("bernini-r-remix");
-      await expect(page.getByRole("combobox", { name: "API key" })).toHaveCount(
-        0,
-      );
-      await page.getByRole("button", { name: "Open WebUI" }).click();
-      await expect(page.getByRole("combobox", { name: "API key" })).toHaveCount(
-        1,
-      );
-      await expect(
-        page.getByRole("button", { name: "Setup notes", exact: true }),
-      ).toBeVisible();
-      await expect(page.locator("main > div > details")).toHaveCount(0);
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= innerWidth,
-        ),
-      ).toBe(true);
-      const violations = (
-        await new AxeBuilder({ page }).analyze()
-      ).violations.filter((v) =>
-        ["serious", "critical"].includes(v.impact ?? ""),
-      );
-      expect(violations).toEqual([]);
-      await page.screenshot({
-        path: `test-results/screens/home/polish2-${theme}-${width}.png`,
-        fullPage: true,
-      });
-    });
-  }
 }
 
 test("Home omits greeting when the API display name is an email", async ({
@@ -251,86 +171,6 @@ test("Home omits greeting when the API display name is an email", async ({
   await expect(page.locator("main")).not.toContainText("Hello,");
 });
 
-test("one selected and pasted app key scopes the app setup and the gateway check", async ({
-  page,
-  request,
-}) => {
-  await fixture(page, request);
-  const checks: unknown[] = [];
-  await page.route("**/me/api/connection-test", (route) => {
-    checks.push(route.request().postDataJSON());
-    return fulfilJson(route, {
-        ok: true,
-        latency_ms: 25,
-        reason: "The selected key reached the gateway.",
-        path: "/v1/models",
-        model: null,
-        request_id: null,
-      });
-  });
-  await page.goto("/");
-  await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
-  const select = page.getByRole("combobox", { name: "API key" });
-  await select.click();
-  await page
-    .getByRole("option", { name: "Test client · Chat access", exact: true })
-    .click();
-  const paste = page.getByLabel(/^Paste your /);
-  await expect(paste).toHaveCount(1);
-  await paste.fill("fixture-chat-secret");
-  await expect(
-    page.getByRole("textbox", { name: "Model", exact: true }),
-  ).toHaveValue("default");
-  await page.getByRole("button", { name: "Setup notes", exact: true }).click();
-  // Open WebUI is set up in its admin panel: numbered steps, no code snippet.
-  const notes = page.getByRole("dialog", { name: "Setup notes" });
-  await expect(notes.getByRole("listitem").first()).toContainText("Open Admin Panel");
-  await expect(notes.getByRole("link", { name: "Open WebUI docs" })).toHaveAttribute(
-    "href",
-    /^https:\/\//,
-  );
-  await page.keyboard.press("Escape");
-  await expect(paste).toHaveValue("fixture-chat-secret");
-  await page
-    .getByRole("button", { name: "Check connection", exact: true })
-    .click();
-  await expect(
-    page.getByText(/^Gateway responded with this key · 25 ms$/),
-  ).toBeVisible();
-  expect(checks).toEqual([
-    { api_key: "fixture-chat-secret", credential_id: "chat-key" },
-  ]);
-  await select.click();
-  await page
-    .getByRole("option", { name: "Test client · Images only", exact: true })
-    .click();
-  await expect(paste).toHaveValue("");
-  await expect(
-    page.getByRole("textbox", { name: "Model", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Check connection", exact: true }),
-  ).toBeDisabled();
-  await paste.fill("fixture-image-secret");
-  await page
-    .getByRole("button", { name: "Check connection", exact: true })
-    .click();
-  await expect.poll(() => checks.length).toBe(2);
-  expect(checks[1]).toEqual({
-    api_key: "fixture-image-secret",
-    credential_id: "image-key",
-  });
-  expect(
-    await page.evaluate(() =>
-      [...Object.values(localStorage), ...Object.values(sessionStorage)].some(
-        (value) => value.includes("fixture-image-secret"),
-      ),
-    ),
-  ).toBe(false);
-  await page.reload();
-  await expect(page.getByLabel(/^Paste your /)).toHaveCount(0);
-});
-
 test("Home recent media carries content while requests stay in receipts", async ({
   page,
   request,
@@ -339,6 +179,7 @@ test("Home recent media carries content while requests stay in receipts", async 
   await page.route("**/me/api/home", (route) =>
     fulfilJson(route, {
         ...home,
+        recent_chats: [],
         receipts: [
           {
             request_id: "polish-image-receipt",
@@ -349,13 +190,13 @@ test("Home recent media carries content while requests stay in receipts", async 
         ],
       }),
   );
-  await page.route("**/me/api/media?limit=12", (route) =>
+  await page.route("**/me/api/media?limit=8", (route) =>
     fulfilJson(route, {
         assets: [
           {
             asset_id: "polish-audio",
             kind: "audio",
-            model: "audio.generate.ace-step-1.5-2b-base",
+            model: "audio.generate.ace-step-1.5-xl-turbo",
             prompt: "A river moves beneath the willow trees",
             download_url: "/signed/polish-audio",
           },
@@ -386,7 +227,7 @@ test("Home recent media carries content while requests stay in receipts", async 
     page.locator('audio[src="/signed/polish-audio"]'),
   ).toHaveAttribute("preload", "none");
   await expect(page.locator("main")).not.toContainText(
-    "audio.generate.ace-step-1.5-2b-base",
+    "audio.generate.ace-step-1.5-xl-turbo",
   );
 });
 
@@ -411,6 +252,11 @@ test("Home and Library render a frame from posterless video", async ({
         currentTime.set!.call(this, value);
       },
     });
+  });
+  // The live snapshot, with the recent chats earlier tests left on the shared gateway taken out: this test is about the video tile.
+  await page.route("**/me/api/home", async (route) => {
+    const response = await route.fetch();
+    await fulfilJson(route, { ...(await response.json()), recent_chats: [] }, { response });
   });
   await page.route("**/me/api/media?**", (route) =>
     fulfilJson(route, {
@@ -510,12 +356,10 @@ for (const width of [390, 1440]) {
         }),
     );
     await page.goto("/");
-    await expect(
-      page.getByRole("link", { name: "Open Image in Library", exact: true }),
-    ).toBeVisible();
-    const longCard = page.getByRole("link", {
-      name: `Open Image in Library: ${prompt}`,
-    });
+    // A link is named by what it shows: its kind, and its prompt when it has one.
+    await expect(page.locator('main a[href*="asset=empty-prompt"]')).toHaveAccessibleName(/Image/);
+    const longCard = page.locator('main a[href*="asset=long-prompt"]');
+    await expect(longCard).toHaveAccessibleName(new RegExp(prompt.slice(0, 40)));
     await expect(longCard).toBeVisible();
     expect(
       await longCard.evaluate(
@@ -555,7 +399,5 @@ test("Home failed images show a named unavailable preview", async ({
   await expect(
     page.getByRole("img", { name: "Image preview unavailable" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Open Image in Library", exact: true }),
-  ).toBeVisible();
+  await expect(page.locator('main a[href^="/library/?asset="]').first()).toHaveAccessibleName(/Image/);
 });

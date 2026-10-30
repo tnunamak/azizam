@@ -13,7 +13,6 @@ const options: SignInOptions = {
   oidc_label: "",
   oidc_url: "",
   instance_name: "Azizam",
-  owner_name: "Owner",
   signed_in_oidc: { email: "previous@example.com", name: "Previous Person", csrf_token: "csrf-previous" },
 };
 

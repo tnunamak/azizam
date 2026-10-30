@@ -48,6 +48,14 @@ def test_the_budget_file_sets_every_limit_the_checker_reads() -> None:
     assert BUDGETS["api"]["processes"] == 0 and BUDGETS["api"]["p95_ms"] <= 100 and BUDGETS["ui"]["ready_ms"] <= 500
 
 
+def test_a_cold_read_that_stalls_the_event_loop_past_its_limit_is_reported() -> None:
+    assert BUDGETS["loop"]["max_stall_ms"] <= 100
+    stalled = {"route": "/admin/api/status (after idle)", "who": "owner", "stall_ms": 150.0}
+    assert [v["metric"] for v in check.loop_violations([stalled], BUDGETS["loop"])] == ["stall_ms"]
+    assert check.loop_violations([{**stalled, "stall_ms": 40.0}], BUDGETS["loop"]) == []
+    assert check.loop_violations([_api()], BUDGETS["loop"]) == [], "a row without a stall is not a loop finding"
+
+
 def test_a_route_within_every_limit_is_not_reported() -> None:
     assert check.api_violations([_api()], BUDGETS["api"], counts_only=False) == []
 
@@ -188,3 +196,21 @@ def test_there_is_no_way_to_keep_a_copy() -> None:
     text = (PERF / "serve.py").read_text(encoding="utf-8")
     assert "--state" not in text and "--reuse" not in text and "--prepare-only" not in text
     assert "scratch_owner.sweep" in text and "rmtree(state" in text
+
+
+def test_a_member_home_over_its_request_budget_is_a_violation() -> None:
+    report = _home()
+    report["who"] = "member"
+    report["profiles"]["desktop"]["cold"]["member_api_requests"] = BUDGETS["home"]["member_api_requests"] + 1
+    assert [v["metric"] for v in check.home_violations(report, BUDGETS["home"])] == ["member_api_requests"]
+
+
+def test_an_owner_home_is_not_judged_on_member_requests() -> None:
+    report = _home()
+    report["who"] = "owner"
+    assert check.home_violations(report, BUDGETS["home"]) == []
+
+
+def test_the_budget_table_has_no_route_exceptions() -> None:
+    """Every route meets the defaults in [api]. A route with its own limits hides a slow route, so the table stays empty."""
+    assert BUDGETS["api"].get("routes", {}) == {}

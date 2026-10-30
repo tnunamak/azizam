@@ -35,7 +35,7 @@
     {
       "path": "gateway/me_make.py",
       "function": "_submit",
-      "source_sha256": "c0c3da72fd17262a6125f6a9447e8f1ce6f86f7b1ad9988195ad0705a3d351bc",
+      "source_sha256": "655c448fc32be90afae27c0941d825171d64e647f46fe598266d9bcaafce179c",
       "call": "_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -152,7 +152,7 @@
     {
       "path": "proxy.py",
       "function": "gateway_image_generations_media_job",
-      "source_sha256": "eb22b324241d00f466535e0cc22255c1bb90bf0ef5bdc7d86ef58e737d9976bf",
+      "source_sha256": "f120f098635edd2f5d4aa42bc7bea7175d7e83d56c64e219fdfdeec5a17544de",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -301,7 +301,8 @@
     "server_version": "none",
     "store_asset": "content:creation:link",
     "stt_measurement": "operational",
-    "visible": "none"
+    "visible": "none",
+    "read_preview_asset": "content:creation:read"
   },
   "mcp_tools": [
     {
@@ -355,6 +356,16 @@
         "content": "content:job:read+content:creation:link",
         "cancel": "content:job:cancel"
       }
+    },
+    {
+      "name": "view_asset",
+      "parameters": [
+        "asset_id",
+        "crop"
+      ],
+      "actions": [],
+      "access": "content:creation:read",
+      "note": "A reduced preview of one image asset; the same ownership check as asset thumbnails (_asset_access_allowed)."
     },
     {
       "actions": [],
@@ -411,17 +422,44 @@
     },
     {
       "actions": [
-        "ledger"
+        "list",
+        "get",
+        "delete",
+        "delete_all"
       ],
       "name": "requests",
       "parameters": [
         "action",
-        "request_id"
+        "cursor",
+        "limit",
+        "record_id"
       ],
-      "access": "content:receipt:read+none",
+      "access": "content:request_history:read+content:request_history:delete+content:receipt:read+none",
       "operations": {
+        "list": "content:request_history:read",
+        "get": "content:request_history:read",
+        "delete": "content:request_history:delete",
+        "delete_all": "content:request_history:delete",
         "ledger-with-request-id": "content:receipt:read",
         "ledger-without-request-id": "none"
+      }
+    },
+    {
+      "actions": [
+        "mine_get",
+        "mine_set"
+      ],
+      "name": "retention",
+      "parameters": [
+        "action",
+        "keep",
+        "parts",
+        "retention"
+      ],
+      "access": "own-account",
+      "operations": {
+        "mine_get": "own-account",
+        "mine_set": "own-account"
       }
     }
   ],
@@ -1040,6 +1078,42 @@
       "access": "content:receipt:read"
     },
     {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.list_requests",
+      "method": "GET",
+      "path": "/gateway/v1/requests",
+      "access": "content:request_history:read"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.read_request",
+      "method": "GET",
+      "path": "/gateway/v1/requests/{record_id}",
+      "access": "content:request_history:read"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.delete_request",
+      "method": "DELETE",
+      "path": "/gateway/v1/requests/{record_id}",
+      "access": "content:request_history:delete"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.delete_all_requests",
+      "method": "DELETE",
+      "path": "/gateway/v1/requests",
+      "access": "content:request_history:delete"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.get_delegated_retention",
+      "method": "GET",
+      "path": "/gateway/v1/me/retention",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.put_delegated_retention",
+      "method": "PUT",
+      "path": "/gateway/v1/me/retention",
+      "access": "own-account"
+    },
+    {
       "handler": "gateway.api.create_gateway_router.<locals>.list_resources",
       "method": "GET",
       "path": "/gateway/v1/resources",
@@ -1205,7 +1279,8 @@
       "handler": "gateway.home_api.create_home_router.<locals>.home",
       "method": "GET",
       "path": "/me/api/home",
-      "access": "content:receipt:read"
+      "access": "content:receipt:read",
+      "note": "Home receipts are limited to the signed-in user's own Apps for every role."
     },
     {
       "handler": "gateway.home_api.create_home_router.<locals>.member_status",
@@ -1253,6 +1328,12 @@
       "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.connections",
       "method": "GET",
       "path": "/me/api/mcp/connections",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.mcp_oauth.McpOAuth.register.<locals>.privacy_permission",
+      "method": "PUT",
+      "path": "/me/api/mcp/connections/{grant_id}/privacy-permission",
       "access": "own-account"
     },
     {
@@ -1371,6 +1452,36 @@
       "access": "own-account"
     },
     {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.get_generator",
+      "method": "GET",
+      "path": "/me/api/profile/avatar/generator",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.post_generate",
+      "method": "POST",
+      "path": "/me/api/profile/avatar/generate",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.post_default",
+      "method": "POST",
+      "path": "/me/api/profile/avatar/default",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.post_generated",
+      "method": "POST",
+      "path": "/me/api/profile/avatar/generated",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.me_avatar.create_me_avatar_router.<locals>.delete_generated",
+      "method": "DELETE",
+      "path": "/me/api/profile/avatar/generated",
+      "access": "own-account"
+    },
+    {
       "handler": "gateway.me_make.add_make_routes.<locals>.cancel_job",
       "method": "POST",
       "path": "/me/api/make/jobs/{job_id}/cancel",
@@ -1392,7 +1503,7 @@
       "handler": "gateway.me_make.add_make_routes.<locals>.submit",
       "method": "POST",
       "path": "/me/api/make/jobs",
-      "access": "own-account+content:creation:reuse"
+      "access": "own-account+content:creation:reuse+content:job:read"
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.confirm_media_folder",
@@ -1410,34 +1521,36 @@
       "handler": "gateway.me_media.create_me_media_router.<locals>.job_detail",
       "method": "GET",
       "path": "/me/api/jobs/{job_id}",
-      "access": "content:job:read"
+      "access": "content:job:read",
+      "note": "Job status is limited to the signed-in user's own Apps for every role."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.list_jobs",
       "method": "GET",
       "path": "/me/api/jobs",
-      "access": "content:job:read"
+      "access": "content:job:read",
+      "note": "Job status is limited to the signed-in user's own Apps for every role."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.list_media",
       "method": "GET",
       "path": "/me/api/media",
       "access": "content:creation:read+content:creation:link+content:prompt:read",
-      "note": "Prompt inclusion is a separate decision from creation visibility."
+      "note": "Library reads are limited to the signed-in user's own scope for every role; prompt inclusion is a separate decision from creation visibility."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.media_detail",
       "method": "GET",
       "path": "/me/api/media/{asset_id}",
       "access": "content:creation:read+content:creation:link+content:prompt:read",
-      "note": "Prompt inclusion is a separate decision from creation visibility."
+      "note": "Library reads are limited to the signed-in user's own scope for every role; prompt inclusion is a separate decision from creation visibility."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.media_download",
       "method": "GET",
       "path": "/me/api/media/{asset_id}/download",
       "access": "content:creation:link+content:prompt:reuse",
-      "note": "metadata=full additionally requires the viewer's saved prompt."
+      "note": "Library downloads are limited to the signed-in user's own scope for every role; metadata=full additionally requires the viewer's saved prompt."
     },
     {
       "handler": "gateway.me_media.create_me_media_router.<locals>.remove_missing_media",
@@ -1468,6 +1581,24 @@
       "handler": "gateway.me_prompt_memory.create_me_prompt_memory_router.<locals>.put_prompt_memory",
       "method": "PUT",
       "path": "/me/api/prompt-memory",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.get_my_retention",
+      "method": "GET",
+      "path": "/me/api/retention",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.put_my_retention",
+      "method": "PUT",
+      "path": "/me/api/retention",
+      "access": "own-account"
+    },
+    {
+      "handler": "gateway.request_history_api.create_request_history_router.<locals>.dismiss_request_history_notice",
+      "method": "POST",
+      "path": "/me/api/retention/notice-seen",
       "access": "own-account"
     },
     {
@@ -3004,7 +3135,8 @@
       "handler": "proxy.user_portal_activity",
       "method": "GET",
       "path": "/me/api/activity",
-      "access": "content:receipt:read"
+      "access": "content:receipt:read",
+      "note": "Activity receipts are limited to the signed-in user's own Apps for every role."
     },
     {
       "handler": "proxy.user_portal_create_app",
@@ -3019,6 +3151,12 @@
       "access": "own-account"
     },
     {
+      "handler": "proxy.user_portal_key_privacy_permission",
+      "method": "PUT",
+      "path": "/me/api/credentials/{credential_id}/privacy-permission",
+      "access": "own-account"
+    },
+    {
       "handler": "proxy.user_portal_delete_app",
       "method": "DELETE",
       "path": "/me/api/apps/{app_id}",
@@ -3028,6 +3166,42 @@
       "handler": "proxy.user_portal_mint_key",
       "method": "POST",
       "path": "/me/api/apps/{app_id}/keys",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_add_trusted_address",
+      "method": "POST",
+      "path": "/me/api/apps/{app_id}/trusted-addresses",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_adopt_key",
+      "method": "POST",
+      "path": "/me/api/credentials/{credential_id}/adopt",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_adopt_trusted_address",
+      "method": "POST",
+      "path": "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_readd_trusted_address",
+      "method": "POST",
+      "path": "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_replace_key",
+      "method": "POST",
+      "path": "/me/api/credentials/{credential_id}/replace",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_remove_trusted_address",
+      "method": "DELETE",
+      "path": "/me/api/apps/{app_id}/trusted-addresses/{entry_id}",
       "access": "own-account"
     },
     {
@@ -3070,6 +3244,12 @@
       "handler": "proxy.user_portal_session",
       "method": "GET",
       "path": "/me/api/session",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.user_portal_session_end_token",
+      "method": "GET",
+      "path": "/me/api/session/end-token",
       "access": "own-account"
     },
     {
@@ -3222,24 +3402,31 @@
     "succeeded": "content:job:read"
   },
   "mcp_dispatch": {
-    "McpDeps": "d36ad610e444a315a32352b9e7f294b7d9b025dcc52c85efb99b90b4bfc3bd7d",
+    "McpDeps": "562522e05d91a79cfdda031292d2d86ccc2924c2f1c8a437139caa64a5d1a281",
     "rpc_error": "a23c4b9c67defee55675b673cded5661de031a6216b4231e661eef8f2c62e7a2",
     "_decode_header_value": "34648136c6a4cdfc8071129770a4beb60738f3a5053d8f974c6ce18c4b605878",
     "_normal_origin": "96df6d69434cf32e0e38a64189bb2fcb0fad04285c4e48c1cd66d970f6fbbcea",
     "_origin_allowed": "116c7b2c42c96ce89bfedc29bfd0cdcdb90870b978693e7cccbb0956b45ab704",
     "_asset": "bdeb44dadbbd2f2bb8186cf7a2112a938431337c60f64edb4569e44c46e49f7e",
+    "ImagePreview": "8f44951015df28c66372989c4069505718b02231b49826bf7a57cd16b7e67350",
+    "_reduced_image_preview": "3f8bc420807bb7bbef2f50d210ba20102ca3378cf96fffc48be4fc6b1d5b05e3",
+    "_image_preview_blocks": "66aaada80dfc5271eaec65ac33f9fc841429decaa7c02fb5e386295a1f3adaa3",
+    "_view_asset_crop": "a6a353824601b798fceeadc1b02270d953bceb73d13d8d3fbe37f399b69151b4",
+    "_view_asset": "23dfa9dfb87d961ee8476a32b10b37bcff08ef2f4660ee9c0bad4d8c40114d1c",
     "_assets_from_response": "cf283156a090b1a96432eb757ba933193baa4661e69a480b818b7bf5b35ada20",
     "_job_family": "0d1684dce09411c6a345fb99bbfc4cbbffc4c1c09ff44cbedd7907393ba8f187",
     "_job_paths": "7c5795ab8594aadbbbf6f357064596c572702cd82aab0b35c4b45e5c94a36465",
     "_normalize_job": "2dcd8c0b5d75a70126d32343159f807c6f945c78f9ceda43adba1daf45377944",
     "Tools": "7be10b7c1a00897ed30cf61ad5f09796c41a6c038d1d0fbee95543e5c6842fb1",
-    "tool_result": "3fd760fa9e5e6847f39c9dcf8348b0932e101af7140aaf482c4057b9b7700d46",
-    "call_tool": "abd0ca98c708e34effb9d7c763f0d953dc70471ef6e57ff97b2e0cd2e85c039d",
+    "tool_result": "e1efa86a533c6754836ea6f5cf96ada46537d05b4e1fa96a599b7689573c38d9",
+    "_history_tool": "c5b1ad4a40f691f9ec1ecebe32a1103c1ce8e62296767cefdd4f60183ece3efd",
+    "_tool_argument_error": "3f32675ba4c92fb3b901967a8cca48cf5fe7bcdbd69b673d88e05b51de80b1ae",
+    "call_tool": "23f6f7b4e5e7dc286e8f7b5926d218643e7bc203e3837d5b3777fb49d7a05fa0",
     "_json": "d6cf8d0eccd7337c47b15be6d9560f65a5840c0594a91465a4f77f5eb985a098",
     "_bad_request": "a294e7977da5864ff89dd16e015edfcec2fa1d8e301de8da7bdd95120665f97a",
     "_validate_modern": "432f7895202e0642c6fa654e8220a821e5df44273f09d0619cca939675224d58",
     "_valid_envelope": "22fc29e2742465753487013398e5186278267ef295aa1bc64093a58d5fda2587",
-    "handle_message": "955ccc6efd06b31fafd01f36d62ba64ea1c3c8e12885d539e7d1632f06d6b7be",
+    "handle_message": "e3b0e782fb7c7af2ca36b1a7c50c85f91dd8ef762fba257df328fad27b5de109",
     "_quoted": "b5c1398422b4a8d3081e4f0d7620a28718369daca734207393de9e2fc1c0ae7d",
     "bearer_challenge": "39a19c7740529da1df86cb38aad57a7e54ed8b3220ab24d7134c2f626a44e63c",
     "register_mcp_routes": "23da16a0a1fe022c5b5a26fbedb7632bbdda4a5e628c25ca55b75dbb0682a019",
@@ -3267,6 +3454,6 @@
     "mcp_no_stream": "dc1118144f06960affd356e3f599ae76703726c95f144af06f2d3554079690b3",
     "protected_resource": "a9bd38a702db1bfd58c9833c829c59973acf8b5fd595d733418f0542f3cf5215",
     "rank": "0b045bdafd1ab65458de7bd9f45a79a1c2fa18bd5cd8a8eeedb53a30d8d46f55",
-    "<module>": "5e2a05523df37ffffecb7752ae84ac8d6b33537be2ac7108a7304cc09472824e"
+    "<module>": "b4c2cb00bb35b6034fb7b1d55491b84d14252fc2170472a4e62301a65867f6f6"
   }
 }

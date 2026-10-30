@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from dataclasses import replace
 
 import pytest
+from tests.support.app_keys import accountable_person
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -39,7 +40,7 @@ def home_case(tmp_path):
     client_app = create_user_app(session, name="Open WebUI", path=db)["app"]
     outsider = admin_store.create_app("Other", kind="personal", owner_user_id=other["id"], access_plan="person", path=db)
     def credential(app, key, **kwargs):
-        return admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key(key), prefix="masked", path=db, **kwargs)
+        return admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key(key), prefix="masked", path=db, **kwargs, created_by=accountable_person(db, app["id"]))
     key = "test-home-key"
     cred = credential(client_app, key)
     other_cred = credential(outsider, "other-key")
@@ -106,6 +107,11 @@ def home_case(tmp_path):
     case.http.close()
 
 
+def alias_rows(data):
+    """The person's own alias rows: Home lists aliases as capability rows now, not as a separate list."""
+    return [row for row in data["capabilities"] if "alias" in row.get("tags", [])]
+
+
 def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
     c = home_case
     for i in range(7):
@@ -116,10 +122,10 @@ def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
     data = response.json()
     assert len(data["receipts"]) == 5
     assert {row["request_id"] for row in data["receipts"]} == {f"mine-{i}" for i in range(2, 7)}
-    assert [row["id"] for row in data["aliases"]] == ["fast"]
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
     assert all(row["status"] == "ready" for row in data["capabilities"])
     assert data["api_base_url"] == "https://gateway.example/v1"
-    assert data["creations"] is None
+    assert not {"aliases", "credential_aliases", "new_app_aliases", "creations"} & data.keys()
     TypeAdapter(list[HomeCapability]).validate_python(data["capabilities"])
     TypeAdapter(HomeProjection).validate_python(data)
     assert c.key not in response.text and "sha256:" not in response.text
@@ -127,7 +133,7 @@ def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
     assert response.headers["cache-control"] == "no-store"
 
 
-def test_home_owner_recent_defaults_to_instance_activity(home_case):
+def test_home_owner_recent_shows_only_owned_app_activity(home_case):
     c = home_case
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
     service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
@@ -138,17 +144,30 @@ def test_home_owner_recent_defaults_to_instance_activity(home_case):
 
     data = c.http.get("/me/api/home").json()
     projected = TypeAdapter(HomeProjection).validate_python(data)
-    assert [row["request_id"] for row in projected["receipts"]] == ["local", "service", "mine"]
-    local = projected["receipts"][0]
-    service_row = projected["receipts"][1]
-    assert local["source"]["kind"] == "local-network"
-    assert local["source_label"] == "Local network · no key"
-    assert service_row["source"]["app_id"] == service["id"]
-    assert service_row["source_label"] == "Daisy"
-    assert service_row["source"]["label"] == "Daisy"
+    assert [row["request_id"] for row in projected["receipts"]] == ["mine"]
+    assert all(row["request_id"] != "local" for row in projected["receipts"])
+    assert all(row.get("source", {}).get("app_id") != service["id"] for row in projected["receipts"])
 
 
-def test_owner_can_open_instance_receipt_details_and_member_cannot(home_case):
+def test_client_activity_projection_keeps_app_id_under_source(home_case):
+    c = home_case
+    app_id = c.client_app["id"]
+    receipt_store.record(
+        {"request_id": "mine", "app_id": app_id, "status": "succeeded"},
+        path=c.receipts,
+    )
+
+    rows = receipt_store.recent(
+        limit=5, audience="client", viewer_person_id=c.user["id"],
+        app_ids=[app_id], path=c.receipts,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["source"]["app_id"] == app_id
+    assert "app_id" not in rows[0]
+
+
+def test_owner_cannot_open_instance_receipts_and_the_owner_bypass_is_gone(home_case):
     c = home_case
     admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
     service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
@@ -156,10 +175,13 @@ def test_owner_can_open_instance_receipt_details_and_member_cannot(home_case):
     receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, created_at=11, path=c.receipts)
     receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, created_at=12, path=c.receipts)
 
-    assert get_user_receipt(c.session, "local", path=c.db, receipts_path=c.receipts)["source"]["kind"] == "local-network"
-    assert get_user_receipt(c.session, "service", path=c.db, receipts_path=c.receipts)["source"]["app_id"] == service["id"]
-    audit_rows = admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db)
-    assert {row["target_id"] for row in audit_rows} == {"service", "local"}
+    # Owning the App, or being the owner, does not make another person's receipt the owner's (D51).
+    # A receipt with no person is read by no person (D52).
+    for request_id in ("local", "service"):
+        with pytest.raises(UserPortalError) as owner_error:
+            get_user_receipt(c.session, request_id, path=c.db, receipts_path=c.receipts)
+        assert owner_error.value.status_code == 404
+    assert admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db) == []
 
     member_session = AdminSession(subject=c.outsider["owner_user_id"], email="two@example.test", role="admin", issued_at=1, expires_at=4_000_000_000)
     with pytest.raises(UserPortalError) as local_error:
@@ -174,7 +196,7 @@ def test_home_unknown_health_is_not_green(home_case):
     home_case.health = {"backends": []}
     data = home_case.http.get("/me/api/home").json()
     assert data["status"]["state"] == "unknown"
-    assert not data["aliases"][0]["available"]
+    assert not alias_rows(data)[0]["available"]
     assert data["capabilities"][0]["reason_code"] == "unknown"
 
 
@@ -183,7 +205,7 @@ def test_home_and_member_status_preserve_observed_state(home_case, state):
     home_case.health = {"backends": [{"key": "service", "live_status": state}]}
     data = home_case.http.get("/me/api/home").json()
     assert data["status"]["state"] == state
-    assert data["aliases"][0]["status"] == state
+    assert alias_rows(data)[0]["status"] == state
     assert not data["capabilities"][0]["available"]
     member = home_case.http.get("/me/api/status").json()
     TypeAdapter(MemberStatus).validate_python(member)
@@ -251,7 +273,7 @@ def test_connection_rejects_revoked_and_expired_keys(home_case):
     c = home_case
     admin_store.revoke_credential(c.cred["id"], path=c.db)
     assert c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).status_code == 404
-    admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("expired"), prefix="masked", expires_at=1, path=c.db)
+    admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("expired"), prefix="masked", expires_at=1, path=c.db, created_by=accountable_person(c.db, c.client_app["id"]))
     assert c.http.post("/me/api/connection-test", json={"api_key": "expired"}, headers=c.headers).status_code == 404
     assert c.calls == []
 
@@ -296,7 +318,7 @@ def test_setup_legacy_receipt_without_source_is_not_observed_app_use(home_case):
 
 def test_setup_default_app_used_does_not_complete_app_step(home_case):
     c = home_case
-    cred = admin_store.create_credential_hash(subject_kind="app", subject_id=c.personal["id"], hash=hash_api_key("bootstrap"), prefix="masked", path=c.db)
+    cred = admin_store.create_credential_hash(subject_kind="app", subject_id=c.personal["id"], hash=hash_api_key("bootstrap"), prefix="masked", path=c.db, created_by=accountable_person(c.db, c.personal["id"]))
     admin_store.touch_credential_last_used(cred["id"], path=c.db)
     admin_store.record_audit("app.self_create", actor_kind="user", target_kind="app", target_id=c.personal["id"], metadata={"via": "setup_local_owner"}, path=c.db)
     steps = c.http.get("/admin/api/setup-progress").json()["steps"]
@@ -315,7 +337,7 @@ def test_setup_admin_created_app_use_does_not_prove_external_client(home_case):
     c = home_case
     named = admin_store.create_app("Cursor", kind="personal", owner_user_id=c.user["id"], access_plan="person", path=c.db)
     admin_store.record_audit("app.create", target_kind="app", target_id=named["id"], path=c.db)
-    cred = admin_store.create_credential_hash(subject_kind="app", subject_id=named["id"], hash=hash_api_key("cursor-key"), prefix="masked", path=c.db)
+    cred = admin_store.create_credential_hash(subject_kind="app", subject_id=named["id"], hash=hash_api_key("cursor-key"), prefix="masked", path=c.db, created_by=accountable_person(c.db, named["id"]))
     admin_store.touch_credential_last_used(cred["id"], path=c.db)
     steps = c.http.get("/admin/api/setup-progress").json()["steps"]
     assert not next(step for step in steps if step["id"] == "connect_app")["done"]
@@ -362,6 +384,7 @@ def test_setup_receipt_acknowledgement_follows_db_owner_visible_receipts(home_ca
     receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, path=c.receipts)
     receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, path=c.receipts)
     receipt_store.record({"request_id": "foreign", "app_id": c.outsider["id"], "status": "succeeded"}, path=c.receipts)
+    receipt_store.record({"request_id": "mine", "app_id": None, "maker_person_id": c.user["id"], "status": "succeeded"}, path=c.receipts)
 
     assert c.http.post("/admin/api/setup-evidence", json={"event": "settings_copied", "app_id": c.outsider["id"]}, headers=c.headers).status_code == 404
     assert c.http.post("/admin/api/setup-evidence", json={"event": "external_client_confirmed", "app_id": c.outsider["id"]}, headers=c.headers).status_code == 404
@@ -370,14 +393,16 @@ def test_setup_receipt_acknowledgement_follows_db_owner_visible_receipts(home_ca
     assert c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": "local"}, headers=c.headers).status_code == 403
     c.owner = True
 
+    # Only a receipt the owner made can be viewed, so only it can count as evidence (D51).
     for request_id in ("local", "service", "foreign"):
         response = c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": request_id}, headers=c.headers)
-        assert response.status_code == 200, response.text
+        assert response.status_code == 404, response.text
+    response = c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": "mine"}, headers=c.headers)
+    assert response.status_code == 200, response.text
     evidence = c.http.get("/admin/api/setup-progress").json()["evidence"]
     assert evidence["receipt_viewed"]["recorded"]
     assert not evidence["external_client_confirmed"]["recorded"]
-    audit_rows = admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db)
-    assert {row["target_id"] for row in audit_rows} >= {"local", "service", "foreign"}
+    assert admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db) == []
 
 
 def test_setup_actual_invitation_completes_optional_step(home_case):
@@ -422,17 +447,17 @@ def test_member_status_contains_only_allowed_capabilities_and_owned_receipts(hom
     assert c.http.get("/me/api/status").status_code == 401
 
 
-def test_home_and_connection_use_the_apps_own_access_plan(home_case):
+def test_home_lists_the_persons_access_while_connection_checks_use_the_keys_access(home_case):
     c = home_case
     no_chat = store_plan("no-chat", path=c.db, caps=())
     admin_store.disable_app(c.personal["id"], path=c.db)
     admin_store.revoke_credential(c.cred["id"], path=c.db)
-    restricted = admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("restricted-key"), prefix="masked", path=c.db)
+    restricted = admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("restricted-key"), prefix="masked", path=c.db, created_by=accountable_person(c.db, c.client_app["id"]))
     c.give_app(c.client_app, no_chat)
     data = c.http.get("/me/api/home").json()
-    assert data["credential_aliases"][restricted["id"]] == []
-    # What a new App of this person could use is still listed.
-    assert [alias["id"] for alias in data["new_app_aliases"]] == ["fast"]
+    # Home lists what the person may use. A key's narrower access is the connection check's concern.
+    assert "credential_aliases" not in data
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
     result = c.http.post("/me/api/connection-test", json={"api_key": "restricted-key"}, headers=c.headers).json()
     assert result["path"] == "/v1/models" and result["model"] is None
     assert [call[0] for call in c.calls] == ["/v1/models"]
@@ -442,7 +467,7 @@ def test_home_and_connection_follow_the_persons_plan_for_same_as_person_apps(hom
     c = home_case
     c.give_person(store_plan("no-chat", path=c.db, caps=()))
     data = c.http.get("/me/api/home").json()
-    assert data["capabilities"] == [] and data["aliases"] == []
+    assert data["capabilities"] == []
     result = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).json()
     assert result["path"] == "/v1/models"
 
@@ -454,7 +479,7 @@ def test_person_without_a_plan_gets_nothing_on_home_and_is_told_so(home_case):
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["has_access_plan"] is False
-    assert data["capabilities"] == [] and data["aliases"] == [] and data["new_app_aliases"] == []
+    assert data["capabilities"] == [] and alias_rows(data) == []
     assert c.http.get("/me/api/status").json()["capabilities"] == []
     response = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers)
     assert response.status_code == 200, response.text
@@ -534,7 +559,7 @@ def test_connection_alias_precedence_never_uses_same_named_local_model(home_case
     assert result["ok"] and result["path"] == "/v1/models"
     assert [call[0] for call in c.calls] == ["/v1/models"]
     data = c.http.get("/me/api/home").json()
-    assert not data["aliases"][0]["available"]  # The healthy same-named local model is shadowed.
+    assert not alias_rows(data)[0]["available"]  # The healthy same-named local model is shadowed.
 
 
 def test_workflow_and_service_aliases_preserve_permissions():
@@ -555,26 +580,21 @@ def test_workflow_and_service_aliases_preserve_permissions():
     assert not any(cap.policy_available for cap in _resolved_capabilities(denied, lambda _identity: denied_raw, registry) if "alias" in cap.tags)
 
 
-def test_recipe_aliases_are_app_scoped_and_new_app_follows_the_persons_plan(home_case):
-    c = home_case
-    narrow_app = admin_store.create_app("Narrow", kind="personal", owner_user_id=c.user["id"], access_plan="person", path=c.db)
-    narrow = admin_store.create_credential_hash(subject_kind="app", subject_id=narrow_app["id"], hash=hash_api_key("narrow-key"), prefix="masked", path=c.db)
-    c.give_app(narrow_app, store_plan("no-chat", path=c.db, caps=()))
-    data = c.http.get("/me/api/home").json()
-    assert [alias["id"] for alias in data["aliases"]] == ["fast"]
-    assert [alias["id"] for alias in data["credential_aliases"][c.cred["id"]]] == ["fast"]
-    assert data["credential_aliases"][narrow["id"]] == []
-    assert [alias["id"] for alias in data["new_app_aliases"]] == ["fast"]
-    assert c.other_cred["id"] not in data["credential_aliases"]
-
-
-def test_capability_union_includes_what_a_new_app_could_use(home_case):
+def test_recipe_aliases_follow_the_persons_plan_on_home(home_case):
     c = home_case
     c.give_app(c.client_app, store_plan("no-chat", path=c.db, caps=()))
     data = c.http.get("/me/api/home").json()
-    assert data["credential_aliases"][c.cred["id"]] == []
-    assert [alias["id"] for alias in data["new_app_aliases"]] == ["fast"]
-    assert data["capabilities"] and data["aliases"]
+    # An App's narrower key does not narrow what Home offers the person (Home uses the person's access).
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
+    assert "credential_aliases" not in data
+
+
+def test_home_lists_what_the_person_could_use(home_case):
+    c = home_case
+    c.give_app(c.client_app, store_plan("no-chat", path=c.db, caps=()))
+    data = c.http.get("/me/api/home").json()
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
+    assert data["capabilities"]
 
 
 def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(fake_upstreams, monkeypatch, tmp_path):
@@ -634,7 +654,7 @@ def test_chat_only_model_plan_cannot_advertise_ready_generic_image_targets(home_
             intent=cap.intent, model=cap.model, workflow=cap.workflow, backend=cap.backend)) for cap in raw]
     c.capabilities_override = provider
     data = c.http.get("/me/api/home").json()
-    assert [row["id"] for row in data["aliases"]] == ["fast"]
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
     assert not any(row["capability"] == "image" for row in data["capabilities"])
     assert any(row["capability"] == "chat" and row["available"] for row in data["capabilities"])
 
@@ -695,8 +715,7 @@ def test_home_and_member_status_preserve_upstream_remote_alias_permission(home_c
         assert any(row.get("model") == "fast" for row in data["capabilities"]) == (restriction == "allowed_canonical_grant")
         if path.endswith("home"):
             expected_aliases = ["fast"] if restriction == "allowed_canonical_grant" else []
-            assert [row["id"] for row in data["aliases"]] == expected_aliases
-            assert [row["id"] for row in data["new_app_aliases"]] == expected_aliases
+            assert [row["use_name"] for row in alias_rows(data)] == expected_aliases
 
 
 def test_disabled_remote_model_cannot_be_resolved_by_registry_alias_fallback(home_case):
@@ -793,7 +812,7 @@ def test_service_selected_remote_alias_obeys_canonical_provider_permission(home_
         data = response.json()
         assert any(row.get("model") == "voice" for row in data["capabilities"]) is expected
         if path.endswith("home"):
-            assert [row["id"] for row in data["aliases"]] == (["voice"] if expected else [])
+            assert [row["use_name"] for row in alias_rows(data)] == (["voice"] if expected else [])
 
 
 # A receipt without a recorded source is not proof (see the legacy test above).
@@ -887,17 +906,17 @@ def test_recipe_alias_local_provenance_excludes_remote_and_unknown(home_case):
     c = home_case
     response = c.http.get("/me/api/home")
     assert response.status_code == 200
-    assert response.json()["credential_aliases"][c.cred["id"]][0]["local"] is True
+    assert alias_rows(response.json())[0]["backend_kind"] == "local"
 
     c.registry["services"]["service"]["config"] = {}
     response = c.http.get("/me/api/home")
-    assert response.json()["credential_aliases"][c.cred["id"]][0]["local"] is False
+    assert alias_rows(response.json())[0].get("backend_kind") != "local"
 
     c.registry["services"]["service"]["config"] = {
         "gateway_lifecycle": True, "cost_class": "paid-remote",
     }
     response = c.http.get("/me/api/home")
-    assert response.json()["credential_aliases"][c.cred["id"]][0]["local"] is False
+    assert alias_rows(response.json())[0].get("backend_kind") != "local"
 
 
 def test_member_status_capabilities_carry_home_evidence_source_and_check_time(home_case):

@@ -46,6 +46,51 @@ def connection_for(app_id: str | None) -> str | None:
     return None
 
 
+def note_maker(
+    app_id: str | None, person_id: str | None, *, credential_id: str | None = None, connection_id: str | None = None,
+) -> None:
+    """Record who this request ran as under ``app_id``: the person, and the credential or MCP connection that
+    authenticated it. ``person_id`` is None when the request resolved no person."""
+    holder = _trusted_address.get()
+    if holder is not None:
+        holder.update(maker_app_id=app_id, maker_person_id=person_id,
+                      maker_credential_id=credential_id, maker_connection_id=connection_id)
+
+
+def maker_for(app_id: str | None) -> str | None:
+    """The person this request ran as, when it ran as ``app_id``. Never the App's owner: a request that resolved no
+    person has no maker, whoever owns the App it came through."""
+    holder = _trusted_address.get()
+    if app_id and holder and holder.get("maker_app_id") == app_id:
+        return holder.get("maker_person_id")
+    return None
+
+
+def job_maker(app_id: str | None) -> tuple[str | None, str | None, str | None]:
+    """The (person, credential, connection) that stamp a media job this request creates under ``app_id``.
+
+    A request that ran under another App, or that resolved no identity, stamps nothing. Its job then has no maker,
+    and no one reads it (fail closed). The job's App is never the source of the person.
+    """
+    holder = _trusted_address.get()
+    if holder is None or holder.get("maker_app_id") != app_id:
+        return None, None, None
+    return (holder.get("maker_person_id") or None, holder.get("maker_credential_id") or None,
+            holder.get("maker_connection_id") or None)
+
+
+@contextmanager
+def acting_as(*, app_id: str | None, person_id: str | None = None, credential_id: str | None = None,
+              connection_id: str | None = None):
+    """Run the block as one authenticated request, as the middleware and authentication record it. Tests only."""
+    token = _trusted_address.set({})
+    note_maker(app_id, person_id, credential_id=credential_id, connection_id=connection_id)
+    try:
+        yield
+    finally:
+        _trusted_address.reset(token)
+
+
 def current_gateway_ui() -> bool:
     return _gateway_ui.get()
 

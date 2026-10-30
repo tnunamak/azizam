@@ -105,8 +105,20 @@ class AdminContext:
         return self.actor_id or self.subject
 
 
+class NotYourApp(PermissionError):
+    """An App key or trusted address is added by the App's accountable person only (owner visibility §3.5)."""
+
+
 class AdminKeyNameTaken(ValueError):
     """The name of a new admin key is already in use."""
+
+
+class ServiceLeftOut(ValueError):
+    """A metadata-only edit of an excluded service must use its repair flow."""
+
+    def __init__(self, message: str, *, fix_path: str) -> None:
+        super().__init__(message)
+        self.fix_path = fix_path
 
 
 class ActorOutranked(PermissionError):
@@ -1262,6 +1274,10 @@ def _owner_required(exc: Exception) -> JSONResponse:
     return _RouteError(status.HTTP_403_FORBIDDEN, "owner_required", str(exc)).as_response()
 
 
+def _not_your_app(exc: Exception) -> JSONResponse:
+    return _RouteError(status.HTTP_403_FORBIDDEN, "not_your_app", str(exc)).as_response()
+
+
 def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResponse:
     """Resolve admin context, returning a JSONResponse on failure."""
     try:
@@ -1545,13 +1561,16 @@ def _validate_service_registry(
     try:
         payload = record_carriers.restore_echoed_registry(payload, before)  # a read written back unchanged (decision D27)
         service_registry.validate_protocol_dispatch_registry(payload, before=before)
-        return service_registry.normalize_service_registry(payload)
+        registry = service_registry.normalize_service_registry(payload)
     except Exception as exc:  # noqa: BLE001
         raise _RouteError(
             status.HTTP_400_BAD_REQUEST,
             "invalid_service_registry",
             f"invalid service registry: {exc}",
         ) from exc
+    # Not inside the try above: a refused model kind keeps its own code and field (engine_check.DraftError).
+    service_registry.refuse_unoffered_kinds_in_registry(registry, before=before)
+    return registry
 
 
 def _validate_service_form(
@@ -2109,12 +2128,10 @@ def create_admin_router(
             body = await _read_json_body(request)
         except _RouteError as exc:
             return exc.as_response()
-        if "owner" not in ctx.roles:  # Trusting an address lets a device in with no key.
-            return _RouteError(
-                status.HTTP_403_FORBIDDEN, "owner_required", "Only an owner can trust an address.",
-            ).as_response()
-        try:
+        try:  # Trusting an address lets a device in with no key, so only the App's accountable person may.
             record = store.add_trusted_address(app_id=app_id, data=body, actor=ctx)
+        except NotYourApp as exc:
+            return _not_your_app(exc)
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST, "invalid_trusted_address", str(exc),
@@ -2267,6 +2284,8 @@ def create_admin_router(
             ).as_response()
         try:
             record = store.create_credential(app_id=app_id, data=body, actor=ctx)
+        except NotYourApp as exc:
+            return _not_your_app(exc)
         except PermissionError as exc:
             return _owner_required(exc)
         except SessionEnded as exc:
@@ -2572,6 +2591,10 @@ def create_admin_router(
             )
         except _RouteError as exc:
             return exc.as_response()
+        except engine_check.DraftError as exc:
+            return engine_admin.EngineRouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+            ).as_response()
         except PermissionError as exc:
             return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
@@ -2611,6 +2634,10 @@ def create_admin_router(
                 actor=ctx, expected_generation=expected_generation)
         except _RouteError as exc:
             return exc.as_response()
+        except engine_check.DraftError as exc:
+            return engine_admin.EngineRouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+            ).as_response()
         except PermissionError as exc:
             return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
@@ -2644,7 +2671,9 @@ def create_admin_router(
         The text is cleaned of the secret parts of the form that caused it (an address with user info, a header value).
         """
         msg = projection.scrub_text(str(exc)[:600], _body_secret_texts(body))
-        if "not found" in msg:
+        if isinstance(exc, ServiceLeftOut):
+            code, http = "service_left_out", status.HTTP_409_CONFLICT
+        elif "not found" in msg:
             code, http = "service_not_found", status.HTTP_404_NOT_FOUND
         elif "already exists" in msg:
             code, http = "service_conflict", status.HTTP_409_CONFLICT
@@ -3090,6 +3119,10 @@ def create_admin_router(
                 ).as_response()
         except _RouteError as exc:
             return exc.as_response()
+        except engine_check.DraftError as exc:
+            return engine_admin.EngineRouteError(
+                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+            ).as_response()
         except service_registry.ServiceRegistryConflict as exc:
             return _RouteError(
                 status.HTTP_409_CONFLICT,

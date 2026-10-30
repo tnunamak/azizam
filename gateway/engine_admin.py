@@ -39,6 +39,7 @@ from gateway import log_scrub
 from gateway import admin_store, category_enforcement, egress, projection, record_carriers, secret_commands, secret_store, service_registry, stt_chunking, transforms, url_binding
 from gateway.compat import positive_int_env
 from gateway.access_plans import PlanError, plan_from_document
+from gateway.capability_ids import MODEL_KINDS
 from gateway.engine_access import who_can_use
 from gateway.engine_check import (
     SECRET_MASK,
@@ -449,6 +450,13 @@ def _models_config(definition: Mapping[str, Any], values: Mapping[str, Any], mod
         item = stored_row(upstream, public)
         # A public name or upstream edit does not create a new offering.
         item.update(model_group=public, upstream_model=upstream)
+        kind = row.get("kind")
+        if kind in (None, ""):
+            item.pop("kind", None)
+        elif kind in MODEL_KINDS:
+            item["kind"] = kind
+        else:
+            raise DraftError(f"The capability of “{public}” is not one of the choices.", field="models")
         window = row.get("context_window")
         if window not in (None, ""):
             try:
@@ -554,6 +562,7 @@ def build_raw(
         else:
             raw.pop("headers", None)
     models_config = _models_config(definition, values, models, stored_models)
+    # The kind rule runs in the registry write, which knows the stored record.
     if models_config:
         raw["models"] = models_config
         raw.setdefault("model_policy_schema_version", service_registry.MODEL_POLICY_SCHEMA_VERSION)
@@ -685,10 +694,15 @@ def engine_view(catalog: EngineCatalog, stored: Mapping[str, Any], *, db_path: P
     locked = service_registry.is_litellm_service_record(stored.get("id"), stored)
     editable = not locked
     model_use = (config.get("engine_check") or {}).get("model_use") or {}
-    models = [{"id": m.get("upstream_model"), "public_name": m.get("model_group") or m.get("id"),
+    models = []
+    for m in model_rows(config.get("models")):
+        row = {"id": m.get("upstream_model"), "public_name": m.get("model_group") or m.get("id"),
                "context_window": m.get("context_window"), "enabled": m.get("enabled", True),
                "use": model_use.get(m.get("upstream_model"), "")}
-              for m in model_rows(config.get("models"))]
+        # A model with no kind is shown as before: the key appears only when the operator set one.
+        if m.get("kind"):
+            row["kind"] = m["kind"]
+        models.append(row)
     secret_id = str(stored_config.get("api_key_secret_id") or "")
     key: dict[str, Any] = {"state": "none"}
     if env_name:

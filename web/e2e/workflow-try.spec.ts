@@ -4,6 +4,15 @@ import { type Page, type Route } from "@playwright/test";
 import { expect, test } from "./fixtures/isolation";
 import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
+/** A person who has not written a prompt takes the tab's example first. Written words are never replaced. */
+async function takeExampleIfEmpty(page: import("@playwright/test").Page) {
+  const example = page.getByRole("button", { name: "Try an example" });
+  if (!(await example.count())) return;
+  const box = page.getByRole("textbox", { name: /^(Prompt|Question)$/ });
+  if ((await box.count()) && (await box.inputValue()) === "") await example.click();
+}
+
+
 
 // Try mints one key per sign-in and revokes the session's older Try keys
 // (gateway/user_runtime.py ensure_try_session_key). Cases that open Try share the
@@ -435,6 +444,7 @@ test("successive video runs poll their own jobs and never reuse old output", asy
 
   await prepareTryKey(page, "video.generate.async");
   await fillRequiredPrompt(page, firstPrompt);
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Waiting to start", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Check again", exact: true }).click();
@@ -449,6 +459,7 @@ test("successive video runs poll their own jobs and never reuse old output", asy
   await expect.poll(() => video.evaluate((element: HTMLVideoElement) => element.error)).toBeNull();
 
   await fillRequiredPrompt(page, secondPrompt);
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Waiting to start", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Download video", exact: true }))
@@ -617,6 +628,7 @@ test("workflow multipart run sends a browser-encoded file part without a JSON co
     mimeType: "video/mp4",
     buffer: Buffer.from("fake mp4"),
   });
+  await takeExampleIfEmpty(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Workflow result", { exact: true })).toBeVisible();
 

@@ -12,12 +12,15 @@ from unittest.mock import patch
 
 from PIL import Image
 
+from fastapi import FastAPI
 from starlette.responses import Response, StreamingResponse
 from starlette.testclient import TestClient
 
 import proxy
 from tests.support.access import authenticated, access_context, auth_identity  # noqa: E402
 from gateway import media_ingestion, media_jobs, receipt_store, provenance
+from gateway.api import create_gateway_router
+from gateway.discovery import WorkflowRegistry
 from gateway.receipts import RouteReceipt
 from tests.media_test_bytes import mp4_bytes
 
@@ -470,6 +473,91 @@ class SyncMediaRouteTests(unittest.TestCase):
         self.assertEqual(job["assets"][0]["filename"], "sync-video.mp4")
         self.assertTrue(job["assets"][0]["asset_id"].startswith("vid_"))
 
+    def test_index_video_delivery_makes_the_app_principal_the_maker_only_without_a_person(self) -> None:
+        asset_id = "vid_" + "ab" * 32
+
+        def deliver(video_id: str, record: dict) -> media_jobs.MediaJob:
+            job = media_ingestion.index_video_delivery(
+                video_id=video_id, asset_id=asset_id, filename="clip.mp4", media_type="video/mp4", record=record,
+            )
+            assert job is not None
+            return job
+
+        made_by_person = deliver("video_person", {"app_id": "app_video", "owner_key_hash": "app:app_video", "person_id": "usr_maker"})
+        made_by_service_app = deliver("video_service", {"app_id": "app_video", "owner_key_hash": "app:app_video"})
+        made_without_app = deliver("video_user", {"owner_key_hash": "user:usr_maker"})
+
+        self.assertEqual((made_by_person.maker_person_id, made_by_person.maker_credential_id), ("usr_maker", None))
+        self.assertEqual((made_by_service_app.maker_person_id, made_by_service_app.maker_credential_id),
+                         (None, "app:app_video"))
+        self.assertEqual((made_without_app.maker_person_id, made_without_app.maker_credential_id), (None, None))
+
+    def test_service_app_video_is_read_by_its_app_keys_and_no_one_else(self) -> None:
+        import anyio
+
+        prompt_id = _FakeVideoAsyncClient.prompt_id
+        video_id = proxy._video_id_from_prompt_id(prompt_id)
+        creator = proxy.AuthContext(identity=auth_identity(
+            name="Desk video", key_hash="sha256:desk-video", app_id="app_video", credential_id="cred_desk_video"))
+        proxy._video_job_records[prompt_id] = {
+            "resolved_model": "ltx-test",
+            "app_profile": "plan_test",
+            "app_id": "app_video",
+            "api_key_name": "Desk video",
+            "owner_key_hash": "app:app_video",
+            "provenance": provenance.build_provenance_record(
+                kind="video",
+                request_id=video_id,
+                requested_model="sora-test",
+                resolved_model="ltx-test",
+                workflow_id="video.generate.ltx-test",
+                backend="comfyui",
+            ),
+        }
+        self.addCleanup(lambda: proxy._video_job_records.pop(prompt_id, None))
+
+        with patch.object(proxy, "COMFY_ENABLED", True), \
+             patch.object(proxy.httpx, "AsyncClient", _FakeVideoAsyncClient), \
+             patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content):
+            async def fetch_without_prompt_metadata():
+                return await proxy.proxy_graph_video_content(video_id, creator, metadata_mode="none")
+            response = anyio.run(fetch_without_prompt_metadata)
+
+        self.assertEqual(response.status_code, 200)
+        job = media_jobs.get_by_request_id(video_id, path=self.media_db)
+        assert job is not None
+        self.assertIsNone(job["maker_person_id"])
+        self.assertEqual(job["maker_credential_id"], "app:app_video")
+
+        active = [creator]
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def authenticate(request, call_next):
+            request.scope["auth_context"] = active[0]
+            return await call_next(request)
+
+        app.include_router(create_gateway_router(
+            WorkflowRegistry(), media_job_store_path=self.media_db, receipt_store_path=self.receipt_db,
+            record_scope_provider=proxy._gateway_record_scope, record_authorizer=proxy._gateway_record_authorizer,
+        ))
+        client = TestClient(app)
+
+        def read_status(auth_context) -> int:
+            active[0] = auth_context
+            return client.get(f"/gateway/v1/media/jobs/{job['job_id']}").status_code
+
+        same_app = proxy.AuthContext(identity=auth_identity(
+            name="Desk video 2", key_hash="sha256:desk-video-2", app_id="app_video", credential_id="cred_desk_video_2"))
+        other_app = proxy.AuthContext(identity=auth_identity(
+            name="Other app", key_hash="sha256:other-app", app_id="app_other", credential_id="cred_other_app"))
+        owner = proxy.AuthContext(identity=auth_identity(
+            name="Desk owner", key_hash="sha256:owner-session", person_id="usr_owner", auth_kind="session"))
+        self.assertEqual(read_status(creator), 200)
+        self.assertEqual(read_status(same_app), 200)
+        self.assertEqual(read_status(other_app), 404)
+        self.assertEqual(read_status(owner), 404)
+
 
     def test_video_content_index_library_false_preserves_delivery_without_media_job(self) -> None:
         import anyio
@@ -532,6 +620,8 @@ class SyncMediaRouteTests(unittest.TestCase):
         stored = receipt_store.get(receipt.request_id, path=self.receipt_db)
         assert stored is not None
         self.assertEqual(stored["status"], "succeeded")
+        # A success was served, so the receipt says when its work started.
+        self.assertIsNotNone(stored["started_at_ms"])
         self.assertEqual(stored["requested_model"], "tts-1")
         self.assertTrue(stored["stream"])
         self.assertEqual(stored["policy_decision"], "allowed")
@@ -553,4 +643,5 @@ class SyncMediaRouteTests(unittest.TestCase):
         stored_stream = receipt_store.get(streaming_receipt.request_id, path=self.receipt_db)
         assert stored_stream is not None
         self.assertEqual(stored_stream["status"], "succeeded")
+        self.assertIsNotNone(stored_stream["started_at_ms"])
         self.assertTrue(stored_stream["stream"])

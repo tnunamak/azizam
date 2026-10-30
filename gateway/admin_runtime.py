@@ -31,7 +31,15 @@ from gateway import log_scrub
 from gateway import admin_store, browser_sessions, engine_check, step_up, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway import session_guard
-from gateway.admin_api import ActorOutranked, AdminAuthError, AdminContext, AdminKeyNameTaken, access_model_summary
+from gateway.admin_api import (
+    ActorOutranked,
+    AdminAuthError,
+    AdminContext,
+    AdminKeyNameTaken,
+    NotYourApp,
+    ServiceLeftOut,
+    access_model_summary,
+)
 from gateway.admin_oidc import (
     SERVICE_ACCOUNT_SESSION_PREFIX,
     AdminSession,
@@ -370,6 +378,17 @@ class AdminSQLiteStore:
             return
         raise PermissionError("Only the owner can do this for an App that someone else answers for.")
 
+    @staticmethod
+    def _require_accountable_person(actor: AdminContext, accountable_user_id: str) -> None:
+        """Only the App's accountable person adds a key or a trusted address (owner visibility §3.5).
+
+        The owner role is not enough: it runs plans and disables Apps, but a binding is a credential
+        the person must issue for themselves. A control-plane key is not a person, so it adds none.
+        """
+        if actor.actor_kind == "user" and accountable_user_id and actor.audit_actor_id == accountable_user_id:
+            return
+        raise NotYourApp("Only the person this App answers for can add a key or a trusted address to it.")
+
     def create_app(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]:
@@ -556,16 +575,22 @@ class AdminSQLiteStore:
         return _plan_record(record)
 
     def list_trusted_addresses(self, *, app_id: str) -> list[dict[str, Any]] | None:
-        if admin_store.get_app(app_id, path=self.path) is None:
+        app = admin_store.get_app(app_id, path=self.path)
+        if app is None:
             return None
-        return admin_store.list_trusted_addresses(app_id, path=self.path)
+        entries = admin_store.list_trusted_addresses(app_id, path=self.path)
+        # What the cut-over does to each entry, and the remedy the App's person has (the rule their keep route applies).
+        view = admin_store.cutover_for_bindings(app.get("owner_user_id"), addresses=entries, path=self.path)
+        return [{**entry, **view.get(entry["id"], {})} for entry in entries]
 
     def add_trusted_address(
         self, *, app_id: str, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any] | None:
         """Trust a client address or range for one App. ValueError carries a sentence for the owner."""
-        if admin_store.get_app(app_id, path=self.path) is None:
+        app = admin_store.get_app(app_id, path=self.path)
+        if app is None:
             return None
+        self._require_accountable_person(actor, str(app.get("owner_user_id") or ""))
         try:
             address = trusted_addresses.normalize_entry(data.get("address"))
             record = admin_store.add_trusted_address(
@@ -623,7 +648,7 @@ class AdminSQLiteStore:
         app = admin_store.get_app(app_id, path=self.path)
         if app is None:
             raise ValueError(f"app {app_id!r} not found")
-        self._require_owner_or_accountable(actor, str(app.get("owner_user_id") or ""))
+        self._require_accountable_person(actor, str(app.get("owner_user_id") or ""))
         api_key = generate_app_api_key()
         record = admin_store.create_credential_hash(
             subject_kind="app",
@@ -846,12 +871,15 @@ class AdminSQLiteStore:
         try:
             if section == "services" and isinstance(record, Mapping) and service_registry.is_litellm_service_record(held.id, record):
                 raise ValueError(f"service {held.id!r} is a managed substrate; remove it and the gateway restores its own")
-            candidate = copy.deepcopy(self.get_service_registry())
+            current = self.get_service_registry()
+            candidate = copy.deepcopy(current)
             candidate[section] = {**(candidate.get(section) or {}), held.key: record}
             try:
                 registry = service_registry.normalize_service_registry(candidate)
             except ValueError as error:
                 raise ValueError(projection.scrub_text(str(error)[:600], record_carriers.legacy_secret_texts(record))) from None
+            # A left-out record is not in ``current``, so it is checked as new; the others only if they change.
+            service_registry.refuse_unoffered_kinds_in_registry(registry, before=current)
             saved = self._persist_service_registry(
                 registry,
                 action="operator.service.updated",
@@ -1311,6 +1339,12 @@ class AdminSQLiteStore:
             # The way to fix a record that is left out: edit it, starting from what is stored.
             existing = left_out.record
         metadata_fields = {"name", "enabled", "disabled", "note", "acknowledge_warnings"}
+        if left_out is not None and set(data) <= metadata_fields:
+            fix_path = f"/admin/api/operator/service-registry/excluded/services/{sid}"
+            raise ServiceLeftOut(
+                f"Service {sid!r} is left out of the registry. Fix it with PUT {fix_path}.",
+                fix_path=fix_path,
+            )
         if existing is not None and "owner" not in actor.roles and set(data) - metadata_fields:
             raise PermissionError("Only the owner can change service settings.")
         if existing is not None and set(data) <= metadata_fields:
@@ -2329,10 +2363,10 @@ def app_key_prompt_memory(app: Mapping[str, Any], credential: Mapping[str, Any])
     return {
         "person_id": person_id,
         "description": (
-            "Prompts sent with this key follow your prompt-memory settings. "
-            "Anyone holding it can access your saved prompts."
+            "Words sent with this key follow your saved words and chats setting. "
+            "Anyone holding it can access your saved words and chats."
             if person_id else
-            "Prompts sent with this key are not remembered. Generated items belong to the App. "
+            "Words sent with this key are not kept. Generated items belong to the App. "
             "Requests to /v1/responses can explicitly ask to save a conversation with store:true until it is explicitly deleted."
         ),
     }
@@ -2439,6 +2473,7 @@ def runtime_identity_for_app_credential_hash(
         browser_session = AdminSession(subject=row.get("cred_created_by") or "", email="", role="none",
                                        session_id=row["cred_session_id"], **timing)
     return replace(identity, credential_id=str(row["cred_id"]), browser_session=browser_session,
+                   privacy_permission=bool(row.get("cred_privacy_permission")),
                    auth_kind="service_key" if row["app_kind"] == "service" else "app_key")
 
 
@@ -2460,6 +2495,26 @@ def runtime_identity_for_session_app(
         return None
     return replace(identity_from_access_row(
         row, key_hash=f"app:{app_id}", name=str(row.get("app_name") or app_id), person_id=person_id,
+    ), auth_kind="session")
+
+
+def runtime_identity_for_new_session_app(
+    person_id: str,
+    *,
+    path: Path = admin_store.DB_PATH,
+) -> RuntimeIdentity | None:
+    """Return the identity a person's session App has, or would have, without creating the App.
+
+    A read that asks what a person may use (the avatar's make route) must not write. Until a make job starts, the
+    session App does not exist, and this gives the identity it will have: the same plan and the same denials, with no
+    App id. Nothing is written with it, and no App key can match it.
+    """
+    with admin_store.runtime_auth_connection(path) as connection:
+        row = admin_store.runtime_access_row_for_new_session_app(connection, person_id)
+    if row is None:
+        return None
+    return replace(identity_from_access_row(
+        row, key_hash="", name="the person's session App", person_id=person_id,
     ), auth_kind="session")
 
 

@@ -79,10 +79,11 @@ Privacy in the UI/API does not protect against that server authority.
 
 Both admin and self-service key-minting APIs return `prompt_memory.person_id` and
 `prompt_memory.description`. For service Apps or someone else's App the copy
-is: "Prompts sent with this key are not remembered. Generated items belong to
-the App. Chat requests can explicitly ask to save a conversation until it is
-explicitly deleted." For an own personal-App key it says prompts follow your settings
-and anyone holding the key can access your saved prompts. The web key form
+is: "Words sent with this key are not kept. Generated items belong to
+the App. Requests to /v1/responses can explicitly ask to save a conversation with
+store:true until it is explicitly deleted." For an own personal-App key it says words
+sent with the key follow your saved words and chats setting, and anyone holding the
+key can access your saved words and chats. The web key form
 must show this description when its frontend work ships.
 
 Member preferences live in a new `admin.db` table keyed by `users.id`:

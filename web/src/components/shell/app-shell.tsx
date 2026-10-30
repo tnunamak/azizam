@@ -24,6 +24,7 @@ import {
   Play,
   Plug,
   ReceiptText,
+  History,
   Tags,
   CornerDownRight,
   Settings,
@@ -65,8 +66,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { LeaveGuard } from "./leave-guard";
 import { ReauthGate } from "./reauth-gate";
 import { SessionCoverFromStore } from "./session-cover";
+import { SignInFrame } from "./sign-in-frame";
 import { ToastGate } from "./toast-gate";
 import {
   checkPageShown,
@@ -86,7 +89,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { useAvatarSetting } from "./avatar-setting";
+import { AutomaticAvatar, useAvatarSetting } from "./avatar-setting";
 import { ViewerContext, useViewer, useViewerQuery } from "./session";
 // Keep the shortcut listener in the shell; load the palette and account menu
 // outside the first paint, then fetch them once the page is idle so the first
@@ -120,6 +123,7 @@ const icons: Record<string, LucideIcon> = {
   Home: House,
   Library: Images,
   Try: Play,
+  History: History,
   "Apps & keys": KeyRound,
   Connect: Plug,
   Models: Box,
@@ -146,19 +150,31 @@ function signInHref(returnPath: string): string {
   return `/sign-in/?return_to=${encodeURIComponent(returnPath)}`;
 }
 
+/** Nothing to subscribe to: the page's hydration state never changes once it has happened. */
+const subscribeNever = () => () => {};
+
 function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
   const { resolvedTheme, setTheme } = useTheme();
-  const toggle = () => setTheme(resolvedTheme === "dark" ? "light" : "dark");
+  // The static export draws this button before the browser knows the theme, and React keeps an attribute it drew at
+  // hydration even when the theme differs. So the name waits for the hydrated page: the server and the hydration render
+  // both say "Change theme", and the name that states the press follows once the page has hydrated.
+  const hydrated = useSyncExternalStore(subscribeNever, () => true, () => false);
+  // The name says what a press does ("Switch to dark"), and the tooltip shows the same words. The icon is the mode a
+  // press switches to: the moon in light, the sun in dark.
+  const next = resolvedTheme === "dark" ? "light" : "dark";
+  const label = hydrated ? `Switch to ${next}` : "Change theme";
+  const toggle = () => setTheme(next);
   const icons = (
     <>
-      <Sun className="size-4 dark:hidden" aria-hidden="true" />
-      <Moon className="hidden size-4 dark:block" aria-hidden="true" />
+      <Moon className="size-4 dark:hidden" aria-hidden="true" />
+      <Sun className="hidden size-4 dark:block" aria-hidden="true" />
     </>
   );
   return chrome ? (
     <button
       type="button"
-      aria-label="Toggle theme"
+      aria-label={label}
+      title={label}
       className="shell-nav-footer size-11 shrink-0 justify-center px-0 lg:size-9"
       onClick={toggle}
     >
@@ -169,7 +185,8 @@ function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
       variant="ghost"
       size="icon"
       className="min-h-11 min-w-11"
-      aria-label="Toggle theme"
+      aria-label={label}
+      title={label}
       onClick={toggle}
     >
       {icons}
@@ -550,12 +567,17 @@ function isWideSidebar() {
   return window.matchMedia(WIDE_SIDEBAR_QUERY).matches;
 }
 
+/** Destinations the phone's More list leaves out: its bottom bar already has the tab. */
+const LEFT_OUT_OF_MORE = ["Apps & keys"];
+
 function Nav({
   expanded = false,
   onNavigate,
+  omit = [],
 }: {
   expanded?: boolean;
   onNavigate?: () => void;
+  omit?: string[];
 }) {
   const viewer = useViewer();
   const pathname = usePathname();
@@ -584,6 +606,7 @@ function Nav({
                     (!viewer.admin &&
                       group === "You" &&
                       d.title === "Status")) &&
+                  !omit.includes(d.title) &&
                   (!viewer.serviceAdmin ||
                     d.title === "Home" ||
                     (d.group === "Gateway" &&
@@ -629,8 +652,10 @@ function AlertSlot() {
   const viewer = useViewer();
   const pathname = usePathname();
   const onStatus = canonicalDestinationPath(pathname) === "/status";
+  // Home's gateway panel shows the same fault with its fix, so the banner would say it twice.
+  const onHome = canonicalDestinationPath(pathname) === "/";
   const checksReady = useAfterFirstLoad(SHELL_CHECKS_DELAY_MS);
-  const alert = useOwnerAlertTarget(viewer.admin && !onStatus && checksReady);
+  const alert = useOwnerAlertTarget(viewer.admin && !onStatus && !onHome && checksReady);
   // Status owns its section markup. Resolve its visible heading after route
   // loading so the banner can hand keyboard focus to the affected section.
   useEffect(() => {
@@ -668,7 +693,7 @@ function AlertSlot() {
       window.removeEventListener("hashchange", onHashChange);
     };
   }, [pathname, viewer.admin]);
-  if (!alert || onStatus || canonicalDestinationPath(pathname) === "/try") return null;
+  if (!alert || onStatus || onHome || canonicalDestinationPath(pathname) === "/try") return null;
   return (
     <div
       className="bg-warning-tint text-foreground border-warning/30 border-b px-5 py-2.5 sm:px-8 lg:px-12"
@@ -747,6 +772,8 @@ function Shell({ children }: { children: React.ReactNode }) {
     !((pageName === undefined || pageName === "") && viewer?.authenticated);
   const showPublicShell =
     publicPage || sessionPending || sessionError || !viewer?.authenticated;
+  // The sign-in page is one surface, at /sign-in/ and at a signed-out "/". It has its own frame and no header.
+  const signInSurface = pageName === "sign-in" || (pageName === "" && !viewer?.authenticated);
   const currentPath = canonicalDestinationPath(pathname);
   const returnPath = signInReturnPath(pathname, "");
   const privateSignInHref = signInHref(returnPath);
@@ -855,13 +882,16 @@ function Shell({ children }: { children: React.ReactNode }) {
       }
     >
       <TooltipProvider>
+        <AutomaticAvatar />
         <a
           href="#main-content"
           className="focus:bg-background sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:rounded-md focus:p-3"
         >
           Skip to content
         </a>
-        {showPublicShell ? (
+        {showPublicShell && signInSurface ? (
+          <SignInFrame themeToggle={<ThemeToggle />}>{content}</SignInFrame>
+        ) : showPublicShell ? (
           <div className="min-h-dvh">
             <header className="flex items-center justify-between px-5 py-4 sm:px-8">
               <Link prefetch={false}
@@ -1052,6 +1082,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             <div className="px-4 pb-6">
               <Nav
                 expanded
+                omit={moreOpen ? LEFT_OUT_OF_MORE : undefined}
                 onNavigate={() => {
                   setMoreOpen(false);
                   setRailOpen(false);
@@ -1141,6 +1172,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Shell>{children}</Shell>
         </SessionBoundary>
         <ReauthGate />
+        <LeaveGuard />
         <ToastGate />
       </QueryClientProvider>
     </ThemeProvider>

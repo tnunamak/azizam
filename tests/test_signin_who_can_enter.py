@@ -9,13 +9,15 @@ makes the group ``/Trusted`` administrators, no other rules.
 Each answer in the owner's question "Can any of my Keycloak users log in, and
 what access do they get?" is one test below.
 """
+import sqlite3
 import time
 from dataclasses import replace
 
 from fastapi.testclient import TestClient
 import pytest
 
-from gateway import accounts, admin_runtime, admin_store
+from gateway import accounts, admin_runtime, admin_store, gateway_lifetime
+from tests.support.app_keys import issue_app_credential
 from gateway.admin_oidc import CookieConfig, OIDCConfig
 from tests.support.access import store_plan
 
@@ -61,7 +63,8 @@ class Gateway:
     def client(self) -> TestClient:
         return TestClient(self.proxy.app, base_url="https://ai.example", client=("127.0.0.1", 50000))
 
-    def sign_in(self, client, *, sub, email, groups=(), email_verified=True, auth_time="now", start=None):
+    def sign_in(self, client, *, sub, email, groups=(), email_verified=True, auth_time="now", start=None,
+                picture=None):
         """Run the browser flow. Returns the callback response.
 
         The provider says the person signed in just now, as Keycloak does; ``auth_time=None`` is a provider
@@ -81,6 +84,8 @@ class Gateway:
                       "exp": 4_000_000_000, "iat": int(time.time())}
             if groups:
                 claims["groups"] = list(groups)
+            if picture is not None:
+                claims["picture"] = picture
             if auth_time is not None:
                 claims["auth_time"] = int(time.time()) if auth_time == "now" else auth_time
             return claims
@@ -123,11 +128,15 @@ def gateway(tmp_path, monkeypatch):
     gw.set_rules([TRUSTED])
     original = gw.client
     gw.client = lambda: clients.append(original()) or clients[-1]
+    # A running gateway holds the lifetime lock for its whole life. This harness serves without running the lifespan,
+    # so it takes the same hold, and the cut-over sees it as it would see a running gateway.
+    gateway_lifetime.hold(path)
     try:
         yield gw
     finally:
         for client in clients:
             client.close()
+        gateway_lifetime.release(path)
 
 
 def signed_in(gateway, *, sub, email, groups=()):
@@ -175,6 +184,19 @@ def test_q1_an_invitation_that_names_their_verified_email_lets_them_finish_signi
     assert gateway.user("friend@example.test") is not None
     # Signing in is not accepting: the plan still arrives only with the invitation.
     assert admin_store.person_plan_id(gateway.user("friend@example.test")["id"], path=gateway.path) is None
+
+
+def test_successful_sso_sign_in_repairs_its_null_plan_session_app(gateway):
+    sub, email = "repair-session-app", "repair@example.test"
+    user = admin_store.upsert_oidc_user(gateway.config.issuer, sub, email=email, path=gateway.path)
+    app = admin_store.ensure_session_app_for_user(user["id"], name="Azizam", path=gateway.path)
+    with sqlite3.connect(gateway.path) as conn:
+        conn.execute("UPDATE apps SET access_plan=NULL WHERE id=?", (app["id"],))
+
+    _, response = signed_in(gateway, sub=sub, email=email, groups=["/Trusted"])
+
+    assert response.status_code == 302, response.text
+    assert admin_store.get_app(app["id"], path=gateway.path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
 
 
 def test_q1_an_invitation_for_another_email_lets_a_stranger_in_nowhere(gateway):
@@ -446,7 +468,7 @@ def test_an_administrator_cannot_mint_a_key_on_an_app_the_owner_answers_for(gate
     refused = admin.post(f"/admin/api/apps/{app.json()['app']['id']}/keys", headers=csrf_for(admin),
                          json={"display_name": "k"})
     assert refused.status_code == 403, refused.text
-    assert refused.json()["error"]["code"] == "owner_required"
+    assert refused.json()["error"]["code"] == "not_your_app"
 
 
 def test_an_administrator_cannot_change_the_plan_or_owner_of_an_app_the_owner_answers_for(gateway):
@@ -1036,6 +1058,7 @@ def test_receipts_and_media_treat_an_app_scoped_owner_grant_as_no_role(gateway, 
     assert me_media._live_role_for_user(user["id"], gateway.path) == "none"
 
     seen = {}
+    monkeypatch.setattr(user_runtime.receipt_store, "count", lambda **kw: 1)  # the feed reads every candidate before its limit
     monkeypatch.setattr(user_runtime.receipt_store, "recent", lambda **kw: seen.update(kw) or [])
     user_runtime.build_user_activity_snapshot(SimpleNamespace(subject=user["id"]), path=gateway.path)
     assert seen["app_ids"] == [app["id"]]  # not None: the feed is limited to their own App
@@ -1118,8 +1141,8 @@ def test_an_administrator_can_still_revoke_a_members_app_key(gateway):
     member_id = admin_store.upsert_oidc_user("https://id.example", "m", email="m@example.test", path=gateway.path)["id"]
     app_id = owner.post("/admin/api/apps", headers=csrf_for(owner), json={
         "name": "members", "kind": "service", "access_plan": plan_id, "owner_user_id": member_id}).json()["app"]["id"]
-    key = owner.post(f"/admin/api/apps/{app_id}/keys", headers=csrf_for(owner), json={"display_name": "k"})
-    revoked = admin.post(f"/admin/api/credentials/{key.json()['credential']['id']}/revoke", headers=csrf_for(admin))
+    key = issue_app_credential(gateway.path, app_id, label="k")
+    revoked = admin.post(f"/admin/api/credentials/{key['id']}/revoke", headers=csrf_for(admin))
     assert revoked.status_code == 200, revoked.text
     assert admin.delete(f"/admin/api/apps/{app_id}", headers=csrf_for(admin)).status_code == 200
 

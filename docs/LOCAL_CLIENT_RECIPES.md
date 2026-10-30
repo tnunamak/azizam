@@ -134,7 +134,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `GET /openai/v1/videos` | OpenAI-shaped video | List video jobs *submitted by the calling API key* via this route (`limit`, `after`, `order`). Job records survive restarts until explicitly deleted. |
 | `DELETE /openai/v1/videos/{id}` | OpenAI-shaped video | Cancels a queued/running job (ComfyUI `/api/jobs/{id}/cancel`) before tombstoning it; a `409` means cancellation couldn't be confirmed, not that the job survived. Scoped to the owning API key -- all four of status/content/list/delete are. |
 | `POST /openai/v1/videos/extensions` | OpenAI-shaped video (Sora's extend) | Add footage to a completed video; the result is the source plus the new segment. `501 video_extend_not_configured` if `videos.extend_workflow` is unset. See "Long video". |
-| `POST /openai/v1/videos/{id}/remix`, `POST /openai/v1/videos/edits` | OpenAI-shaped video | Remix a completed or uploaded video with a new prompt (Bernini-R). `501 video_remix_not_configured` if `videos.remix_workflow` is unset. See "Remix and character replace". |
+| `POST /openai/v1/videos/{id}/remix`, `POST /openai/v1/videos/edits` | OpenAI-shaped video | Remix a completed or uploaded video with a new prompt. Off in the shipped config: `501 video_remix_not_configured` until `videos.remix_workflow` is set. See "Remix and character replace". |
 | `GET /v1/status` | Admin | Operational status; requires admin auth. |
 | `POST /anthropic/v1/messages` | Anthropic Messages | Translator over chat completions with SSE streaming; `/v1/messages` remains a legacy convenience route. |
 | `GET /ollama/api/tags` | Ollama-compatible | Model list from configured catalog; `/api/tags` remains a convenience route. |
@@ -752,51 +752,18 @@ resource, the cap, the failure error and the progress are the same as for LTX. W
 
 ### Remix and character replace
 
-Two workflows take a source video as input. Both need the Wan models and
-ComfyUI nodes on this host (`video-bernini-r-remix`, `video-scail-2-replace`).
+Remix is off in the shipped config. Character replace runs on this host
+(`video-scail-2-replace`) and needs its ComfyUI nodes and models.
 
-**Remix** follows OpenAI's API. `POST /v1/videos/{video_id}/remix` takes
-`{"prompt": ...}` and returns a new video job with `remixed_from_video_id` set
-to the source. The source must be a completed video of the same API key. It runs
-Bernini-R (Wan 2.2 14B, Q4_K_M). The edit is approximate, not frame-exact: use
-prompts like "Replace the beach with a snowy mountain. Keep the dog and its
-motion unchanged."
+**Remix is off.** The shipped config sets no `videos.remix_workflow`, so
+`POST /v1/videos/{video_id}/remix` and `POST /v1/videos/edits` return
+`501 video_remix_not_configured`. The routes stay so that OpenAI clients get that
+error and not a missing route. The workflow that ran remix (Bernini-R, Wan 2.2 14B,
+Q4_K_M) and its model files were removed on 2026-10-27. To turn remix back on,
+name a workflow in `videos.remix_workflow` in `proxy_config.yml` and add a
+`video-remix` alias that resolves to that workflow. The routes submit as `video-remix`.
 
-```bash
-export AZIZAM_API_KEY='opk_...'
-VIDEO_ID='video_...'
-curl -s -X POST "http://127.0.0.1:5000/v1/videos/$VIDEO_ID/remix" \
-  -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" \
-  -d '{"prompt": "Replace the beach with a snowy mountain at golden hour. Keep the dog unchanged."}'
-```
-
-```python
-import os
-from openai import OpenAI
-
-base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
-video_id = os.environ["AZIZAM_VIDEO_ID"]
-client = OpenAI(base_url=f"{base_url}/v1", api_key=os.environ["AZIZAM_API_KEY"])
-
-video = client.videos.remix(video_id, prompt="Make it snowy. Keep the dog unchanged.")
-video = client.videos.poll(video.id)
-client.videos.download_content(video.id).write_to_file("remix.mp4")
-```
-
-To remix a clip that is not a gateway video, use OpenAI's edit route,
-`POST /v1/videos/edits`: `client.videos.edit(prompt=..., video=open("clip.mp4", "rb"))`.
-Over JSON, `video` can also be `{"id": "video_..."}` (this sets
-`remixed_from_video_id`). An upload gives `remixed_from_video_id: null`. The same
-upload also works on `POST /v1/videos` with `model: "video-remix"` and
-`extensions.com.azizam.workflow.source_video` set to a video id, an http(s) URL
-or a `data:video/mp4;base64,...` URI.
-
-Optional gateway fields on remix and edit: `seed`, `seconds`, `size`, `negative_prompt`,
-and `model`. Without `model` the resource reports `"model": "video-remix"` (OpenAI reports
-the source's model); `azizam_resolved_model` is always `video-bernini-r-remix`.
-Output keeps the source frame rate and audio. `seconds` defaults to the source length, up to
-3.4 s, and may not exceed the source length; the maximum is 4 s, 832x480 (4k+1 frames).
-Measured on the 3090: 81 frames at 832x480 = 462 s warm.
+Gateway extras on remix and edit: `seed`, `seconds`, `size`, and `negative_prompt`. `model` is optional.
 
 **Character replace** has no OpenAI equivalent, so it is a gateway workflow on
 `POST /v1/videos` with `model: "character-replace"` (also `scail-2`). A reference
@@ -1667,7 +1634,6 @@ an exact model or settings. Unknown names pass through unchanged.
 | | `video-fast` | `video-ltx-2.5-t2v` (same graph as `video`) | |
 | | `video-long` | `video-ltx-2.5-long` (code-built chain, up to `videos.max_total_seconds`, default 40 s) | |
 | | `h3-long`, `minimax-h3-long` | `video-minimax-h3-long` (code-built H3 chain, same cap; `minimax-h3` itself also chains past 10 s) | |
-| | `video-remix` | `video-bernini-r-remix`; needs `extensions...source_video`; also what `/v1/videos/{id}/remix` runs | |
 | | `character-replace` | `video-scail-2-replace`; needs `extensions...source_video` and `reference_image` | |
 | Rerank | `rerank` | Example deployment: Qwen3-Reranker-0.6B Q5_K_M (CPU, on demand) | any name containing `rerank` |
 | TTS | `tts` | Supertonic (audio.cpp, GPU0, always warm; preset voices), then OmniVoice. Chatterbox Turbo is temporarily disabled (2026-10-08) and is not in the list. A user-created voice (`voice: {"id": "voice_..."}`) answers `400 custom_voice_engine_unsupported` here, because Supertonic has preset voices only; select `model: omnivoice` to clone (see the GPU0 note below) | `tts-1`, `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |

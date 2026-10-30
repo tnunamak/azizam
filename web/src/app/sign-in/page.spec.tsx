@@ -3,7 +3,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -22,7 +21,7 @@ const defaults = {
   oidc_url: "/login?return_to=%2Fusage%2F",
   instance_name: "Azizam",
 };
-let options: typeof defaults;
+let options: typeof defaults & { fresh_sign_in?: boolean };
 let ownerExists: boolean;
 let client: QueryClient;
 const json = (body: unknown, status = 200) =>
@@ -87,8 +86,10 @@ it.each([
           ? `Continue with ${label}`
           : "Continue with single sign-on",
     });
-    expect(provider).toHaveAttribute("data-variant", "default");
-    expect(provider).toHaveAttribute("href", options.oidc_url);
+    // The sign-in primary is the Home's resting Make (`--make-rest`, an ink pill): the same fill as the Home's Make button.
+    expect(provider).toHaveAttribute("data-variant", "make");
+    // The name box is on by default, so the single sign-on start says so: remember=1 (Addendum 2).
+    expect(provider).toHaveAttribute("href", `${options.oidc_url}&remember=1`);
     expect(screen.getByRole("button", { name: "Sign in" })).toHaveAttribute(
       "data-variant",
       "outline",
@@ -169,6 +170,7 @@ it("sends the original return target to the server and follows its validated nex
         email: "member@example.test",
         password: "A long test password",
         return_to: "/usage/?receipt=one",
+        remember: true,
       }),
     }),
   );
@@ -189,7 +191,7 @@ it("requires a password before sign-in and sends a one-character password", asyn
   expect(screen.getByLabelText("Password")).toBeRequired();
   await user.type(screen.getByLabelText("Password"), "x");
   await user.click(screen.getByRole("button", { name: "Sign in" }));
-  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/auth/api/login", expect.objectContaining({ body: JSON.stringify({ email: "member@example.test", password: "x", return_to: "/" }) })));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/auth/api/login", expect.objectContaining({ body: JSON.stringify({ email: "member@example.test", password: "x", return_to: "/", remember: true }) })));
 });
 it("requires a password before reset and sends a one-character password", async () => {
   window.history.replaceState(null, "", "/sign-in/#reset=reset-test");
@@ -233,7 +235,7 @@ it.each([
     "Couldn’t sign you in.",
   ],
 ])(
-  "explains %s and focuses the error without losing the fields",
+  "explains %s and moves focus to the password without losing the fields",
   async (code, status, message, expected) => {
     const original = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation((input, init) =>
@@ -245,7 +247,7 @@ it.each([
     await submit();
     const error = await screen.findByRole("alert");
     expect(error).toHaveTextContent(expected);
-    expect(error).toHaveFocus();
+    expect(screen.getByLabelText("Password")).toHaveFocus();
     expect(screen.getByLabelText("Email")).toHaveValue("member@example.test");
     expect(screen.getByLabelText("Password")).toHaveValue(
       "A long test password",
@@ -344,7 +346,8 @@ it("says a provider that reports no sign-in time cannot confirm a risky action, 
   expect(alert).not.toHaveTextContent("Single sign-on didn’t finish");
 });
 
-it("says a provider did not ask for a password just now, and links to the sign-out when the provider has one", async () => {
+it("a refused sign-in says the provider did not ask for a password, and offers its sign-out (S8)", async () => {
+  options.fresh_sign_in = true;
   window.history.replaceState(
     null,
     "",
@@ -353,37 +356,67 @@ it("says a provider did not ask for a password just now, and links to the sign-o
   options.oidc = true;
   options.oidc_label = "Keycloak";
   mount();
-  const alert = await screen.findByRole("alert");
-  expect(alert).toHaveTextContent(
-    "Azizam couldn’t confirm that Keycloak just asked for your password.",
-  );
-  expect(alert).toHaveTextContent("Sign out of Keycloak, then try again.");
   expect(
-    within(alert).getByRole("link", { name: "Sign out of Keycloak" }),
-  ).toHaveAttribute("href", "/login/provider-sign-out");
+    await screen.findByRole("heading", { level: 1, name: "Sign out of Keycloak first" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Azizam couldn’t confirm that Keycloak just asked for a password, so it stopped. Someone may still be signed in to Keycloak in this browser.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Signing out of Keycloak also signs out of other apps that use it in this browser.",
+    ),
+  ).toBeVisible();
+  expect(screen.getByRole("link", { name: "Sign out of Keycloak" })).toHaveAttribute(
+    "href",
+    "/login/provider-sign-out",
+  );
+  expect(screen.getByRole("button", { name: "Back" })).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
-it("gives the same message without a link when the provider publishes no sign-out address", async () => {
-  window.history.replaceState(null, "", "/sign-in/?error=not_fresh");
+it("without a provider sign-out address, says who can sign out and offers Sign in again (S8b)", async () => {
+  options.fresh_sign_in = true;
+  window.history.replaceState(null, "", "/sign-in/?error=not_fresh&return_to=%2Fusage%2F");
   options.oidc = true;
   options.oidc_label = "Keycloak";
   mount();
-  const alert = await screen.findByRole("alert");
-  expect(alert).toHaveTextContent("Sign out of Keycloak, then try again.");
-  expect(within(alert).queryByRole("link")).toBeNull();
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Sign out of Keycloak first" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Azizam couldn’t confirm that Keycloak just asked for a password, so it stopped. Ask the person who used Keycloak last to sign out of it. Or open Keycloak in a new tab, choose Sign out, and open nothing else there.",
+    ),
+  ).toBeVisible();
+  expect(screen.getByText("If neither works, ask the person who runs Azizam.")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Sign out of Keycloak" })).toBeNull();
+  expect(screen.getByRole("link", { name: "Sign in again" })).toHaveAttribute(
+    "href",
+    "/login?return_to=%2Fusage%2F&remember=1",
+  );
 });
 
-it("names the provider generically when the label is the default one", async () => {
+it("names the provider generically when the label is the default one (S8b)", async () => {
+  options.fresh_sign_in = true;
   window.history.replaceState(null, "", "/sign-in/?error=not_fresh");
   options.oidc = true;
   options.oidc_label = "your identity provider";
   mount();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Azizam couldn’t confirm that your sign-in provider just asked for your password. Sign out of your sign-in provider, then try again.",
-  );
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Sign out of your sign-in provider first" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Azizam couldn’t confirm that your sign-in provider just asked for a password, so it stopped. Ask the person who used your sign-in provider last to sign out of it. Or open your sign-in provider in a new tab, choose Sign out, and open nothing else there.",
+    ),
+  ).toBeVisible();
 });
 
-it("shows a refused first-owner sign-in on the setup page of a new gateway, where the setup link is", async () => {
+it("a refused first-owner sign-in shows the same screen, and Back returns to the setup page", async () => {
+  options.fresh_sign_in = true;
   ownerExists = false;
   window.history.replaceState(
     null,
@@ -394,17 +427,19 @@ it("shows a refused first-owner sign-in on the setup page of a new gateway, wher
   options.oidc_label = "Keycloak";
   mount();
   expect(
-    await screen.findByRole("heading", { name: "Set up Azizam" }),
+    await screen.findByRole("heading", { level: 1, name: "Sign out of Keycloak first" }),
   ).toBeVisible();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Azizam couldn’t confirm that Keycloak just asked for your password.",
-  );
+  await userEvent.setup().click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Set up Azizam" }),
+  ).toBeVisible();
   expect(
     screen.getByRole("link", { name: "Set up your gateway" }),
   ).toHaveAttribute("href", "/setup/");
 });
 
-it("shows a refused invitation sign-in with the same message, and the retry goes back to the invitation", async () => {
+it("a refused invitation sign-in shows the same screen, and Back goes back to the invitation", async () => {
+  options.fresh_sign_in = true;
   window.history.replaceState(
     null,
     "",
@@ -414,12 +449,45 @@ it("shows a refused invitation sign-in with the same message, and the retry goes
   options.oidc_label = "Keycloak";
   options.oidc_url = "/login?return_to=%2Finvite%2F";
   mount();
-  expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Azizam couldn’t confirm that Keycloak just asked for your password.",
-  );
   expect(
-    screen.getByRole("link", { name: "Continue with Keycloak" }),
-  ).toHaveAttribute("href", "/login?return_to=%2Finvite%2F");
+    await screen.findByRole("heading", { level: 1, name: "Sign out of Keycloak first" }),
+  ).toBeVisible();
+  await userEvent.setup().click(screen.getByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("link", { name: "Continue with Keycloak" }),
+  ).toHaveAttribute("href", "/login?return_to=%2Finvite%2F&remember=1");
+  expect(screen.queryByRole("heading", { name: /Sign out of/ })).toBeNull();
+});
+
+it("Back leaves the sign-out screen, and a reload does not bring it back", async () => {
+  options.fresh_sign_in = true;
+  window.history.replaceState(null, "", "/sign-in/?error=not_fresh&provider_sign_out=1");
+  options.oidc = true;
+  options.oidc_label = "Keycloak";
+  mount();
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Back" }));
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Sign in to Azizam" }),
+  ).toBeVisible();
+  expect(window.location.search).not.toContain("error=");
+  expect(window.location.search).not.toContain("provider_sign_out");
+});
+
+it("a refused sign-in on a gateway that does not report fresh sign-in keeps the plain page, with no sign-out link", async () => {
+  // Before the gateway reports fresh sign-in (A2), the refused-sign-in screen stays off and the page reads as usual.
+  window.history.replaceState(
+    null,
+    "",
+    "/sign-in/?error=not_fresh&return_to=%2Fsettings%2F&provider_sign_out=1",
+  );
+  options.oidc = true;
+  options.oidc_label = "Keycloak";
+  mount();
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Sign in to Azizam" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Sign out of Keycloak first")).toBeNull();
+  expect(screen.queryByRole("link", { name: "Sign out of Keycloak" })).toBeNull();
 });
 
 it("renders provider text through React escaping", async () => {
@@ -453,4 +521,187 @@ it("keeps one heading and no form when options fail to load", async () => {
   expect(screen.queryByRole("form")).toBeNull();
   expect(screen.queryByLabelText("Email")).toBeNull();
   expect(screen.queryByText("Recovery and advanced setup")).toBeNull();
+});
+
+it("names the instance only: no shared-by line, and no person's name, even if the gateway sent one", async () => {
+  // The sign-in page is public. The options answer carries no owner name, and the page would not print one anyway.
+  Object.assign(options, { owner_name: "Sam Okafor" });
+  mount();
+  expect(await screen.findByRole("heading", { name: "Sign in to Azizam" })).toBeVisible();
+  expect(screen.queryByText(/Shared by/)).toBeNull();
+  expect(screen.queryByText(/Sam Okafor/)).toBeNull();
+});
+
+it("gives the reset line one copy for everyone, with no name in it", async () => {
+  Object.assign(options, { owner_name: "Sam Okafor" });
+  mount();
+  const reset = await screen.findByText("Forgot your password? Ask the person who set up Azizam for a reset link.");
+  expect(reset).toBeVisible();
+  expect(reset).toHaveClass("text-pretty");
+  expect(screen.queryByText(/Sam Okafor/)).toBeNull();
+});
+
+it.each([
+  ["Okafor family", "Okafor family"],
+  ["", "Azizam"],
+])("names the instance in the reset line, or Azizam when none is set (%j)", async (instance, named) => {
+  options.instance_name = instance;
+  mount();
+  expect(
+    await screen.findByText(`Forgot your password? Ask the person who set up ${named} for a reset link.`),
+  ).toBeVisible();
+});
+
+it("puts the name box under the single sign-on button, and its helper is its description", async () => {
+  options.built_in = false;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  mount();
+  const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
+  const box = screen.getByRole("checkbox", { name: "Remember my name on this browser" });
+  expect(provider.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(box).toHaveAccessibleDescription("Show my name here next time. Turn off on a shared computer.");
+});
+
+it("keeps the name box directly under single sign-on, above the divider, when both ways in are on", async () => {
+  options.built_in = true;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  mount();
+  const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
+  const box = screen.getByRole("checkbox", { name: "Remember my name on this browser" });
+  const divider = screen.getByText("or use your email");
+  const signIn = screen.getByRole("button", { name: "Sign in" });
+  expect(provider.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(box.compareDocumentPosition(divider) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(divider.compareDocumentPosition(signIn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("fills the sign-in beside single sign-on with ink once either field has text", async () => {
+  options.built_in = true;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  mount();
+  const user = userEvent.setup();
+  const signIn = await screen.findByRole("button", { name: "Sign in" });
+  expect(signIn).toHaveAttribute("data-variant", "outline");
+  await user.type(screen.getByLabelText("Email"), "member@example.test");
+  expect(signIn).toHaveAttribute("data-variant", "make");
+});
+
+it("shows a spinner on Sign in while the sign-in is checked", async () => {
+  options.built_in = true;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  vi.mocked(fetch).mockImplementation((input) =>
+    String(input) === "/auth/api/login"
+      ? new Promise(() => {})
+      : String(input).startsWith("/auth/api/options")
+        ? json(options)
+        : json({ owner_exists: true }),
+  );
+  mount();
+  await submit();
+  const pending = await screen.findByRole("button", { name: "Signing in…" });
+  expect(pending).toBeDisabled();
+  expect(pending.querySelector("svg")).toHaveClass("motion-safe:animate-spin");
+});
+
+it("moves focus to Email when the owner's password form opens in place", async () => {
+  options.built_in = false;
+  options.oidc = true;
+  Object.assign(options, { owner_password: true });
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: "Owner? Sign in with your password" }));
+  expect(await screen.findByLabelText("Email")).toHaveFocus();
+});
+
+it("marks both fields invalid when the password is refused, and names the refusal in each", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input) === "/auth/api/login"
+      ? json({ error: { code: "invalid_login", message: "Wrong" } }, 401)
+      : original(input, init),
+  );
+  mount();
+  await submit();
+  await screen.findByRole("alert");
+  for (const field of [screen.getByLabelText("Email"), screen.getByLabelText("Password")]) {
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription("Email or password is incorrect. Check both and try again.");
+  }
+});
+
+it("moves focus to the password field after a refusal, selects its text, and enables Sign in again", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input) === "/auth/api/login"
+      ? json({ error: { code: "invalid_login", message: "Wrong" } }, 401)
+      : original(input, init),
+  );
+  mount();
+  await submit();
+  await screen.findByRole("alert");
+  const password = screen.getByLabelText("Password") as HTMLInputElement;
+  await waitFor(() => expect(password).toHaveFocus());
+  expect([password.selectionStart, password.selectionEnd]).toEqual([0, "A long test password".length]);
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+});
+
+it("does not flag the fields for a refusal that is not about the password", async () => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((input, init) =>
+    String(input) === "/auth/api/login"
+      ? json({ error: { code: "account_disabled", message: "This account is disabled." } }, 403)
+      : original(input, init),
+  );
+  mount();
+  await submit();
+  await screen.findByRole("alert");
+  expect(screen.getByLabelText("Email")).not.toHaveAttribute("aria-invalid");
+  expect(screen.getByLabelText("Password")).not.toHaveAttribute("aria-invalid");
+});
+
+it("says the provider is opening, once, and holds the other controls while the page leaves", async () => {
+  options.built_in = true;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  mount();
+  const user = userEvent.setup();
+  const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
+  // jsdom cannot leave the page: stop the link's navigation here, as the browser would start it.
+  const stop = (event: MouseEvent) => event.preventDefault();
+  window.addEventListener("click", stop);
+  try {
+    await user.click(provider);
+  } finally {
+    window.removeEventListener("click", stop);
+  }
+  expect(provider).toHaveTextContent("Opening Okafor ID…");
+  expect(provider).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("status")).toHaveTextContent("Opening Okafor ID");
+  expect(screen.getByLabelText("Email")).toBeDisabled();
+  expect(screen.getByLabelText("Password")).toBeDisabled();
+  expect(screen.getByRole("checkbox")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeDisabled();
+});
+
+it("applies the name box to single sign-on as well as to the password", async () => {
+  options.built_in = true;
+  options.oidc = true;
+  options.oidc_label = "Okafor ID";
+  mount();
+  const user = userEvent.setup();
+  const provider = await screen.findByRole("link", { name: "Continue with Okafor ID" });
+  expect(provider).toHaveAttribute("href", `${options.oidc_url}&remember=1`);
+  await user.click(screen.getByRole("checkbox", { name: "Remember my name on this browser" }));
+  expect(provider).toHaveAttribute("href", `${options.oidc_url}&remember=0`);
+  await user.type(screen.getByLabelText("Email"), "member@example.test");
+  await user.type(screen.getByLabelText("Password"), "A long test password");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  await waitFor(() => {
+    const login = vi.mocked(fetch).mock.calls.find(([input]) => String(input) === "/auth/api/login");
+    expect(JSON.parse(String(login?.[1]?.body))).toMatchObject({ remember: false });
+  });
 });

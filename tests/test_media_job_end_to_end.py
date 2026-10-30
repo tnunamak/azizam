@@ -8,6 +8,7 @@ the worker is the real one, so a failure anywhere on the path shows here.
 from __future__ import annotations
 
 import asyncio
+from tests.support.app_keys import accountable_person
 import io
 import ipaddress
 import json
@@ -136,7 +137,7 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
         accounts.change_person(owner["id"], "test", path=self.admin, plan_id=plan["id"])
         self.local = admin_store.create_app("This computer", kind="service", owner_user_id=owner["id"],
                                             access_plan=plan["id"], path=self.admin)
-        admin_store.add_trusted_address(self.local["id"], "127.0.0.1", max_entries=10, path=self.admin)
+        admin_store.add_trusted_address(self.local["id"], "127.0.0.1", max_entries=10, path=self.admin, created_by=accountable_person(self.admin, self.local["id"]))
         self.keyed = admin_store.create_app("daisy", kind="service", owner_user_id=owner["id"],
                                             access_plan=plan["id"], path=self.admin)
         admin_store.create_credential_hash(subject_kind="app", subject_id=self.keyed["id"], app_id=self.keyed["id"],

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from tests.support.app_keys import accountable_person
 import base64
 import json
 import time
@@ -17,7 +18,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import accounts, admin_store, me_make, media_delivery, media_jobs, prompt_memory, receipt_store  # noqa: E402
+from gateway import accounts, admin_store, me_make, me_media, media_delivery, media_jobs, prompt_memory, receipt_store  # noqa: E402
+from gateway import request_source
+from gateway.receipts import RouteReceipt  # noqa: E402
 from tests.support.access import store_plan  # noqa: E402
 
 PNG = b"\x89PNG\r\n\x1a\n-source-picture-bytes"
@@ -62,7 +65,8 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         source_job = media_jobs.MediaJob(intent="image.generate", request_id="req_source",
                                          app_id=self.app["id"], status=media_jobs.STATUS_SUCCEEDED,
                                          assets=[{"asset_id": SOURCE, "media_type": "image/png"}])
-        media_jobs.create(source_job, path=root / "jobs.db")
+        with request_source.acting_as(app_id=self.app["id"], person_id=self.user["id"]):
+            media_jobs.create(source_job, path=root / "jobs.db")
 
     def _payload(self, intent: str = "image.edit", **body) -> dict:
         body = {"model": "image", "prompt": "private make prompt", **body}
@@ -574,6 +578,91 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         proxy._EPHEMERAL_MEDIA_JOB_PAYLOADS.clear()
         self.assertEqual(self.runtime.load_payload("mj_keep")["auth"]["app_id"], self.app["id"])
 
+    def _make_job(self, job_id: str = "mj_runtime", request_id: str = "req_make_runtime") -> None:
+        """A make job and its submit receipt, as the submit route writes them."""
+        media_jobs.create(media_jobs.MediaJob(job_id=job_id, intent="image.generate", request_id=request_id,
+                                              app_id=self.app["id"], metadata={"mode": me_make.JOB_MODE}),
+                          path=media_jobs.DB_PATH)
+        receipt_store.record(RouteReceipt(protocol="azizam.make", intent="image.generate", path=me_make.ROUTE_PATH,
+                                          request_id=request_id, app_id=self.app["id"], api_key_name=me_make.APP_NAME,
+                                          requested_model="image", job_id=job_id, status="accepted"),
+                             path=receipt_store.DB_PATH)
+
+    def _stored(self, request_id: str) -> dict:
+        return receipt_store.get(request_id, audience="internal", path=receipt_store.DB_PATH)
+
+    def test_a_dispatched_make_job_records_where_its_work_ran_on_its_own_receipt(self) -> None:
+        self._make_job()
+        seen = {}
+
+        async def dispatching_route(request, auth_context, receipt=None):
+            seen["receipt"] = receipt
+            proxy._mark_backend_started(receipt)  # What the image route does when it hands the work over.
+            return self._ok()
+
+        with patch.object(proxy, "proxy_graph_image_request", dispatching_route):
+            asyncio.run(self.runtime.execute(self._payload("image.generate")))
+        # The picture's receipt is read from memory: the image route writes it to a store path
+        # bound at import time, which these tests do not patch.
+        picture = seen["receipt"]
+        make = self._stored("req_make_runtime")
+        self.assertTrue(picture.backend)
+        self.assertIsNotNone(picture.started_at_ms)
+        self.assertEqual((make["backend"], make["started_at_ms"]), (picture.backend, picture.started_at_ms))
+        self.assertFalse(make["remote"])
+        self.assertTrue(me_media._receipt_served_locally(make))
+        self.assertTrue(me_media._receipt_served_locally(picture.to_dict()))
+
+    def test_a_make_job_refused_before_its_backend_runs_records_no_dispatch(self) -> None:
+        self._make_job()
+
+        async def never(request, auth_context, receipt=None):
+            raise AssertionError("a refused job never reaches the backend")
+
+        denial = proxy.PolicyDecision(decision="denied", sources=("app_profile",),
+                                      reasons=("images are off for this app",))
+        with self.subTest("policy denial"), \
+                patch.object(proxy, "_apply_image_route_policy", return_value=denial), \
+                patch.object(proxy, "proxy_graph_image_request", never):
+            with self.assertRaises(me_make.MakeBackendError):
+                asyncio.run(self.runtime.execute(self._payload("image.generate")))
+        with self.subTest("operator admission"), patch.object(proxy, "proxy_graph_image_request", never):
+            self._admission(disabled_intents=["image.generate"])
+            with self.assertRaises(me_make.MakeBackendError):
+                asyncio.run(self.runtime.execute(self._payload("image.generate")))
+        make = self._stored("req_make_runtime")
+        self.assertIsNone(make["backend"])
+        self.assertIsNone(make["started_at_ms"])
+        self.assertFalse(me_media._receipt_served_locally(make))
+
+    def test_a_remote_dispatch_keeps_the_make_receipt_remote(self) -> None:
+        self._make_job()
+
+        async def remote_route(request, auth_context, receipt=None):
+            receipt.remote = True  # A provider-served request is remote and never counted local.
+            proxy._mark_backend_started(receipt)
+            return self._ok()
+
+        with patch.object(proxy, "proxy_graph_image_request", remote_route):
+            asyncio.run(self.runtime.execute(self._payload("image.generate")))
+        make = self._stored("req_make_runtime")
+        self.assertIsNotNone(make["started_at_ms"])
+        self.assertTrue(make["remote"])
+        self.assertFalse(me_media._receipt_served_locally(make))
+
+    def test_the_first_recorded_dispatch_is_kept(self) -> None:
+        self._make_job()
+        paths = {"jobs_path": media_jobs.DB_PATH, "receipts_path": receipt_store.DB_PATH}
+        self.assertTrue(me_make.record_dispatch("mj_runtime", backend="local-engine",
+                                                started_at_ms=1_700_000_000_500, remote=False, **paths))
+        self.assertFalse(me_make.record_dispatch("mj_runtime", backend="other-engine",
+                                                 started_at_ms=1_700_000_900_000, remote=True, **paths))
+        self.assertFalse(me_make.record_dispatch("mj_missing", backend="local-engine",
+                                                 started_at_ms=1_700_000_500, remote=False, **paths))
+        make = self._stored("req_make_runtime")
+        self.assertEqual((make["backend"], make["started_at_ms"], make["remote"]),
+                         ("local-engine", 1_700_000_000_500, False))
+
 
 class SessionAppStoreTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -607,6 +696,9 @@ class SessionAppStoreTests(unittest.TestCase):
         """Write a key the way a gateway without the session-App guard could."""
         import sqlite3
 
+        from tests.support.app_keys import unguarded
+
+        unguarded(self.admin)
         conn = sqlite3.connect(self.admin)
         try:
             conn.execute("DROP TRIGGER IF EXISTS credentials_never_on_session_apps")
@@ -620,23 +712,29 @@ class SessionAppStoreTests(unittest.TestCase):
         return "cred_legacy"
 
     def test_no_one_can_create_a_key_for_a_session_app(self) -> None:
-        from gateway.admin_api import AdminContext
+        from gateway.admin_api import AdminContext, NotYourApp
         from gateway.admin_runtime import AdminSQLiteStore
 
         app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
         with self.assertRaises(ValueError):
             admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"],
-                                               hash="h" * 64, prefix="opk_x", path=self.admin)
-        for actor in ("admin", self.user["id"]):
-            with self.subTest(actor=actor), self.assertRaises(ValueError):
-                AdminSQLiteStore(self.admin).create_credential(
-                    app_id=app["id"], data={},
-                    actor=AdminContext(subject=actor, actor_id=actor, roles=frozenset({"owner"})),
-                )
+                                               hash="h" * 64, prefix="opk_x", path=self.admin, created_by=accountable_person(self.admin, app["id"]))
+        # An administrator is not the person the session App answers for: not_your_app. That person is refused
+        # because a session App never holds a key (ValueError).
+        with self.subTest(actor="admin"), self.assertRaises(NotYourApp):
+            AdminSQLiteStore(self.admin).create_credential(
+                app_id=app["id"], data={},
+                actor=AdminContext(subject="admin", actor_id="admin", roles=frozenset({"owner"})),
+            )
+        with self.subTest(actor="the person"), self.assertRaises(ValueError):
+            AdminSQLiteStore(self.admin).create_credential(
+                app_id=app["id"], data={},
+                actor=AdminContext(subject=self.user["id"], actor_id=self.user["id"], roles=frozenset({"owner"})),
+            )
         self.assertEqual(admin_store.list_credentials(path=self.admin), [])
         ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], access_plan="person", path=self.admin)
         admin_store.create_credential_hash(subject_kind="app", subject_id=ordinary["id"],
-                                           hash="o" * 64, prefix="opk_o", path=self.admin)
+                                           hash="o" * 64, prefix="opk_o", path=self.admin, created_by=accountable_person(self.admin, ordinary["id"]))
 
     def test_a_session_app_key_never_authenticates(self) -> None:
         from gateway.admin_runtime import runtime_identity_for_app_credential_hash
@@ -649,7 +747,7 @@ class SessionAppStoreTests(unittest.TestCase):
         app = admin_store.ensure_session_app_for_user(self.user["id"], name="Azizam", path=self.admin)
         ordinary = admin_store.create_app("Mine", kind="personal", owner_user_id=self.user["id"], access_plan="person", path=self.admin)
         kept = admin_store.create_credential_hash(subject_kind="app", subject_id=ordinary["id"],
-                                                  hash="o" * 64, prefix="opk_o", path=self.admin)
+                                                  hash="o" * 64, prefix="opk_o", path=self.admin, created_by=accountable_person(self.admin, ordinary["id"]))
         legacy = self._legacy_session_app_key(app["id"], "s" * 64)
         admin_store.init_db(self.admin)
         credentials = {item["id"]: item for item in admin_store.list_credentials(path=self.admin)}
@@ -657,7 +755,7 @@ class SessionAppStoreTests(unittest.TestCase):
         self.assertIsNone(credentials[kept["id"]]["revoked_at"])
         with self.assertRaises(ValueError):
             admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"],
-                                               hash="n" * 64, prefix="opk_n", path=self.admin)
+                                               hash="n" * 64, prefix="opk_n", path=self.admin, created_by=accountable_person(self.admin, app["id"]))
 
 
 if __name__ == "__main__":

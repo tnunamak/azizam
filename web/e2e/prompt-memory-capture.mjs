@@ -94,14 +94,14 @@ async function household(page, value) {
 const shots = {
   // Member: their own settings.
   "account-member": { as: seed.member_email, go: "/account/" },
-  // Member: Try with the default (kept) and with Don't keep on.
+  // Member: Try with the default (kept) and with keep request history off.
   "try-kept": { as: seed.member_email, go: "/try/?capability=image" },
   "try-forget": {
     as: seed.member_email,
     go: "/try/?capability=image",
     act: async (page) => {
       await page
-        .getByRole("switch", { name: "Don’t keep this prompt" })
+        .getByRole("switch", { name: "Keep request history" })
         .click();
     },
   },
@@ -152,7 +152,7 @@ const shots = {
     owner: { retention_cap: "3_months" },
     go: "/account/",
   },
-  // Background cleanup still running after Delete my saved prompts.
+  // Background cleanup still running after Delete saved words and chats.
   "account-cleanup": {
     as: seed.member_email,
     go: "/account/",
@@ -177,7 +177,7 @@ const shots = {
       await page.getByLabel("App name").fill("Kitchen tablet");
       await page.getByRole("button", { name: "Create app and key" }).click();
       await page
-        .getByRole("heading", { name: "Connect Kitchen tablet" })
+        .getByRole("heading", { name: "New key for Kitchen tablet" })
         .waitFor();
     },
   },

@@ -2,14 +2,15 @@
 import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useUnsavedSecret } from "@/lib/unsaved-work";
 import { CopyField } from "./copy-field";
 
 export interface SecretRevealProps {
   secret: string | null;
   label?: string;
   onSaved?: () => void;
-  /** One line about what the key carries, e.g. whether its prompts are
-   * remembered (`keyPromptNote`). */
+  /** One line about what the key carries, e.g. whether its words are
+   * kept (`keyPromptNote`). */
   note?: string | null;
 }
 /** For newly issued secrets only: confirmation permanently removes the value from this view. */
@@ -20,6 +21,8 @@ export function SecretReveal({
   note,
 }: SecretRevealProps) {
   const [saved, setSaved] = useState(false);
+  // Held while the secret is on screen unsaved, so no navigation can drop it (leave-guard.tsx).
+  const release = useUnsavedSecret(Boolean(secret) && !saved);
   if (saved || !secret)
     return (
       <div
@@ -44,6 +47,7 @@ export function SecretReveal({
         type="button"
         size="md"
         onClick={() => {
+          release();
           setSaved(true);
           onSaved?.();
         }}

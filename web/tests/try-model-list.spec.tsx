@@ -7,6 +7,7 @@ const account = vi.hoisted(() => ({
   session: vi.fn(),
   tryKey: vi.fn(),
   revokeKey: vi.fn(),
+  requestHistory: vi.fn(),
   params: new URLSearchParams(),
   viewer: { authenticated: true, serviceAdmin: true, admin: false },
 }));
@@ -88,7 +89,17 @@ const json = (body: unknown) =>
     headers: { "content-type": "application/json" },
   });
 
+const HISTORY_ON = {
+  keep: true,
+  retention: "7_days",
+  parts: ["accepted"],
+  choices: ["1_day", "7_days", "30_days"],
+  allowed_parts: ["accepted", "received"],
+  notice_due: false,
+};
+
 beforeEach(() => {
+  account.requestHistory.mockResolvedValue({ ...HISTORY_ON });
   Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
     configurable: true,
     value: () => false,
@@ -345,6 +356,7 @@ describe("fallback capabilities and catalog envelopes", () => {
     const user = userEvent.setup();
     render(<TryPage />);
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"));
+    await user.click(screen.getByRole("button", { name: "Try an example" }));
     await user.click(screen.getByRole("button", { name: "Run" }));
     await screen.findByRole("button", { name: "Retry" });
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model");
@@ -397,6 +409,9 @@ describe("Try keys stay in page memory", () => {
   async function runPage(container: HTMLElement) {
     const page = within(container);
     await waitFor(() => expect(page.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"));
+    // A person who has not written a prompt takes the tab's example first.
+    const box = page.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (box && box.value === "") await userEvent.setup().click(page.getByRole("button", { name: "Try an example" }));
     await userEvent.setup().click(page.getByRole("button", { name: "Run" }));
     await page.findByText("Fixture reply");
     await waitFor(() => expect(page.getByRole("button", { name: "Run" })).toBeEnabled());
@@ -489,6 +504,7 @@ describe("Try keys stay in page memory", () => {
     account.tryKey.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const view = render(<TryPage />);
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Try an example" }));
     await userEvent.setup().click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(account.tryKey).toHaveBeenCalledTimes(1));
     account.viewer = { ...account.viewer, authenticated: false };
@@ -498,40 +514,4 @@ describe("Try keys stay in page memory", () => {
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/chat/completions"))).toBe(false);
     expect(localStorage.getItem(storageKey)).toBeNull();
   });
-});
-
-
-it("announces access refresh completion and preserves Refresh focus while loading", async () => {
-  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
-  account.viewer = { authenticated: true, serviceAdmin: false, admin: false };
-  Object.assign(account, { promptMemory: vi.fn().mockResolvedValue({ prompt_memory: null }) });
-  let finish: (() => void) | undefined;
-  let hold = false;
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    if (hold && url.includes("models/catalog")) await new Promise<void>((resolve) => { finish = resolve; });
-    return json(url.includes("workflows") ? { workflows: [] } : { ...catalog, access_plan: { id: "family", name: "Family" } });
-  }));
-  try {
-    render(<TryPage />);
-    const status = await screen.findByText("Your access plan: Family.");
-    expect(status).toHaveAttribute("role", "status");
-    const user = userEvent.setup();
-    const refresh = screen.getByRole("button", { name: "Refresh access" });
-    hold = true;
-    await user.click(refresh);
-    expect(refresh).toHaveFocus();
-    expect(refresh).not.toBeDisabled();
-    expect(refresh).toHaveAttribute("aria-disabled", "true");
-    expect(refresh).toHaveAttribute("aria-busy", "true");
-    expect(status).toHaveTextContent("Checking your access plan…");
-    await user.click(refresh);
-    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("models/catalog"))).toHaveLength(2);
-    await act(async () => { finish!(); });
-    await waitFor(() => expect(refresh).toHaveAttribute("aria-busy", "false"));
-    expect(refresh).toHaveFocus();
-    expect(status).toHaveTextContent("Your access plan: Family.");
-    expect(status).toHaveTextContent("Access refresh complete.");
-  } finally {
-    account.viewer.serviceAdmin = true;
-  }
 });

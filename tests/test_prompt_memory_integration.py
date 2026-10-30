@@ -133,6 +133,8 @@ def test_image_job_submit_receipt_has_no_outcome_and_worker_receipt_reports_the_
         queued = receipt_store.recent(path=rig.receipts_db, audience="client")
         submit = next(row for row in queued if row["path"] == "/gateway/v1/media/jobs/image-generations")
         assert "retention" not in submit
+        # The submit receipt names the job it created, so Usage can pair it with the job after the job record is erased.
+        assert submit["job_id"] == rig.scheduled[0]
         await proxy._run_image_media_job(rig.scheduled[0])
 
     with GatewayRig("receipt_job", tmp_path / "rig") as rig:
@@ -214,7 +216,7 @@ def test_erasure_cutoff_wins_over_default_remember_for_an_explicit_no_person_sto
     started = int(time.time()) - 5
     with sqlite3.connect(admin_db) as conn:
         retention.ensure_erasure_cutoff_table(conn)
-        conn.execute("INSERT INTO prompt_memory_erasure_cutoffs(person_id,cutoff_at) VALUES('*',?)", (started + 1,))
+        conn.execute("INSERT INTO prompt_memory_erasure_cutoffs(person_id,grp,cutoff_at) VALUES('*','prompts',?)", (started + 1,))
     outcomes = []
     decision = retention.Decision(None, False, "no_person", created_at=started, kind=retention.CONVERSATION)
     assert not retention.write(retention.CONVERSATION, admin_path=admin_db, person_id=None,

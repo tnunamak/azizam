@@ -6,6 +6,7 @@ Step 1 callers retain explicitly marked legacy exceptions until step 3.
 """
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,7 +54,8 @@ def viewer_from_auth(
 
     Resolved scope keys may be supplied by a caller that already read aliases.
     Legacy hash-only contexts supply no person or credential-origin authority.
-    Privacy permission is not issued in step 1. Missing identity adds no authority.
+    Privacy permission comes only from the authenticated key or connection record.
+    Missing identity adds no authority.
     """
     from gateway import ownership
     from gateway.runtime_auth import RuntimeIdentity
@@ -67,6 +69,7 @@ def viewer_from_auth(
         app_id=getattr(identity, "app_id", None),
         key_hash=getattr(identity, "key_hash", None) if not getattr(identity, "app_id", None) else None,
         owner_keys=frozenset(owner_keys), auth_kind=getattr(identity, "auth_kind", "app_key"),
+        privacy_permission=bool(getattr(identity, "privacy_permission", False)),
         credential_id=getattr(identity, "credential_id", None),
         trusted_address=getattr(identity, "trusted_address", None),
         connection_id=getattr(identity, "connection_id", None),
@@ -92,6 +95,23 @@ class Share:
     active: bool = True
 
 
+def makers_of(
+    explicit: Iterable[str] = (), *, app_person: str | None = None, key_persons: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """The trusted maker(s) of one row (D51, D52). Callers pass ``app_person`` only for an App-attributed row.
+
+    An explicit maker recorded at write time wins. Otherwise a personal App names its accountable person,
+    because its keys carry exactly that person (O5). A service App names no person, so its row stays
+    person-less. An App-less row takes the person its owner keys name.
+    """
+    named = tuple(dict.fromkeys(person for person in explicit if person))
+    if named:
+        return named
+    if app_person:
+        return (app_person,)
+    return tuple(dict.fromkeys(person for person in key_persons if person))
+
+
 @dataclass(frozen=True)
 class CreationRecord:
     asset_id: str
@@ -100,7 +120,13 @@ class CreationRecord:
     app_id: str | None = None
     shares: tuple[Share, ...] = ()
     available: bool = True
+    origin: ContentOrigin | None = None
     kind: Literal["creation"] = field(default="creation", init=False)
+
+    @property
+    def person_id(self) -> str | None:
+        # One maker is the only person a creation names. Several makers name none, and decide refuses them.
+        return self.maker_person_ids[0] if len(self.maker_person_ids) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -127,15 +153,21 @@ class ChatRecord:
 @dataclass(frozen=True)
 class VoiceRecord:
     owner_keys: frozenset[str] = frozenset()
+    person_id: str | None = None
+    app_id: str | None = None
+    origin: ContentOrigin | None = None
     available: bool = True
     kind: Literal["voice"] = field(default="voice", init=False)
 
 
 @dataclass(frozen=True)
 class ReceiptRecord:
+    """A receipt is read by its maker. ``owner_keys`` only names the App that the row was attributed to."""
     owner_keys: frozenset[str] = frozenset()
-    person_id: str | None = None
+    person_id: str | None = None  # the trusted maker, never the App's owner (D51)
     app_id: str | None = None
+    origin: ContentOrigin | None = None
+    owner_key_hash: str | None = None  # the creating key of an App-less row (the legacy runtime key)
     request_id: str | None = None
     available: bool = True
     kind: Literal["receipt"] = field(default="receipt", init=False)
@@ -144,7 +176,11 @@ class ReceiptRecord:
 @dataclass(frozen=True)
 class JobRecord:
     owner_keys: frozenset[str] = frozenset()
+    person_id: str | None = None  # the maker stamped on the job at creation, from the authenticated request (D51)
     app_id: str | None = None
+    origin: ContentOrigin | None = None
+    owner_key_hash: str | None = None  # the creating key of an App-less job (the legacy runtime key)
+    credential_id: str | None = None  # the stamped creating credential; with no person, it is the job's maker
     job_id: str | None = None
     available: bool = True
     kind: Literal["job"] = field(default="job", init=False)
@@ -168,6 +204,7 @@ class DebugCaptureRecord:
     kind: Literal["debug_capture"] = field(default="debug_capture", init=False)
 
 
+PersonRecord: TypeAlias = CreationRecord | VoiceRecord | ReceiptRecord | JobRecord | PromptRecord | ChatRecord | RequestHistoryRecord | DebugCaptureRecord
 ContentRecord: TypeAlias = CreationRecord | PromptRecord | ChatRecord | VoiceRecord | ReceiptRecord | JobRecord | RequestHistoryRecord | DebugCaptureRecord
 
 
@@ -208,11 +245,11 @@ def _shared(viewer: Viewer, record: CreationRecord | PromptRecord) -> Shared | D
     return DENY
 
 
-def _self(viewer: Viewer, record: PromptRecord | ChatRecord | RequestHistoryRecord | DebugCaptureRecord) -> bool:
+def _self(viewer: Viewer, record: PersonRecord) -> bool:
     return bool(viewer.person_id and record.person_id == viewer.person_id)
 
 
-def _content_read(viewer: Viewer, record: PromptRecord | ChatRecord | RequestHistoryRecord) -> bool:
+def _content_read(viewer: Viewer, record: PersonRecord) -> bool:
     if record.person_id is None:
         return (viewer.person_id is None and viewer.auth_kind in {"app_key", "trusted_address", "service_key"}
                 and bool(viewer.app_id) and record.app_id == viewer.app_id)
@@ -224,12 +261,19 @@ def _content_read(viewer: Viewer, record: PromptRecord | ChatRecord | RequestHis
     if origin is None:
         return False
     if viewer.auth_kind == "app_key":
-        return (origin.auth_kind == "app_key" and bool(origin.credential_id)
-                and bool(viewer.app_id) and record.app_id == viewer.app_id)
+        return (origin.auth_kind == "app_key" and bool(viewer.app_id)
+                and record.app_id == viewer.app_id)
     if viewer.auth_kind == "mcp_grant":
         return (origin.auth_kind == "mcp_grant" and bool(viewer.connection_id)
                 and origin.connection_id == viewer.connection_id)
     return False
+
+
+def _appless_legacy_key(viewer: Viewer, record: ReceiptRecord | JobRecord) -> bool:
+    """The legacy runtime key (no App, no person) reads the rows it created (D52)."""
+    return (record.person_id is None and not record.app_id and viewer.auth_kind == "app_key"
+            and not viewer.person_id and not viewer.app_id and bool(viewer.key_hash)
+            and record.owner_key_hash == viewer.key_hash)
 
 
 def decide_own(viewer: Viewer, principals: Iterable[str]) -> bool:
@@ -246,23 +290,37 @@ def decide_own(viewer: Viewer, principals: Iterable[str]) -> bool:
 def decide(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
     if not record.available:
         return DENY
-    if isinstance(record, (CreationRecord, VoiceRecord, ReceiptRecord, JobRecord)):
-        own = decide_own(viewer, record.owner_keys)
-        if isinstance(record, CreationRecord):
-            if own and action in {"read", "delete", "reuse", "link"}:
+    # Owning an App grants no content (D51). A creation, voice, receipt or job is read by its maker
+    # through the same rule as a prompt. An App-less row is read by its App's own credential (D52).
+    if isinstance(record, CreationRecord):
+        if len(record.maker_person_ids) > 1:
+            return _shared(viewer, record) if action in {"read", "link"} else DENY
+        if action in {"read", "link"}:
+            if _content_read(viewer, record):
                 return OWN
-            if (own and action == "share" and viewer.person_id
-                    and record.maker_person_ids == (viewer.person_id,)):
-                return OWN
-            if action in {"read", "link"}:
-                return _shared(viewer, record)
-        elif isinstance(record, VoiceRecord):
-            if own and action in {"read", "delete", "reuse"}:
-                return OWN
-        elif isinstance(record, ReceiptRecord):
-            if own and action == "read":
-                return OWN
-        elif own and action in {"read", "cancel"}:
+            return _shared(viewer, record)
+        if action in {"delete", "reuse"} and _self(viewer, record) and _content_read(viewer, record):
+            return OWN
+        if (action == "share" and _self(viewer, record) and record.maker_person_ids == (viewer.person_id,)
+                and (viewer.auth_kind == "session" or viewer.privacy_permission)):
+            return OWN
+    elif isinstance(record, VoiceRecord):
+        if action == "read" and _content_read(viewer, record):
+            return OWN
+        if action in {"delete", "reuse"} and _self(viewer, record) and _content_read(viewer, record):
+            return OWN
+    elif isinstance(record, ReceiptRecord):
+        if action == "read" and (_content_read(viewer, record) or _appless_legacy_key(viewer, record)):
+            return OWN
+    elif isinstance(record, JobRecord):
+        # A job with no stamped maker (a row from before the stamp, or one made without an authenticated request)
+        # has no reader under any App. Its App's key is not a maker, so the person-less rule below never reaches it.
+        if record.person_id is None and record.credential_id is None:
+            return DENY
+        if action == "read" and (_content_read(viewer, record) or _appless_legacy_key(viewer, record)):
+            return OWN
+        if action == "cancel" and ((_self(viewer, record) and _content_read(viewer, record))
+                                   or _appless_legacy_key(viewer, record)):
             return OWN
     elif isinstance(record, PromptRecord):
         if action == "read":
@@ -302,6 +360,60 @@ def require(viewer: Viewer, record: ContentRecord, action: Action) -> Access:
     if isinstance(access, Deny):
         raise PublicFailure("not_found", 404)
     return access
+
+
+def request_history_record(row: Mapping[str, Any]) -> RequestHistoryRecord:
+    """The content record of one stored kept request: who made it, and through which credential (D52)."""
+    origin_kind, origin_id = row.get("origin_kind"), row.get("origin_id")
+    origin: ContentOrigin | None = None
+    if origin_kind == "app_key":
+        origin = ContentOrigin("app_key", credential_id=origin_id)
+    elif origin_kind == "mcp_grant":
+        origin = ContentOrigin("mcp_grant", connection_id=origin_id)
+    elif origin_kind == "session":
+        origin = ContentOrigin("session")
+    return RequestHistoryRecord(person_id=row.get("person_id"), app_id=row.get("app_id"), origin=origin)
+
+
+_MAKER_CONTENT_SEAL = object()
+
+
+@dataclass(frozen=True)
+class MakerContent:
+    """One kept request as its maker may read it. Only ``maker_content`` builds one, after the read check passes,
+    so no route can hand out request content that the check did not allow (REQUEST_RETENTION.md 13.2)."""
+
+    record_id: str
+    kind: str
+    created_at: int
+    kept_until: int | None
+    parts: Mapping[str, Any]
+    omissions: tuple[str, ...]
+    summary: Mapping[str, Any]
+    origin_kind: str
+    request_id: str | None
+    _seal: object = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._seal is not _MAKER_CONTENT_SEAL:
+            raise TypeError("MakerContent is built by maker_content, after the read check")
+
+
+def maker_content(viewer: Viewer, row: Mapping[str, Any]) -> MakerContent:
+    """The projection of one stored kept request for ``viewer``. Anyone else gets the same 404 as a missing row."""
+    require(viewer, request_history_record(row), "read")
+    return MakerContent(
+        record_id=row["record_id"], kind=row["kind"], created_at=int(row["created_at"]),
+        kept_until=row.get("kept_until"), parts=json.loads(row["parts_json"]),
+        omissions=tuple(json.loads(row["omissions_json"])), summary=json.loads(row["summary_json"]),
+        origin_kind=row.get("origin_kind") or "", request_id=row.get("request_id"),
+        _seal=_MAKER_CONTENT_SEAL,
+    )
+
+
+def visible_maker_rows(viewer: Viewer, rows: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The rows this viewer may read, in their order. Pagination runs over this list, never before it (16.1.4)."""
+    return [row for row in rows if isinstance(decide(viewer, request_history_record(row), "read"), Own)]
 
 
 def operational(viewer: Viewer) -> bool:

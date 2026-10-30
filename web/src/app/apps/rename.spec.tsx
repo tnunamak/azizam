@@ -155,11 +155,18 @@ it("puts Rename app first in the actions menu", async () => {
   trigger.focus();
   fireEvent.keyDown(trigger, { key: "Enter" });
   const items = await screen.findAllByRole("menuitem");
-  expect(items.map((item) => item.textContent).slice(0, 3)).toEqual([
+  expect(items.map((item) => item.textContent).slice(0, 4)).toEqual([
     "Rename app",
     "Rename keys",
     "Create another key",
+    "Rotate keys",
   ]);
+});
+
+it("sets up the app from its card: the Set up button opens Connect with the app named, and no key", async () => {
+  renderApps();
+  const link = await screen.findByRole("link", { name: "Set up My laptop" });
+  expect(link.getAttribute("href")).toMatch(/^\/connect\/?\?app=saved-app$/);
 });
 
 it("renames an app with the trimmed name and shows the name the gateway saved", async () => {
@@ -442,7 +449,8 @@ it("wraps a very long key name and gives it a title", async () => {
   });
   renderApps();
   await chooseFromMenu("My laptop", "Rename keys");
-  const label = await screen.findByText(long);
+  // The key's name also shows on its row in the card, so the label is read from the dialog.
+  const label = within(await screen.findByRole("dialog")).getByText(long);
   expect(label).toHaveAttribute("title", long);
   expect(label.className).toContain("break-words");
 });

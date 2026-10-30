@@ -21,6 +21,7 @@ from tests.test_session_lifecycle import (  # noqa: F401  (gateway and sg are fi
     COOKIE, HELPER, OWNER, cookie_session, csrf, forge, gateway, helper_client, owner_client, sg, stale_owner,
 )
 from tests.test_signin_who_can_enter import csrf_for, mint_admin_key, signed_in
+from tests.support.app_keys import accountable_person
 from gateway.session_policy import MINUTE
 
 ACT = {"x-azizam-user-action": "1"}
@@ -47,7 +48,7 @@ def make_app(db, owner, name, kind="personal"):
 def make_key(db, app, label, secret=None):
     return admin_store.create_credential_hash(
         subject_kind="app", subject_id=app["id"], hash=hash_api_key(secret or f"opk_{label}"), prefix="opk_test_0123456",
-        display_name=label, path=db)
+        display_name=label, path=db, created_by=accountable_person(db, app["id"]))
 
 
 @pytest.mark.parametrize("text, code", [
@@ -153,11 +154,12 @@ def test_renaming_a_key_changes_only_its_label_and_a_label_another_active_key_of
 def test_a_revoked_expired_missing_or_misplaced_key_is_not_renamed(db):
     mine, theirs = person(db), person(db, "other")
     laptop, phone = make_app(db, mine, "Laptop"), make_app(db, mine, "Phone")
-    revoked, expired, live = make_key(db, laptop, "Old"), make_key(db, laptop, "Lapsed"), make_key(db, laptop, "Live")
+    revoked, live = make_key(db, laptop, "Old"), make_key(db, laptop, "Live")
+    # A key made already expired: an App key's expiry cannot be changed after it is made (gateway/app_binding_guard.py).
+    expired = admin_store.create_credential_hash(
+        subject_kind="app", subject_id=laptop["id"], hash=hash_api_key("opk_Lapsed"), prefix="opk_test_0123456",
+        display_name="Lapsed", path=db, created_by=accountable_person(db, laptop["id"]), expires_at=1)
     admin_store.revoke_credential(revoked["id"], path=db)
-    with closing(sqlite3.connect(db)) as conn:
-        conn.execute("UPDATE credentials SET expires_at = 1 WHERE id = ?", (expired["id"],))
-        conn.commit()
 
     assert admin_store.rename_app_credential(revoked["id"], "New", path=db) is None
     assert admin_store.rename_app_credential(expired["id"], "New", path=db) is None
@@ -353,9 +355,11 @@ def admin_app(client, name, **extra):
 
 
 def admin_key(client, app_id, label="first"):
-    minted = client.post(f"/admin/api/apps/{app_id}/keys", headers=csrf(client), json={"label": label})
-    assert minted.status_code == 201, minted.text
-    return minted.json()["credential"]
+    """A key on the App, issued by the App's accountable person: an administrator may not mint on someone else's App."""
+    import proxy
+    from tests.support.app_keys import accountable_person, issue_app_credential
+
+    return issue_app_credential(proxy.ADMIN_STORE.path, app_id, label=label)
 
 
 def rename_key(client, app_id, credential_id, label, headers=None):
@@ -761,7 +765,9 @@ def test_the_owner_openapi_document_gives_the_command_line_both_rename_commands(
     assert [op["operationId"].replace("_", "-") for op in commands.values()] == [
         "owner-patch-admin-api-apps-app-id", "owner-patch-admin-api-apps-app-id-keys-credential-id"]
     for op in commands.values():
-        assert op["security"] == [{"OwnerBearer": []}] and op["tags"] == ["apps and keys"]
+        # Both renames are admin-level: the owner or an admin may rename, and the rank rule keeps an admin off a higher role.
+        assert op["security"] == [{"OwnerBearer": []}, {"BrowserSession": []}]
+        assert op["tags"] == ["apps and keys", "Owner and admins"]
     assert not any(path.startswith("/me/api/") for path in schema["paths"]), "a person's own routes stay out of the owner document"
 
 

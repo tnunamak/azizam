@@ -16,7 +16,8 @@ Features:
 """
 
 from gateway.compat import get_env
-from gateway import client_errors, log_egress, log_scrub, private_tmp, request_forms
+from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
+from gateway.public_failure import PublicFailure
 
 # Every log line, print and warning leaves through one scrubbing egress, whoever makes it (decision D44).
 log_egress.install()
@@ -25,7 +26,6 @@ import asyncio
 import shutil
 import base64
 import copy
-import functools
 import json
 import math
 import os
@@ -76,6 +76,7 @@ from gateway import (
     admin_store,
     audio_media_jobs,
     browser_sessions,
+    avatar_generation,
     avatars,
     remembered_people,
     frontend_mount,
@@ -102,6 +103,7 @@ from gateway import (
 )
 from gateway import secret_store, runtime_secrets, projection
 from gateway import directory_index, loop_watchdog, request_connections, video_extend
+from gateway import request_history, request_history_api, request_history_capture, request_history_slot
 from gateway.http_tls import tls_context
 from gateway import media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject, thumbnails, output_availability
@@ -195,7 +197,7 @@ from gateway.local_owner import (
     load_or_create_signing_key as local_load_signing_key,
 )
 from gateway.setup_render import render_setup_page
-from gateway import signin_admin, signin_rules_migration
+from gateway import maker_stamp_migration, signin_admin, signin_rules_migration
 from gateway.signin_api import create_signin_api
 from gateway.admin_runtime import (
     ADMIN_CONTROL_ROLES,
@@ -209,6 +211,7 @@ from gateway.admin_runtime import (
     is_human_user_record,
     person_for_app_credential,
     runtime_identity_for_app_credential_hash,
+    runtime_identity_for_new_session_app,
     runtime_identity_for_session_app,
     runtime_identity_for_trusted_address,
     runtime_identity_for_trusted_app,
@@ -216,7 +219,7 @@ from gateway.admin_runtime import (
     session_admin_role_subject,
 )
 from gateway.api import create_gateway_router, create_request_retention_router
-from gateway.request_source import note_connection, note_trusted_address
+from gateway.request_source import note_connection, note_maker, note_trusted_address
 from gateway.availability import availability_evidence_snapshot, project_capabilities
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
@@ -225,6 +228,9 @@ from gateway.models_catalog import (
     create_models_catalog_router,
     registered_model_capabilities,
     HealthProbeNoResponse,
+    HealthProbeRefused,
+    HealthProbeTimedOut,
+    connect_failure_kind,
     probe_service_health,
 )
 from gateway.workflows_catalog import (
@@ -241,13 +247,20 @@ from gateway.user_runtime import (
     ensure_try_session_key,
     get_user_app_credential,
     get_user_receipt,
+    add_user_trusted_address,
+    adopt_user_app_key,
+    adopt_user_trusted_address,
     mint_user_app_key,
+    readd_user_trusted_address,
+    remove_user_trusted_address,
     rename_person_app,
     rename_person_key,
     rename_user_app,
     rename_user_app_key,
+    replace_user_app_key,
     request_user_access,
     revoke_user_app_key,
+    set_user_app_key_privacy_permission,
 )
 from gateway.audio_extensions import (
     bind_audio_workflow_extensions,
@@ -309,6 +322,8 @@ from gateway.toolcall_detection import (
 )
 from gateway.discovery import WorkflowRegistry
 from gateway.video_limits import limits_for_workflow, video_limits
+from gateway.app_key_openapi import augment_app_key_openapi
+from gateway import operation_security
 from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
 from gateway.workflow_openapi import advertised_inputs_schema, workflow_catalog
 from gateway.discovery_metadata import (
@@ -396,6 +411,7 @@ from gateway.policy import (
 from gateway.receipts import (ReceiptLifecycleOwner, RouteReceipt, new_request_id,
                               configure_retention_fact_capture, record_retention_fact_failure, run_receipt_write)
 from gateway.runtime_auth import (
+    CLIENT_KEY_HEADERS,
     RuntimeIdentity,
     discovery_allows,
     discovery_audience_for_access,
@@ -1011,8 +1027,8 @@ VIDEO_ALIASES = {
     for k, v in (videos_cfg.get("aliases", {}) or {}).items()
 }
 # Workflow id that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
-# Unset means both routes return a clear 501 (video_remix_not_configured). Keep
-# the `video-remix` stable alias pointing at the same workflow.
+# Unset means both routes return a clear 501 (video_remix_not_configured). The
+# routes submit as `video-remix`, so that alias must point at the same workflow.
 VIDEO_REMIX_WORKFLOW = videos_cfg.get("remix_workflow") or None
 # Long video (extensions, `shots`, `seconds` past a model's native length).
 # `extend_workflow` names the chain workflow POST /v1/videos/extensions runs;
@@ -2029,41 +2045,6 @@ def _provision_existing_user_personal_apps() -> int:
     return created
 
 
-def _ensure_personal_app_for_owner(
-    user: Mapping[str, Any],
-    *,
-    role: str,
-    via: str = "setup_local_owner",
-) -> Mapping[str, Any] | None:
-    """Ensure a just-claimed local owner has a personal App.
-
-    Parity with the OIDC login path, so the user portal can hand the new owner
-    a working key without a separate "create App" step. The App is "Same as
-    its person"; it runs once the owner has an access plan.
-    """
-    user_id = str(user.get("id") or "")
-    if not user_id:
-        return None
-    label = user.get("email") or user.get("display_name") or user_id
-    app = admin_store.ensure_personal_app_for_user(
-        user_id,
-        name=f"{label} personal access",
-        path=ADMIN_STORE.path,
-    )
-    admin_store.record_audit(
-        "app.self_create",
-        actor_kind="user",
-        actor_id=user_id,
-        actor_label=str(user.get("display_name") or user.get("email") or user_id),
-        target_kind="app",
-        target_id=str(app["id"]),
-        metadata={"email": user.get("email"), "via": via, "role": role,
-                  "access_plan": app.get("access_plan")},
-        path=ADMIN_STORE.path,
-    )
-    return app
-
-
 AuthIdentity = RuntimeIdentity
 
 
@@ -2102,7 +2083,7 @@ def get_client_api_key_from_headers(headers) -> str:
     if auth_header.lower().startswith("bearer "):
         parts = auth_header.split(None, 1)
         return parts[1].strip() if len(parts) == 2 else ""
-    for header_name in ("x-api-key", "api-key"):
+    for header_name in CLIENT_KEY_HEADERS:
         api_key = headers.get(header_name, "")
         if api_key and api_key.strip():
             return api_key.strip()
@@ -2344,6 +2325,21 @@ def access_error(code: str) -> Response:
 
 
 def authenticate_request(request: Request, request_path: str) -> AuthContext | Response:
+    """Resolve the caller, and leave the identity in the request state for request-history capture."""
+    result = _authenticate_request(request, request_path)
+    if isinstance(result, AuthContext):
+        setattr(request.state, request_history_capture.IDENTITY_STATE_KEY, result)
+        if result.identity is not None:
+            # Receipts this request makes name the person it ran as, and no one else (REQUEST_RETENTION.md 13.3).
+            # A media job it creates is stamped with the same person and the credential or grant that authenticated it.
+            # An App-less legacy key has no credential row, so its key hash is the credential that made the job (D52).
+            note_maker(result.identity.app_id, result.identity.person_id,
+                       credential_id=result.identity.credential_id or result.identity.key_hash or None,
+                       connection_id=result.identity.connection_id)
+    return result
+
+
+def _authenticate_request(request: Request, request_path: str) -> AuthContext | Response:
     """Resolve the App key of a data-plane request (design §2.5 step 1).
 
     Public paths (health) return an empty context that can run
@@ -2459,7 +2455,8 @@ def _authenticate_mcp_access_token(request: Request, request_path: str, token: s
     if identity.app_id:
         note_connection(identity.app_id, connection.grant_id)
     return AuthContext(identity=replace(identity, name=f"{connection.client_name} (MCP)",
-                                        connection_id=connection.grant_id, auth_kind="mcp_grant"))
+                                        connection_id=connection.grant_id, auth_kind="mcp_grant",
+                                        privacy_permission=connection.privacy_permission))
 
 
 def authenticate_runtime_request(request: Request, request_path: str) -> RuntimeRouteAuth | Response:
@@ -5338,6 +5335,8 @@ async def proxy_stt_request(
                 elif streams:
                     receipt.metadata["status_code"] = 200
 
+            # The engine call starts here. Recording the start now lets Usage count a success of this route as served.
+            owner.mark_phase("started_at_ms")
             reply = await _stt_adapter(execution.backend_config).invoke(
                 _stt_connection(execution),
                 "stt.translate" if operation == "translations" else "stt.transcribe",
@@ -8349,6 +8348,7 @@ async def proxy_graph_image_request(
             )
             if admission is not None:
                 return admission
+            _mark_backend_started(receipt)
             return await _generate_images_with_adaptive_batching(
                 request=request,
                 client=client,
@@ -8979,6 +8979,7 @@ async def proxy_graph_image_edit_request(
             )
             if admission is not None:
                 return admission
+            _mark_backend_started(receipt)
             return await _generate_images_with_adaptive_batching(
                 request=request,
                 client=client,
@@ -9458,7 +9459,7 @@ def _tracked_video_fields(prompt_id: str, auth_context: AuthContext | None = Non
 def _hold_video_progress(prompt_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Never report lower progress than an earlier poll did for the same job.
 
-    Multi-stage graphs (LTX upscale, Bernini high+low) restart the sampler bar
+    Multi-stage graphs (LTX upscale, two-pass samplers) restart the sampler bar
     in each stage, and a queue-only poll reports a flat 25. OpenAI's `progress`
     only moves forward, so keep a high-water mark per job. Terminal states
     report 100 and are left alone.
@@ -12643,7 +12644,7 @@ async def proxy_graph_video_remix(
 
     Same contract as OpenAI's remix: JSON `{"prompt": ...}`, a new video job
     back, `remixed_from_video_id` set to the source. The gateway runs
-    `videos.remix_workflow` (Bernini-R). `model` is optional; when absent the
+    `videos.remix_workflow` (501 while it is unset). `model` is optional; when absent the
     resource reports `video-remix`. Gateway extras (`seed`, `seconds`, `size`,
     `negative_prompt`) are accepted as top-level fields.
     """
@@ -12774,25 +12775,22 @@ async def _run_workflow_drift_once() -> dict:
         }
     interpreter = sys.executable or "python3"
     try:
-        proc = await asyncio.create_subprocess_exec(
-            interpreter, str(_DRIFT_SCRIPT_PATH), "--verbose",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(Path(__file__).parent),
-        )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-        except asyncio.TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
+            done = await off_loop_spawn.run(
+                [interpreter, str(_DRIFT_SCRIPT_PATH), "--verbose"],
+                capture_output=True,
+                cwd=str(Path(__file__).parent),
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
             return {
                 "status": "error",
                 "reason": "drift script timed out after 120s",
                 "checked_at": int(time.time()),
             }
-        rc = proc.returncode
-        out = (stdout or b"").decode("utf-8", errors="replace")
-        err = (stderr or b"").decode("utf-8", errors="replace")
+        rc = done.returncode
+        out = (done.stdout or b"").decode("utf-8", errors="replace")
+        err = (done.stderr or b"").decode("utf-8", errors="replace")
         return {
             "status": "ok" if rc == 0 else "drift" if rc == 1 else "error",
             "exit_code": rc,
@@ -12869,6 +12867,22 @@ async def _initialize_stores() -> None:
     await asyncio.to_thread(providers.recover_provider_spend, path=ADMIN_DB_PATH.parent / "provider_spend.db")
 
 
+def _backfill_media_job_makers_at_startup() -> None:
+    """Give legacy media jobs the maker their creation-time evidence names, once (OV3 slice 1).
+
+    A failure leaves those jobs unstamped, so they stay unread until a start completes the pass. The start itself goes on.
+    """
+    try:
+        counts = maker_stamp_migration.backfill(
+            media_jobs.DB_PATH, receipts_path=receipt_store.DB_PATH, admin_path=ADMIN_DB_PATH,
+        )
+    except Exception as exc:  # noqa: BLE001 - a start must not fail over a backfill; unresolved jobs stay unread
+        print(f"[proxy] WARNING: media job maker backfill did not finish: {type(exc).__name__}", flush=True)
+        return
+    if counts is not None:
+        print(f"[proxy] media job makers backfilled from creation-time evidence: {counts}", flush=True)
+
+
 def _migrate_host_command_permission() -> None:
     """Decision D13: installs that already declare command lifecycles keep them working."""
     registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
@@ -12900,14 +12914,45 @@ def _retry_prompt_deadline_repair() -> None:
         _PROMPT_DEADLINE_REPAIR_PENDING = False
 
 
+def _release_late_hold(acquisition: asyncio.Future, path: Path) -> None:
+    """Release a hold that landed after its start-up was cancelled: no lifespan is left to release it."""
+    if not acquisition.cancelled() and acquisition.exception() is None:
+        gateway_lifetime.release(path)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """App lifespan manager."""
+    """The gateway's run, with the lifetime lock on its database held around the start-up and the shutdown.
+
+    Every launcher passes through here: ``python proxy.py``, ``uvicorn proxy:app`` and a test gateway that enters it.
+    The lock is re-entrant per process, and it is released when the last lifespan on this database exits (owner
+    visibility step 2, design §8.1).
+    """
+    path = ADMIN_STORE.path
+    # Waits while the cut-over holds the file exclusively. The worker thread keeps waiting after a cancelled await, so the
+    # wait is a task that the shield keeps running: a hold that lands after the cancel is released by the callback.
+    acquisition = asyncio.create_task(asyncio.to_thread(gateway_lifetime.hold, path))
+    try:
+        await asyncio.shield(acquisition)
+    except asyncio.CancelledError:
+        acquisition.add_done_callback(lambda done: _release_late_hold(done, path))
+        raise
+    try:
+        async with _serve(app):
+            yield
+    finally:
+        gateway_lifetime.release(path)
+
+
+@asynccontextmanager
+async def _serve(app: FastAPI):
+    """The start-up and shutdown of the stores, workers and background tasks."""
     # The retention defaults are data (registry/retention.yml); without a valid file the gateway has none.
     await asyncio.to_thread(retention.require_bundled)
     # Ownership and history stores must be ready before any worker can write.
     # In particular, do not run cleanup beside an unfinished quarantine.
     await _initialize_stores()
+    await asyncio.to_thread(_backfill_media_job_makers_at_startup)
     await asyncio.to_thread(_report_session_view_key_problem)
     await asyncio.to_thread(prompt_memory.require_resolvable_periods, admin_path=ADMIN_DB_PATH)
     await asyncio.to_thread(STT_MEASUREMENTS.startup_cleanup)
@@ -13049,8 +13094,15 @@ async def lifespan(app: FastAPI):
         IMAGE_CACHE_DIR, _prompt_migration_state_path(),
     ))
 
+    # The status snapshot builds only while something reads it. The backend history needs samples whether or not
+    # anyone reads, so its sampler runs as long as the gateway does, and shutdown joins both.
+    status_endpoint.open_snapshot(_build_status_snapshot)
+    status_endpoint.start_backend_samples(lambda: config)
+
     yield
 
+    await status_endpoint.stop_snapshot()
+    await status_endpoint.stop_backend_samples()
     prompt_memory_stop.set()
     prompt_memory_task.cancel()
     metadata_migration_task.cancel()
@@ -13255,6 +13307,7 @@ def _note_media_metadata_body(body: Any) -> Response | None:
         if ctx is not None and isinstance(body, Mapping):
             ctx.prompt_decision = prompt_memory.decide_for_person(
                 ctx.person_id, body, admin_path=ADMIN_STORE.path,
+                request_forget=request_history_slot.prompts_forget(),
             )
             started = _MEDIA_JOB_PROMPT_STARTED_AT.get()
             if started is not None and ctx.prompt_decision.keep:
@@ -13823,7 +13876,80 @@ def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[
     return out
 
 
-_SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+# Every capabilities and overview read asks about the same few services. Their rows are kept for the TTL below, and a
+# read that finds a service cold shares the probe already in flight for it, so a read costs no HTTP probe or `systemctl`
+# process unless a row has expired. The status grid keeps its own rows and deadlines.
+_SERVICE_ROW_CACHE_TTL_S = 12.0
+_SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}  # service id -> (probe start, row)
+_SERVICE_ROW_PROBES: dict[str, asyncio.Task] = {}  # service id -> the probe in flight that will answer it
+
+
+def _service_row_key(row: Mapping[str, Any]) -> str:
+    return str(row.get("service_id") or row.get("key") or "")
+
+
+async def _probe_service_rows(services: dict[str, Any], started: float) -> list[dict[str, Any]]:
+    owner = asyncio.current_task()
+    try:
+        rows = await status_endpoint._backend_grid({"backends": services})
+    finally:
+        # Unregister only the entries this task registered. A fallback probe registers none, so a newer probe for the
+        # same service may still be in flight when it finishes.
+        for key in services:
+            if _SERVICE_ROW_PROBES.get(key) is owner:
+                _SERVICE_ROW_PROBES.pop(key)
+    checked_at = int(time.time())
+    for row in rows:
+        row.setdefault("observed_at_s", checked_at)
+        _SERVICE_ROW_CACHE[_service_row_key(row)] = (started, dict(row))
+    return rows
+
+
+async def _service_rows(services: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The rows for these services: a row cached less than the TTL ago, else the row of a probe in flight for the
+    service, else a new probe for the services nobody is probing. A shared probe that fails does not fail this
+    reader: its services are probed again one by one, and a service that still fails gets an unknown row."""
+    now = status_endpoint._now()
+    rows: list[dict[str, Any]] = []
+    waits: dict[asyncio.Task, list[str]] = {}  # each probe this reader waits on -> the requested services it answers
+    cold: dict[str, Any] = {}
+    for key, service in services.items():
+        hit = _SERVICE_ROW_CACHE.get(key)
+        probe = _SERVICE_ROW_PROBES.get(key)
+        if hit is not None and now - hit[0] < _SERVICE_ROW_CACHE_TTL_S:
+            rows.append(dict(hit[1]))
+        elif probe is not None and not probe.done():
+            waits.setdefault(probe, []).append(key)
+        else:
+            cold[key] = service
+    if cold:
+        probe = asyncio.ensure_future(_probe_service_rows(cold, now))
+        _SERVICE_ROW_PROBES.update(dict.fromkeys(cold, probe))
+        waits[probe] = list(cold)
+    for probe, keys in waits.items():
+        try:
+            # Shielded: a reader that is cancelled must not cancel the probe that the other readers are waiting on.
+            rows.extend(row for row in await asyncio.shield(probe) if _service_row_key(row) in services)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - another service's failure in a shared batch must not fail this reader
+            rows.extend(await _service_rows_one_by_one({key: services[key] for key in keys}))
+    return rows
+
+
+async def _service_rows_one_by_one(services: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Probe each service on its own after a shared probe failed. A service that fails again gets an unknown row with
+    the error's type, never an exception."""
+    async def one(key: str, service: Any) -> list[dict[str, Any]]:
+        try:
+            return await _probe_service_rows({key: service}, status_endpoint._now())
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - reported as an unknown row
+            return [{"service_id": key, "key": key, "status": "unknown", "last_error": type(exc).__name__,
+                     "observed_at_s": int(time.time())}]
+    groups = await asyncio.gather(*(one(key, service) for key, service in services.items()))
+    return [row for group in groups for row in group]
 
 
 async def _status_payload_with_service_rows(
@@ -13845,22 +13971,7 @@ async def _status_payload_with_service_rows(
     missing = {key: value for key, value in backends.items() if key in wanted}
     if not missing:
         return status_payload
-    # Every capabilities and overview read asks about the same few services. Their
-    # rows are kept as long as the status grid keeps its own, so a read costs no
-    # HTTP probe or `systemctl` process unless a row has expired.
-    now = time.monotonic()
-    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
-    kept = [dict(hit[1]) for key in missing if (hit := _SERVICE_ROW_CACHE.get(key)) and now - hit[0] < ttl]
-    kept_ids = {str(row.get("service_id") or row.get("key") or "") for row in kept}
-    unchecked = {key: value for key, value in missing.items() if key not in kept_ids}
-    probed: list[dict[str, Any]] = []
-    if unchecked:
-        probed = await status_endpoint._backend_grid({"backends": unchecked})
-        checked_at = int(time.time())
-        for row in probed:
-            row.setdefault("observed_at_s", checked_at)
-            _SERVICE_ROW_CACHE[str(row.get("service_id") or row.get("key") or "")] = (now, dict(row))
-    extra = status_endpoint._merge_backend_observations([*kept, *probed])
+    extra = status_endpoint._merge_backend_observations(await _service_rows(missing))
     return {**status_payload, "backends": [*rows, *extra]}
 
 
@@ -13900,17 +14011,9 @@ async def _capabilities_availability_evidence(
 
 
 def _cached_status_payload_for_availability() -> Mapping[str, Any]:
-    cache = getattr(status_endpoint, "_CACHE", {})
-    cached = cache.get("data") if isinstance(cache, Mapping) else None
-    ts = cache.get("ts") if isinstance(cache, Mapping) else None
-    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
-    if not isinstance(cached, Mapping):
-        return {}
-    if not isinstance(ts, (int, float)) or isinstance(ts, bool):
-        return {}
-    if ttl <= 0 or time.monotonic() - float(ts) > ttl:
-        return {}
-    return cached
+    """The latest status snapshot's payload, for availability answers that need no probe. Empty before the first build,
+    and once the snapshot is too old to trust: the caller then probes the services it needs."""
+    return status_endpoint.latest_payload()
 
 
 def _runtime_availability_evidence(
@@ -13946,8 +14049,20 @@ async def _status_payload_with_protocol_issues(payload: Mapping[str, Any]) -> Ma
     return {**payload, "protocol_issues": issues, "health_sources": sources}
 
 
+async def _build_status_snapshot() -> dict[str, Any]:
+    """One full status build, run in the background while something reads the snapshot. Every section probes on its own
+    budget, and the availability evidence is worked out from the result. Readers take the result from the snapshot;
+    none waits for it."""
+    payload = await _status_payload_with_protocol_issues(await status_endpoint.build_status_payload(config))
+    return await _with_availability(payload)
+
+
 async def _status_payload_with_availability() -> Mapping[str, Any]:
-    payload = await _status_payload_with_protocol_issues(await status_endpoint.get_cached_status(config))
+    """The admin status and Home read the snapshot. Nothing here probes, and no request waits for a build."""
+    return await status_endpoint.get_cached_status(config)
+
+
+async def _with_availability(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     try:
         # Registry and capability resolution read SQLite; keep them off the loop.
         service_records, no_auth_capabilities = await asyncio.to_thread(
@@ -13956,8 +14071,11 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
         health_evidence = await _models_catalog_health_evidence(service_records, service_ids=(service_records.get("services") or {}).keys())
         # Composed workflow engines (the face sidecar) are checked read-only
         # for evidence; the engine grid itself is unchanged.
+        # A section that times out keeps its last rows, so this build can carry rows from an old answer. Availability does
+        # not count those as evidence of now: without a recent answer, a service has no row here and reads as unknown.
+        build_rows = payload if status_endpoint.backend_rows_are_fresh() else {**payload, "backends": []}
         service_rows = await _status_payload_with_service_rows(
-            payload, _workflow_availability_services(service_records),
+            build_rows, _workflow_availability_services(service_records),
             _composed_dependency_service_ids(no_auth_capabilities),
         )
         availability_evidence = await asyncio.to_thread(
@@ -13982,7 +14100,10 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
             ),
             "_availability_evidence": availability_evidence,
         }
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # The page still renders without the availability evidence. Log the type only: the message
+        # can carry a path or a secret.
+        print(f"[proxy] status availability skipped: {type(exc).__name__}", flush=True)
         return payload
 
 
@@ -14162,13 +14283,18 @@ def _gateway_record_scope(request: Request) -> dict[str, Any]:
 
 
 def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str, Any]) -> bool:
+    from gateway import content_makers
+    from gateway.content_access import viewer_from_auth
     from gateway.record_ownership import owns_record
     auth_context = _auth_context_from_scope(request)
-    identity = auth_context.identity
-    return owns_record(
-        kind, record, app_id=identity.app_id if identity else None,
-        owner_keys=_asset_read_owner_keys(auth_context),
-    )
+    # One App reader per request: the authorizer runs once per row of a page.
+    state = getattr(request, "state", None)
+    apps = getattr(state, "record_apps", None)
+    if apps is None:
+        apps = content_makers.Apps(ADMIN_STORE.path)
+        if state is not None:
+            state.record_apps = apps
+    return owns_record(kind, record, viewer=viewer_from_auth(auth_context, owner_keys=()), apps=apps)
 
 
 async def _gateway_media_job_submitter(
@@ -14235,10 +14361,35 @@ async def _security_headers_middleware(request: Request, call_next):
     return response
 
 
+async def _maker_browser_session_request(request: Request) -> bool:
+    """Whether a maker's request history call comes from the person's own browser session, with no App key.
+
+    The maker's kept requests are also the person's own in the browser (REQUEST_RETENTION.md 10). Such a call carries
+    the session cookie and no Authorization header, so the key layer does not gate it; the router reads the session
+    and checks the user-action header and CSRF token on every write.
+    """
+    if not operation_security.session_passes_key_layer(request.url.path):
+        return False
+    # Any credential the key layer would read, in any form it reads one, keeps the call on that layer: a key
+    # presented with a session cookie is judged as the key, never as the session.
+    if (request.headers.get("authorization") or request.headers.get(_INTERNAL_IDENTITY_HEADER)
+            or _resolve_client_api_key(request)):
+        return False
+    return await asyncio.to_thread(_oidc_session_from_request, request) is not None
+
+
+# The paths whose every operation passes the App key layer before its handler runs, whether or not the handler
+# checks the caller itself. The API reference gives these operations the App key security (fill_security), and on
+# operation_security.SESSION_KEY_LAYER_PATHS a browser session as well.
+KEY_LAYER_PREFIXES = ("/gateway/v1", "/native/")
+
+
 @app.middleware("http")
 async def _gateway_auth_middleware(request: Request, call_next):
     """Gate gateway-native discovery/receipt APIs, and the per-engine native lane, behind the proxy key layer."""
-    if request.url.path.startswith(("/gateway/v1", "/native/")):
+    if request.url.path.startswith(KEY_LAYER_PREFIXES):
+        if await _maker_browser_session_request(request):
+            return await call_next(request)
         refusal = await _authenticate_mounted_route(request)
         if refusal is not None:
             return refusal
@@ -14400,6 +14551,8 @@ class _SessionMakeRuntime:
     def schedule(self, job_id: str, run: Callable[[], Awaitable[None]]) -> None:
         if job_id in _image_media_job_scheduled:
             return
+        # The owning loop comes first: called off it, this raises before any marker or gate is kept.
+        loop = asyncio.get_running_loop()
         _image_media_job_scheduled.add(job_id)
         gate = self._gates.setdefault(job_id, _MakePublishGate())
 
@@ -14433,11 +14586,16 @@ class _SessionMakeRuntime:
             finally:
                 semaphore.release()
 
-        loop = asyncio.get_running_loop()
         # A cancel while the job waits for a turn ends the wait at once, so
         # only queued or running jobs hold a task and a gate.
         gate.loop, gate.stop_waiting = loop, asyncio.Event()
-        task = loop.create_task(bounded())
+        try:
+            task = loop.create_task(bounded())
+        except BaseException:
+            # No task will run the job, so give back its marker and its gate.
+            _image_media_job_scheduled.discard(job_id)
+            self._gates.pop(job_id, None)
+            raise
         _image_media_job_tasks.add(task)
 
         def _done(done_task: asyncio.Task) -> None:
@@ -14520,6 +14678,8 @@ class _SessionMakeRuntime:
             finally:
                 _MAKE_PUBLISH_GATE.reset(gate_token)
                 _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
+                # Canceled or failed work may still have reached the backend.
+                _record_make_dispatch(str(payload.get("job_id") or ""), receipt)
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         if not 200 <= int(response.status_code) < 300:
             message, error_info = _media_job_failure(response)
@@ -14546,6 +14706,16 @@ async def _cancellable_make_call(gate: _MakePublishGate, work: Awaitable[Respons
     return response
 
 
+def _record_make_dispatch(job_id: str, receipt: RouteReceipt) -> None:
+    """Give the make job's own receipt where its work ran, once the work has begun there."""
+    if receipt.started_at_ms is None:
+        return  # Refused before any backend work began, so nothing is recorded.
+    me_make.record_dispatch(
+        job_id, backend=receipt.backend, started_at_ms=receipt.started_at_ms, remote=receipt.remote,
+        jobs_path=media_jobs.DB_PATH, receipts_path=receipt_store.DB_PATH,
+    )
+
+
 _SESSION_MAKE_RUNTIME = _SessionMakeRuntime()
 
 
@@ -14567,6 +14737,15 @@ app.include_router(
 )
 
 app.include_router(
+    request_history_api.create_request_history_router(
+        session_provider=lambda request: _oidc_session_from_request(request),
+        mutation_validator=lambda request, session: _require_user_action_header(request, session),
+        admin_path=lambda: ADMIN_STORE.path,
+        media_path=lambda: media_jobs.DB_PATH,
+    )
+)
+
+app.include_router(
     me_prompt_memory.create_me_prompt_memory_router(
         session_provider=lambda request: _oidc_session_from_request(request),
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
@@ -14579,11 +14758,79 @@ app.include_router(
     )
 )
 
+def _avatar_picture_model(person_id: str) -> str | None:
+    """The image route a person's avatar is made with: the first one their own App may use, while media jobs are admitted.
+
+    A read: it creates nothing. The session App is made when a make job starts (me_make._submit), so until one exists
+    the route is read from the identity that App will have.
+    """
+    if _SESSION_MAKE_RUNTIME.admission(avatar_generation.IMAGE_INTENT) is not None:
+        return None
+    app = admin_store.get_session_app_for_user(person_id, path=ADMIN_STORE.path)
+    identity = (
+        runtime_identity_for_session_app(str(app["id"]), person_id, path=ADMIN_STORE.path) if app is not None
+        else runtime_identity_for_new_session_app(person_id, path=ADMIN_STORE.path)
+    )
+    if identity is None or identity.denial:
+        return None
+    return avatar_generation.pick_route(_gateway_capabilities_for_auth_context(AuthContext(identity=identity)))
+
+
+def _avatar_start_job(request: Request, person_id: str, model: str, prompt: str) -> dict[str, Any]:
+    user = admin_store.get_user(person_id, path=ADMIN_STORE.path)
+    if user is None:
+        raise PublicFailure("session_user_not_found", 401)
+    return me_make.start_person_job(
+        request,
+        {
+            "intent": avatar_generation.IMAGE_INTENT,
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            # The prompt is the gateway's template, not the person's words, so it is not kept in their prompt memory.
+            "extensions": {prompt_memory.NAMESPACE: {"mode": "forget"}},
+        },
+        user=user,
+        runtime=_SESSION_MAKE_RUNTIME,
+        find_owned_asset=lambda request, user_id, asset_id: me_media.owned_library_asset(
+            user_id, asset_id, **_PERSON_LIBRARY),
+        admin_path=ADMIN_STORE.path,
+        jobs_path=media_jobs.DB_PATH,
+        receipts_path=receipt_store.DB_PATH,
+    )
+
+
+def _avatar_own_picture_file(person_id: str, asset_id: str) -> Path | None:
+    """The file of a picture in the person's own Library, or None. The Library decides whose job made it."""
+    item = me_media.owned_library_asset(person_id, asset_id, **_PERSON_LIBRARY)
+    if item is None or item.get("available") is False:
+        return None
+    path = asset_cache_path(asset_id)
+    return path if path is not None and path.is_file() else None
+
+
+def _avatar_job_state(person_id: str, job_id: str) -> dict[str, Any] | None:
+    """The person's own make job, as the automatic default reads it, or None when it is not theirs."""
+    return me_make.person_job_state(job_id, person_id, admin_path=ADMIN_STORE.path, jobs_path=media_jobs.DB_PATH)
+
+
+def _avatar_picture_work_busy() -> bool:
+    """Whether any picture job is queued or running here. The automatic default waits for the queue to clear."""
+    return bool(_image_media_job_scheduled)
+
+
 app.include_router(
     me_avatar.create_me_avatar_router(
         session_provider=lambda request: _oidc_session_from_request(request),
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
         admin_db_path=lambda: ADMIN_STORE.path,
+        generation=me_avatar.AvatarGeneration(
+            model_for=_avatar_picture_model,
+            start=_avatar_start_job,
+            own_picture_file=_avatar_own_picture_file,
+            job_state=_avatar_job_state,
+            busy=_avatar_picture_work_busy,
+        ),
     )
 )
 
@@ -14692,13 +14939,23 @@ def _mcp_store_asset(request: Request, auth: Any, content: bytes, kind: str, suf
     }
 
 
-def _mcp_read_asset(request: Request, auth: Any, asset_id: str) -> bytes | None:
+def _mcp_read_asset(request: Request, auth: Any, asset_id: str, *, max_bytes: int | None = None) -> bytes | None:
     path = asset_cache_path(asset_id)
     if path is None or not path.exists():
         return None
     if not _asset_access_allowed(asset_id, auth if isinstance(auth, AuthContext) else None):
         return None
-    return media_delivery.deliver_bytes(path.read_bytes(), path.suffix, "none")
+    if max_bytes is None:
+        raw = path.read_bytes()
+    else:
+        with path.open("rb") as source:
+            raw = source.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            return None
+        # This path is only used by the preview encoder, which applies image
+        # orientation before re-encoding without metadata.
+        return raw
+    return media_delivery.deliver_bytes(raw, path.suffix, "none")
 
 
 def _mcp_allowed_origins(_request: Request) -> list[str]:
@@ -14821,6 +15078,8 @@ def _mount_mcp(app: FastAPI) -> None:
             visible=lambda _request, auth, entry: isinstance(auth, AuthContext) and _category_entry_visible(auth, entry),
             store_asset=_mcp_store_asset,
             read_asset=_mcp_read_asset,
+            read_preview_asset=lambda request, auth, asset_id: _mcp_read_asset(
+                request, auth, asset_id, max_bytes=mcp_server.MCP_PREVIEW_SOURCE_MAX_BYTES),
             public_base_url=lambda request: _public_base_url(request),
             server_version=str((config.get("proxy") or {}).get("version") or "1"),
             allowed_origins=_mcp_allowed_origins,
@@ -15621,8 +15880,13 @@ def _require_user_session(request: Request):
 def _user_action_response_error(exc: UserPortalError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": {"code": exc.code, "message": exc.message}},
+        content={"error": {"code": exc.code, "message": exc.message, **exc.details}},
     )
+
+
+def _confirms_administrators(body: Any) -> bool:
+    """The owner's confirmation that the administrators on record could have made the binding: a JSON ``true``, nothing else."""
+    return isinstance(body, Mapping) and body.get("confirm_admins_could_have_made_it") is True
 
 
 def _require_user_action_header(request: Request, session) -> JSONResponse | None:
@@ -16107,23 +16371,8 @@ async def _step_up_gate(request: Request, call_next):
     if step_up.is_sensitive(request.method, path):
         denial = await asyncio.to_thread(_step_up_denial, request)
         if denial is not None:
-            if path.startswith("/setup/"):
-                # A form post: say it in words, not as JSON.
-                return HTMLResponse(
-                    "<!doctype html><title>Sign in again</title><main><h1>Sign in again</h1>"
-                    "<p>It has been a while since you signed in, so no App or key was made.</p>"
-                    '<p><a href="/login?return_to=/setup/console">Sign in again</a>, then go back and create the App.</p></main>',
-                    status_code=401, headers={"Cache-Control": "no-store"})
             return denial
     return await call_next(request)
-
-
-def _require_recent_sign_in_for_administrator(session) -> None:
-    """Raise ``StepUpRequired`` for an owner or administrator whose sign-in is older than the window."""
-    roles = admin_store.effective_admin_roles("user", session.subject, path=ADMIN_STORE.path)
-    if ADMIN_CONTROL_ROLES & roles:
-        step_up.require_recent(
-            authenticated_at=session.last_authenticated, subject=session.subject, window_seconds=_step_up_window())
 
 
 def _mcp_require_recent_sign_in(request: Request, session) -> Response | None:
@@ -16203,6 +16452,8 @@ app.include_router(create_home_router(
     spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
     availability_services=_workflow_availability_services,
     workflow_records=GATEWAY_WORKFLOW_REGISTRY.records,
+    recent_chats=lambda person_id: request_history_api.recent_chats(
+        person_id, admin_path=ADMIN_STORE.path, media_path=media_jobs.DB_PATH, limit=6),
 ))
 
 
@@ -16210,7 +16461,8 @@ app.include_router(create_home_router(
 async def user_portal_session(request: Request):
     session = (await asyncio.to_thread(_oidc_session_from_request, request))
     try:
-        snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path)
+        snapshot = await asyncio.to_thread(build_user_portal_snapshot, session, path=ADMIN_STORE.path,
+                                           avatar_route=_avatar_picture_model)
     except UserPortalError as exc:
         # The sign-in cannot be identified right now (for example its view key is unreadable): say so, and send
         # nothing that could be taken for a signed-in person. The CSRF token still goes: a sign-out needs only the
@@ -16227,6 +16479,34 @@ async def user_portal_session(request: Request):
     return JSONResponse(
         status_code=200,
         content=snapshot,
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.get("/me/api/session/end-token", include_in_schema=False)
+async def user_portal_session_end_token(request: Request):
+    """Return only the current session's CSRF token and the name needed by sign-out."""
+    session = await asyncio.to_thread(_oidc_session_from_request, request)
+    if session is None:
+        return JSONResponse(
+            {"authenticated": False, "csrf_token": ""},
+            headers={"cache-control": "no-store"},
+        )
+
+    user = await asyncio.to_thread(admin_store.get_user, session.subject, path=ADMIN_STORE.path)
+    who = None
+    if user is not None:
+        email = user.get("email") or session.email
+        who = {
+            "name": user.get("display_name") or email,
+            "email": email,
+        }
+    return JSONResponse(
+        {
+            "authenticated": True,
+            "csrf_token": _csrf_token_for_oidc_session(session),
+            "user": who,
+        },
         headers={"cache-control": "no-store"},
     )
 
@@ -16288,8 +16568,17 @@ async def _models_catalog_health_evidence(
     async def get_json(url: str) -> Mapping[str, Any] | None:
         if not url.startswith(("http://", "https://")):
             return None
-        async with httpx.AsyncClient(timeout=0.75, verify=context) as client:
-            response = await client.get(url)
+        try:
+            async with httpx.AsyncClient(timeout=0.75, verify=context) as client:
+                response = await client.get(url)
+        except httpx.TimeoutException as exc:
+            raise HealthProbeTimedOut() from exc
+        except httpx.ConnectError as exc:
+            # Only a refused connection says nothing listens. A name that does not resolve or a
+            # failed TLS handshake propagates as an ordinary failure: the probe reports it as unavailable.
+            if connect_failure_kind(exc) == "refused":
+                raise HealthProbeRefused() from exc
+            raise
         if response.status_code >= 400:
             raise HealthProbeNoResponse(status_code=response.status_code)
         payload = response.json()
@@ -16372,10 +16661,8 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         )
     except Exception:  # noqa: BLE001
         health_evidence = {}
-    try:
-        status_payload = await status_endpoint.get_cached_status(config)
-    except Exception:  # noqa: BLE001
-        status_payload = _cached_status_payload_for_availability()
+    # Availability takes the snapshot only while it is fresh. An older row is probed below, not trusted.
+    status_payload = _cached_status_payload_for_availability()
     try:
         status_payload = await _status_payload_with_service_rows(
             status_payload or {}, service_records,
@@ -16565,13 +16852,17 @@ async def user_portal_activity(request: Request):
         limit = int(request.query_params.get("limit") or 0) or None
     except (TypeError, ValueError):
         limit = None
-    snapshot = await asyncio.to_thread(
-        build_user_activity_snapshot,
-        session,
-        limit=limit if limit else 20,
-        path=ADMIN_STORE.path,
-        receipts_path=receipt_store.DB_PATH,
-    )
+    try:
+        snapshot = await asyncio.to_thread(
+            build_user_activity_snapshot,
+            session,
+            limit=limit if limit else 20,
+            path=ADMIN_STORE.path,
+            receipts_path=receipt_store.DB_PATH,
+            cursor=request.query_params.get("cursor"),
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
     return JSONResponse(
         status_code=200,
         content=snapshot,
@@ -16710,6 +17001,150 @@ async def user_portal_mint_key(app_id: str, request: Request):
     )
 
 
+@app.post("/me/api/apps/{app_id}/trusted-addresses", include_in_schema=False)
+async def user_portal_add_trusted_address(app_id: str, request: Request):
+    """Trust a client address for an App the signed-in person answers for (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        record = add_user_trusted_address(
+            session, app_id, body if isinstance(body, Mapping) else {}, path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=201,
+        content={"trusted_address": record},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/credentials/{credential_id}/adopt", include_in_schema=False)
+async def user_portal_adopt_key(credential_id: str, request: Request):
+    """Keep an unproven key on an App the signed-in person answers for (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        credential = adopt_user_app_key(
+            session, credential_id, confirmed_administrators=_confirms_administrators(body), path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200,
+        content={"credential": credential},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt", include_in_schema=False)
+async def user_portal_adopt_trusted_address(app_id: str, entry_id: str, request: Request):
+    """Keep an unproven trusted address on an App the signed-in person answers for (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        record = adopt_user_trusted_address(
+            session, app_id, entry_id, confirmed_administrators=_confirms_administrators(body), path=ADMIN_STORE.path,
+        )
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200,
+        content={"trusted_address": record},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd", include_in_schema=False)
+async def user_portal_readd_trusted_address(app_id: str, entry_id: str, request: Request):
+    """Add an unkept trusted address again on an App the signed-in person answers for, in one step (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        readded = readd_user_trusted_address(session, app_id, entry_id, path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=201,
+        content=readded,
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.delete("/me/api/apps/{app_id}/trusted-addresses/{entry_id}", include_in_schema=False)
+async def user_portal_remove_trusted_address(app_id: str, entry_id: str, request: Request):
+    """Remove a trusted address from an App the signed-in person answers for (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        record = remove_user_trusted_address(session, app_id, entry_id, path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=200,
+        content={"trusted_address": record},
+        headers={"cache-control": "no-store"},
+    )
+
+
+@app.post("/me/api/credentials/{credential_id}/replace", include_in_schema=False)
+async def user_portal_replace_key(credential_id: str, request: Request):
+    """Replace an App key the signed-in person answers for with a new key on the same App (owner visibility step 2)."""
+    try:
+        session = (await asyncio.to_thread(_require_user_session, request))
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        payload = replace_user_app_key(session, credential_id, path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(
+        status_code=201,
+        content=payload,
+        headers={"cache-control": "no-store"},
+    )
+
+
 @app.post("/me/api/try-key", include_in_schema=False)
 async def user_portal_try_key(request: Request):
     """Reuse or mint the Try page's key for this sign-in session."""
@@ -16729,7 +17164,6 @@ async def user_portal_try_key(request: Request):
         credential = ensure_try_session_key(
             session,
             reuse_id=str(reuse_id) if reuse_id else None,
-            before_mint=lambda: _require_recent_sign_in_for_administrator(session),
             path=ADMIN_STORE.path,
         )
     except UserPortalError as exc:
@@ -16844,6 +17278,32 @@ async def user_portal_rename_key(credential_id: str, request: Request):
         credential = await asyncio.to_thread(
             rename_user_app_key, session, credential_id, label if isinstance(label, str) else "",
             path=ADMIN_STORE.path)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    return JSONResponse(status_code=200, content={"credential": credential}, headers={"cache-control": "no-store"})
+
+
+@app.put("/me/api/credentials/{credential_id}/privacy-permission", include_in_schema=False)
+async def user_portal_key_privacy_permission(credential_id: str, request: Request):
+    """Let the signed-in accountable person widen request-history access for one App key."""
+    try:
+        session = await asyncio.to_thread(_require_user_session, request)
+    except UserPortalError as exc:
+        return _user_action_response_error(exc)
+    header_error = _require_user_action_header(request, session)
+    if header_error is not None:
+        return header_error
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    enabled = body.get("enabled") if isinstance(body, Mapping) else None
+    if not isinstance(enabled, bool):
+        return _user_action_response_error(UserPortalError(
+            "invalid_privacy_permission", "enabled must be true or false", status_code=400))
+    try:
+        credential = await asyncio.to_thread(
+            set_user_app_key_privacy_permission, session, credential_id, enabled, path=ADMIN_STORE.path)
     except UserPortalError as exc:
         return _user_action_response_error(exc)
     return JSONResponse(status_code=200, content={"credential": credential}, headers={"cache-control": "no-store"})
@@ -17420,26 +17880,100 @@ def _normalize_local_email(value: str) -> str:
     return (value or "").strip().lower()
 
 
-async def _issue_browser_admin_session(
+def _complete_setup_local_owner(
     request: Request,
     *,
-    user_id: str,
     email: str,
-    role: str,
+    verifier: str,
     signing_key: bytes,
-    redirect_to: str = "/setup/",
-) -> Response:
+):
+    """Commit the first owner, their plan, their personal App and their session together.
+
+    Returns the session and its cookie, or None when an owner was already claimed. The caller sets the
+    cookie after this returns, so the cookie is set only once the claim has committed.
+    """
+    path = ADMIN_STORE.path
     cookie = _browser_admin_cookie_config()
-    # Both calls open and write SQLite, so they run in a thread, not on the event loop.
-    await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cookie,
-                            signing_key=signing_key, path=ADMIN_STORE.path)
-    session = await asyncio.to_thread(
-        browser_sessions.issue,
-        {"sub": user_id, "email": email}, role=role, cookie=cookie, path=ADMIN_STORE.path,
-    )
-    response = RedirectResponse(redirect_to, status_code=303)
-    browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=signing_key)
-    return response
+    accounts.initialize(path)
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        user = admin_store.claim_first_local_owner_in(
+            conn,
+            issuer=_LOCAL_OWNER_ISSUER,
+            subject=email,
+            email=email,
+            display_name=email,
+            verifier=verifier,
+            granted_by="setup-local-owner",
+        )
+        if user is None:
+            return None
+        user_id = str(user["id"])
+        # A fresh gateway has no built-in default plan, so the first owner gets one
+        # ordinary starting plan; without it they would be refused on their own gateway.
+        admin_store.seed_first_owner_plan_in(conn, user_id)
+        # Parity with OIDC login: give the new owner a personal App up front so the
+        # portal can hand them a working key without a separate "create App" step.
+        label = user.get("email") or user.get("display_name") or user_id
+        app = admin_store.ensure_personal_app_for_user_in(conn, user_id, name=f"{label} personal access")
+        admin_store._record_audit_in_transaction(
+            conn, "app.self_create",
+            actor_kind="user", actor_id=user_id,
+            actor_label=str(user.get("display_name") or user.get("email") or user_id),
+            target_kind="app", target_id=str(app["id"]),
+            metadata={"email": user.get("email"), "via": "setup_local_owner", "role": "owner",
+                      "access_plan": app.get("access_plan")},
+            now=int(time.time()),
+        )
+        browser_sessions.end_incoming_in(conn, request, cookie=cookie, signing_key=signing_key, path=path)
+        session = browser_sessions.issue_in(conn, {"sub": user_id, "email": email}, role="owner",
+                                            cookie=cookie, path=path)
+    accounts.invalidate_asset_families()
+    return session, cookie
+
+
+def _complete_setup_local_login(
+    request: Request,
+    user: Mapping[str, Any],
+    *,
+    email: str,
+    built_in: bool,
+    signing_key: bytes,
+):
+    """Commit the setup recovery login and its replacement session together."""
+    path = ADMIN_STORE.path
+    user_id = str(user["id"])
+    cookie = _browser_admin_cookie_config()
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        role_names = admin_store.effective_user_roles_in(conn, user_id)
+        if not built_in and "owner" not in role_names:
+            return None, "builtin_disabled"
+        if "owner" in role_names:
+            role = "owner"
+        elif role_names & {"admin", "superadmin"}:
+            role = "admin"
+        else:
+            return None, "admin_role_required"
+
+        accounts.clear_signin_refusal_in(conn, user_id)
+        admin_store._record_audit_in_transaction(
+            conn, "setup.local_owner_login",
+            actor_kind="user", actor_id=user_id,
+            actor_label=str(user.get("display_name") or user.get("email") or user_id),
+            target_kind="user", target_id=user_id,
+            metadata={"email": email, "via": "setup_page"},
+            now=int(time.time()),
+        )
+        browser_sessions.end_incoming_in(
+            conn, request, cookie=cookie, signing_key=signing_key, path=path,
+        )
+        session = browser_sessions.issue_in(
+            conn, {"sub": user_id, "email": email},
+            role=role, cookie=cookie, path=path,
+        )
+    accounts.invalidate_asset_families()
+    return session, None
 
 
 def _origin_header_allowed_for_request(request: Request) -> bool:
@@ -17574,35 +18108,19 @@ async def setup_create_local_owner(request: Request):
             status_code=400,
         )
 
-    user = admin_store.claim_first_local_owner(
-        issuer=_LOCAL_OWNER_ISSUER,
-        subject=email,
-        email=email,
-        display_name=email,
-        verifier=verifier,
-        granted_by="setup-local-owner",
-        path=ADMIN_STORE.path,
-    )
-    if user is None:
-        return RedirectResponse("/setup/", status_code=303)
-    # A fresh gateway has no built-in default plan, so the first owner gets one
-    # ordinary starting plan; without it they would be refused on their own gateway.
-    admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
-    # Parity with OIDC login: give the new owner a personal App up front so the
-    # portal can hand them a working key without a separate "create App" step.
-    _ensure_personal_app_for_owner(user, role="owner")
     # Setup is done — hand the new owner to the portal, where their key is
     # auto-minted and revealed once. Landing back on /setup would greet them
     # with the operator "this gateway has an owner" recovery card (third-person,
     # plus a redundant second key-mint flow). The portal is the real home.
-    return await _issue_browser_admin_session(
-        request,
-        user_id=str(user["id"]),
-        email=email,
-        role="owner",
-        signing_key=signing_key,
-        redirect_to="/",
+    claimed = await asyncio.to_thread(
+        _complete_setup_local_owner, request, email=email, verifier=verifier, signing_key=signing_key,
     )
+    if claimed is None:
+        return RedirectResponse("/setup/", status_code=303)
+    session, cookie = claimed
+    response = RedirectResponse("/", status_code=303)
+    browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=signing_key)
+    return response
 
 
 @app.post("/setup/local-login", include_in_schema=False)
@@ -17666,17 +18184,14 @@ async def setup_local_login(request: Request):
             login_email=email,
             status_code=401,
         )
-    role_names = admin_store.effective_admin_roles(
-        "user", str(user["id"]), path=ADMIN_STORE.path,
+    session, signin_error = await asyncio.to_thread(
+        _complete_setup_local_login, request, user, email=email,
+        built_in=built_in, signing_key=signing_key,
     )
-    if not built_in and "owner" not in role_names:
+    if signin_error == "builtin_disabled":
         # Only the owner's password works while built-in sign-in is off.
         return JSONResponse({"error": {"code": "builtin_disabled", "message": "Use the identity provider to sign in."}}, status_code=403)
-    if "owner" in role_names:
-        role = "owner"
-    elif "admin" in role_names or "superadmin" in role_names:
-        role = "admin"
-    else:
+    if signin_error == "admin_role_required":
         return await _setup_page_response(
             request,
             login_error=(
@@ -17686,27 +18201,16 @@ async def setup_local_login(request: Request):
             login_email=email,
             status_code=403,
         )
-    accounts.clear_signin_refusal(str(user["id"]), path=ADMIN_STORE.path)
-    admin_store.record_audit(
-        "setup.local_owner_login",
-        actor_kind="user",
-        actor_id=str(user["id"]),
-        actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
-        target_kind="user",
-        target_id=str(user["id"]),
-        metadata={"email": email, "via": "setup_page"},
-        path=ADMIN_STORE.path,
-    )
     # A returning owner/admin signing in from /setup lands on the portal, their
     # home — not back on the operator setup console.
-    return await _issue_browser_admin_session(
-        request,
-        user_id=str(user["id"]),
-        email=email,
-        role=role,
-        signing_key=signing_key,
-        redirect_to=_safe_admin_return_to(values.get("return_to") or request.query_params.get("return_to")),
+    response = RedirectResponse(
+        _safe_admin_return_to(values.get("return_to") or request.query_params.get("return_to")),
+        status_code=303,
     )
+    browser_sessions.set_cookie(
+        response, session, cookie=_browser_admin_cookie_config(), signing_key=signing_key,
+    )
+    return response
 
 
 @app.post("/setup/first-app", include_in_schema=False)
@@ -17772,28 +18276,12 @@ async def setup_create_first_app(request: Request):
                 path=ADMIN_STORE.path,
             )
         else:
-            app_record = ADMIN_STORE.create_app(
-                data={"name": app_name, "kind": "service", "access_plan": "person"},
-                actor=actor,
-            )
-            credential = ADMIN_STORE.create_credential(
-                app_id=str(app_record["id"]),
-                data={"label": key_label},
-                actor=actor,
-            )
-            admin_store.record_audit(
-                "setup.first_app_key",
-                actor_kind=actor.actor_kind,
-                actor_id=actor.audit_actor_id,
-                actor_label=actor.actor_label,
-                target_kind="credential",
-                target_id=str(credential.get("id") or ""),
-                metadata={
-                    "via": "setup_page",
-                    "app_id": app_record.get("id"),
-                    "prefix": credential.get("prefix"),
-                },
-                path=ADMIN_STORE.path,
+            # A control-plane key answers for no person, so it cannot issue an App's first key (owner
+            # visibility step 2). The owner signs in and makes the App from their own session.
+            return await _setup_page_response(
+                request,
+                app_error="Sign in as the person this App will answer for. A control-plane key cannot add a key to an App.",
+                status_code=403,
             )
     except UserPortalError as e:
         return await _setup_page_response(
@@ -17895,6 +18383,121 @@ def _browser_signin_failure(request: Request, *, return_to: str | None = None, r
     )
 
 
+class _OidcBootstrapRefused(Exception):
+    """A first-owner race changed the admission decision during sign-in."""
+
+
+class _OidcAccountDisabled(Exception):
+    """The OIDC identity belongs to a disabled or removed person."""
+
+
+def _complete_oidc_signin(
+    request: Request,
+    state,
+    cfg,
+    claims: Mapping[str, Any],
+    decision,
+    bootstrap_owner: bool,
+):
+    """Commit every successful OIDC sign-in write together and return its session and device cookie."""
+    path = ADMIN_STORE.path
+    accounts.initialize(path)
+    previous = browser_sessions.decode_incoming(
+        request, cookie=cfg.cookie, signing_key=cfg.signing_key,
+    ) if state.reauth else None
+    with admin_store.transaction(path) as tx:
+        conn = tx.conn
+        user = admin_store.upsert_oidc_user_in(
+            conn, cfg.issuer, str(claims["sub"]),
+            email=str(claims.get("email") or ""),
+            display_name=str(claims.get("name") or claims.get("email") or ""),
+        )
+        person_id = str(user["id"])
+        account_state = conn.execute(
+            "SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,),
+        ).fetchone()
+        if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
+            raise _OidcAccountDisabled()
+        accounts.record_oidc_verification_in(conn, person_id, claims.get("email_verified") is True)
+        accounts.clear_signin_refusal_in(conn, person_id)
+        oidc_access_names = access_names_from_oidc_claims(
+            claims, client_id=cfg.client_id, groups_claim=cfg.groups_claim,
+        )
+        admin_store.replace_user_identity_claims_in(conn, person_id, oidc_access_names)
+
+        owner_claimed = False
+        if bootstrap_owner:
+            owner_claimed = admin_store.claim_first_owner_in(
+                conn, person_id, granted_by="oidc-bootstrap",
+            )
+            if owner_claimed:
+                admin_store.seed_first_owner_plan_in(conn, person_id)
+            else:
+                # Another first sign-in won ownership while this request waited for the write lock.
+                decision = signin_admin.decide(
+                    path, claims, issuer=cfg.issuer, client_id=cfg.client_id,
+                    groups_claim=cfg.groups_claim, bootstrap_owner=False,
+                )
+                if not decision.outcome.admitted:
+                    raise _OidcBootstrapRefused()
+
+        effective_grants = admin_store.reconcile_oidc_admin_roles_in(
+            conn, person_id, {"admin"} if decision.outcome.admin else set(),
+        )
+        signin_admin.sync_rule_plan_in(conn, person_id, decision.outcome)
+        effective_roles = {grant["role"] for grant in effective_grants}
+        role = "owner" if owner_claimed or "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
+        avatars.record_sign_in_picture_in(conn, person_id, claims.get("picture"))
+        label = user.get("email") or user.get("display_name") or user["id"]
+        app = admin_store.ensure_personal_app_for_user_in(
+            conn, person_id, name=f"{label} personal access",
+        )
+        admin_store._record_audit_in_transaction(
+            conn, "app.self_create",
+            actor_kind="user", actor_id=person_id,
+            actor_label=str(user.get("display_name") or user.get("email") or person_id),
+            target_kind="app", target_id=str(app["id"]),
+            metadata={"email": user.get("email"), "via": "oidc_login",
+                      "access_plan": app.get("access_plan")},
+            now=int(time.time()),
+        )
+
+        if previous is not None and previous.subject != person_id:
+            raise ValueError("re-authentication was completed by a different person")
+        session_claims = {"sub": person_id, "email": claims.get("email") or ""}
+        # The freshness checks above refuse every reply without a time from this sign-in, so the unknown-time value
+        # below is only a fallback. It is never "now" (decision D40).
+        provider_time = provider_auth_time(claims)
+        authenticated_at = AUTH_TIME_UNKNOWN if provider_time is None else provider_time
+        if previous is not None:
+            try:
+                session = browser_sessions.confirm_in(
+                    conn, previous, path=path, authenticated_at=authenticated_at,
+                )
+            except SessionError:
+                # The session ended while the person was at the provider. The provider has just proved who they
+                # are, so they get a new session, as they did before sign-in writes were atomic.
+                previous = None
+        if previous is None:
+            if not state.reauth:
+                browser_sessions.end_incoming_in(
+                    conn, request, cookie=cfg.cookie, signing_key=cfg.signing_key, path=path,
+                )
+            session = browser_sessions.issue_in(
+                conn, session_claims, role=role, cookie=cfg.cookie, path=path,
+                authenticated_at=authenticated_at,
+            )
+        minted = remembered_people.keep_in(
+            conn,
+            token=remembered_people.device_token(request, secure=cfg.cookie.secure),
+            person_id=person_id, method="sso", issuer=cfg.issuer,
+            remember=state.remember, from_tile=bool(state.tile_person_id),
+        )
+    admin_store.repair_session_app_at_signin(person_id, path=path)
+    accounts.invalidate_asset_families()
+    return user, session, minted
+
+
 @app.get("/admin/oidc/callback", include_in_schema=False)
 async def admin_oidc_callback(request: Request):
     error = request.query_params.get("error")
@@ -17962,105 +18565,24 @@ async def admin_oidc_callback(request: Request):
             # A refused person keeps nothing the identity provider gave them.
             await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
             raise
-        user = admin_store.upsert_oidc_user(
-            cfg.issuer,
-            str(claims["sub"]),
-            email=str(claims.get("email") or ""),
-            display_name=str(claims.get("name") or claims.get("email") or ""),
-            path=ADMIN_STORE.path,
-        )
-        accounts.record_oidc_verification(str(user["id"]), claims.get("email_verified") is True, path=ADMIN_STORE.path)
-        accounts.clear_signin_refusal(str(user["id"]), path=ADMIN_STORE.path)
-        account_state = accounts.access(str(user["id"]), path=ADMIN_STORE.path)
-        if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
-            return clear_browser_binding(JSONResponse({"error": {"code": "account_disabled", "message": "This account is disabled."}}, status_code=403), state)
-        oidc_access_names = access_names_from_oidc_claims(
-            claims,
-            client_id=cfg.client_id,
-            groups_claim=cfg.groups_claim,
-        )
-        admin_store.replace_user_identity_claims(
-            str(user["id"]),
-            oidc_access_names,
-            path=ADMIN_STORE.path,
-        )
-        # Whether an owner already exists is decided inside the write's own
-        # transaction, so two first sign-ins cannot both become owner.
-        if bootstrap_owner and admin_store.claim_first_owner(
-            str(user["id"]), granted_by="oidc-bootstrap", path=ADMIN_STORE.path,
-        ):
-            admin_store.seed_first_owner_plan(str(user["id"]), path=ADMIN_STORE.path)
-        elif bootstrap_owner:
-            # Another first sign-in won the owner role; this person is an ordinary one.
-            decision, _ = await _decide_oidc_signin(cfg, claims, bootstrap_owner=False)
-            if not decision.outcome.admitted:
-                await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
-                raise SignInRefused("sign-in rules do not let this person in")
-        # Rule-derived grants are re-derived at every sign-in; a grant no rule
-        # supports any more ends here. Grants the owner gave by hand stay.
-        effective_grants = admin_store.reconcile_oidc_admin_roles(
-            str(user["id"]), {"admin"} if decision.outcome.admin else set(),
-            path=ADMIN_STORE.path,
-        )
-        signin_admin.sync_rule_plan(ADMIN_STORE.path, str(user["id"]), decision.outcome)
-        effective_roles = {grant["role"] for grant in effective_grants}
-        role = "owner" if "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
-        # Kept only for a person who is let in: the URL the provider shared (https and short);
-        # the browser never loads it (gateway/me_avatar.py serves it).
-        await asyncio.to_thread(avatars.record_sign_in_picture, str(user["id"]), claims.get("picture"), path=ADMIN_STORE.path)
-        label = user.get("email") or user.get("display_name") or user["id"]
-        app = admin_store.ensure_personal_app_for_user(
-            str(user["id"]),
-            name=f"{label} personal access",
-            path=ADMIN_STORE.path,
-        )
-        admin_store.record_audit(
-            "app.self_create",
-            actor_kind="user",
-            actor_id=str(user["id"]),
-            actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
-            target_kind="app",
-            target_id=str(app["id"]),
-            metadata={"email": user.get("email"), "via": "oidc_login",
-                      "access_plan": app.get("access_plan")},
-            path=ADMIN_STORE.path,
-        )
-        session_claims = {
-            "sub": user["id"],
-            "email": claims.get("email") or "",
-        }
-        previous = await asyncio.to_thread(_oidc_session_from_request, request) if state.reauth else None
-        if previous is not None and previous.subject != str(user["id"]):
-            # Confirming is for the person who asked. Someone else's login is not a confirmation.
-            raise ValueError("re-authentication was completed by a different person")
-        # The freshness checks above refuse every reply without a time from this sign-in, so the unknown-time value
-        # below is only a fallback. It is never "now" (decision D40).
-        provider_time = provider_auth_time(claims)
-        authenticated_at = AUTH_TIME_UNKNOWN if provider_time is None else provider_time
-        if previous is not None:
-            # Confirming the same person keeps their sign-in: the same family under a new session id, as a password
-            # confirm does, so the view id and the browser's other tabs stay the same (decision D35 for the old id).
-            session = await asyncio.to_thread(browser_sessions.confirm, previous, path=ADMIN_STORE.path,
-                                              authenticated_at=authenticated_at)
-        else:
-            if not state.reauth:
-                await asyncio.to_thread(browser_sessions.end_incoming, request, cookie=cfg.cookie,
-                                        signing_key=cfg.signing_key, path=ADMIN_STORE.path)
-            session = await asyncio.to_thread(
-                browser_sessions.issue,
-                session_claims, role=role, cookie=cfg.cookie, path=ADMIN_STORE.path,
-                authenticated_at=authenticated_at,
+        try:
+            user, session, minted = await asyncio.to_thread(
+                _complete_oidc_signin, request, state, cfg, claims, decision, bootstrap_owner,
             )
+        except _OidcBootstrapRefused:
+            await asyncio.to_thread(_end_provider_access_after_refusal, cfg.issuer, claims)
+            raise SignInRefused("sign-in rules do not let this person in") from None
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
         browser_sessions.set_cookie(response, session, cookie=cfg.cookie, signing_key=cfg.signing_key)
-        minted = await asyncio.to_thread(
-            remembered_people.keep, path=ADMIN_STORE.path,
-            token=remembered_people.device_token(request, secure=cfg.cookie.secure),
-            person_id=str(user["id"]), method="sso", issuer=cfg.issuer,
-            remember=state.remember, from_tile=bool(state.tile_person_id))
         if minted:
             remembered_people.set_device_cookie(response, minted, secure=cfg.cookie.secure)
         return clear_browser_binding(response, state)
+    except _OidcAccountDisabled:
+        response = JSONResponse(
+            {"error": {"code": "account_disabled", "message": "This account is disabled."}},
+            status_code=403,
+        )
+        return clear_browser_binding(response, state) if state else response
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as failure:
         no_time = isinstance(failure, ProviderReportsNoSignInTime)
         not_fresh = isinstance(failure, ProviderSignInNotFresh)
@@ -18083,6 +18605,18 @@ async def admin_oidc_callback(request: Request):
                 content="OIDC authentication failed",
                 status_code=400,
                 media_type="text/plain; charset=utf-8",
+            )
+        return clear_browser_binding(response, state) if state else response
+    except Exception:  # noqa: BLE001 - unexpected failures must not escape the sign-in boundary
+        response = _browser_signin_failure(
+            request, return_to=state.return_to if state else None, reason="provider",
+        )
+        if response is None:
+            response = JSONResponse(
+                {"error": {"code": "signin_unavailable",
+                            "message": "Sign-in could not be completed. Try again."}},
+                status_code=503,
+                headers={"cache-control": "no-store"},
             )
         return clear_browser_binding(response, state) if state else response
 
@@ -18596,7 +19130,8 @@ async def health():
     """Proxy service health. Public so external health checks do not need API keys."""
     body = {
         "status": "healthy",
-        "app_credentials_configured": active_app_credential_count(),
+        # SQLite on a worker thread: an open and a query on the loop would hold every other request.
+        "app_credentials_configured": await asyncio.to_thread(active_app_credential_count),
     }
     # A broken session view key is reported as degraded, with its reason code only: signed-in accounts cannot be
     # checked until it is fixed. This comment stays out of the docstring, which is the published OpenAPI description.
@@ -19081,6 +19616,12 @@ def start_image_route_receipt(
     _capture_retention_facts(receipt, auth_context=auth_context)
     _begin_media_delivery(auth_context, receipt)
     return receipt
+
+
+def _mark_backend_started(receipt: RouteReceipt | None) -> None:
+    """Stamp the moment work is handed to a backend. A refusal before this call leaves no start."""
+    if receipt is not None:
+        receipt.mark_phase("started_at_ms")
 
 
 def _apply_image_route_policy(
@@ -20983,6 +21524,11 @@ def _maintain_household_prompt_memory() -> None:
     prompt_memory.tighten_retention(household["retention_cap"])
 
 
+def _maintain_request_history() -> None:
+    # Expiry, and the erasure intents of request history. Repeats until each succeeds (REQUEST_RETENTION.md 12).
+    request_history.maintain(admin_path=ADMIN_STORE.path, path=media_jobs.DB_PATH, now=int(time.time()))
+
+
 def _maintain_person_prompt_memory(person_id: str) -> None:
     # The cutoff only rises to when memory went off, read in the same
     # transaction, so prompts saved after switching back on survive.
@@ -21008,7 +21554,7 @@ def _maintain_person_prompt_memory(person_id: str) -> None:
 def _maintain_prompt_memory() -> None:
     # Each step reads its own setting when it runs. A decision read at the
     # start of the pass can be stale by the time a slow step reaches it.
-    operations = [_retry_prompt_deadline_repair, _maintain_household_prompt_memory]
+    operations = [_retry_prompt_deadline_repair, _maintain_household_prompt_memory, _maintain_request_history]
     for user in admin_store.list_users(path=ADMIN_STORE.path):
         operations.append(lambda person_id=user["id"]: _maintain_person_prompt_memory(person_id))
     operations.append(_drain_prompt_purges)
@@ -21145,7 +21691,8 @@ def _spool_media_job_payload(job_id: str, payload: dict[str, Any]) -> None:
     with _MEDIA_PAYLOAD_LOCK:
         person_id = payload["auth"].get("person_id")
         body = copy.deepcopy(payload["body"])
-        memory = prompt_memory.decide_for_person(person_id, body, admin_path=ADMIN_STORE.path)
+        memory = prompt_memory.decide_for_person(person_id, body, admin_path=ADMIN_STORE.path,
+                                                 request_forget=request_history_slot.prompts_forget())
         with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
             # Service/LAN execution spools are temporary operational state. Their
             # prompt is required to resume, so retain it only until terminal state.
@@ -21262,7 +21809,8 @@ def _image_media_job_request_id(
     fallback_request_id: str,
 ) -> tuple[str, str, str]:
     owner = _asset_owner_key(auth_context) or "anonymous"
-    memory = prompt_memory.decide_for_person(_auth_person_id(auth_context), body, admin_path=ADMIN_STORE.path)
+    memory = prompt_memory.decide_for_person(_auth_person_id(auth_context), body, admin_path=ADMIN_STORE.path,
+                                             request_forget=request_history_slot.prompts_forget())
     if idempotency_key:
         identity = {"owner": owner, "idempotency_key": idempotency_key}
         if not memory.keep and memory.reason != "no_person":
@@ -23516,6 +24064,8 @@ async def gateway_image_generations_media_job(request: Request):
             job_id = str(existing.get("job_id") or "")
             if job_id and _has_image_media_job_payload(job_id):
                 _schedule_image_media_job(job_id)
+        # A same-key replay answers the job it already made, so its receipt belongs to that job, not to a new request.
+        receipt.job_id = str(existing["job_id"])
         response = _image_media_job_response(existing, request)
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
@@ -23621,11 +24171,16 @@ async def gateway_image_generations_media_job(request: Request):
 
     if created.job_id != job.job_id:
         _delete_image_media_job_payload(job.job_id)
+        # A concurrent retry with the same key lost the race: its receipt belongs to the job that won.
+        receipt.job_id = created.job_id
         created_dict = created.to_dict("internal")
         response = _image_media_job_response(created_dict, request)
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
 
+    # Usage counts the job as this request. The submit receipt names its job, as Make's does,
+    # so the pair stays linked after the job record is erased.
+    receipt.job_id = job.job_id
     try:
         media_jobs.append_event(
             job.job_id,
@@ -23901,7 +24456,8 @@ async def gateway_asset_metadata(asset_id: str, request: Request):
     )
 
 
-@app.get("/v1/assets/{asset_id}/thumbnail", openapi_extra=SIGNED_THUMBNAIL_OPENAPI, response_class=Response)
+@app.get("/v1/assets/{asset_id}/thumbnail", response_class=Response,
+         openapi_extra={**SIGNED_THUMBNAIL_OPENAPI, **operation_security.openapi_extra(operation_security.SIGNED_URL)})
 async def assets_thumbnail(asset_id: str, request: Request):
     """Serve a small WebP preview of an asset named by a signed thumbnail URL."""
     return await asyncio.to_thread(_signed_asset_thumbnail_response, asset_id, request)
@@ -24403,7 +24959,7 @@ async def videos_delete(video_id: str, request: Request):
 
 
 async def videos_remix(video_id: str, request: Request):
-    """Remix a completed video with a new prompt (Bernini-R); 501 unless videos.remix_workflow is set."""
+    """Remix a completed video with a new prompt; 501 unless videos.remix_workflow is set."""
     auth_context = (await asyncio.to_thread(authenticate_request, request, "/v1/videos/{video_id}/remix"))
     if isinstance(auth_context, Response):
         return auth_context
@@ -24440,7 +24996,7 @@ async def videos_extend(request: Request):
 # =============================================================================
 
 _audio_cfg = config.get("audio", {}) or {}
-AUDIO_DEFAULT_WORKFLOW = _audio_cfg.get("default_workflow", "ace-step-1.5-2b-base")
+AUDIO_DEFAULT_WORKFLOW = _audio_cfg.get("default_workflow", "ace-step-1.5-xl-turbo")
 _AUDIO_WORKFLOWS_DIR_CFG = _audio_cfg.get("workflows_dir", "./workflows/audio")
 AUDIO_WORKFLOWS_DIR = Path(_AUDIO_WORKFLOWS_DIR_CFG)
 if not AUDIO_WORKFLOWS_DIR.is_absolute():
@@ -25229,11 +25785,27 @@ async def _context_window_for_model_id(
 async def _annotate_model_context_windows(
     data: list[Any], *, observed_windows: dict[str, int] | None = None,
 ) -> None:
+    entries = {item.get("id"): item for item in data
+               if isinstance(item, dict) and isinstance(item.get("id"), str)}
     for item in data:
         if not isinstance(item, dict):
             continue
         model_id = item.get("id")
         if not isinstance(model_id, str) or not model_id:
+            continue
+        resolves_to = item.get("azizam_resolves_to")
+        target = resolves_to.get("chat") if isinstance(resolves_to, Mapping) else None
+        if isinstance(resolves_to, Mapping) and "chat" in resolves_to and not target:
+            item.pop("context_window", None)
+            continue
+        if isinstance(target, str) and target and target != model_id:
+            # A stable alias follows its served model, even if a same-named
+            # legacy role has a different context window.
+            found = await _context_window_for_model_id(target, entries.get(target))
+            if found is not None:
+                item["context_window"] = found
+            else:
+                item.pop("context_window", None)
             continue
         found = await _context_window_for_model_id(model_id, item, observed_windows=observed_windows)
         if found is not None:
@@ -26006,9 +26578,9 @@ async def list_models(request: Request):
     )
 
 
-@app.get("/v1/status")
+@app.get("/v1/status", openapi_extra=operation_security.openapi_extra(operation_security.OWNER))
 async def v1_status(request: Request):
-    """Consolidated admin-only status JSON for the dashboard."""
+    """Consolidated status JSON for the dashboard."""
     try:
         (await asyncio.to_thread(ADMIN_AUTH, request))
     except AdminAuthError as exc:
@@ -26293,7 +26865,7 @@ def _protocol_loopback_source_headers(request: Request) -> dict[str, str]:
     headers = {
         key: value
         for key, value in request.headers.items()
-        if key.lower() not in {"authorization", "x-api-key", "api-key"}
+        if key.lower() not in {"authorization", *CLIENT_KEY_HEADERS}
     }
     api_key = _resolve_client_api_key(request)
     if api_key:
@@ -27626,6 +28198,7 @@ async def create_response(request: Request):
                 req_body, admin_path=ADMIN_STORE.path,
                 responses_store=req_body.get("store") if isinstance(req_body.get("store"), bool) else None,
                 kind=retention.CONVERSATION,
+                request_forget=request_history_slot.prompts_forget(),
             )
         except prompt_memory.PromptModeError as exc:
             return _responses_error(str(exc), code="invalid_prompt_mode", param=f"extensions.{prompt_memory.NAMESPACE}.mode")
@@ -29822,6 +30395,7 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
         lease = await runtime.lease(drain=_swap_drain, lock_for=swap_lock_for,
                                     may_switch=_target_activation(auth_context) != "existing_only")
         if op == "images":
+            _mark_backend_started(receipt)
             response = await _protocol_image_result(runtime, body, request, auth_context, receipt, store)
         else:
             reply = await runtime.invoke(op, body)
@@ -31274,84 +31848,87 @@ async def _ui_admin_page_guard(request: Request, name: str) -> Response | None:
 Op = frontend_mount.Operation
 # These handlers check the caller themselves, in the error shape of their protocol. An Op the mount
 # authenticates (no ``self_authenticates``) is checked before its handler runs, on any path prefix.
-SelfAuthOp = functools.partial(frontend_mount.Operation, self_authenticates=True)
+def SelfAuthOp(endpoint, methods, *, auth, **options):
+    """An operation that checks its caller itself. ``auth`` declares how: ``operation_security.APP_KEY``, or
+    ``operation_security.SIGNED_URL`` for a link whose query signature is the credential."""
+    return frontend_mount.Operation(endpoint, methods, self_authenticates=True, auth=auth, **options)
 FRONTEND_TRANSLATORS.register("identity", {
-    "models.list": SelfAuthOp(list_models, frozenset({"GET"})),
-    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"})),
-    "voices.list": SelfAuthOp(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI),
+    "models.list": SelfAuthOp(list_models, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "voices.list": SelfAuthOp(list_voices, frozenset({"GET"}), openapi_extra=VOICES_LIST_OPENAPI, auth=operation_security.APP_KEY),
     "audio.speech": SelfAuthOp(audio_speech, frozenset({"POST"}), openapi_extra=AUDIO_SPEECH_OPENAPI,
-                               response_class=Response),
+                               response_class=Response, auth=operation_security.APP_KEY),
     "audio.transcriptions": SelfAuthOp(audio_transcriptions, frozenset({"POST"}),
-                                       openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI),
-    "audio.translations": SelfAuthOp(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI),
-    "audio.generate": SelfAuthOp(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI),
-    "audio.models": SelfAuthOp(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI),
-    "images.generate": SelfAuthOp(images_generations, frozenset({"POST"}), openapi_extra=IMAGES_GENERATIONS_OPENAPI),
-    "images.variations": SelfAuthOp(images_variations, frozenset({"POST"}), openapi_extra=IMAGES_VARIATIONS_OPENAPI),
-    "images.edit": SelfAuthOp(images_edits, frozenset({"POST"}), openapi_extra=IMAGES_EDITS_OPENAPI),
+                                       openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "audio.translations": SelfAuthOp(audio_translations, frozenset({"POST"}), openapi_extra=AUDIO_TRANSLATIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "audio.generate": SelfAuthOp(audio_generate, frozenset({"POST"}), openapi_extra=AUDIO_GENERATE_OPENAPI, auth=operation_security.APP_KEY),
+    "audio.models": SelfAuthOp(audio_models, frozenset({"GET"}), openapi_extra=AUDIO_MODELS_OPENAPI, auth=operation_security.APP_KEY),
+    "images.generate": SelfAuthOp(images_generations, frozenset({"POST"}), openapi_extra=IMAGES_GENERATIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "images.variations": SelfAuthOp(images_variations, frozenset({"POST"}), openapi_extra=IMAGES_VARIATIONS_OPENAPI, auth=operation_security.APP_KEY),
+    "images.edit": SelfAuthOp(images_edits, frozenset({"POST"}), openapi_extra=IMAGES_EDITS_OPENAPI, auth=operation_security.APP_KEY),
     "images.content": SelfAuthOp(images_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
-                                 response_class=Response),
+                                 response_class=Response, auth=operation_security.SIGNED_URL),
     "assets.content": SelfAuthOp(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
-                                 response_class=Response),
-    "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI),
-    "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI),
+                                 response_class=Response, auth=operation_security.SIGNED_URL),
+    "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI, auth=operation_security.APP_KEY),
     "videos.content": SelfAuthOp(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,
-                                 response_class=Response),
-    "videos.list": SelfAuthOp(videos_list, frozenset({"GET"}), openapi_extra=VIDEOS_LIST_OPENAPI),
-    "videos.delete": SelfAuthOp(videos_delete, frozenset({"DELETE"}), openapi_extra=VIDEOS_DELETE_OPENAPI),
-    "videos.remix": SelfAuthOp(videos_remix, frozenset({"POST"}), openapi_extra=VIDEOS_REMIX_OPENAPI),
-    "videos.edit": SelfAuthOp(videos_edit, frozenset({"POST"}), openapi_extra=VIDEOS_EDIT_OPENAPI),
-    "videos.extend": SelfAuthOp(videos_extend, frozenset({"POST"}), openapi_extra=VIDEOS_EXTEND_OPENAPI),
-    "rerank": SelfAuthOp(rerank_v1, frozenset({"POST"})),
-    "rerank.v2": SelfAuthOp(rerank_v2, frozenset({"POST"})),
-    "rerank.root": SelfAuthOp(rerank_root, frozenset({"POST"})),
-    "responses.create": SelfAuthOp(create_response, frozenset({"POST"})),
-    "responses.retrieve": SelfAuthOp(retrieve_response, frozenset({"GET"})),
-    "responses.input_items": SelfAuthOp(list_response_input_items, frozenset({"GET"})),
-    "responses.input_tokens": SelfAuthOp(count_response_input_tokens, frozenset({"POST"})),
-    "responses.cancel": SelfAuthOp(cancel_response, frozenset({"POST"})),
-    "responses.delete": SelfAuthOp(delete_response, frozenset({"DELETE"})),
-    "chat.completions": SelfAuthOp(chat_completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
-    "text.completions": SelfAuthOp(completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
-    "text.embeddings": SelfAuthOp(embeddings, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI),
+                                 response_class=Response, auth=operation_security.APP_KEY),
+    "videos.list": SelfAuthOp(videos_list, frozenset({"GET"}), openapi_extra=VIDEOS_LIST_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.delete": SelfAuthOp(videos_delete, frozenset({"DELETE"}), openapi_extra=VIDEOS_DELETE_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.remix": SelfAuthOp(videos_remix, frozenset({"POST"}), openapi_extra=VIDEOS_REMIX_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.edit": SelfAuthOp(videos_edit, frozenset({"POST"}), openapi_extra=VIDEOS_EDIT_OPENAPI, auth=operation_security.APP_KEY),
+    "videos.extend": SelfAuthOp(videos_extend, frozenset({"POST"}), openapi_extra=VIDEOS_EXTEND_OPENAPI, auth=operation_security.APP_KEY),
+    "rerank": SelfAuthOp(rerank_v1, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "rerank.v2": SelfAuthOp(rerank_v2, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "rerank.root": SelfAuthOp(rerank_root, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.create": SelfAuthOp(create_response, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.retrieve": SelfAuthOp(retrieve_response, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "responses.input_items": SelfAuthOp(list_response_input_items, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "responses.input_tokens": SelfAuthOp(count_response_input_tokens, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.cancel": SelfAuthOp(cancel_response, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "responses.delete": SelfAuthOp(delete_response, frozenset({"DELETE"}), auth=operation_security.APP_KEY),
+    "chat.completions": SelfAuthOp(chat_completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI, auth=operation_security.APP_KEY),
+    "text.completions": SelfAuthOp(completions, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI, auth=operation_security.APP_KEY),
+    "text.embeddings": SelfAuthOp(embeddings, frozenset({"POST"}), openapi_extra=_OPENAI_COMPAT_JSON_BODY_OPENAPI, auth=operation_security.APP_KEY),
     "unsupported.assistants": SelfAuthOp(openai_assistants_unsupported,
-                                         frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"}), include_in_schema=False),
+                                         frozenset({"GET", "POST", "PUT", "DELETE", "PATCH"}), include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.files": SelfAuthOp(openai_files_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                            include_in_schema=False),
+                            include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.batches": SelfAuthOp(openai_batches_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                              include_in_schema=False),
+                              include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.fine_tuning": SelfAuthOp(openai_fine_tuning_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                                  include_in_schema=False),
+                                  include_in_schema=False, auth=operation_security.APP_KEY),
     "unsupported.realtime": SelfAuthOp(openai_realtime_unsupported, frozenset({"GET", "POST", "DELETE"}),
-                               include_in_schema=False),
+                               include_in_schema=False, auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("anthropic", {
-    "chat.completions": SelfAuthOp(anthropic_messages, frozenset({"POST"})),
-    "tokens.count": SelfAuthOp(anthropic_count_tokens, frozenset({"POST"})),
-    "models.list": SelfAuthOp(anthropic_models, frozenset({"GET"})),
-    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"})),
+    "chat.completions": SelfAuthOp(anthropic_messages, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "tokens.count": SelfAuthOp(anthropic_count_tokens, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.list": SelfAuthOp(anthropic_models, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.retrieve": SelfAuthOp(anthropic_model_retrieve, frozenset({"GET"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("ollama", {
-    "chat.completions": SelfAuthOp(ollama_chat, frozenset({"POST"})),
-    "text.completions": SelfAuthOp(ollama_generate, frozenset({"POST"})),
-    "text.embeddings": SelfAuthOp(ollama_embed, frozenset({"POST"})),
-    "text.embeddings.prompt": SelfAuthOp(ollama_embeddings, frozenset({"POST"})),
-    "models.tags": SelfAuthOp(ollama_tags, frozenset({"GET"})),
-    "models.show": SelfAuthOp(ollama_show, frozenset({"POST"})),
-    "models.ps": SelfAuthOp(ollama_ps, frozenset({"GET"})),
-    "version": SelfAuthOp(ollama_version, frozenset({"GET"})),
-    "models.create": SelfAuthOp(ollama_create, frozenset({"POST"})),
-    "models.copy": SelfAuthOp(ollama_copy, frozenset({"POST"})),
-    "models.pull": SelfAuthOp(ollama_pull, frozenset({"POST"})),
-    "models.push": SelfAuthOp(ollama_push, frozenset({"POST"})),
-    "blobs": SelfAuthOp(ollama_blobs, frozenset({"HEAD", "POST"})),
-    "models.delete": SelfAuthOp(ollama_delete, frozenset({"DELETE"})),
+    "chat.completions": SelfAuthOp(ollama_chat, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "text.completions": SelfAuthOp(ollama_generate, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "text.embeddings": SelfAuthOp(ollama_embed, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "text.embeddings.prompt": SelfAuthOp(ollama_embeddings, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.tags": SelfAuthOp(ollama_tags, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.show": SelfAuthOp(ollama_show, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.ps": SelfAuthOp(ollama_ps, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "version": SelfAuthOp(ollama_version, frozenset({"GET"}), auth=operation_security.APP_KEY),
+    "models.create": SelfAuthOp(ollama_create, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.copy": SelfAuthOp(ollama_copy, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.pull": SelfAuthOp(ollama_pull, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "models.push": SelfAuthOp(ollama_push, frozenset({"POST"}), auth=operation_security.APP_KEY),
+    "blobs": SelfAuthOp(ollama_blobs, frozenset({"HEAD", "POST"}), auth=operation_security.APP_KEY),
+    "models.delete": SelfAuthOp(ollama_delete, frozenset({"DELETE"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("realtime", {
-    "realtime.session": SelfAuthOp(realtime_v1, frozenset({"WEBSOCKET"})),
+    "realtime.session": SelfAuthOp(realtime_v1, frozenset({"WEBSOCKET"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("gateway", {
-    "media.job.content": SelfAuthOp(gateway_media_job_content, frozenset({"GET"})),
+    "media.job.content": SelfAuthOp(gateway_media_job_content, frozenset({"GET"}), auth=operation_security.APP_KEY),
 })
 FRONTEND_TRANSLATORS.register("provider-native", {
     "provider.list": Op(provider_native_list, frozenset({"GET"})),
@@ -31432,6 +32009,8 @@ app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
 from gateway.request_source import RequestSourceMiddleware
 app.add_middleware(RequestSourceMiddleware)
 from gateway.request_body_limits import RequestBodyLimitMiddleware, RequestBodyLimits
+app.add_middleware(request_history_capture.RequestHistoryMiddleware,
+                   admin_path=lambda: ADMIN_STORE.path, media_path=lambda: media_jobs.DB_PATH)
 app.add_middleware(RequestBodyLimitMiddleware, limits=RequestBodyLimits.from_config(config))
 from gateway.request_connections import RequestConnectionsMiddleware
 app.add_middleware(RequestConnectionsMiddleware)
@@ -31463,6 +32042,10 @@ def _gateway_openapi() -> dict[str, Any]:
     )
     from gateway.owner_openapi import augment_owner_openapi
     augment_owner_openapi(schema, app.routes)
+    augment_app_key_openapi(schema)
+    operation_security.augment_schemes(schema, cookie_name=ADMIN_AUTH.cookie.name)
+    operation_security.augment_signed_links(schema)
+    operation_security.fill_security(schema, is_public=is_public_path, key_layer_prefixes=KEY_LAYER_PREFIXES)
     app.openapi_schema = schema
     return schema
 

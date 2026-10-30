@@ -201,7 +201,7 @@ def observe_guard_and_decide(tmp_path: Path) -> dict:
                         cell[f"decide_for_person/{body_name}/{store}"] = fields
                     except prompt_memory.PromptModeError as exc:
                         cell[f"decide_for_person/{body_name}/{store}"] = ["PromptModeError", str(exc)]
-            cell["member_row"] = _rows(path, "SELECT remember, retention, updated_by FROM prompt_memory_preferences")
+            cell["member_row"] = _rows(path, "SELECT remember, retention, updated_by FROM prompt_memory_preferences WHERE grp='prompts'")
             cell["member"] = prompt_memory.get_member(person, path=path)
             cell["unknown_person"] = _safe_guard(path, "usr_missing")
             out[f"{household_name}|{member_name}"] = _scrub_ids(cell, {person: "PERSON"})
@@ -233,8 +233,9 @@ def observe_put_matrix(tmp_path: Path) -> dict:
                 if age_case == "cutoff":
                     with sqlite3.connect(path) as conn:
                         conn.execute("CREATE TABLE IF NOT EXISTS prompt_memory_erasure_cutoffs ("
-                                     "person_id TEXT PRIMARY KEY, cutoff_at INTEGER NOT NULL)")
-                        conn.execute("INSERT OR REPLACE INTO prompt_memory_erasure_cutoffs VALUES(?,?)", (person, now - 20))
+                                     "person_id TEXT NOT NULL, grp TEXT NOT NULL, cutoff_at INTEGER NOT NULL, "
+                                     "PRIMARY KEY(person_id, grp))")
+                        conn.execute("INSERT OR REPLACE INTO prompt_memory_erasure_cutoffs VALUES(?,'prompts',?)", (person, now - 20))
                 result = {}
                 try:
                     result["returned"] = prompt_memory.put(
@@ -359,7 +360,7 @@ def _cutoff_shape(path: Path) -> dict:
     out = {}
     for table in ("prompt_memory_erasure_cutoffs", "prompt_memory_erasure_intents"):
         exists = _rows(path, f"SELECT 1 FROM sqlite_master WHERE name='{table}'")
-        out[table] = sorted(row[0] for row in _rows(path, f"SELECT person_id FROM {table}")) if exists else None
+        out[table] = sorted(row[0] for row in _rows(path, f"SELECT person_id FROM {table} WHERE grp='prompts'")) if exists else None
     return out
 
 
@@ -409,13 +410,13 @@ def observe_member_settings(tmp_path: Path) -> dict:
         client = TestClient(app)
         user_header = {"x-azizam-user-action": "1"}
         cell = {"get_default": _http(client.get("/me/api/prompt-memory"))}
-        cell["rows_after_get"] = _rows(admin_db, "SELECT remember, retention FROM prompt_memory_preferences")
+        cell["rows_after_get"] = _rows(admin_db, "SELECT remember, retention FROM prompt_memory_preferences WHERE grp='prompts'")
         prompt_memory.put("img_1", user, "mine", kept_until=None, path=prompt_db)
         for remember, retention in itertools.product((True, False), (*PERIODS, "bogus")):
             label = f"put_{remember}_{retention}"
             cell[label] = _http(client.put("/me/api/prompt-memory", json={"remember": remember, "retention": retention},
                                            headers=user_header))
-            cell[label + "/rows"] = _rows(admin_db, "SELECT remember, retention, updated_by FROM prompt_memory_preferences")
+            cell[label + "/rows"] = _rows(admin_db, "SELECT remember, retention, updated_by FROM prompt_memory_preferences WHERE grp='prompts'")
             cell[label + "/prompts"] = _rows(prompt_db, "SELECT asset_id FROM asset_prompts")
         cell["put_missing_header"] = _http(client.put("/me/api/prompt-memory", json={"remember": True, "retention": "never"}))
         cell["put_bad_body"] = _http(client.put("/me/api/prompt-memory", json={"remember": "x"}, headers=user_header))

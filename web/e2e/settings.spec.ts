@@ -234,7 +234,7 @@ for (const [state, theme, width] of [
           "Instance",
           "Sign-in",
           "People and access",
-          "Prompts",
+          "Saved words and chats",
           "Receipts",
           "Media admission",
           "Extensions",
@@ -435,7 +435,7 @@ test("new visitors use the saved default theme and personal choices persist", as
   );
   await page.goto(`${baseURL}/sign-in/`);
   await expect(page.locator("html")).toHaveClass(/dark/);
-  await page.getByRole("button", { name: "Toggle theme" }).click();
+  await page.getByRole("button", { name: "Switch to light" }).click();
   await expect(page.locator("html")).not.toHaveClass(/dark/);
   await page.reload();
   await expect(page.locator("html")).not.toHaveClass(/dark/);
@@ -548,6 +548,15 @@ for (const theme of ["dark"] as const) {
             .getByRole("option", { name: "Ask each time", exact: true })
             .click();
           await expect(plan).toContainText("Ask each time");
+          const receiptButton = page.getByRole("button", {
+            name: "Save receipt setting",
+            exact: true,
+          });
+          await expect(receiptButton).toHaveCSS("white-space", "normal");
+          await receiptButton.scrollIntoViewIfNeeded();
+          await page.screenshot({
+            path: `${process.env.UI_DEFAULTS_SHOTS_DIR ?? "test-results/screens"}/receipt-button-200pct-${width}-${theme}.png`,
+          });
           await expect(
             page.locator('[data-slot="select-content"]'),
           ).toHaveCount(0);

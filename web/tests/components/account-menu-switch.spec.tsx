@@ -42,6 +42,7 @@ function json(body: unknown, status = 200) {
 
 /** A signed-in session that accepts its own sign-out. */
 async function answerSessionAndLogout(input: RequestInfo | URL): Promise<Response> {
+  if (String(input) === "/me/api/session/end-token") return json({ authenticated: true, csrf_token: "fixture-csrf" });
   if (String(input) === "/me/api/session") return json({ authenticated: true, csrf_token: "fixture-csrf" });
   if (String(input) === "/logout") return json({ next: "/sign-in/" });
   throw new Error("Unexpected URL: " + String(input));
@@ -79,7 +80,7 @@ it("Switch person with nothing unsaved ends the session and shows no confirm", a
 
   await user.click(await screen.findByRole("menuitem", { name: "Switch person" }));
 
-  await waitFor(() => expect(navigate.replace).toHaveBeenCalledWith("/sign-in/"));
+  await waitFor(() => expect(navigate.replace).toHaveBeenCalledWith("/sign-in/?after=switch"));
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
@@ -106,6 +107,6 @@ it("Sign out with an unsent message asks first, and its discard button signs out
   const dialog = await screen.findByRole("dialog", { name: "Sign out?" });
   expect(fetch).not.toHaveBeenCalled();
   await user.click(within(dialog).getByRole("button", { name: "Discard and sign out" }));
-  await waitFor(() => expect(navigate.replace).toHaveBeenCalledWith("/sign-in/"));
+  await waitFor(() => expect(navigate.replace).toHaveBeenCalledWith("/sign-in/?after=sign-out"));
   expect(fetch).toHaveBeenCalledWith("/logout", expect.objectContaining({ method: "POST" }));
 });

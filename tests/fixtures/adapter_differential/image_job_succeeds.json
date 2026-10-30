@@ -350,6 +350,13 @@
   ],
   "gateway_sleeps": [],
   "media_jobs": {
+    "media_job_asset_origins": [
+      {
+        "asset_id": "img_ed015874c35191e17c664ae522f8e2221c9d4e5384e6b137d9c9ff74c0db994e",
+        "job_id": "<job:1>",
+        "origin_id": "<req:1>"
+      }
+    ],
     "media_job_events": [
       {
         "attempt_number": 1,
@@ -447,6 +454,9 @@
           "input_hash": "<digest>",
           "intent": "image.generate",
           "job_id": "<job:1>",
+          "maker_connection_id": null,
+          "maker_credential_id": "sha256:test",
+          "maker_person_id": null,
           "metadata": {
             "attempts": 1,
             "completed_at": "<time>",
@@ -474,6 +484,9 @@
           "upstream_http_status": null,
           "workflow": "image.generate.krea2-turbo"
         },
+        "maker_connection_id": null,
+        "maker_credential_id": "sha256:test",
+        "maker_person_id": null,
         "parent_request_id": "<req:1>",
         "progress": 100,
         "request_id": "<req:1>",
@@ -484,7 +497,7 @@
     ],
     "media_jobs_schema_version": [
       {
-        "version": 4
+        "version": 6
       }
     ],
     "retention_fact_destinations": [
@@ -801,7 +814,7 @@
         "app_profile": "plan_everything",
         "created_at": "<time>",
         "intent": "image.generate",
-        "job_id": null,
+        "job_id": "<job:1>",
         "parent_request_id": null,
         "path": "/gateway/v1/media/jobs/image-generations",
         "protocol": "openai.images",
@@ -823,7 +836,7 @@
           "first_output_at_ms": null,
           "ignored_inputs": {},
           "intent": "image.generate",
-          "job_id": null,
+          "job_id": "<job:1>",
           "latency_ms": "<duration>",
           "manifest_hash": "9aed1752d05b0e8bfa743a08ee5372a4e723d24d248c7a8c95e3e3b1ea6cea3a",
           "manifest_id": "image.generate.krea2-turbo",

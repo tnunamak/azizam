@@ -651,14 +651,17 @@ class TestRetentionRegressions(unittest.TestCase):
         from typing import Any, Iterable, Mapping
         from gateway import media_jobs, receipt_store
 
-        # Exercise the real projection lookup helper without importing UI/services.
-        source = ast.parse((ROOT / "gateway/me_media.py").read_text())
-        helpers = [node for node in source.body if isinstance(node, ast.FunctionDef)
-                   and node.name in ("_job_receipt_ids", "_receipts_by_request_id")]
+        # Exercise the real projection lookup helpers without importing UI/services. The receipt ids of a job are
+        # defined in gateway/content_makers.py; the receipts-by-id lookup stays in gateway/me_media.py.
+        helpers = []
+        for module, name in (("gateway/content_makers.py", "job_receipt_ids"),
+                             ("gateway/me_media.py", "_receipts_by_request_id")):
+            source = ast.parse((ROOT / module).read_text())
+            helpers += [node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == name]
         namespace = {"Any": Any, "Mapping": Mapping, "Iterable": Iterable,
                      "Path": Path, "receipt_store": receipt_store}
         exec(compile(ast.Module(body=helpers, type_ignores=[]), "<receipt lookup>", "exec"), namespace)
-        receipt_ids = namespace["_job_receipt_ids"]
+        receipt_ids = namespace["job_receipt_ids"]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "jobs.db"
             media_jobs.init_db(path)

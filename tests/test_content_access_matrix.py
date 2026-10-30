@@ -17,12 +17,12 @@ from gateway.public_failure import PublicFailure
 
 # Every column is transcribed separately, including the blank (Deny) cells.
 MATRIX = {
-    "creation": {"read": ("Own", "Shared"), "delete": ("Own",), "reuse": ("Own",), "share": ("Maker",), "link": ("Own", "Shared"), "cancel": ()},
+    "creation": {"read": ("ContentRead", "Shared"), "delete": ("SelfContentRead",), "reuse": ("SelfContentRead",), "share": ("Maker",), "link": ("ContentRead", "Shared"), "cancel": ()},
     "prompt": {"read": ("ContentRead", "SharedPrompt"), "delete": ("Self",), "reuse": ("SelfContentRead",), "share": (), "link": (), "cancel": ()},
     "chat": {"read": ("ContentRead",), "delete": ("SelfAppOrKey",), "reuse": ("SelfAppOrKey",), "share": (), "link": (), "cancel": ()},
-    "voice": {"read": ("Own",), "delete": ("Own",), "reuse": ("Own",), "share": (), "link": (), "cancel": ()},
-    "receipt": {"read": ("Own",), "delete": (), "reuse": (), "share": (), "link": (), "cancel": ()},
-    "job": {"read": ("Own",), "delete": (), "reuse": (), "share": (), "link": (), "cancel": ("Own",)},
+    "voice": {"read": ("ContentRead",), "delete": ("SelfContentRead",), "reuse": ("SelfContentRead",), "share": (), "link": (), "cancel": ()},
+    "receipt": {"read": ("ContentRead",), "delete": (), "reuse": (), "share": (), "link": (), "cancel": ()},
+    "job": {"read": ("ContentRead",), "delete": (), "reuse": (), "share": (), "link": (), "cancel": ("SelfContentRead",)},
     "request_history": {"read": ("ContentRead",), "delete": ("SelfPermission",), "reuse": ("SelfPermission",), "share": (), "link": (), "cancel": ()},
     "debug_capture": {"read": ("SelfPermission",), "delete": ("SelfPermission",), "reuse": (), "share": (), "link": (), "cancel": ()},
 }
@@ -65,12 +65,12 @@ def records(*, active=True, include_prompt=False, available=True, legacy=False, 
     owners = frozenset({"old:a" if legacy else "app:a"})
     app = None if legacy else "a"
     return {
-        "creation": CreationRecord("asset:1", owners, ("a",), shares=(grant,), available=available),
+        "creation": CreationRecord("asset:1", owners, () if personless else ("a",), app_id=app, shares=(grant,), available=available, origin=origin),
         "prompt": PromptRecord("asset:1", person, shares=(grant,), app_id=app, available=available, origin=origin),
         "chat": ChatRecord(person, app, "old:a", available=available, origin=origin),
-        "voice": VoiceRecord(owners, available=available),
-        "receipt": ReceiptRecord(owners, available=available),
-        "job": JobRecord(owners, available=available),
+        "voice": VoiceRecord(owners, person_id=person, app_id=app, origin=origin, available=available),
+        "receipt": ReceiptRecord(owners, person_id=person, app_id=app, origin=origin, available=available),
+        "job": JobRecord(owners, person_id=person, app_id=app, origin=origin, available=available),
         "request_history": RequestHistoryRecord(person, app_id=app, available=available, origin=origin),
         "debug_capture": DebugCaptureRecord(person, app_id=app, available=available, origin=origin),
     }
@@ -82,7 +82,7 @@ def oracle_relations(v, row):
     own = bool((v.owner_keys - {""}) & (getattr(row, "owner_keys", frozenset()) - {""}))
     app_match = bool(v.app_id and getattr(row, "app_id", None) == v.app_id)
     origin = getattr(row, "origin", None)
-    output = bool(origin and ((v.auth_kind == "app_key" and app_match and origin.auth_kind == "app_key" and origin.credential_id)
+    output = bool(origin and ((v.auth_kind == "app_key" and app_match and origin.auth_kind == "app_key")
                              or (v.auth_kind == "mcp_grant" and origin.auth_kind == "mcp_grant" and v.connection_id and origin.connection_id == v.connection_id)))
     permission = v.auth_kind == "session" or v.privacy_permission
     content_read = ((self_person and (permission or output)) if getattr(row, "person_id", None) is not None else
@@ -92,12 +92,19 @@ def oracle_relations(v, row):
                   ((row.kind == "creation" and row.asset_id in (s.asset_id, s.poster_asset_id)) or
                    (row.kind == "prompt" and row.asset_id == s.asset_id and row.person_id == s.maker_person_id and s.include_prompt))), None)
     legacy_key = bool(v.key_hash and getattr(row, "owner_key_hash", None) == v.key_hash)
-    return {"Own": own, "Maker": own and bool(v.person_id) and getattr(row, "maker_person_ids", ()) == (v.person_id,),
+    return {"Own": own, "Maker": bool(v.person_id) and getattr(row, "maker_person_ids", ()) == (v.person_id,) and permission,
             "Self": self_person, "ContentRead": content_read,
             "SelfContentRead": self_person and content_read,
             "SelfAppOrKey": self_person and (app_match if getattr(row, "app_id", None) else legacy_key),
             "SelfPermission": self_person and permission,
             "Shared": bool(share), "SharedPrompt": bool(share) and permission}
+
+
+def unmade_job_denied(row):
+    """Explicit deny: a job with no maker person and no stamped credential has no reader under any App, key or
+    address. The person-less ContentRead relation above would grant an App key or the trusted address that row, so
+    this rule overrides it. Fail closed: a job nobody made is read by nobody (D51)."""
+    return row.kind == "job" and row.person_id is None and row.credential_id is None
 
 
 @pytest.mark.parametrize("kind,action", tuple(product(MATRIX, ACTIONS)))
@@ -109,6 +116,8 @@ def test_every_kind_action_basis_cell(kind, action):
             v = replace(viewer, is_owner=role, privacy_permission=privacy)
             relations = oracle_relations(v, row)
             allowed = [cell for cell in MATRIX[kind][action] if relations[cell]] if available else []
+            if unmade_job_denied(row):
+                allowed = []
             expected = Own if any(cell not in {"Shared", "SharedPrompt"} for cell in allowed) else Shared if allowed else Deny
             access = decide(v, row, action)
             assert isinstance(access, expected), (kind, action, actor, state, origin)
@@ -158,23 +167,24 @@ def test_h6_personless_mutations_deny_while_continuation_uses_read():
                 assert isinstance(decide(ACTORS[name], row, action), Deny)
 
 
-def test_h7_app_key_legacy_browser_and_mcp_rows_need_flag():
+def test_h7_delegated_credentials_read_same_app_outputs_and_need_permission_elsewhere():
     v = ACTORS["maker-key"]
     for kind in ("prompt", "chat", "request_history"):
         for origin in (None, ORIGINS[1], ORIGINS[5]):
             row = records(origin=origin)[kind]
             assert isinstance(decide(v, row, "read"), Deny)
             assert isinstance(decide(replace(v, privacy_permission=True), row, "read"), Own)
-        for origin in ORIGINS[2:4]:
-            assert isinstance(decide(v, records(origin=origin)[kind], "read"), Own)
+        for app_origin in ORIGINS[2:5]:
+            assert isinstance(decide(v, records(origin=app_origin)[kind], "read"), Own)
 
 
-def test_maker_requires_own_and_exactly_one_maker():
+def test_maker_requires_exactly_one_maker_and_owning_the_app_is_not_needed():
     viewer = ACTORS["maker-session"]
     creation = records()["creation"]
     for makers in ((), ("a", "b"), ("a", "a"), ("b",)):
         assert isinstance(decide(viewer, replace(creation, maker_person_ids=makers), "share"), Deny)
-    assert isinstance(decide(replace(viewer, owner_keys=frozenset()), creation, "share"), Deny)
+    # The maker shares her own work whatever Apps she owns (D51).
+    assert isinstance(decide(replace(viewer, owner_keys=frozenset()), creation, "share"), Own)
 
 
 def test_share_selects_only_its_asset_poster_and_maker_prompt_row():
@@ -187,8 +197,8 @@ def test_share_selects_only_its_asset_poster_and_maker_prompt_row():
         assert isinstance(decide(v, replace(prompt, asset_id=asset, person_id=person), "read"), Deny)
 
 
-def test_own_precedes_share_and_survives_revocation():
-    viewer = replace(ACTORS["maker-session"], person_id="q")
+def test_maker_precedes_share_and_share_survives_revocation():
+    viewer = ACTORS["maker-session"]
     for active in (False, True):
         assert isinstance(decide(viewer, records(active=active)["creation"], "read"), Own)
 

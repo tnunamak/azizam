@@ -26,16 +26,19 @@ per model):
 * ``run``: start a workflow or an OpenAI-style media operation (speech). Returns
   the result, or a job id when the work outlives ``wait_seconds``.
 * ``job``: poll, wait for, or cancel a job; fetches the result.
+* ``view_asset``: view a reduced preview of one of the caller's image assets,
+  optionally cropped in original pixel coordinates.
 * ``stt_measurement`` (when wired): owner long-audio settings and measurement jobs.
 * ``rename_app`` and ``rename_key``: give one of the signed-in person's own Apps or keys a new name. They
   work for a client the person signed in (an OAuth connection) whose consent included renaming (the grant's
   ``mcp:rename`` scope), never for an App key, and change a label only: no new key, no new access.
+* ``requests`` and ``retention``: read or delete personal request history, and read or set its retention choice.
 
 The module owns no business logic. Authentication, profile policy, receipts and
 job storage stay in the core routes: every action is dispatched in process to
 those routes with the caller's own credentials (``McpDeps.call``). Media comes
-back as MCP ``resource_link`` blocks that point at signed asset URLs, never as
-base64 blobs. A feature the core cannot do returns an explicit tool error.
+back as signed asset links, with optional bounded image previews. A feature
+the core cannot do returns an explicit tool error.
 """
 from __future__ import annotations
 
@@ -44,11 +47,16 @@ from gateway.media_jobs import ERROR_FIELDS, PHASE_FIELDS, is_terminal
 import asyncio
 import base64
 import binascii
+import copy
+import io
 import json
 import time
+import warnings
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
+
+from PIL import Image, ImageOps
 
 from gateway.stt_samples import RIGHTS_CAVEAT
 
@@ -56,7 +64,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from gateway.workflow_call import (
-    BuiltRequest, CallError, asset_id_in, build_request, effective_schema, error_from, kind_for, sniff, validate_inputs,
+    BuiltRequest, CallError, asset_id_in, build_request, effective_schema, error_from, kind_for, sniff,
+    validate_inputs,
 )
 
 MODERN_VERSION = "2026-07-28"
@@ -81,7 +90,8 @@ SERVER_NAME = "azizam"
 INSTRUCTIONS = (
     "Media generation gateway. Call `capabilities` to see workflows and aliases "
     "(image, video, music, sfx, speech), `capabilities` with `target` for typed "
-    "inputs, `run` to generate, and `job` to poll slow work. Results are signed URLs. "
+    "inputs, `run` to generate, `job` to poll slow work, and `view_asset` to inspect "
+    "a reduced image preview. Results are signed URLs. "
     "`rename_app` and `rename_key` rename the signed-in person's own apps and keys."
 )
 
@@ -89,6 +99,13 @@ DEFAULT_WAIT_SECONDS = 30
 MAX_WAIT_SECONDS = 120
 SYNC_TIMEOUT_SECONDS = 300.0
 MAX_ASSET_BYTES = 512 * 1024 * 1024
+MCP_PREVIEW_SOURCE_MAX_BYTES = 32 * 1024 * 1024
+MCP_PREVIEW_MAX_PIXELS = 32_000_000
+MCP_PREVIEW_MAX_SIDE = 768
+MCP_PREVIEW_MAX_BYTES = 192 * 1024
+MCP_PREVIEW_TOTAL_IMAGE_BYTES = 512 * 1024
+MCP_PREVIEW_MAX_COUNT = 4
+MCP_PREVIEW_MAX_CANDIDATES = 8
 
 SPEECH_TARGET = "speech"
 SPEECH_SCHEMA: dict[str, Any] = {
@@ -118,6 +135,8 @@ class McpDeps:
     # (request, auth, asset_id) -> bytes, or None when missing or not the caller's
     read_asset: Callable[[Request, Any, str], bytes | None]
     public_base_url: Callable[[Request], str | None]
+    # Optional bounded read for image previews. Like read_asset, it must check ownership.
+    read_preview_asset: Callable[[Request, Any, str], bytes | None] | None = None
     server_version: str = "1"
     # Browser origins that may call the endpoint (DNS-rebinding defence). The
     # request's own Host is not evidence: a rebinding page controls it.
@@ -201,7 +220,8 @@ TOOLS: list[dict[str, Any]] = [
         "description": (
             "Run a workflow, stable alias or `speech`. `inputs` follow the schema from `capabilities` "
             "with `target`. Fast work returns the result. Slow work (video, long music) returns a "
-            "`job_id` after `wait_seconds`; call `job` to continue. Media comes back as signed URLs. "
+            "`job_id` after `wait_seconds`; call `job` to continue. Media comes back as signed URLs; "
+            "available image assets also have reduced image previews. "
             "Image and video inputs take a data URI or an asset id from an earlier result."
         ),
         "inputSchema": {
@@ -233,6 +253,29 @@ TOOLS: list[dict[str, Any]] = [
             "additionalProperties": False,
         },
         "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "view_asset",
+        "title": "View an image asset",
+        "description": (
+            "View a reduced preview of an image asset from an earlier result. Pass its asset_id, never a URL. "
+            "An optional crop is [left, top, right, bottom] in original pixels; right and bottom are exclusive. "
+            "The preview is limited to 768 pixels per side and 192 KiB."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "asset_id": {"type": "string", "minLength": 68, "maxLength": 68,
+                             "pattern": "^img_[0-9a-f]{64}$",
+                             "description": "Image asset id returned by this gateway."},
+                "crop": {"type": "array", "minItems": 4, "maxItems": 4,
+                         "items": {"type": "integer", "minimum": 0},
+                         "description": "Optional [left, top, right, bottom] box in original pixels; right and bottom are exclusive."},
+            },
+            "required": ["asset_id"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
     },
     {
         "name": "rename_app",
@@ -289,13 +332,28 @@ TOOLS.append({
 })
 
 TOOLS.append({
-    "name": "requests", "title": "Read the retention ledger",
-    "description": "Owner and administrators can see dated facts about where request content may remain. Action: ledger.",
+    "name": "requests", "title": "Read or delete your request history",
+    "description": "List, read or delete your own request history. Actions: list, get, delete, delete_all.",
     "inputSchema": {"type": "object", "properties": {
-        "action": {"type": "string", "enum": ["ledger"]},
-        "request_id": {"type": "string", "description": "Optional saved request id; omit for today's facts."},
+        "action": {"type": "string", "enum": ["list", "get", "delete", "delete_all"]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+        "cursor": {"type": "string"},
+        "record_id": {"type": "string", "minLength": 1, "maxLength": 128},
     }, "required": ["action"], "additionalProperties": False},
-    "annotations": {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
+})
+
+TOOLS.append({
+    "name": "retention", "title": "Read or set your request history setting",
+    "description": "Read your request history setting, or set it when this connection has privacy permission. "
+                   "Actions: mine_get, mine_set.",
+    "inputSchema": {"type": "object", "properties": {
+        "action": {"type": "string", "enum": ["mine_get", "mine_set"]},
+        "keep": {"type": "boolean"},
+        "retention": {"type": "string"},
+        "parts": {"type": "array", "items": {"type": "string"}},
+    }, "required": ["action"], "additionalProperties": False},
+    "annotations": {"readOnlyHint": False, "idempotentHint": True, "openWorldHint": False},
 })
 
 # ------------------------------------------------------------------ result I/O
@@ -307,6 +365,167 @@ def _asset(item: Mapping[str, Any], name: str) -> dict[str, Any]:
     out["kind"] = media_type.split("/")[0] if media_type else item.get("kind", "file")
     out["name"] = name
     return out
+
+
+@dataclass(frozen=True)
+class ImagePreview:
+    media_type: str
+    content: bytes
+    source_width: int
+    source_height: int
+    width: int
+    height: int
+    crop: tuple[int, int, int, int] | None
+
+
+def _reduced_image_preview(raw: bytes, media_type: str,
+                           crop: tuple[int, int, int, int] | None = None) -> ImagePreview | None:
+    """Return a metadata-free, size-bounded raster preview, preserving transparency."""
+    if len(raw) > MCP_PREVIEW_SOURCE_MAX_BYTES or not media_type.lower().startswith("image/"):
+        return None
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(raw)) as source:
+                if source.format not in {"PNG", "JPEG", "WEBP", "GIF", "BMP", "TIFF"}:
+                    return None
+                raw_width, raw_height = source.size
+                if raw_width <= 0 or raw_height <= 0 or raw_width * raw_height > MCP_PREVIEW_MAX_PIXELS:
+                    return None
+                source.seek(0)
+                source.load()
+                has_alpha = "A" in source.getbands() or "transparency" in source.info
+                oriented = ImageOps.exif_transpose(source)
+                width, height = oriented.size
+                if crop is not None:
+                    left, top, right, bottom = crop
+                    if right > width or bottom > height:
+                        raise CallError("crop is outside the image's original pixel bounds",
+                                        image_width=width, image_height=height)
+                cropped = oriented.crop(crop) if crop is not None else oriented
+                preview_source = cropped.convert("RGBA" if has_alpha else "RGB")
+
+                for side in (MCP_PREVIEW_MAX_SIDE, 512, 384, 256):
+                    preview = preview_source.copy()
+                    preview.thumbnail((side, side), Image.Resampling.LANCZOS)
+                    qualities = (None,) if has_alpha else (72, 58)
+                    for quality in qualities:
+                        output = io.BytesIO()
+                        if has_alpha:
+                            preview.save(output, format="PNG", optimize=True)
+                            result_type = "image/png"
+                        else:
+                            preview.save(output, format="JPEG", quality=quality, optimize=True,
+                                         progressive=False, subsampling=2)
+                            result_type = "image/jpeg"
+                        encoded = output.getvalue()
+                        if len(encoded) <= MCP_PREVIEW_MAX_BYTES:
+                            return ImagePreview(result_type, encoded, width, height,
+                                                preview.width, preview.height, crop)
+    except CallError:
+        raise
+    except Exception:  # noqa: BLE001 - previews are optional; keep the signed asset link on any decode failure.
+        return None
+    return None
+
+
+async def _image_preview_blocks(deps: McpDeps, request: Request, auth: Any,
+                                payload: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Read only caller-owned generated image assets and make bounded MCP image blocks."""
+    if payload.get("status") != "succeeded":
+        return []
+    assets = payload.get("assets")
+    if not isinstance(assets, list):
+        return []
+
+    blocks: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    candidates = 0
+    response_bytes = 0
+    preview_count = 0
+    for asset in assets:
+        if not isinstance(asset, Mapping) or not str(asset.get("media_type") or "").lower().startswith("image/"):
+            continue
+        asset_id = asset.get("asset_id")
+        if not isinstance(asset_id, str) or asset_id_in(asset_id) != asset_id or asset_id in seen_ids:
+            continue
+        seen_ids.add(asset_id)
+        candidates += 1
+        if candidates > MCP_PREVIEW_MAX_CANDIDATES or preview_count >= MCP_PREVIEW_MAX_COUNT:
+            break
+        claimed_size = asset.get("size_bytes")
+        if isinstance(claimed_size, int) and not isinstance(claimed_size, bool) and claimed_size > MCP_PREVIEW_SOURCE_MAX_BYTES:
+            continue
+        if deps.read_preview_asset is None:
+            return []
+        try:
+            raw = await asyncio.to_thread(deps.read_preview_asset, request, auth, asset_id)
+            if not isinstance(raw, bytes):
+                continue
+            preview = await asyncio.to_thread(_reduced_image_preview, raw, str(asset.get("media_type") or ""))
+        except Exception:  # noqa: BLE001 - optional previews must not hide the existing asset link.
+            continue
+        if preview is None:
+            continue
+        if response_bytes + len(preview.content) > MCP_PREVIEW_TOTAL_IMAGE_BYTES:
+            continue
+        blocks.append({"type": "text", "text": f"Reduced preview for asset {asset_id}."})
+        blocks.append({"type": "image", "data": base64.b64encode(preview.content).decode("ascii"),
+                       "mimeType": preview.media_type})
+        preview_count += 1
+        response_bytes += len(preview.content)
+    return blocks
+
+
+def _view_asset_crop(value: Any) -> tuple[int, int, int, int] | None:
+    if value is None:
+        return None
+    if (not isinstance(value, (list, tuple)) or len(value) != 4
+            or any(isinstance(edge, bool) or not isinstance(edge, int) for edge in value)):
+        raise CallError("`crop` must be four integer pixel coordinates: [left, top, right, bottom]")
+    left, top, right, bottom = value
+    if left < 0 or top < 0 or right <= left or bottom <= top:
+        raise CallError("`crop` must have non-negative left/top coordinates and positive width/height")
+    return left, top, right, bottom
+
+
+async def _view_asset(deps: McpDeps, request: Request, auth: Any,
+                      args: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    unknown = sorted(set(args) - {"asset_id", "crop"})
+    if unknown:
+        raise CallError(f"unknown argument {unknown[0]!r}")
+    asset_id = args.get("asset_id")
+    if (not isinstance(asset_id, str) or len(asset_id) != 68
+            or asset_id_in(asset_id) != asset_id or not asset_id.startswith("img_")):
+        raise CallError("`asset_id` must be an image asset id returned by this gateway")
+    crop = _view_asset_crop(args.get("crop"))
+    if deps.read_preview_asset is None:
+        raise CallError("bounded image previews are unavailable on this gateway")
+    try:
+        raw = await asyncio.to_thread(deps.read_preview_asset, request, auth, asset_id)
+    except Exception:  # noqa: BLE001 - don't disclose asset store details.
+        raw = None
+    if not isinstance(raw, bytes):
+        raise CallError("the image is missing, unavailable to this caller, or too large to preview")
+    preview = await asyncio.to_thread(_reduced_image_preview, raw, "image/*", crop)
+    if preview is None:
+        raise CallError("the image could not be previewed within the supported format and size limits")
+    payload: dict[str, Any] = {
+        "status": "succeeded",
+        "asset_id": asset_id,
+        "preview": {
+            "media_type": preview.media_type,
+            "width": preview.width,
+            "height": preview.height,
+            "source_width": preview.source_width,
+            "source_height": preview.source_height,
+            "crop": list(preview.crop) if preview.crop is not None else None,
+        },
+    }
+    block = {"type": "image", "data": base64.b64encode(preview.content).decode("ascii"),
+             "mimeType": preview.media_type}
+    return payload, block
 
 
 async def _assets_from_response(deps: McpDeps, request: Request, auth: Any, resp: Any, stem: str) -> tuple[list[dict[str, Any]], Any]:
@@ -623,16 +842,27 @@ class Tools:
         return await asyncio.to_thread(self.deps.rename, self.request, self.auth, tool, dict(args))
 
 
-def tool_result(payload: Mapping[str, Any], *, is_error: bool = False, version: str = MODERN_VERSION) -> dict[str, Any]:
+def tool_result(payload: Mapping[str, Any], *, is_error: bool = False, version: str = MODERN_VERSION,
+                image_previews: list[dict[str, str]] | None = None,
+                image_preview_note: str | None = None) -> dict[str, Any]:
     """MCP tool result: JSON text for any client, structured content, links for media.
 
     2025-03-26 has neither ``structuredContent`` nor ``resource_link`` (both
-    arrived in 2025-06-18), so its clients get text alone. Errors lead with a
-    plain message; the JSON block preserves details for every protocol era.
+    arrived in 2025-06-18), but standard image blocks work in every supported
+    version. Errors lead with a plain message; JSON preserves details in every era.
     """
     content: list[dict[str, Any]] = [{"type": "text", "text": json.dumps(payload, separators=(",", ":"), default=str)}]
     if is_error:
         content.insert(0, {"type": "text", "text": str(payload.get("error") or "Tool execution failed")})
+    if image_previews:
+        content.extend(image_previews)
+        content.append({"type": "text", "text": image_preview_note or
+                        "Only the labelled images are included as reduced previews; other assets are links only."})
+    elif payload.get("status") == "succeeded" and any(
+        isinstance(asset, Mapping) and str(asset.get("media_type") or "").lower().startswith("image/")
+        for asset in (payload.get("assets") or [])
+    ):
+        content.append({"type": "text", "text": "No image pixels are included in this result; only asset links are available."})
     if version == OLDEST_VERSION:
         result: dict[str, Any] = {"content": content}
     else:
@@ -649,25 +879,104 @@ def tool_result(payload: Mapping[str, Any], *, is_error: bool = False, version: 
     return result
 
 
+async def _history_tool(deps: McpDeps, request: Request, auth: Any, name: str, args: Mapping[str, Any],
+                       version: str) -> dict[str, Any]:
+    """Dispatch personal request-history actions to the same routes as REST clients."""
+    action = args.get("action")
+    method: str
+    path: str
+    kwargs: dict[str, Any] = {}
+    deleted_record: str | None = None
+
+    if name == "requests":
+        if action == "ledger":
+            if (deps.retention_ledger is None or not deps.retention_visible(request, auth)
+                    or set(args) - {"action", "request_id"}):
+                return tool_result({"status": "error", "error": "The retention ledger is unavailable for this caller."},
+                                   is_error=True, version=version)
+            request_id = args.get("request_id")
+            if request_id is not None and (not isinstance(request_id, str) or not request_id or len(request_id) > 128):
+                return tool_result({"status": "error", "error": "request_id must be a saved request id."},
+                                   is_error=True, version=version)
+            try:
+                view = await asyncio.to_thread(deps.retention_ledger, request, auth, request_id)
+            except PermissionError:
+                view = None
+            return tool_result({"ledger": view} if view is not None else
+                               {"status": "error", "error": "Ledger not found."},
+                               is_error=view is None, version=version)
+
+        if action == "list":
+            if set(args) - {"action", "limit", "cursor"}:
+                return _tool_argument_error("list accepts only limit and cursor", version)
+            limit = args.get("limit", 20)
+            cursor = args.get("cursor")
+            if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+                return _tool_argument_error("limit must be an integer from 1 to 100", version)
+            if cursor is not None and (not isinstance(cursor, str) or not cursor):
+                return _tool_argument_error("cursor must be a non-empty cursor string", version)
+            method, path = "GET", "/gateway/v1/requests"
+            kwargs["params"] = {"limit": limit, **({"cursor": cursor} if cursor is not None else {})}
+        elif action in {"get", "delete"}:
+            if set(args) != {"action", "record_id"}:
+                return _tool_argument_error(f"{action} requires only record_id", version)
+            record_id = args.get("record_id")
+            if not isinstance(record_id, str) or not record_id or len(record_id) > 128:
+                return _tool_argument_error("record_id must be a saved request record id", version)
+            method = "GET" if action == "get" else "DELETE"
+            path = f"/gateway/v1/requests/{quote(record_id, safe='')}"
+            deleted_record = record_id if action == "delete" else None
+        elif action == "delete_all":
+            if set(args) != {"action"}:
+                return _tool_argument_error("delete_all accepts only action", version)
+            method, path = "DELETE", "/gateway/v1/requests"
+        else:
+            return _tool_argument_error("action must be list, get, delete, delete_all or an available ledger action",
+                                        version)
+    elif name == "retention":
+        if action == "mine_get":
+            if set(args) != {"action"}:
+                return _tool_argument_error("mine_get accepts only action", version)
+            method, path = "GET", "/gateway/v1/me/retention"
+        elif action == "mine_set":
+            if set(args) != {"action", "keep", "retention", "parts"}:
+                return _tool_argument_error("mine_set requires keep, retention and parts", version)
+            keep, period, parts = args.get("keep"), args.get("retention"), args.get("parts")
+            if not isinstance(keep, bool) or not isinstance(period, str) or not isinstance(parts, list) \
+                    or any(not isinstance(part, str) for part in parts):
+                return _tool_argument_error("mine_set requires a boolean keep, string retention and string parts", version)
+            method, path = "PUT", "/gateway/v1/me/retention"
+            kwargs["json"] = {"keep": keep, "retention": period, "parts": parts}
+        else:
+            return _tool_argument_error("action must be mine_get or mine_set", version)
+    else:  # pragma: no cover - caller only routes the two history tools here
+        return _tool_argument_error("unknown history tool", version)
+
+    try:
+        response = await deps.call(request, method, path, **kwargs)
+    except Exception:  # noqa: BLE001 - MCP must not leak a traceback or internal message.
+        return tool_result({"status": "error", "error": "the gateway could not complete this history action"},
+                           is_error=True, version=version)
+    if response.status_code == 204:
+        payload: Mapping[str, Any] = {"deleted": deleted_record} if deleted_record else {"status": "succeeded"}
+    else:
+        try:
+            value = response.json()
+            payload = value if isinstance(value, Mapping) else {"result": value}
+        except (ValueError, TypeError):
+            payload = {"status": "error", "error": "the gateway returned an invalid history response"}
+    return tool_result(payload, is_error=response.status_code >= 400, version=version)
+
+
+def _tool_argument_error(message: str, version: str) -> dict[str, Any]:
+    return tool_result({"status": "error", "error": message}, is_error=True, version=version)
+
+
 async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args: Mapping[str, Any],
                     version: str = MODERN_VERSION) -> dict[str, Any]:
     tools = Tools(deps, request, auth)
-    if name == "requests":
-        if (deps.retention_ledger is None or not deps.retention_visible(request, auth)
-                or args.get("action") != "ledger" or set(args) - {"action", "request_id"}):
-            return tool_result({"status": "error", "error": "The retention ledger is unavailable for this caller."},
-                               is_error=True, version=version)
-        request_id = args.get("request_id")
-        if request_id is not None and (not isinstance(request_id, str) or not request_id or len(request_id) > 128):
-            return tool_result({"status": "error", "error": "request_id must be a saved request id."},
-                               is_error=True, version=version)
-        try:
-            view = await asyncio.to_thread(deps.retention_ledger, request, auth, request_id)
-        except PermissionError:
-            view = None
-        return tool_result({"ledger": view} if view is not None else
-                           {"status": "error", "error": "Ledger not found."},
-                           is_error=view is None, version=version)
+    if name in {"requests", "retention"}:
+        return await _history_tool(deps, request, auth, name, args, version)
     if name == "stt_measurement":
         if deps.stt_measurement is None:
             return tool_result({"status": "error", "error": "Long-audio operator commands are unavailable."}, is_error=True, version=version)
@@ -675,13 +984,27 @@ async def call_tool(deps: McpDeps, request: Request, auth: Any, name: str, args:
             return tool_result(await deps.stt_measurement(request, auth, args), version=version)
         except CallError as error:
             return tool_result({"status": "error", "error": str(error), **error.details}, is_error=True, version=version)
+    if name == "view_asset":
+        try:
+            payload, preview = await _view_asset(deps, request, auth, args)
+            return tool_result(payload, version=version, image_previews=[preview],
+                               image_preview_note="Reduced image preview. Crop coordinates refer to original pixels; source bytes are not included in text.")
+        except CallError as exc:
+            return tool_result({"status": "error", "error": str(exc), **exc.details},
+                               is_error=True, version=version)
+        except Exception as exc:  # noqa: BLE001 - never leak a traceback or asset-store detail to the client.
+            print(f"[mcp] tool view_asset failed: {type(exc).__name__}: {exc}", flush=True)
+            return tool_result({"status": "error", "error": "the adapter could not preview this image"},
+                               is_error=True, version=version)
     handler = {"capabilities": tools.capabilities, "run": tools.run, "job": tools.job,
                "rename_app": lambda a: tools.rename("rename_app", a), "rename_key": lambda a: tools.rename("rename_key", a)}[name]
     try:
         # Both run and job expose generation failures to the caller as errors.
         # A canceled job is a valid outcome, including an explicit cancel request.
         payload = await handler(args)
-        return tool_result(payload, is_error=payload.get("status") == "failed", version=version)
+        previews = await _image_preview_blocks(deps, request, auth, payload)
+        return tool_result(payload, is_error=payload.get("status") == "failed", version=version,
+                           image_previews=previews)
     except CallError as exc:
         return tool_result({"status": "error", "error": str(exc), **exc.details}, is_error=True, version=version)
     except Exception as exc:  # noqa: BLE001 - never leak a traceback to the client
@@ -765,11 +1088,22 @@ async def handle_message(deps: McpDeps, request: Request, auth: Any, msg: Mappin
         owner_can_measure = (deps.stt_measurement is not None
                              and deps.owner_visible(request, auth))
         can_read_ledger = deps.retention_ledger is not None and deps.retention_visible(request, auth)
-        result = {"tools": [tool for tool in TOOLS if
-                             (tool["name"] != "stt_measurement" or owner_can_measure)
-                             and (tool["name"] != "requests" or can_read_ledger)]}
+        visible_tools = []
+        for tool in TOOLS:
+            if tool["name"] == "stt_measurement" and not owner_can_measure:
+                continue
+            if tool["name"] == "requests" and can_read_ledger:
+                # Keep the old operator ledger action available only to callers who can read it.
+                tool = copy.deepcopy(tool)
+                tool["description"] += " The ledger action shows dated facts about where request content may remain."
+                tool["inputSchema"]["properties"]["action"]["enum"].append("ledger")
+                tool["inputSchema"]["properties"]["request_id"] = {
+                    "type": "string", "description": "Optional saved request id; omit for today's facts.",
+                }
+            visible_tools.append(tool)
+        result = {"tools": visible_tools}
         if modern:
-            result.update(ttlMs=300000, cacheScope="private" if owner_can_measure or can_read_ledger else "public")
+            result.update(ttlMs=300000, cacheScope="private")
     elif method == "tools/call":
         name = params.get("name")
         if not isinstance(name, str) or name not in {t["name"] for t in TOOLS}:

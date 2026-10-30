@@ -1,558 +1,696 @@
 {
   "GET /admin/api/activity/requests": {
     "tag": "usage and receipts",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/admin-keys": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key; a key works only while the person who minted it still holds a role that permits it",
-    "success_status": 201
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; an owner key needs the owner role; a caller mints only a role it holds; a key works only while the person who minted it still holds a role that permits it",
+    "success_status": 201,
+    "owner_only": false
   },
   "GET /admin/api/apps": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/apps": {
     "tag": "apps and keys",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "success_status": 201
+    "success_status": 201,
+    "owner_only": false
   },
   "DELETE /admin/api/apps/{app_id}": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "PATCH /admin/api/apps/{app_id}": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/apps/{app_id}/enable": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/apps/{app_id}/keys": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "success_status": 201
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; only the App's accountable person may add a key",
+    "success_status": 201,
+    "owner_only": false
   },
   "PATCH /admin/api/apps/{app_id}/keys/{credential_id}": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/apps/{app_id}/trusted-addresses": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/apps/{app_id}/trusted-addresses": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to trust an address",
-    "success_status": 201
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; only the App's accountable person may trust an address",
+    "success_status": 201,
+    "owner_only": false
   },
   "DELETE /admin/api/apps/{app_id}/trusted-addresses/{entry_id}": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/audit": {
     "tag": "usage and receipts",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/audit-events": {
     "tag": "usage and receipts",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/audit/{event_id}": {
     "tag": "usage and receipts",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/categories/active": {
     "tag": "categories",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/categories/candidates": {
     "tag": "categories",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/categories/candidates/{revision}/activate": {
     "tag": "categories",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/categories/history": {
     "tag": "categories",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/categories/preview-as": {
     "tag": "categories",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/categories/revisions/{revision}": {
     "tag": "categories",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/categories/revisions/{revision}/restore": {
     "tag": "categories",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/categories/services": {
     "tag": "categories",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/config/export": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/config/reload": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/credentials": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "DELETE /admin/api/credentials/{credential_id}": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/credentials/{credential_id}/revoke": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/drain": {
     "tag": "status",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only",
+    "owner_only": false
   },
   "POST /admin/api/drain": {
     "tag": "status",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only; bearer only"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only; bearer only",
+    "owner_only": false,
+    "bearer_only": true
   },
   "GET /admin/api/extensions": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/extensions/enable": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/extensions/validate": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "DELETE /admin/api/extensions/{package_id}": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/invites": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/invites": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "DELETE /admin/api/invites/{link_id}": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/invites/{link_id}/link": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/operator/litellm-config": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/operator/litellm/keys": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/operator/litellm/keys": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "success_status": 201
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "success_status": 201,
+    "owner_only": true
   },
   "POST /admin/api/operator/litellm/keys/delete": {
     "tag": "apps and keys",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/operator/host-commands": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "PUT /admin/api/operator/host-commands": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PUT /admin/api/operator/media-job-admission": {
     "tag": "media and library",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/operator/overrides": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "PUT /admin/api/operator/service-availability": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/operator/service-registry": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "PUT /admin/api/operator/service-registry": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/operator/services": {
     "tag": "engines and providers",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "success_status": 201
+    "success_status": 201,
+    "owner_only": false
   },
   "POST /admin/api/operator/services/detect-models": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/operator/services/test": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "DELETE /admin/api/operator/services/{service_id}": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "PATCH /admin/api/operator/services/{service_id}": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/operator/services/{service_id}/enabled": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/overview": {
     "tag": "status",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/people": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "DELETE /admin/api/people/{user_id}": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PATCH /admin/api/people/{user_id}": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/people/{user_id}/reset": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/providers": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/providers": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
-    "success_status": 201
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "success_status": 201,
+    "owner_only": true
   },
   "GET /admin/api/providers/-/catalog": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "DELETE /admin/api/providers/-/global-caps": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PUT /admin/api/providers/-/global-caps": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/providers/-/test": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "DELETE /admin/api/providers/{provider_id}": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/providers/{provider_id}": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "DELETE /admin/api/providers/{provider_id}/caps": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PUT /admin/api/providers/{provider_id}/caps": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "DELETE /admin/api/providers/{provider_id}/key": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PUT /admin/api/providers/{provider_id}/key": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PUT /admin/api/providers/{provider_id}/models": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/providers/{provider_id}/reconciliation": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/providers/{provider_id}/reconciliation/{reservation_id}": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/providers/{provider_id}/test": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/session": {
     "tag": "account",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/settings/defaults": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PUT /admin/api/settings/defaults": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/settings/effective": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/settings/effective/export": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/settings/instance": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PUT /admin/api/settings/instance": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/settings/prompt-memory": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PUT /admin/api/settings/prompt-memory": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/settings/receipts": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PUT /admin/api/settings/receipts": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/settings/receipts/preview": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/settings/sessions": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PUT /admin/api/settings/sessions": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/setup-progress": {
     "tag": "status",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/status": {
     "tag": "status",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/users": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "DELETE /admin/api/access-plans/{plan_id}": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/access-plans": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/access-plans/editor": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/access-plans/{plan_id}": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/access-plans": {
     "tag": "people and plans",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "success_status": 201
+    "success_status": 201,
+    "owner_only": true
   },
   "POST /admin/api/access/check": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/access/preview": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "PUT /admin/api/access-plans/{plan_id}": {
     "tag": "people and plans",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/signin": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/signin/preview": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/signin/discover": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/signin/test": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/signin/test/{test_id}/start": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/signin/test/{test_id}": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "DELETE /admin/api/signin/test/{test_id}": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/signin/link-owner": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "PUT /admin/api/signin": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/signin/notice/dismiss": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/signin/owner-password": {
     "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/engine-definitions": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/engines/check": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/engines/test": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/engines/access": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/engines/{service_id}": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "POST /admin/api/operator/services/{service_id}/secret-entries": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret",
+    "owner_only": false
   },
   "PUT /admin/api/operator/service-registry/excluded/{section}/{record_id}": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "DELETE /admin/api/operator/service-registry/excluded/{section}/{record_id}": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/engine-protocols": {
     "tag": "engines and providers",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/engines/{service_id}/stt-measurements": {
     "tag": "long-audio measurement",
-    "gate": "AdminAuthenticator / _require_admin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/engines/{service_id}/stt-measurements": {
     "tag": "long-audio measurement",
-    "gate": "AdminAuthenticator / _require_admin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/engines/{service_id}/stt-measurements/{job_id}": {
     "tag": "long-audio measurement",
-    "gate": "AdminAuthenticator / _require_admin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/engines/{service_id}/stt-measurements/{job_id}/cancel": {
     "tag": "long-audio measurement",
-    "gate": "AdminAuthenticator / _require_admin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
   },
   "POST /admin/api/engines/{service_id}/stt-measurements/{job_id}/apply": {
     "tag": "long-audio measurement",
-    "gate": "AdminAuthenticator / _require_admin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
   },
   "PATCH /admin/api/engines/{service_id}/stt-settings": {
     "tag": "long-audio settings",
-    "gate": "AdminAuthenticator / _require_admin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/settings/retention/ledger": {
     "tag": "retention facts",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/engines/{service_id}/retention/ledger": {
     "tag": "retention facts",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/engines/{service_id}/retention/facts": {
     "tag": "retention facts",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "PUT /admin/api/engines/{service_id}/retention/facts": {
     "tag": "retention facts",
-    "gate": "AdminAuthenticator / _require_admin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/providers/{provider_id}/retention/facts": {
     "tag": "retention facts",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "PUT /admin/api/providers/{provider_id}/retention/facts": {
     "tag": "retention facts",
-    "gate": "AdminAuthenticator / _require_admin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/settings/retention/systems/{system_id}/facts": {
     "tag": "retention facts",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "PUT /admin/api/settings/retention/systems/{system_id}/facts": {
     "tag": "retention facts",
-    "gate": "AdminAuthenticator / _require_admin; owner role required"
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "owner_only": true
   },
   "GET /admin/api/requests/{request_id}/retention/ledger": {
     "tag": "retention facts",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   },
   "GET /admin/api/me/retention/ledger": {
     "tag": "retention facts",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin"
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
+    "owner_only": false
   }
 }

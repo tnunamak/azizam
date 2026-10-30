@@ -195,7 +195,7 @@ def test_the_engine_page_asks_about_each_model_for_the_work_the_check_found(gate
                               "values": {"address": f"{fake.base_url}/v1"}, "capabilities": ["chat", "embeddings"]})
     assert created.status_code == 201, created.text
     engine = owner.get("/admin/api/engines/embedder").json()["engine"]
-    assert engine["models"][0]["use"] == "Embeddings"
+    assert engine["models"][0]["use"] == "Document search"
     assert family not in {row["id"] for row in engine["access"]["plans"]}, "Family allows chat only"
 
 

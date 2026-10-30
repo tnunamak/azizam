@@ -31,7 +31,7 @@ describe("summary attention budgets", () => {
       </>,
     );
     expect(screen.getByText("$0.00")).toBeVisible();
-    expect(screen.getByText("Local · no provider charge")).toBeVisible();
+    expect(screen.getByText("Local · no charge")).toBeVisible();
     expect(screen.queryByText("Not measured yet")).toBeNull();
   });
 

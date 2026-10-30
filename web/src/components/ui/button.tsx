@@ -12,31 +12,40 @@ import { Slot } from "radix-ui";
  * `lg` and `icon-lg` are 40 on desktop and 44 on phones.
  */
 const buttonVariants = cva(
-  "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-meta font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max-sm:min-w-11 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-meta whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max-sm:min-w-11 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        // The Home's resting Make: an ink pill (`--make-rest`), the same fill and radius as Make in the composer. The
+        // sign-in page's primary action uses it. `rounded-full!` beats the base's `rounded-control`, which cn does not merge.
+        make: "rounded-full! bg-make-rest text-make-rest-foreground hover:bg-make-rest/90",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+        // A button edge is visible in both themes: `--input` is at least 3:1 against the page and card.
         outline:
-          "border border-border bg-card text-foreground hover:border-input hover:bg-muted",
+          "border border-input bg-card text-foreground hover:bg-muted",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground",
         ghost: "text-foreground hover:bg-muted",
         link: "text-link underline-offset-4 hover:underline",
       },
+      // The weight sits in each size, not the base, so `xl` can be semibold without a second font-weight class beside it
+      // (cn does not merge conflicting utilities).
       size: {
-        default: "h-8 gap-1.5 px-3 has-[>svg]:px-2.5",
-        xs: "h-8 gap-1 px-2 text-badge has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-8 gap-1.5 px-3 has-[>svg]:px-2.5",
-        md: "h-10 px-4 text-body has-[>svg]:px-3.5",
-        // Large actions use the form height on desktop; 44 is phone-only.
-        lg: "h-10 max-sm:h-11 px-5 text-body has-[>svg]:px-4",
-        icon: "size-8",
-        "icon-xs": "size-8 [&_svg:not([class*='size-'])]:size-3.5",
-        "icon-sm": "size-8",
-        "icon-lg": "size-10 max-sm:size-11",
+        default: "h-8 gap-1.5 px-3 font-medium has-[>svg]:px-2.5",
+        xs: "h-8 gap-1 px-2 font-medium text-badge! has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
+        sm: "h-8 gap-1.5 px-3 font-medium has-[>svg]:px-2.5",
+        md: "h-10 px-4 font-medium text-body! has-[>svg]:px-3.5 max-sm:h-auto max-sm:max-w-full max-sm:whitespace-normal",
+        // Large actions use form height on desktop; the phone's 44px minimum lets wrapped labels grow.
+        lg: "h-10 px-5 font-medium text-body! has-[>svg]:px-4 max-sm:h-auto max-sm:max-w-full max-sm:whitespace-normal",
+        // The one primary action of a page that has nothing else to do (the sign-in page): 48 at every width, 16 px semibold.
+        // `text-lg!` is important because the base's `text-meta` otherwise wins the cascade (14 px, measured).
+        xl: "h-12 px-6 text-lg! font-semibold has-[>svg]:px-5",
+        icon: "size-8 font-medium",
+        "icon-xs": "size-8 font-medium [&_svg:not([class*='size-'])]:size-3.5",
+        "icon-sm": "size-8 font-medium",
+        "icon-lg": "size-10 font-medium max-sm:size-11",
       },
     },
     defaultVariants: {

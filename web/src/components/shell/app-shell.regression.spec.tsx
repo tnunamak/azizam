@@ -105,6 +105,8 @@ beforeEach(() => {
     "fetch",
     vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.endsWith("/me/api/session/end-token"))
+        return jsonResponse({ authenticated: true, csrf_token: ownerSession.csrf_token, user: ownerSession.user });
       if (url.endsWith("/me/api/session")) return jsonResponse(ownerSession);
       if (url.endsWith("/.well-known/azizam")) {
         return jsonResponse({
@@ -187,6 +189,8 @@ describe("AppShell accessible names", () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementation((input) => {
       const url = String(input);
+      if (url.endsWith("/me/api/session/end-token"))
+        return jsonResponse({ authenticated: true, csrf_token: ownerSession.csrf_token, user: ownerSession.user });
       if (url.endsWith("/me/api/session")) return jsonResponse(ownerSession);
       if (url.endsWith("/logout")) return jsonResponse({}, { status: 403 });
       return jsonResponse({});
@@ -306,6 +310,18 @@ describe("AppShell navigation tooltips", () => {
     expect(screen.queryByRole("tooltip")).toBeNull();
     expect(within(nav).getByRole("link", { name: "Home" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("button", { name: "Go to" }).querySelector("kbd")).toHaveTextContent(/Ctrl K|⌘K/);
+  });
+
+  it("keeps Apps & keys in the main navigation only, not in the account menu", async () => {
+    mockSidebarViewport(true);
+    render(<AppShell><h1>Home</h1></AppShell>);
+    const nav = await screen.findByRole("navigation", { name: "Main navigation" });
+    const apps = within(nav).getByRole("link", { name: "Apps & keys" });
+    const user = userEvent.setup();
+    await user.click((await screen.findAllByRole("button", { name: "Account menu: Alex Owner" }))[0]);
+    await screen.findByRole("menuitem", { name: "Help" });
+    expect(apps).toHaveAttribute("href", "/apps");
+    expect(screen.queryByRole("menuitem", { name: "Apps & keys" })).toBeNull();
   });
 
   it("keeps collapsed-rail tooltips and accessible names for hover and keyboard focus", async () => {
@@ -526,13 +542,13 @@ describe("WP-20 shell recovery", () => {
     await waitFor(() => expect(logout).toHaveBeenCalledTimes(1));
   });
 
-  it("keeps Help in the common menu without developer links", async () => {
+  it("points Help at the product docs, keeps the API reference beside it, and adds no developer links", async () => {
     render(<AppShell><h1>Home</h1></AppShell>);
     const user = userEvent.setup();
     await user.click((await screen.findAllByRole("button", { name: "Account menu: Alex Owner" }))[0]);
-    expect(await screen.findByRole("menuitem", { name: "Help" })).toHaveAttribute("href", "/docs");
+    expect(await screen.findByRole("menuitem", { name: "Help" })).toHaveAttribute("href", "https://azizam.dev/docs");
+    expect(screen.getByRole("menuitem", { name: "API reference" })).toHaveAttribute("href", "/docs");
     expect(screen.queryByRole("menuitem", { name: "Design system" })).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "API reference" })).toBeNull();
   });
 
   it("shows apps loading, failure and retry in Go to, then hides an empty group", async () => {

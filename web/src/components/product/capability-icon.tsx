@@ -46,12 +46,12 @@ const capabilities = {
   },
   decide: {
     icon: GitBranch,
-    label: capabilityLabels.decisions,
+    label: capabilityLabels.decide,
     color: "text-capability-decide bg-capability-decide/10",
   },
   embed: {
     icon: Layers,
-    label: capabilityLabels.embeddings,
+    label: capabilityLabels.embed,
     color: "text-capability-embed bg-capability-embed/10",
   },
 };

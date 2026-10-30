@@ -252,9 +252,8 @@ test.each([0, 4])(
       spend_total_requests: 4,
     });
     expect(await screen.findByText("Spend this month (USD)")).toBeVisible();
-    expect(screen.getByText("Cost not recorded")).toBeVisible();
-    expect(screen.getByText(/Costs recorded for 0 of 4 requests/)).toBeVisible();
-    expect(screen.getByText(/4 paid requests have unknown cost/)).toBeVisible();
+    expect(screen.getByText("Cost not reported by the provider")).toBeVisible();
+    expect(screen.getByText(/Total excludes 4 requests without a reported cost/)).toBeVisible();
   },
 );
 test.each([
@@ -262,13 +261,13 @@ test.each([
     unknown: 2,
     measured: 2,
     label: "Spend this month (USD)",
-    detail: /2 paid requests have unknown cost/,
+    detail: /Total excludes 2 requests without a reported cost/,
   },
   {
     unknown: 0,
     measured: 4,
     label: "Spend this month (USD)",
-    detail: /Costs recorded for 4 of 4 requests/,
+    detail: null,
   },
 ])(
   "USAGE-01 identifies completeness: $label",
@@ -282,7 +281,8 @@ test.each([
     });
     expect(await screen.findByText(label)).toBeVisible();
     expect(screen.getByText("$1.25")).toBeVisible();
-    expect(screen.getByText(detail)).toBeVisible();
+    if (detail) expect(screen.getByText(detail)).toBeVisible();
+    else expect(screen.queryByText(/Total excludes|We don't know/)).toBeNull();
   },
 );
 test("USAGE-01 does not claim complete coverage without measurement counts", async () => {
@@ -405,7 +405,7 @@ test.each([undefined, null])("UA-01 labels an unrecorded receipt cost in summary
     receipts: [
       { request_id: "unknown", capability: "chat", cost_usd: cost },
       { request_id: "zero", capability: "image", cost_usd: 0 },
-      { request_id: "local", capability: "video", cost_usd: cost, remote: false },
+      { request_id: "local", capability: "video", cost_usd: cost, remote: false, served_locally: true },
     ],
     by_model: [{ model: "unmeasured-model", capability: "chat", requests: 1 }],
   });
@@ -417,7 +417,7 @@ test.each([undefined, null])("UA-01 labels an unrecorded receipt cost in summary
   expect(within(zero).queryByText("Cost not recorded")).not.toBeInTheDocument();
   expect(within(zero).getByText("$0.00")).toBeInTheDocument();
   const local = screen.getByRole("button", { name: /Receipt details for Video request/ });
-  expect(within(local).getByText("No provider charge")).toBeInTheDocument();
+  expect(within(local).getByText("Local · no charge")).toBeInTheDocument();
   // A model row with no locality evidence says Cost not recorded, never blank.
   expect(screen.getAllByText("Cost not recorded")).toHaveLength(4);
   const modelRow = screen.getByRole("row", { name: /unmeasured-model|Unmeasured Model/ });
@@ -428,6 +428,137 @@ test.each([undefined, null])("UA-01 labels an unrecorded receipt cost in summary
   expect(within(sheet).getByText("Cost not recorded")).toBeVisible();
 });
 
+test("A17 names a local request, a remote one without a reported cost, and a total that leaves some out", async () => {
+  renderUsage({
+    requests: 3,
+    remote_spend: 0.5,
+    paid_requests: 1,
+    unknown_paid_requests: 1,
+    spend_measured_requests: 1,
+    spend_total_requests: 2,
+    receipts: [
+      { request_id: "local-1", capability: "chat", remote: false, served_locally: true },
+      { request_id: "remote-1", capability: "image", remote: true },
+    ],
+    by_model: [
+      { model: "paid-model", capability: "image", requests: 1, remote_spend: 0.5, paid_requests: 1, unknown_paid_requests: 0 },
+      { model: "unreported-model", capability: "video", requests: 1, remote_spend: null, paid_requests: 0, unknown_paid_requests: 1 },
+    ],
+  });
+  const user = userEvent.setup();
+  // The total is a sum of reported costs, so it says what it leaves out.
+  const spend = (await screen.findByText("Spend this month (USD)", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(spend).getByText("$0.50")).toBeVisible();
+  expect(within(spend).getByText(/Total excludes 1 request without a reported cost/)).toBeVisible();
+  const unreportedRow = screen.getByRole("row", { name: /unreported/i });
+  expect(within(unreportedRow).getByText("Cost not reported by the provider")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "View recent requests" }));
+  const local = screen.getByRole("button", { name: /Receipt details for Chat request/ });
+  const localLabel = within(local).getByText("Local · no charge");
+  expect(localLabel).toHaveAttribute("title", "Didn’t go to a paid provider, so nothing was charged.");
+  const remote = screen.getByRole("button", { name: /Receipt details for Image request/ });
+  expect(within(remote).getByText("Cost not reported by the provider")).toBeVisible();
+  await user.click(remote);
+  const sheet = screen.getByRole("dialog");
+  expect(within(sheet).getByText("Cost not reported by the provider")).toBeVisible();
+  expect(
+    within(sheet).getByText("A paid provider handled this request but didn’t report what it cost, so it isn’t in the total."),
+  ).toBeVisible();
+});
+
+
+test("A month served entirely here says Local · no charge, not No paid requests", async () => {
+  renderUsage({
+    requests: 12,
+    local_requests: 12,
+    paid_requests: 0,
+    unknown_paid_requests: 0,
+    remote_spend: 0,
+    spend_measured_requests: 12,
+    spend_total_requests: 12,
+    by_model: [{ model: "local-chat", capability: "chat", requests: 12, remote_spend: 0, paid_requests: 0, unknown_paid_requests: 0, local_requests: 12 }],
+  });
+  const spend = (await screen.findByText("Spend this month (USD)", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(spend).getByText("Local · no charge")).toBeVisible();
+  expect(within(spend).queryByText("No paid requests")).not.toBeInTheDocument();
+  expect(within(modelRow("Local Chat")).getByText("Local · no charge")).toBeVisible();
+});
+
+test("Local requests sit beside a paid total, in the total and in their own rows", async () => {
+  renderUsage({
+    requests: 5,
+    local_requests: 3,
+    paid_requests: 1,
+    unknown_paid_requests: 0,
+    remote_spend: 0.5,
+    spend_measured_requests: 3,
+    spend_total_requests: 5,
+    by_model: [
+      { model: "paid-image", capability: "image", requests: 2, remote_spend: 0.5, paid_requests: 1, unknown_paid_requests: 0, local_requests: 0 },
+      { model: "local-chat", capability: "chat", requests: 3, remote_spend: null, paid_requests: 0, unknown_paid_requests: 0, local_requests: 3 },
+    ],
+  });
+  const spend = (await screen.findByText("Spend this month (USD)", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(spend).getByText("$0.50")).toBeVisible();
+  expect(within(spend).getByText("3 local · no charge")).toBeVisible();
+  expect(within(modelRow("Local Chat")).getByText("Local · no charge")).toBeVisible();
+  expect(within(modelRow("Paid Image")).getByText("$0.50")).toBeVisible();
+});
+
+test("A month with no paid request still counts its local ones beside No paid requests", async () => {
+  renderUsage({
+    requests: 5,
+    local_requests: 2,
+    paid_requests: 0,
+    unknown_paid_requests: 0,
+    remote_spend: 0,
+    spend_measured_requests: 5,
+    spend_total_requests: 5,
+  });
+  const spend = (await screen.findByText("Spend this month (USD)", { selector: "dt" })).closest<HTMLElement>('[data-slot="stat"]')!;
+  expect(within(spend).getByText("No paid requests")).toBeVisible();
+  expect(within(spend).getByText("2 local · no charge")).toBeVisible();
+});
+
+test("A request that failed before routing reads Cost not recorded, never Local", async () => {
+  renderUsage({
+    receipts: [{ request_id: "refused", capability: "chat", remote: false, status: "failed" }],
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "View recent requests" }));
+  const refused = screen.getByRole("button", { name: /Receipt details for Chat request/ });
+  expect(within(refused).getByText("Cost not recorded")).toBeInTheDocument();
+  expect(within(refused).queryByText("Local · no charge")).not.toBeInTheDocument();
+});
+
+test("Usage CSV writes zero spend only for a request served here", async () => {
+  const blobs: Blob[] = [];
+  vi.stubGlobal("URL", class extends URL {
+    static createObjectURL(blob: Blob) { blobs.push(blob); return "blob:served"; }
+    static revokeObjectURL = vi.fn();
+  });
+  const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  try {
+    renderUsage({
+      receipts: [
+        { request_id: "served", capability: "chat", resolved_model: "local-chat", remote: false, served_locally: true, status: "succeeded" },
+        { request_id: "refused", capability: "chat", resolved_model: "local-chat", remote: false, status: "failed" },
+      ],
+    });
+    const button = await screen.findByRole("button", { name: "Download CSV" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await userEvent.setup().click(button);
+    const csv = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(blobs[0]);
+    });
+    const spendColumns = csv.trimEnd().split("\r\n").slice(1).map((row) => row.split(",").at(-1));
+    expect(spendColumns).toEqual(["0", ""]);
+  } finally {
+    click.mockRestore();
+  }
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -654,10 +785,10 @@ test("Usage model Spend cell is Local, an amount or Cost not recorded", async ()
   expect(within(modelRow("Local Chat")).getByText("Cost not recorded")).toBeVisible();
   expect(within(modelRow("Zero Chat")).getByText("$0.00")).toBeVisible();
   expect(within(modelRow("Paid Image")).getByText("$0.25")).toBeVisible();
-  expect(within(modelRow("Mystery")).getByText("Cost not recorded")).toBeVisible();
+  expect(within(modelRow("Mystery")).getByText("Cost not reported by the provider")).toBeVisible();
   const partial = modelRow("Partial");
   expect(within(partial).getByText("$0.50")).toBeVisible();
-  expect(within(partial).getByText("Some costs missing")).toBeVisible();
+  expect(within(partial).getByText("Total excludes 1 request without a reported cost")).toBeVisible();
   expect(screen.queryByText(/Local: no provider charge\./)).not.toBeInTheDocument();
   expect(screen.queryByText(/Unavailable: the provider cost was not recorded\./)).not.toBeInTheDocument();
   // No row is blank in the Spend column.
@@ -683,7 +814,7 @@ test("Usage chart legend names capabilities as Home and Try do", async () => {
     expect(screen.getAllByText(name).length).toBeGreaterThan(0);
   }
   expect(screen.queryByText("Decisions")).not.toBeInTheDocument();
-  expect(screen.queryByText("Embeddings")).not.toBeInTheDocument();
+  expect(screen.queryByText("Document search")).not.toBeInTheDocument();
 });
 
 test("Usage receipts show host paths only in owner technical details", async () => {
@@ -810,7 +941,7 @@ test("Usage By task keeps missing and partial costs distinct from known local co
   const table = await screen.findByRole("table", { name: "By task" });
   const chat = within(table).getByRole("row", { name: /Chat/ });
   expect(within(chat).getByText("$0.50")).toBeVisible();
-  expect(within(chat).getByText("Some costs missing")).toBeVisible();
+  expect(within(chat).getByText("Some requests have no recorded cost.")).toBeVisible();
   const picture = within(table).getByRole("row", { name: /Make a picture/ });
   expect(within(picture).getByText("Cost not recorded")).toBeVisible();
   expect(within(picture).queryByText("$0.00")).not.toBeInTheDocument();
@@ -1201,7 +1332,7 @@ test("Usage model table shows names, never a path or packing tag, and a Cost in 
   expect(screen.getAllByText("Make a picture").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Choose an option").length).toBeGreaterThan(0);
   expect(screen.queryByText("Decisions", { exact: true })).toBeNull();
-  expect(screen.queryByText("Embeddings", { exact: true })).toBeNull();
+  expect(screen.queryByText("Document search", { exact: true })).toBeNull();
 });
 
 const manySources = [

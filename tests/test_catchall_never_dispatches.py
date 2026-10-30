@@ -14,6 +14,7 @@ effect is a tripwire; no network request is made.
 from __future__ import annotations
 
 import shutil
+from tests.support.app_keys import accountable_person
 import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
@@ -98,8 +99,7 @@ def seeded_stores(tmp_path_factory):
         app_key = generate_app_api_key()
         admin_store.create_credential_hash(
             subject_kind="app", subject_id=service_app["id"], app_id=service_app["id"],
-            hash=proxy.hash_api_key(app_key), prefix=app_key[:12], path=paths["admin"],
-        )
+            hash=proxy.hash_api_key(app_key), prefix=app_key[:12], path=paths["admin"], created_by=accountable_person(paths["admin"], service_app["id"]))
     for path in paths.values():
         # Fold the WAL into the main file, so copying that one file is a full copy.
         with sqlite3.connect(path) as conn:

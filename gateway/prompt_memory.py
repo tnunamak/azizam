@@ -20,7 +20,16 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 
 import os
 
-from gateway import admin_store, directory_index, media_jobs, media_metadata, private_io, request_connections, retention
+from gateway import (
+    admin_store,
+    directory_index,
+    media_jobs,
+    media_metadata,
+    private_io,
+    request_connections,
+    request_history_slot,
+    retention,
+)
 from gateway.sqlite_startup import connect, connect_readonly
 from gateway.public_failure import PublicFailure
 
@@ -110,12 +119,12 @@ def decide(
     *, person_id: str | None, member: Mapping[str, Any] | None,
     household: Mapping[str, Any] | None, request_body: Mapping[str, Any] | None,
     responses_store: bool | None = None, now: int | None = None,
-    kind: str = retention.LIBRARY_PROMPT,
+    kind: str = retention.LIBRARY_PROMPT, request_forget: bool = False,
 ) -> Decision:
     """Resolve policy before any payload, media or Responses persistence (``retention.decide``)."""
     return retention.decide(
         kind, person_id=person_id, member=member, household_policy=household,
-        request_body=request_body, responses_store=responses_store, now=now,
+        request_body=request_body, responses_store=responses_store, now=now, request_forget=request_forget,
     )
 
 
@@ -128,9 +137,12 @@ def decide_for_person(
     person_id: str | None, body: Mapping[str, Any] | None, *,
     admin_path: Path | None = None,
     responses_store: bool | None = None,
-    kind: str = retention.LIBRARY_PROMPT,
+    kind: str = retention.LIBRARY_PROMPT, request_forget: bool = False,
 ) -> Decision:
-    """Resolve memory policy for an authenticated person independent of App."""
+    """Resolve memory policy for an authenticated person independent of App.
+
+    ``request_forget`` is the request's ``X-Azizam-Prompts: forget`` header, which the body does not carry.
+    """
     path = admin_path or admin_store.DB_PATH
     try:
         member = admin_store.ensure_prompt_memory_preference(person_id, path=path) if person_id else None
@@ -141,7 +153,7 @@ def decide_for_person(
         return Decision(person_id, False, "storage_unavailable", kind=kind)
     return decide(
         person_id=person_id, member=member, household=household,
-        request_body=body, responses_store=responses_store, kind=kind,
+        request_body=body, responses_store=responses_store, kind=kind, request_forget=request_forget,
     )
 
 
@@ -235,15 +247,10 @@ def put(
     def insert(deadline: int | None) -> None:
         conn = _connect(path)
         try:
-            conn.execute(
-                "INSERT INTO asset_prompts(asset_id,person_id,prompt_text,metadata_json,created_at,kept_until) "
-                "VALUES(?,?,?,?,?,?) ON CONFLICT(asset_id,person_id) DO UPDATE SET "
-                "prompt_text=excluded.prompt_text,metadata_json=excluded.metadata_json,"
-                "created_at=excluded.created_at,kept_until=excluded.kept_until",
-                (asset_id, person_id, prompt_text,
-                 json.dumps(dict(metadata), ensure_ascii=False) if metadata else None,
-                 started, deadline),
-            )
+            insert_prompt_in(conn, {
+                "asset_id": asset_id, "person_id": person_id, "prompt_text": prompt_text,
+                "metadata": metadata, "created_at": started, "kept_until": deadline,
+            })
             conn.commit()
         finally:
             conn.close()
@@ -254,6 +261,28 @@ def put(
     )
 
 
+def insert_prompt_in(conn: sqlite3.Connection, record: Mapping[str, Any]) -> None:
+    """Insert one Library prompt inside the caller's media-jobs transaction."""
+    metadata = record.get("metadata")
+    conn.execute(
+        "INSERT INTO asset_prompts(asset_id,person_id,prompt_text,metadata_json,created_at,kept_until) "
+        "VALUES(?,?,?,?,?,?) ON CONFLICT(asset_id,person_id) DO UPDATE SET "
+        "prompt_text=excluded.prompt_text,metadata_json=excluded.metadata_json,"
+        "created_at=excluded.created_at,kept_until=excluded.kept_until",
+        (record["asset_id"], record["person_id"], record["prompt_text"],
+         json.dumps(dict(metadata), ensure_ascii=False) if metadata else None,
+         record["created_at"], record.get("kept_until")),
+    )
+
+
+def _creating_receipt_id() -> str | None:
+    """The receipt of the request making this media. That request's job is the one that indexes the asset."""
+    from gateway import media_delivery
+
+    receipt = getattr(media_delivery.current(), "receipt", None)
+    return getattr(receipt, "request_id", None) or None
+
+
 def safe_put(
     asset_id: str, person_id: str, prompt_text: str, *, kept_until: int | None,
     metadata: Mapping[str, str] | None = None, path: Path | None = None,
@@ -262,6 +291,19 @@ def safe_put(
 ) -> bool:
     """Best-effort prompt write; storage contention cannot fail media delivery."""
     try:
+        started = int(time.time()) if created_at is None else created_at
+        if asset_id and person_id and isinstance(prompt_text, str) and prompt_text:
+            target = Path(path or media_jobs.DB_PATH)
+            if request_history_slot.defer_library_prompt(
+                {
+                    "asset_id": asset_id, "person_id": person_id, "prompt_text": prompt_text,
+                    "metadata": dict(metadata) if metadata else None, "created_at": started,
+                    "kept_until": kept_until, "origin_id": _creating_receipt_id(),
+                },
+                database_path=target,
+                on_result=on_result,
+            ):
+                return True
         return put(
             asset_id, person_id, prompt_text, kept_until=kept_until, metadata=metadata,
             path=path, admin_path=admin_path, created_at=created_at, on_result=on_result,
@@ -302,7 +344,7 @@ def require_resolvable_periods(*, admin_path: Path) -> None:
     try:
         conn = connect_readonly(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
         try:
-            stored = {row[0] for row in conn.execute("SELECT retention FROM prompt_memory_preferences")}
+            stored = {row[0] for row in conn.execute("SELECT retention FROM prompt_memory_preferences WHERE grp='prompts'")}
             row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (retention.SETTING_KEY,)).fetchone()
         finally:
             conn.close()
@@ -350,7 +392,7 @@ def tighten_contract_periods(*, admin_path: Path, path: Path | None = None) -> i
                 cap = stored_cap
             except (TypeError, ValueError):
                 logging.getLogger(__name__).warning("invalid stored retention setting; using bundled defaults")
-        members = dict(admin_conn.execute("SELECT user_id, retention FROM prompt_memory_preferences"))
+        members = dict(admin_conn.execute("SELECT user_id, retention FROM prompt_memory_preferences WHERE grp='prompts'"))
 
         media_conn = _connect(path)
         try:
@@ -431,9 +473,17 @@ def get_person_prompts(person_id: str, *, path: Path | None = None,
 
 
 def delete_person(person_id: str, *, path: Path | None = None) -> int:
-    """Delete a person's prompts and their Library hides in one transaction; returns the prompts deleted."""
+    """Delete a person's Library prompts, hides and linked request history in one transaction."""
     conn = _connect(path)
     try:
+        conn.execute("BEGIN IMMEDIATE")
+        asset_ids = [str(row[0]) for row in conn.execute(
+            "SELECT asset_id FROM asset_prompts WHERE person_id=?", (person_id,),
+        ).fetchall()]
+        request_ids = media_jobs.request_ids_for_assets_in(conn, asset_ids)
+        from gateway import request_history
+
+        request_history.delete_linked_in(conn, person_id, request_ids)
         count = conn.execute("DELETE FROM asset_prompts WHERE person_id=?", (person_id,)).rowcount
         media_jobs.delete_person_hides_in(conn, person_id)
         conn.commit()
@@ -463,7 +513,7 @@ def mark_person_erasure(
         conn.execute("BEGIN IMMEDIATE")
         admin_store._record_prompt_erasure(conn, person_id, current)
         cutoff = conn.execute(
-            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?", (person_id,),
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=? AND grp='prompts'", (person_id,),
         ).fetchone()[0]
         conn.commit()
         return int(cutoff)
@@ -478,12 +528,12 @@ def _recorded_erasure_cutoff(conn: sqlite3.Connection, person_id: str) -> int:
     changes = [0]
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
                     (ERASURE_CUTOFF_TABLE,)).fetchone():
-        row = conn.execute(f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?",
+        row = conn.execute(f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=? AND grp='prompts'",
                            (person_id,)).fetchone()
         if row:
             changes.append(int(row[0]))
     preference = conn.execute(
-        "SELECT remember, updated_at FROM prompt_memory_preferences WHERE user_id=?", (person_id,),
+        "SELECT remember, updated_at FROM prompt_memory_preferences WHERE user_id=? AND grp='prompts'", (person_id,),
     ).fetchone()
     if preference is not None and not preference[0]:
         changes.append(int(preference[1] or 0))
@@ -525,14 +575,14 @@ def settle_erasure_cutoff(person_id: str, *, admin_path: Path | None = None) -> 
         conn.execute("BEGIN IMMEDIATE")
         retention.ensure_erasure_cutoff_table(conn)
         row = conn.execute(
-            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=?", (person_id,),
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id=? AND grp='prompts'", (person_id,),
         ).fetchone()
         current = int(row[0]) if row else 0
         cutoff = _recorded_erasure_cutoff(conn, person_id)
         if cutoff > current:
             conn.execute(
-                f"INSERT INTO {ERASURE_CUTOFF_TABLE}(person_id,cutoff_at) VALUES(?,?) "
-                "ON CONFLICT(person_id) DO UPDATE SET cutoff_at=MAX(cutoff_at,excluded.cutoff_at)",
+                f"INSERT INTO {ERASURE_CUTOFF_TABLE}(person_id,grp,cutoff_at) VALUES(?,'prompts',?) "
+                "ON CONFLICT(person_id,grp) DO UPDATE SET cutoff_at=MAX(cutoff_at,excluded.cutoff_at)",
                 (person_id, cutoff),
             )
         conn.commit()
@@ -553,7 +603,7 @@ def household_erasure_cutoff(*, admin_path: Path | None = None) -> int | None:
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (ERASURE_CUTOFF_TABLE,),
         ).fetchone()
         row = conn.execute(
-            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*'"
+            f"SELECT cutoff_at FROM {ERASURE_CUTOFF_TABLE} WHERE person_id='*' AND grp='prompts'"
         ).fetchone() if table_exists else None
         setting = conn.execute(
             "SELECT value_json, updated_at FROM operator_settings WHERE key=?", (retention.SETTING_KEY,)
@@ -570,7 +620,7 @@ def erasure_pending(person_id: str, *, admin_path: Path) -> bool:
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='prompt_memory_erasure_intents'").fetchone():
             return False
         return conn.execute(
-            "SELECT 1 FROM prompt_memory_erasure_intents WHERE person_id IN (?, '*')", (person_id,),
+            "SELECT 1 FROM prompt_memory_erasure_intents WHERE person_id IN (?, '*') AND grp='prompts'", (person_id,),
         ).fetchone() is not None
     finally:
         conn.close()
@@ -581,7 +631,7 @@ def complete_erasure(person_id: str, cutoff: int, *, admin_path: Path) -> None:
     conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
     try:
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name='prompt_memory_erasure_intents'").fetchone():
-            conn.execute("DELETE FROM prompt_memory_erasure_intents WHERE person_id=? AND cutoff_at<=?",
+            conn.execute("DELETE FROM prompt_memory_erasure_intents WHERE person_id=? AND cutoff_at<=? AND grp='prompts'",
                          (person_id, int(cutoff)))
             conn.commit()
     finally:
@@ -604,12 +654,24 @@ def prune_person_before(
     """Retry reconciliation by deleting rows at or before an erasure cutoff."""
     conn = _connect(path)
     try:
+        conn.execute("BEGIN IMMEDIATE")
+        asset_ids = [str(row[0]) for row in conn.execute(
+            "SELECT asset_id FROM asset_prompts WHERE person_id=? AND created_at<=?",
+            (person_id, int(cutoff)),
+        ).fetchall()]
+        request_ids = media_jobs.request_ids_for_assets_in(conn, asset_ids)
+        from gateway import request_history
+
+        request_history.delete_linked_in(conn, person_id, request_ids)
         deleted = conn.execute(
             "DELETE FROM asset_prompts WHERE person_id=? AND created_at<=?",
             (person_id, int(cutoff)),
         ).rowcount
         conn.commit()
         return deleted
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -628,9 +690,21 @@ def delete_all(*, path: Path | None = None) -> int:
 def delete_asset(asset_id: str, *, path: Path | None = None) -> int:
     conn = _connect(path)
     try:
+        conn.execute("BEGIN IMMEDIATE")
+        request_ids = media_jobs.request_ids_for_assets_in(conn, (asset_id,))
+        people = [str(row[0]) for row in conn.execute(
+            "SELECT DISTINCT person_id FROM asset_prompts WHERE asset_id=?", (asset_id,),
+        ).fetchall()]
+        from gateway import request_history
+
+        for person_id in people:
+            request_history.delete_linked_in(conn, person_id, request_ids)
         count = conn.execute("DELETE FROM asset_prompts WHERE asset_id=?", (asset_id,)).rowcount
         conn.commit()
         return count
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -966,6 +1040,9 @@ def remove_missing_media(
     """
     if media_folder is None:
         raise PublicFailure("media_folder_unavailable", 503)
+    gone_asset_ids = tuple(dict.fromkeys(str(asset_id) for asset_id in gone_asset_ids if asset_id))
+    hides = tuple(hides)
+    job_ids = tuple(dict.fromkeys(str(job_id) for job_id in job_ids if job_id))
     conn = _connect(path)
     other = None
     try:
@@ -978,6 +1055,11 @@ def remove_missing_media(
         conn.execute("BEGIN IMMEDIATE")
         try:
             _require_media_folder(conn, media_folder, media_identity)
+            request_ids = media_jobs.request_ids_for_assets_in(conn, gone_asset_ids)
+            request_ids.update(media_jobs.request_ids_for_jobs_in(conn, job_ids))
+            from gateway import request_history
+
+            request_history.delete_linked_in(conn, person_id, request_ids)
             conn.executemany(
                 f"DELETE FROM {prompts} WHERE asset_id=? AND person_id=?",
                 [(asset_id, person_id) for asset_id in gone_asset_ids],
@@ -1000,10 +1082,18 @@ def remove_missing_media(
 def delete_asset_for_person(asset_id: str, person_id: str, *, path: Path | None = None) -> int:
     conn = _connect(path)
     try:
+        conn.execute("BEGIN IMMEDIATE")
+        request_ids = media_jobs.request_ids_for_assets_in(conn, (asset_id,))
+        from gateway import request_history
+
+        request_history.delete_linked_in(conn, person_id, request_ids)
         count = conn.execute(
             "DELETE FROM asset_prompts WHERE asset_id=? AND person_id=?", (asset_id, person_id),
         ).rowcount
         conn.commit()
         return count
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()

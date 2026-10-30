@@ -76,6 +76,7 @@ DELETED_PATHS = {
     "/logout", *(f"/admin/{name}{slash}" for name in ADMIN_SECTIONS for slash in ("", "/")),
 }
 NEW_PATHS = {"/setup/console"}
+SESSION_END_TOKEN_PATH = "/me/api/session/end-token"
 # Per-engine native pass-through (contract section 5): new since the baseline, off unless an engine enables it.
 NATIVE_PREFIX = "/native"
 # The access plan API replaced these admin routes (docs/design/ACCESS_PLANS.md): profiles, runtime
@@ -144,6 +145,8 @@ def _now_needs_a_key_any(old: str | None, new: str | None) -> bool:
 def _deliberate(key: str) -> str | None:
     """The reviewed class of a difference, or None if none may exist."""
     _method, path = key.split(" ", 1)
+    if path == SESSION_END_TOKEN_PATH:
+        return "session_end_token"
     if (path in {"/admin/api/me/retention/ledger", "/admin/api/requests/sample/retention/ledger",
                  "/admin/api/settings/retention/ledger", "/admin/api/settings/retention/systems/sample/facts"}
             or re.fullmatch(r"/admin/api/(engines|providers)/[^/]+/retention/(facts|ledger)", path)):
@@ -152,6 +155,14 @@ def _deliberate(key: str) -> str | None:
         return "access-plans"
     if path.startswith("/admin/api/apps/") and "/trusted-addresses" in path:
         return "trusted-addresses"  # owner routes added after the baseline (gateway/trusted_addresses.py)
+    if path.startswith("/me/api/apps/") and path.endswith("/trusted-addresses"):
+        return "trusted-addresses"  # a person's own App's address, added after the baseline (tests/test_me_trusted_addresses.py)
+    if re.fullmatch(r"/me/api/credentials/[^/]+/adopt", path) or re.fullmatch(r"/me/api/apps/[^/]+/trusted-addresses/[^/]+/(adopt|readd)", path):
+        return "adopt"  # a person keeps, or adds again, an unproven binding on their own App (tests/test_me_binding_adoption.py)
+    if re.fullmatch(r"/me/api/credentials/[^/]+/replace", path):
+        return "adopt"  # a person replaces a key they cannot keep, on their own App (tests/test_me_binding_adoption.py)
+    if re.fullmatch(r"/me/api/apps/[^/]+/trusted-addresses/[^/]+", path):
+        return "trusted-addresses"  # a person removes an address from their own App (tests/test_me_binding_adoption.py)
     if re.fullmatch(r"/admin/api/apps/[^/]+/keys/[^/]+", path) or (
             _method == "PATCH" and re.fullmatch(r"/me/api/(apps|credentials)/[^/]+", path)):
         return "rename"  # renaming an App or a key (gateway/admin_api.py rename_key, proxy.py user_portal_rename_*)
@@ -177,6 +188,10 @@ def _deliberate(key: str) -> str | None:
         return "deleted"
     if path == NATIVE_PREFIX or path.startswith(NATIVE_PREFIX + "/"):
         return "native"
+    if (path == "/gateway/v1/requests" or path.startswith("/gateway/v1/requests/")
+            or path in {"/me/api/retention", "/me/api/retention/notice-seen", "/gateway/v1/me/retention"}
+            or re.fullmatch(r"/me/api/credentials/[^/]+/privacy-permission", path)):
+        return "request_history"  # history rows, the member's own choice, its notice and permission; tests/test_request_history_*.py
     if path in NEW_PATHS:
         return "new"
     if path == THUMBNAIL_PATH:
@@ -254,6 +269,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # the access plan API replaced /admin/api/profiles
         if kind == "trusted-addresses":
             continue  # new owner routes; tests/test_trusted_addresses.py covers them
+        if kind == "adopt":
+            continue  # a person keeps an unproven binding on their own App; tests/test_me_binding_adoption.py covers it
         if kind == "rename":
             continue  # new rename routes; tests/test_rename_apps_keys.py covers them
         if kind == "signin":
@@ -273,6 +290,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner command permission route
         if kind == "sessions" and key not in old:
             continue  # new session settings, step-up and sign-out-everywhere routes
+        if kind == "session_end_token" and key not in old:
+            continue  # lightweight member CSRF-token read for sign-out; tests/test_session_lifecycle.py covers it
         if kind == "remembered" and key not in old:
             continue  # new sign-in list and forget routes; tests/test_remembered_people.py covers them
         if kind == "provider_sign_out":
@@ -288,6 +307,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner routes (the secret commands, and the records the registry leaves out)
         if kind == "avatar" and key not in old:
             continue  # new member routes; tests/test_me_avatar.py and tests/test_avatar_signin.py cover them
+        if kind == "request_history" and key not in old:
+            continue  # new maker routes and the member choice; tests/test_request_history_*.py cover them
         if _now_needs_a_key(old.get(key), new.get(key)):
             continue
         if kind == "new" and key in {"GET /setup/console", "HEAD /setup/console"} | {
@@ -327,7 +348,7 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if old.get(key) == new.get(key):
             continue
         kind = _deliberate(key)
-        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "rename", "signin", "engines", "host_commands", "sessions", "secret_entries", "native", "avatar", "remembered", "provider_sign_out"}:
+        if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "adopt", "rename", "signin", "engines", "host_commands", "sessions", "session_end_token", "secret_entries", "native", "avatar", "remembered", "request_history", "provider_sign_out"}:
             continue
         if kind == "retention_ledger" and key not in old:
             continue

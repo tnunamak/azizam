@@ -70,6 +70,8 @@ interface UsageModel {
   paidRequests: number | null;
   /** Paid requests whose cost was not recorded; null when not reported. */
   unknownPaidRequests: number | null;
+  /** Requests whose receipts show they were served on this machine; null when not reported. */
+  localRequests: number | null;
 }
 
 interface UsageReceipt {
@@ -86,6 +88,8 @@ interface UsageReceipt {
   status: string | null;
   durationMs: number | null;
   costUsd: number | null;
+  /** The receipt shows the request was served on this machine (its backend, not the default). */
+  servedLocally: boolean;
   summary: string;
   sourceLabel: string | null;
   personLabel?: string | null;
@@ -116,6 +120,7 @@ interface UsageSummary {
   spendTotalRequests: number | null;
   paidRequests: number | null;
   unknownPaidRequests: number | null;
+  localRequests: number | null;
   truncated: boolean;
 }
 
@@ -156,8 +161,8 @@ const requestNouns: Record<UsageCapability, string> = {
   voice: "Voice",
   transcribe: "Transcription",
   decide: "Decision",
-  embed: "Embedding",
-  embeddings: "Embedding",
+  embed: "Document search",
+  embeddings: "Document search",
   rerank: "Rerank",
   other: "Other",
 };
@@ -201,7 +206,7 @@ export default function UsagePage() {
         app: receipt.sourceLabel ?? nullableString(object(receipt.raw).app_label) ?? "",
         modelName: receipt.model ? nameModel(receipt.model) : "",
         requests: 1,
-        spendUsd: receipt.costUsd ?? (object(receipt.raw).remote === false ? 0 : null),
+        spendUsd: receipt.costUsd ?? (receipt.servedLocally ? 0 : null),
       };
     }));
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -477,9 +482,6 @@ function failedFigure(summary: UsageSummary): string {
 }
 
 function SummaryRow({ summary }: { summary: UsageSummary }) {
-  const noPaidRequests =
-    summary.paidRequests === 0 && summary.unknownPaidRequests === 0 &&
-    summary.remoteSpendUsd === 0;
   return (
     <StatStrip label="This month">
       <Stat
@@ -489,15 +491,7 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
       />
       <Stat
         label="Spend this month (USD)"
-        value={
-          noPaidRequests ? (
-            "No paid requests"
-          ) : summary.remoteSpendUsd === null ? (
-            "Cost not recorded"
-          ) : (
-            <Money amount={summary.remoteSpendUsd} summary precise />
-          )
-        }
+        value={<SpendFigure summary={summary} />}
         note={<><span>{spendCoverageDetail(summary)}</span><CoverageNote summary={summary} /></>}
       />
       <Stat
@@ -512,6 +506,24 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
       />
     </StatStrip>
   );
+}
+
+/**
+ * The period's spend figure. The note beside it already says what the total leaves out, so
+ * the figure adds only the local requests, and says No paid requests when none is paid.
+ */
+function SpendFigure({ summary }: { summary: UsageSummary }) {
+  const state = summarySpend(summary);
+  const noPaid = summary.paidRequests === 0 && summary.unknownPaidRequests === 0 && summary.remoteSpendUsd === 0;
+  const notes = state.kind === "local" ? [] : localNotes(state.local);
+  if (state.kind !== "local" && (summary.requests === 0 || noPaid))
+    return (
+      <>
+        <span>No paid requests</span>
+        <Notes lines={notes} />
+      </>
+    );
+  return <CostCell state={state} notes={notes} />;
 }
 
 function CoverageNote({ summary }: { summary: UsageSummary }) {
@@ -539,17 +551,13 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
   }));
   const tasks = capabilities.map((capability) => {
     const modelsForTask = models.filter((model) => model.capability === capability);
-    const measured = modelsForTask.filter((model) => model.costUsd !== null);
-    const incomplete = modelsForTask.some((model) =>
-      ["partial", "unavailable"].includes(modelCostKind(model)),
-    );
     return {
       capability,
       requests: modelsForTask.every((model) => model.requests !== null)
         ? modelsForTask.reduce((sum, model) => sum + (model.requests ?? 0), 0) : null,
-      costUsd: measured.length ? measured.reduce((sum, model) => sum + (model.costUsd ?? 0), 0) : null,
-      unavailable: measured.length === 0,
-      incomplete,
+      cost: costState(sumCosts(modelsForTask)),
+      // A request with no cost and no remote count cannot say whether its cost is in the total.
+      partial: modelsForTask.some((model) => model.costUsd === null && model.unknownPaidRequests === null),
     };
   }).filter((task) => task.requests === null || task.requests > 0).sort((a, b) => (b.requests ?? -1) - (a.requests ?? -1));
   const active = capabilities.filter((capability) =>
@@ -633,8 +641,12 @@ function DailyChart({ days, models, requests }: { days: UsageDay[]; models: Usag
                       <TableCell numeric className="max-sm:px-2">{formatRequests(task.requests)}</TableCell>
                       <TableCell numeric className="max-sm:px-2">{requests > 0 && task.requests !== null ? `${Math.round(task.requests / requests * 1000) / 10}%` : "Unknown"}</TableCell>
                       <TableCell numeric className="max-sm:px-2 max-sm:whitespace-normal">
-                        {task.unavailable ? "Cost not recorded" : <Money amount={task.costUsd} summary precise />}
-                        {!task.unavailable && task.incomplete ? <span className="text-muted-foreground ml-1 text-meta">Some costs missing</span> : null}
+                        <CostCell
+                          state={task.cost}
+                          notes={task.partial
+                            ? [...costNotes(task.cost), "Some requests have no recorded cost."]
+                            : costNotes(task.cost)}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}
@@ -731,33 +743,149 @@ function ModelTable({
   );
 }
 
-type ModelCostKind = "amount" | "partial" | "unavailable";
+/**
+ * What a spend cell says, from the counts the gateway sends. `usd` is the sum of
+ * reported costs, or null when none was reported. `unknownPaid` counts remote requests
+ * with no reported cost, and `local` counts requests whose receipts show they were served
+ * on this machine. A null count means the gateway did not say, so the cell claims nothing
+ * about where those requests ran.
+ */
+type CostState =
+  | { kind: "amount"; usd: number; excluded: number; local: number }
+  | { kind: "not-reported"; excluded: number; local: number }
+  | { kind: "local"; local: number }
+  | { kind: "unrecorded"; local: number };
+
+interface CostCounts {
+  usd: number | null;
+  unknownPaid: number | null;
+  local: number | null;
+  requests: number | null;
+}
 
 /**
- * What the Spend cell of a model row says. A recorded charge shows the amount.
- * A paid-request counter is not routing evidence. Without an amount,
- * say Cost not recorded, never Local or a guessed zero.
+ * One rule for a receipt and for a group of them. A group where every request was served
+ * here and nothing was charged says Local · no charge. Otherwise it shows the reported
+ * amount, or why there is none. A local request never makes a remote one look free.
  */
-function modelCostKind(row: UsageModel): ModelCostKind {
-  const unknownPaid = (row.unknownPaidRequests ?? 0) > 0;
-  if (row.costUsd != null && row.costUsd > 0) return unknownPaid ? "partial" : "amount";
-  if (unknownPaid) return "unavailable";
-  if (row.costUsd != null) return "amount";
-  return "unavailable";
+function costState({ usd, unknownPaid, local, requests }: CostCounts): CostState {
+  const excluded = unknownPaid ?? 0;
+  const localCount = local ?? 0;
+  if (usd !== null && usd > 0) return { kind: "amount", usd, excluded, local: localCount };
+  if (requests !== null && requests > 0 && localCount === requests && excluded === 0)
+    return { kind: "local", local: localCount };
+  if (usd !== null) return { kind: "amount", usd, excluded, local: localCount };
+  if (excluded > 0) return { kind: "not-reported", excluded, local: localCount };
+  return { kind: "unrecorded", local: localCount };
+}
+
+/** Adds up a group of model rows. A count that any row lacks stays unknown. */
+function sumCosts(rows: UsageModel[]): CostCounts {
+  const measured = rows.filter((row) => row.costUsd !== null);
+  return {
+    usd: measured.length ? measured.reduce((sum, row) => sum + (row.costUsd ?? 0), 0) : null,
+    unknownPaid: sumKnown(rows.map((row) => row.unknownPaidRequests)),
+    local: sumKnown(rows.map((row) => row.localRequests)),
+    requests: sumKnown(rows.map((row) => row.requests)),
+  };
+}
+
+/** The sum of counts, or null when any count is unknown. */
+function sumKnown(counts: (number | null)[]): number | null {
+  return counts.every((count): count is number => count !== null)
+    ? counts.reduce((sum, count) => sum + count, 0)
+    : null;
+}
+
+function summarySpend(summary: UsageSummary): CostState {
+  return costState({
+    usd: summary.remoteSpendUsd,
+    unknownPaid: summary.unknownPaidRequests,
+    local: summary.localRequests,
+    requests: summary.requests,
+  });
+}
+
+/** A receipt's cost: one request, read by the same rule as a total. */
+function receiptCostState(receipt: UsageReceipt): CostState {
+  const raw = object(receipt.raw);
+  const cost = object(raw.cost);
+  const reported = receipt.costUsd ?? nullableNumber(cost.usd);
+  const unreported = reported === null && (raw.remote === true || cost.cost_class === "paid-remote");
+  return costState({
+    usd: reported,
+    unknownPaid: unreported ? 1 : 0,
+    local: receipt.servedLocally ? 1 : 0,
+    requests: 1,
+  });
+}
+
+const costCopy: Record<Exclude<CostState["kind"], "amount">, { label: string; help: string }> = {
+  local: {
+    label: "Local · no charge",
+    help: "Didn’t go to a paid provider, so nothing was charged.",
+  },
+  "not-reported": {
+    label: "Cost not reported by the provider",
+    help: "A paid provider handled this request but didn’t report what it cost, so it isn’t in the total.",
+  },
+  unrecorded: {
+    label: "Cost not recorded",
+    help: "Azizam didn’t record where this request ran, so it can’t say whether it cost money.",
+  },
+};
+
+function excludedCopy(count: number) {
+  return `Total excludes ${formatNumber(count)} ${count === 1 ? "request" : "requests"} without a reported cost`;
+}
+
+/** The line that says how many requests ran here at no charge, or no line. */
+function localNotes(count: number): string[] {
+  return count > 0 ? [`${formatNumber(count)} local · no charge`] : [];
+}
+
+/** What a group's cell adds beside its amount: what the total leaves out, and the local requests. */
+function costNotes(state: CostState): string[] {
+  return [
+    ...(state.kind === "amount" && state.excluded > 0 ? [excludedCopy(state.excluded)] : []),
+    ...(state.kind === "local" ? [] : localNotes(state.local)),
+  ];
+}
+
+function Notes({ lines }: { lines: string[] }) {
+  return (
+    <>
+      {lines.map((line) => (
+        <span key={line} className="text-muted-foreground block text-meta">{line}</span>
+      ))}
+    </>
+  );
+}
+
+/** A spend value: the amount or the label that says why there is none, then its notes. */
+function CostCell({ state, notes = [] }: { state: CostState; notes?: string[] }) {
+  return (
+    <>
+      {state.kind === "amount" ? (
+        <Money amount={state.usd} summary precise />
+      ) : (
+        <span className="text-muted-foreground" title={costCopy[state.kind].help}>
+          {costCopy[state.kind].label}
+        </span>
+      )}
+      <Notes lines={notes} />
+    </>
+  );
 }
 
 function ModelCost({ row }: { row: UsageModel }) {
-  const kind = modelCostKind(row);
-  if (kind === "unavailable")
-    return <span className="text-muted-foreground">Cost not recorded</span>;
-  return (
-    <>
-      <Money amount={row.costUsd} summary precise />
-      {kind === "partial" ? (
-        <span className="text-muted-foreground ml-1 text-meta">Some costs missing</span>
-      ) : null}
-    </>
-  );
+  const state = costState({
+    usd: row.costUsd,
+    unknownPaid: row.unknownPaidRequests,
+    local: row.localRequests,
+    requests: row.requests,
+  });
+  return <CostCell state={state} notes={costNotes(state)} />;
 }
 
 function ReceiptsList({
@@ -783,7 +911,7 @@ function ReceiptsList({
       </CardHeader>
       <CardContent>
         {loading && !receipts.length ? (
-          <div aria-label="Loading receipts" className="space-y-3">
+          <div role="status" aria-label="Loading receipts" aria-busy="true" className="space-y-3">
             {[0, 1, 2].map((item) => (
               <Skeleton key={item} className="h-16 w-full" />
             ))}
@@ -794,6 +922,7 @@ function ReceiptsList({
               <button
                 type="button"
                 key={receipt.selectionKey}
+                data-receipt-id={receipt.requestId ?? undefined}
                 aria-label={`Receipt details for ${receipt.summary}${showPerson ? ` · ${receipt.personLabel ?? "Person not recorded"}` : ""}`}
                 onClick={() => onSelect(receipt)}
                 className="hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-3 py-4 text-left focus-visible:outline-2"
@@ -1122,6 +1251,7 @@ function normalizeSummary(raw: unknown): UsageSummary {
     unknownPaidRequests: nullableNumber(
       data.unknown_paid_requests ?? data.unknownPaidRequests,
     ),
+    localRequests: requestCount(data.local_requests),
     truncated: Boolean(data.truncated),
   };
 }
@@ -1215,6 +1345,7 @@ function normalizeReceipt(raw: unknown, selectionKey: string): UsageReceipt {
     status,
     durationMs,
     costUsd,
+    servedLocally: data.served_locally === true,
     summary: `${requestNouns[capability]} request`,
     sourceLabel: nullableString(object(data.source).label ?? data.source_label),
     personLabel: nullableString(data.person_label),
@@ -1266,6 +1397,7 @@ function normalizeModel(raw: unknown): UsageModel {
     ),
     paidRequests: requestCount(data.paid_requests),
     unknownPaidRequests: requestCount(data.unknown_paid_requests),
+    localRequests: requestCount(data.local_requests),
   };
 }
 
@@ -1350,17 +1482,16 @@ function formatDuration(value: number | null) {
 }
 
 function spendCoverageDetail(summary: UsageSummary) {
-  // No paid requests means no costs to record; say nothing beside "No paid requests".
+  // No paid or unreported requests: there is nothing to explain beside "No paid requests".
   if (summary.paidRequests === 0 && summary.unknownPaidRequests === 0) return "";
-  const coverage = summary.spendMeasuredRequests !== null && summary.spendTotalRequests !== null
-    ? `Costs recorded for ${formatNumber(summary.spendMeasuredRequests)} of ${formatNumber(summary.spendTotalRequests)} requests.`
-    : "We don't know how many request costs were recorded.";
-  const unknown = summary.unknownPaidRequests;
-  return coverage + (unknown !== null && unknown > 0
-    ? ` ${formatNumber(unknown)} paid ${unknown === 1 ? "request has" : "requests have"} unknown cost.` : "");
+  const parts: string[] = [];
+  if (summary.spendMeasuredRequests === null || summary.spendTotalRequests === null)
+    parts.push("We don't know how many request costs were recorded.");
+  const excluded = summary.unknownPaidRequests ?? 0;
+  if (excluded > 0) parts.push(`${excludedCopy(excluded)}. Spend adds only costs providers reported.`);
+  return parts.join(" ");
 }
 
-// A missing cost is unknown unless the receipt says the request stayed local.
 function ReceiptCost({
   receipt,
   summary = false,
@@ -1368,10 +1499,17 @@ function ReceiptCost({
   receipt: UsageReceipt;
   summary?: boolean;
 }) {
-  if (receipt.costUsd != null)
-    return <Money amount={receipt.costUsd} summary={summary} precise={summary} />;
-  if (object(receipt.raw).remote === false) return <>No provider charge</>;
-  return <>Cost not recorded</>;
+  const state = receiptCostState(receipt);
+  if (state.kind === "amount")
+    return <Money amount={state.usd} summary={summary} precise={summary} />;
+  const copy = costCopy[state.kind];
+  if (summary) return <span title={copy.help}>{copy.label}</span>;
+  return (
+    <>
+      <span>{copy.label}</span>
+      <span className="text-muted-foreground block text-meta">{copy.help}</span>
+    </>
+  );
 }
 
 function shortDate(value: string) {

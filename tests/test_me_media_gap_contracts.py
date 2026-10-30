@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from tests.support.app_keys import accountable_person
 import json
 import shutil
 import sqlite3
@@ -19,6 +20,7 @@ from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
 from gateway.receipts import RouteReceipt
+from gateway import request_source
 from tests.support.access import service_app
 
 
@@ -68,16 +70,14 @@ class MeMediaGapContractTests(unittest.TestCase):
             app_id=self.app_a["id"],
             hash="sha256:alice",
             prefix="test_alice",
-            path=self.admin_db,
-        )
+            path=self.admin_db, created_by=accountable_person(self.admin_db, self.app_a["id"]))
         self.cred_b = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=self.app_b["id"],
             app_id=self.app_b["id"],
             hash="sha256:bob",
             prefix="test_bob",
-            path=self.admin_db,
-        )
+            path=self.admin_db, created_by=accountable_person(self.admin_db, self.app_b["id"]))
         self.current_user = self.alice
         app = FastAPI()
         app.include_router(
@@ -209,6 +209,9 @@ class MeMediaGapContractTests(unittest.TestCase):
     def test_deleted_asset_survives_same_person_audit_pagination(self) -> None:
         asset_id = "img_" + "b" * 64
         self._write_asset(asset_id, ["sha256:alice", "sha256:bob"])
+        meta = self._asset_metadata(asset_id)
+        meta["maker_person_ids"] = [self.alice["id"]]
+        self._meta_path(asset_id).write_text(json.dumps(meta))
         headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         response = self.client.delete(f"/me/api/media/{asset_id}", headers=headers)
         self.assertEqual(response.status_code, 200, response.text)
@@ -224,20 +227,19 @@ class MeMediaGapContractTests(unittest.TestCase):
             )
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
         self.assertEqual(self.client.get("/me/api/media").json()["assets"], [])
+        # Bob holds an owner key but did not make it, so he never read it (D51); the file itself survives.
         self.current_user = self.bob
-        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
         self.assertTrue(self._asset_path(asset_id).exists())
 
     def test_stale_owner_session_loses_everyone_access_immediately(self) -> None:
         asset_id = "img_" + "c" * 64
         self._write_asset(asset_id, ["sha256:alice"], "PRIVATE-PROMPT")
         self.current_user = self.owner
-        paths = [
-            "/me/api/media?scope=everyone",
-            f"/me/api/media/{asset_id}?scope=everyone",
-            f"/me/api/media/{asset_id}/download?scope=everyone",
-            "/me/api/usage/summary?person=all",
-        ]
+        # The Library has no owner-everyone selector for any role (D51), so only the operational usage view is gated.
+        for path in ("/me/api/media?scope=everyone", f"/me/api/media/{asset_id}?scope=everyone"):
+            self.assertEqual(self.client.get(path).status_code, 400, path)
+        paths = ["/me/api/usage/summary?person=all"]
         for path in paths:
             response = self.client.get(path)
             self.assertEqual(response.status_code, 200, (path, response.text))
@@ -256,17 +258,19 @@ class MeMediaGapContractTests(unittest.TestCase):
     def test_jobs_paginate_ties_after_scoping_without_loss(self) -> None:
         expected = [f"mine-{i:03d}" for i in range(205)]
         for job_id in expected:
-            media_jobs.create(media_jobs.MediaJob(
-                job_id=job_id, intent="image.generate", app_id=self.app_a["id"],
-                status="succeeded", created_at=1700000000, updated_at=1700000000,
-            ), path=self.jobs_db)
+            with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+                media_jobs.create(media_jobs.MediaJob(
+                    job_id=job_id, intent="image.generate", app_id=self.app_a["id"],
+                    status="succeeded", created_at=1700000000, updated_at=1700000000,
+                ), path=self.jobs_db)
         # Newer foreign rows would fill a globally paginated first page.
         for index in range(105):
-            media_jobs.create(media_jobs.MediaJob(
-                job_id=f"foreign-{index:03d}", intent="image.generate",
-                app_id=self.app_b["id"], status="succeeded",
-                created_at=1700000001, updated_at=1700000001,
-            ), path=self.jobs_db)
+            with request_source.acting_as(app_id=self.app_b["id"], person_id=self.bob["id"]):
+                media_jobs.create(media_jobs.MediaJob(
+                    job_id=f"foreign-{index:03d}", intent="image.generate",
+                    app_id=self.app_b["id"], status="succeeded",
+                    created_at=1700000001, updated_at=1700000001,
+                ), path=self.jobs_db)
         collected, lengths, cursor = [], [], None
         for _ in range(3):
             params = {"cursor": cursor} if cursor is not None else {}

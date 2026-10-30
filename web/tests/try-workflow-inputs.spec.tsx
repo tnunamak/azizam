@@ -483,16 +483,106 @@ describe("WorkflowInputs", () => {
       within(picture).getByRole("button", { name: "Choose a file" }),
     ).toBeVisible();
     expect(screen.queryByRole("textbox", { name: /Source image/ })).toBeNull();
-    expect(
-      document.querySelector('[data-technical-input="source_image"]'),
-    ).toHaveTextContent("Sent as the file part source_image.");
-    // An ignored input is not a control; it is explained under Input details.
+    // The owner's detail is the picture's own helper text, not a separate list.
+    expect(within(picture).getByText(/Sent as the file part source_image\./)).toBeVisible();
+    expect(screen.queryByText("Input details")).toBeNull();
+    // An ignored input is not a control, so it has no row, and nothing lists it apart.
     expect(screen.queryByRole("textbox", { name: "Seed" })).toBeNull();
     expect(screen.queryByRole("spinbutton", { name: "Seed" })).toBeNull();
-    const technical = document.querySelector('[data-technical-input="seed"]')!;
-    expect(technical).toHaveTextContent(
-      "Known input, but this route ignores it for the selected workflow.",
-    );
+    expect(screen.queryByText(/Known input, but this route ignores it/)).toBeNull();
+  });
+
+  describe("each input's detail is its own helper text", () => {
+    // A change-strength input as a manifest sends it: a label, a plain help line, and a request field the
+    // workflow extension carries. Before it had a help line, its only description was in a separate list.
+    const changeStrength: WorkflowInput = {
+      name: "strength",
+      type: "number",
+      label: "change strength",
+      help: "Keep at 1 to change the whole picture.",
+      minimum: 0,
+      maximum: 1,
+      applies: "Workflow extension",
+      request_field: "strength",
+    };
+    function Form({ owner }: { owner: boolean }) {
+      const [json, setJson] = useState("{}");
+      return (
+        <WorkflowInputs inputs={[changeStrength]} json={json} onChange={setJson} technical={owner} />
+      );
+    }
+
+    it("shows the manifest's help under the input's own control, for a member", () => {
+      render(<Form owner={false} />);
+      const control = screen.getByRole("spinbutton", { name: "Change strength" });
+      expect(control.closest("label")).toHaveTextContent(
+        "Keep at 1 to change the whole picture.",
+      );
+      expect(screen.queryByText(/Writes strength/)).toBeNull();
+      expect(screen.queryByText("Input details")).toBeNull();
+    });
+
+    it("adds the owner's technical detail to that same helper text, with no separate list", () => {
+      render(<Form owner />);
+      const control = screen.getByRole("spinbutton", { name: "Change strength" });
+      expect(control.closest("label")).toHaveTextContent(
+        "Keep at 1 to change the whole picture. Writes strength · range 0 to 1. Workflow extension.",
+      );
+      expect(screen.queryByText("Input details")).toBeNull();
+    });
+  });
+
+  describe("a control's accessible description is its helper text, then its problem", () => {
+    const strength: WorkflowInput = {
+      name: "strength",
+      type: "number",
+      help: "Keep at 1 to change the whole picture.",
+      required: true,
+      minimum: 0,
+      maximum: 1,
+    };
+    const picture: WorkflowInput = {
+      name: "source_image",
+      type: "asset",
+      required: true,
+      help: "The picture to change.",
+    };
+
+    it("describes a number control by its helper text", () => {
+      render(<WorkflowInputs inputs={[strength]} json="{}" onChange={() => undefined} />);
+      expect(screen.getByRole("spinbutton", { name: /Strength/ })).toHaveAccessibleDescription(
+        "Keep at 1 to change the whole picture.",
+      );
+    });
+
+    it("describes a control with a problem by its helper text and then the problem", () => {
+      render(
+        <WorkflowInputs
+          inputs={[strength]}
+          json="{}"
+          onChange={() => undefined}
+          problems={{ strength: "Enter a number from 0 to 1." }}
+        />,
+      );
+      expect(screen.getByRole("spinbutton", { name: /Strength/ })).toHaveAccessibleDescription(
+        "Keep at 1 to change the whole picture. Enter a number from 0 to 1.",
+      );
+    });
+
+    it("describes a picture's Choose a file button by its helper text", () => {
+      render(
+        <WorkflowInputs
+          inputs={[picture]}
+          json="{}"
+          onChange={() => undefined}
+          onFileChange={() => undefined}
+        />,
+      );
+      const group = screen.getByRole("group", { name: /Source image/ });
+      expect(
+        within(group).getByRole("button", { name: "Choose a file" }),
+      ).toHaveAccessibleDescription("The picture to change.");
+    });
   });
 
   it("renders mapped body asset inputs as a picker with the link under Advanced", () => {

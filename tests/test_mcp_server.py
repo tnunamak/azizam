@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import io
 from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
+from PIL import Image, ImageDraw
 from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -89,6 +91,7 @@ class Core:
         self.polls: dict[str, list[dict[str, Any]]] = {}
         self.stored: list[tuple[str, str, int]] = []
         self.assets: dict[str, bytes] = {}
+        self.read_calls: list[tuple[str, Any]] = []
         self.authed = True
 
     async def call(self, request, method, path, **kwargs):
@@ -106,9 +109,11 @@ class Core:
     def store_asset(self, request, auth, content, kind, suffix):
         self.stored.append((kind, suffix, len(content)))
         asset_id = f"{kind}_{'a' * 64}"
-        return {"asset_id": asset_id, "url": f"https://gw.test/v1/assets/{asset_id}/content?sig=x", "media_type": "x", "size_bytes": len(content)}
+        media_type = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}.get(suffix, "x")
+        return {"asset_id": asset_id, "url": f"https://gw.test/v1/assets/{asset_id}/content?sig=x", "media_type": media_type, "size_bytes": len(content)}
 
     def read_asset(self, request, auth, asset_id):
+        self.read_calls.append((asset_id, auth))
         return self.assets.get(asset_id)
 
 
@@ -123,7 +128,7 @@ def env():
 
     deps = McpDeps(authenticate=authenticate, call=core.call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
                    store_asset=core.store_asset, read_asset=core.read_asset,
-                   public_base_url=lambda r: "https://gw.test", poll_interval=0.0,
+                   read_preview_asset=core.read_asset, public_base_url=lambda r: "https://gw.test", poll_interval=0.0,
                    allowed_origins=lambda r: ["https://gw.test"])
     app = FastAPI()
     mcp_server.register_mcp_routes(app, deps)
@@ -272,8 +277,88 @@ def test_notification_is_202_without_body(env):
 
 def test_legacy_tools_list_has_the_three_meta_tools_and_the_two_rename_tools(env):
     tools = rpc(env, "tools/list", headers={"mcp-protocol-version": "2025-06-18"}).json()["result"]["tools"]
-    assert [t["name"] for t in tools] == ["capabilities", "run", "job", "rename_app", "rename_key"]
+    assert [t["name"] for t in tools] == [
+        "capabilities", "run", "job", "view_asset", "rename_app", "rename_key", "requests", "retention",
+    ]
     assert all(t["inputSchema"]["type"] == "object" for t in tools)
+
+
+def test_request_history_and_retention_tools_have_scoped_schemas(env):
+    tools = {tool["name"]: tool for tool in rpc(env, "tools/list").json()["result"]["tools"]}
+
+    requests = tools["requests"]["inputSchema"]
+    assert requests["properties"]["action"]["enum"] == ["list", "get", "delete", "delete_all"]
+    assert requests["properties"]["record_id"]["type"] == "string"
+    assert requests["additionalProperties"] is False
+
+    retention = tools["retention"]["inputSchema"]
+    assert retention["properties"]["action"]["enum"] == ["mine_get", "mine_set"]
+    assert retention["properties"]["keep"]["type"] == "boolean"
+    assert retention["properties"]["retention"]["type"] == "string"
+    assert retention["properties"]["parts"]["items"]["type"] == "string"
+    assert retention["additionalProperties"] is False
+
+    view_asset = tools["view_asset"]["inputSchema"]
+    assert view_asset["required"] == ["asset_id"]
+    assert view_asset["properties"]["crop"]["minItems"] == 4
+    assert view_asset["additionalProperties"] is False
+
+
+def test_requests_tool_dispatches_to_personal_history_routes(env):
+    env.core.routes.update({
+        ("GET", "/gateway/v1/requests"): httpx.Response(
+            200, json={"requests": [{"record_id": "r1"}], "next_cursor": None}),
+        ("GET", "/gateway/v1/requests/r%2F1"): httpx.Response(200, json={"record_id": "r/1"}),
+        ("DELETE", "/gateway/v1/requests/r%2F1"): httpx.Response(204),
+        ("DELETE", "/gateway/v1/requests"): httpx.Response(200, json={"deleted": 1}),
+    })
+
+    listed = call(env, "requests", {"action": "list", "limit": 7, "cursor": "10:r0"})
+    read = call(env, "requests", {"action": "get", "record_id": "r/1"})
+    deleted = call(env, "requests", {"action": "delete", "record_id": "r/1"})
+    deleted_all = call(env, "requests", {"action": "delete_all"})
+
+    assert listed["structuredContent"]["requests"][0]["record_id"] == "r1"
+    assert read["structuredContent"]["record_id"] == "r/1"
+    assert deleted["structuredContent"] == {"deleted": "r/1"}
+    assert deleted_all["structuredContent"]["deleted"] == 1
+    assert env.core.calls == [
+        ("GET", "/gateway/v1/requests", {"params": {"limit": 7, "cursor": "10:r0"}}),
+        ("GET", "/gateway/v1/requests/r%2F1", {}),
+        ("DELETE", "/gateway/v1/requests/r%2F1", {}),
+        ("DELETE", "/gateway/v1/requests", {}),
+    ]
+
+
+def test_retention_tool_dispatches_setting_and_reports_permission_errors(env):
+    env.core.routes[("GET", "/gateway/v1/me/retention")] = httpx.Response(
+        200, json={"keep": True, "retention": "30d", "parts": ["accepted"]})
+    env.core.routes[("PUT", "/gateway/v1/me/retention")] = httpx.Response(
+        200, json={"keep": False, "retention": "30d", "parts": ["accepted"]})
+
+    read = call(env, "retention", {"action": "mine_get"})
+    saved = call(env, "retention", {
+        "action": "mine_set", "keep": False, "retention": "30d", "parts": ["accepted"],
+    })
+    env.core.routes[("PUT", "/gateway/v1/me/retention")] = httpx.Response(
+        403, json={"error": {"code": "privacy_permission_required"}})
+    refused = call(env, "retention", {
+        "action": "mine_set", "keep": False, "retention": "30d", "parts": ["accepted"],
+    })
+
+    assert read["structuredContent"]["keep"] is True
+    assert saved["structuredContent"]["keep"] is False
+    assert refused["isError"] is True
+    assert refused["structuredContent"]["error"]["code"] == "privacy_permission_required"
+    assert env.core.calls == [
+        ("GET", "/gateway/v1/me/retention", {}),
+        ("PUT", "/gateway/v1/me/retention", {"json": {
+            "keep": False, "retention": "30d", "parts": ["accepted"],
+        }}),
+        ("PUT", "/gateway/v1/me/retention", {"json": {
+            "keep": False, "retention": "30d", "parts": ["accepted"],
+        }}),
+    ]
 
 
 def test_owner_only_stt_measurement_tool_is_not_listed_to_nonowners():
@@ -366,7 +451,7 @@ def test_modern_unknown_method_is_404_with_32601(env):
 
 def test_modern_results_carry_result_type_and_cache_hints(env):
     result = rpc(env, "tools/list", modern=True).json()["result"]
-    assert result["resultType"] == "complete" and result["cacheScope"] == "public"
+    assert result["resultType"] == "complete" and result["cacheScope"] == "private"
 
 
 def test_unknown_tool_is_a_protocol_error(env):
@@ -447,6 +532,28 @@ def _image_reply(body):
     return httpx.Response(200, json={"data": [{"url": f"https://gw.test/v1/assets/img_{'b' * 64}/content?sig=1"}]})
 
 
+def _png(size=(96, 64), *, transparent=False, color=(30, 120, 220)):
+    image = Image.new("RGBA" if transparent else "RGB", size,
+                      (*color, 255) if transparent else color)
+    if transparent:
+        image.putpixel((0, 0), (240, 20, 30, 0))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _split_color_png():
+    image = Image.new("RGB", (1600, 800), "red")
+    ImageDraw.Draw(image).rectangle((800, 0, 1599, 799), fill="blue")
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _image_blocks(result):
+    return [item for item in result["content"] if item.get("type") == "image"]
+
+
 def test_run_sync_image_builds_the_core_request_and_links_the_result(env):
     env.core.routes[("POST", "/v1/images/generations")] = lambda kw: _image_reply(kw["json"])
     result = call(env, "run", {"target": "image", "inputs": {"prompt": "a fish", "width": 512, "height": 512, "steps": 4, "n": 2}})
@@ -462,13 +569,315 @@ def test_run_sync_image_builds_the_core_request_and_links_the_result(env):
     assert result["structuredContent"]["assets"][0]["asset_id"] == f"img_{'b' * 64}"
 
 
+@pytest.mark.parametrize("version", mcp_server.SUPPORTED_VERSIONS)
+def test_generated_image_has_a_bounded_preview_and_keeps_its_signed_link(env, version):
+    raw = _png((1024, 512))
+    asset_id = f"img_{'a' * 64}"
+    env.core.assets[asset_id] = raw
+    env.core.routes[("POST", "/v1/images/generations")] = httpx.Response(
+        200, json={"data": [{"b64_json": base64.b64encode(raw).decode("ascii")}]})
+
+    result = call(env, "run", {"target": "krea", "inputs": {"prompt": "a fish"}},
+                  modern=version == MODERN, headers={"mcp-protocol-version": version})
+    image = _image_blocks(result)
+    assert len(image) == 1
+    assert image[0]["mimeType"] == "image/jpeg"
+    preview_bytes = base64.b64decode(image[0]["data"], validate=True)
+    assert len(preview_bytes) <= mcp_server.MCP_PREVIEW_MAX_BYTES
+    with Image.open(io.BytesIO(preview_bytes)) as preview:
+        assert max(preview.size) <= mcp_server.MCP_PREVIEW_MAX_SIDE
+
+    serialized = json.dumps(result)
+    assert "https://gw.test/v1/assets/" in serialized and "sig=x" in serialized
+    assert "reduced previews" in serialized.lower()
+    if version == mcp_server.OLDEST_VERSION:
+        assert "structuredContent" not in result
+        assert not any(item["type"] == "resource_link" for item in result["content"])
+    else:
+        assert result["structuredContent"]["assets"][0]["url"].endswith("?sig=x")
+        assert any(item["type"] == "resource_link" for item in result["content"])
+
+
+def test_preview_preserves_alpha_and_strips_source_metadata():
+    raw = _png(transparent=True)
+    preview = mcp_server._reduced_image_preview(raw, "image/png")
+    assert preview is not None
+    assert preview.media_type == "image/png" and len(preview.content) <= mcp_server.MCP_PREVIEW_MAX_BYTES
+    with Image.open(io.BytesIO(preview.content)) as image:
+        assert image.mode == "RGBA" and image.getpixel((0, 0))[3] == 0
+        assert not image.info
+    assert mcp_server._reduced_image_preview(b"<svg></svg>", "image/svg+xml") is None
+
+
+def test_completed_job_returns_a_reduced_image_preview(env):
+    raw = _png((640, 480))
+    asset_id = f"img_{'a' * 64}"
+    env.core.assets[asset_id] = raw
+    env.core.polls["/gateway/v1/media/jobs/mj_image"] = [{"status": "succeeded"}]
+    env.core.routes[("GET", "/gateway/v1/media/jobs/mj_image/content")] = httpx.Response(
+        200, content=raw, headers={"content-type": "image/png"})
+
+    result = call(env, "job", {"job_id": "mj_image"})
+    assert result["structuredContent"]["status"] == "succeeded"
+    assert len(_image_blocks(result)) == 1
+    assert any(item["type"] == "resource_link" for item in result["content"])
+    assert env.core.read_calls[0][1] is not None
+
+
+def test_preview_read_uses_the_authenticated_caller_and_keeps_links_when_denied():
+    raw = _png()
+    core = Core()
+    seen = []
+
+    def authenticate(request, _path):
+        return SimpleNamespace(identity=request.headers["authorization"].removeprefix("Bearer "))
+
+    def read_asset(request, auth, asset_id):
+        seen.append((auth.identity, asset_id))
+        return raw if auth.identity == "owner" else None
+
+    deps = McpDeps(authenticate=authenticate, call=core.call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
+                   store_asset=core.store_asset, read_asset=read_asset, read_preview_asset=read_asset,
+                   public_base_url=lambda r: "https://gw.test")
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    client = TestClient(app)
+    core.routes[("POST", "/v1/images/generations")] = httpx.Response(
+        200, json={"data": [{"url": f"https://gw.test/v1/assets/img_{'a' * 64}/content?sig=x",
+                             "media_type": "image/png"}]})
+    request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": "run", "arguments": {"target": "krea", "inputs": {"prompt": "x"}}}}
+
+    owner = client.post("/mcp", headers={"authorization": "Bearer owner", "mcp-protocol-version": "2025-11-25"},
+                        json=request).json()["result"]
+    other = client.post("/mcp", headers={"authorization": "Bearer other", "mcp-protocol-version": "2025-11-25"},
+                        json=request).json()["result"]
+    assert len(_image_blocks(owner)) == 1
+    assert _image_blocks(other) == []
+    assert any(item["type"] == "resource_link" for item in other["content"])
+    assert seen == [("owner", f"img_{'a' * 64}"), ("other", f"img_{'a' * 64}")]
+    assert [path for _, path, _ in core.calls] == ["/v1/images/generations", "/v1/images/generations"]
+
+
+def test_preview_skips_invalid_or_oversized_assets_without_losing_links(env):
+    asset_id = f"img_{'c' * 64}"
+    url = f"https://gw.test/v1/assets/{asset_id}/content?sig=x"
+    env.core.routes[("POST", "/v1/images/generations")] = httpx.Response(
+        200, json={"data": [{"asset_id": asset_id, "url": url, "media_type": "image/png",
+                             "size_bytes": mcp_server.MCP_PREVIEW_SOURCE_MAX_BYTES + 1}]})
+    result = call(env, "run", {"target": "krea", "inputs": {"prompt": "x"}})
+    assert _image_blocks(result) == []
+    assert result["structuredContent"]["assets"][0]["url"] == url
+    assert env.core.read_calls == []
+
+    env.core.routes[("POST", "/v1/images/generations")] = httpx.Response(
+        200, json={"data": [{"asset_id": asset_id, "url": url, "media_type": "image/png"}]})
+    env.core.assets[asset_id] = b"not a raster image"
+    corrupt = call(env, "run", {"target": "krea", "inputs": {"prompt": "x"}})
+    assert _image_blocks(corrupt) == []
+    assert any(item["type"] == "resource_link" for item in corrupt["content"])
+
+
+def test_preview_count_is_bounded(env):
+    raw = _png()
+    items = []
+    for digit in "abcdef":
+        asset_id = f"img_{digit * 64}"
+        url = f"https://gw.test/v1/assets/{asset_id}/content?sig=x"
+        env.core.assets[asset_id] = raw
+        items.append({"asset_id": asset_id, "url": url, "media_type": "image/png"})
+    env.core.routes[("POST", "/v1/images/generations")] = httpx.Response(200, json={"data": items})
+
+    result = call(env, "run", {"target": "krea", "inputs": {"prompt": "six images"}})
+    blocks = _image_blocks(result)
+    assert len(blocks) == mcp_server.MCP_PREVIEW_MAX_COUNT
+    assert sum(len(base64.b64decode(block["data"])) for block in blocks) <= mcp_server.MCP_PREVIEW_TOTAL_IMAGE_BYTES
+    assert len(env.core.read_calls) == mcp_server.MCP_PREVIEW_MAX_COUNT
+    assert len([item for item in result["content"] if item["type"] == "resource_link"]) == 6
+
+
+def test_preview_identifies_its_asset_when_an_earlier_preview_is_unavailable(env):
+    first, second = (f"img_{digit * 64}" for digit in "ab")
+    env.core.assets[second] = _png()
+    env.core.routes[("POST", "/v1/images/generations")] = httpx.Response(
+        200, json={"data": [
+            {"asset_id": asset_id, "url": f"https://gw.test/v1/assets/{asset_id}/content?sig=x",
+             "media_type": "image/png"}
+            for asset_id in (first, second)
+        ]})
+    result = call(env, "run", {"target": "krea", "inputs": {"prompt": "two images"}})
+    content = result["content"]
+    position = next(index for index, item in enumerate(content) if item.get("type") == "image")
+    assert content[position - 1] == {"type": "text", "text": f"Reduced preview for asset {second}."}
+    assert len(_image_blocks(result)) == 1
+
+
+def test_preview_total_raw_bytes_are_bounded(monkeypatch, env):
+    raw = _png()
+    items = []
+    for digit in "abcd":
+        asset_id = f"img_{digit * 64}"
+        url = f"https://gw.test/v1/assets/{asset_id}/content?sig=x"
+        env.core.assets[asset_id] = raw
+        items.append({"asset_id": asset_id, "url": url, "media_type": "image/png"})
+    env.core.routes[("POST", "/v1/images/generations")] = httpx.Response(200, json={"data": items})
+    monkeypatch.setattr(mcp_server, "_reduced_image_preview", lambda *_args: mcp_server.ImagePreview(
+        "image/jpeg", b"x" * (150 * 1024), 1000, 1000, 768, 768, None))
+
+    result = call(env, "run", {"target": "krea", "inputs": {"prompt": "large previews"}})
+    blocks = _image_blocks(result)
+    assert len(blocks) == 3
+    assert sum(len(base64.b64decode(block["data"])) for block in blocks) <= mcp_server.MCP_PREVIEW_TOTAL_IMAGE_BYTES
+
+
+@pytest.mark.parametrize("version", mcp_server.SUPPORTED_VERSIONS)
+def test_view_asset_returns_full_and_original_pixel_crop_previews(env, version):
+    raw = _split_color_png()
+    asset_id = f"img_{'d' * 64}"
+    env.core.assets[asset_id] = raw
+
+    def view(crop=None):
+        args = {"asset_id": asset_id}
+        if crop is not None:
+            args["crop"] = crop
+        return call(env, "view_asset", args, modern=version == MODERN,
+                    headers={"mcp-protocol-version": version})
+
+    full = view()
+    left = view([0, 0, 800, 800])
+    right = view([800, 0, 1600, 800])
+    blocks = [_image_blocks(result)[0] for result in (full, left, right)]
+    details = [json.loads(result["content"][0]["text"]) for result in (full, left, right)]
+    assert details[0]["preview"]["crop"] is None
+    assert details[1]["preview"]["crop"] == [0, 0, 800, 800]
+    assert details[2]["preview"]["crop"] == [800, 0, 1600, 800]
+    assert details[0]["preview"]["source_width"] == 1600
+    assert details[0]["preview"]["width"] == 768 and details[0]["preview"]["height"] == 384
+    assert all(len(base64.b64decode(block["data"])) <= mcp_server.MCP_PREVIEW_MAX_BYTES for block in blocks)
+    with Image.open(io.BytesIO(base64.b64decode(blocks[1]["data"]))) as image:
+        assert image.size == (768, 768) and image.getpixel((384, 384))[0] > 200
+    with Image.open(io.BytesIO(base64.b64decode(blocks[2]["data"]))) as image:
+        assert image.size == (768, 768) and image.getpixel((384, 384))[2] > 200
+    source_b64 = base64.b64encode(raw).decode("ascii")
+    assert all(source_b64 not in item["text"] for result in (full, left, right)
+               for item in result["content"] if item["type"] == "text")
+    assert all("url" not in detail and "data" not in detail for detail in details)
+
+
+@pytest.mark.parametrize(("crop", "message"), [
+    ([-1, 0, 10, 10], "non-negative"),
+    ([0, 0, 0, 10], "positive width/height"),
+    ([0, 0, 1601, 10], "outside the image's original pixel bounds"),
+    ([0, 0, 1.5, 10], "four integer pixel coordinates"),
+])
+def test_view_asset_rejects_invalid_crop_bounds(env, crop, message):
+    asset_id = f"img_{'e' * 64}"
+    env.core.assets[asset_id] = _png((1600, 800))
+    result = call(env, "view_asset", {"asset_id": asset_id, "crop": crop})
+    assert result["isError"] is True
+    assert message in result["structuredContent"]["error"]
+    assert _image_blocks(result) == []
+
+
+def test_view_asset_unavailable_or_unauthorized_asset_returns_no_image_or_identifier():
+    core = Core()
+    deps = McpDeps(authenticate=lambda _request, _path: SimpleNamespace(identity="other"),
+                   call=core.call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
+                   store_asset=core.store_asset, read_asset=core.read_asset,
+                   read_preview_asset=lambda _request, _auth, _asset_id: None,
+                   public_base_url=lambda _request: "https://gw.test")
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    client = TestClient(app)
+    asset_id = f"img_{'f' * 64}"
+    result = client.post("/mcp", headers={**H, "mcp-protocol-version": "2025-11-25"}, json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "view_asset", "arguments": {"asset_id": asset_id}},
+    }).json()["result"]
+    assert result["isError"] is True and _image_blocks(result) == []
+    assert "missing, unavailable to this caller" in result["structuredContent"]["error"]
+    assert asset_id not in json.dumps(result)
+    assert core.calls == []
+
+
+def test_preview_fails_closed_without_bounded_reader():
+    core = Core()
+    read_calls = []
+    raw = _png()
+
+    def unbounded_read(_request, _auth, asset_id):
+        read_calls.append(asset_id)
+        return raw
+
+    deps = McpDeps(authenticate=lambda _request, _path: SimpleNamespace(identity="k"),
+                   call=core.call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
+                   store_asset=core.store_asset, read_asset=unbounded_read,
+                   public_base_url=lambda _request: "https://gw.test")
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    client = TestClient(app)
+    core.routes[("POST", "/v1/images/generations")] = httpx.Response(
+        200, json={"data": [{"b64_json": base64.b64encode(raw).decode("ascii")}]})
+    generated = client.post("/mcp", headers={**H, "mcp-protocol-version": "2025-11-25"}, json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "run", "arguments": {"target": "krea", "inputs": {"prompt": "x"}}},
+    }).json()["result"]
+    asset_id = generated["structuredContent"]["assets"][0]["asset_id"]
+    assert _image_blocks(generated) == [] and read_calls == []
+    assert any(item["type"] == "resource_link" for item in generated["content"])
+    viewed = client.post("/mcp", headers={**H, "mcp-protocol-version": "2025-11-25"}, json={
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "view_asset", "arguments": {"asset_id": asset_id}},
+    }).json()["result"]
+    assert viewed["isError"] and _image_blocks(viewed) == []
+    assert "unavailable" in viewed["structuredContent"]["error"]
+    assert read_calls == []
+
+
+@pytest.mark.parametrize("size_bytes", [None, 1])
+def test_preview_uses_bounded_reader_when_size_is_missing_or_underreported(size_bytes):
+    core = Core()
+    bounded_calls = []
+    unbounded_calls = []
+    asset_id = f"img_{'b' * 64}"
+    item = {"asset_id": asset_id, "url": f"https://gw.test/v1/assets/{asset_id}/content?sig=x",
+            "media_type": "image/png"}
+    if size_bytes is not None:
+        item["size_bytes"] = size_bytes
+
+    def bounded_read(_request, _auth, requested_id):
+        bounded_calls.append(requested_id)
+        return None  # models a bounded reader rejecting an oversized stored source
+
+    def unbounded_read(_request, _auth, requested_id):
+        unbounded_calls.append(requested_id)
+        return _png()
+
+    deps = McpDeps(authenticate=lambda _request, _path: SimpleNamespace(identity="k"),
+                   call=core.call, catalog=lambda: CATALOG, aliases=lambda: ALIASES,
+                   store_asset=core.store_asset, read_asset=unbounded_read,
+                   read_preview_asset=bounded_read, public_base_url=lambda _request: "https://gw.test")
+    app = FastAPI()
+    mcp_server.register_mcp_routes(app, deps)
+    client = TestClient(app)
+    core.routes[("POST", "/v1/images/generations")] = httpx.Response(200, json={"data": [item]})
+    result = client.post("/mcp", headers={**H, "mcp-protocol-version": "2025-11-25"}, json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "run", "arguments": {"target": "krea", "inputs": {"prompt": "x"}}},
+    }).json()["result"]
+    assert _image_blocks(result) == []
+    assert any(item["type"] == "resource_link" for item in result["content"])
+    assert bounded_calls == [asset_id] and unbounded_calls == []
+
+
 def test_run_never_returns_inline_base64(env):
     env.core.routes[("POST", "/v1/images/generations")] = httpx.Response(
         200, json={"data": [{"b64_json": base64.b64encode(PNG).decode()}]})
     result = call(env, "run", {"target": "krea", "inputs": {"prompt": "x"}})
     assert env.core.stored == [("img", ".png", len(PNG))]
     assert "b64" not in json.dumps(result) and "iVBOR" not in json.dumps(result)
-    assert result["content"][1]["type"] == "resource_link"
+    assert any(item["type"] == "resource_link" for item in result["content"])
+    assert any("No image pixels" in item.get("text", "") for item in result["content"])
 
 
 def test_run_rejects_unknown_missing_and_mistyped_inputs_before_calling_core(env):

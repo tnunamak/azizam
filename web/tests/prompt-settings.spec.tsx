@@ -145,7 +145,7 @@ describe("Your settings: prompts", () => {
     );
     wrap(<AccountPage />);
     const select = await screen.findByRole("combobox", {
-      name: "Forget prompts after",
+      name: "Forget them after",
     });
     expect(select).toHaveTextContent("3 months");
     expect(
@@ -205,7 +205,7 @@ describe("Your settings: prompts", () => {
       ),
     ).toBeVisible();
     expect(
-      screen.getByRole("combobox", { name: "Forget prompts after" }),
+      screen.getByRole("combobox", { name: "Forget them after" }),
     ).toHaveTextContent("3 months");
   });
 
@@ -252,16 +252,16 @@ describe("Your settings: prompts", () => {
     );
     wrap(<AccountPage />);
     await user.click(
-      await screen.findByRole("combobox", { name: "Forget prompts after" }),
+      await screen.findByRole("combobox", { name: "Forget them after" }),
     );
     await user.click(await screen.findByRole("option", { name: "3 months" }));
     expect(await screen.findByRole("dialog")).toHaveTextContent(
-      "Prompts older than 3 months are deleted now.",
+      "Words and chats older than 3 months are deleted now.",
     );
     expect(mocks.savePromptMemory).not.toHaveBeenCalled();
   });
 
-  it("asks before turning memory off, because that deletes saved prompts", async () => {
+  it("asks before turning memory off, because that deletes saved words and chats", async () => {
     const user = userEvent.setup();
     mocks.promptMemory.mockResolvedValue(member());
     mocks.savePromptMemory.mockResolvedValue(
@@ -269,17 +269,17 @@ describe("Your settings: prompts", () => {
     );
     wrap(<AccountPage />);
     const toggle = await screen.findByRole("switch", {
-      name: "Remember what I type",
+      name: "Keep the words you used to make things",
     });
     expect(toggle).toBeChecked();
     // The row says what turning it off does before anyone touches it.
     expect(
-      screen.getByText("Turning it off deletes saved prompts."),
+      screen.getByText("Turning it off deletes saved words and chats."),
     ).toBeVisible();
     await user.click(toggle);
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent(
-      "Deletion of saved prompts may continue in the background.",
+      "Deletion of saved ones may continue in the background.",
     );
     expect(dialog).toHaveTextContent(
       "Your pictures, audio and videos stay in Library.",
@@ -293,11 +293,11 @@ describe("Your settings: prompts", () => {
       }),
     );
     expect(
-      await screen.findByRole("switch", { name: "Remember what I type" }),
+      await screen.findByRole("switch", { name: "Keep the words you used to make things" }),
     ).not.toBeChecked();
   });
 
-  it("deletes saved prompts after asking, and says how many", async () => {
+  it("deletes saved words and chats after asking, and says how many", async () => {
     const user = userEvent.setup();
     const { toast } = await import("@/lib/toast");
     mocks.promptMemory.mockResolvedValue(member());
@@ -307,13 +307,13 @@ describe("Your settings: prompts", () => {
     await user.click(await screen.findByRole("button", { name: "Delete…" }));
     await user.click(
       within(await screen.findByRole("dialog")).getByRole("button", {
-        name: "Delete prompts",
+        name: "Delete words and chats",
       }),
     );
     await waitFor(() =>
       expect(mocks.deleteSavedPrompts).toHaveBeenCalledTimes(1),
     );
-    expect(toast.success).toHaveBeenCalledWith("Deleted 3 saved prompts.");
+    expect(toast.success).toHaveBeenCalledWith("Deleted words for 3 creations.");
   });
 
   it("shows file cleanup that is still running, honestly", async () => {
@@ -350,7 +350,7 @@ describe("Your settings: prompts", () => {
     wrap(<AccountPage />);
     expect(await screen.findByText("Up to 3 months here.")).toBeVisible();
     const select = screen.getByRole("combobox", {
-      name: "Forget prompts after",
+      name: "Forget them after",
     });
     expect(select).toHaveTextContent("3 months");
     await user.click(select);
@@ -372,7 +372,7 @@ describe("Your settings: prompts", () => {
       await screen.findByText("Sam turned this off for everyone."),
     ).toBeVisible();
     expect(
-      screen.getByRole("switch", { name: "Remember what I type" }),
+      screen.getByRole("switch", { name: "Keep the words you used to make things" }),
     ).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Delete…" })).toBeNull();
     expect(screen.queryByRole("combobox")).toBeNull();
@@ -398,7 +398,7 @@ describe("Settings: the household's prompt rules", () => {
     });
     wrap(<HouseholdPromptsSection />);
     const select = await screen.findByRole("combobox", {
-      name: "Keep prompts for",
+      name: "Longest time to keep them",
     });
     expect(select).toHaveTextContent("3 months");
     expect(screen.getByText(/3 months \(no longer offered\)/)).toBeVisible();
@@ -426,7 +426,7 @@ describe("Settings: the household's prompt rules", () => {
       ),
     ).toBeVisible();
     expect(
-      screen.getByRole("combobox", { name: "Keep prompts for" }),
+      screen.getByRole("combobox", { name: "Longest time to keep them" }),
     ).toHaveTextContent("3 months");
   });
 
@@ -451,11 +451,11 @@ describe("Settings: the household's prompt rules", () => {
     // of the line truncates.
     expect(
       await screen.findByText(
-        "Deletes saved prompts and wins over everyone’s own choice.",
+        "Deletes saved words and chats and wins over everyone’s own choice.",
       ),
     ).toBeVisible();
     await user.click(
-      await screen.findByRole("switch", { name: "Never keep prompts" }),
+      await screen.findByRole("switch", { name: "Never keep words or chats" }),
     );
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent(
@@ -465,7 +465,7 @@ describe("Settings: the household's prompt rules", () => {
       "engine’s own history, external output folders, backups, or downloaded copies",
     );
     await user.click(
-      within(dialog).getByRole("button", { name: "Never keep prompts" }),
+      within(dialog).getByRole("button", { name: "Never keep words or chats" }),
     );
     await waitFor(() =>
       expect(mocks.householdPut).toHaveBeenCalledWith(
@@ -474,10 +474,10 @@ describe("Settings: the household's prompt rules", () => {
       ),
     );
     expect(
-      await screen.findByRole("switch", { name: "Never keep prompts" }),
+      await screen.findByRole("switch", { name: "Never keep words or chats" }),
     ).toBeChecked();
     expect(
-      screen.getByRole("switch", { name: "Remember prompts for new people" }),
+      screen.getByRole("switch", { name: "Keep words and chats for new people" }),
     ).toBeDisabled();
   });
 
@@ -495,7 +495,7 @@ describe("Settings: the household's prompt rules", () => {
     );
     wrap(<HouseholdPromptsSection />);
     const select = await screen.findByRole("combobox", {
-      name: "Keep prompts for",
+      name: "Longest time to keep them",
     });
     await user.click(select);
     await user.click(await screen.findByRole("option", { name: "No limit" }));
@@ -507,11 +507,11 @@ describe("Settings: the household's prompt rules", () => {
     );
     expect(screen.queryByRole("dialog")).toBeNull();
     await user.click(
-      screen.getByRole("combobox", { name: "Keep prompts for" }),
+      screen.getByRole("combobox", { name: "Longest time to keep them" }),
     );
     await user.click(await screen.findByRole("option", { name: "3 months" }));
     expect(await screen.findByRole("dialog")).toHaveTextContent(
-      "Everyone’s prompts older than 3 months are deleted now.",
+      "Everyone’s words and chats older than 3 months are deleted now.",
     );
   });
 });
@@ -540,7 +540,7 @@ it.each(["member", "household"])(
     expect(await screen.findByText("Deletion pending")).toBeVisible();
     expect(
       screen.getByText(
-        /Prompt deletion hasn.t finished. Azizam keeps retrying/,
+        /Deleting saved words and chats hasn.t finished. Azizam keeps retrying/,
       ),
     ).toBeVisible();
     expect(screen.queryByText("Saved prompts are deleted")).toBeNull();
@@ -564,7 +564,7 @@ it.each(["member", "household"])(
       );
       wrap(<AccountPage />);
       await user.click(
-        await screen.findByRole("switch", { name: "Remember what I type" }),
+        await screen.findByRole("switch", { name: "Keep the words you used to make things" }),
       );
     } else {
       mocks.householdGet.mockResolvedValue({
@@ -580,13 +580,13 @@ it.each(["member", "household"])(
       );
       wrap(<HouseholdPromptsSection />);
       await user.click(
-        await screen.findByRole("switch", { name: "Never keep prompts" }),
+        await screen.findByRole("switch", { name: "Never keep words or chats" }),
       );
     }
     const dialog = await screen.findByRole("dialog");
     await user.click(
       within(dialog).getByRole("button", {
-        name: kind === "member" ? "Turn off" : "Never keep prompts",
+        name: kind === "member" ? "Turn off" : "Never keep words or chats",
       }),
     );
     await waitFor(() =>

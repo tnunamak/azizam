@@ -1,4 +1,6 @@
 /** Product wording for state and reason codes returned by gateway APIs. */
+import { capabilityLabelFor } from "./terms";
+
 export type AvailabilityReasonCode =
   | "ready"
   | "ready_on_request"
@@ -31,20 +33,6 @@ const stateReason: Record<string, string> = {
   policy_denied: "Unavailable under this access plan.",
 };
 
-const capabilityLabel: Record<string, string> = {
-  chat: "Chat",
-  image: "Images",
-  video: "Video",
-  speech: "Speech",
-  transcribe: "Transcription",
-  music: "Music",
-  sfx: "Sound effects",
-  audio: "Audio",
-  decide: "Decisions",
-  embed: "Embeddings",
-  rerank: "Reranking",
-};
-
 export function availabilityReason(
   state: string,
   reasonCode?: AvailabilityReasonCode,
@@ -62,7 +50,7 @@ export function statusSummaryCopy(summary: {
 }): string | undefined {
   if (summary.state === "ready") return undefined;
   const ids = summary.affected_capability_ids ?? [];
-  const labels = ids.map((id) => capabilityLabel[id] ?? id).filter(Boolean);
+  const labels = ids.map((id) => capabilityLabelFor(id) ?? id).filter(Boolean);
   if (!labels.length && summary.reason_code === "no_capabilities") {
     return "No capabilities are available to your account yet.";
   }
@@ -76,7 +64,7 @@ export function statusSummaryCopy(summary: {
         ? `${labels[0]} and ${labels[1].toLowerCase()}`
         : `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)?.toLowerCase()}`;
   if (summary.state === "unavailable") {
-    const verb = labels.length === 1 && !["Images", "Decisions", "Embeddings", "Sound effects"].includes(labels[0]) ? "is" : "are";
+    const verb = labels.length === 1 && !["Images", "Decisions", "Sound effects"].includes(labels[0]) ? "is" : "are";
     const code = summary.reason_code;
     const ending = code === "unavailable_disabled"
       ? "disabled"

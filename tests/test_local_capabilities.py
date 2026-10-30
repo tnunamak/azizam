@@ -90,13 +90,13 @@ REPRESENTATIVE_CONFIG: dict = {
                 "file": "workflows/videos/video-ltx-2.5-t2v.json",
                 "max_seconds": 8,
             },
-            "video-wan-2.2-ti2v-5b-q8": {
-                "file": "workflows/video-wan-2.2.json",
+            "video-ltx-2.5-i2v": {
+                "file": "workflows/videos/video-ltx-2.5-i2v.json",
             },
         },
         "aliases": {
             "ltx-2.5": "video-ltx-2.5-t2v",
-            "wan-2.2": "video-wan-2.2-ti2v-5b-q8",
+            "ltx-2.5-i2v": "video-ltx-2.5-i2v",
             "sora-2": "video-ltx-2.5-t2v",
         },
     },
@@ -236,7 +236,7 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
         ids = {c.workflow for c in video}
         self.assertEqual(
             ids,
-            {"video-ltx-2.5-t2v", "video-wan-2.2-ti2v-5b-q8"},
+            {"video-ltx-2.5-t2v", "video-ltx-2.5-i2v"},
         )
         ltx = next(c for c in video if c.workflow == "video-ltx-2.5-t2v")
         joined = " ".join(ltx.caveats)

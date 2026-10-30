@@ -94,8 +94,22 @@ def test_member_self_scope_is_allowed(monkeypatch, tmp_path, person):
     request = Request({"type": "http", "query_string": (f"person={person}" if person else "").encode()})
     monkeypatch.setattr(me_media, "_owned_app_ids", lambda *args: ["app_owned"])
     monkeypatch.setattr(me_media, "_member_media_scope", lambda user_id, *args, **kwargs: user_id)
-    assert me_media._media_scope(request, actor, tmp_path) == "person_private_id"
     assert me_media._usage_app_scope(request, actor, tmp_path) == (["app_owned"], "me", ["person_private_id"])
+    if person is None:
+        # OWNER_VISIBILITY (OV3): the Library scope is the caller's own, and it is never a query parameter.
+        assert me_media._media_scope(request, actor, tmp_path) == "person_private_id"
+
+
+@pytest.mark.parametrize("person", ["self", "person_private_id", "all", "another_person"])
+def test_library_refuses_any_person_scope_parameter(tmp_path, person):
+    from starlette.requests import Request
+    from gateway import me_media
+    actor = me_media._Actor(user={"id": "person_private_id"}, role="member")
+    request = Request({"type": "http", "query_string": f"person={person}".encode()})
+    with pytest.raises(PublicFailure) as caught:
+        me_media._media_scope(request, actor, tmp_path)
+    assert caught.value.code == "param_not_supported"
+    assert caught.value.status_code == 400
 
 
 @pytest.mark.parametrize("person", ["all", "another_person"])
@@ -104,11 +118,10 @@ def test_other_people_still_require_owner(tmp_path, person):
     from gateway import me_media
     actor = me_media._Actor(user={"id": "person_private_id"}, role="member")
     request = Request({"type": "http", "query_string": f"person={person}".encode()})
-    for scope in (me_media._media_scope, me_media._usage_app_scope):
-        with pytest.raises(PublicFailure) as caught:
-            scope(request, actor, tmp_path)
-        assert caught.value.code == "owner_required"
-        assert caught.value.status_code == 403
+    with pytest.raises(PublicFailure) as caught:
+        me_media._usage_app_scope(request, actor, tmp_path)
+    assert caught.value.code == "owner_required"
+    assert caught.value.status_code == 403
 
 
 @pytest.mark.parametrize("candidates,expected", [([], "alias_misconfigured"),

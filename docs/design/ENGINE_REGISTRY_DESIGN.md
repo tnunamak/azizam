@@ -107,6 +107,7 @@ service:
         upstream:  str        # what we forward as `model` (default: public)
         aliases:   [str]      # extra public names → this deployment
         context_window: int|null  # per-model override
+        kind: enum                # chat | embed | speech | transcribe: the one capability this model serves (optional; absent = every capability the backend offers). Saving refuses a kind none of the engine's capabilities serve.
         transforms: [str]     # per-deployment transform ids (§4)
         activation:           # per-model swap target; driver-typed (§3)
           env: {}             # {VAR: value} env lines the systemd/docker driver writes

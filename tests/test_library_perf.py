@@ -20,6 +20,7 @@ from gateway import admin_store, me_media, media_jobs, receipt_store, thumbnails
 from gateway.admin_oidc import AdminSession
 from gateway.receipts import RouteReceipt
 from gateway.server_timing import ServerTimingMiddleware
+from gateway import request_source
 
 
 def _png(width: int = 1600, height: int = 1200) -> bytes:
@@ -78,11 +79,12 @@ class Library:
             request_id=request_id, app_id=app["id"], requested_model=model, resolved_model=model,
             status="succeeded", accepted_at_ms=created_at * 1000,
         ), path=self.receipts)
-        media_jobs.create(media_jobs.MediaJob(
-            request_id=request_id, intent="image.generate", status=media_jobs.STATUS_SUCCEEDED,
-            created_at=created_at, updated_at=created_at, progress=100,
-            assets=[{"asset_id": asset_id, "kind": kind, "model": model}],
-        ), path=self.jobs)
+        with request_source.acting_as(app_id=app["id"], person_id=app["owner_user_id"] if app["kind"] == "personal" else None):
+            media_jobs.create(media_jobs.MediaJob(
+                request_id=request_id, app_id=app["id"], intent="image.generate", status=media_jobs.STATUS_SUCCEEDED,
+                created_at=created_at, updated_at=created_at, progress=100,
+                assets=[{"asset_id": asset_id, "kind": kind, "model": model}],
+            ), path=self.jobs)
         return asset_id
 
     def ids(self, query: str = "") -> list[str]:
@@ -138,12 +140,12 @@ def test_filters_narrow_the_pages_and_facets_cover_the_whole_library(library: Li
     assert library.client.get("/me/api/media?cursor=not-a-cursor").status_code == 400
 
 
-def test_scope_still_denies_other_people_and_everyone_for_members(library: Library) -> None:
+def test_scope_stays_own_and_removed_scope_keys_are_rejected(library: Library) -> None:
     mine = library.add(library.app_a, created_at=1_700_000_000)
     theirs = library.add(library.app_b, created_at=1_700_000_001)
     assert library.ids("limit=100") == [mine]
-    assert library.client.get("/me/api/media?scope=everyone").status_code == 403
-    assert library.client.get("/me/api/media?person=" + library.bob["id"]).status_code == 403
+    assert library.client.get("/me/api/media?scope=everyone").status_code == 400
+    assert library.client.get("/me/api/media?person=" + library.bob["id"]).status_code == 400
     assert library.client.get(f"/me/api/media/{theirs}").status_code == 404
     library.user = library.bob
     assert library.ids("limit=100") == [theirs]

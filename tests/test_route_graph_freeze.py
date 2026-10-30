@@ -19,6 +19,12 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 
 # Deliberate additions since the freeze: path prefix -> reason.
 ADDED_PATHS: dict[str, str] = {
+    "/me/api/apps/{app_id}/trusted-addresses": "a person trusts an address for their own App; tests/test_me_trusted_addresses.py covers it",
+    "/me/api/credentials/{credential_id}/adopt": "a person keeps an unproven key on their own App; tests/test_me_binding_adoption.py covers it",
+    "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt": "a person keeps an unproven address on their own App; tests/test_me_binding_adoption.py covers it",
+    "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd": "a person adds an unkept address again on their own App in one step; tests/test_me_binding_adoption.py covers it",
+    "/me/api/credentials/{credential_id}/replace": "a person replaces a key they cannot keep, on their own App; tests/test_me_binding_adoption.py covers it",
+    "/me/api/apps/{app_id}/trusted-addresses/{entry_id}": "a person removes a trusted address from their own App; tests/test_me_binding_adoption.py covers it",
     "/admin/api/me/retention/ledger": "owner/admin offline retention ledger; tests/test_retention_slice6.py covers scope and no network reads",
     "/admin/api/requests/{request_id}/retention/ledger": "dated ledger for a request receipt; tests/test_retention_slice6.py covers revisions",
     "/admin/api/settings/retention/ledger": "owner/admin retention settings ledger; tests/test_retention_slice6.py covers it",
@@ -51,6 +57,15 @@ ADDED_PATHS: dict[str, str] = {
                               "viewer may see, outside the OpenAPI schema; tests/test_me_avatar.py covers them",
     "/admin/api/apps/{app_id}/keys/{credential_id}": "an administrator or the owner renames an App's key (a label, no "
                                                       "new credential, so no step-up); tests/test_rename_apps_keys.py covers it",
+    "/gateway/v1/requests": "the maker's own kept requests: list, read, delete and delete all (REQUEST_RETENTION.md section 10); "
+                            "a delegated credential without the privacy permission cannot delete; tests/test_request_history_routes.py covers them",
+    "/gateway/v1/me/retention": "a delegated App key or MCP grant reads the person's request history choice; writes need privacy permission; tests/test_request_history_routes.py covers it",
+    "/me/api/retention": "the member's own request history choice, session only (D50: a member can turn history off); "
+                         "tests/test_request_history_member_choice.py covers it",
+    "/me/api/session/end-token": "a lightweight read for the current session's CSRF token and name before sign-out; "
+                                  "tests/test_session_lifecycle.py covers the endpoint",
+    "/me/api/credentials/{credential_id}/privacy-permission": "the accountable person changes request-history access for one of their own App keys after step-up; tests/test_request_history_privacy_permission.py covers it",
+    "/me/api/mcp/connections/{grant_id}/privacy-permission": "the signed-in person changes request-history access for one of their own MCP grants after step-up; tests/test_request_history_privacy_permission.py covers it",
 }
 
 # Deliberate additions of one method to a path that was already frozen: (method, path template) -> reason. The path
@@ -60,6 +75,16 @@ ADDED_METHODS: dict[tuple[str, str], str] = {
                                          "tests/test_rename_apps_keys.py covers it",
     ("PATCH", "/me/api/credentials/{credential_id}"): "a person renames their own key's label (outside the OpenAPI schema); "
                                                        "tests/test_rename_apps_keys.py covers it",
+    ("POST", "/me/api/apps/{app_id}/trusted-addresses"): "a person trusts an address for their own App (outside the OpenAPI "
+                                                         "schema); tests/test_me_trusted_addresses.py covers it",
+    ("POST", "/me/api/credentials/{credential_id}/adopt"): "a person keeps an unproven key on their own App (outside the "
+                                                           "OpenAPI schema); tests/test_me_binding_adoption.py covers it",
+    ("POST", "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt"): "a person keeps an unproven address on their own App "
+                                                                          "(outside the OpenAPI schema); tests/test_me_binding_adoption.py covers it",
+    ("POST", "/me/api/credentials/{credential_id}/replace"): "a person replaces a key they cannot keep, on their own App (outside "
+                                                             "the OpenAPI schema); tests/test_me_binding_adoption.py covers it",
+    ("DELETE", "/me/api/apps/{app_id}/trusted-addresses/{entry_id}"): "a person removes a trusted address from their own App "
+                                                                     "(outside the OpenAPI schema); tests/test_me_binding_adoption.py covers it",
 }
 
 
@@ -128,9 +153,11 @@ def test_the_protocol_policy_projections_are_unchanged() -> None:
 def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # MOSS, FLUX.2 Klein, FIBO and keyframe workflows add schemas, never routes or policy.
     # Removing precisely these additions must recover the data-hygiene document,
-    # which adds the reviewed missing/retryable output responses.
+    # which adds the reviewed missing/retryable output responses, the App key security schemes, and the security each
+    # operation declares (API reference security; the route graph leaves that security out of each route's extra).
     added = {"image.generate.moss-image", "image.generate.moss-image-fast",
              "image.generate.moss-image-quality", "image.generate.flux2-klein", "image.edit.flux2-klein", "image.edit.fibo-2-edit-turbo",
+             "image.generate.flux2-klein-snofs",
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
              "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid"}
     records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()
@@ -140,7 +167,9 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         proxy.app.openapi_schema = None
         # The edit transport documents repeated image[] parts for pictures. The sign-in box (Login.remember) is
         # nullable: true keeps a name, false takes it off, null leaves the list alone. The remembered list's entry for
-        # the person signed in on the browser carries "you": true.
-        assert route_graph.openapi_digest(proxy.app) == "44a85332a83dfc5e37ad8d9bc37fea7a75010c34ed243d334a39c1307c7f2f1a"
+        # the person signed in on the browser carries "you": true. The drain write takes the owner's bearer key alone.
+        # Re-captured 2026-10-26 after ace-step-1.5-2b-base left the registry.
+        # Re-captured 2026-10-28 after the video removal (779db850f): the video paths, schemas and workflow list moved; nothing else.
+        assert route_graph.openapi_digest(proxy.app) == "6a61973b42c4099de4e44d9312ce819dca0c60e9b82a2115f49674049b3eb88e"
     proxy.app.openapi_schema = None
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

@@ -254,7 +254,7 @@ const SECTIONS = [
   "Sign-in",
   "Sign-in sessions",
   "People and access",
-  "Prompts",
+  "Saved words and chats",
   "Receipts",
   "Media admission",
   "Computer commands",

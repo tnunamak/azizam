@@ -88,7 +88,6 @@ class DerivationTableTests(unittest.TestCase):
 
         expected = {
             "video-scail-2-replace": ["text", "image", "video"],
-            "video-bernini-r-remix": ["text", "video"],
         }
         for workflow_id, inputs in expected.items():
             with self.subTest(workflow=workflow_id):

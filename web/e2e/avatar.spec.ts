@@ -40,15 +40,36 @@ test("a person changes their avatar from the account menu and it sticks", { tag:
   expect(before.ok()).toBe(true);
   const start = await before.json();
   expect(start.person_id).toMatch(/^usr_/);
+  expect(start.choice).toBe("auto");
   try {
     const dialog = await openPicker(page);
-    const chosen = dialog.getByRole("radio", { name: /Plum/ });
-    await dialog.getByText("Plum", { exact: true }).click();
-    await expect(chosen).toBeChecked();
+    // The colours show under Initials, which is the source this person has. Auto can already check Plum for them;
+    // choosing the colour that is checked sends no change event.
+    const colours = dialog.getByRole("radiogroup", { name: "Colour of your initials" });
+    // Each colour's value is its stored word, so the checked one is read from it, not from its text.
+    const checkedColour = colours.locator("[role='radio'][aria-checked='true']");
+    await expect(checkedColour).toHaveCount(1);
+    const currentWord = await checkedColour.getAttribute("value");
+    const selection =
+      currentWord === "v7"
+        ? {
+            label: "Fern",
+            choice: "v2",
+            background: /#294A40|rgb\(41, 74, 64\)/,
+          }
+        : {
+            label: "Plum",
+            choice: "v7",
+            background: /#5C3F61|rgb\(92, 63, 97\)/,
+          };
+    const chosen = colours.getByRole("radio", { name: selection.label, exact: true });
+    await expect(chosen).toHaveAttribute("aria-checked", "false");
+    await chosen.click();
+    await expect(chosen).toHaveAttribute("aria-checked", "true");
     await expect(page.getByText("We couldn't save your avatar")).toHaveCount(0);
     await expect
       .poll(async () => (await (await page.request.get("/me/api/profile/avatar")).json()).choice)
-      .toBe("v7");
+      .toBe(selection.choice);
     await dialog.getByRole("button", { name: "Done" }).click();
     await expect(dialog).toBeHidden();
     // Focus returns to the account button.
@@ -56,12 +77,16 @@ test("a person changes their avatar from the account menu and it sticks", { tag:
     // It is the same on a fresh load, in the sidebar and on People.
     await page.reload();
     const trigger = page.getByRole("button", { name: /^Account menu/ }).first();
-    await expect(discOf(trigger)).toHaveCSS("background-image", /#5C3F61|rgb\(92, 63, 97\)/);
+    await expect(discOf(trigger)).toHaveCSS("background-image", selection.background);
+    if (SHOTS) {
+      mkdirSync(SHOTS, { recursive: true });
+      await page.screenshot({ path: path.join(SHOTS, "avatar-after-change-1440.png") });
+    }
     await page.goto("/people/");
     await expect(page.getByRole("heading", { name: "People" })).toBeVisible();
     await expect(
       page.locator("[data-slot='person-mark'] > span").first(),
-    ).toHaveCSS("background-image", /#5C3F61|rgb\(92, 63, 97\)/);
+    ).toHaveCSS("background-image", selection.background);
   } finally {
     // The lane owner is shared by the other tests of this server: put the default back.
     const session = await (await page.request.get("/me/api/session")).json();
@@ -100,6 +125,8 @@ for (const view of views) {
           choice: "auto",
           person_id: body.user.id,
           picture_url: "/me/api/profile/avatar/picture?v=1760000000",
+          sign_in_picture_url: "/me/api/profile/avatar/picture?kind=sign-in&v=1760000000",
+          made_picture_url: null,
         };
       await fulfilJson(route, body, { response });
     });
@@ -107,7 +134,8 @@ for (const view of views) {
       fulfilBytes(route, { contentType: "image/png", body: PNG }),
     );
     const dialog = await openPicker(page);
-    await expect(dialog.getByRole("radio")).toHaveCount(9);
+    // The sign-in picture and Initials are the sources; the colours show only under Initials, so not here.
+    await expect(dialog.getByRole("radio")).toHaveCount(2);
     const box = (await dialog.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(view.width);
@@ -115,8 +143,8 @@ for (const view of views) {
     // No sideways scroll, and every choice is a touch target of 44 or more on a phone.
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     if (view.width < 640)
-      for (const label of await dialog.locator("label").all()) {
-        const size = (await label.boundingBox())!;
+      for (const row of await dialog.getByRole("radio").all()) {
+        const size = (await row.boundingBox())!;
         expect(size.height).toBeGreaterThanOrEqual(44);
       }
     const axe = await new AxeBuilder({ page }).include("[role='dialog']").analyze();

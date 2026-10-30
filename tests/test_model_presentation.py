@@ -81,7 +81,7 @@ def test_media_technical_description_stays_in_details(kind, expected):
     assert row["technical_description"] == technical
 
 
-@pytest.mark.parametrize("kind,title,expected", [("speech", "TTS", "Speech"), ("transcribe", "STT", "Transcription")])
+@pytest.mark.parametrize("kind,title,expected", [("speech", "TTS", "Voice"), ("transcribe", "STT", "Transcription")])
 def test_speech_protocol_acronyms_use_friendly_titles(kind, title, expected):
     from gateway.model_presentation import capability_presentation
     row = capability_presentation(_kind_capability(kind, backend="one", title=title))
@@ -228,7 +228,7 @@ def test_catalog_summary_omits_unknown_metrics_but_preserves_details():
         service_records={"test": {"name": "Internal service", "description": "Private path debug data", "config": {"base_url": "http://localhost:18001"}}},
     )
     row = catalog["models"][0]
-    assert row["summary"] == {"cost_label": "Local · no provider charge"}
+    assert row["summary"] == {"cost_label": "Local · no charge"}
     assert row["timing"] == {"typical_seconds": None, "source": None}
     assert row["description"] == "A chat model."
 
@@ -270,7 +270,7 @@ def test_technical_discovery_retains_workflow_targets_while_product_rows_dedupe(
 
 
 @pytest.mark.parametrize("filename, taxonomy", [
-    ("ace-step-1.5-xl-turbo.yml", "music"), ("ace-step-1.5-2b-base.yml", "music"),
+    ("ace-step-1.5-xl-turbo.yml", "music"),
     ("yue2-song.yml", "music"), ("sa3-small-sfx.yml", "sfx"), ("tangoflux.yml", "sfx"),
 ])
 def test_shipped_audio_taxonomy_is_data_in_valid_manifests(filename, taxonomy):
@@ -304,7 +304,7 @@ def test_alias_does_not_hide_same_model_on_another_backend():
 
 
 @pytest.mark.parametrize("name, capabilities, engine, expected", [
-    ("Audio & Speech (provider)", ["audio", "speech"], "Chatterbox", "Chatterbox (speech)"),
+    ("Audio & Speech (provider)", ["audio", "speech"], "Chatterbox", "Chatterbox (voice)"),
     ("Image (Provider)", ["images", "videos"], "ComfyUI", "ComfyUI (images & video)"),
     ("ComfyUI (Image + Video Generation)", ["images", "videos"], None, "ComfyUI (images & video)"),
     ("Canary", ["transcriptions"], None, "Canary (transcription)"),
@@ -594,7 +594,7 @@ def test_owner_transcription_uses_same_taxonomy_even_without_live_observation():
 @pytest.mark.parametrize("name,capabilities,expected", [
     ("Local llama.cpp server (official; Bee rollback available)", ["openai", "chat", "completions"], "llama.cpp (chat)"),
     ("canary-stt", ["audio", "transcriptions"], "Canary (transcription)"),
-    ("chatterbox-tts", ["audio", "speech"], "Chatterbox (speech)"),
+    ("chatterbox-tts", ["audio", "speech"], "Chatterbox (voice)"),
 ])
 def test_legacy_seed_names_keep_identity_and_drop_deployment_notes(name, capabilities, expected):
     assert engine_label({"name": name, "capabilities": capabilities}, "internal") == expected
@@ -708,9 +708,8 @@ def test_classification_follows_the_model_list_type():
     assert product_capability(Capability(intent="chat.completions", backend="one"), {LISTED_METADATA_KEY: listed}) == "rerank"
 
 
-def test_embeddings_capability_reads_as_document_search_to_people():
-    # The seeded service is already named "Document search"; its capability label
-    # must equal that name so no "(embeddings)" suffix is appended.
+def test_embeddings_capability_uses_the_voice_glossary_label():
+    # The engine keeps its configured name; the capability uses the glossary term.
     service = {"name": "Document search", "capabilities": ["embeddings"]}
     assert service_capability_labels(service) == ["Document search"]
     assert engine_label(service, "household-embedding") == "Document search"

@@ -257,7 +257,7 @@ describe("member Status diagnosis", () => {
 });
 
 describe("member Status leaves app plumbing out", () => {
-  it("never says 'Embeddings down' or lists decisions to a member", async () => {
+  it("never says 'Document search down' or lists decisions to a member", async () => {
     const ready = snapshot.capabilities[0];
     serve({
       ...snapshot,
@@ -267,7 +267,7 @@ describe("member Status leaves app plumbing out", () => {
         {
           ...ready,
           capability: "embeddings",
-          capability_title: "Embeddings",
+          capability_title: "Document search",
           icon_key: "embed",
           intent: "text.embeddings",
           status: "unavailable",
@@ -293,9 +293,9 @@ describe("member Status leaves app plumbing out", () => {
       await screen.findByRole("heading", { name: "What you can use" }),
     ).toBeVisible();
     expect(await screen.findByText("Images", { selector: "p" })).toBeVisible();
-    expect(screen.getByRole("status")).not.toHaveTextContent(/Embeddings/i);
+    expect(screen.getByRole("status")).not.toHaveTextContent(/Document search/i);
     expect(document.body.textContent).not.toMatch(
-      /Embeddings|Decisions|Your capabilities/,
+      /Document search|Decisions|Your capabilities/,
     );
   });
 });

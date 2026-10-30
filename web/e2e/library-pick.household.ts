@@ -75,7 +75,7 @@ async function tryAs(
 
 async function library(page: Page, kind: "image" | "video") {
   const response = await page.request.get(
-    `/me/api/media?kind=${kind}&limit=40&scope=me`,
+    `/me/api/media?kind=${kind}&limit=40`,
   );
   expect(response.ok()).toBe(true);
   return ((await response.json()) as { assets: LibraryItem[] }).assets;

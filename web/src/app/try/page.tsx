@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -14,8 +15,8 @@ import {
   MessageSquare,
   Copy,
   EyeOff,
+  Ghost,
   GitBranch,
-  History,
   Image as ImageIcon,
   Loader2,
   Mic,
@@ -41,6 +42,7 @@ import {
 } from "./workflow-media";
 import { outputKindOf } from "./workflow-input-meta";
 import { costFrom } from "./result-cost";
+import { chatDefaultChoice } from "./chat-default";
 import { runImageJob } from "./image-job";
 import { isNetworkFailure, networkFetch } from "@/lib/network-error";
 import { sessionIsClosed } from "@/lib/session-end";
@@ -58,11 +60,13 @@ import Link from "next/link";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/cn";
 import {
+  FORGET_EXTENSION,
   tryKeepState,
   withForget,
   type MemberPromptMemory,
   type TryKeepState,
 } from "@/lib/prompt-memory";
+import { periodWords, type RequestHistoryChoice } from "@/lib/request-history";
 import { taskNames } from "@/lib/terms";
 import { modelDisplayName } from "@/lib/model-name";
 import { useUnsavedWork, type UnsavedKind } from "@/lib/unsaved-work";
@@ -79,8 +83,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { takeHomeHandoff, type HomeHandoff } from "@/app/_home/handoff";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader, EmptyState, ErrorState } from "@/components/product";
+import { TechnicalDetails } from "@/components/product/technical-details";
 
 type TryTab =
   | "chat"
@@ -134,6 +140,12 @@ type CatalogOption = {
   unavailableMessage?: string;
   /** Other ids that name the same model (an alias and its target). */
   alsoKnownAs?: string[];
+  /** Where the catalog lists it (aliases first). The chat default follows this order. */
+  order: number;
+  /** Takes pictures as input, so it is a vision model rather than an ordinary chat model. */
+  pictures: boolean;
+  /** This option is the embedding capability. A row that also chats keeps its chat option, which is not embedding. */
+  embedding: boolean;
 };
 type WorkflowOption = {
   id: string;
@@ -161,6 +173,12 @@ type WorkflowOption = {
     python?: string;
     javascript?: string;
   };
+};
+/** A workflow's inputs as the person left them: its JSON, its attached files, and the words it last ran with. */
+type WorkflowDraft = {
+  json: string;
+  files: Record<string, File | null>;
+  base: string | undefined;
 };
 type CatalogState = "idle" | "loading" | "ready" | "empty" | "error";
 type CatalogSection = "models" | "workflows";
@@ -193,11 +211,13 @@ type Result = {
   probabilities?: Array<{ option: string; probability: number | null }>;
   /** The run asked the gateway not to keep its words, or memory was off. */
   promptNotSaved?: boolean;
+  /** The run was sent with keep request history off: nothing about it was kept. */
+  historyOff?: boolean;
 };
 
 /** Tabs whose words the gateway can keep with what they make. */
 const MEMORY_TABS = new Set<TryTab>(["image", "speech", "workflow"]);
-/** "Don't keep this prompt", remembered for the browser session. */
+/** Keep request history switched off, remembered for the browser session. */
 const FORGET_SESSION_KEY = "azizam.try.forget";
 /** Remove secrets persisted by older versions; new keys stay in page memory. */
 const TRY_KEY_STORAGE_KEY = "azizam.try.key";
@@ -210,35 +230,70 @@ function forgetStoredTryKey() {
   }
 }
 
+// Prompt boxes start empty, with a placeholder. A workflow starts from its own example inputs.
 const DEFAULTS: Record<TryTab, { model: string; prompt: string }> = {
-  chat: { model: "", prompt: "Reply with one short sentence." },
-  image: { model: "", prompt: "A calm teal fish mark on a white card." },
-  speech: { model: "", prompt: "The gateway is ready." },
+  chat: { model: "", prompt: "" },
+  image: { model: "", prompt: "" },
+  speech: { model: "", prompt: "" },
   transcribe: { model: "", prompt: "" },
-  // Everyday examples: a member reads these, so no gateway test words.
-  decide: {
-    model: "",
-    prompt: "What should I do?",
-  },
-  embed: {
-    model: "",
-    prompt: "Pancakes need flour, eggs and milk.",
-  },
-  workflow: {
-    model: "",
-    prompt: "{}",
-  },
+  decide: { model: "", prompt: "" },
+  embed: { model: "", prompt: "" },
+  workflow: { model: "", prompt: "{}" },
 };
 const TRY_TABS = Object.keys(DEFAULTS) as TryTab[];
-/** The decide tab's other two fields start with these. */
+/**
+ * "Try an example" fills a tab with sample words for its mode. A member reads
+ * these, so they carry no gateway test words.
+ */
+const EXAMPLES: Partial<Record<TryTab, string>> = {
+  chat: "Reply with one short sentence.",
+  image: "A calm teal fish mark on a white card.",
+  speech: "The gateway is ready.",
+  decide: "What should I do?",
+  embed: "Pancakes need flour, eggs and milk.",
+};
+/** The decide tab's other two boxes, filled by its example. */
 const DECIDE_STATE_EXAMPLE = "It is raining and the bus is 20 minutes late.";
 const DECIDE_OPTIONS_EXAMPLE = "Take a taxi\nWait for the bus";
+const DECIDE_STATE_PLACEHOLDER = "Describe what is happening";
+const DECIDE_OPTIONS_PLACEHOLDER = "One option per line";
+/** What an empty prompt box says it is for. */
+const PLACEHOLDERS: Partial<Record<TryTab, string>> = {
+  chat: "Ask a question or give a task",
+  image: "Describe the picture you want",
+  speech: "Type the words to hear spoken",
+  decide: "What do you need to decide?",
+  embed: "Type the text to turn into numbers",
+};
+/** Run says so when a tab's prompt is empty, instead of sending it. */
+const EMPTY_PROMPT_MESSAGE: Partial<Record<TryTab, string>> = {
+  chat: "Enter a prompt before running chat.",
+  image: "Describe the picture before running it.",
+  speech: "Type the words to speak before running it.",
+  decide: "Enter a question before running it.",
+  embed: "Enter some text before running it.",
+};
 
 /** The words a tab starts with. Words that differ from these, or from what the tab last ran with, are unsent. */
 function startWords(tab: TryTab): string {
-  return tab === "decide"
-    ? JSON.stringify([DEFAULTS.decide.prompt, DECIDE_STATE_EXAMPLE, DECIDE_OPTIONS_EXAMPLE])
-    : DEFAULTS[tab].prompt;
+  return tab === "decide" ? JSON.stringify(["", "", ""]) : DEFAULTS[tab].prompt;
+}
+
+/** A picture's identity for the unsent check. The same picture chosen again is not a change. */
+function fileIdentity(file: File | null | undefined) {
+  return file ? JSON.stringify([file.name, file.size, file.lastModified]) : "";
+}
+
+/** Whether any of a workflow's inputs holds a different picture from the one it last ran with. */
+function filesDiffer(files: Record<string, File | null>, base: Record<string, File | null>) {
+  return Object.keys({ ...files, ...base }).some(
+    (name) => fileIdentity(files[name]) !== fileIdentity(base[name]),
+  );
+}
+
+/** A workflow left behind is unsent when its words differ from what it last ran with, or a picture differs from its last run. */
+function draftIsUnsent(draft: WorkflowDraft, lastRun: Record<string, File | null>) {
+  return draft.json !== (draft.base ?? startWords("workflow")) || filesDiffer(draft.files, lastRun);
 }
 
 /** The kind of work a running request makes: a picture, audio or video, or else the answer it waits for. */
@@ -493,7 +548,7 @@ async function recentCreation(
 ) {
   if ((typeof prompt !== "string" || !prompt) && !jobId) return null;
   try {
-    const response = await networkFetch("/me/api/media?kind=image&limit=5&scope=me", {
+    const response = await networkFetch("/me/api/media?kind=image&limit=5", {
       credentials: "same-origin",
     });
     if (!response.ok) return null;
@@ -520,6 +575,27 @@ async function recentCreation(
       );
     });
     return found?.asset_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The address a recovered picture loads from. The download route answers with
+ * JSON; its `download_url` is the picture, so an image must not load the route
+ * itself. Null when the answer does not name one.
+ */
+async function pictureDownloadUrl(assetId: string): Promise<string | null> {
+  try {
+    const response = await networkFetch(
+      `/me/api/media/${encodeURIComponent(assetId)}/download`,
+      { credentials: "same-origin" },
+    );
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { download_url?: unknown };
+    return typeof payload.download_url === "string" && payload.download_url
+      ? payload.download_url
+      : null;
   } catch {
     return null;
   }
@@ -570,6 +646,8 @@ function receiptFrom(response: Response, payload: unknown) {
 
 /** Where a run's receipt can be found: its request id, or its creations. */
 type ReceiptLookup = { requestId: string | null; assetIds: string[] };
+/** What a receipt check found; receiptLookup is set when the check itself failed. */
+type ReceiptCheck = { receiptId: string | null; receiptLookup?: ReceiptLookup };
 
 function receiptLookup(
   response: Response,
@@ -604,14 +682,15 @@ function receiptLookup(
  */
 async function checkReceipt(
   lookup: ReceiptLookup,
-): Promise<{ receiptId: string | null; receiptLookup?: ReceiptLookup }> {
+  signal?: AbortSignal,
+): Promise<ReceiptCheck> {
   let failed = false;
   /** The id when its receipt exists; null when it does not. Throws on failure. */
   async function verify(requestId: string | null) {
     if (!requestId) return null;
     const receipt = await networkFetch(
       `/me/api/receipts/${encodeURIComponent(requestId)}`,
-      { credentials: "same-origin" },
+      { credentials: "same-origin", signal },
     );
     if (receipt.ok) return requestId;
     if (receipt.status === 404) return null;
@@ -627,6 +706,7 @@ async function checkReceipt(
     try {
       const detail = await networkFetch(`/me/api/media/${encodeURIComponent(id)}`, {
         credentials: "same-origin",
+        signal,
       });
       if (!detail.ok) {
         if (detail.status !== 404) failed = true;
@@ -648,16 +728,29 @@ async function checkReceipt(
   return failed ? { receiptId: null, receiptLookup: lookup } : { receiptId: null };
 }
 
-/** Bound receipt waiting even when a fetch does not settle. */
-async function timedReceipt(lookup: ReceiptLookup) {
+/** How long a receipt check may take before the answer says it could not be checked. */
+const RECEIPT_CHECK_MS = 10_000;
+
+/**
+ * Checks a receipt for at most RECEIPT_CHECK_MS. The check's fetches are
+ * aborted at the deadline; the wait also ends there, so a fetch that ignores
+ * the abort cannot hold the answer's receipt line open. A check that did not
+ * finish reads as "could not be checked", which offers Check again. The
+ * caller's controller can also abort the check before then.
+ */
+async function timedReceipt(
+  lookup: ReceiptLookup,
+  controller = new AbortController(),
+): Promise<ReceiptCheck> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<ReceiptCheck>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve({ receiptId: null, receiptLookup: lookup });
+    }, RECEIPT_CHECK_MS);
+  });
   try {
-    return await Promise.race([
-      checkReceipt(lookup),
-      new Promise<{ receiptId: string | null; receiptLookup: ReceiptLookup }>((resolve) => {
-        timer = setTimeout(() => resolve({ receiptId: null, receiptLookup: lookup }), 10_000);
-      }),
-    ]);
+    return await Promise.race([checkReceipt(lookup, controller.signal), deadline]);
   } finally {
     clearTimeout(timer);
   }
@@ -842,7 +935,7 @@ function groupCatalog(payload: unknown) {
   // A stable alias ("image") and the model it points at ("krea2-turbo") are
   // one choice, not two. The alias stays; the model's id still selects it.
   const aliasTargets: Partial<Record<TryTab, Map<string, CatalogOption>>> = {};
-  for (const value of records) {
+  for (const [order, value] of records.entries()) {
     if (typeof value !== "object" || value === null) continue;
     const record = value as Record<string, unknown>;
     const id =
@@ -856,6 +949,9 @@ function groupCatalog(payload: unknown) {
     for (const capability of capabilities) {
       const option: CatalogOption = {
         id,
+        order,
+        pictures: takesPictures(record),
+        embedding: makesEmbeddingsAs(record, capability),
         label: modelDisplayName(id, {
           models: [
             {
@@ -972,6 +1068,9 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
       capability: "workflow" as const,
       price: "",
       locality: "Workflow manifest",
+      order: options.length,
+      pictures: false,
+      embedding: false,
       workflow,
     });
   }
@@ -1128,6 +1227,43 @@ function makesPicturesFromText(record: Record<string, unknown>) {
   });
 }
 
+/** The capability summaries a catalog row lists, each with its intent and modalities. */
+function capabilitySummaries(record: Record<string, unknown>): Array<Record<string, unknown>> {
+  return Array.isArray(record.capabilities)
+    ? record.capabilities.filter(
+        (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
+      )
+    : [];
+}
+
+function capabilityTab(intent: unknown): TryTab | undefined {
+  if (typeof intent !== "string") return undefined;
+  const key = intent.toLowerCase().trim();
+  return CAPABILITY_TABS[key] ?? INTENT_TABS[key];
+}
+
+/**
+ * A chat model that takes a picture as input is a vision model, and the chat
+ * default is never one. The catalog's input modalities say which.
+ */
+function takesPictures(record: Record<string, unknown>) {
+  return capabilitySummaries(record).some((item) => {
+    const input = Array.isArray(item.input_modalities) ? item.input_modalities : [];
+    return capabilityTab(item.intent) === "chat" && input.includes("image");
+  });
+}
+
+/**
+ * Whether one catalog option of a row is an embedding model: its capability is embedding, or a capability
+ * of the same kind lists an embedding output. A row that also chats keeps its chat option, which is not.
+ */
+function makesEmbeddingsAs(record: Record<string, unknown>, capability: TryTab) {
+  return capability === "embed" || capabilitySummaries(record).some((item) => {
+    const output = Array.isArray(item.output_modalities) ? item.output_modalities : [];
+    return capabilityTab(item.intent) === capability && output.includes("embedding");
+  });
+}
+
 function costLabel(value: unknown) {
   if (typeof value !== "object" || value === null) return "";
   const cost = value as { kind?: unknown; price?: unknown };
@@ -1163,6 +1299,7 @@ function selectedOrDefaultModel(
   current: string,
   options: CatalogOption[],
   explicit: boolean,
+  defaultChoice: (options: CatalogOption[]) => CatalogOption | undefined,
 ) {
   if (!options.length) return explicit ? current : "";
   // A model that an alias stands for is selected through the alias.
@@ -1172,10 +1309,18 @@ function selectedOrDefaultModel(
   if (standIn) return standIn.id;
   if (explicit) return current;
   if (options.some((option) => option.id === current)) return current;
-  return options.find((option) => option.recommended)?.id ?? options[0].id;
+  // A default that finds nothing leaves the choice empty for the person to make.
+  return defaultChoice(options)?.id ?? "";
+}
+
+/** Most tabs start on the catalog's recommendation, else the first option. */
+function recommendedChoice(options: CatalogOption[]) {
+  return options.find((option) => option.recommended) ?? options[0];
 }
 
 export default function TryPage() {
+  // Prefix for element ids, so two Try pages on one document never share one.
+  const idBase = useId();
   const searchParams = useSearchParams();
   const requestedWorkflow = searchParams.get("workflow");
   const requestedCapability = searchParams.get("capability");
@@ -1208,6 +1353,11 @@ export default function TryPage() {
   const [activeTab, setActiveTab] = useState<TryTab>("chat");
   const viewer = useViewer();
   const personViewer = viewer.authenticated && !viewer.serviceAdmin;
+  // Whether this person's requests are kept in History; the keep-history switch's note says what would be.
+  // Undefined while loading, null when it cannot be read.
+  const [historyChoice, setHistoryChoice] = useState<
+    RequestHistoryChoice | null | undefined
+  >(undefined);
   // Prompt memory: whether this person's runs keep their words. Read once;
   // the switch below starts from it and is remembered for the session.
   const [promptMemory, setPromptMemory] = useState<
@@ -1227,8 +1377,8 @@ export default function TryPage() {
       ) as Record<TryTab, string>,
   );
   const [voicesByModel, setVoicesByModel] = useState<Record<string, string>>({});
-  const [decisionState, setDecisionState] = useState(DECIDE_STATE_EXAMPLE);
-  const [options, setOptions] = useState(DECIDE_OPTIONS_EXAMPLE);
+  const [decisionState, setDecisionState] = useState("");
+  const [options, setOptions] = useState("");
   // The words each tab last ran with, or a workflow's loaded example. Only tabs whose words differ are unsent.
   const [baseWords, setBaseWords] = useState<Partial<Record<TryTab, string>>>({});
   const wordsNow = (tab: TryTab) =>
@@ -1237,6 +1387,10 @@ export default function TryPage() {
   const [workflowFiles, setWorkflowFiles] = useState<
     Record<string, File | null>
   >({});
+  // The pictures each workflow's last run sent, by workflow. A picture that differs from its last run is unsent.
+  const [lastRunFiles, setLastRunFiles] = useState<Record<string, Record<string, File | null>>>({});
+  // What a person typed or attached for each workflow, kept while Try shows another one.
+  const [workflowDrafts, setWorkflowDrafts] = useState<Record<string, WorkflowDraft>>({});
   // Run was pressed with something missing: show each field's message.
   const [workflowChecked, setWorkflowChecked] = useState(false);
   const formRefs = useRef<Partial<Record<TryTab, HTMLFormElement | null>>>({});
@@ -1254,6 +1408,8 @@ export default function TryPage() {
   const initializedWorkflowId = useRef<string | null>(null);
   const chunks = useRef<Blob[]>([]);
   const runIds = useRef<Partial<Record<TryTab, number>>>({});
+  // The receipt lookup in flight for each tab. A newer lookup for the tab cancels it.
+  const receiptChecks = useRef<Partial<Record<TryTab, AbortController>>>({});
   const [running, setRunning] = useState<TryTab | null>(null);
   const [results, setResults] = useState<Partial<Record<TryTab, Result>>>({});
   const [errors, setErrors] = useState<Partial<Record<TryTab, TryError>>>({});
@@ -1267,11 +1423,6 @@ export default function TryPage() {
   const [catalogState, setCatalogState] = useState<
     Record<CatalogSection, CatalogState>
   >({ models: "idle", workflows: "idle" });
-  const [catalogPlan, setCatalogPlan] = useState<
-    { id: string; name: string } | null | undefined
-  >(undefined);
-  const [accessRefresh, setAccessRefresh] = useState<"idle" | "loading" | "complete">("idle");
-  const catalogLoading = Object.values(catalogState).some((state) => state === "loading");
   const [unknownModelCount, setUnknownModelCount] = useState(0);
   const speechChoices = catalog.speech?.find((option) => option.id === model.speech)?.speechVoices;
   const voice = selectedVoice(speechChoices, voicesByModel[model.speech]);
@@ -1295,8 +1446,19 @@ export default function TryPage() {
       workflowChoices.find((option) => option.id === model.workflow)?.workflow,
     [workflowChoices, model.workflow],
   );
-  const unsentTabs = TRY_TABS.filter(
-    (tab) => wordsNow(tab) !== (baseWords[tab] ?? startWords(tab)),
+  const shownLastRun = selectedWorkflow ? (lastRunFiles[selectedWorkflow.id] ?? {}) : {};
+  // The workflow tab is unsent while the workflow on screen has changed words or a picture since its last run, and also
+  // while a workflow left behind has either: those drafts are shown again only when that workflow is opened.
+  const workflowUnsent =
+    wordsNow("workflow") !== (baseWords.workflow ?? startWords("workflow")) ||
+    filesDiffer(workflowFiles, shownLastRun) ||
+    Object.entries(workflowDrafts).some(
+      ([id, draft]) => id !== selectedWorkflow?.id && draftIsUnsent(draft, lastRunFiles[id] ?? {}),
+    );
+  const unsentTabs = TRY_TABS.filter((tab) =>
+    tab === "workflow"
+      ? workflowUnsent
+      : wordsNow(tab) !== (baseWords[tab] ?? startWords(tab)),
   );
   useUnsavedWork({ kind: "try-draft", count: unsentTabs.length, active: unsentTabs.length > 0 });
   useUnsavedWork({
@@ -1333,12 +1495,14 @@ export default function TryPage() {
   useEffect(() => {
     mounted.current = true;
     const urls = objectUrls.current;
+    const checks = receiptChecks.current;
     return () => {
       mounted.current = false;
       keyGeneration.current += 1;
       if (recorder.current?.state === "recording") recorder.current.stop();
       stream.current?.getTracks().forEach((track) => track.stop());
       urls.forEach((url) => URL.revokeObjectURL(url));
+      for (const check of Object.values(checks)) check?.abort();
     };
   }, []);
 
@@ -1359,6 +1523,34 @@ export default function TryPage() {
     if (requestedTab) setActiveTab(requestedTab);
   }, [requestedTab]);
 
+  // A prompt typed on Home arrives in sessionStorage, never in the URL. It is taken once and sent as
+  // one run, on the tab this page opened, once that tab is showing and its list has loaded.
+  const homeHandoff = useRef<HomeHandoff | null | undefined>(undefined);
+  const [handoffPending, setHandoffPending] = useState(false);
+  useEffect(() => {
+    if (homeHandoff.current !== undefined) return;
+    homeHandoff.current = takeHomeHandoff(requestedCapabilityKey ?? null);
+    if (!homeHandoff.current || !requestedTab) {
+      homeHandoff.current = null;
+      return;
+    }
+    if (homeHandoff.current.prompt) {
+      const words = homeHandoff.current.prompt;
+      setPrompt((current) => ({ ...current, [requestedTab]: words }));
+    }
+    setHandoffPending(true);
+  }, [requestedCapabilityKey, requestedTab]);
+  useEffect(() => {
+    if (!handoffPending || !homeHandoff.current || !requestedTab || activeTab !== requestedTab) return;
+    const section: CatalogSection = requestedTab === "workflow" ? "workflows" : "models";
+    if (catalogState[section] !== "ready" && catalogState[section] !== "empty") return;
+    const form = formRefs.current[requestedTab];
+    if (!form) return;
+    homeHandoff.current = null;
+    setHandoffPending(false);
+    form.requestSubmit();
+  }, [handoffPending, activeTab, requestedTab, catalogState, prompt]);
+
   useEffect(() => {
     try {
       setForgetState(sessionStorage.getItem(FORGET_SESSION_KEY) === "1");
@@ -1374,6 +1566,10 @@ export default function TryPage() {
       void accountApi.promptMemory().then(
         (response) => live && setPromptMemory(response.prompt_memory),
         () => live && setPromptMemory(null),
+      );
+      void accountApi.requestHistory().then(
+        (choice) => live && setHistoryChoice(choice),
+        () => live && setHistoryChoice(null),
       );
     };
     refresh();
@@ -1409,12 +1605,30 @@ export default function TryPage() {
   }, [requestedCapabilityKey, requestedWorkflow]);
 
   useEffect(() => {
+    // The values read here are the ones shown when the workflow changed: the workflow being left.
+    const previous = initializedWorkflowId.current;
+    if (previous && previous !== selectedWorkflow?.id) {
+      const draft: WorkflowDraft = {
+        json: prompt.workflow,
+        files: workflowFiles,
+        base: baseWords.workflow,
+      };
+      setWorkflowDrafts((drafts) => ({ ...drafts, [previous]: draft }));
+    }
     if (!selectedWorkflow) {
       initializedWorkflowId.current = null;
       return;
     }
     if (initializedWorkflowId.current === selectedWorkflow.id) return;
     initializedWorkflowId.current = selectedWorkflow.id;
+    setWorkflowChecked(false);
+    const draft = workflowDrafts[selectedWorkflow.id];
+    if (draft) {
+      setPrompt((current) => ({ ...current, workflow: draft.json }));
+      setBaseWords((current) => ({ ...current, workflow: draft.base }));
+      setWorkflowFiles(draft.files);
+      return;
+    }
     const body = workflowExampleBody(selectedWorkflow);
     const inputs = workflowDefaults(
       selectedWorkflow.inputs,
@@ -1428,7 +1642,7 @@ export default function TryPage() {
     }));
     setBaseWords((current) => ({ ...current, workflow: example }));
     setWorkflowFiles({});
-    setWorkflowChecked(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWorkflow]);
 
   useEffect(() => {
@@ -1463,6 +1677,18 @@ export default function TryPage() {
     // A kind Try cannot run was a notice about the link; choosing a task
     // answers it.
     if (requestedKind?.untryable) setKindCleared(true);
+  }
+
+  /** "Try an example" fills a tab's boxes with sample words for its mode. */
+  function fillExample(tab: TryTab) {
+    if (tab === "decide") {
+      setPrompt((current) => ({ ...current, decide: EXAMPLES.decide ?? "" }));
+      setDecisionState(DECIDE_STATE_EXAMPLE);
+      setOptions(DECIDE_OPTIONS_EXAMPLE);
+      return;
+    }
+    const sample = EXAMPLES[tab];
+    if (sample !== undefined) setPrompt((current) => ({ ...current, [tab]: sample }));
   }
 
   async function retryCatalog(section: CatalogSection) {
@@ -1620,6 +1846,7 @@ export default function TryPage() {
         next[tab.value],
         options,
         explicitModelTabs.current.has(tab.value),
+        tab.value === "chat" ? chatDefaultChoice : recommendedChoice,
       );
     }
     if (
@@ -1651,7 +1878,6 @@ export default function TryPage() {
       mounted.current &&
       !controller.signal.aborted &&
       catalogRequests.current[section] === controller;
-    if (section === "models") setCatalogPlan(undefined);
     setCatalogState((states) => ({ ...states, [section]: "loading" }));
     try {
       const response = await networkFetch(
@@ -1663,18 +1889,12 @@ export default function TryPage() {
       );
       let grouped: CatalogGroups;
       let unknownCount = 0;
-      let accountPlan: typeof catalogPlan = undefined;
       if (section === "workflows") {
         if (!response.ok) throw new Error("Workflow catalog unavailable");
         grouped = { workflow: groupWorkflows(await response.json()) };
       } else if (response.ok) {
         const payload = await response.json();
         grouped = groupCatalog(payload);
-        const plan = payload.access_plan;
-        accountPlan = plan === null ? null
-          : plan && typeof plan.id === "string" && typeof plan.name === "string"
-            ? { id: plan.id, name: plan.name }
-            : undefined;
       } else if (secret) {
         const fallback = await networkFetch("/openai/v1/models", {
           headers: { authorization: `Bearer ${secret}` },
@@ -1702,10 +1922,7 @@ export default function TryPage() {
           : { ...grouped, workflow: catalogRef.current.workflow };
       catalogRef.current = merged;
       setCatalog(merged);
-      if (section === "models") {
-        setUnknownModelCount(unknownCount);
-        setCatalogPlan(accountPlan);
-      }
+      if (section === "models") setUnknownModelCount(unknownCount);
       setModel((selected) => nextModelForCatalog(merged, selected));
       const hasOptions = Object.values(grouped).some(
         (options) => options?.length,
@@ -1843,13 +2060,22 @@ export default function TryPage() {
     };
   }
 
+  /** What a tab needs written before Run sends anything, or null when it has it. */
+  function missingWordsMessage(tab: TryTab): string | null {
+    if (tab === "decide") {
+      if (!prompt.decide.trim()) return EMPTY_PROMPT_MESSAGE.decide ?? null;
+      return parsedOptions.length ? null : "Add at least one option before running it.";
+    }
+    const message = EMPTY_PROMPT_MESSAGE[tab];
+    return message && !prompt[tab].trim() ? message : null;
+  }
+
   async function run(tab: TryTab, event: FormEvent) {
     event.preventDefault();
-    if (tab === "chat" && !prompt.chat.trim()) {
-      setErrors((current) => ({
-        ...current,
-        chat: { message: "Enter a prompt before running chat." },
-      }));
+    // Checked before a key is prepared, so an empty box never mints one.
+    const missing = missingWordsMessage(tab);
+    if (missing) {
+      setErrors((current) => ({ ...current, [tab]: { message: missing } }));
       return;
     }
     // A sign-out or unmount (both advance keyGeneration) ends the identity
@@ -1925,6 +2151,9 @@ export default function TryPage() {
     }
     setRunning(tab);
     setBaseWords((current) => ({ ...current, [tab]: wordsNow(tab) }));
+    if (tab === "workflow" && runWorkflow) {
+      setLastRunFiles((current) => ({ ...current, [runWorkflow.id]: workflowFiles }));
+    }
     if (tab === "workflow") setJobError(null);
     setErrors((current) => ({ ...current, [tab]: undefined }));
     try {
@@ -1953,14 +2182,19 @@ export default function TryPage() {
         // Keep the current run's privacy promise visible after a refresh.
         setForget(true);
       }
-      const forgetRun =
+      // A prompt the member or the household turned off still goes with forget on the tabs that keep prompts,
+      // as before: the request text is what the prompt is, so History must not keep it either. The keep-history
+      // switch is the same control on every tab.
+      const promptsOff =
         MEMORY_TABS.has(tab) &&
-        (forget ||
-          keepState === "member-off" ||
+        (keepState === "member-off" ||
           keepState === "household-off" ||
           refreshedState === "member-off" ||
           refreshedState === "household-off" ||
           (personViewer && refreshedState === "unknown"));
+      // Prompt keeping off sends forget as well, so History keeps nothing of the typed request either. The names of
+      // the two settings and of "forget" are to be reworked (REQUEST_RETENTION.md section 17, slice 5b1, open point 1).
+      const forgetRun = forget || promptsOff;
       const request: RequestInfo = forgetRun
         ? built.multipart
           ? { ...built, form: withForget(built.form ?? {}) }
@@ -2008,6 +2242,8 @@ export default function TryPage() {
           }
           form.set("model", selectedModel.transcribe);
           form.set("file", file);
+          if (forgetRun)
+            form.set("extensions", JSON.stringify({ [FORGET_EXTENSION]: { mode: "forget" } }));
         }
         result = await publicRequest(request.path, runKey.secret, {
           method: "POST",
@@ -2022,9 +2258,6 @@ export default function TryPage() {
       }
       if (superseded()) return;
       const lookup = receiptLookup(result.response, result.payload, result.requestId);
-      const receipt = tab === "chat"
-        ? { receiptId: null, receiptLookup: lookup }
-        : await checkReceipt(lookup);
       if (superseded()) return;
       const oldUrls = [
         results[tab]?.audioUrl,
@@ -2050,27 +2283,27 @@ export default function TryPage() {
                 catalog[tab]?.find((option) => option.id === selectedModel[tab])
                   ?.locality,
             ),
-            receipt.receiptId,
+            null,
             request,
           ),
-          receiptLookup: receipt.receiptLookup,
+          receiptLookup: lookup,
           imageModel: tab === "image"
             ? runCatalog.image?.find((option) => option.id === selectedModel.image)?.label ?? selectedModel.image
             : undefined,
-          checkingReceipt: tab === "chat",
+          checkingReceipt: true,
           runId,
           promptNotSaved,
+          historyOff: forget,
         },
       }));
-      if (tab === "chat") {
-        void timedReceipt(lookup).then((checked) => {
-          if (superseded()) return;
-          setResults((current) => current[tab]?.runId === runId
-            ? { ...current, [tab]: { ...current[tab]!, ...checked,
-                receiptLookup: checked.receiptLookup, checkingReceipt: false } }
-            : current);
-        });
-      }
+      // The answer is on screen before its receipt is looked up; the lookup gives up after ten seconds.
+      lookUpReceipt(tab, lookup, (checked) => {
+        if (superseded()) return;
+        setResults((current) => current[tab]?.runId === runId
+          ? { ...current, [tab]: { ...current[tab]!, ...checked,
+              receiptLookup: checked.receiptLookup, checkingReceipt: false } }
+          : current);
+      });
     } catch (error) {
       if (superseded()) return;
       const lost =
@@ -2192,15 +2425,11 @@ export default function TryPage() {
           outcome.jobId,
         );
         if (!assetId) throw new LostRequestError("image", outcome.jobId);
+        const downloadUrl = await pictureDownloadUrl(assetId);
+        if (!downloadUrl) throw new LostRequestError("image", outcome.jobId);
         return {
           response: new Response(null),
-          payload: {
-            data: [
-              {
-                url: `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
-              },
-            ],
-          } as unknown,
+          payload: { data: [{ url: downloadUrl }] } as unknown,
           elapsedMs: Math.round(performance.now() - clock),
         };
       }
@@ -2216,8 +2445,28 @@ export default function TryPage() {
     }
   }
 
+  /**
+   * Looks up a tab's receipt in the background, then hands the answer to
+   * `apply`. A newer lookup for the same tab cancels this one, and leaving
+   * Try cancels it too, so a late answer never overwrites a newer one.
+   */
+  function lookUpReceipt(
+    tab: TryTab,
+    lookup: ReceiptLookup,
+    apply: (checked: ReceiptCheck) => void,
+  ) {
+    receiptChecks.current[tab]?.abort();
+    const controller = new AbortController();
+    receiptChecks.current[tab] = controller;
+    void timedReceipt(lookup, controller).then((checked) => {
+      if (!mounted.current || receiptChecks.current[tab] !== controller) return;
+      delete receiptChecks.current[tab];
+      apply(checked);
+    });
+  }
+
   /** Checks a result's receipt again after the check itself failed. */
-  async function recheckReceipt(tab: TryTab) {
+  function recheckReceipt(tab: TryTab) {
     const lookup = results[tab]?.receiptLookup;
     if (!lookup) return;
     const update = (patch: Partial<Result>) =>
@@ -2228,13 +2477,13 @@ export default function TryPage() {
           : current;
       });
     update({ checkingReceipt: true });
-    const receipt = await timedReceipt(lookup);
-    if (!mounted.current) return;
-    update({
-      checkingReceipt: false,
-      receiptId: receipt.receiptId,
-      ...(receipt.receiptLookup ? {} : { receiptLookup: undefined }),
-    });
+    lookUpReceipt(tab, lookup, (receipt) =>
+      update({
+        checkingReceipt: false,
+        receiptId: receipt.receiptId,
+        ...(receipt.receiptLookup ? {} : { receiptLookup: undefined }),
+      }),
+    );
   }
 
   function editFailedRun(tab: TryTab) {
@@ -2276,10 +2525,8 @@ export default function TryPage() {
       }
       const requestId =
         previous.receiptId ?? job.requestId ?? previous.job.requestId;
-      const receipt = await checkReceipt({
-        requestId: requestId ?? null,
-        assetIds: [],
-      });
+      const lookup: ReceiptLookup = { requestId: requestId ?? null, assetIds: [] };
+      // The output is on screen before its receipt is looked up, as for a run.
       setResults((current) => ({
         ...current,
         workflow: {
@@ -2290,10 +2537,17 @@ export default function TryPage() {
             payload instanceof Blob
               ? `${payload.type ? `${payload.type} · ` : ""}${payload.size} bytes`
               : JSON.stringify(payload, null, 2),
-          receiptId: receipt.receiptId,
-          receiptLookup: receipt.receiptLookup,
+          receiptId: previous.receiptId,
+          receiptLookup: lookup,
+          checkingReceipt: true,
         },
       }));
+      lookUpReceipt("workflow", lookup, (checked) => {
+        setResults((current) => current.workflow?.runId === previous.runId
+          ? { ...current, workflow: { ...current.workflow!, ...checked,
+              receiptLookup: checked.receiptLookup, checkingReceipt: false } }
+          : current);
+      });
     } catch (error) {
       setJobError(
         error instanceof Error
@@ -2367,10 +2621,10 @@ export default function TryPage() {
     }
     if (tab === "speech") {
       if (!(payload instanceof Blob) || !payload.size)
-        return nothing("Speech result", "audio");
+        return nothing("Voice result", "audio");
       const audioUrl = URL.createObjectURL(payload);
       objectUrls.current.push(audioUrl);
-      return { title: "Speech result", body: "Audio generated.", audioUrl, ...common };
+      return { title: "Voice result", body: "Audio generated.", audioUrl, ...common };
     }
     if (tab === "transcribe") {
       const text = (payload as { text?: unknown } | null)?.text;
@@ -2406,8 +2660,8 @@ export default function TryPage() {
     }
     const vector = embeddingStats(payload);
     return vector
-      ? { title: "Embedding result", body: "Vector created.", vector, ...common }
-      : nothing("Embedding result", "result");
+      ? { title: "Document search result", body: "Vector created.", vector, ...common }
+      : nothing("Document search result", "result");
   }
 
   return (
@@ -2415,44 +2669,6 @@ export default function TryPage() {
       <PageHeader title="Try" />
 
       <section className="text-muted-foreground text-sm">
-        {personViewer && (
-          <div className="mb-3 space-y-1" role="group" aria-label="Try access">
-            <p>Signed in as {viewer.name}.</p>
-            <p role="status">
-              {catalogPlan ? `Your access plan: ${catalogPlan.name}.`
-                : ["idle", "loading"].includes(catalogState.models)
-                  ? "Checking your access plan…"
-                  : catalogPlan === null
-                    ? "No access plan is assigned to your account. Ask the owner."
-                    : "Your access plan could not be confirmed."}
-              {accessRefresh === "complete" && " Access refresh complete."}
-            </p>
-            {viewer.admin && (
-              <p>
-                Checking another plan does not change your access here.{" "}
-                <Link prefetch={false} href="/people/?tab=plans" className="text-foreground underline underline-offset-4">
-                  Check another plan
-                </Link>
-                .
-              </p>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              aria-disabled={catalogLoading || accessRefresh === "loading"}
-              aria-busy={catalogLoading || accessRefresh === "loading"}
-              onClick={async () => {
-                if (catalogLoading || accessRefresh === "loading") return;
-                setAccessRefresh("loading");
-                await loadCatalog(key?.secret);
-                if (mounted.current) setAccessRefresh("complete");
-              }}
-            >
-              Refresh access
-            </Button>
-          </div>
-        )}
         {keyError && (
           <div className="mb-3">
             <ErrorState
@@ -2636,6 +2852,7 @@ export default function TryPage() {
                         What is happening?
                       </span>
                       <Textarea
+                        placeholder={DECIDE_STATE_PLACEHOLDER}
                         value={decisionState}
                         onChange={(event) =>
                           setDecisionState(event.target.value)
@@ -2690,11 +2907,27 @@ export default function TryPage() {
                     </details>
                   )}
                   {tab.value !== "transcribe" && tab.value !== "workflow" && (
-                    <label className="block space-y-2">
-                      <span className="text-sm font-medium">
-                        {tab.value === "decide" ? "Question" : "Prompt"}
-                      </span>
+                    <div className="space-y-2">
+                      <div className="flex min-h-8 items-center justify-between gap-3">
+                        <label
+                          htmlFor={`${idBase}-prompt-${tab.value}`}
+                          className="text-sm font-medium"
+                        >
+                          {tab.value === "decide" ? "Question" : "Prompt"}
+                        </label>
+                        {EXAMPLES[tab.value] !== undefined && (
+                          <button
+                            type="button"
+                            className="text-muted-foreground hover:text-foreground text-meta min-h-11 underline underline-offset-4"
+                            onClick={() => fillExample(tab.value)}
+                          >
+                            Try an example
+                          </button>
+                        )}
+                      </div>
                       <Textarea
+                        id={`${idBase}-prompt-${tab.value}`}
+                        placeholder={PLACEHOLDERS[tab.value]}
                         value={prompt[tab.value]}
                         onChange={(event) =>
                           setPrompt((current) => ({
@@ -2703,7 +2936,7 @@ export default function TryPage() {
                           }))
                         }
                       />
-                    </label>
+                    </div>
                   )}
                   {tab.value === "speech" && (
                     <VoicePicker
@@ -2766,6 +2999,7 @@ export default function TryPage() {
                     <label className="block space-y-2">
                       <span className="text-sm font-medium">Options</span>
                       <Textarea
+                        placeholder={DECIDE_OPTIONS_PLACEHOLDER}
                         value={options}
                         onChange={(event) => setOptions(event.target.value)}
                         aria-describedby="options-help"
@@ -2778,13 +3012,15 @@ export default function TryPage() {
                       </span>
                     </label>
                   )}
-                  {MEMORY_TABS.has(tab.value) && keepState ? (
-                    <PromptKeepControl
-                      id={`forget-${tab.value}`}
-                      state={keepState}
+                  {personViewer ? (
+                    <KeepHistoryControl
+                      id={`keep-history-${tab.value}`}
+                      keepState={keepState}
+                      history={historyChoice}
                       forget={forget}
                       onForget={setForget}
                       owner={owner}
+                      memory={MEMORY_TABS.has(tab.value)}
                       made={
                         tab.value === "image"
                           ? "picture"
@@ -2802,7 +3038,7 @@ export default function TryPage() {
                   personViewer &&
                   tab.value !== "speech" ? (
                     <p className="text-muted-foreground text-meta">
-                      Jobs whose prompts aren’t kept cannot resume after a
+                      Jobs whose words aren’t kept cannot resume after a
                       gateway restart.
                     </p>
                   ) : null}
@@ -2946,10 +3182,15 @@ function ResultView({
     <div className="min-w-0 space-y-5">
       <div className="space-y-2">
         <h2 className="font-semibold">{result.title}</h2>
-        {result.promptNotSaved ? (
+        {result.historyOff ? (
+          <p className="text-muted-foreground text-meta flex items-center gap-1.5">
+            <Ghost aria-hidden="true" className="size-4 shrink-0" />
+            Not saved in your History
+          </p>
+        ) : result.promptNotSaved ? (
           <p className="text-muted-foreground text-meta flex items-center gap-1.5">
             <EyeOff aria-hidden="true" className="size-4 shrink-0" />
-            Prompt not kept
+            Words not kept
           </p>
         ) : null}
         {result.missing && (
@@ -3130,23 +3371,6 @@ function ResultView({
   );
 }
 
-/** Raw answers and status codes, folded away from the normal view (P15). */
-function TechnicalDetails({ text }: { text: string }) {
-  return (
-    <details className="border-t pt-3">
-      <summary className="min-h-11 cursor-pointer text-sm font-medium">
-        Technical details
-      </summary>
-      <pre
-        tabIndex={0}
-        className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
-      >
-        {text}
-      </pre>
-    </details>
-  );
-}
-
 const MEDIA_NOUN = { image: "picture", audio: "audio", video: "video" } as const;
 
 /**
@@ -3229,101 +3453,173 @@ function ResultMedia({
 }
 
 /**
- * "Don't keep this prompt", set before Run (ChatGPT's Temporary Chat and
- * Safari's private mode: the mode is chosen before you send, and the screen
- * shows it). One row above Run: the switch and what happens to the words.
- * When memory is off for the person or the household there is no choice
- * to make, so the row says so instead of offering a switch that does
- * nothing.
+ * Keep request history: one switch on every Try tab, set before Run. On, the
+ * request is kept as the person's settings say. Off, it goes with forget, so
+ * the gateway keeps nothing about it, and the choice lasts for this browser
+ * tab only. The switch starts on, which is the default for a person who keeps
+ * request history. Where the person's settings already decide (history or
+ * prompt keeping off), the row says so and offers no switch.
  */
-function PromptKeepControl({
+function KeepHistoryControl({
   id,
-  state,
   forget,
   onForget,
+  keepState,
+  history,
   owner,
+  memory,
   made,
 }: {
   id: string;
-  state: TryKeepState;
+  /** Off: the request goes with forget. */
   forget: boolean;
   onForget: (next: boolean) => void;
+  keepState: TryKeepState | null;
+  /** Undefined while loading; null when the setting cannot be read. */
+  history: RequestHistoryChoice | null | undefined;
   owner: boolean;
+  /** The tab keeps its words with what it makes (pictures, audio, workflow results). */
+  memory: boolean;
   made: string;
 }) {
-  const fixed = state === "member-off" || state === "household-off";
-  const notKept = fixed || forget;
-  const Icon = notKept ? EyeOff : History;
-  const label = fixed ? "Prompts aren’t kept" : "Don’t keep this prompt";
-  const description = fixed ? (
-    state === "member-off" ? (
+  const promptsKept = keepState === "choice";
+  if (memory && (keepState === "member-off" || keepState === "household-off")) {
+    return (
+      <div
+        data-slot="prompt-keep"
+        data-state="not-kept"
+        className="rounded-control flex items-center gap-3 border bg-muted px-3 py-2.5"
+      >
+        <EyeOff aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="text-body font-medium">Words aren’t kept</p>
+          <p id={`${id}-note`} className="text-muted-foreground text-meta">
+            {keepState === "member-off" ? (
+              <>
+                You turned off saved words and chats.{" "}
+                <Link prefetch={false}
+                  href="/account"
+                  className="text-foreground underline underline-offset-4"
+                >
+                  Change
+                </Link>
+              </>
+            ) : owner ? (
+              <>
+                You turned off saved words and chats for everyone.{" "}
+                <Link prefetch={false}
+                  href="/settings#prompts"
+                  className="text-foreground underline underline-offset-4"
+                >
+                  Settings
+                </Link>
+              </>
+            ) : (
+              "Turned off for everyone on this gateway."
+            )}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  // Nothing at all is kept for this request, so a switch would change nothing: say so instead.
+  if (
+    keepState === "household-off" ||
+    (history != null && !history.keep && !(memory && promptsKept))
+  ) {
+    return (
+      <div
+        data-slot="keep-history"
+        data-state="not-kept"
+        className="rounded-control bg-muted flex items-center gap-3 border px-3 py-2.5"
+      >
+        <EyeOff aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="text-body font-medium">Nothing you send is kept</p>
+          <p id={`${id}-note`} className="text-muted-foreground text-meta">
+            {keepState === "household-off" ? (
+              "Turned off for everyone on this gateway."
+            ) : (
+              <>
+                Request history is off for you.{" "}
+                <Link prefetch={false}
+                  href="/account#history"
+                  className="text-foreground underline underline-offset-4"
+                >
+                  Change
+                </Link>
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  let note: ReactNode;
+  if (forget) {
+    note = (
       <>
-        You turned off prompt keeping.{" "}
-        <Link prefetch={false}
-          href="/account"
-          className="text-foreground underline underline-offset-4"
-        >
-          Change
-        </Link>
+        <span className="block">Not saved in your History.</span>
+        {memory ? (
+          <span className="block">
+            The words aren’t kept. The {made} still goes to Library.
+          </span>
+        ) : null}
       </>
-    ) : owner ? (
+    );
+  } else if (keepState === "unknown" || history === null) {
+    note = memory
+      ? "Couldn't read your saved words and chats setting. Saved words are visible only to you."
+      : "Couldn’t read your settings. Saved items are visible only to you.";
+  } else if (keepState === null || history === undefined) {
+    note = "Checking what Azizam keeps…";
+  } else {
+    note = (
       <>
-        You turned off prompt keeping for everyone.{" "}
-        <Link prefetch={false}
-          href="/settings#prompts"
-          className="text-foreground underline underline-offset-4"
-        >
-          Settings
-        </Link>
+        {history.keep ? (
+          <span className="block">
+            Saved in your History for {periodWords(history.retention)}.
+          </span>
+        ) : null}
+        {memory && promptsKept ? (
+          <>
+            <span className="block">
+              Azizam tries to keep the words with the {made}.
+            </span>
+            <span className="block">Only you can see kept words.</span>
+          </>
+        ) : (
+          <span className="block">Only you can see it.</span>
+        )}
       </>
-    ) : (
-      "Turned off for everyone on this gateway."
-    )
-  ) : forget ? (
-    `The ${made} still goes to Library.`
-  ) : state === "unknown" ? (
-    "Couldn't read your prompt settings. Saved prompts are visible only to you."
-  ) : (
-    <>
-      <span className="block">
-        Azizam tries to keep the prompt with the {made}.
-      </span>
-      <span className="block">Only you can see kept prompts.</span>
-    </>
-  );
+    );
+  }
+  // With request history off, this switch can only still decide the prompt kept with a picture.
+  const label = history?.keep === false ? "Keep the words you used to make things" : "Keep request history";
   return (
     <div
-      data-slot="prompt-keep"
-      data-state={notKept ? "not-kept" : "kept"}
+      data-slot="keep-history"
+      data-state={forget ? "off" : "on"}
       className={cn(
         "rounded-control flex items-center gap-3 border px-3 py-2.5",
-        notKept && "bg-muted",
+        forget && "bg-muted",
       )}
     >
-      <Icon
-        aria-hidden="true"
-        className="text-muted-foreground size-4 shrink-0"
-      />
+      <Ghost aria-hidden="true" className="text-muted-foreground size-4 shrink-0" />
       <div className="min-w-0 flex-1">
-        {fixed ? (
-          <p className="text-body font-medium">{label}</p>
-        ) : (
-          <label htmlFor={id} className="text-body block font-medium">
-            {label}
-          </label>
-        )}
+        <label htmlFor={id} className="text-body block font-medium">
+          {label}
+        </label>
         <p id={`${id}-note`} className="text-muted-foreground text-meta">
-          {description}
+          {note}
         </p>
       </div>
-      {fixed ? null : (
-        <Switch
-          id={id}
-          checked={forget}
-          onCheckedChange={onForget}
-          aria-describedby={`${id}-note`}
-        />
-      )}
+      <Switch
+        id={id}
+        checked={!forget}
+        onCheckedChange={(next) => onForget(!next)}
+        aria-describedby={`${id}-note`}
+      />
     </div>
   );
 }
@@ -3444,7 +3740,7 @@ function ModelSelect({
         aria-label="Model"
         className="w-full min-w-0 overflow-hidden [&_[data-slot=select-value]]:min-w-0"
       >
-        <SelectValue placeholder="No options available" />
+        <SelectValue placeholder={values.length ? "Choose a model" : "No options available"} />
       </SelectTrigger>
       <SelectContent>
         {values.map((option) => (

@@ -261,6 +261,13 @@
   ],
   "gateway_sleeps": [],
   "media_jobs": {
+    "media_job_asset_origins": [
+      {
+        "asset_id": "img_b8b1266ff29b9596389d7beda3ee902541358b277066e0bb8bafeef664479cf5",
+        "job_id": "<job:1>",
+        "origin_id": "<req:1>"
+      }
+    ],
     "media_jobs": [
       {
         "api_key_name": "test-app",
@@ -295,6 +302,9 @@
           "input_hash": "<digest>",
           "intent": "image.generate",
           "job_id": "<job:1>",
+          "maker_connection_id": null,
+          "maker_credential_id": "sha256:test",
+          "maker_person_id": null,
           "metadata": {
             "mode": "sync_media_route"
           },
@@ -312,6 +322,9 @@
           "upstream_http_status": null,
           "workflow": "krea2-turbo"
         },
+        "maker_connection_id": null,
+        "maker_credential_id": "sha256:test",
+        "maker_person_id": null,
         "parent_request_id": null,
         "progress": 100,
         "request_id": "<req:1>",
@@ -322,7 +335,7 @@
     ],
     "media_jobs_schema_version": [
       {
-        "version": 4
+        "version": 6
       }
     ],
     "retention_fact_destinations": [
@@ -634,7 +647,7 @@
           ],
           "source_kind": "app",
           "source_label": "test-app",
-          "started_at_ms": null,
+          "started_at_ms": "<time>",
           "status": "ok",
           "stream": false,
           "updated_at_ms": "<time>",

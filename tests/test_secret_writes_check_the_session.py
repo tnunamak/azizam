@@ -80,6 +80,7 @@ CLEAN_UP_ONLY = {
 # Routes with their own race below (not a registry or secret-store probe).
 OWN_RACE = {
     ("POST", "/admin/api/apps/{app_id}/trusted-addresses"): "a trusted address lets a device in with no key",
+    ("POST", "/me/api/apps/{app_id}/trusted-addresses"): "a trusted address lets a device in with no key (tests/test_me_trusted_addresses.py races a sign-out)",
     ("PUT", "/admin/api/signin"): "the identity provider's issuer and client secret (tests/test_signin_settings_api.py)",
 }
 

@@ -34,6 +34,18 @@ def api_violations(rows: list[dict], budget: dict, counts_only: bool) -> list[di
     return found
 
 
+def loop_violations(rows: list[dict], budget: dict) -> list[dict]:
+    """A cold read that stalls the event loop, as api_bench.py measures it (rows with stall_ms)."""
+    found = []
+    for row in rows:
+        if "stall_ms" not in row or row["stall_ms"] <= budget["max_stall_ms"]:
+            continue
+        found.append({"kind": "loop", "what": f"{row['route']} ({row['who']})", "metric": "stall_ms",
+                      "value": row["stall_ms"], "limit": budget["max_stall_ms"],
+                      "over": row["stall_ms"] / max(budget["max_stall_ms"], 1)})
+    return found
+
+
 def ui_violations(rows: list[dict], budget: dict, counts_only: bool) -> list[dict]:
     found = []
     for row in rows:
@@ -63,6 +75,9 @@ def home_violations(report: dict, budget: dict) -> list[dict]:
         ("js_wire_kb", profiles["mobile"]["cold"]["js_wire_kb"]), ("js_requests", profiles["mobile"]["cold"]["js_requests"]),
         ("uncompressed_js", profiles["mobile"]["cold"]["js_uncompressed"]),
     ]
+    if report.get("who") == "member":
+        # Only a member's Home is judged on requests: an owner's also reads the status and registry the shell shares.
+        checks.append(("member_api_requests", profiles["desktop"]["cold"].get("member_api_requests")))
     return [{"kind": "home", "what": "Home", "metric": name, "value": value if value is not None else "never", "limit": budget[name],
              "over": 99 if value is None else value / max(budget[name], 1)}
             for name, value in checks if value is None or value > budget[name]]
@@ -84,7 +99,10 @@ def main() -> None:
     parser.add_argument("--counts-only", action="store_true")
     args = parser.parse_args()
     budgets = tomllib.loads(args.budgets.read_text(encoding="utf-8"))
-    bad = api_violations(json.loads(args.api.read_text())["rows"], budgets["api"], args.counts_only)
+    api_rows = json.loads(args.api.read_text())["rows"]
+    bad = api_violations(api_rows, budgets["api"], args.counts_only)
+    if not args.counts_only:
+        bad += loop_violations(api_rows, budgets["loop"])
     if args.ui:
         bad += ui_violations(json.loads(args.ui.read_text())["rows"], budgets["ui"], args.counts_only)
     if args.home and not args.counts_only:

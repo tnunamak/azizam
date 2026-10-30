@@ -105,13 +105,13 @@ const taskLabels: Record<Task, string> = {
   image: terms.image,
   video: terms.video,
   music: terms.music,
-  sfx: terms.sound_effects,
+  sfx: terms.sfx,
   speech: terms.speech,
   audio: terms.audio,
   transcribe: terms.transcribe,
   decide: taskNames.decisions,
   embed: taskNames.embeddings,
-  rerank: terms.reranking,
+  rerank: terms.rerank,
 };
 
 /** One plain sentence per task: what an app uses it for. */
@@ -153,13 +153,13 @@ function letters(value: string): string {
 /**
  * The model's own name when it adds something to the model name: "Supertonic"
  * for `tts`, but nothing for `coder-q5` ("Coder Q5") or a title that only
- * names the task ("Speech" for `tts`).
+ * names the task ("Voice" for `tts`).
  */
 export function modelTitle(row: CatalogRow): string | undefined {
   const id = letters(row.id);
   const task = letters(taskLabel(row));
   const serverTask = letters(row.capability_title ?? "");
-  // "Embeddings · Embed" only names the task twice; "embed" is the task too.
+  // "Document search · Embed" only names the task twice; "embed" is the task too.
   const plain = (word: string) => (word.startsWith("embed") ? "embed" : word);
   const known = new Set([id, task, serverTask, letters(row.capability ?? "")].map(plain));
   for (const candidate of [row.title ?? row.display_name, row.recommended_model]) {
@@ -522,7 +522,7 @@ function ModelRow({
   const status = statusWords(row).label;
   const usual = availabilityState(row) === "ready" || status === "Ready to start";
   // A phone has one line for facts: a state that needs attention first, and a
-  // price only when it is not the usual local "no provider charge".
+  // price only when it is not the usual local "no charge".
   const phoneFacts = [
     usual ? null : status,
     ...meta,
@@ -673,11 +673,13 @@ function DetailSheet({
   onOpenChange,
   viewerAdmin,
   knownNames,
+  browserOrigin,
 }: {
   row: CatalogRow | null;
   onOpenChange: (open: boolean) => void;
   viewerAdmin: boolean;
   knownNames: ReadonlySet<string>;
+  browserOrigin: string;
 }) {
   const action = row ? availabilityAction(row, viewerAdmin) : null;
   const timing = row ? timingLabel(row) : undefined;
@@ -769,14 +771,14 @@ function DetailSheet({
                   Replace YOUR_KEY with your own key in your server-side app.
                 </p>
                 <div className="[&_pre]:break-all [&_pre]:whitespace-pre-wrap">
-                  <CodeBlock key={row.id} snippets={appSnippetsFor(row, window.location.origin)} />
+                  <CodeBlock key={row.id} snippets={appSnippetsFor(row, browserOrigin)} />
                 </div>
               </section>
               <section className="space-y-3">
                 <h3 className="text-body font-medium">Example for app setup</h3>
                 <div className="[&_pre]:break-all [&_pre]:whitespace-pre-wrap">
-                  {snippetsFor(row, window.location.origin).length > 0 ? (
-                    <CodeBlock snippets={snippetsFor(row, window.location.origin)} />
+                  {snippetsFor(row, browserOrigin).length > 0 ? (
+                    <CodeBlock snippets={snippetsFor(row, browserOrigin)} />
                   ) : (
                     <p className="text-muted-foreground text-meta">
                       No example was provided. Use the model name above when connecting your app.
@@ -905,6 +907,7 @@ export default function ModelsClient() {
   const address =
     discovery?.recipes?.openai?.canonical_base_url ??
     (typeof window === "undefined" ? "" : `${window.location.origin}/openai/v1`);
+  const browserOrigin = typeof window === "undefined" ? "" : window.location.origin;
 
   // Aliases first, then exact models; a name listed as both appears once.
   const allRows = useMemo(() => {
@@ -1134,6 +1137,7 @@ export default function ModelsClient() {
         onOpenChange={(open) => !open && setDetailId(null)}
         viewerAdmin={viewer.admin}
         knownNames={knownNames}
+        browserOrigin={browserOrigin}
       />
     </div>
   );

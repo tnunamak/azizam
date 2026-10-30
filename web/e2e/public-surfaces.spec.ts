@@ -8,7 +8,6 @@ const builtInOptions = {
   oidc_label: "",
   oidc_url: "/login?return_to=/",
   instance_name: "Browser test gateway",
-  owner_name: "Gateway owner",
 };
 
 // Display states, copy and form wiring for these two pages are asserted in
@@ -88,6 +87,7 @@ test("built-in sign-in posts JSON and retains its fields after denied credential
     email: "unknown@example.test",
     password: "Invalid browser test password",
     return_to: "/",
+    remember: true,
   });
   await expect(page).toHaveURL(/\/sign-in\/$/);
   await expect(

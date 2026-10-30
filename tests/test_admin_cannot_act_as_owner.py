@@ -13,6 +13,7 @@ import json
 import pytest
 
 from gateway import admin_store, service_registry
+from gateway import trusted_addresses
 from gateway.litellm_substrate import compile_litellm_substrate_config
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
     csrf_for,
@@ -74,8 +75,9 @@ def test_an_administrator_cannot_remove_a_trusted_address_of_the_owners_app(gate
 def test_an_administrator_can_still_remove_a_trusted_address_of_a_members_app(gateway):
     owner, _, plan_id, admin = owner_and_admin(gateway)
     app_id = _app_of(gateway, owner, plan_id, _member_id(gateway), name="members")
-    entry_id = owner.post(f"/admin/api/apps/{app_id}/trusted-addresses", headers=csrf_for(owner),
-                          json={"address": "192.168.1.51"}).json()["trusted_address"]["id"]
+    # The member answers for their App, so the member is the one who trusts the address (owner visibility step 2).
+    entry_id = admin_store.add_trusted_address(app_id, "192.168.1.51", created_by=_member_id(gateway),
+                                               max_entries=trusted_addresses.MAX_ENTRIES_PER_APP, path=gateway.path)["id"]
     removed = admin.delete(f"/admin/api/apps/{app_id}/trusted-addresses/{entry_id}", headers=csrf_for(admin))
     assert removed.status_code == 200, removed.text
 

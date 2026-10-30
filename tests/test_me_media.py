@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from tests.support.app_keys import accountable_person
 import json
 import shutil
 import sqlite3
@@ -15,7 +16,22 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, mcp_oauth_store, media_delivery, media_jobs, media_metadata, me_make, me_media, ownership, prompt_memory, provenance, receipt_store
+from gateway import (
+    accounts,
+    admin_store,
+    mcp_oauth_store,
+    media_delivery,
+    media_jobs,
+    media_metadata,
+    me_make,
+    me_media,
+    ownership,
+    prompt_memory,
+    provenance,
+    receipt_store,
+    request_history,
+    request_source,
+)
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
 from gateway.receipts import RouteReceipt
@@ -66,23 +82,27 @@ class MeMediaRouterTests(unittest.TestCase):
             app_id=self.app_a["id"],
             hash="sha256:alice",
             prefix="test_alice",
-            path=self.admin_db,
-        )
+            path=self.admin_db, created_by=accountable_person(self.admin_db, self.app_a["id"]))
         self.cred_b = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=self.app_b["id"],
             app_id=self.app_b["id"],
             hash="sha256:bob",
             prefix="test_bob",
-            path=self.admin_db,
-        )
+            path=self.admin_db, created_by=accountable_person(self.admin_db, self.app_b["id"]))
         self.current_user = self.alice
+        self.signed_asset_ids: list[str] = []
+
+        def signed_url_builder(_request: Request, asset_id: str, mode: str) -> str:
+            self.signed_asset_ids.append(asset_id)
+            return f"http://testserver/v1/assets/{asset_id}/content?md={mode}&sig=test"
+
         app = FastAPI()
         app.include_router(
             me_media.create_me_media_router(
                 session_provider=self._session,
                 mutation_validator=self._mutation_validator,
-                signed_url_builder=lambda request, asset_id, mode: f"http://testserver/v1/assets/{asset_id}/content?md={mode}&sig=test",
+                signed_url_builder=signed_url_builder,
                 asset_path_resolver=self._asset_path,
                 asset_media_type_resolver=lambda asset_id, path: "image/png",
                 asset_deleter=self._delete_unshared,
@@ -97,8 +117,9 @@ class MeMediaRouterTests(unittest.TestCase):
         self.client = TestClient(app)
 
     def test_job_notifications_are_scoped_even_for_owner(self) -> None:
-        for app in (self.app_a, self.app_b):
-            media_jobs.create(media_jobs.MediaJob(intent="video.generate", app_id=app["id"]), path=self.jobs_db)
+        for app, person in ((self.app_a, self.alice), (self.app_b, self.bob)):
+            with request_source.acting_as(app_id=app["id"], person_id=person["id"]):
+                media_jobs.create(media_jobs.MediaJob(intent="video.generate", app_id=app["id"]), path=self.jobs_db)
         rows = self.client.get("/me/api/jobs?scope=everyone").json()["jobs"]
         self.assertEqual(len(rows), 1)
         foreign = next(job for job in media_jobs.recent(path=self.jobs_db) if job["app_id"] == self.app_b["id"])
@@ -111,8 +132,9 @@ class MeMediaRouterTests(unittest.TestCase):
         now = int(time.time())
         for key, status, updated in (("old", "succeeded", 1), ("active", "running", 1),
                                      ("recent", "succeeded", now)):
-            media_jobs.create(media_jobs.MediaJob(job_id=key, intent="image.generate",
-                app_id=self.app_a["id"], status=status, created_at=updated, updated_at=updated), path=self.jobs_db)
+            with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+                media_jobs.create(media_jobs.MediaJob(job_id=key, intent="image.generate",
+                    app_id=self.app_a["id"], status=status, created_at=updated, updated_at=updated), path=self.jobs_db)
         with patch("gateway.me_media.time.time", return_value=now):
             first = self.client.get("/me/api/jobs?watch=1").json()
         self.assertEqual({job["job_id"] for job in first["jobs"]}, {"active", "recent"})
@@ -124,10 +146,118 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(len(self.client.get("/me/api/jobs").json()["jobs"]), 3)
         self.assertEqual(self.client.get("/me/api/jobs?watch=1&since=bad").status_code, 400)
 
+    def _service_app_member_work(self, *, maker: dict | None) -> tuple[str, str]:
+        """A receipt, a job and a cached item in the owner's service App, made by ``maker`` (None: no person)."""
+        service = admin_store.create_app("Household", kind="service", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db)
+        asset_id = "img_" + "9" * 64
+        self._write_asset(asset_id, [ownership.principal_key("app", service["id"])], request_id="req_service_work", created_at=time.time())
+        if maker is not None:
+            meta = self._asset_metadata(asset_id)
+            meta["maker_person_ids"] = [maker["id"]]
+            self._meta_path(asset_id).write_text(json.dumps(meta))
+        self._receipt(service["id"], "req_service_work", maker_person_id=maker["id"] if maker else None)
+        with request_source.acting_as(app_id=service["id"], person_id=maker["id"] if maker else None):
+            media_jobs.create(media_jobs.MediaJob(
+                request_id="req_service_work", job_id="job_service_work", intent="image.generate", workflow="wf.image",
+                status=media_jobs.STATUS_SUCCEEDED, progress=100, app_id=service["id"],
+                assets=[{"asset_id": asset_id, "media_type": "image/png"}],
+            ), path=self.jobs_db)
+        return asset_id, "job_service_work"
+
+    def test_owning_a_service_app_grants_no_member_work_in_it(self) -> None:
+        asset_id, job_id = self._service_app_member_work(maker=self.alice)
+        self.current_user = self.alice
+        self.assertIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 200)
+        self.assertEqual([job["job_id"] for job in self.client.get("/me/api/jobs").json()["jobs"]], [job_id])
+        self.assertEqual(self.client.get(f"/me/api/jobs/{job_id}").status_code, 200)
+
+        self.current_user = self.owner
+        self.signed_asset_ids.clear()
+        self.assertNotIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 404)
+        self.assertEqual(self.client.get("/me/api/jobs").json()["jobs"], [])
+        self.assertEqual(self.client.get(f"/me/api/jobs/{job_id}").status_code, 404)
+        self.assertNotIn(asset_id, self.signed_asset_ids)
+
+    def test_admin_and_another_member_get_no_member_work_from_a_service_app(self) -> None:
+        asset_id, job_id = self._service_app_member_work(maker=self.alice)
+        admin = admin_store.upsert_oidc_user("issuer", "admin-sub", email="admin@example.com", path=self.admin_db)
+        admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=admin["id"], path=self.admin_db)
+        self.signed_asset_ids.clear()
+        for user in (admin, self.bob):
+            self.current_user = user
+            self.assertNotIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+            self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+            self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 404)
+            self.assertEqual(self.client.get(f"/me/api/jobs/{job_id}").status_code, 404)
+        self.assertNotIn(asset_id, self.signed_asset_ids)
+
+    def test_a_person_less_row_in_a_service_app_is_read_by_no_person(self) -> None:
+        asset_id, job_id = self._service_app_member_work(maker=None)
+        for user in (self.owner, self.alice, self.bob):
+            self.current_user = user
+            self.assertNotIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+            self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+            self.assertEqual(self.client.get(f"/me/api/jobs/{job_id}").status_code, 404)
+
+    def test_a_cached_member_item_in_a_service_app_is_hidden_from_the_owner(self) -> None:
+        service = admin_store.create_app("Household cache", kind="service", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db)
+        asset_id = "img_" + "7" * 64
+        self._write_asset(asset_id, [ownership.principal_key("app", service["id"])], created_at=time.time())
+        meta = self._asset_metadata(asset_id)
+        meta["maker_person_ids"] = [self.alice["id"]]
+        self._meta_path(asset_id).write_text(json.dumps(meta))
+        self.signed_asset_ids.clear()
+        self.current_user = self.owner
+        self.assertNotIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 404)
+        self.assertNotIn(asset_id, self.signed_asset_ids)
+        self.current_user = self.alice
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)
+
+    def test_a_personal_app_row_without_a_recorded_maker_is_still_its_persons(self) -> None:
+        owner_app = admin_store.create_app("Owner personal", kind="personal", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db)
+        asset_id = "img_" + "8" * 64
+        self._write_asset(asset_id, [ownership.principal_key("app", owner_app["id"])], request_id="req_owner_make", created_at=time.time())
+        self._receipt(owner_app["id"], "req_owner_make")
+        with request_source.acting_as(app_id=owner_app["id"], person_id=self.owner["id"]):
+            media_jobs.create(media_jobs.MediaJob(
+                request_id="req_owner_make", job_id="job_owner_make", intent="image.generate", workflow="wf.image",
+                status=media_jobs.STATUS_SUCCEEDED, progress=100, app_id=owner_app["id"],
+                assets=[{"asset_id": asset_id, "media_type": "image/png"}],
+            ), path=self.jobs_db)
+        self.current_user = self.owner
+        self.assertIn(asset_id, [item["asset_id"] for item in self.client.get("/me/api/media").json()["assets"]])
+        self.assertEqual(self.client.get("/me/api/jobs/job_owner_make").status_code, 200)
+
+    def test_a_client_parent_link_does_not_make_another_person_the_maker_of_a_job(self) -> None:
+        """Alice names Bob's receipt as the parent of her job. The job is still Alice's: the maker is the one stamped
+        from her authenticated request, and the parent link names no one (a client can send any parent)."""
+        self._receipt(self.app_b["id"], "req_bob_chat", maker_person_id=self.bob["id"])
+        with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+            media_jobs.create(media_jobs.MediaJob(
+                job_id="job_claimed", request_id="req_alice_claim", parent_request_id="req_bob_chat",
+                intent="image.generate", workflow="wf.image", app_id=self.app_a["id"],
+                status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                assets=[{"asset_id": "img_" + "6" * 64, "media_type": "image/png"}],
+            ), path=self.jobs_db)
+        self.current_user = self.bob
+        self.assertNotIn("job_claimed", [job["job_id"] for job in self.client.get("/me/api/jobs").json()["jobs"]])
+        self.assertEqual(self.client.get("/me/api/jobs/job_claimed").status_code, 404)
+        self.current_user = self.alice
+        self.assertIn("job_claimed", [job["job_id"] for job in self.client.get("/me/api/jobs").json()["jobs"]])
+        self.assertEqual(self.client.get("/me/api/jobs/job_claimed").status_code, 200)
+
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def _session(self, _request: Request) -> AdminSession:
+    def _session(self, request: Request) -> AdminSession | None:
+        if request is not None and request.headers.get("authorization"):
+            return None
         return AdminSession(
             subject=self.current_user["id"],
             email=self.current_user["email"],
@@ -219,6 +349,13 @@ class MeMediaRouterTests(unittest.TestCase):
         owner_key_hash: str | None = None,
         connection_id: str | None = None,
         api_key_name: str | None = None,
+        maker_person_id: str | None = None,
+        backend: str | None = None,
+        remote: bool = False,
+        started: bool = False,
+        usd: str | None = None,
+        job_id: str | None = None,
+        attempt_number: int | None = None,
     ) -> None:
         receipt = RouteReceipt(
             protocol="openai.images",
@@ -232,42 +369,55 @@ class MeMediaRouterTests(unittest.TestCase):
             owner_key_hash=owner_key_hash,
             connection_id=connection_id,
             api_key_name=api_key_name,
+            maker_person_id=maker_person_id,
+            backend=backend,
+            remote=remote,
+            job_id=job_id,
+            attempt_number=attempt_number,
         )
         receipt.accepted_at_ms = 1_700_000_000_000
         receipt.updated_at_ms = 1_700_000_001_000
+        if started:
+            receipt.started_at_ms = 1_700_000_000_500
         if cost is not None:
             receipt.metadata["litellm"] = {"response_cost": cost}
-        if cost_class is not None:
-            receipt.cost = {"cost_class": cost_class, "usd": cost}
+        if cost_class is not None or usd is not None:
+            receipt.cost = {"cost_class": cost_class, "usd": usd if usd is not None else cost}
         receipt_store.record(receipt, created_at=int(time.time()) if created_at is None else created_at, path=self.receipts_db)
 
     def _job(self, request_id: str, asset_id: str, *, workflow: str = "wf.image", media_type: str = "image/png") -> None:
-        media_jobs.create(
-            media_jobs.MediaJob(
-                request_id=request_id,
-                intent="image.generate",
-                workflow=workflow,
-                status=media_jobs.STATUS_SUCCEEDED,
-                progress=100,
-                assets=[{"asset_id": asset_id, "media_type": media_type}],
-            ),
-            path=self.jobs_db,
-        )
+        # The request that made the job also wrote its receipt, so the job takes that receipt's App and maker.
+        receipt = receipt_store.get(request_id, audience="internal", path=self.receipts_db) or {}
+        app_id = receipt.get("app_id")
+        app = admin_store.get_app(app_id, path=self.admin_db) if app_id else None
+        # A request through a personal App runs as that App's person; the receipt names the maker when it was recorded.
+        person_id = receipt.get("maker_person_id") or (app["owner_user_id"] if app and app.get("kind") == "personal" else None)
+        with request_source.acting_as(app_id=app_id, person_id=person_id):
+            media_jobs.create(
+                media_jobs.MediaJob(
+                    request_id=request_id,
+                    app_id=app_id,
+                    intent="image.generate",
+                    workflow=workflow,
+                    status=media_jobs.STATUS_SUCCEEDED,
+                    progress=100,
+                    assets=[{"asset_id": asset_id, "media_type": media_type}],
+                ),
+                path=self.jobs_db,
+            )
 
-    def test_item_without_recorded_origin_or_time_stays_unknown(self) -> None:
-        # No receipt, no job, no provenance and an owner key no App holds:
-        # nothing shows where it came from or when it was made.
+    def test_cache_asset_without_receipt_recovers_its_owned_app_source(self) -> None:
+        # The key links this cache item to Alice's App even when no receipt or job exists.
         asset_id = "img_" + "f" * 64
         self._asset_path(asset_id).write_bytes(PNG_1X1)
-        self._meta_path(asset_id).write_text(json.dumps({"asset_id": asset_id, "owner_key_hashes": ["sha256:nobody"]}))
-        self.current_user = self.owner
-        item = next(asset for asset in self.client.get("/me/api/media?scope=everyone").json()["assets"]
+        self._meta_path(asset_id).write_text(json.dumps({"asset_id": asset_id, "owner_key_hashes": ["sha256:alice"]}))
+        item = next(asset for asset in self.client.get("/me/api/media").json()["assets"]
                     if asset["asset_id"] == asset_id)
-        self.assertEqual((item["source"]["kind"], item["source"]["label"]), ("unknown", "Source unknown"))
+        self.assertEqual((item["source"]["kind"], item["source"]["label"]), ("app", "Alice"))
         self.assertIsNone(item["created_at"], "file time is not creation time")
         self.assertIsNone(item["provenance"]["created_at"])
         self.assertEqual(item["file_modified_at"], int(self._asset_path(asset_id).stat().st_mtime))
-        self.assertEqual(item["title"], "Picture by Source unknown")
+        self.assertEqual(item["title"], "Picture by Alice")
         self.assertNotIn("1970", item["title"])
 
     def test_legacy_receipt_without_source_kind_is_not_called_local_network(self) -> None:
@@ -319,9 +469,9 @@ class MeMediaRouterTests(unittest.TestCase):
         default = self.client.get("/me/api/media").json()
         self.assertEqual((default["scope"], default["assets"]), ("me", []))
         self.assertEqual(default["default_scope"], "self")
-        everyone = self.client.get("/me/api/media", params={"scope": "everyone"}).json()
-        self.assertEqual(len(everyone["assets"]), 1)
-        self.assertEqual(everyone["default_scope"], "explicit")
+        removed = self.client.get("/me/api/media", params={"scope": "everyone"})
+        self.assertEqual(removed.status_code, 400)
+        self.assertEqual(removed.json()["error"]["code"], "param_not_supported")
 
     def _complete_history(self) -> None:
         with sqlite3.connect(self.receipts_db) as conn:
@@ -477,7 +627,7 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(own.json()["asset"]["prompt"], "misty lake")
         self.assertEqual(own.json()["asset"]["title"], "misty lake")
 
-    def test_owner_everyone_scope_is_role_gated_and_audited(self) -> None:
+    def test_owner_cannot_broaden_library_scope(self) -> None:
         alice_asset = "img_" + "c" * 64
         bob_asset = "img_" + "d" * 64
         self._write_asset(alice_asset, ["sha256:alice"])
@@ -487,22 +637,17 @@ class MeMediaRouterTests(unittest.TestCase):
         self._job("req_alice", alice_asset)
         self._job("req_bob", bob_asset)
 
-        denied = self.client.get("/me/api/media?scope=everyone")
-        self.assertEqual(denied.status_code, 403)
         self.current_user = self.owner
-        allowed = self.client.get("/me/api/media?scope=everyone")
-        self.assertEqual(allowed.status_code, 200, allowed.text)
-        self.assertEqual({item["asset_id"] for item in allowed.json()["assets"]}, {alice_asset, bob_asset})
-        self.assertTrue(all(item["prompt"] is None and item["title"].startswith("Picture by ")
-                            and "misty lake" not in item["title"] for item in allowed.json()["assets"]))
-        foreign = self.client.get(f"/me/api/media?person={self.alice['id']}")
-        self.assertEqual(foreign.status_code, 200, foreign.text)
-        self.assertTrue(all(item["prompt"] is None and "misty lake" not in item["title"]
-                            for item in foreign.json()["assets"]))
-        audit = admin_store.list_audit(action_prefix="media.library.everyone", path=self.admin_db)
-        self.assertEqual(len(audit), 1)
+        own = self.client.get("/me/api/media")
+        self.assertEqual(own.status_code, 200, own.text)
+        self.assertEqual(own.json()["assets"], [])
+        for query in ("scope=everyone", f"person={self.alice['id']}"):
+            response = self.client.get(f"/me/api/media?{query}")
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertEqual(response.json()["error"]["code"], "param_not_supported")
+        self.assertEqual(admin_store.list_audit(action_prefix="media.library.everyone", path=self.admin_db), [])
 
-    def test_owner_sees_own_prompt_in_instance_library_only(self) -> None:
+    def test_owner_sees_own_saved_prompt(self) -> None:
         owner_app = admin_store.create_app(
             "Owner personal", kind="personal", owner_user_id=self.owner["id"], access_plan="person", path=self.admin_db,
         )
@@ -532,6 +677,10 @@ class MeMediaRouterTests(unittest.TestCase):
         self._write_asset(local_asset, [], request_id="req_local_cache", created_at=now)
         self._write_asset(recovered_asset, ["sha256:alice"], request_id="req_missing", created_at=now)
         self._write_asset(shared_asset, ["sha256:bob", "sha256:alice"], request_id="req_shared_missing", created_at=now)
+        # Two owner keys name two people; the recorded maker is the one who made it (D51).
+        meta = self._asset_metadata(shared_asset)
+        meta["maker_person_ids"] = [self.alice["id"]]
+        self._meta_path(shared_asset).write_text(json.dumps(meta))
         admin_store.revoke_credential(self.cred_a["id"], path=self.admin_db)
         self._receipt(self.app_a["id"], "req_alice")
         self._receipt(self.app_b["id"], "req_bob")
@@ -554,14 +703,11 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/me/api/usage/summary?source=app:{self.app_b['id']}").status_code, 403)
 
         self.current_user = self.owner
-        all_media = self.client.get("/me/api/media?scope=everyone")
-        self.assertEqual(all_media.status_code, 200, all_media.text)
-        source_ids = {source["id"] for source in all_media.json()["sources"]}
-        self.assertNotIn("local-network", source_ids)
-        self.assertIn(f"app:{self.service_app['id']}", source_ids)
-        service = self.client.get(f"/me/api/media?scope=everyone&source=app:{self.service_app['id']}")
-        self.assertEqual([item["asset_id"] for item in service.json()["assets"]], [service_asset])
-        self.assertEqual(self.client.get("/me/api/media?scope=everyone&source=local-network").status_code, 400)
+        own_media = self.client.get("/me/api/media")
+        self.assertEqual(own_media.status_code, 200, own_media.text)
+        self.assertEqual(own_media.json()["assets"], [])
+        self.assertEqual(self.client.get(f"/me/api/media?source=app:{self.service_app['id']}").status_code, 403)
+        self.assertEqual(self.client.get("/me/api/media?source=local-network").status_code, 400)
         service_usage = self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.service_app['id']}")
         self.assertEqual(service_usage.status_code, 200, service_usage.text)
         self.assertEqual(service_usage.json()["media_count"], 1)
@@ -592,11 +738,160 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertFalse(deleted.json()["physical_removed"])
         self.assertTrue(self._asset_path(asset_id).exists())
         self.assertEqual(self.client.get("/me/api/media").json()["assets"], [])
-
         self.current_user = self.bob
         bob_list = self.client.get("/me/api/media")
         self.assertEqual(bob_list.status_code, 200)
         self.assertEqual([item["asset_id"] for item in bob_list.json()["assets"]], [asset_id])
+
+    def test_deleting_library_item_erases_the_request_history_that_made_it(self) -> None:
+        asset_id = "img_" + "a" * 64
+        request_id = "req_library_delete"
+        self._receipt(self.app_a["id"], request_id)
+        self._job(request_id, asset_id)
+        self._write_asset(asset_id, ["sha256:alice"], request_id=request_id)
+        record = {
+            "record_id": request_history.new_record_id(), "request_id": request_id,
+            "person_id": self.alice["id"], "app_id": self.app_a["id"],
+            "origin_kind": "app_key", "origin_id": "credential-alice", "created_at": int(time.time()),
+            "kept_until": None, "parts": {"accepted": {"headers": {}, "body": {"model": "image"}}},
+            "omissions": [], "policy_version": 1,
+            "summary": {"route": "/v1/images/generations", "model": "image", "status": 200,
+                        "latency_ms": 5},
+        }
+        request_history.insert(record, path=self.jobs_db)
+
+        deleted = self.client.delete(
+            f"/me/api/media/{asset_id}",
+            headers={"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"},
+        )
+
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertIsNone(prompt_memory.get(asset_id, self.alice["id"], path=self.prompt_db))
+        self.assertIsNone(request_history.get_row(record["record_id"], path=self.jobs_db))
+
+    def test_erasing_all_person_library_prompts_erases_their_linked_history(self) -> None:
+        asset_id = "img_" + "b" * 64
+        request_id = "req_library_erase_all"
+        self._receipt(self.app_a["id"], request_id)
+        self._job(request_id, asset_id)
+        self._write_asset(asset_id, ["sha256:alice"], request_id=request_id)
+        record = {
+            "record_id": request_history.new_record_id(), "request_id": request_id,
+            "person_id": self.alice["id"], "app_id": self.app_a["id"],
+            "origin_kind": "app_key", "origin_id": "credential-alice", "created_at": int(time.time()),
+            "kept_until": None, "parts": {"accepted": {"headers": {}, "body": {"model": "image"}}},
+            "omissions": [], "policy_version": 1,
+            "summary": {"route": "/v1/images/generations", "model": "image", "status": 200,
+                        "latency_ms": 5},
+        }
+        request_history.insert(record, path=self.jobs_db)
+
+        deleted = prompt_memory.prune_person_before(
+            self.alice["id"], int(time.time()) + 1, path=self.prompt_db,
+        )
+
+        self.assertEqual(deleted, 1)
+        self.assertIsNone(prompt_memory.get(asset_id, self.alice["id"], path=self.prompt_db))
+        self.assertIsNone(request_history.get_row(record["record_id"], path=self.jobs_db))
+
+    def test_deleting_all_library_prompts_preserves_unrelated_chat_history(self) -> None:
+        asset_id = "img_" + "c" * 64
+        library_request_id = "req_library_scope"
+        chat_request_id = "req_unrelated_chat"
+        self._receipt(self.app_a["id"], library_request_id)
+        self._job(library_request_id, asset_id)
+        self._write_asset(asset_id, ["sha256:alice"], request_id=library_request_id)
+        stored: dict[str, dict] = {}
+        for request_id, route in (
+            (library_request_id, "/v1/images/generations"),
+            (chat_request_id, "/v1/chat/completions"),
+        ):
+            record = {
+                "record_id": request_history.new_record_id(), "request_id": request_id,
+                "person_id": self.alice["id"], "app_id": self.app_a["id"],
+                "origin_kind": "app_key", "origin_id": "credential-alice", "created_at": int(time.time()),
+                "kept_until": None, "parts": {"accepted": {"headers": {}, "body": {"model": "image"}}},
+                "omissions": [], "policy_version": 1,
+                "summary": {"route": route, "model": "image", "status": 200, "latency_ms": 5},
+            }
+            request_history.insert(record, path=self.jobs_db)
+            stored[request_id] = record
+
+        deleted = prompt_memory.delete_person(self.alice["id"], path=self.prompt_db)
+
+        self.assertEqual(deleted, 1)
+        self.assertIsNone(request_history.get_row(stored[library_request_id]["record_id"], path=self.jobs_db))
+        self.assertIsNotNone(request_history.get_row(stored[chat_request_id]["record_id"], path=self.jobs_db))
+
+    def test_removing_a_person_explicitly_erases_all_request_history(self) -> None:
+        record = {
+            "record_id": request_history.new_record_id(), "request_id": "req_account_removal_chat",
+            "person_id": self.alice["id"], "app_id": self.app_a["id"],
+            "origin_kind": "app_key", "origin_id": "credential-alice", "created_at": int(time.time()),
+            "kept_until": None, "parts": {"accepted": {"headers": {}, "body": {"model": "chat"}}},
+            "omissions": [], "policy_version": 1,
+            "summary": {"route": "/v1/chat/completions", "model": "chat", "status": 200, "latency_ms": 5},
+        }
+        request_history.insert(record, path=self.jobs_db)
+
+        with patch.object(media_jobs, "DB_PATH", self.jobs_db):
+            accounts.change_person(self.alice["id"], self.owner["id"], remove=True, path=self.admin_db)
+
+        self.assertIsNone(request_history.get_row(record["record_id"], path=self.jobs_db))
+
+    def test_deleting_old_asset_uses_its_receipt_after_an_idempotency_key_is_reused(self) -> None:
+        old_asset = "img_" + "8" * 64
+        new_asset = "img_" + "9" * 64
+        old_receipt = "receipt_before_replay_release"
+        new_receipt = "receipt_after_replay_release"
+        idem_key = "same_idempotency_key"
+        old_job = media_jobs.create(media_jobs.MediaJob(
+            job_id="job_before_replay_release", request_id=idem_key, parent_request_id=old_receipt,
+            intent="image.generate", status=media_jobs.STATUS_SUCCEEDED,
+            assets=[{"asset_id": old_asset, "media_type": "image/png"}],
+        ), path=self.jobs_db)
+        with media_jobs._conn(self.jobs_db) as conn:
+            conn.execute("UPDATE media_jobs SET updated_at=1 WHERE job_id=?", (old_job.job_id,))
+            conn.commit()
+        new_job = media_jobs.create(media_jobs.MediaJob(
+            job_id="job_after_replay_release", request_id=idem_key, parent_request_id=new_receipt,
+            intent="image.generate", status=media_jobs.STATUS_SUCCEEDED,
+            assets=[{"asset_id": new_asset, "media_type": "image/png"}],
+        ), path=self.jobs_db)
+        self.assertEqual(
+            media_jobs.get(old_job.job_id, audience="internal", path=self.jobs_db)["creating_receipt_id"],
+            old_receipt,
+        )
+        self.assertEqual(
+            media_jobs.get(new_job.job_id, audience="internal", path=self.jobs_db)["creating_receipt_id"],
+            new_receipt,
+        )
+        self._receipt(self.app_a["id"], old_receipt)
+        self._receipt(self.app_a["id"], new_receipt)
+        self._write_asset(old_asset, ["sha256:alice"], request_id=old_receipt)
+        self._write_asset(new_asset, ["sha256:alice"], request_id=new_receipt)
+        records: dict[str, dict] = {}
+        for request_id in (old_receipt, new_receipt):
+            record = {
+                "record_id": request_history.new_record_id(), "request_id": request_id,
+                "person_id": self.alice["id"], "app_id": self.app_a["id"],
+                "origin_kind": "app_key", "origin_id": "credential-alice", "created_at": int(time.time()),
+                "kept_until": None, "parts": {"accepted": {"headers": {}, "body": {"model": "image"}}},
+                "omissions": [], "policy_version": 1,
+                "summary": {"route": "/v1/images/generations", "model": "image", "status": 200,
+                            "latency_ms": 5},
+            }
+            request_history.insert(record, path=self.jobs_db)
+            records[request_id] = record
+
+        deleted = self.client.delete(
+            f"/me/api/media/{old_asset}",
+            headers={"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"},
+        )
+
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertIsNone(request_history.get_row(records[old_receipt]["record_id"], path=self.jobs_db))
+        self.assertIsNotNone(request_history.get_row(records[new_receipt]["record_id"], path=self.jobs_db))
 
     def test_cache_fallback_survives_without_job_or_receipt(self) -> None:
         asset_id = "img_" + "f" * 64
@@ -637,10 +932,11 @@ class MeMediaRouterTests(unittest.TestCase):
     def test_job_with_released_request_id_keeps_its_receipt_link(self) -> None:
         # After a replay release (or erasure of a seeded ID) only the creating request's ID remains.
         self._receipt(self.app_a["id"], "req_parent")
-        media_jobs.create(media_jobs.MediaJob(
-            request_id="", parent_request_id="req_parent", intent="image.generate",
-            status=media_jobs.STATUS_SUCCEEDED, assets=[{"asset_id": "img_" + "7" * 64}],
-        ), path=self.jobs_db)
+        with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+            media_jobs.create(media_jobs.MediaJob(
+                request_id="", parent_request_id="req_parent", intent="image.generate", app_id=self.app_a["id"],
+                status=media_jobs.STATUS_SUCCEEDED, assets=[{"asset_id": "img_" + "7" * 64}],
+            ), path=self.jobs_db)
         assets = self.client.get("/me/api/media").json()["assets"]
         self.assertEqual([item["asset_id"] for item in assets], ["img_" + "7" * 64])
         self.assertEqual(assets[0]["model"], "local-image")
@@ -682,7 +978,46 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(source["label"], "Local network · no key · Open WebUI")
         self.assertEqual(source["client_hint"], "Open WebUI")
 
-    def test_owner_missing_receipt_jobs_recover_source_from_job_identity(self) -> None:
+    def test_a_parent_link_labels_the_source_only_for_a_viewer_who_may_read_the_parent(self) -> None:
+        # The parent link is chosen by the client, so its receipt labels the item's source only when the viewer may
+        # read that receipt. Otherwise the item keeps the source its own job records, never the other person's.
+        own_asset, foreign_asset = "img_" + "c" * 64, "img_" + "d" * 64
+        self._receipt(self.service_app["id"], "req_alice_parent", maker_person_id=self.alice["id"])
+        self._receipt(self.app_b["id"], "req_bob_parent", maker_person_id=self.bob["id"])
+        for asset_id, request_id, parent in ((own_asset, "req_alice_child", "req_alice_parent"),
+                                             (foreign_asset, "req_alice_child_2", "req_bob_parent")):
+            self._write_asset(asset_id, ["sha256:alice"], request_id=request_id)
+            with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+                media_jobs.create(media_jobs.MediaJob(
+                    request_id=request_id, parent_request_id=parent, app_id=self.app_a["id"],
+                    intent="image.generate", workflow="wf.image", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                    assets=[{"asset_id": asset_id, "media_type": "image/png"}],
+                ), path=self.jobs_db)
+
+        labels = {item["asset_id"]: item["source"]["label"] for item in self.client.get("/me/api/media").json()["assets"]}
+
+        self.assertEqual(labels[own_asset], self.service_app["name"])
+        self.assertEqual(labels[foreign_asset], self.app_a["name"])
+
+    def test_usage_counts_a_job_under_its_own_app_when_its_parent_link_names_a_receipt_the_viewer_may_not_read(self) -> None:
+        # The client chooses the parent link, so Bob's receipt is reachable from Alice's job. The receipt is outside her
+        # scope, so it must not decide whether her job is counted or which source it has. Her job's own App does.
+        self._receipt(self.app_b["id"], "req_bob_parent", maker_person_id=self.bob["id"])
+        with request_source.acting_as(app_id=self.app_a["id"], person_id=self.alice["id"]):
+            media_jobs.create(media_jobs.MediaJob(
+                request_id="req_alice_child", parent_request_id="req_bob_parent", app_id=self.app_a["id"],
+                intent="image.generate", workflow="wf.image", status=media_jobs.STATUS_SUCCEEDED, progress=100,
+                assets=[{"asset_id": "img_" + "e" * 64, "media_type": "image/png"}],
+            ), path=self.jobs_db)
+
+        usage = self.client.get("/me/api/usage/summary")
+        self.assertEqual(usage.status_code, 200, usage.text)
+        self.assertEqual(usage.json()["media_count"], 1)
+        own_source = self.client.get(f"/me/api/usage/summary?source=app:{self.app_a['id']}")
+        self.assertEqual(own_source.status_code, 200, own_source.text)
+        self.assertEqual(own_source.json()["media_count"], 1)
+
+    def test_owner_library_does_not_recover_foreign_source_from_job_identity(self) -> None:
         keyed_asset = "img_" + "8" * 64
         service_asset = "img_" + "7" * 64
         self._write_asset(keyed_asset, ["sha256:alice"], request_id="req_missing_keyed", created_at=time.time())
@@ -717,13 +1052,9 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual([item["asset_id"] for item in member_media.json()["assets"]], [keyed_asset])
 
         self.current_user = self.owner
-        owner_media = self.client.get("/me/api/media?scope=everyone")
+        owner_media = self.client.get("/me/api/media")
         self.assertEqual(owner_media.status_code, 200, owner_media.text)
-        sources = {item["asset_id"]: item["source"] for item in owner_media.json()["assets"]}
-        self.assertEqual(sources[keyed_asset]["label"], "Alice")
-        self.assertEqual(sources[keyed_asset]["recovered_from"], "asset_owner_key")
-        self.assertEqual(sources[service_asset]["label"], "Daisy")
-        self.assertEqual(sources[service_asset]["recovered_from"], "media_job")
+        self.assertEqual(owner_media.json()["assets"], [])
         usage = self.client.get(f"/me/api/usage/summary?person=all&source=app:{self.app_a['id']}")
         self.assertEqual(usage.status_code, 200, usage.text)
         self.assertEqual(usage.json()["media_count"], 1)
@@ -735,13 +1066,11 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertIsNotNone(user_principal)
         retired = admin_store.create_credential_hash(
             subject_kind="app", subject_id=self.app_a["id"], app_id=self.app_a["id"],
-            hash="sha256:alice-retired", prefix="test_retired", path=self.admin_db,
-        )
+            hash="sha256:alice-retired", prefix="test_retired", path=self.admin_db, created_by=accountable_person(self.admin_db, self.app_a["id"]))
         admin_store.revoke_credential(retired["id"], path=self.admin_db)
         admin_store.create_credential_hash(
             subject_kind="app", subject_id=self.app_a["id"], app_id=self.app_a["id"],
-            hash="sha256:alice-current", prefix="test_current", path=self.admin_db,
-        )
+            hash="sha256:alice-current", prefix="test_current", path=self.admin_db, created_by=accountable_person(self.admin_db, self.app_a["id"]))
         admin_store.create_credential_hash(
             subject_kind="user", subject_id=self.alice["id"],
             hash="sha256:alice-personal", prefix="test_personal", path=self.admin_db,
@@ -971,10 +1300,13 @@ class MeMediaRouterTests(unittest.TestCase):
     def test_keyless_local_network_is_no_longer_a_source_or_person(self) -> None:
         self._receipt(None, "req_unattributed")
         self.current_user = self.owner
-        for path in ("/me/api/usage/summary?person=all", "/me/api/media?scope=everyone"):
+        for path in ("/me/api/usage/summary?person=all", "/me/api/media"):
             body = self.client.get(path).json()
-            self.assertNotIn("local-network", {source["id"] for source in body["sources"]}, path)
-            self.assertNotIn("Local network · no key", json.dumps(body["sources"]), path)
+            if path.endswith("/media"):
+                self.assertNotIn("Local network · no key", json.dumps(body), path)
+            else:
+                self.assertNotIn("local-network", {source["id"] for source in body["sources"]}, path)
+                self.assertNotIn("Local network · no key", json.dumps(body["sources"]), path)
         self.assertNotIn("local-network", {p["id"] for p in self.client.get("/me/api/usage/summary").json()["people"]})
         self.assertEqual(self.client.get("/me/api/usage/summary?source=local-network").status_code, 400)
 
@@ -1109,12 +1441,9 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get("/me/api/media?workflow=wf").json()["assets"], [])
 
         self.current_user = self.owner
-        everyone = self.client.get("/me/api/media?scope=everyone&workflow=wf.image")
-        self.assertEqual(everyone.status_code, 200, everyone.text)
-        self.assertEqual(
-            {item["asset_id"] for item in everyone.json()["assets"]},
-            {alice_asset, bob_asset},
-        )
+        owner_library = self.client.get("/me/api/media?workflow=wf.image")
+        self.assertEqual(owner_library.status_code, 200, owner_library.text)
+        self.assertEqual(owner_library.json()["assets"], [])
 
     def test_cross_user_delete_and_download_do_not_reveal_foreign_assets(self) -> None:
         asset_id = "img_" + "5" * 64
@@ -1124,26 +1453,29 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download?metadata=full").status_code, 404)
         self.assertTrue(self._asset_path(asset_id).exists())
 
-    def test_owner_detail_is_explicit_and_audited_but_cannot_delete_foreign(self) -> None:
+    def test_owner_cannot_open_or_prepare_foreign_library_items(self) -> None:
         asset_id = "img_" + "6" * 64
         self._write_asset(asset_id, ["sha256:alice"])
         self.current_user = self.owner
-        detail = self.client.get(f"/me/api/media/{asset_id}?scope=everyone")
-        self.assertEqual(detail.status_code, 200)
-        self.assertIsNone(detail.json()["asset"]["prompt"])
-        self.assertIsNone(detail.json()["asset"]["workflow_download_url"])
-        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download?scope=everyone&metadata=full").status_code, 403)
-        self.assertTrue(admin_store.list_audit(action_prefix="media.detail.everyone", path=self.admin_db))
+        detail = self.client.get(f"/me/api/media/{asset_id}")
+        self.assertEqual(detail.status_code, 404)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 404)
+        for query in ("scope=everyone", "scope=me", "owner=", "person="):
+            self.assertEqual(self.client.get(f"/me/api/media/{asset_id}?{query}").status_code, 400)
+        self.assertEqual(admin_store.list_audit(action_prefix="media.detail.everyone", path=self.admin_db), [])
         headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
-        self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}?scope=everyone", headers=headers).status_code, 404)
+        self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}", headers=headers).status_code, 404)
         admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=self.bob["id"], path=self.admin_db)
         self.current_user = self.bob
-        self.assertEqual(self.client.get("/me/api/media?scope=everyone").status_code, 403)
+        self.assertEqual(self.client.get("/me/api/media?scope=everyone").status_code, 400)
         self.assertEqual(self.client.get("/me/api/usage/summary?person=all").status_code, 403)
 
     def test_deleted_shared_asset_stays_deleted_after_audit_churn(self) -> None:
         asset_id = "img_" + "7" * 64
         self._write_asset(asset_id, ["sha256:alice", "sha256:bob"])
+        meta = self._asset_metadata(asset_id)
+        meta["maker_person_ids"] = [self.alice["id"]]
+        self._meta_path(asset_id).write_text(json.dumps(meta))
         headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}", headers=headers).status_code, 200)
         # One transaction for the churn: a commit per row made this test take
@@ -1156,8 +1488,9 @@ class MeMediaRouterTests(unittest.TestCase):
                     metadata=None, now=admin_store._now())
             conn.commit()
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+        # Bob holds an owner key but made nothing and holds no share, so he never saw it (D51).
         self.current_user = self.bob
-        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
 
     def test_disabled_apps_keep_owned_history(self) -> None:
         asset_id = "img_" + "8" * 64
@@ -1368,6 +1701,413 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(usage["unknown_paid_requests"], 1)
         self.assertFalse(usage["remote_spend_available"])
 
+    def test_totals_count_a_decision_cost_recorded_on_the_receipt(self) -> None:
+        # A paid decision records its amount on the receipt's cost, and the row shows it; the total must too.
+        self._receipt(self.app_a["id"], "req_decision_paid", intent="decide", route_path="/typesafe/v1/decisions",
+                      requested_model="decide-remote", resolved_model="decide-remote", backend="paid-decisions",
+                      remote=True, usd="0.0042")
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["remote_spend"], 0.0042)
+        self.assertEqual(usage["spend_measured_requests"], 1)
+        self.assertEqual(usage["paid_requests"], 1)
+        self.assertEqual(usage["unknown_paid_requests"], 0)
+        self.assertEqual(usage["receipts"][0]["remote_spend"], 0.0042)
+
+    def test_a_remote_receipt_with_no_recorded_cost_stays_unreported(self) -> None:
+        self._receipt(self.app_a["id"], "req_remote_bare", intent="chat.completions", route_path="/v1/chat/completions",
+                      requested_model="paid-chat", resolved_model="paid-chat", backend="paid-provider", remote=True)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["unknown_paid_requests"], 1)
+        self.assertEqual(usage["paid_requests"], 0)
+        self.assertFalse(usage["remote_spend_available"])
+        self.assertEqual(usage["local_requests"], 0)
+        self.assertIsNone(usage["receipts"][0]["remote_spend"])
+        self.assertFalse(usage["receipts"][0]["served_locally"])
+
+    def test_a_request_the_receipt_shows_was_served_locally_counts_as_local(self) -> None:
+        self._receipt(self.app_a["id"], "req_local_chat", intent="chat.completions", route_path="/v1/chat/completions",
+                      requested_model="local-chat", resolved_model="local-chat", backend="local-engine", started=True)
+        self._receipt(self.app_a["id"], "req_local_zero", intent="chat.completions", route_path="/v1/chat/completions",
+                      requested_model="local-chat", resolved_model="local-chat", backend="gateway-substrate", cost=0.0,
+                      started=True)
+        self._receipt(self.app_a["id"], "req_local_failed_after_dispatch", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="local-chat", resolved_model="local-chat",
+                      backend="local-engine", status="failed", started=True)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], 3)
+        self.assertEqual(usage["local_requests"], 3)
+        self.assertEqual(usage["paid_requests"], 0)
+        self.assertEqual(usage["unknown_paid_requests"], 0)
+        self.assertEqual(usage["remote_spend"], 0)
+        self.assertEqual(usage["by_model"][0]["local_requests"], 3)
+        self.assertTrue(all(receipt["served_locally"] for receipt in usage["receipts"]))
+
+    def test_a_request_that_failed_before_routing_is_not_counted_as_local(self) -> None:
+        # Refused before any backend was chosen: the receipt has only the default remote:false.
+        self._receipt(self.app_a["id"], "req_refused_unrouted", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="local-chat", resolved_model="local-chat",
+                      status="failed")
+        # A backend name is set when the receipt is created, then admission refuses it before dispatch.
+        self._receipt(self.app_a["id"], "req_refused_admission", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="local-chat", resolved_model="local-chat",
+                      backend="gateway-substrate", status="rejected")
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], 2)
+        self.assertEqual(usage["local_requests"], 0)
+        self.assertEqual(usage["unknown_paid_requests"], 0)
+        self.assertEqual(usage["remote_spend"], 0)
+        self.assertEqual([row["local_requests"] for row in usage["by_model"]], [0])
+        self.assertFalse(any(receipt["served_locally"] for receipt in usage["receipts"]))
+
+    def test_a_success_with_no_start_time_is_not_counted_as_local(self) -> None:
+        # Receipts written now stamp a start time when a backend serves the request, so a bare success proves nothing.
+        self._receipt(self.app_a["id"], "req_unstamped_success", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="local-chat", resolved_model="local-chat",
+                      backend="local-engine")
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (1, 0))
+        [row] = usage["receipts"]
+        self.assertFalse(row["served_locally"])
+
+    def test_a_success_written_before_start_times_existed_still_counts_as_local(self) -> None:
+        # Receipts stored before started_at_ms existed have no such key, and their success is their only evidence.
+        receipt_store.record({
+            "request_id": "req_legacy_local", "protocol": "openai.chat", "path": "/v1/chat/completions",
+            "intent": "chat.completions", "app_id": self.app_a["id"], "api_key_name": "App",
+            "requested_model": "local-chat", "resolved_model": "local-chat", "backend": "local-engine",
+            "remote": False, "status": "succeeded",
+        }, created_at=int(time.time()), path=self.receipts_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (1, 1))
+        [row] = usage["receipts"]
+        self.assertTrue(row["served_locally"])
+
+    def _submit_picture(self, job_id: str, submit_request_id: str, *, app_id: str, created_at: int | None = None,
+                        status: str = media_jobs.STATUS_SUCCEEDED, links_job: bool = True,
+                        remote: bool = False) -> None:
+        # The image route's submit receipt names no model, and its job names this receipt as the parent.
+        # It names its job too, unless it predates that link (links_job=False). remote=True stamps remote dispatch.
+        self._receipt(app_id, submit_request_id, intent="image.generate",
+                      route_path="/gateway/v1/media/jobs/image-generations", requested_model=None,
+                      resolved_model=None, status="ok", backend="comfyui", created_at=created_at,
+                      job_id=job_id if links_job else None, remote=remote,
+                      # The route's finish() gives its submit receipt attempt 1, the same number as the first attempt.
+                      attempt_number=1)
+        media_jobs.create(media_jobs.MediaJob(
+            job_id=job_id, request_id=f"imgjob_idem_{job_id}", intent="image.generate",
+            parent_request_id=submit_request_id, app_id=app_id, status=status,
+        ), path=self.jobs_db)
+
+    def _work_receipt(self, request_id: str, job_id: str, *, app_id: str, attempt: int = 1, status: str = "ok",
+                      started: bool = True, remote: bool = False, cost: float | None = None,
+                      created_at: int | None = None) -> None:
+        # The worker's receipt for one attempt: it carries the job's id and reports where the work ran.
+        self._receipt(app_id, request_id, job_id=job_id, attempt_number=attempt, intent="image.generate",
+                      route_path="/v1/images/generations", status=status, backend="local-engine", remote=remote,
+                      started=started, cost=cost, created_at=created_at)
+
+    def test_a_picture_made_through_a_job_counts_once_and_is_local(self) -> None:
+        self._submit_picture("mj_try", "req_try_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_try_work", "mj_try", app_id=self.app_a["id"])
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (1, 1))
+        self.assertEqual((usage["paid_requests"], usage["unknown_paid_requests"]), (0, 0))
+        self.assertFalse(usage["remote_spend_available"])
+        self.assertEqual([(row["requests"], row["local_requests"]) for row in usage["by_model"]], [(1, 1)])
+        [row] = usage["receipts"]
+        self.assertEqual(row["request_id"], "req_try_submit")
+        self.assertTrue(row["served_locally"])
+        self.assertIsNone(row["remote_spend"])
+
+    def test_a_picture_with_two_attempts_counts_once_with_the_summed_cost(self) -> None:
+        self._submit_picture("mj_retry", "req_retry_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_retry_first", "mj_retry", app_id=self.app_a["id"], attempt=1, status="error",
+                           remote=True, cost=0.25)
+        self._work_receipt("req_retry_second", "mj_retry", app_id=self.app_a["id"], attempt=2, remote=True, cost=0.5)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], 1)
+        self.assertEqual(usage["remote_spend"], 0.75)
+        self.assertEqual((usage["spend_measured_requests"], usage["paid_requests"]), (1, 1))
+        # The latest attempt succeeded, so the request is not failed.
+        self.assertEqual(usage["failed_requests"], 0)
+        [row] = usage["receipts"]
+        self.assertEqual((row["request_id"], row["remote_spend"], row["served_locally"]),
+                         ("req_retry_submit", 0.75, False))
+
+    def test_a_picture_whose_work_failed_counts_once_as_a_failed_request(self) -> None:
+        self._submit_picture("mj_failed", "req_failed_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_failed_work", "mj_failed", app_id=self.app_a["id"], status="error", started=False)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"], usage["local_requests"]), (1, 1, 0))
+        [row] = usage["receipts"]
+        self.assertEqual(row["status"], "error")
+
+    def test_a_worker_refused_job_counts_once_as_failed_with_its_cost_not_recorded(self) -> None:
+        # No attempt receipt exists, so the submit receipt's "ok" is not the outcome; the job record's failure is.
+        self._submit_picture("mj_refused", "req_refused_submit", app_id=self.app_a["id"],
+                             status=media_jobs.STATUS_FAILED)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"], usage["local_requests"]), (1, 1, 0))
+        self.assertEqual(usage["unknown_paid_requests"], 0)
+        self.assertFalse(usage["remote_spend_available"])
+        [row] = usage["receipts"]
+        self.assertEqual(row["status"], "failed")
+        self.assertFalse(row["served_locally"])
+        self.assertIsNone(row["remote_spend"])
+
+    def test_a_legacy_job_that_names_its_readable_creator_counts_as_failed(self) -> None:
+        # The job record names no App and no owner, so it takes its readable creator's scope, as its other lookups do.
+        self._receipt(self.app_a["id"], "req_legacy_submit", job_id="mj_legacy",
+                      route_path="/gateway/v1/media/jobs/image-generations", requested_model=None,
+                      resolved_model=None, status="ok", backend="comfyui")
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="mj_legacy", request_id="imgjob_legacy", intent="image.generate",
+            parent_request_id="req_legacy_submit", status=media_jobs.STATUS_FAILED,
+        ), path=self.jobs_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 1))
+        [row] = usage["receipts"]
+        self.assertEqual((row["request_id"], row["status"]), ("req_legacy_submit", "failed"))
+
+    def test_a_job_record_the_viewer_cannot_read_does_not_fail_its_request(self) -> None:
+        # The job belongs to another App, so Alice's Usage does not read its failure.
+        self._receipt(self.app_a["id"], "req_foreign_submit", job_id="mj_foreign",
+                      route_path="/gateway/v1/media/jobs/image-generations", requested_model=None,
+                      resolved_model=None, status="ok", backend="comfyui")
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="mj_foreign", request_id="imgjob_foreign", intent="image.generate",
+            parent_request_id="req_foreign_submit", app_id=self.app_b["id"], status=media_jobs.STATUS_FAILED,
+        ), path=self.jobs_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 0))
+        self.assertEqual(usage["receipts"][0]["status"], "ok")
+        # Alice's own chat is the creating receipt of a second foreign job, and her own work receipt names that job.
+        # The unreadable record must not join the chat to the work, count its picture, or pass on its provenance.
+        self._receipt(self.app_a["id"], "req_foreign_chat", intent="chat.completions", route_path="/v1/chat/completions",
+                      requested_model="local-chat", resolved_model="local-chat", backend="local-engine", started=True)
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="mj_foreign_two", request_id="imgjob_foreign_two", intent="image.generate",
+            parent_request_id="req_foreign_chat", app_id=self.app_b["id"], status=media_jobs.STATUS_SUCCEEDED,
+            assets=[{"asset_id": "img_foreign_two", "media_type": "image/png"}],
+        ), path=self.jobs_db)
+        self._work_receipt("req_foreign_work", "mj_foreign_two", app_id=self.app_a["id"], status="error", started=False)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"], usage["media_count"]), (3, 1, 0))
+        statuses = {row["request_id"]: row["status"] for row in usage["receipts"]}
+        self.assertEqual(statuses["req_foreign_chat"], "succeeded")
+        self.assertEqual(statuses["req_foreign_work"], "error")
+
+    def test_a_picture_counts_once_after_its_job_record_is_erased(self) -> None:
+        # The work receipt is stored first: the submit receipt must still be the request, not the earliest row.
+        self._work_receipt("req_erased_work", "mj_erased", app_id=self.app_a["id"], status="error",
+                           created_at=int(time.time()) - 5)
+        self._submit_picture("mj_erased", "req_erased_submit", app_id=self.app_a["id"])
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 1)
+        media_jobs.delete_succeeded(["mj_erased"], path=self.jobs_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 1))
+        [row] = usage["receipts"]
+        self.assertEqual((row["request_id"], row["status"]), ("req_erased_submit", "error"))
+
+    def test_an_older_submit_receipt_stays_unlinked_once_its_job_record_is_erased(self) -> None:
+        # Known gap, accepted: a submit receipt written before it named its job has no link after erasure,
+        # so it counts on its own beside the work receipt.
+        self._submit_picture("mj_old", "req_old_submit", app_id=self.app_a["id"], links_job=False)
+        self._work_receipt("req_old_work", "mj_old", app_id=self.app_a["id"])
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 1)
+        media_jobs.delete_succeeded(["mj_old"], path=self.jobs_db)
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 2)
+
+    def test_a_request_named_only_as_a_jobs_parent_is_not_its_submit(self) -> None:
+        # The job's creating receipt is gone, so the chat it names only as its parent is not the job's submit.
+        self._receipt(self.app_a["id"], "req_named_chat", intent="chat.completions", route_path="/v1/chat/completions",
+                      requested_model="local-chat", resolved_model="local-chat", backend="local-engine", started=True)
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="mj_named", request_id="imgjob_named", intent="image.generate", parent_request_id="req_named_chat",
+            creating_receipt_id="req_gone", app_id=self.app_a["id"], status=media_jobs.STATUS_FAILED,
+        ), path=self.jobs_db)
+        self._work_receipt("req_named_work", "mj_named", app_id=self.app_a["id"], status="error", started=False)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (2, 1))
+        statuses = {row["request_id"]: row["status"] for row in usage["receipts"]}
+        self.assertEqual(statuses, {"req_named_chat": "succeeded", "req_named_work": "error"})
+
+    def test_a_same_key_replay_of_a_failed_picture_does_not_hide_the_failure(self) -> None:
+        now = int(time.time())
+        self._submit_picture("mj_replayed", "req_replayed_submit", app_id=self.app_a["id"], created_at=now - 30)
+        self._work_receipt("req_replayed_work", "mj_replayed", app_id=self.app_a["id"], status="error", started=False,
+                           created_at=now - 20)
+        # The same Idempotency-Key submitted again after the failure: another submit receipt for the same job, stored last.
+        self._receipt(self.app_a["id"], "req_replayed_again", job_id="mj_replayed",
+                      route_path="/gateway/v1/media/jobs/image-generations", requested_model=None, resolved_model=None,
+                      status="ok", backend="comfyui", attempt_number=1, created_at=now - 10)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 1))
+        [row] = usage["receipts"]
+        self.assertEqual((row["request_id"], row["status"]), ("req_replayed_submit", "error"))
+
+    def test_a_picture_row_carries_the_model_that_by_model_counts(self) -> None:
+        self._submit_picture("mj_model", "req_model_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_model_work", "mj_model", app_id=self.app_a["id"])
+        usage = self.client.get("/me/api/usage/summary").json()
+        [model] = usage["by_model"]
+        self.assertTrue(model["model"])
+        [row] = usage["receipts"]
+        self.assertEqual(row.get("model"), model["model"])
+
+    def test_a_picture_with_one_unpriced_remote_attempt_counts_as_unknown_beside_its_known_cost(self) -> None:
+        self._submit_picture("mj_partial", "req_partial_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_partial_first", "mj_partial", app_id=self.app_a["id"], attempt=1, status="error",
+                           remote=True, cost=0.25)
+        # The second attempt ran on a paid remote backend, and its provider reported no cost.
+        self._work_receipt("req_partial_second", "mj_partial", app_id=self.app_a["id"], attempt=2, remote=True)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["remote_spend"], usage["spend_measured_requests"]), (1, 0.25, 1))
+        self.assertEqual((usage["paid_requests"], usage["unknown_paid_requests"]), (1, 1))
+        self.assertTrue(usage["remote_spend_available"])
+        [row] = usage["receipts"]
+        self.assertEqual(row["remote_spend"], 0.25)
+
+    def test_a_dispatch_stamped_submit_beside_a_priced_remote_attempt_is_not_unknown_paid(self) -> None:
+        # The submit receipt carries remote dispatch but copies no cost. Only the attempt's cost is the request's cost.
+        self._submit_picture("mj_dispatched", "req_dispatched_submit", app_id=self.app_a["id"], remote=True)
+        self._work_receipt("req_dispatched_work", "mj_dispatched", app_id=self.app_a["id"], remote=True, cost=0.25)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["remote_spend"], usage["spend_measured_requests"]), (1, 0.25, 1))
+        self.assertEqual((usage["paid_requests"], usage["unknown_paid_requests"]), (1, 0))
+        self.assertTrue(usage["remote_spend_available"])
+        [row] = usage["receipts"]
+        self.assertEqual((row["request_id"], row["remote_spend"]), ("req_dispatched_submit", 0.25))
+
+    def _usage_client_on(self, receipts_db: Path, jobs_db: Path) -> TestClient:
+        # The Usage router over another pair of stores, such as the ones a gateway rig writes through its routes.
+        app = FastAPI()
+        app.include_router(
+            me_media.create_me_media_router(
+                session_provider=self._session,
+                mutation_validator=self._mutation_validator,
+                signed_url_builder=lambda request, asset_id, mode: f"http://testserver/v1/assets/{asset_id}/content?md={mode}&sig=test",
+                asset_path_resolver=self._asset_path,
+                asset_media_type_resolver=lambda asset_id, path: "image/png",
+                asset_deleter=self._delete_unshared,
+                asset_catalog_provider=self._catalog,
+                asset_metadata_reader=self._asset_metadata,
+                admin_db_path=self.admin_db,
+                media_jobs_path=jobs_db,
+                receipts_path=receipts_db,
+                prompt_memory_path=self.prompt_db,
+            )
+        )
+        return TestClient(app)
+
+    def test_a_same_key_replay_of_a_failed_image_job_counts_once_as_failed(self) -> None:
+        # Through the real image route: submit, the worker's attempt fails, then the same Idempotency-Key submits again.
+        import asyncio
+
+        import proxy
+        from tests.support.adapter_differential_rig import GatewayRig, comfy_exchanges, scenario
+
+        failed = {"p1": {"status": {"status_str": "error", "completed": False, "messages": [
+            ["execution_error", {"node_type": "KSampler", "node_id": "7", "exception_message": "CUDA error"}]]},
+            "outputs": {}}}
+        body = {"prompt": "doomed", "response_format": "url", "background": "opaque"}
+        headers = {"Idempotency-Key": "same-key-after-failure"}
+        with GatewayRig("usage_replay", Path(self.tmp.name) / "rig") as rig:
+            rig.set(proxy, "_schedule_image_media_job", lambda job_id: rig.scheduled.append(job_id) or True)
+            fake = rig.engine("comfy", scenario("comfyui", "usage-replay-comfy",
+                                                comfy_exchanges(history=failed, strict=False)), host="comfy.usage.test")
+            rig.set(proxy, "COMFY_HOST", fake.base_url)
+
+            async def drive() -> tuple[str, str]:
+                first = await rig.call("POST", "/gateway/v1/media/jobs/image-generations", label="submit the image job",
+                                       json_body=body, headers=headers, unordered_json=True)
+                await proxy._run_image_media_job(rig.scheduled[0])
+                again = await rig.call("POST", "/gateway/v1/media/jobs/image-generations", label="same key again",
+                                       json_body=body, headers=headers, unordered_json=True)
+                return first.json()["job_id"], again.json()["job_id"]
+
+            first_id, again_id = asyncio.run(drive())
+            self.current_user = self.owner
+            # The owner's own scope holds no Apps here, so ask for everyone's usage: the rig's receipts belong to no App.
+            usage = self._usage_client_on(rig.receipts_db, rig.media_jobs_db).get(
+                "/me/api/usage/summary", params={"person": "all"}).json()
+        self.assertEqual(again_id, first_id)
+        self.assertEqual((usage["requests"], usage["failed_requests"]), (1, 1))
+        [row] = usage["receipts"]
+        # The worker's failed attempt records its own status, which the failed count reads.
+        self.assertEqual(row["status"], "error")
+
+    def test_a_request_outside_any_job_is_counted_as_before(self) -> None:
+        self._receipt(self.app_a["id"], "req_plain_chat", intent="chat.completions",
+                      route_path="/v1/chat/completions", requested_model="local-chat", resolved_model="local-chat",
+                      backend="local-engine", started=True)
+        self._submit_picture("mj_beside", "req_beside_submit", app_id=self.app_a["id"])
+        self._work_receipt("req_beside_work", "mj_beside", app_id=self.app_a["id"])
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (2, 2))
+        self.assertEqual({row["request_id"] for row in usage["receipts"]}, {"req_plain_chat", "req_beside_submit"})
+
+    def test_a_job_never_takes_a_value_from_a_work_receipt_the_viewer_cannot_read(self) -> None:
+        self._submit_picture("mj_scope", "req_scope_submit", app_id=self.app_a["id"])
+        # Bob's work receipt names the same job, but Alice cannot read it, so its paid cost must not reach her totals.
+        self._work_receipt("req_scope_work", "mj_scope", app_id=self.app_b["id"], remote=True, cost=4.0)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["remote_spend"], usage["paid_requests"]), (1, 0, 0))
+        self.assertEqual((usage["unknown_paid_requests"], usage["remote_spend_available"]), (0, False))
+        [row] = usage["receipts"]
+        self.assertEqual(row["request_id"], "req_scope_submit")
+        self.assertFalse(row["served_locally"])
+        self.assertIsNone(row["remote_spend"])
+
+    def test_a_job_whose_submit_receipt_is_from_last_month_counts_once_this_month(self) -> None:
+        last_month = int(datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0,
+                                                              microsecond=0).timestamp()) - 60
+        self._submit_picture("mj_last", "req_last_submit", app_id=self.app_a["id"], created_at=last_month)
+        self._work_receipt("req_last_work", "mj_last", app_id=self.app_a["id"])
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (1, 1))
+        # The submit receipt is outside this month, so the job's work receipt stands for the request.
+        self.assertEqual([row["request_id"] for row in usage["receipts"]], ["req_last_work"])
+
+    def test_an_audio_or_video_job_with_one_receipt_counts_once(self) -> None:
+        # These jobs write no separate submit receipt: the worker's receipt is the job's own, keyed by its request id.
+        for intent, route, prefix in (("audio.generate", "/gateway/v1/media/jobs", "aud"),
+                                      ("video.generate", "/v1/videos", "vid")):
+            request_id = f"{prefix}job_one"
+            self._receipt(self.app_a["id"], request_id, job_id=f"mj_{prefix}", intent=intent,
+                          route_path=route, requested_model="model-one", resolved_model="model-one",
+                          backend="local-engine", started=True, status="ok")
+            media_jobs.create(media_jobs.MediaJob(
+                job_id=f"mj_{prefix}", request_id=request_id, intent=intent, parent_request_id=request_id,
+                app_id=self.app_a["id"], status=media_jobs.STATUS_SUCCEEDED,
+            ), path=self.jobs_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (2, 2))
+        self.assertEqual(sorted(row["request_id"] for row in usage["receipts"]), ["audjob_one", "vidjob_one"])
+
+    def test_an_audio_job_counts_once_after_its_job_record_is_erased(self) -> None:
+        # Its one receipt is the job's own, so with no submit receipt to pair it with, erasure leaves nothing to double.
+        self._receipt(self.app_a["id"], "audjob_erased", job_id="mj_aud_erased", intent="audio.generate",
+                      route_path="/gateway/v1/media/jobs", requested_model="model-one", resolved_model="model-one",
+                      backend="local-engine", started=True, status="ok")
+        media_jobs.create(media_jobs.MediaJob(
+            job_id="mj_aud_erased", request_id="audjob_erased", intent="audio.generate",
+            parent_request_id="audjob_erased", app_id=self.app_a["id"], status=media_jobs.STATUS_SUCCEEDED,
+        ), path=self.jobs_db)
+        media_jobs.delete_succeeded(["mj_aud_erased"], path=self.jobs_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual((usage["requests"], usage["local_requests"]), (1, 1))
+        self.assertEqual([row["request_id"] for row in usage["receipts"]], ["audjob_erased"])
+
+    def test_receipt_cost_prefers_the_provider_figure_then_the_recorded_cost(self) -> None:
+        self.assertEqual(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": "0.01"}},
+                                                 "cost": {"usd": "0.02"}}), 0.01)
+        self.assertEqual(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": "bad"}},
+                                                 "cost": {"usd": "0.02"}}), 0.02)
+        self.assertEqual(me_media._receipt_cost({"cost": {"usd": "0.0042"}}), 0.0042)
+        self.assertIsNone(me_media._receipt_cost({"cost": {"usd": None}}))
+        self.assertIsNone(me_media._receipt_cost({"cost": {"usd": "NaN"}}))
+
     def test_missing_audio_job_asset_is_listed_unavailable_and_not_downloadable(self) -> None:
         asset_id = "aud_" + "0" * 64
         self._receipt(self.app_a["id"], "req_expired")
@@ -1573,6 +2313,8 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
                 make_runtime=self.runtime,
             )
         )
+        # The gateway's middleware opens each request's identity record; the make route stamps its job from it.
+        app.add_middleware(request_source.RequestSourceMiddleware)
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
@@ -1959,17 +2701,17 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(len(self.runtime.calls), 1)
 
     def test_make_cannot_use_another_person_job_as_source_even_if_output_is_shared(self) -> None:
-        # Criterion 3: job boundary, independent of the asset boundary. Bob's
-        # output is explicitly shared with Alice, so only a job-ownership check
-        # can reject Bob's job as a source.
+        # Criterion 3: the job boundary. Bob made the output and holds no share
+        # for Alice (D51), so Alice cannot read it; the make job must refuse
+        # Bob's job as a source for that reason too, with nothing disclosed.
         canary = "bob-job-canary-41b9"
         with self._as(self.bob):
             foreign, shared_asset = self._completed_output("bob-source", prompt=canary)
         self._meta_path(shared_asset).write_text(json.dumps({
             "asset_id": shared_asset, "owner_key_hashes": ["sha256:bob", "sha256:alice"],
-            "updated_at": 1_700_000_000,
+            "maker_person_ids": [self.bob["id"]], "updated_at": 1_700_000_000,
         }))
-        self.assertEqual(self.client.get(f"/me/api/media/{shared_asset}").status_code, 200)
+        self.assertEqual(self.client.get(f"/me/api/media/{shared_asset}").status_code, 404)
         own, own_asset = self._completed_output("own-source")
         _, own_edit = self._submit_make("own-job-edit", intent="image.edit", source_job_id=own["job_id"])
         self._finished(own_edit["job_id"])
@@ -2217,6 +2959,28 @@ class MeMakeApiAcceptanceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(media_jobs.count(path=self.jobs_db), 0)
 
+    def test_a_completed_local_make_job_is_counted_local_in_usage(self) -> None:
+        _, job = self._submit_make("local-picture")
+        self._finished(job["job_id"])
+        # The runtime reports the dispatch once its work reaches a backend on this machine.
+        me_make.record_dispatch(job["job_id"], backend="local-engine", started_at_ms=1_700_000_000_500,
+                                remote=False, jobs_path=self.jobs_db, receipts_path=self.receipts_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], 1)
+        self.assertEqual(usage["local_requests"], 1)
+        self.assertTrue(usage["receipts"][0]["served_locally"])
+
+    def test_a_make_job_refused_before_dispatch_is_not_counted_local(self) -> None:
+        self.runtime.fail_with = me_make.MakeBackendError("This kind of work is disabled.", http_status=503)
+        _, job = self._submit_make("refused-picture")
+        self.assertEqual(self._finished(job["job_id"])["status"], media_jobs.STATUS_FAILED)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], 1)
+        self.assertEqual(usage["local_requests"], 0)
+        self.assertFalse(usage["receipts"][0]["served_locally"])
+        # The job failed, and its receipt never recorded a success, so Usage counts the request as failed.
+        self.assertEqual((usage["failed_requests"], usage["receipts"][0]["status"]), (1, "failed"))
+
 
 
 class MemberFailureCopyTests(unittest.TestCase):
@@ -2265,8 +3029,8 @@ class MemberFailureCopyTests(unittest.TestCase):
         self.assertNotIn("period=", period["message"])
         source = self._error(self.client.get("/me/api/media", params={"source": "x"}), 400, "invalid_source", "request")
         self.assertNotIn("app:<id>", source["message"])
-        owner = self._error(self.client.get("/me/api/media", params={"person": "all"}), 403, "owner_required", "account")
-        self.assertIn("Choose your own work", owner["message"])
+        owner = self._error(self.client.get("/me/api/media", params={"person": "all"}), 400, "param_not_supported", "request")
+        self.assertIn("setting", owner["message"])
 
     def test_missing_file_is_not_called_expired(self) -> None:
         asset_id = "aud_" + "d" * 64

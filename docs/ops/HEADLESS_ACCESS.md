@@ -64,13 +64,16 @@ Access plans decide what everyone may do, so only the owner may create, change
 or delete one (`403 owner_required` for an administrator). Administrators can
 still read plans.
 
-Only the owner may create an App that someone else answers for, change that
-App's access plan or accountable person, or mint a key on it. An administrator
-may do these only for an App that answers to themselves, so its spend stays
-inside the administrator's own access plan. An administrator without an access
-plan gets a key that authorizes nothing. A key has no person of its own, so an
-`admin` key cannot create Apps or App keys; the refusal is
-`403 owner_required`.
+Only the owner may create an App that someone else answers for, or change that
+App's access plan or accountable person. A key or a trusted address on an App is
+added only by the person the App answers for, from their browser session. The
+owner role does not add one, and neither does a control-plane key, so an owner
+automation key cannot mint an App key (`403 not_your_app`). An administrator may
+create or change only an App that answers to themselves, so its spend stays inside
+the administrator's own access plan. An administrator without an access plan gets
+a key that authorizes nothing. A key has no person of its own, so an `admin` key
+cannot create Apps or App keys; the refusal is `403 owner_required`. See
+`docs/ops/OWNER_BINDINGS.md`.
 
 Use a private working directory. Keep tracing off (`set +x`) while handling
 credentials. The key and header files must have mode 600. The examples read
@@ -83,12 +86,8 @@ variables. Keep these files out of logs and version control.
 curl --fail-with-body -sS "$AZIZAM_URL/admin/api/apps" \
   -H @owner-header.txt
 
-# Choose an existing app ID from the list. This mints an App key, not an owner key.
-APP_ID=app_id_from_list
-curl --fail-with-body -sS -X POST "$AZIZAM_URL/admin/api/apps/$APP_ID/keys" \
-  -H @owner-header.txt \
-  -H 'Content-Type: application/json' --data '{"label":"automation-client"}' \
-  > app-key-response.json
+# An owner automation key cannot mint an App key: the person the App answers for makes
+# one from a browser session (POST /me/api/apps/{app_id}/keys). See docs/ops/OWNER_BINDINGS.md.
 
 curl --fail-with-body -sS "$AZIZAM_URL/admin/api/activity/requests?limit=10" \
   -H @owner-header.txt
@@ -99,8 +98,8 @@ curl --fail-with-body -sS "$AZIZAM_URL/admin/api/status" \
 For denied `/status*` calls, request telemetry no longer touches credential usage
 or writes metrics; status pages now share the existing admin telemetry exclusion.
 
-Key creation writes the one-time secret in `credential.api_key` to the private
-`app-key-response.json` file; keep that file out of shared logs and version control.
+A key made from a browser session returns its one-time secret in `api_key`. Keep
+that response out of shared logs and version control.
 Request activity returns safe receipt records with `next_cursor`. It differs from
 the administrative change audit at `/admin/api/audit`. Continue receipt pages
 with `before=<next_cursor>` until `next_cursor` is null. Registry writes need the
@@ -182,9 +181,6 @@ profile["auth"]["params"]["token"] = key
 config.write_text(json.dumps(data, indent=2) + "\n")
 PY
 restish azizam owner-get-admin-api-apps -o json
-restish azizam owner-post-admin-api-apps-app-id-keys "$APP_ID" \
-  'label: automation-client' -o json \
-  > app-key-response.json
 restish azizam owner-get-admin-api-activity-requests --limit 10 -o json
 restish azizam owner-get-admin-api-status -o json
 ```
@@ -246,10 +242,12 @@ device. The server keeps the rows, and the page gets a tile for each name.
 - `POST /auth/api/login` accepts `{"tile", "password"}` in place of
   `{"email", "password"}`, never both. A tile only names a person. The person's
   own password still has to match, and a wrong one counts toward the same limit
-  as an email sign-in. `"remember"` is three-valued: `true` keeps the person on
-  this device's list, `false` takes that person off this device's list after a
-  successful sign-in, and omitted or `null` leaves the list alone (headless
-  clients). A tile sign-in never adds a name.
+  as an email sign-in. That limit is 60 attempts per address in 15 minutes
+  (`AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW` sets the 60) and 10 per email.
+  `"remember"` is three-valued: `true` keeps the person on this device's list,
+  `false` takes that person off this device's list after a successful sign-in,
+  and omitted or `null` leaves the list alone (headless clients). A tile sign-in
+  never adds a name.
 - `GET /login?tile=…` starts provider sign-in and asks the provider to sign the
   person in again (`prompt=login`, `max_age=0`). It sends no `login_hint` and no
   email in any URL. The callback accepts only a fresh sign-in by the person the
@@ -307,10 +305,10 @@ Selected successful workflows are exercised separately.
 | `DELETE /admin/api/apps/{app_id}` | owner-bearer | denied | `gateway.admin_api.disable_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `PATCH /admin/api/apps/{app_id}` | owner-bearer | denied | `gateway.admin_api.update_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/apps/{app_id}/enable` | owner-bearer | denied | `gateway.admin_api.enable_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `POST /admin/api/apps/{app_id}/keys` | owner-bearer | denied | `gateway.admin_api.create_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/apps/{app_id}/keys` | owner-bearer | denied | `gateway.admin_api.create_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin; only the App's accountable person may add a key (`not_your_app` otherwise), so a control-plane key adds none | accountable person |
 | `PATCH /admin/api/apps/{app_id}/keys/{credential_id}` | owner-bearer | denied | `gateway.admin_api.rename_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin; an administrator is refused on an App that answers to the owner (`app_outranks_you`) | owner |
 | `GET /admin/api/apps/{app_id}/trusted-addresses` | owner-bearer | denied | `gateway.admin_api.list_trusted_addresses`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
-| `POST /admin/api/apps/{app_id}/trusted-addresses` | owner-bearer | denied | `gateway.admin_api.add_trusted_address`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to trust an address | owner |
+| `POST /admin/api/apps/{app_id}/trusted-addresses` | owner-bearer | denied | `gateway.admin_api.add_trusted_address`; AdminAuthenticator / _require_admin; owner/admin/superadmin; only the App's accountable person may trust an address (`not_your_app` otherwise) | accountable person |
 | `DELETE /admin/api/apps/{app_id}/trusted-addresses/{entry_id}` | owner-bearer | denied | `gateway.admin_api.delete_trusted_address`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/audit` | owner-bearer | denied | `gateway.admin_api.audit`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/audit-events` | owner-bearer | denied | `gateway.admin_api.audit_events`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -448,9 +446,16 @@ Selected successful workflows are exercised separately.
 | `DELETE /me/api/apps/{app_id}` | session-only | denied | `proxy.user_portal_delete_app`; Browser session; mutations require CSRF/action header | hidden |
 | `PATCH /me/api/apps/{app_id}` | session-only | denied | `proxy.user_portal_rename_app`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/apps/{app_id}/keys` | session-only | denied | `proxy.user_portal_mint_key`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/apps/{app_id}/trusted-addresses` | session-only | denied | `proxy.user_portal_add_trusted_address`; Browser session; mutations require CSRF/action header; only the App's accountable person | hidden |
+| `POST /me/api/credentials/{credential_id}/adopt` | session-only | denied | `proxy.user_portal_adopt_key`; Browser session; mutations require CSRF/action header; only the owner keeps a key nobody else could have made (`409 keep_not_provable` otherwise) | hidden |
+| `POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt` | session-only | denied | `proxy.user_portal_adopt_trusted_address`; Browser session; mutations require CSRF/action header; only the owner keeps an address nobody else could have added (`409 keep_not_provable` otherwise) | hidden |
+| `POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd` | session-only | denied | `proxy.user_portal_readd_trusted_address`; Browser session; mutations require CSRF/action header; the App's person adds an unkept address again in one step: the old entry is removed and the same address is added as theirs (`404 app_not_found` for another person's App) | hidden |
+| `POST /me/api/credentials/{credential_id}/replace` | session-only | denied | `proxy.user_portal_replace_key`; Browser session; mutations require CSRF/action header; only the App's accountable person replaces a key it cannot keep | hidden |
+| `DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}` | session-only | denied | `proxy.user_portal_remove_trusted_address`; Browser session; mutations require CSRF/action header; only the App's accountable person | hidden |
 | `POST /me/api/connection-test` | session-only | denied | `gateway.home_api.connection_test`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/credentials/{credential_id}` | session-only | denied | `proxy.user_portal_revoke_key`; Browser session; mutations require CSRF/action header | hidden |
 | `PATCH /me/api/credentials/{credential_id}` | session-only | denied | `proxy.user_portal_rename_key`; Browser session; mutations require CSRF/action header | hidden |
+| `PUT /me/api/credentials/{credential_id}/privacy-permission` | session-only | denied | `proxy.user_portal_key_privacy_permission`; accountable person and own App key; mutations require CSRF/action header and recent sign-in | hidden |
 | `GET /me/api/credentials/{credential_id}/access` | session-only | denied | `proxy.user_portal_credential_access`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/credentials/{credential_id}/revoke` | session-only | denied | `proxy.user_portal_revoke_key`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/home` | session-only | denied | `gateway.home_api.home`; Browser session; mutations require CSRF/action header | hidden |
@@ -461,6 +466,7 @@ Selected successful workflows are exercised separately.
 | `GET /me/api/make/jobs/{job_id}` | session-only | denied | `gateway.me_make.get_job`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/make/jobs/{job_id}/cancel` | session-only | denied | `gateway.me_make.cancel_job`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/mcp/connections` | session-only | denied | `gateway.mcp_oauth.connections`; Browser session; own connections only | hidden |
+| `PUT /me/api/mcp/connections/{grant_id}/privacy-permission` | session-only | denied | `gateway.mcp_oauth.privacy_permission`; own connection only; mutations require CSRF/action header and recent sign-in | hidden |
 | `POST /me/api/mcp/connections/{grant_id}/revoke` | session-only | denied | `gateway.mcp_oauth.revoke_connection`; Browser session; own connections only; mutations require CSRF/action header | hidden |
 | `GET /me/api/mcp/requests/{request_id}` | session-only | denied | `gateway.mcp_oauth.consent_details`; Browser session; same-browser binding cookie | hidden |
 | `POST /me/api/mcp/requests/{request_id}` | session-only | denied | `gateway.mcp_oauth.consent_decision`; Browser session; same-browser binding cookie; mutations require CSRF/action header | hidden |
@@ -475,11 +481,20 @@ Selected successful workflows are exercised separately.
 | `PUT /me/api/profile/avatar` | session-only | denied | `gateway.me_avatar.put_avatar`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/profile/avatars` | session-only | denied | `gateway.me_avatar.list_avatars`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/profile/avatar/picture` | session-only | denied | `gateway.me_avatar.get_picture`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/profile/avatar/default` | session-only | denied | `gateway.me_avatar.post_default`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/profile/avatar/generate` | session-only | denied | `gateway.me_avatar.post_generate`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/profile/avatar/generated` | session-only | denied | `gateway.me_avatar.post_generated`; Browser session; mutations require CSRF/action header | hidden |
+| `DELETE /me/api/profile/avatar/generated` | session-only | denied | `gateway.me_avatar.delete_generated`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/profile/avatar/generator` | session-only | denied | `gateway.me_avatar.get_generator`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/prompt-memory` | session-only | denied | `gateway.me_prompt_memory.get_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
 | `PUT /me/api/prompt-memory` | session-only | denied | `gateway.me_prompt_memory.put_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/retention` | session-only | denied | `gateway.request_history_api.get_my_retention`; Browser session; mutations require CSRF/action header | hidden |
+| `PUT /me/api/retention` | session-only | denied | `gateway.request_history_api.put_my_retention`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/retention/notice-seen` | session-only | denied | `gateway.request_history_api.dismiss_request_history_notice`; Browser session; mutations require CSRF/action header | hidden |
 | `DELETE /me/api/prompt-memory/prompts` | session-only | denied | `gateway.me_prompt_memory.delete_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/receipts/{request_id}` | session-only | denied | `proxy.user_portal_receipt_detail`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/session` | session-view | no owner authority | `proxy.user_portal_session`; Optional browser session; returns unauthenticated view without cookie | hidden |
+| `GET /me/api/session/end-token` | session-view | no owner authority | `proxy.user_portal_session_end_token`; Optional browser session; returns only its CSRF token and display name | hidden |
 | `GET /me/api/status` | session-only | denied | `gateway.home_api.member_status`; Browser session; mutations require CSRF/action header | hidden |
 | `POST /me/api/try-key` | session-only | denied | `proxy.user_portal_try_key`; Browser session; mutations require CSRF/action header | hidden |
 | `GET /me/api/usage/summary` | session-only | denied | `gateway.me_media.usage_summary`; Browser session; mutations require CSRF/action header | hidden |

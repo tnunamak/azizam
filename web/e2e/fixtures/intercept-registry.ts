@@ -164,10 +164,11 @@ const REQUIRED: Record<string, string[]> = {
   "/auth/api/options": ["/built_in", "/oidc", "/oidc_label", "/oidc_url"],
   "/health": ["/status"],
   "/me/api/home": [
-    "/aliases",
     "/authenticated",
     "/capabilities",
+    "/has_access_plan",
     "/receipts",
+    "/recent_chats",
     "/user",
     "/user/email",
     "/user/id",
@@ -177,6 +178,7 @@ const REQUIRED: Record<string, string[]> = {
   "/me/api/jobs": ["/jobs", "/next_cursor"],
   "/me/api/media": ["/assets"],
   "/me/api/models/catalog": ["/aliases", "/models"],
+  "/me/api/retention": ["/notice_due"],
   "/me/api/session": [
     "/authenticated",
     "/user",
@@ -259,6 +261,7 @@ export const REGISTRY: Endpoint[] = [
   reads("/auth/api/options", {
     required: ["/built_in", "/oidc", "/oidc_label", "/oidc_url"],
   }),
+  reads("/auth/api/remembered", { required: ["/remember", "/people"] }),
   reads("/setup/api/state", { required: ["/owner_exists"] }),
   reads("/health", { required: ["/status"] }),
   reads("/admin/api/activity/requests", {
@@ -377,12 +380,12 @@ export const REGISTRY: Endpoint[] = [
     ],
   }),
   reads("/me/api/home", {
-    open: ["/credential_aliases"],
     required: [
-      "/aliases",
       "/authenticated",
       "/capabilities",
+      "/has_access_plan",
       "/receipts",
+      "/recent_chats",
       "/user",
       "/user/email",
       "/user/id",
@@ -393,6 +396,9 @@ export const REGISTRY: Endpoint[] = [
   reads("/me/api/jobs", { required: ["/jobs", "/next_cursor"] }),
   reads("/me/api/media", { required: ["/assets"] }),
   reads("/me/api/models/catalog", { required: ["/aliases", "/models"] }),
+  // Home's one-time request history notice reads this; a capture stubs it due.
+  reads("/me/api/retention", { required: ["/notice_due"] }),
+  reads("/me/api/profile/avatar/generator", { required: ["/available"] }),
   reads("/me/api/session", {
     required: [
       "/authenticated",
@@ -455,6 +461,24 @@ export const REGISTRY: Endpoint[] = [
   }),
   executed("GET", "/gateway/v1/media/jobs/{id}/content", { path: /^\/gateway\/v1\/media\/jobs\/[^/]+\/content$/ }),
   executed("GET", "/v1/videos/{id}", { path: /^\/v1\/videos\/[^/]+$/ }),
+  {
+    // The owner's address list for an App. The probe reads the first App that holds an address, so the entries a stub
+    // carries are checked against a real one (the add-again flow adds one before it answers the list).
+    id: "GET /admin/api/apps/{id}/trusted-addresses",
+    methods: ["GET"],
+    path: /^\/admin\/api\/apps\/[^/]+\/trusted-addresses$/,
+    probe: async (api) => {
+      const { apps } = (await read(api, "/admin/api/apps")) as { apps: { id: string }[] };
+      for (const app of apps) {
+        const listed = (await read(api, `/admin/api/apps/${app.id}/trusted-addresses`)) as {
+          trusted_addresses: unknown[];
+        };
+        if (listed.trusted_addresses.length > 0) return listed;
+      }
+      return { trusted_addresses: [] };
+    },
+    required: ["/trusted_addresses"],
+  },
   executed("DELETE", "/admin/api/invites/{id}", { path: /^\/admin\/api\/invites\/[^/]+$/ }),
   executed("DELETE", "/admin/api/people/{id}", { path: /^\/admin\/api\/people\/[^/]+$/ }),
   executed("PATCH", "/admin/api/operator/services/{id}", {

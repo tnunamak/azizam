@@ -25,18 +25,27 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", { t
     .getByRole("button", { name: "Create app and key", exact: true })
     .click();
   const { credential: firstKey } = await (await mintedResponse).json();
-  const reveal = page.getByRole("dialog", { name: `Connect ${name}` });
+  const reveal = page.getByRole("dialog", { name: `New key for ${name}` });
   await expect(reveal).toBeVisible();
-  // The setup guide shows the app's fields; the key stays in its own field.
-  await expect(reveal.getByRole("heading", { name: "Set up your app" })).toBeVisible();
-  await expect(reveal.getByRole("combobox", { name: "Your app" })).toBeVisible();
+  // The setup guide shows the app's fields; the key stays in its own field. "Journey client" names no client,
+  // so none is picked and the generic recipe shows.
+  await expect(reveal.getByRole("heading", { name: "Set up a client" })).toBeVisible();
+  await expect(reveal.getByRole("group", { name: "Clients" })).toBeVisible();
   await expect(reveal.getByLabel("Your key", { exact: true })).toHaveValue(firstKey.api_key);
   expect(
-    await reveal.locator("section input").evaluateAll(
-      (inputs, key) => inputs.some((input) => (input as HTMLInputElement).value === key),
+    await reveal.locator("section input, section textarea").evaluateAll(
+      (fields, key) => fields.some((field) => (field as HTMLInputElement).value === key),
       firstKey.api_key,
     ),
   ).toBe(false);
+  // On a phone the whole key shows in its field, with nothing clipped at the end.
+  await page.setViewportSize({ width: 390, height: 900 });
+  expect(
+    await reveal.getByLabel("Your key", { exact: true }).evaluate(
+      (field) => field.scrollWidth <= field.clientWidth && field.scrollHeight <= field.clientHeight,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.keyboard.press("Escape");
   await expect(reveal).toBeVisible();
   await reveal.getByRole("button", { name: "I’ve saved the key" }).click();
@@ -139,7 +148,7 @@ test("an owner gives a new app another access plan before its key exists, then c
   await dialog.getByRole("combobox", { name: "Access plan" }).click();
   await page.getByRole("option", { name: "Local chat", exact: true }).click();
   await dialog.getByRole("button", { name: "Create app and key", exact: true }).click();
-  const reveal = page.getByRole("dialog", { name: `Connect ${name}` });
+  const reveal = page.getByRole("dialog", { name: `New key for ${name}` });
   await expect(reveal).toBeVisible();
   await expect(reveal).toContainText("Access plan “Local chat”");
   expect(calls).toEqual(["set plan", "mint key"]);

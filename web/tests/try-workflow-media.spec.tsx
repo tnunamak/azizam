@@ -255,6 +255,11 @@ describe("an image-to-video workflow on Try", () => {
   it("says what is missing on the field and sends nothing", async () => {
     const user = userEvent.setup();
     await openWorkflow();
+    {
+    const example = screen.queryByRole("button", { name: "Try an example" });
+    const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (example && promptBox?.value === "") await user.click(example);
+    }
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(await screen.findByText("Choose a picture to start from")).toBeVisible();
     expect(screen.getByText("Describe the video first")).toBeVisible();
@@ -282,6 +287,11 @@ describe("an image-to-video workflow on Try", () => {
     await user.upload(pickerInput(), PNG);
     const preview = await screen.findByRole("img", { name: "Chosen picture" });
     expect(preview).toHaveAttribute("src", expect.stringMatching(/^data:image\/png;base64,/));
+    {
+    const example = screen.queryByRole("button", { name: "Try an example" });
+    const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (example && promptBox?.value === "") await user.click(example);
+    }
     await user.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts()).toHaveLength(1));
     const body = postedBody();
@@ -339,6 +349,11 @@ describe("an image-to-video workflow on Try", () => {
     expect(screen.getByRole("img", { name: "Chosen picture" }).getAttribute("src")).toMatch(
       /^data:image\/png;base64,/,
     );
+    {
+    const example = screen.queryByRole("button", { name: "Try an example" });
+    const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (example && promptBox?.value === "") await user.click(example);
+    }
     await user.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts()).toHaveLength(1));
     expect(postedBody().input_reference).toMatch(/^data:image\/png;base64,/);
@@ -369,6 +384,11 @@ describe("an image-to-video workflow on Try", () => {
         "A boat drifts",
       );
       await user.upload(pickerInput(), PNG);
+      {
+      const example = screen.queryByRole("button", { name: "Try an example" });
+      const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+      if (example && promptBox?.value === "") await user.click(example);
+      }
       await user.click(screen.getByRole("button", { name: "Run" }));
       await screen.findByText("The gateway could not start this video.");
       return user;
@@ -399,6 +419,11 @@ describe("an image-to-video workflow on Try", () => {
       const user = await failFirstRun();
       videoResponse = () => json({ id: "video_2", object: "video", status: "queued" });
       await user.click(screen.getByRole("button", { name: "Edit and run again" }));
+      {
+      const example = screen.queryByRole("button", { name: "Try an example" });
+      const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+      if (example && promptBox?.value === "") await user.click(example);
+      }
       await user.click(screen.getByRole("button", { name: "Run" }));
       await waitFor(() => expect(posts()).toHaveLength(2));
       expect(postedBody().input_reference).toMatch(/^data:image\/png/);
@@ -428,6 +453,11 @@ it("keeps the Try key out of the normal view, under Key details", async () => {
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
   );
+  {
+  const example = screen.queryByRole("button", { name: "Try an example" });
+  const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+  if (example && promptBox?.value === "") await user.click(example);
+  }
   await user.click(screen.getByRole("button", { name: "Run" }));
   const summary = await screen.findByText("Key details");
   expect(screen.getByText(/Try runs with its own key, which ends when you sign out/)).not.toBeVisible();
@@ -606,6 +636,11 @@ it.each([false, true])("sends the multipart File despite upload strings (edited=
       target: { value: "must not replace the File" },
     });
   }
+  {
+  const example = screen.queryByRole("button", { name: "Try an example" });
+  const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+  if (example && promptBox?.value === "") fireEvent.click(example);
+  }
   fireEvent.click(screen.getByRole("button", { name: "Run" }));
   await waitFor(() => expect(posts()).toHaveLength(1));
   const body = posts()[0][1].body as FormData;
@@ -646,6 +681,11 @@ describe("readable Try model choices", () => {
       fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     }
     await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
+    {
+    const example = screen.queryByRole("button", { name: "Try an example" });
+    const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (example && promptBox?.value === "") fireEvent.click(example);
+    }
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(posts()).toHaveLength(1));
     expect(postedBody().model).toBe(raw);
@@ -732,6 +772,11 @@ describe("media input states", () => {
     fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
     fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
     expect(await screen.findByText(/Adding picture…/)).toBeVisible();
+    {
+    const example = screen.queryByRole("button", { name: "Try an example" });
+    const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (example && promptBox?.value === "") fireEvent.click(example);
+    }
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     expect(submitted).not.toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent("Wait for it to finish");
@@ -743,6 +788,11 @@ describe("media input states", () => {
     });
     await waitFor(() => expect(screen.queryByText(/Adding picture…/)).toBeNull());
     expect(screen.getByText("From your Library")).toBeVisible();
+    {
+    const example = screen.queryByRole("button", { name: "Try an example" });
+    const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (example && promptBox?.value === "") fireEvent.click(example);
+    }
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     expect(submitted).toHaveBeenCalledTimes(1);
   });

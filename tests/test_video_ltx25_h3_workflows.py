@@ -19,9 +19,45 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway import manifests, workflow_call  # noqa: E402
 from tests.support.access import access_context  # noqa: E402
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+
+def test_ltx_frame_rate_is_integer_and_manifest_routes_reject_other_types() -> None:
+    records = {
+        record.id.removeprefix("video.generate."): record
+        for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records()
+        if record.id in {
+            "video.generate.ltx-2.5-i2v",
+            "video.generate.ltx-2.5-t2v",
+            "video.generate.ltx-2.5-keyframes",
+            "video.generate.ltx-2.5-keyframes-mid",
+        }
+    }
+    assert set(records) == {
+        "ltx-2.5-i2v",
+        "ltx-2.5-t2v",
+        "ltx-2.5-keyframes",
+        "ltx-2.5-keyframes-mid",
+    }
+    for record in records.values():
+        spec = record.manifest["inputs"]["frame_rate"]
+        assert spec["type"] == "integer"
+
+        direct = manifests.validate_inputs(record.manifest, {"frame_rate": 24})
+        assert direct.accepted["frame_rate"] == 24
+        call_schema = workflow_call.effective_schema({"inputs": {"type": "object", "properties": {
+            "frame_rate": spec,
+        }}})
+        workflow_call.validate_inputs(call_schema, {"frame_rate": 24})
+
+        for value in (24.0, "24"):
+            rejected = manifests.validate_inputs(record.manifest, {"frame_rate": value})
+            assert "frame_rate" in rejected.rejected
+            with pytest.raises(workflow_call.CallError, match="frame_rate.*integer"):
+                workflow_call.validate_inputs(call_schema, {"frame_rate": value})
 
 
 class SizeAndLengthRuleTests(unittest.TestCase):

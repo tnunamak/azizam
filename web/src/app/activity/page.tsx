@@ -350,7 +350,7 @@ export default function ActivityPage() {
             </Callout>
           )}
           {auditPending ? (
-            <div aria-label="Loading changes" aria-busy="true" className="relative">
+            <div role="group" aria-label="Loading changes" aria-busy="true" className="relative">
               <span className="absolute right-0 top-4 z-10"><DelayedSpinner /></span>
               <div aria-hidden="true" className="divide-border divide-y">
                 {[0, 1, 2, 3, 4].map((i) => (

@@ -40,7 +40,8 @@ test("a new operator sets up, adds the fake engine and chats in under ten minute
   await page.getByLabel("Confirm password").fill(PASSWORD);
   await page.getByRole("button", { name: "Create owner account" }).click();
   await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
-  await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible();
+  // Home's title is its greeting (the Home redesign removed the page title), "Welcome" on an owner's first visit.
+  await expect(page.getByRole("heading", { level: 1, name: /^(Welcome|Good (morning|afternoon|evening))/ })).toBeVisible();
 
   // 2. Home leads to the next step: no engine yet, so it says where to add one.
   const addEngine = page.getByRole("link", { name: "Add an engine" }).first();
@@ -74,6 +75,10 @@ test("a new operator sets up, adds the fake engine and chats in under ten minute
     .getByRole("link", { name: "Try", exact: true })
     .click();
   await expect(page).toHaveURL(/\/try\/?$/);
+  // Try starts on the model the operator just added: the chat default, with no pick by hand.
+  // The picker shows the engine's name in its own capitals ("Marker Engine"), so match it without case.
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toContainText(new RegExp(ENGINE_NAME, "i"));
+  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Say hello from the new gateway.");
   await page.getByRole("button", { name: "Run", exact: true }).click();
   const resultHeading = page.getByRole("heading", { name: "Chat result", exact: true });
   await expect(resultHeading).toBeVisible({ timeout: 60_000 });

@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import sqlite3
@@ -16,12 +17,12 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, NamedTuple
 
 from gateway import admin_store, request_connections, session_guard, sqlite_startup
 # A module import: admin_runtime imports this module through browser_sessions.
 from gateway import admin_runtime
-from gateway.compat import positive_int_env
+from gateway.compat import get_env, positive_int_env
 from gateway.local_owner import verify_password as verify_legacy_password
 from gateway.runtime_auth import hash_api_key
 
@@ -52,7 +53,7 @@ class AccountError(ValueError):
 
 
 @contextmanager
-def connection(path: Path) -> Iterator[sqlite3.Connection]:
+def connection(path: Path, *, invalidate_asset_cache: bool = True) -> Iterator[sqlite3.Connection]:
     if request_connections.active():
         # Share the request's admin-store connection: this is the same database.
         with admin_store._conn(path) as conn:
@@ -61,7 +62,7 @@ def connection(path: Path) -> Iterator[sqlite3.Connection]:
                 with conn:
                     yield conn
             finally:
-                if conn.total_changes != changes:
+                if invalidate_asset_cache and conn.total_changes != changes:
                     invalidate_asset_families()
         return
     conn = sqlite_startup.connect(path, timeout=10)
@@ -72,7 +73,7 @@ def connection(path: Path) -> Iterator[sqlite3.Connection]:
         with conn:
             yield conn
     finally:
-        if conn.total_changes != changes:
+        if invalidate_asset_cache and conn.total_changes != changes:
             invalidate_asset_families()
         conn.close()
 
@@ -472,26 +473,67 @@ def record_signin_refusal_in(conn: sqlite3.Connection, user_id: str) -> None:
 def clear_signin_refusal(user_id: str, *, path: Path) -> None:
     """A successful sign-in lifts the pause on the person's keys."""
     with connection(path) as conn:
-        conn.execute("DELETE FROM account_signin_refusals WHERE user_id=?", (user_id,))
+        clear_signin_refusal_in(conn, user_id)
+
+
+def clear_signin_refusal_in(conn: sqlite3.Connection, user_id: str) -> None:
+    """Clear a refusal inside the sign-in transaction that owns ``conn``."""
+    conn.execute("DELETE FROM account_signin_refusals WHERE user_id=?", (user_id,))
 
 
 def register_session(user_id: str, session_id: str, expires_at: int, *, path: Path):
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        state = conn.execute("SELECT * FROM account_access WHERE user_id=?", (user_id,)).fetchone()
-        if state and (state["disabled_at"] is not None or state["removed_at"] is not None):
-            raise AccountError("account_disabled", "This account is disabled.", 403)
-        conn.execute("DELETE FROM account_sessions WHERE expires_at<=?", (int(time.time()),))
-        conn.execute("INSERT INTO account_sessions VALUES(?,?,?)", (session_id, user_id, expires_at))
+        register_session_in(conn, user_id, session_id, expires_at)
+
+
+def register_session_in(conn: sqlite3.Connection, user_id: str, session_id: str, expires_at: int) -> None:
+    """Register a session without committing the caller's transaction."""
+    state = conn.execute("SELECT * FROM account_access WHERE user_id=?", (user_id,)).fetchone()
+    if state and (state["disabled_at"] is not None or state["removed_at"] is not None):
+        raise AccountError("account_disabled", "This account is disabled.", 403)
+    conn.execute("DELETE FROM account_sessions WHERE expires_at<=?", (int(time.time()),))
+    conn.execute("INSERT INTO account_sessions VALUES(?,?,?)", (session_id, user_id, expires_at))
+
+
+_LOGIN_ATTEMPTS_DEFAULT = 60
+_invalid_login_attempts_logged = False
+_invalid_login_attempts_lock = threading.Lock()
+
+
+def login_attempts_per_window() -> int:
+    """Password sign-ins one address may attempt in 15 minutes.
+
+    AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW sets the 60. The UI test gateways raise it, since their browsers share one address.
+    An invalid setting keeps the 60 and logs one line per process. The 10 attempts per email do not change.
+    """
+    global _invalid_login_attempts_logged
+    setting = get_env("AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW")
+    if setting is None:
+        return _LOGIN_ATTEMPTS_DEFAULT
+    try:
+        value = int(setting)
+    except ValueError:
+        value = 0
+    if value > 0:
+        return value
+    with _invalid_login_attempts_lock:
+        if not _invalid_login_attempts_logged:
+            logging.getLogger(__name__).warning(
+                "AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW is not a positive whole number; keeping %d attempts per 15 minutes",
+                _LOGIN_ATTEMPTS_DEFAULT)
+            _invalid_login_attempts_logged = True
+    return _LOGIN_ATTEMPTS_DEFAULT
 
 
 def throttle(ip: str, email: str, *, path: Path, now: int | None = None):
     ts = int(time.time()) if now is None else now
     exceeded = False
-    with connection(path) as conn:
+    ip_attempts = login_attempts_per_window()
+    with connection(path, invalidate_asset_cache=False) as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM account_login_limits WHERE started_at<=?", (ts - 900,))
-        for label, value, maximum in (("ip", ip, 60), ("email", email.strip().lower(), 10)):
+        for label, value, maximum in (("ip", ip, ip_attempts), ("email", email.strip().lower(), 10)):
             bucket = hashlib.sha256(f"{label}:{value}".encode()).hexdigest()
             conn.execute("INSERT INTO account_login_limits VALUES(?,?,1) ON CONFLICT(bucket) "
                          "DO UPDATE SET attempts=attempts+1", (bucket, ts))
@@ -505,7 +547,7 @@ def throttle_oidc(ip: str, *, path: Path, now: int | None = None) -> None:
     initialize(path)
     ts = int(time.time()) if now is None else now
     bucket = "oidc:" + hashlib.sha256(ip.encode()).hexdigest()
-    with connection(path) as conn:
+    with connection(path, invalidate_asset_cache=False) as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM account_login_limits WHERE bucket LIKE 'oidc:%' AND started_at<=?", (ts - 60,))
         conn.execute("INSERT INTO account_login_limits VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1",
@@ -523,7 +565,7 @@ def throttle_remembered(ip: str, *, path: Path, now: int | None = None) -> None:
     initialize(path)
     ts = int(time.time()) if now is None else now
     bucket = "remembered:" + hashlib.sha256(ip.encode()).hexdigest()
-    with connection(path) as conn:
+    with connection(path, invalidate_asset_cache=False) as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("DELETE FROM account_login_limits WHERE bucket LIKE 'remembered:%' AND started_at<=?", (ts - 60,))
         conn.execute("INSERT INTO account_login_limits VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1",
@@ -534,6 +576,14 @@ def throttle_remembered(ip: str, *, path: Path, now: int | None = None) -> None:
 
 
 def login(email: str, password: str, ip: str, *, path: Path) -> dict:
+    user = authenticate_login(email, password, ip, path=path)
+    with connection(path) as conn:
+        record_successful_login_in(conn, str(user["id"]))
+    return user
+
+
+def authenticate_login(email: str, password: str, ip: str, *, path: Path) -> dict:
+    """Count and verify a password attempt without writing successful-login state."""
     throttle(ip, email, path=path)
     email = email.strip().lower()
     with connection(path) as conn:
@@ -541,7 +591,7 @@ def login(email: str, password: str, ip: str, *, path: Path) -> dict:
         # by password, and the owner, who can set one whatever provider made their account.
         row = conn.execute("SELECT u.*,p.verifier FROM users u JOIN local_password_credentials p "
                            "ON p.user_id=u.id WHERE LOWER(u.email)=? ORDER BY u.created_at LIMIT 1", (email,)).fetchone()
-    return _verified_login(row, password, path=path)
+    return _verified_user(row, password, path=path)
 
 
 def login_as(person_id: str, password: str, ip: str, *, path: Path) -> dict:
@@ -549,24 +599,35 @@ def login_as(person_id: str, password: str, ip: str, *, path: Path) -> dict:
 
     The attempt counts toward the same per-email limit as an email sign-in, so the two cannot be tried in turn.
     """
+    user = authenticate_login_as(person_id, password, ip, path=path)
+    with connection(path) as conn:
+        record_successful_login_in(conn, str(user["id"]))
+    return user
+
+
+def authenticate_login_as(person_id: str, password: str, ip: str, *, path: Path) -> dict:
+    """Verify a remembered tile's password without writing successful-login state."""
     with connection(path) as conn:
         row = conn.execute("SELECT u.*,p.verifier FROM users u LEFT JOIN local_password_credentials p "
                            "ON p.user_id=u.id WHERE u.id=?", (person_id,)).fetchone()
     throttle(ip, (row["email"] or person_id) if row else person_id, path=path)
-    return _verified_login(row, password, path=path)
+    return _verified_user(row, password, path=path)
 
 
-def _verified_login(row, password: str, *, path: Path) -> dict:
+def _verified_user(row, password: str, *, path: Path) -> dict:
     verifier = row["verifier"] if row and row["verifier"] else _DUMMY_VERIFIER
     valid = verify_password(password, verifier)
     state = access(row["id"], path=path) if row else None
     if not valid or not row or (state and (state["disabled_at"] is not None or state["removed_at"] is not None)):
         raise AccountError("invalid_login", "Email or password is incorrect.", 401)
-    ts = int(time.time())
-    with connection(path) as conn:
-        conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (ts, row["id"]))
-        _audit(conn, "account.login", row["id"], row["id"], ts)
     return {k: v for k, v in dict(row).items() if k != "verifier"}
+
+
+def record_successful_login_in(conn: sqlite3.Connection, user_id: str, *, now: int | None = None) -> None:
+    """Write the login timestamp and audit in the caller's successful-sign-in transaction."""
+    ts = int(time.time()) if now is None else int(now)
+    conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (ts, user_id))
+    _audit(conn, "account.login", user_id, user_id, ts)
 
 
 def _public_link(row) -> dict:
@@ -645,55 +706,78 @@ def revoke_invite(link_id: str, actor: str, *, path: Path, actor_kind: str = "us
         _audit(conn, "account.invite.revoke", actor, link_id, ts, actor_kind=actor_kind, actor_label=actor_label)
 
 
-def accept_invite(token: str, email: str, name: str, password: str | None, *, path: Path,
-                  oidc_user_id: str | None = None) -> tuple[dict, dict, dict]:
+class InviteAcceptance(NamedTuple):
+    """An invitation acceptance whose inputs are checked and whose password is hashed, ready to write."""
+
+    token: str
+    email: str
+    name: str
+    verifier: str | None
+    oidc_user_id: str | None
+
+
+def prepare_invite_acceptance(token: str, email: str, name: str, password: str | None, *, path: Path,
+                              oidc_user_id: str | None = None) -> InviteAcceptance:
+    """Check the inputs and hash the password before any write lock is taken; hashing is slow."""
     email = normalize_email(email)
     if not isinstance(name, str) or not name.strip() or len(name) > 120:
         raise AccountError("invalid_name", "Enter your name (up to 120 characters).")
     inspect_invite(token, path=path)
     verifier = hash_password(password) if oidc_user_id is None else None
+    return InviteAcceptance(token, email, name, verifier, oidc_user_id)
+
+
+def accept_invite_in(conn: sqlite3.Connection, acceptance: InviteAcceptance) -> tuple[dict, dict, dict]:
+    """Accept an invitation inside the caller's transaction: the person, their access, a first app and its key."""
+    token, email, name, verifier, oidc_user_id = acceptance
     api_key, ts = admin_runtime.generate_app_api_key(), int(time.time())
+    link = _usable_link(conn, token, "invite", ts)
+    _valid_plan(conn, link["plan_id"])
+    if link["email"] and not hmac.compare_digest(link["email"].encode(), email.encode()):
+        raise AccountError("invite_email_mismatch", "Use the email address on this invitation.", 403)
+    if oidc_user_id:
+        user = conn.execute("SELECT * FROM users WHERE id=? AND issuer!='local'", (oidc_user_id,)).fetchone()
+        if not user or (user["email"] or "").lower() != email:
+            raise AccountError("identity_mismatch", "Sign in with the invited account.", 403)
+        state = conn.execute("SELECT * FROM account_access WHERE user_id=?", (oidc_user_id,)).fetchone()
+        rule_plan = bool(state and state["plan_id"] and conn.execute(
+            "SELECT 1 FROM signin_rule_plans WHERE user_id=? AND plan_id=?",
+            (oidc_user_id, state["plan_id"])).fetchone())
+        # A plan only a sign-in rule gave does not count: the invitation's plan beats it.
+        if state and ((state["plan_id"] and not rule_plan) or state["removed_at"] is not None):
+            raise AccountError("account_exists", "This account already has an access plan.", 409)
+        user_id = oidc_user_id
+    else:
+        if conn.execute("SELECT 1 FROM users WHERE LOWER(email)=?", (email,)).fetchone():
+            raise AccountError("account_exists", "An account already uses this email. Sign in or ask the owner for help.", 409)
+        user_id = _id("usr")
+        conn.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)", (user_id, "local", email, email, name.strip(), ts, ts))
+        conn.execute("INSERT INTO local_password_credentials VALUES(?,?,?,?)", (user_id, verifier, ts, ts))
+    # The invitation's plan was previewed when it was sent (design §2.12).
+    conn.execute("INSERT INTO account_access(user_id,plan_id) VALUES(?,?) ON CONFLICT(user_id) "
+                 "DO UPDATE SET plan_id=excluded.plan_id", (user_id, link["plan_id"]))
+    # The invitation's plan beats any sign-in rule from now on.
+    conn.execute("DELETE FROM signin_rule_plans WHERE user_id=?", (user_id,))
+    app_id, credential_id = _id("app"), _id("cred")
+    conn.execute("INSERT INTO apps(id,kind,name,owner_user_id,access_plan,created_at) VALUES(?,?,?,?,'person',?)",
+                 (app_id, "personal", "My first app", user_id, ts))
+    conn.execute("INSERT INTO credentials(id,subject_kind,subject_id,app_id,hash,prefix,display_name,created_at,created_by) "
+                 "VALUES(?,?,?,?,?,?,?,?,?)", (credential_id, "app", app_id, app_id, hash_api_key(api_key), api_key[:18], "First app key", ts, user_id))
+    conn.execute("UPDATE account_links SET used_at=?,user_id=? WHERE id=?", (ts, user_id, link["id"]))
+    _audit(conn, "account.invite.accept", user_id, link["id"], ts, {"plan_id": link["plan_id"], "app_id": app_id, "credential_id": credential_id})
+    _audit(conn, "credential.create", user_id, credential_id, ts,
+           {"app_id": app_id, "prefix": api_key[:18], "source": "invite"}, target_kind="credential")
+    user = dict(conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
+    app = dict(conn.execute("SELECT * FROM apps WHERE id=?", (app_id,)).fetchone())
+    return user, app, {"id": credential_id, "app_id": app_id, "api_key": api_key, "prefix": api_key[:18]}
+
+
+def accept_invite(token: str, email: str, name: str, password: str | None, *, path: Path,
+                  oidc_user_id: str | None = None) -> tuple[dict, dict, dict]:
+    acceptance = prepare_invite_acceptance(token, email, name, password, path=path, oidc_user_id=oidc_user_id)
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        link = _usable_link(conn, token, "invite", ts)
-        _valid_plan(conn, link["plan_id"])
-        if link["email"] and not hmac.compare_digest(link["email"].encode(), email.encode()):
-            raise AccountError("invite_email_mismatch", "Use the email address on this invitation.", 403)
-        if oidc_user_id:
-            user = conn.execute("SELECT * FROM users WHERE id=? AND issuer!='local'", (oidc_user_id,)).fetchone()
-            if not user or (user["email"] or "").lower() != email:
-                raise AccountError("identity_mismatch", "Sign in with the invited account.", 403)
-            state = conn.execute("SELECT * FROM account_access WHERE user_id=?", (oidc_user_id,)).fetchone()
-            rule_plan = bool(state and state["plan_id"] and conn.execute(
-                "SELECT 1 FROM signin_rule_plans WHERE user_id=? AND plan_id=?",
-                (oidc_user_id, state["plan_id"])).fetchone())
-            # A plan only a sign-in rule gave does not count: the invitation's plan beats it.
-            if state and ((state["plan_id"] and not rule_plan) or state["removed_at"] is not None):
-                raise AccountError("account_exists", "This account already has an access plan.", 409)
-            user_id = oidc_user_id
-        else:
-            if conn.execute("SELECT 1 FROM users WHERE LOWER(email)=?", (email,)).fetchone():
-                raise AccountError("account_exists", "An account already uses this email. Sign in or ask the owner for help.", 409)
-            user_id = _id("usr")
-            conn.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)", (user_id, "local", email, email, name.strip(), ts, ts))
-            conn.execute("INSERT INTO local_password_credentials VALUES(?,?,?,?)", (user_id, verifier, ts, ts))
-        # The invitation's plan was previewed when it was sent (design §2.12).
-        conn.execute("INSERT INTO account_access(user_id,plan_id) VALUES(?,?) ON CONFLICT(user_id) "
-                     "DO UPDATE SET plan_id=excluded.plan_id", (user_id, link["plan_id"]))
-        # The invitation's plan beats any sign-in rule from now on.
-        conn.execute("DELETE FROM signin_rule_plans WHERE user_id=?", (user_id,))
-        app_id, credential_id = _id("app"), _id("cred")
-        conn.execute("INSERT INTO apps(id,kind,name,owner_user_id,access_plan,created_at) VALUES(?,?,?,?,'person',?)",
-                     (app_id, "personal", "My first app", user_id, ts))
-        conn.execute("INSERT INTO credentials(id,subject_kind,subject_id,app_id,hash,prefix,display_name,created_at,created_by) "
-                     "VALUES(?,?,?,?,?,?,?,?,?)", (credential_id, "app", app_id, app_id, hash_api_key(api_key), api_key[:18], "First app key", ts, user_id))
-        conn.execute("UPDATE account_links SET used_at=?,user_id=? WHERE id=?", (ts, user_id, link["id"]))
-        _audit(conn, "account.invite.accept", user_id, link["id"], ts, {"plan_id": link["plan_id"], "app_id": app_id, "credential_id": credential_id})
-        _audit(conn, "credential.create", user_id, credential_id, ts,
-               {"app_id": app_id, "prefix": api_key[:18], "source": "invite"}, target_kind="credential")
-        user = dict(conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
-        app = dict(conn.execute("SELECT * FROM apps WHERE id=?", (app_id,)).fetchone())
-    return user, app, {"id": credential_id, "app_id": app_id, "api_key": api_key, "prefix": api_key[:18]}
+        return accept_invite_in(conn, acceptance)
 
 
 def reset_password(token: str, password: str, *, path: Path):
@@ -796,15 +880,28 @@ def change_person(user_id: str, actor: str, *, path: Path, plan_id: Any = _UNCHA
                metadata, actor_kind=actor_kind, actor_label=actor_label)
 
     if remove:
-        from gateway import prompt_memory
+        from gateway import avatars, media_jobs, prompt_memory, request_history
+
+        # Account removal is an explicit full-content erasure. Keep it separate
+        # from prompt_memory.delete_person's Library-only cascade.
+        request_history.delete_all_for_person(
+            user_id, admin_path=path, path=media_jobs.DB_PATH, now=ts,
+        )
         prompt_memory.delete_person(user_id)
+        # The picture the gateway made for them is a copy outside the database; the row went with the removal above.
+        avatars.remove_generated_files(user_id, path=path)
 
 
 def record_oidc_verification(user_id: str, verified: bool, *, path: Path):
     initialize(path)
     with connection(path) as conn:
-        conn.execute("INSERT INTO account_oidc_verification VALUES(?,?) ON CONFLICT(user_id) "
-                     "DO UPDATE SET email_verified=excluded.email_verified", (user_id, int(verified)))
+        record_oidc_verification_in(conn, user_id, verified)
+
+
+def record_oidc_verification_in(conn: sqlite3.Connection, user_id: str, verified: bool) -> None:
+    """Save provider verification inside the successful-sign-in transaction."""
+    conn.execute("INSERT INTO account_oidc_verification VALUES(?,?) ON CONFLICT(user_id) "
+                 "DO UPDATE SET email_verified=excluded.email_verified", (user_id, int(verified)))
 
 
 def oidc_email_verified(user_id: str, *, path: Path) -> bool:

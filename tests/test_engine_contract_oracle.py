@@ -101,6 +101,7 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
         "moss-image-fast": ("image", text_to_image),
         "moss-image-quality": ("image", text_to_image),
         "flux2-klein": ("image", text_to_image),
+        "flux2-klein-snofs": ("image", text_to_image),
         "flux2-klein-edit": ("image", {"input_modalities": ["text", "image"], "output_modalities": ["image"]}),
     }
     keyframes = {"video-minimax-h3-keyframes", "video-minimax-h3-keyframes-mid",
@@ -124,7 +125,9 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     assert old_engine["values"].pop("protocol_description") == ""
     assert old_engine["key"].pop("entry_id").startswith("ent_")
     assert old_engine["key"].pop("availability") == "unavailable"
-    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "e4be4df70e3ab15ee7db581f005d4188078d45e500356fe20b6391dbbf606a84"
+    # Re-captured 2026-10-26: ace-step-1.5-2b-base left the catalog; nothing else in this digest moved.
+    # Re-captured 2026-10-28: the video removal (779db850f) dropped video-remix and video-wan-2.2-ti2v-5b-q8; capabilities and engine did not move.
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "a1fe0716a0ec1c5ec3b0f1ce3fac4787225b1d688f64ef8841f863b8bb407e2d"
 
 
 def test_litellm_compiler_and_current_are_frozen() -> None:

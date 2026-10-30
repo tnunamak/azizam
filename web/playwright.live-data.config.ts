@@ -13,8 +13,12 @@ const python =
   process.env.UI_E2E_PYTHON ??
   (existsSync(localPython) ? localPython : "python3");
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-// Legacy setup/spec consumers use these filenames. ci-local gives this config
-// a dedicated browser-${port} worktree, isolating its auth and manifest too.
+const stateRoot = process.env.UI_E2E_STATE_ROOT
+  ? path.join(process.env.UI_E2E_STATE_ROOT, "live-data")
+  : path.resolve(__dirname, "../.ui-e2e-state/live-data");
+// Legacy setup/spec consumers use these filenames. ci-local shares one browser
+// worktree across configs, while this config gets a per-run state root and
+// distinct output filenames for its auth and manifest.
 const manifestPath = path.resolve(
   __dirname,
   "test-results/live-data-manifest.json",
@@ -44,7 +48,7 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: `${quote(python)} ../scripts/ui/live_data_seed.py --serve --port ${port}`,
+    command: `${quote(python)} ../scripts/ui/live_data_seed.py --serve --state-root ${quote(stateRoot)} --port ${port}`,
     env: {
       UI_E2E_PORT: String(port),
       LIVE_DATA_MANIFEST_PATH: manifestPath,

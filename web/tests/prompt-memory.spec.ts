@@ -127,7 +127,7 @@ describe("withForget", () => {
 describe("purgeStatus", () => {
   it("reports a startup deadline repair that has not finished", () => {
     expect(purgeStatus({ pending: true, deadline_repair_pending: true })).toBe(
-      "Saved prompts haven't been shortened to the current limits yet. Azizam keeps retrying.",
+      "Saved words and chats haven’t been shortened to the current limits yet. Azizam keeps retrying.",
     );
   });
   it("is silent when nothing is pending", () => {
@@ -155,7 +155,7 @@ describe("purgeStatus", () => {
         metadata_stripping: { status: "retrying", files_pending: 1 },
       }),
     ).toBe(
-      "Some older files still contain prompts. Azizam keeps retrying. 1 file left.",
+      "Some older files still contain words you used. Azizam keeps retrying. 1 file left.",
     );
   });
 
@@ -167,9 +167,9 @@ describe("purgeStatus", () => {
 });
 
 describe("keyPromptNote", () => {
-  it("says a service or someone else's key is not remembered", () => {
+  it("says a service or someone else's key does not keep words", () => {
     expect(keyPromptNote({ person_id: null })).toBe(
-      "Media prompts sent with this key are not remembered. Requests to /v1/responses with store:true can save the conversation until it is explicitly deleted.",
+      "Words sent with this key are not kept. Requests to /v1/responses with store:true can save the conversation until it is explicitly deleted.",
     );
   });
 
@@ -192,15 +192,15 @@ it("shows the full backend key description", () => {
 });
 
 describe("prompt memory copy", () => {
-  it("names disabled prompt keeping without guessing missing-prompt reasons", () => {
+  it("names disabled keeping without guessing missing-prompt reasons", () => {
     expect(promptNotSavedReason("member-off", false)).toBe(
-      "You turned off prompt keeping.",
+      "You turned off keeping words and chats.",
     );
     expect(promptNotSavedReason("household-off", true)).toBe(
-      "You turned off prompt keeping for everyone.",
+      "You turned off keeping words and chats for everyone.",
     );
     expect(promptNotSavedReason("household-off", false)).toBe(
-      "This gateway doesn’t keep prompts.",
+      "This gateway doesn’t keep words and chats.",
     );
     expect(promptNotSavedReason("choice", false)).toBeNull();
     expect(promptNotSavedReason("unknown", false)).toBeNull();
@@ -213,9 +213,9 @@ describe("prompt memory copy", () => {
     expect(welcomePromptNote("unknown")).toBeNull();
   });
 
-  it("names unfinished prompt deletion and retrying without claiming completion", () => {
+  it("names unfinished deletion and retrying without claiming completion", () => {
     expect(purgeStatus({ pending: true, database_pending: true })).toBe(
-      "Prompt deletion hasn't finished. Azizam keeps retrying.",
+      "Deleting saved words and chats hasn’t finished. Azizam keeps retrying.",
     );
   });
 
@@ -226,13 +226,13 @@ describe("prompt memory copy", () => {
         metadata_stripping: { status: "retrying", files_pending: 12 },
       }),
     ).toBe(
-      "Some older files still contain prompts. Azizam keeps retrying. 12 files left.",
+      "Some older files still contain words you used. Azizam keeps retrying. 12 files left.",
     );
     expect(
       purgeStatus({
         pending: true,
         metadata_stripping: { status: "retrying" },
       }),
-    ).toBe("Some older files still contain prompts. Azizam keeps retrying.");
+    ).toBe("Some older files still contain words you used. Azizam keeps retrying.");
   });
 });

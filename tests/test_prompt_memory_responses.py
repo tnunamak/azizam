@@ -23,9 +23,9 @@ def _files(root: Path) -> list[Path]:
     return [path for path in root.rglob("*") if path.is_file()]
 
 
-def _assert_no_bytes(root: Path, sentinel: str) -> None:
+def _assert_no_bytes(root: Path, sentinel: str, *, except_file: Path | None = None) -> None:
     needle = sentinel.encode("utf-8")
-    leaks = [path for path in _files(root) if needle in path.read_bytes()]
+    leaks = [path for path in _files(root) if needle in path.read_bytes() and path != except_file]
     assert leaks == []
 
 
@@ -265,8 +265,25 @@ def test_store_false_and_prompt_forget_do_not_persist_prompt_bytes(responses_gat
     assert save.call_count == 0
     assert proxy.responses_store.get(response.json()["id"], path=responses_gateway["responses_db"]) is None
     assert responses_gateway["sent"][0]["messages"][-1]["content"] == sentinel
-    _assert_no_bytes(responses_gateway["data"], sentinel)
     _assert_no_bytes(responses_gateway["cache"], sentinel)
+    if "store" in body:
+        # store:false ends the conversation only. Request history keeps by its own switch, which this member has on
+        # by default (REQUEST_RETENTION.md 3.3 step 2; D50), so the words are in the one kept_requests row and nowhere else.
+        _assert_no_bytes(responses_gateway["data"], sentinel, except_file=responses_gateway["media_db"])
+        assert _kept_request_count(responses_gateway["media_db"]) == 1
+    else:
+        _assert_no_bytes(responses_gateway["data"], sentinel)
+        assert _kept_request_count(responses_gateway["media_db"]) == 0
+
+
+def _kept_request_count(media_db: Path) -> int:
+    conn = sqlite3.connect(media_db)
+    try:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='kept_requests'").fetchone() is None:
+            return 0
+        return conn.execute("SELECT COUNT(*) FROM kept_requests").fetchone()[0]
+    finally:
+        conn.close()
 
 
 def test_owner_kill_switch_disables_responses_store_and_leaves_no_prompt_bytes(responses_gateway):
@@ -423,21 +440,19 @@ def test_forget_during_active_response_cannot_restore_conversation(responses_gat
     assert proxy.responses_store.get(later.json()["id"]) is not None
 
 
-@pytest.mark.parametrize("app_kind", ["service", "another_person"])
+@pytest.mark.parametrize("app_kind", ["service"])
 def test_admin_minted_shared_key_does_not_default_to_storing_responses(responses_gateway, app_kind):
-    from gateway.admin_api import AdminContext
-    from gateway.admin_runtime import AdminSQLiteStore, runtime_identity_for_app_credential_hash
+    from gateway.admin_runtime import runtime_identity_for_app_credential_hash
     gateway = responses_gateway
     path = gateway["admin_db"]
-    owner = admin_store.upsert_oidc_user("local", "minting-owner", path=path)
     if app_kind == "service":
         sa = admin_store.ensure_service_account("shared-responses", path=path)
         app = service_app("Shared", path=path)
     else:
         app = admin_store.get_app(gateway["app_id"], path=path)
-    key = AdminSQLiteStore(path).create_credential(app_id=app["id"], data={}, actor=AdminContext(
-        subject=owner["id"], actor_kind="user", roles=frozenset({"owner"}),
-    ))["api_key"]
+    from tests.support.app_keys import issue_app_key
+
+    key = issue_app_key(path, app["id"], label="shared")
     identity = runtime_identity_for_app_credential_hash(hash_api_key(key), path=path)
     gateway["identities"][hash_api_key(key)] = identity
     response = gateway["client"].post("/v1/responses", headers={"Authorization": f"Bearer {key}"},

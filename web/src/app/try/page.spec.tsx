@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   tryKey: vi.fn(),
   revokeKey: vi.fn(),
   promptMemory: vi.fn().mockResolvedValue({ prompt_memory: null }),
+  requestHistory: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => mocks.params }));
 vi.mock("@/lib/account-api", () => ({
@@ -24,6 +25,7 @@ vi.mock("@/lib/account-api", () => ({
     tryKey: mocks.tryKey,
     revokeKey: mocks.revokeKey,
     promptMemory: mocks.promptMemory,
+    requestHistory: mocks.requestHistory,
   },
 }));
 const response = (body: unknown, ok = true) =>
@@ -45,6 +47,15 @@ const workflows = {
   ],
 };
 const fetchMock = vi.fn();
+/** The member's request history choice: on, with the default period (the gateway's data). */
+const historyOn = () => ({
+  keep: true,
+  retention: "7_days",
+  parts: ["accepted"],
+  choices: ["1_day", "7_days", "30_days"],
+  allowed_parts: ["accepted", "received"],
+  notice_due: false,
+});
 beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
     configurable: true,
@@ -54,8 +65,18 @@ beforeEach(() => {
     configurable: true,
     value: () => {},
   });
+  // The keep-request-history switch renders on every tab; the switch measures itself with ResizeObserver, which jsdom lacks.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   mocks.params = new URLSearchParams();
   mocks.promptMemory.mockResolvedValue({ prompt_memory: null });
+  mocks.requestHistory.mockResolvedValue(historyOn());
   vi.stubGlobal("fetch", fetchMock);
   fetchMock
     .mockReset()
@@ -85,12 +106,11 @@ test("names the page with exactly one level-one heading", async () => {
   expect(screen.getByRole("heading", { level: 1, name: "Try" })).toBeVisible();
 });
 
-test("Try names the signed-in account's plan, ignores a plan in the URL, and refreshes access", async () => {
+test("Try has no account header: no signed-in name, plan, plan check or refresh", async () => {
   mocks.params = new URLSearchParams("plan=plan-other");
-  let planName = "Family";
   fetchMock.mockImplementation(async (url: string) => response(
     url.includes("workflows") ? workflows : {
-      ...models, access_plan: { id: "plan-account", name: planName },
+      ...models, access_plan: { id: "plan-account", name: "Family" },
     },
   ));
   render(
@@ -98,31 +118,14 @@ test("Try names the signed-in account's plan, ignores a plan in the URL, and ref
       <TryPage />
     </ViewerContext.Provider>,
   );
-  expect(await screen.findByText("Your access plan: Family.")).toBeVisible();
-  expect(screen.getByText("Signed in as River.")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Check another plan" })).toHaveAttribute("href", "/people?tab=plans");
-  expect(screen.getByText(/Checking another plan does not change your access here/)).toBeVisible();
-  planName = "Everything and categories";
-  fireEvent.click(screen.getByRole("button", { name: "Refresh access" }));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(
-    "Your access plan: Everything and categories. Access refresh complete.",
-  ));
-  expect(mocks.tryKey).not.toHaveBeenCalled();
-});
-
-test.each([null, undefined])("Try distinguishes no assigned plan from an unconfirmed plan (%s)", async (plan) => {
-  fetchMock.mockImplementation(async (url: string) => response(
-    url.includes("workflows") ? workflows : { ...models, ...(plan === null ? { access_plan: null } : {}) },
-  ));
-  render(
-    <ViewerContext.Provider value={{ authenticated: true, name: "River", email: null, role: "member", admin: false }}>
-      <TryPage />
-    </ViewerContext.Provider>,
-  );
-  expect(await screen.findByText(plan === null
-    ? "No access plan is assigned to your account. Ask the owner."
-    : "Your access plan could not be confirmed.")).toBeVisible();
+  // The model list has loaded once its loading notice is gone; the header, if it still existed, was drawn at once.
+  await waitFor(() => expect(screen.queryByRole("status", { name: "Loading models" })).toBeNull());
+  expect(screen.queryByText(/Signed in as/)).toBeNull();
+  expect(screen.queryByText(/access plan/i)).toBeNull();
+  expect(screen.queryByRole("group", { name: "Try access" })).toBeNull();
   expect(screen.queryByRole("link", { name: "Check another plan" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Refresh access" })).toBeNull();
+  expect(mocks.tryKey).not.toHaveBeenCalled();
 });
 
 test.each([false, true])(
@@ -282,6 +285,7 @@ test.each(["unknown", "speech"])(
     await userEvent.click(screen.getByRole("combobox", { name: "Model" }));
     await userEvent.click(screen.getByRole("option", { name: "Second chat" }));
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Second chat");
+    await takeExampleIfEmpty();
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled());
     expect(fetchMock.mock.calls.some(([url]) => url === "/openai/v1/chat/completions")).toBe(false);
@@ -321,6 +325,7 @@ test("speech refresh uses the replacement model and its discovered voice", async
   render(<TryPage />);
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("First voice model"));
   expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Voice" }).value).toBe("novel-a");
+  await takeExampleIfEmpty();
   fireEvent.click(screen.getByRole("button", { name: "Run" }));
   await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/openai/v1/audio/speech")).toBe(true));
   const call = fetchMock.mock.calls.find(([url]) => url === "/openai/v1/audio/speech");
@@ -582,6 +587,7 @@ test("receipt lookup times out after ten seconds and can be retried", async () =
   await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
   vi.useFakeTimers();
   try {
+    await takeExampleIfEmpty();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Run" })));
     expect(screen.getByText("Ready answer")).toBeVisible();
     await act(async () => vi.advanceTimersByTimeAsync(10_000));
@@ -590,6 +596,78 @@ test("receipt lookup times out after ten seconds and can be retried", async () =
     expect(screen.getByRole("link", { name: /receipt/i })).toBeVisible();
   } finally {
     vi.useRealTimers();
+  }
+});
+/** A speech answer whose request id has a receipt that never comes back. Returns the signals its receipt fetches carried. */
+function speechWithPendingReceipt() {
+  const signals: AbortSignal[] = [];
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url.includes("workflows")) return response({ workflows: [] });
+    if (url === "/me/api/models/catalog") {
+      return response({ aliases: [], models: [{
+        id: "speech-a",
+        name: "Voice model",
+        capability: "speech",
+        speech_voices: { voices: [{ id: "v", name: "Voice" }], default_voice: "v", allow_other: false },
+      }] });
+    }
+    if (url === "/openai/v1/audio/speech") {
+      return new Response(new Blob(["RIFF"], { type: "audio/wav" }), {
+        status: 200,
+        headers: { "content-type": "audio/wav", "x-azizam-request-id": "req_speech_pending" },
+      });
+    }
+    if (url.startsWith("/me/api/receipts/")) {
+      if (init?.signal) signals.push(init.signal);
+      return new Promise<Response>(() => {});
+    }
+    return response({});
+  });
+  return signals;
+}
+/** jsdom has no object URLs; a finished audio answer needs one to play. */
+function stubObjectUrls() {
+  const create = vi.fn(() => "blob:try-audio");
+  const original = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: create });
+  return () => {
+    if (original) Object.defineProperty(URL, "createObjectURL", original);
+    else Reflect.deleteProperty(URL, "createObjectURL");
+  };
+}
+test("a finished audio result shows before its receipt is looked up", async () => {
+  const restoreUrls = stubObjectUrls();
+  mocks.params = new URLSearchParams("capability=speech");
+  speechWithPendingReceipt();
+  render(<TryPage />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Voice model"));
+  await takeExampleIfEmpty();
+  fireEvent.click(screen.getByRole("button", { name: "Run" }));
+  expect(await screen.findByRole("heading", { name: "Voice result" })).toBeVisible();
+  expect(screen.getByLabelText("Generated audio")).toBeInTheDocument();
+  expect(screen.getByText("Checking receipt...")).toBeVisible();
+  restoreUrls();
+});
+test("a receipt check gives up after ten seconds, aborts its request, and offers Check again", async () => {
+  const restoreUrls = stubObjectUrls();
+  mocks.params = new URLSearchParams("capability=speech");
+  const signals = speechWithPendingReceipt();
+  render(<TryPage />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Voice model"));
+  vi.useFakeTimers();
+  try {
+    await takeExampleIfEmpty();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Run" })));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText("Checking receipt...")).toBeVisible();
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(screen.getByText("Receipt couldn’t be checked.")).toBeVisible();
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled();
+  } finally {
+    vi.useRealTimers();
+    restoreUrls();
   }
 });
 test("recorded mp4 uploads its real type and filename", async () => {
@@ -657,7 +735,15 @@ test("a workflow removed during key refresh never posts its stale request", asyn
   await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
   expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
 });
+/** A person who has not written a prompt takes the tab's example first. Written words are never replaced. */
+async function takeExampleIfEmpty() {
+  const box = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ });
+  if (box && (box as HTMLTextAreaElement).value === "") {
+    fireEvent.click(screen.getByRole("button", { name: "Try an example" }));
+  }
+}
 async function pressRun() {
+  await takeExampleIfEmpty();
   const run = await screen.findByRole("button", { name: "Run" });
   await waitFor(() => expect(run).toBeEnabled());
   fireEvent.click(run);
@@ -1056,7 +1142,8 @@ test.each(["", "   \n\t"])("empty chat prompt %j is refused with a clear message
   render(<TryPage />);
   await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeEnabled());
   fireEvent.change(screen.getByRole("textbox", { name: "Prompt" }), { target: { value: prompt } });
-  await pressRun();
+  // Run as a person would with the box empty: no example is filled in for them.
+  fireEvent.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText("Enter a prompt before running chat.")).toBeVisible();
   expect(mocks.tryKey).not.toHaveBeenCalled();
   expect(fetchMock.mock.calls.filter(([url]) => url === "/openai/v1/chat/completions")).toHaveLength(0);

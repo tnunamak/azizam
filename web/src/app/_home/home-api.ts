@@ -9,37 +9,22 @@ import {
   type SetupProgress as SharedSetupProgress,
 } from "@/lib/product-api";
 
-export type { HomeAlias, HomeReceipt } from "@/lib/product-api";
+export type { HomeReceipt } from "@/lib/product-api";
 export type SetupProgress = SharedSetupProgress & {
   dismissed?: boolean;
   evidence: SharedSetupProgress["evidence"] & {
     observed_external_client?: { recorded: boolean; source: string };
   };
 };
-// A display tile may omit a routing name; the wire contract stays generated.
-export type HomeCapability = Pick<
-  SharedHomeCapability,
-  "capability" | "intent" | "available" | "status" | "reason_code"
-> & {
-  capability: string;
-  intent: string;
-  available: boolean;
-  status: SharedHomeCapability["status"];
-  model?: string | null;
-  workflow?: string | null;
-  availability?: SharedHomeCapability["availability"];
-  title?: string;
-  use_name?: string;
-  capability_title?: string;
-  icon_key?: string;
-  recommended_model?: string;
-  use_names?: string[];
-  summary?: string;
-};
+export type HomeCapability = SharedHomeCapability;
 export type HomeSnapshot = SharedHomeSnapshot & {
   user: NonNullable<SharedHomeSnapshot["user"]>;
-  capabilities: HomeCapability[];
 };
+export type HomeChat = NonNullable<SharedHomeSnapshot["recent_chats"]>[number];
+
+/** The newest media Home shows: one page, which is what the six Recent tiles need. */
+export const RECENT_MEDIA_LIMIT = 8;
+
 export interface HomeCreation {
   asset_id: string;
   kind: "image" | "video" | "audio";
@@ -61,24 +46,6 @@ export interface HomeCreationsResponse {
 
 export function hasHomeCreationContent(creation: HomeCreation): boolean {
   return ["image", "video", "audio"].includes(creation.kind);
-}
-
-export function homeCreationPreviewRank(creation: HomeCreation): number {
-  if (creation.kind === "image") return creation.download_url ? 3 : 0;
-  if (creation.kind === "video") {
-    if (creation.poster_asset_id) return 3;
-    return creation.download_url ? 2 : 0;
-  }
-  if (creation.download_url && creation.prompt?.trim()) return 3;
-  return creation.download_url ? 2 : 0;
-}
-export interface ConnectionResult {
-  ok: boolean;
-  latency_ms: number | null;
-  reason: string;
-  path: string;
-  model: string | null;
-  request_id: string | null;
 }
 
 async function homeRequest<T>(
@@ -136,59 +103,20 @@ export const homeApi = {
       throw error;
     }
   },
+  /** The newest media the person owns: a single page, so Recent costs one request. */
   creations: async (): Promise<HomeCreationsResponse> => {
-    const previewable: HomeCreation[] = [];
-    const fallback: HomeCreation[] = [];
-    const seenCursors = new Set<string>();
-    const seenAssetIds = new Set<string>();
-    let cursor: string | null | undefined;
-    let hasMore = true;
-    let pagesScanned = 0;
-    let partial = false;
-    while (hasMore && previewable.length < 4 && pagesScanned < 3) {
-      const query = new URLSearchParams({ limit: "12" });
-      if (cursor) query.set("cursor", cursor);
-      let page: HomeCreationsResponse;
-      try {
-        page = await homeRequest<HomeCreationsResponse>(
-          `/me/api/media?${query.toString()}`,
-        );
-      } catch (error) {
-        if (previewable.length > 0 || fallback.length > 0) {
-          partial = true;
-          break;
-        }
-        throw error;
-      }
-      pagesScanned += 1;
-      for (const asset of page.assets.filter(hasHomeCreationContent)) {
-        if (seenAssetIds.has(asset.asset_id)) continue;
-        seenAssetIds.add(asset.asset_id);
-        if (homeCreationPreviewRank(asset) > 0) previewable.push(asset);
-        else if (fallback.length < 4) fallback.push(asset);
-      }
-      const nextCursor = page.next_cursor;
-      if (nextCursor && seenCursors.has(nextCursor)) {
-        partial = true;
-        break;
-      }
-      if (nextCursor) seenCursors.add(nextCursor);
-      cursor = nextCursor;
-      hasMore = Boolean(page.has_more && cursor);
-    }
-    if (hasMore && previewable.length < 4) partial = true;
-    return { assets: [...previewable, ...fallback].slice(0, 4), partial };
+    const page = await homeRequest<HomeCreationsResponse>(
+      `/me/api/media?limit=${RECENT_MEDIA_LIMIT}`,
+    );
+    return { assets: page.assets.filter(hasHomeCreationContent) };
   },
   mediaDownload: (assetId: string) =>
     homeRequest<{ download_url?: string }>(
-      `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
+      `/me/api/media/${encodeURIComponent(assetId)}/download`,
     ),
+  /** Asks the owner for an access plan. The request carries no content. */
+  requestAccess: () => homeRequest<unknown>("/me/api/access-request", {}),
   setup: productApi.setup,
   dismissSetup: () =>
     homeRequest<{ dismissed: boolean }>("/admin/api/setup-dismiss", {}),
-  test: (apiKey: string, credentialId?: string) =>
-    homeRequest<ConnectionResult>("/me/api/connection-test", {
-      api_key: apiKey,
-      ...(credentialId ? { credential_id: credentialId } : {}),
-    }),
 };

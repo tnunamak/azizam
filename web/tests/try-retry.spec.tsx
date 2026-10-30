@@ -63,6 +63,8 @@ it("a failed result offers Edit and run again, which repeats nothing", async () 
   await waitFor(() =>
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
   );
+  const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+  if (promptBox && promptBox.value === "") await user.click(screen.getByRole("button", { name: "Try an example" }));
   await user.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText("Request failed")).toBeVisible();
   // The old "Try again" reloaded the model list and left the failure in
@@ -150,6 +152,8 @@ it.each([
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent("Chat model"),
     );
+    const promptBox = screen.queryByRole("textbox", { name: /^(Prompt|Question)$/ }) as HTMLTextAreaElement | null;
+    if (promptBox && promptBox.value === "") await user.click(screen.getByRole("button", { name: "Try an example" }));
     await user.click(screen.getByRole("button", { name: "Run" }));
     expect(await screen.findByText("Provider unavailable")).toBeVisible();
     // Status and time are technical: folded, not in the card (PF-006).

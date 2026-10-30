@@ -101,13 +101,13 @@ function capabilityLabel(value: string) {
       video: capabilityLabels.video,
       voice: capabilityLabels.speech,
       music: capabilityLabels.music,
-      sfx: capabilityLabels.sound_effects,
+      sfx: capabilityLabels.sfx,
       audio: capabilityLabels.audio,
       workflow: "Workflows",
       chat: capabilityLabels.chat,
       transcribe: capabilityLabels.transcribe,
-      decide: capabilityLabels.decisions,
-      embed: capabilityLabels.embeddings,
+      decide: capabilityLabels.decide,
+      embed: capabilityLabels.embed,
     }[value as WorkflowCapability] ??
     value.replace(/[_-]+/g, " ").replace(/^./, (letter) => letter.toUpperCase())
   );

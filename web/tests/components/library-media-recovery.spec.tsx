@@ -177,7 +177,7 @@ describe("Library media recovery", () => {
     ).toHaveAttribute("src", expect.stringContaining("/image.png"));
     expect(
       fetchMock.mock.calls.some(
-        ([input]) => String(input) === "/me/api/media/image/download?scope=me",
+        ([input]) => String(input) === "/me/api/media/image/download",
       ),
     ).toBe(true);
   });

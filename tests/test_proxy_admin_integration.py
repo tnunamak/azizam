@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import accounts, admin_store  # noqa: E402
+from gateway import accounts, admin_store, content_access  # noqa: E402
+from tests.support.app_keys import accountable_person, issue_app_credential, issue_app_key
 from gateway.admin_api import AdminContext  # noqa: E402
 from tests.support.access import AdminAppFixtures, plan_document, store_plan  # noqa: E402
 from tests.support.signin import seed_rules  # noqa: E402
@@ -193,13 +194,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
 
-        key_response = self.client.post(
-            f"/admin/api/apps/{app_id}/keys",
-            json={"label": "Brother"},
-            headers=self._auth(),
-        )
-        self.assertEqual(key_response.status_code, 201, key_response.text)
-        app_key = key_response.json()["credential"]["api_key"]
+        app_key = issue_app_key(self.db, app_id, label="Brother")
         self.assertTrue(app_key.startswith("opk_"))
 
         forbidden = self.client.get(
@@ -246,13 +241,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         created = self._create_app("brother-chat", access_plan=plan["id"])
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
-        key_response = self.client.post(
-            f"/admin/api/apps/{app_id}/keys",
-            json={"label": "Brother"},
-            headers=self._auth(),
-        )
-        self.assertEqual(key_response.status_code, 201, key_response.text)
-        app_key = key_response.json()["credential"]["api_key"]
+        app_key = issue_app_key(self.db, app_id, label="Brother")
 
         capabilities = self.client.get(
             "/gateway/v1/capabilities",
@@ -372,9 +361,12 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         assert_authenticated_admin_dashboard(self, self.client)
         users = admin_store.list_users(path=self.db)
         self.assertEqual(len(users), 1)
-        apps = admin_store.list_apps_for_user(users[0]["id"], path=self.db)
+        apps = [app for app in admin_store.list_apps_for_user(users[0]["id"], path=self.db)
+                if not admin_store.is_session_app(app["id"], path=self.db)]
         self.assertEqual(len(apps), 1)
         self.assertEqual(apps[0]["kind"], "personal")
+        session_app = admin_store.get_session_app_for_user(users[0]["id"], path=self.db)
+        self.assertEqual(session_app["access_plan"], admin_store.PERSON_ASSIGNMENT)
 
     def test_oidc_login_trusted_group_grants_admin_session(self) -> None:
         cfg = OIDCConfig(
@@ -494,9 +486,12 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         )
         # No invitation, so no plan (design N3); the personal App is "Same as
         # its person", so it denies until the owner chooses a plan.
-        apps = admin_store.list_apps_for_user(user["id"], path=self.db)
+        apps = [app for app in admin_store.list_apps_for_user(user["id"], path=self.db)
+                if not admin_store.is_session_app(app["id"], path=self.db)]
         self.assertEqual(len(apps), 1)
         self.assertEqual(apps[0]["access_plan"], "person")
+        session_app = admin_store.get_session_app_for_user(user["id"], path=self.db)
+        self.assertEqual(session_app["access_plan"], admin_store.PERSON_ASSIGNMENT)
         self.assertIsNone(admin_store.person_plan_id(user["id"], path=self.db))
 
     def test_status_dashboard_accepts_admin_oidc_session(self) -> None:
@@ -616,13 +611,7 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         created = self._create_app("status-not-admin")
         self.assertEqual(created.status_code, 201, created.text)
         app_id = created.json()["app"]["id"]
-        key_response = self.client.post(
-            f"/admin/api/apps/{app_id}/keys",
-            json={"label": "App key"},
-            headers=self._auth(),
-        )
-        self.assertEqual(key_response.status_code, 201, key_response.text)
-        app_key = key_response.json()["credential"]["api_key"]
+        app_key = issue_app_key(self.db, app_id, label="App key")
 
         response = self.client.get(
             "/v1/status",
@@ -1240,6 +1229,133 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
         finally:
             receipt_store.DB_PATH = old_receipts_path
 
+    def test_owner_library_running_feed_is_own(self) -> None:
+        from gateway import mcp_oauth, mcp_oauth_store, receipt_store
+        from gateway.receipts import RouteReceipt
+        from tests.support.access import service_app
+
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="azizam",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            admin_emails=frozenset(),
+            signing_key=b"s" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        seed_rules(self.db, domains=["example.com"])
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+
+        receipts_db = Path(self.tmp.name) / "owner-running-feed.db"
+        old_receipts_path = receipt_store.DB_PATH
+        receipt_store.DB_PATH = receipts_db
+        try:
+            receipt_store.init_db(receipts_db)
+            people = {
+                "member_a": admin_store.upsert_oidc_user(
+                    cfg.issuer, "alice-feed", email="alice@example.com", path=self.db,
+                ),
+                "member_b": admin_store.upsert_oidc_user(
+                    cfg.issuer, "bob-feed", email="bob@example.com", path=self.db,
+                ),
+                "owner": admin_store.upsert_oidc_user(
+                    cfg.issuer, "owner-feed", email="owner@example.com", path=self.db,
+                ),
+                "admin": admin_store.upsert_oidc_user(
+                    cfg.issuer, "admin-feed", email="admin@example.com", path=self.db,
+                ),
+            }
+            admin_store.assign_admin_role(
+                role="owner", subject_kind="user", subject_id=people["owner"]["id"], path=self.db,
+            )
+            admin_store.assign_admin_role(
+                role="admin", subject_kind="user", subject_id=people["admin"]["id"], path=self.db,
+            )
+            apps = {
+                name: admin_store.create_app(
+                    f"{name} app", kind="personal", owner_user_id=person["id"],
+                    access_plan="person", path=self.db,
+                )
+                for name, person in people.items()
+            }
+            for name, app in apps.items():
+                receipt_store.record(
+                    RouteReceipt(
+                        protocol="openai.image", intent="image.generate", app_id=app["id"],
+                        status="running", requested_model=f"private-{name}-model",
+                    ),
+                    path=receipts_db,
+                )
+            service = service_app("Feed service", path=self.db)
+            receipt_store.record(
+                RouteReceipt(protocol="openai.chat", intent="chat.generate", app_id=service["id"], status="running"),
+                path=receipts_db,
+            )
+            receipt_store.record(
+                RouteReceipt(protocol="openai.chat", intent="chat.generate", app_id=None, status="running"),
+                path=receipts_db,
+            )
+
+            def sign_in(name):
+                person = people[name]
+                session = session_from_claims(
+                    {"sub": person["id"], "email": person["email"]}, role="none", cookie=cfg.cookie,
+                )
+                self.client.cookies.clear()
+                self.client.cookies.set(
+                    cfg.cookie.name,
+                    encode_session_cookie(session, signing_key=cfg.signing_key),
+                )
+
+            for name in ("owner", "admin", "member_a", "member_b"):
+                sign_in(name)
+                with patch("gateway.user_runtime.decide", wraps=content_access.decide) as decision:
+                    response = self.client.get("/me/api/activity")
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertTrue(decision.called)
+                self.assertEqual(response.json()["scope"], "me")
+                self.assertEqual(len(response.json()["receipts"]), 1)
+                self.assertEqual(response.json()["receipts"][0]["source"]["app_id"], apps[name]["id"])
+                for foreign in set(people) - {name}:
+                    self.assertNotIn(f"private-{foreign}-model", response.text)
+                self.assertNotIn(service["id"], response.text)
+
+            app_key = issue_app_key(self.db, apps["member_a"]["id"])
+            oauth_store = mcp_oauth_store.Store(lambda: self.db)
+            mcp_client = oauth_store.put_client(
+                client_id="owner-feed-client", kind="registered", name="Owner feed fixture",
+                redirect_uris=["https://client.example/callback"],
+                grant_types=["authorization_code"], auth_method="none", secret_hash=None, metadata={},
+            )
+            grant = oauth_store.create_grant(
+                person_id=people["member_a"]["id"], client=mcp_client,
+                redirect_uri="https://client.example/callback", resource="http://testserver/mcp",
+                scope=mcp_oauth.SCOPE, session=None,
+            )
+            mcp_token = mcp_oauth_store.new_secret(mcp_oauth.ACCESS_TOKEN_PREFIX)
+            oauth_store.save_token(
+                mcp_token, kind="access", grant_id=grant.id, client_id=mcp_client.client_id,
+                scope=mcp_oauth.SCOPE, ttl=3600,
+            )
+            self.client.cookies.clear()
+            for token in (app_key, mcp_token):
+                response = self.client.get(
+                    "/me/api/activity", headers={"authorization": f"Bearer {token}"},
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertFalse(response.json()["authenticated"])
+                self.assertEqual(response.json()["receipts"], [])
+                self.assertNotIn("private-", response.text)
+        finally:
+            receipt_store.DB_PATH = old_receipts_path
+
     def test_user_portal_cross_owner_mutations_and_detail_are_404_and_isolated(self) -> None:
         """User B cannot discover or mutate any User A portal resource."""
         from gateway import receipt_store
@@ -1287,23 +1403,20 @@ class ProxyAdminIntegrationTests(AdminAppFixtures, unittest.TestCase):
             hash=hash_api_key("user-a-test-secret"),
             prefix="opk_user_a",
             display_name="User A key",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app_a["id"]))
         credential_b = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=app_b["id"],
             hash=hash_api_key("user-b-test-secret"),
             prefix="opk_user_b",
             display_name="User B key",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app_b["id"]))
         inactive_credential = admin_store.create_credential_hash(
             subject_kind="app",
             subject_id=app_a["id"],
             hash=hash_api_key("user-a-inactive-secret"),
             prefix="opk_user_a_inactive",
-            path=self.db,
-        )
+            path=self.db, created_by=accountable_person(self.db, app_a["id"]))
         admin_store.revoke_credential(inactive_credential["id"], path=self.db)
         wrong_kind_credential = admin_store.create_credential_hash(
             subject_kind="user",
@@ -1901,22 +2014,18 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         assert_authenticated_admin_dashboard(self, self.client)
 
     def test_setup_signed_in_admin_can_create_first_personal_app_key(self) -> None:
-        # The App answers to the gateway owner (a person) and follows their plan.
-        owner = admin_store.upsert_oidc_user("https://idp.example", "owner", email="o@example.com", path=self.db)
-        admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], path=self.db)
-        accounts.initialize(self.db)
-        accounts.change_person(owner["id"], "test", path=self.db,
-                               plan_id=store_plan("Everything", path=self.db)["id"])
-        admin_key, _, _ = create_admin_service_account_key(
-            "real-owner",
-            path=self.db,
-        )
-        response = self.client.post(
-            "/setup/claim",
-            data={"admin_key": admin_key},
+        # The owner signs in as a person, so the first App is theirs and follows their plan (owner visibility step 2).
+        signed_in = self.client.post(
+            "/setup/local-owner",
+            data={
+                "email": "owner@example.com",
+                "password": "correct-horse-battery",
+                "password_confirm": "correct-horse-battery",
+            },
             follow_redirects=False,
         )
-        self.assertEqual(response.status_code, 303, response.text)
+        self.assertEqual(signed_in.status_code, 303, signed_in.text)
+        owner = admin_store.list_users(path=self.db)[0]
 
         async def fake_status(_config):
             return {"backends": [{"name": "loopback", "status": "up"}]}
@@ -1950,7 +2059,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             self.assertIn("Authorization: Bearer", created.text)
             self.assertIn("setup-copy-btn", created.text)
 
-            apps = [app for app in admin_store.list_apps(path=self.db) if app["kind"] == "service"]
+            apps = [app for app in admin_store.list_apps(path=self.db) if app["kind"] == "personal"]
             self.assertEqual(len(apps), 1)
             self.assertEqual(apps[0]["owner_user_id"], owner["id"])
             self.assertEqual(apps[0]["access_plan"], "person")
@@ -1970,6 +2079,29 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             self.assertEqual(refreshed.status_code, 200, refreshed.text)
             self.assertNotIn(api_key, refreshed.text)
             self.assertIn("Active runtime keys: 1", refreshed.text)
+
+    def test_setup_first_app_refuses_a_control_plane_key_and_writes_nothing(self) -> None:
+        # Owner visibility step 2: an App key is issued through the signed-in person it answers for.
+        # A control-plane admin key holds no person, so the first-App form refuses it before any write.
+        admin_key, _, _ = create_admin_service_account_key("real-owner", path=self.db)
+        claimed = self.client.post("/setup/claim", data={"admin_key": admin_key}, follow_redirects=False)
+        self.assertEqual(claimed.status_code, 303, claimed.text)
+        setup = self.client.get("/setup/console")
+        self.assertEqual(setup.status_code, 200, setup.text)
+        match = re.search(r'name="csrf_token" value="([^"]+)"', setup.text)
+        self.assertIsNotNone(match, setup.text)
+        apps_before = admin_store.list_apps(path=self.db)
+        credentials_before = admin_store.list_credentials(path=self.db)
+
+        refused = self.client.post(
+            "/setup/first-app",
+            data={"csrf_token": match.group(1), "app_name": "first-app", "key_label": "Laptop"},
+        )
+
+        self.assertEqual(refused.status_code, 403, refused.text)
+        self.assertNotRegex(refused.text, r"opk_[A-Za-z0-9_-]+")
+        self.assertEqual(admin_store.list_apps(path=self.db), apps_before)
+        self.assertEqual(admin_store.list_credentials(path=self.db), credentials_before)
 
     def test_setup_first_app_rejects_stale_csrf(self) -> None:
         admin_key, _, _ = create_admin_service_account_key(
@@ -2396,11 +2528,7 @@ class AdminCredentialDeleteAliasTests(AdminAppFixtures, unittest.TestCase):
 
     def test_delete_credential_revokes_it(self) -> None:
         app = self._create_app("App").json()["app"]
-        cred = self.client.post(
-            f"/admin/api/apps/{app['id']}/keys",
-            json={"display_name": "key1"},
-            headers=self._auth(),
-        ).json()["credential"]
+        cred = issue_app_credential(self.db, app["id"], label="key1")
 
         resp = self.client.delete(
             f"/admin/api/credentials/{cred['id']}",
@@ -2419,11 +2547,7 @@ class AdminCredentialDeleteAliasTests(AdminAppFixtures, unittest.TestCase):
 
     def test_post_revoke_still_works(self) -> None:
         app = self._create_app("App2").json()["app"]
-        cred = self.client.post(
-            f"/admin/api/apps/{app['id']}/keys",
-            json={"display_name": "key2"},
-            headers=self._auth(),
-        ).json()["credential"]
+        cred = issue_app_credential(self.db, app["id"], label="key2")
 
         resp = self.client.post(
             f"/admin/api/credentials/{cred['id']}/revoke",

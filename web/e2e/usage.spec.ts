@@ -167,23 +167,28 @@ test("usage reads the real account summary and seeded receipt", async ({
   );
   const summary = await response.json();
   expect(summary.requests).toBeGreaterThan(0);
-  expect(
-    summary.receipts.some(
-      (receipt: { requested_model: string }) =>
-        receipt.requested_model === "demo-chat",
-    ),
-  ).toBe(true);
+  const seededReceipt = summary.receipts.find(
+    (receipt: {
+      request_id: string;
+      requested_model: string;
+      status: string;
+      source?: { kind: string; label: string };
+    }) =>
+      receipt.requested_model === "demo-chat" &&
+      receipt.source?.kind === "app" &&
+      receipt.source.label === "Browser test app",
+  );
+  if (!seededReceipt) {
+    throw new Error("The seeded Browser test app receipt must be in Usage");
+  }
+  expect(seededReceipt.status).toBe("succeeded");
   await page.goto("/usage/");
   await page.getByRole("button", { name: "View recent requests" }).click();
-  await expect(
-    page
-      .getByRole("button", { name: /Receipt details for Chat request/ })
-      .first(),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: /Receipt details for Chat request/ })
-    .first()
-    .click();
+  const seededRow = page.locator(
+    `[data-receipt-id="${seededReceipt.request_id}"]`,
+  );
+  await expect(seededRow).toBeVisible();
+  await seededRow.click();
   await expect(
     page.getByRole("dialog", { name: "Request receipt" }),
   ).toContainText("succeeded");

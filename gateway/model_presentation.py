@@ -93,7 +93,7 @@ def engine_label(service: Mapping[str, Any], service_id: str | None) -> str | No
     if labels:
         name = re.sub(r"^(?:Local|Remote)\s+", "", name)
         name = re.sub(r"\s+(?:server|provider|engine)$", "", name, flags=re.IGNORECASE)
-    suffixes = {"Transcription": "stt", "Speech": "tts"}
+    suffixes = {CAPABILITY_LABELS["transcribe"]: "stt", CAPABILITY_LABELS["speech"]: "tts"}
     for label, suffix in suffixes.items():
         if label in labels:
             name = re.sub(rf"-{suffix}$", "", name, flags=re.IGNORECASE)

@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 
 import asyncio
+from tests.support.app_keys import accountable_person
 import copy
 import json
 import os
@@ -23,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import media_jobs, receipt_store  # noqa: E402
+from gateway import media_jobs, receipt_store, request_source  # noqa: E402
 from gateway.access_plans import AccessPlan  # noqa: E402
 from tests.support.access import access, plan_for, auth_identity  # noqa: E402
 
@@ -549,7 +550,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "job_id": "job_runtime_policy",
             "intent": "image.generate",
             "status": proxy.media_jobs.STATUS_SUCCEEDED,
+            "app_id": "app_runtime_policy",
             "owner_key_hash": proxy.hash_api_key(RAW_KEY),
+            "maker_credential_id": proxy.hash_api_key(RAW_KEY),
         }
         payload = {"created": 123, "data": [{"url": "https://example.test/i.png"}]}
 
@@ -578,7 +581,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "job_id": "job_audio_policy",
             "intent": "music.generate",
             "status": proxy.media_jobs.STATUS_SUCCEEDED,
+            "app_id": "app_runtime_policy",
             "owner_key_hash": proxy.hash_api_key(RAW_KEY),
+            "maker_credential_id": proxy.hash_api_key(RAW_KEY),
             "assets": [{
                 "asset_id": "aud_" + "a" * 64,
                 "media_type": "audio/mpeg",
@@ -606,7 +611,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "job_id": "job_audio_policy",
             "intent": "music.generate",
             "status": proxy.media_jobs.STATUS_SUCCEEDED,
+            "app_id": "app_runtime_policy",
             "owner_key_hash": proxy.hash_api_key(RAW_KEY),
+            "maker_credential_id": proxy.hash_api_key(RAW_KEY),
             "assets": [{"asset_id": "aud_" + "a" * 64}],
         }
 
@@ -1491,8 +1498,8 @@ class ProtocolLoopbackIdentityTests(unittest.IsolatedAsyncioTestCase):
                                            access_plan=plan["id"], path=admin)
             kitchen = admin_store.create_app("Kitchen tablet", kind="service", owner_user_id=owner["id"],
                                              access_plan=plan["id"], path=admin)
-            admin_store.add_trusted_address(local["id"], "127.0.0.1", max_entries=10, path=admin)
-            admin_store.add_trusted_address(kitchen["id"], "192.0.2.7", max_entries=10, path=admin)
+            admin_store.add_trusted_address(local["id"], "127.0.0.1", max_entries=10, path=admin, created_by=accountable_person(admin, local["id"]))
+            admin_store.add_trusted_address(kitchen["id"], "192.0.2.7", max_entries=10, path=admin, created_by=accountable_person(admin, kitchen["id"]))
             _AuthenticatingLoopbackClient.seen = []
             with patch.object(proxy.ADMIN_STORE, "path", admin), \
                     patch.object(proxy.httpx, "AsyncClient", _AuthenticatingLoopbackClient):

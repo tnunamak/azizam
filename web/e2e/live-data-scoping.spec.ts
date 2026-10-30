@@ -7,8 +7,11 @@ type Manifest = {
   local_asset: string;
   member_asset: string;
   owner_asset: string;
+  owner_audio: string;
+  owner_service_asset: string;
   service_app_id: string;
   member_app_id: string;
+  member_user_id: string;
 };
 
 async function manifest(): Promise<Manifest> {
@@ -17,14 +20,13 @@ async function manifest(): Promise<Manifest> {
   ) as Manifest;
 }
 
-test("owner sees earlier keyless LAN and service app media and usage; keyless requests are now refused", async ({
+test("owner sees their own media and usage, not a member's work in a service App; keyless requests are refused", async ({
   page,
   baseURL,
 }) => {
   const data = await manifest();
 
-  // There is no keyless access (ACCESS_PLANS.md §2.8); the seeded LAN
-  // receipt and media from before that stay visible to the owner.
+  // There is no keyless access (ACCESS_PLANS.md §2.8).
   const anon = await request.newContext({ baseURL });
   const keyless = await anon.post("/v1/chat/completions", {
     headers: { "user-agent": "Open WebUI live-data e2e" },
@@ -37,31 +39,31 @@ test("owner sees earlier keyless LAN and service app media and usage; keyless re
   expect((await keyless.json()).error.code).toBe("key_required");
   await anon.dispose();
 
-  const media = await (await page.request.get("/me/api/media?scope=everyone")).json();
+  // What an owner reads follows who made it (OWNER_VISIBILITY). Owning Daisy grants nothing in it: the member's
+  // work in Daisy is theirs alone, and the keyless LAN clip has no maker, so no one reads it.
+  const media = await (await page.request.get("/me/api/media")).json();
   const mediaSources = media.sources.map((source: { id: string }) => source.id);
   expect(mediaSources).toEqual(
     expect.arrayContaining([`app:${data.service_app_id}`]),
   );
-  // Keyless access is gone, so "Local network · no key" is no source to pick.
   expect(mediaSources).not.toContain("local-network");
-  expect(
-    media.assets.map((asset: { asset_id: string }) => asset.asset_id),
-  ).toEqual(
-    expect.arrayContaining([
-      data.service_asset,
-      data.owner_asset,
-      data.local_asset,
-    ]),
+  expect(mediaSources).not.toContain(`app:${data.member_app_id}`);
+  const ids = media.assets.map((asset: { asset_id: string }) => asset.asset_id);
+  expect(ids).toEqual(
+    expect.arrayContaining([data.owner_asset, data.owner_audio, data.owner_service_asset]),
   );
+  expect(ids).not.toContain(data.member_asset);
+  expect(ids).not.toContain(data.service_asset);
+  expect(ids).not.toContain(data.local_asset);
 
   const serviceMedia = await (
-    await page.request.get(`/me/api/media?scope=everyone&source=app:${data.service_app_id}`)
+    await page.request.get(`/me/api/media?source=app:${data.service_app_id}`)
   ).json();
   expect(
     serviceMedia.assets.map((asset: { asset_id: string }) => asset.asset_id),
-  ).toEqual([data.service_asset]);
+  ).toEqual([data.owner_service_asset]);
   expect(
-    (await page.request.get("/me/api/media?scope=everyone&source=local-network")).status(),
+    (await page.request.get("/me/api/media?source=local-network")).status(),
   ).toBe(400);
 
   const usage = await (
@@ -79,32 +81,9 @@ test("owner sees earlier keyless LAN and service app media and usage; keyless re
   await page.goto("/library/");
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
   await expect(page.getByText("No media yet")).toHaveCount(0);
-  // App filtering is available in the explicit Everyone view.
-  await page.getByRole("combobox", { name: "Person", exact: true }).click();
-  await page.getByRole("option", { name: "Everyone", exact: true }).click();
-  // Model, date and app live in the "Filters" popover since D1.
-  await page.getByRole("button", { name: /^Filters/ }).click();
-  await page.getByRole("combobox", { name: "App", exact: true }).click();
-  await page.getByRole("option", { name: "Daisy", exact: true }).click();
-  await page.keyboard.press("Escape");
-  await expect(page.locator("article")).toHaveCount(1);
-  await page.getByRole("button", { name: /^Open Picture, / }).click();
-  await page.getByText("Details", { exact: true }).click();
-  await expect(
-    page.getByRole("dialog").getByText("Daisy", { exact: true }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  // Returning to Mine clears the App filter and includes their accountable Apps.
-  await page.getByRole("combobox", { name: "Person", exact: true }).click();
-  await page.getByRole("option", { name: "Mine", exact: true }).click();
-  // Daisy is a service app the owner answers for (ACCESS_PLANS.md §2.4), so
-  // "you" covers its media as well as the owner's own; never a member's.
-  await expect(page.locator("article")).toHaveCount(2);
-  const mine = await (await page.request.get("/me/api/media?scope=me")).json();
-  expect(
-    mine.assets.map((asset: { asset_id: string }) => asset.asset_id).sort(),
-  ).toEqual([data.owner_asset, data.service_asset].sort());
-  await expect(page.getByText("No media yet")).toHaveCount(0);
+  // The owner's Library has no person choice; its three items are the owner's own work.
+  await expect(page.getByRole("combobox", { name: "Person", exact: true })).toHaveCount(0);
+  await expect(page.locator("article")).toHaveCount(3);
   await expect(page.getByText("Library could not be loaded")).toHaveCount(0);
   await page.goto("/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
@@ -120,7 +99,7 @@ test("owner sees earlier keyless LAN and service app media and usage; keyless re
   ).toBeVisible();
 });
 
-test("member cannot see local/service media or mint signed URLs for them", async ({
+test("member sees their own media, and cannot reach the owner's work in a service App", async ({
   browser,
   baseURL,
 }) => {
@@ -133,22 +112,35 @@ test("member cannot see local/service media or mint signed URLs for them", async
 
   const ownMedia = await (await member.get("/me/api/media")).json();
   expect(
-    ownMedia.assets.map((asset: { asset_id: string }) => asset.asset_id),
-  ).toEqual([data.member_asset]);
-  expect(ownMedia.sources.map((source: { id: string }) => source.id)).toEqual([
-    `app:${data.member_app_id}`,
-  ]);
+    ownMedia.assets.map((asset: { asset_id: string }) => asset.asset_id).sort(),
+  ).toEqual([data.member_asset, data.service_asset].sort());
+  // The source list includes the member's Apps, including the keyless App created at sign-in. Daisy's media
+  // is theirs without being an App of theirs.
+  const sources = ownMedia.sources as Array<{
+    id: string;
+    label: string;
+    owner_user_id: string;
+  }>;
+  expect(sources.map((source) => source.id)).toContain(`app:${data.member_app_id}`);
+  expect(
+    sources.some(
+      (source) => source.label === "Azizam" && source.owner_user_id === data.member_user_id,
+    ),
+  ).toBe(true);
+  expect(sources.every((source) => source.owner_user_id === data.member_user_id)).toBe(true);
 
   expect(
     (await member.get("/me/api/media?source=local-network")).status(),
   ).toBe(400);
+  // Filtering by Daisy stays refused to a member; their own picture there is in the unfiltered list above.
   expect(
-    (
-      await member.get(`/me/api/media?source=app:${data.service_app_id}`)
-    ).status(),
+    (await member.get(`/me/api/media?source=app:${data.service_app_id}`)).status(),
   ).toBe(403);
   expect(
-    (await member.get(`/me/api/media/${data.service_asset}/download`)).status(),
+    (await member.get(`/me/api/media/${data.owner_service_asset}/download`)).status(),
+  ).toBe(404);
+  expect(
+    (await member.get(`/me/api/media/${data.owner_asset}/download`)).status(),
   ).toBe(404);
   expect(
     (await member.get("/me/api/usage/summary?source=local-network")).status(),
@@ -158,5 +150,6 @@ test("member cannot see local/service media or mint signed URLs for them", async
   await page.goto("/library/");
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
   await expect(page.getByText("No media yet")).toHaveCount(0);
+  await expect(page.locator("article")).toHaveCount(2);
   await context.close();
 });

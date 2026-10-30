@@ -264,6 +264,7 @@ export function WorkflowInputs({
         mediaInput={isMediaBodyInput(input, mapping)}
         outputKind={outputKind}
         problem={problems[input.name]}
+        detail={technical ? technicalDetail(input, mapping) : undefined}
         unsupportedCombined={isUnsupportedCombinedInput(
           input,
           inputs,
@@ -298,31 +299,6 @@ export function WorkflowInputs({
           </div>
         </details>
       )}
-      {technical && (
-      <details className="border-t px-3">
-        <summary className="text-muted-foreground min-h-11 cursor-pointer py-3 text-xs">
-          Input details
-        </summary>
-        <dl className="space-y-3 pb-3 text-xs">
-          {inputs.map((input) => (
-            <div key={input.name} data-technical-input={input.name}>
-              <dt className="font-medium">
-                {input.name}
-                <span className="text-muted-foreground ml-2 font-normal">
-                  {input.type}
-                  {input.required ? " · required" : ""}
-                </span>
-              </dt>
-              <dd className="text-muted-foreground">
-                {inputExplanation(input, mapping)}
-                {input.applies ? ` ${input.applies}.` : ""}
-                {input.description ? ` ${input.description}` : ""}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </details>
-      )}
     </div>
   );
 }
@@ -337,6 +313,7 @@ function WorkflowInputControl({
   mediaInput = false,
   outputKind,
   problem,
+  detail,
   unsupportedCombined = false,
   onChange,
 }: {
@@ -349,6 +326,8 @@ function WorkflowInputControl({
   mediaInput?: boolean;
   outputKind: OutputKind;
   problem?: string;
+  /** Owners only: where the value goes and what it accepts. Shown under the input's own hint. */
+  detail?: string;
   unsupportedCombined?: boolean;
   onChange: (value: unknown) => void;
 }) {
@@ -359,6 +338,9 @@ function WorkflowInputControl({
     ? "This setting cannot be changed here yet."
     : inputHint(input, outputKind);
   const errorId = problem ? `${id}-error` : undefined;
+  const hintId = hint || detail ? `${id}-hint` : undefined;
+  // The helper line, then the problem: both are what the control says about itself.
+  const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
   const disabled = parentDisabled || isUnsupportedValue(value);
   // An asset the catalog does not type is a picture, as for body inputs
   // below; a generic file ("binary") gets a plain file chooser.
@@ -377,8 +359,13 @@ function WorkflowInputControl({
       </span>
     </span>
   );
-  const hintLine = hint ? (
-    <span className="text-muted-foreground text-xs">{hint}</span>
+  // The hint and, for an owner, the technical detail: one helper line, in two spans.
+  const hintLine = hint || detail ? (
+    <span id={hintId} className="text-muted-foreground text-xs">
+      {hint ? <span>{hint}</span> : null}
+      {hint && detail ? " " : null}
+      {detail ? <span data-slot="input-detail">{detail}</span> : null}
+    </span>
   ) : null;
   const problemLine = problem ? (
     <span
@@ -410,7 +397,7 @@ function WorkflowInputControl({
             kind={kind}
             file={file}
             invalid={Boolean(problem)}
-            describedBy={errorId}
+            describedBy={describedBy}
             onFileChange={onFileChange}
           />
         ) : (
@@ -420,7 +407,7 @@ function WorkflowInputControl({
             aria-labelledby={`${id}-label`}
             aria-required={input.required || undefined}
             aria-invalid={Boolean(problem) || undefined}
-            aria-describedby={errorId}
+            aria-describedby={describedBy}
             onChange={(event) =>
               onFileChange(event.currentTarget.files?.[0] ?? null)
             }
@@ -444,7 +431,7 @@ function WorkflowInputControl({
           kind={mediaKindOf(input) ?? "image"}
           value={typeof value === "string" ? value : undefined}
           invalid={Boolean(problem)}
-          describedBy={errorId}
+          describedBy={describedBy}
           onChange={onChange}
         />
         {problemLine}
@@ -458,7 +445,7 @@ function WorkflowInputControl({
       {controlFor(input, id, label, value, disabled || fileInput, fileInput, onChange, {
         placeholder: inputPlaceholder(input, outputKind),
         invalid: Boolean(problem),
-        describedBy: errorId,
+        describedBy,
       })}
       {hintLine}
       {problemLine}
@@ -823,6 +810,18 @@ export function isMediaBodyInput(
     return false;
   }
   return isMediaInput(input);
+}
+
+/** Owners only: where an input goes and what it accepts, in the words the old Input details list used. */
+function technicalDetail(input: WorkflowInput, mapping: WorkflowInputMapping) {
+  return [
+    inputExplanation(input, mapping),
+    input.applies ? `${input.applies}.` : "",
+    input.description ?? "",
+  ]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(" ");
 }
 
 function inputExplanation(

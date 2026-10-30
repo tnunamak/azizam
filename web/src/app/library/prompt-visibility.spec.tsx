@@ -61,7 +61,7 @@ const kept = {
   workflow_download_url: "https://gw.test/v1/assets/img_kept/content?md=full",
   source: { id: "app:a1", kind: "app", label: "Robin", person_id: "usr_robin" },
 };
-// The same person's item made with "Don't keep this prompt".
+// The same person's item made with keep request history off.
 const forgotten = {
   ...base,
   asset_id: "img_forgotten",
@@ -145,7 +145,7 @@ describe("the prompt in the viewer", () => {
         vi
           .mocked(fetch)
           .mock.calls.some(([input]) =>
-            String(input).includes("/img_kept/download?scope=me&metadata=full"),
+            String(input).includes("/img_kept/download?metadata=full"),
           ),
       ).toBe(true),
     );
@@ -179,7 +179,7 @@ describe("the prompt in the viewer", () => {
     });
     const dialog = await openOnly(user);
     expect(
-      await within(dialog).findByText("No saved prompt. You turned off prompt keeping."),
+      await within(dialog).findByText("No saved prompt. You turned off keeping words and chats."),
     ).toBeVisible();
     cleanup();
     renderWith([forgotten], {
@@ -194,7 +194,7 @@ describe("the prompt in the viewer", () => {
     const again = await openOnly(user);
     expect(
       await within(again).findByText(
-        "No saved prompt. This gateway doesn’t keep prompts.",
+        "No saved prompt. This gateway doesn’t keep words and chats.",
       ),
     ).toBeVisible();
   });
@@ -225,16 +225,12 @@ describe("the prompt in the viewer", () => {
     ).toBeNull();
   });
 
-  test("the owner viewing everyone's media sees another person's item the same way", async () => {
-    const user = userEvent.setup();
+  test("the owner Library names what stays private and has no person selector", async () => {
     state.viewer = { role: "owner", name: "Sam", id: "usr_sam", admin: true };
     state.home = { receipts: [], user: { id: "usr_sam" } };
-    renderWith([othersView]);
-    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
-    (await screen.findByRole("combobox", { name: "Person" })).focus();
-    await user.keyboard("{Enter}");
-    await user.click(await screen.findByRole("option", { name: "Everyone" }));
-    const dialog = await openOnly(user);
-    expect(dialog.textContent ?? "").not.toMatch(/prompt|with details/i);
+    renderWith([]);
+    expect(await screen.findByText("Your creations and prompts are private to you.")).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Person" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

@@ -15,7 +15,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import media_jobs  # noqa: E402
+from gateway import media_jobs, request_source  # noqa: E402
 from gateway.media_jobs import (  # noqa: E402
     ADMIN_ONLY_FIELDS,
     ALL_STATUSES,
@@ -170,6 +170,47 @@ class _StoreCase(unittest.TestCase):
 class TestStoreLifecycle(_StoreCase):
     def test_init_records_schema_version(self) -> None:
         self.assertEqual(media_jobs.schema_version(self.db), media_jobs.SCHEMA_VERSION)
+
+    def test_existing_database_backfills_indexed_asset_origins(self) -> None:
+        modern_asset = "asset_modern_origin"
+        legacy_asset = "asset_legacy_origin"
+        media_jobs.create(_make_job(
+            job_id="job_modern_origin", request_id="idem_modern",
+            parent_request_id="receipt_modern", status=STATUS_SUCCEEDED,
+            assets=[{"asset_id": modern_asset}],
+        ), path=self.db)
+        media_jobs.create(_make_job(
+            job_id="job_legacy_origin", request_id="idem_legacy",
+            parent_request_id="receipt_legacy", status=STATUS_SUCCEEDED,
+            assets=[{"asset_id": legacy_asset}],
+        ), path=self.db)
+
+        # Recreate the v4 shape and a legacy row written before creating_receipt_id existed.
+        with media_jobs._conn(self.db) as conn:
+            conn.execute(
+                "UPDATE media_jobs SET job_json=json_remove(job_json, '$.creating_receipt_id') "
+                "WHERE job_id='job_legacy_origin'"
+            )
+            conn.execute("DROP TABLE IF EXISTS media_job_asset_origins")
+            conn.execute("UPDATE media_jobs_schema_version SET version=4")
+            conn.commit()
+
+        media_jobs.init_db(self.db)
+
+        with media_jobs._conn(self.db) as conn:
+            self.assertEqual(
+                conn.execute("SELECT version FROM media_jobs_schema_version").fetchone()[0],
+                media_jobs.SCHEMA_VERSION,
+            )
+            index_names = {row[1] for row in conn.execute("PRAGMA index_list(media_job_asset_origins)")}
+            self.assertIn("media_job_asset_origins_asset", index_names)
+            plan = " ".join(str(value) for row in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT DISTINCT origin_id FROM media_job_asset_origins WHERE asset_id=?",
+                (modern_asset,),
+            ) for value in row)
+            self.assertIn("media_job_asset_origins_asset", plan)
+            self.assertEqual(media_jobs.request_ids_for_assets_in(conn, (modern_asset,)), {"receipt_modern"})
+            self.assertEqual(media_jobs.request_ids_for_assets_in(conn, (legacy_asset,)), {"receipt_legacy"})
 
     def test_create_and_get_round_trip(self) -> None:
         job = _make_job()
@@ -546,7 +587,7 @@ def test_audience_contract_is_independent_of_implementation_tables():
     admin_keys = {"workflow", "backend", "app_profile", "app_id", "api_key_name"}
     internal_keys = {
         "metadata", "owner_key_hash", "owner_scope", "input_hash",
-        "creating_receipt_id",
+        "creating_receipt_id", "maker_person_id", "maker_credential_id", "maker_connection_id",
     }
 
     assert set(job.to_dict("client")) == client_keys
@@ -556,6 +597,38 @@ def test_audience_contract_is_independent_of_implementation_tables():
     assert job.to_dict("internal")["creating_receipt_id"] == "receipt-sentinel"
     assert job.to_dict("admin")["app_id"] == "app-sentinel"
     assert job.to_dict("client")["job_id"] == job.job_id
+
+
+def test_a_version_five_store_gains_the_maker_stamp_and_its_old_jobs_stay_unstamped(tmp_path):
+    """Version 6 adds the stamp columns. A job made before the stamp keeps no maker, so it has no reader."""
+    import sqlite3
+
+    path = tmp_path / "jobs.db"
+    media_jobs.init_db(path)
+    with request_source.acting_as(app_id="app_test", person_id="usr_alice", credential_id="key:alice"):
+        stamped = media_jobs.create(_make_job(request_id="req_new", app_id="app_test"), path=path)
+    old = media_jobs.create(_make_job(request_id="req_old"), path=path)
+    with sqlite3.connect(path) as conn:
+        # Rebuild the version 5 shape: no stamp columns and no maker index, and the job JSON of a row written before the
+        # stamp existed.
+        conn.execute("DROP INDEX IF EXISTS media_jobs_maker_person")
+        for column in ("maker_person_id", "maker_credential_id", "maker_connection_id"):
+            conn.execute(f"ALTER TABLE media_jobs DROP COLUMN {column}")
+        conn.execute("UPDATE media_jobs SET job_json = json_remove(job_json, '$.maker_person_id', "
+                     "'$.maker_credential_id', '$.maker_connection_id') WHERE job_id = ?", (old.job_id,))
+        conn.execute("UPDATE media_jobs_schema_version SET version = 5")
+        conn.commit()
+
+    media_jobs.init_db(path)
+
+    assert media_jobs.schema_version(path) == media_jobs.SCHEMA_VERSION == 6
+    with sqlite3.connect(path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(media_jobs)")}
+    assert {"maker_person_id", "maker_credential_id", "maker_connection_id"} <= columns
+    migrated = media_jobs.get(old.job_id, audience="internal", path=path)
+    assert migrated is not None and migrated.get("maker_person_id") is None and migrated.get("maker_credential_id") is None
+    kept = media_jobs.get(stamped.job_id, audience="internal", path=path)
+    assert kept is not None and kept["maker_person_id"] == "usr_alice"
 
 
 if __name__ == "__main__":

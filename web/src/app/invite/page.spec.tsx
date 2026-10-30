@@ -64,7 +64,7 @@ it("requires an invite password and sends a one-character password", async () =>
   window.history.replaceState(null, "", "/invite/#token=valid-test-token");
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url.startsWith("/auth/api/options")) return json({ built_in: true, oidc: false, oidc_label: "", oidc_url: "/login", instance_name: "Test", owner_name: "Owner" });
+    if (url.startsWith("/auth/api/options")) return json({ built_in: true, oidc: false, oidc_label: "", oidc_url: "/login", instance_name: "Test" });
     if (url === "/auth/api/invite") return json({ plan: null, email: "person@example.test", expires_at: Date.now() / 1000 + 3600, owner_name: "Owner", instance_name: "Test" });
     if (url === "/auth/api/invite/accept") return json({ next: "/", credential: { api_key: "secret" } });
     return json({});

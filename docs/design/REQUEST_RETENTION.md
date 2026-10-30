@@ -207,7 +207,7 @@ kinds:
     readers: scope                    # today's person + App/credential rule (section 4)
   request_history:
     purpose: Request history keeps what your apps sent for a short time, so you can check it and run it again.
-    parts: {allowed: [accepted, received], default: [accepted]}
+    parts: {allowed: [accepted, received], default: [accepted, received]}
     max_record_bytes: 1048576
     readers: maker
   debug_capture:                      # no group: opening a window is the choice (section 9)
@@ -339,11 +339,23 @@ I10):
 3. **Outbound credentials are never in a part.** `sent` is captured before
    `runtime_secrets` attaches stored credentials (D26, D38, D42: a request is
    built once and credentials are attached at the moment of use).
-4. **URLs inside a body keep scheme, host and path.** User info and query
-   values are replaced by `[removed]`, and query names are kept. A signed
-   URL is a bearer credential ([research] R6; `PROMPT_MEMORY.md` "OpenAI
-   image URLs are bearer capabilities"). The record marks this, so Run
-   again knows the record is incomplete.
+4. **URLs inside a body keep scheme, host and port, and most of the path.** A
+   URL runs from its scheme to the end of its token: the next space, or a scheme
+   that follows a delimiter (round 9, R9-1). One with an `@` or `%40` anywhere,
+   one that cannot be split into a scheme and a host, or one whose token holds a
+   `://` that does not start it, is replaced whole by `[url removed]`. Otherwise
+   the query and fragment are
+   replaced by `?[removed]` and `#[removed]`, query names included, and a path
+   segment named as a credential is replaced by `[removed]` (round 7, R7-1). A
+   path segment is also replaced when it holds a colon, or when it is 20 or
+   more characters from `[A-Za-z0-9_-]` and holds a letter and a digit (round 8,
+   R8-1). Round 9 reads the segment after percent-decoding, with its trailing
+   prose punctuation set aside and kept (R9-2, R9-3). That is a shape check on
+   URL path segments, not a secret detector, so rule 6 still holds for bodies and
+   other text. A signed URL is a bearer
+   credential ([research] R6; `PROMPT_MEMORY.md` "OpenAI image URLs are bearer
+   capabilities"). The record marks this, so Run again knows the record is
+   incomplete.
 5. **Large media is not copied.** A `data:` URL, or a base64 string over
    64 KiB, becomes `{"omitted": "media", "media_type": ..., "bytes": N}`.
    Multipart file parts are listed by field name, media type and size only.
@@ -358,7 +370,9 @@ I10):
    detector", because a detector that misses would be a control that does
    less than it says.
 7. **Only containers the gateway parses are captured.** These are JSON
-   objects, and multipart forms (their fields and part listing). A body the
+   objects, and multipart forms (their fields and part listing). JSON held in
+   a string, including a JSON string literal, is cleaned as JSON within one
+   work budget per record (round 6, R6-2). A body the
    gateway does not parse is recorded as
    `{"omitted": "unsupported_container", "media_type": ..., "bytes": N}`:
    a non-JSON native-lane body, raw audio, or any other media type. The
@@ -367,7 +381,9 @@ I10):
    through" ([research] R2).
 8. **A field named as a credential is removed, at any depth.** A field
    whose name has a credential segment gets the value `[removed]`. The
-   segments are compared in snake, kebab or camel case: `secret`,
+   segments are compared in snake, kebab or camel case, after characters
+   that show as nothing (format characters and the other default-ignorable
+   code points) are dropped (round 6, R6-4): `secret`,
    `password`, `passwd`, `credential(s)`, `authorization`, `apikey`, or
    the pairs `api_key`, `access_token`, `refresh_token`, `id_token`,
    `auth_token`. A plain `token` segment is not one of them, so
@@ -1356,9 +1372,10 @@ rules are those of prompt memory. Retention adds no new identity rule.
   The noninterference property (D32 e) is tested on gateway-composed
   output (section 16.2). The engine's success product is excluded (D45b).
 - No engine words reach a non-owner through the Debug window (D45, D44
-  "Limits"). Request history keeps only `accepted` by default, which is the
-  caller's own words. When `received` is kept, it is the trusted engine's
-  success product (D45b). Error replies keep the gateway's composed error
+  "Limits"). Request history keeps `accepted`, the caller's own words, and
+  by default `received` too (D50). `received` is the trusted engine's success
+  product (D45b), and a member who chose sent-only keeps only `accepted`.
+  Error replies keep the gateway's composed error
   (`client_errors`), not the engine's text.
 - Logs never carry content (D43/D44). Retention adds no log line with
   record text. Its log lines use fixed event ids and counts.
@@ -1407,9 +1424,14 @@ queues work. The worker's separate receipt reports the content write. Audio
 and video job submissions currently create no route receipt. A stored receipt
 with a retired retention value remains readable; its invalid entry is omitted
 and the read logs one structural warning. Writes still refuse invalid values.
-The maker sees the full retention entry. In the owner's Home, receipt detail
-and Activity views, another person's entry contains only `kind` and
-`decision`; `reason`, deadline, parts and limit stay with the maker.
+The maker sees the full retention entry. The receipt names its maker when it
+is created: the person the request ran as, from the request's own sign-in
+(section 13.1). Owning the App a request came through never makes a viewer
+the maker. A request that ran as no person has no maker, and its entry shows
+`kind` and `decision` to everyone who can open the receipt, the App's owner
+included. In the owner's Home, receipt detail and Activity views, another
+person's entry contains only `kind` and `decision`; `reason`, deadline, parts
+and limit stay with the maker.
 
 ## 14. AGENTS.md and the extension rung (owner task 11)
 
@@ -1864,6 +1886,190 @@ Slice 3 deploys only after the live read-only count of section 19.
 descriptions; a blob store for request inputs ([research] R6); saved
 templates ([research] R5 option 3); the widening slice Tim chooses
 (section 18).
+
+**Slice 5a as built.** Server side only. The UI, the privacy permission, the MCP tools and the Library cascade are
+slice 5b. These are the readings the build took where the text leaves a form open, or where D50-D52 change the text.
+
+- **Default and upgrade (D50; section 12, item 3).** Request history is a group on by default for a new member
+  (`groups.request_history.default_keep: true`, in the data). An existing member gets a row with keep off at the
+  schema 17 upgrade, as section 12 requires, so nobody already using Azizam starts keeping bodies. The notice that
+  section 12 asks for is UI work.
+- **Keys by group (sections 3.2, 12).** `prompt_memory_preferences` and the two erasure tables gain their group in the
+  key, and the rows that existed become `prompts`. The prompts code paths default to that group, so they behave as
+  before. The slice 1 golden matrix still differs only in its `bogus` period cells.
+- **Capture (sections 3.3, 3.6).** A pure ASGI middleware records each data-plane request once, at its end. It
+  decides then, because the handler sets the caller's identity during authentication. The write goes through
+  `retention.write`, which re-reads the kill switch, the member's choice and the cutoffs under the lock. The receipt's
+  `retention` entry is set after the write. A request that never authenticates writes nothing.
+- **Forget (section 3.4).** Forget in a JSON body (whatever its Content-Type), in a form field (multipart or
+  form-urlencoded), or in `X-Azizam-Prompts` keeps nothing.
+  The header is removed before the route runs. A JSON body of known size up to the record limit is read first, so an
+  invalid control gets the existing 400 (`invalid_prompt_mode`) before any route runs. A larger or chunked body is not
+  refused early; it is still never kept. This is a limit on section 3.4's "refused before dispatch".
+- **Unread bodies.** For an authenticated request, the rest of a body the route did not read is drained, for up to 30
+  seconds. A body that never completes is not kept (reason `incomplete`).
+- **Size (sections 3.5, 3.6).** A JSON body or reply over `max_record_bytes` is omitted as `record_size`, not
+  truncated, so a kept record is never partial. Section 3.5 says "up to `max_record_bytes`" for replies; this build
+  omits instead.
+- **`store: false` (section 3.3, step 2).** This ends the conversation only. Request history keeps by its own switch,
+  because section 3.3 lists `store: false` as a forget for `conversation` alone. The Responses test that asserted no
+  prompt bytes anywhere now asserts that the bytes sit in the one `kept_requests` row and nowhere else.
+- **Readers (section 4; D51, D52).** Content access decides. A personal key reads the rows its own App created,
+  without the permission; an MCP grant reads the rows its own connection created; everything else needs the privacy
+  permission, which no key or grant carries yet. **Deleting** needs the permission, because section 10 lists deletes
+  among the controls. A delegated credential therefore gets `403 privacy_permission_required`. D52 says reads are
+  free, and section 10 says controls need the permission; this build reads delete as a control.
+- **Member choice (not in the 5a list).** `GET` and `PUT /me/api/retention` let a member turn history off. They are
+  session only and hidden from the schema, like the other session routes. Without them a default-on group could not be
+  switched off.
+- **Fences and expiry (section 12).** Delete all, and turning history off, write a cutoff and an intent in one
+  transaction, delete the rows, and clear the intent. Maintenance settles an intent that did not finish, deletes
+  expired rows, and covers the household kill switch for this group. A shorter period shortens existing deadlines;
+  a longer one never extends them.
+- **Not built in 5a.** The Library cascade, and the same transaction for media requests (sections 3.1, 3.6, 12); the
+  privacy permission; the MCP tools; the settings UI; the household route for this group; `maker_signed_in`; debug
+  captures. `policy_version` records the bundled file's format version, not the household revision.
+
+**Slice 5a review fixes, as built.** The review's probes are `tests/test_review_retention_s5a_probes.py`. Each finding
+that they pin now passes with its mark removed. The tests the review did not pin are in
+`tests/test_request_history_s5a_review.py`.
+
+- **Secret floor (rules 4, 8 and 9).** One name tokenizer, `request_history.segments`, splits on `-`, `_`, space, `.`,
+  `[`, `]` and camel case. A word matches as written, and also without a trailing digit run or one trailing `s`, so
+  `secrets`, `password1`, `apiKeys` and `access_tokens` are credential names too, and a credential name removes its
+  whole value, however deep. So `headers[Authorization]`, `provider[api_key]` and `auth[password]` are removed. A URL is
+  any `scheme://`, in any letter case (`postgres://`, `wss://`, `HTTPS://`), as a whole value or inside a longer string.
+  Each one is cleaned by the URL rule of round 7 (R7-1, below). A tool call's
+  `arguments` string is parsed and its JSON is cleaned like any JSON. Text that is not JSON is cleaned as text. Two
+  other name checks exist and were left alone: `redaction.is_forbidden_key` is an exact-key set for receipts and media
+  jobs, and `legacy_credential_rules` tokenizes command-line flags. Neither splits request-history names.
+- **Controls (section 3.4).** A multipart `extensions` field is read by `extensions.multipart_extensions`, the routes'
+  own parser. The bracket field then overrides it, as in the workflow route. An invalid or unreadable value is a forget,
+  and so is a control field sent as a file.
+- **Header forget (section 3.4).** `X-Azizam-Prompts: forget` is carried on the request's slot. `retention.decide`
+  takes it as `request_forget`. Saved conversations, Library prompts and the job spool all honour it.
+- **Unreadable control (review item 5; round 2, R2-1).** A JSON or multipart body that the gateway did not read in full,
+  because it was over 1 MiB, was cut short, or did not parse, leaves no row. Its receipt says `not_kept` for
+  `incomplete`. Every other body is read for its control the way its route reads it. A route parses a JSON body whatever
+  its Content-Type says, and a route that reads a form reads a form-urlencoded body's fields too. So a `text/plain`, a
+  form-urlencoded or a Content-Type-less body that carries a JSON or form forget keeps nothing. A body in another
+  container that does not parse, and is within 1 MiB, keeps its `unsupported_container` record, as section 3.5 rule 7 and
+  `test_without_the_header_a_non_json_body…` require. A body over 1 MiB in such a container leaves no row, since its
+  control cannot be read in full. This is our reading of "unparsed body".
+- **Parts at write time (round 2, R2-6).** The parts a record keeps are the member's choice read under the household
+  lock when the record is written, not the choice made when the request started. A reply the member has stopped keeping
+  during the request is not kept, and its omissions are not recorded. The receipt lists the parts that were kept. A
+  member whose history is off at write time keeps nothing.
+- **Disconnects (section 3.6).** `http.disconnect` is not a complete body. A body cut short before the route ran is
+  replayed with `more_body` still set, so the route sees the disconnect. The drain stops at a disconnect.
+- **Cost (sections 3.3, 3.6, 12).** The decision is made as soon as the caller is known. A member whose history is off,
+  a forget, a request with no person, and the kill switch all skip body parsing, reply buffering, the write lock and
+  any write except the receipt entry. A reply is buffered only when it may be kept. One writer thread
+  (`request_history_capture.WRITER`) does every write. At most 32 captures hold a body for a write at once. A request
+  takes one of those slots only when its decision says keep, and gives it back when its write is done (round 2, R2-4).
+  A request that finds no free slot is not captured, and its receipt says `storage_unavailable`. The history writer takes
+  the household lock (admin.db) first and opens its short media-jobs transaction inside it, as the Library and Responses
+  writers do, so the two databases are waited on in one order (round 2, R2-5). A commit that fails after the media row is
+  written reports `write_failed`. The row may then remain, as a Library row can after the same failure.
+  - A body forget in an OFF member's request is reported `member_disabled`, because that body is not read. A header
+    forget is reported `request_forget`, as before.
+  - The Library and Responses writers still take the household lock around their own commit, as on main. Moving them
+    is a follow-up.
+- **List (sections 4, 10).** The list selects metadata columns only. Two columns are new, `parts_kept` and
+  `byte_size`, in `kept_requests` in `media_jobs.db`. A database made before them gains them on connect, and their
+  values are derived from the stored parts. Pages are keyset pages (created_at, record id), cut in SQL in batches of 100.
+  The viewer's own rows are cut from each batch. A malformed cursor is `400 invalid_cursor`. A well-formed cursor
+  always pages, including one whose row was deleted. Before this, that cursor was a 400.
+- **Byte cap (section 12).** `kinds.request_history.max_bytes_per_person` is 268435456 (256 MiB), in
+  `registry/retention.yml`. Each maintenance pass removes a person's oldest records until their stored sizes fit (FIFO).
+  Maintenance runs on a timer, so a person can exceed the cap by what is written between passes. A receipt keeps the
+  deadline it recorded, so a record can leave before that deadline.
+- **Browser session (section 10).** `/gateway/v1/requests` accepts the person's browser session with no Authorization
+  header. The key layer skips such a call, and the router reads the session as the viewer. Reads are the person's own
+  rows only. Writes (delete one, delete all) need `X-Azizam-User-Action: 1` and the CSRF token, as `PUT
+  /me/api/retention` does. A delegated credential's delete is still `403 privacy_permission_required`.
+- **Busy store (section 12).** A read or write that the store's lock refuses returns `503 retry_required`, with
+  `Retry-After: 1`. Delete all writes its fence first, so a busy fence erases nothing. A row delete that fails after
+  the fence returns `202` with `pending: true`. The rows are already hidden, and maintenance deletes them. A turn-off
+  whose row delete fails keeps its erasure intent and still succeeds. Maintenance settles that intent. When the rows are
+  deleted and only the intent cannot be cleared, delete all returns the real count with `pending: false`, and
+  maintenance clears the intent (round 2 nit).
+- **Design-owner rulings (review item 13; no change).** A second key of the same App reads that App's rows, as D52's
+  "its own App" says. The `connection_id` rule applies to MCP grants only. `store:false` ends the conversation only,
+  and history follows the person's switch (section 3.3). The native passthrough lane is not captured in 5a.
+  Conflict: section 4 says a delegated credential reads request history only with the privacy permission. D52, of
+  2026-10-20, says it reads its own App's rows without one. The build follows D52.
+- **Rollback (review item 11).** Schema 17 is not rollback-safe. Take a backup of `admin.db` and `media_jobs.db` before
+  deploy.
+- **Round 4 fixes, as built (R4-1 to R4-4).** The probes are in `tests/test_request_history_s5a_r4_fixes.py`.
+  - **User info and query values (R4-1, superseded by R6-1 and R7-1).** A URL in text runs to the next whitespace, so a quote or sub-delim in its
+    user info does not end it. The user info of a URL ends at its last `@`: everything from the scheme to that `@` is
+    removed. So a `/`, `?` or `#` in a password is not read as the start of the path. A URL whose path or query holds an
+    `@` loses its host too, because a parser cannot tell that case from a password. A closing quote or `>` after a URL
+    is not part of it.
+  - **Depth and unreadable JSON (R4-2).** JSON nested past `JSON_DEPTH_LIMIT` (64) is omitted. A tool call's
+    `arguments` string is replaced by `{"omitted": "json_depth"}`. A body nested that deep is replaced whole. An
+    `arguments` string that starts with `{` or `[` but does not parse is replaced by `{"omitted": "unreadable_json"}`.
+    A body that the JSON parser cannot read at all still leaves no row, as before. A credential name is NFKC-normalised
+    before it is checked.
+  - **Cancelled requests (R4-3).** The write is shielded, so cancelling the request does not cancel a queued write. The
+    write gives the capture's slot back when it is done. A request cancelled before its decision is recorded as
+    `incomplete`.
+  - **Body forgets (R4-4).** The body's control is read as soon as the body is complete. A forget, or a control that
+    cannot be read in full, gives the slot back at once and stops buffering the reply. The receipt still says why
+    nothing was kept.
+  - **JSON in any string (R5-1).** A string that starts with `{` or `[` after whitespace, and parses as JSON, is cleaned by the `arguments` path (`_redact_string`) and stored compact, so tool `arguments` are compact too. One that does not parse is cleaned as text, except tool `arguments`, which is still omitted as `unreadable_json`. Past the depth limit it is omitted as `json_depth`.
+  - **Format characters in names (R5-2).** `is_credential_name` drops Unicode format characters (category Cf: a zero-width space, a joiner, a word joiner, a byte order mark, a soft hyphen) before the NFKC match, so `pass`, a zero-width space and `word` match. Names without them match as before.
+- **Round 6 fixes, as built (R6-1 to R6-4).** The probes are in `tests/test_request_history_s5a_r6_fixes.py`. One round-4 test changed: `test_r4_1_c` now expects `[url removed]` for each of the five URLs it lists, because the round-4 rule they pinned is replaced.
+  - **Where the authority ends (R6-1).** The authority ends at the first `/`, `?` or `#`. Only an `@` inside it starts user info, and only one may be there. A query or fragment value that holds an `@` is cleaned by its own rule and never becomes the host: `https://h.test/#token=prefix@SECRET` keeps `https://h.test/`, and `https://h.test/?token=prefix@SECRET` keeps `https://h.test/?token=[removed]`. A URL that cannot be split that way is replaced whole by `[url removed]`, and no suffix of it is kept. That covers an authority with a second `@`; a character outside the RFC 3986 authority set (a backslash, a brace, a space, a non-ASCII letter), with the quote a pasted user info may carry allowed; a port that is not a number up to 65535; and an `@` in the path when the authority has none, because an unencoded delimiter in a password would put one there and the path is kept as written. This replaces the round-4 rule (R4-1), which cut user info at the last `@` anywhere in the URL. Known residual: a password with an unencoded `?` or `#` after digits, such as `https://user:12?SECRET@host`, keeps `user:12`, because up to the delimiter the authority is a valid host and port. The value after the delimiter is still removed. Any URL with an `@` in its path and none in its authority is also replaced whole, as `https://host/@name` is. Both are a decision for the owner: tighten to remove every such authority, or accept the residual.
+  - **JSON held in a string literal (R6-2).** A string whose content is a JSON string literal that holds JSON, or another literal, is decoded and cleaned at every wrapper level, and stored as a literal again. A literal around plain text is cleaned as text, as before, and so is a literal around bracketed prose that does not parse. The nested JSON of a record shares one `WorkBudget` between its request body and its reply: decoded text up to `max_record_bytes` (1 MiB), and up to `JSON_NODE_LIMIT` (200,000) values visited. A string spends it when it parses as JSON and is cleaned further (an object, an array, or a literal around one), so plain text costs nothing. A string past the budget is omitted as `{"omitted": "json_budget"}`, and a string past `JSON_DEPTH_LIMIT` is omitted as before. The node limit bounds the work of a body of many small JSON strings, and the micro-benchmark `test_r6_2_j` asserts that counter for a one-mebibyte body, not a time.
+  - **Body whole before the caller is known (R6-3).** A body that completes before the route authenticates has its controls read at the first decision, before a slot is taken and before any reply is buffered. A forget takes no slot, and its reply is not held until the write. Before, the controls were read only when the body completed after the decision, so a forget held its slot until the write.
+  - **Default-ignorable characters in names (R6-4).** `is_credential_name` drops every Default_Ignorable_Code_Point before the NFKC match: the format characters (category Cf) and the ranges U+034F, U+115F to U+1160, U+17B4 to U+17B5, U+180B to U+180F, U+2065, U+3164, U+FE00 to U+FE0F, U+FFA0, U+FFF0 to U+FFF8 and U+E0000 to U+E0FFF. U+2065 and U+FFF0 to U+FFF8 are unassigned, and the property covers them, so they are dropped too. So `pass` followed by U+034F and `word` matches as `password`.
+  - **Round 7 fixes, as built (R7-1 to R7-3).** The probes are in `tests/test_request_history_s5a_r7_fixes.py`. Round 7 replaces the URL rule of rounds 4 and 6, so the round-4, round-6, review and redaction tests that pinned the old output now pin the new one. The pytest count went from 16498 to 16538 collected.
+    - **One URL rule (R7-1), in plain words.** A URL starts at a scheme: a letter, then letters, digits, `+`, `.` or `-`, then `://`. It runs to the next space or the next scheme, so `a://x,b://y` is two URLs. A quote, a bracket or an angle bracket does not end it. If it holds `@` or `%40` anywhere, the whole URL becomes `[url removed]`, and that takes the user name, the password and any `@` in the path with it. If it cannot be split into a scheme and a non-empty ASCII host (a port that is not a number up to 65535, an IPv6 bracket that is not closed, no host, a non-ASCII host), the whole URL becomes `[url removed]`. Otherwise the scheme, host, port and path are kept. A path segment whose name is a credential name (rule 8) becomes `[removed]`. A query becomes `?[removed]`, with every name and value gone, and a fragment becomes `#[removed]`. The same rule applies to a URL that is a whole value and to a URL in a longer string. This resolves both residuals in the R6-1 bullet: an `@` anywhere now removes the URL. Round 8 adds a rule for token-shaped path segments (R8-1, below).
+    - **It over-redacts by design.** Every query goes, names included, so `?page=2` becomes `?[removed]`. Punctuation written straight after a URL with a query goes with the query: `see https://h.test/a?x=1, then` keeps `see https://h.test/a?[removed] then`. A quote or bracket written straight after such a URL goes too. A URL with no host, such as `file:///etc/x`, is removed.
+    - **What the rule does not catch (partly superseded by R8-1).** A secret in a path segment that is not a credential name is kept, such as a bot token in a path or a signed path. Rule 6 forbids a value detector, so no check reads the shape of a path segment. A space inside the user info still ends the URL, so `postgres://u:a b@h` keeps `b@h` as text. The owner decides whether to tighten the path rule, end URLs at punctuation, or accept these two residuals.
+    - **Why quotes and brackets do not end a URL.** The brief's rule ended a URL at a quote, `<` or `>`. Then `https://h.test/a?token=abc"SECRET&x=1` kept `SECRET` as text after the quote, and `postgres://user:'SECRET'@db/app` kept it too. Ending the URL there is the leak, so these characters are part of the URL.
+    - **Linear scan (R7-1).** The old scan searched for a scheme at every letter, so a long run of letters cost time in proportion to its square: 80 KB took about four seconds. The new scan finds each `://` and walks back over its scheme characters, so each character is read once.
+    - **JSON literals cleaned as decoded text (R7-2).** A string literal around plain text had its encoded text cleaned. A URL with escaped slashes (`\u002f`) has no `://` in its encoded text, so it was kept. Now the decoded text is cleaned and the result is stored as a literal again. A decoded `data:` URL is omitted as media.
+    - **Budget checked before a parse (R7-3).** A string is checked against the record's byte budget before it is parsed. A string too long for what is left is omitted as `{"omitted": "json_budget"}` and is never parsed. The budget is spent only when a string parses as JSON, so plain text still costs nothing. Known effect: a plain-text string that starts with a bracket or a quote, and is longer than what is left, is omitted rather than kept as text.
+  - **Round 8 fix, as built (R8-1).** The probes are in `tests/test_request_history_s5a_r8_fixes.py`. The pytest count went from 16538 to 16553 collected. One predicate, `_is_token_segment`, is used by `_scrub_url`, the one URL function.
+    - **Token-shaped path segments (R8-1), in plain words.** A path segment is replaced with `[removed]` when it holds a colon, or when it is 20 or more characters from `[A-Za-z0-9_-]` and holds a letter and a digit. So `/bot123456789:<35 characters>/getMe` becomes `/[removed]/getMe`, and a 32-character webhook token is replaced. A UUID is replaced, and so are most hashes, which hold both letters and digits. A colon also matches a model and method path, such as `gemini-1.5-pro:generateContent`. This over-redacts some IDs on purpose. A segment with any other character, such as a dot, is not a token, however long it is. Short slugs such as `v1` and `chat-completions`, and numeric IDs such as `12345`, are kept.
+    - **What round 8 does not catch.** A colon written as `%3A` is not read as a colon. A token with a dot in it, such as a JSON Web Token (three dot-separated parts), is not matched. The rule applies to URL path segments only. A query, a body or text outside a URL is not checked for tokens, so rule 6 still holds for them.
+    - **Accepted residuals from round 7.** Round 8 does not change these three, which were accepted. A space inside the user info still ends the URL, so `postgres://u:a b@h` keeps `b@h` as text. Every query name is removed with its value, so `?page=2` becomes `?[removed]`. Punctuation written straight after a URL with a query is removed with the query, so `see https://h.test/a?x=1, then` keeps `see https://h.test/a?[removed] then`.
+  - **Round 9 fixes, as built (R9-1 to R9-3).** The probes are in `tests/test_request_history_s5a_r9_fixes.py`. Two round-7 tests changed with R9-1 and were updated in place: `test_r7_1_l` (a URL with a URL in its query is now replaced whole) and `test_r7_1_n` (many `://` in one token are one replacement). The pytest count went from 16553 to 16607 collected. The token rule is in `_url_runs` and `_run_urls`, and the segment rule is in `_scrub_segment`.
+    - **Token boundary (R9-1), in plain words.** A scheme begins a new token only at the start of the text, after whitespace, or after one of `, ; ( ) [ ] { } < > " '` and backtick. A `://` that does not begin a token is not read as a scheme, so a query, fragment or path value written before it is not kept as one. A token that holds a `://` that does not begin it is replaced whole by `[url removed]`. A token whose only `://` does not begin it is replaced too, because it cannot be split into a scheme and a host (R7-1). So `https://a.test?token=<secret>://b.test` and `token=<secret>://b.test` both become `[url removed]`. Two URLs joined by a delimiter, such as `https://a.test/x,https://b.test/y`, are still two URLs.
+    - **Trailing prose punctuation (R9-2).** Before the token check, a path segment has its trailing closing quote, closing bracket, closing paren, period, comma, semicolon, `!` or `?` set aside. If the rest is a token, it becomes `[removed]` and the punctuation is kept, so `/<token>.` becomes `/[removed].`. A `?` starts the query, so it is never part of a segment, and it is not kept when the query is empty. The `@` and `%40` check on the whole URL still runs first.
+    - **Percent-decoding (R9-3).** The colon and token checks read each path segment after `urllib.parse.unquote`, so `%3A` counts as a colon and a fully encoded token is removed. A segment that is kept is kept as written, still encoded. The credential-name check reads the raw segment, as before.
+  - **Round 10 fixes, as built (R10-1, R10-2).** The probes are in `tests/test_request_history_s5a_r10_fixes.py`. A scheme of 20 or more characters replaces the whole URL, because such a "scheme" is a value written before `://` (R10-1). A path segment is split at `/ * ~ + ! $ & ' ( ) , ; =` after decoding, and each piece is checked for the token shape on its own, so an encoded slash or a star beside a token does not hide it; a dot does not split, so a dotted file name stays whole (R10-2). The pytest count went from 16607 to 16611.
+  - **Round 11 fixes, as built (R11-1, R11-2).** Every character outside `[A-Za-z0-9_.-]` now separates pieces of a decoded path segment, so a token inside encoded brackets is removed; a dot still does not separate (R11-1). Trailing digits in a name are stripped by a backwards scan, as the `\d+$` pattern retried from every digit and cost quadratic time on a long digit run (R11-2). The pytest count went from 16611 to 16613.
+    - **What round 9 does not catch.** (1) A secret written straight after a delimiter is read as a scheme, because a delimiter starts a token. `https://a.test/x,<20-character secret>://b.test` keeps the secret, in lower case, as the scheme. Treating a token-shaped scheme (the R8-1 shape) as a value would close this. (2) A segment that decodes to hold a `/`, such as `/<token>%2Fmore`, is checked as one string, so the token is kept. (3) The credential-name check does not decode, so `pass%77ord` is not read as `password`. (4) `*`, `~` and `_` are not prose punctuation here, so `/<token>*` keeps the token.
+    - **Consequences to review.** A URL wrapped in markdown emphasis, such as `*https://a.test/x*`, is replaced whole. A `://` with no scheme in prose, such as `Use :// here`, becomes `Use [url removed] here`. A URL with another URL in its query, such as an OAuth `redirect_uri`, loses its host as well as the URL it carries.
+
+**Slice 5b1 as built.** The member's surfaces: the History page, the request history row in Your settings, the one-time notice on Home for a member who predates the feature (D50; section 12, item 3), and one Incognito switch in Try. The readings the build took:
+
+- **The notice (section 12, item 3).** It is due when the member's history row is off and nothing has changed it: `remember` is 0 and `updated_by` is empty, which is what the schema 17 upgrade wrote. A new member's row starts on, so is never told; a member who turned it off wrote `updated_by` and is not told. Turning the switch on or off answers it. Dismissing it ("Not now") writes `request_history_notice_seen` (a row per person, in the admin store), and the choice does not change. `GET /me/api/retention` returns `notice_due`; `POST /me/api/retention/notice-seen` dismisses it, with the same session and write checks as a choice.
+- **Parts and periods are data.** `GET /me/api/retention` returns `allowed_parts` and the offered `choices`, and the screens read both. The period words come from the ids (`7_days` reads "7 days"); no screen names a period.
+- **App name on each row.** The list names the app a row came through (`app_name`, read from the viewer's own apps); a row with no app shows "Browser".
+- **Receipt link on the OpenAI mount (fix).** A chat receipt names the `/v1` route, and a request made through `/openai/v1` is the same route. Before this slice the capture matched the paths exactly, so Try's chat requests kept no receipt id and the detail could not show the receipt's sentence. The match now compares the canonical route.
+- **The maker sees the full entry (fix; superseded in round 3 below).** The receipt names no person, so `GET /me/api/receipts/{id}` takes the maker from the App's owner. The maker of a request made through their App sees the reason, deadline, parts and limit of its `request_history` entry; anyone else who can open the receipt sees the kind and the decision, as section 13.3 says.
+- **The receipt names its maker (round 3, fix).** The receipt carries `maker_person_id`, the person its request ran as, written when the receipt is created from the request's own sign-in. `GET /me/api/receipts/{id}` gives the full entry only to that person. The App's owner is not the maker of a request made through the App, so a request that ran as no person (a trusted address, a shared key) has no maker, and its entry shows `kind` and `decision` to everyone. A receipt written before this change has no maker, so its full entry now shows `kind` and `decision` to everyone, including the person who made the request.
+- **Replies are kept by default (round 3, D50).** `kinds.request_history.parts.default` is `[accepted, received]`. A person with no stored choice keeps the request and what came back. A stored choice wins: a member who chose sent-only keeps sent-only. Every save from the Account screen, and every turn-on from the Home notice, stores the parts the screen shows. So a person who saved before this change holds the old sent-only parts, and keeps them.
+- **The account switch shows the owner's switch (round 3).** When the owner has turned request history off for everyone, the account settings say "History is off on this gateway. Nothing new is kept.", as History does. The switch shows off and cannot be turned on, and the replies and period controls say that the owner has turned it off for everyone.
+- **Incognito is one switch on every Try tab.** On, the request carries `extensions["com.azizam.prompts"] = {"mode": "forget"}` (in the JSON body, or in the `extensions` form field for transcription). Off, the note says what would be kept, from the member's own choice. A picture, sound or workflow request with prompt keeping off still carries forget, as before: the typed request is what History would keep, so the prompt copy ("Azizam doesn't keep what you type") would be false without it. This is a reading to review; see the open points in the slice report.
+- **Not built in 5b1.** The privacy permission, the MCP tools, the Library cascade and debug captures are unchanged from 5a. The notice is not shown to a key session, which has no person to tell.
+
+**Slice 5b1 round 2, as built.** The owner reviewed 5b1 and found the detail drawer showed raw stored JSON with its headers, and was clipped at 1440 px. The readings the round took:
+
+- **The row's preview is kept on the summary (`summary.preview`).** A list row shows what was asked: the first user message, the input, or the prompt, as one line of at most 120 characters, cut when the record is kept from the redacted body. A list still never loads a body. A removed value never shows in it. A record kept before this round has no preview, and its row shows the kind ("Chat", "Picture") in its place.
+- **The summary's model reads a multipart form too.** A transcription or an image edit names its model in its form's `model` field, so `summary.model` is set for it.
+- **The household switch is on the choice (`household_off`).** `GET /me/api/retention` returns `household_off`: the owner's kill switch (`household.never_keep`), which `decide` reads first for every kind. It is off for everyone whatever a member chose. The Home notice is not offered while it is on, and it stays due for the member, so it comes back if the owner turns history on. History says the owner turned it off, and offers no setting to turn it on. The same switch is Try's "household-off" state, so the two read the same setting.
+- **The detail reads by kind.** A conversation (chat, Responses, Messages) is chat bubbles, with each tool call as a labelled line, then the reply. A picture, sound or video is its prompt and main settings as a label and value list, and a link to its Library item when one exists. A transcription is the file's type and size, then the transcript. Embeddings are the input and "N numbers returned". Any other kind is a plain list of its scalar fields. The model's display name is the title, and the time reads "2 minutes ago" with the exact time in the title.
+- **The Library item is found by the request, not stored.** No record links to a Library item (`linked_asset_ids` is always empty). The drawer searches the person's own Library by the first 100 characters of the prompt, and takes the item whose `request_id` is this request's. No match, no link.
+- **Removed details are one quiet line.** When a kept value holds a removed part, the drawer says "Some details weren’t kept (keys and links are never saved)" once. No `[removed]` marker is shown inline.
+- **Raw record under Technical details.** The app, route, status and the record as kept, headers included, sit in a collapsed "Technical details" at the bottom. The default view shows no headers.
+- **The drawer's width is forced.** The Sheet's base classes (`w-3/4`, `sm:max-w-sm`) and the screen's own classes are only joined, not merged, so the one that comes later in the stylesheet wins. The history drawer uses the `!` forms (`!w-full sm:!max-w-lg`), as the workflows page does.
+- **The forget decision (open point 1) stays.** A picture, sound or workflow request with prompt keeping off still carries forget, so History keeps nothing of the typed request either. The names of the two settings and of "forget" are to be reworked. Try marks the spot with a code comment.
 
 ## 18. Tim's three decisions
 

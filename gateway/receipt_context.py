@@ -41,16 +41,18 @@ def receipt_context(
     *,
     app: Mapping[str, Any],
     person_labels: Mapping[str, str],
+    person_id: str | None = None,
 ) -> dict[str, Any]:
     """The fields every receipt view shows beside the receipt itself.
 
     ``app`` is the receipt's App row (``{}`` when it is gone) and
-    ``person_labels`` maps a user id to its label.
+    ``person_labels`` maps a user id to its label. ``person_id`` is the receipt's trusted maker; it names the
+    person when given, so a member's work through an App someone else owns is not labelled with that owner.
     """
     source = receipt_source(receipt, app)
     return {
         "created_at": created_at,
-        "person_label": person_labels.get(app.get("owner_user_id"), UNATTRIBUTED),
+        "person_label": person_labels.get(person_id if person_id is not None else app.get("owner_user_id"), UNATTRIBUTED),
         "app_label": app.get("name") or source["label"],
         "source": source,
     }

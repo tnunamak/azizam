@@ -10,6 +10,7 @@ the fake engine in tests/fake_systemd_engine.py.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -257,24 +258,23 @@ def test_a_hung_systemctl_call_times_out_and_the_swap_ends(engine, monkeypatch) 
     assert engine.dropin.read_text() == dropin_text("p-a")
 
 
-def test_a_hung_systemctl_process_is_killed(monkeypatch) -> None:
-    class HungProc:
-        returncode = None
-        killed = False
+def test_a_hung_systemctl_process_is_killed(monkeypatch, tmp_path) -> None:
+    """A systemctl call that outlives its job timeout is killed, and the call is treated as failed. The sandbox refuses
+    to run a program named systemctl and fails every os.kill, so the call runs a stand-in that records its pid, and the
+    kill is recorded where os.kill would send it. The stand-in exits by itself after a second, so nothing is left running."""
+    pid_file = tmp_path / "systemctl.pid"
+    stand_in = tmp_path / "fake-systemctl"
+    stand_in.write_text(f"#!/bin/sh\necho $$ > {pid_file}\nexec sleep 1\n", encoding="utf-8")
+    stand_in.chmod(0o755)
+    real_run = ld.off_loop_spawn.run
 
-        async def communicate(self):
-            await asyncio.Event().wait()
+    async def run_stand_in(argv, **kwargs):
+        return await real_run([str(stand_in), *argv[1:]], **kwargs)
 
-        def kill(self) -> None:
-            self.killed = True
-
-    proc = HungProc()
-
-    async def spawn(*_cmd, **_kwargs):
-        return proc
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr(ld.off_loop_spawn, "run", run_stand_in)
+    monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
     monkeypatch.setattr(ld.SystemdDriver, "_SYSTEMCTL_JOB_TIMEOUT_S", 0.1)
     ok = asyncio.run(asyncio.wait_for(ld.SystemdDriver()._run_systemctl(["systemctl", "--user", "daemon-reload"]), 5))
     assert ok is False
-    assert proc.killed
+    assert [pid for pid, _ in killed] == [int(pid_file.read_text())]

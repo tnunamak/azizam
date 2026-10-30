@@ -13,8 +13,12 @@ Applies to every word in the product UI. Marketing pages (azizam.dev) follow it 
 ## Money words
 
 - A recorded charge: "USD 0.42". A charge under one cent: "Less than USD 0.01".
-- A local request with routing evidence: "Local · no provider charge".
-- Missing amount: "Cost not recorded" (never "Free", never blank, never "0").
+- A request that ran locally, where its receipt names a local backend, records no charge, and shows it was served: "Local · no charge". A request that failed before routing is not local: "Cost not recorded".
+- Local requests beside a total, on their own line under it: "N local · no charge".
+- Every surface uses that one label for a local cost: Library, Try, Models, Usage and the money component. Do not write "Local · no provider charge" or "Local: no provider charge".
+- A paid request whose provider did not report its cost: "Cost not reported by the provider".
+- A total that leaves out requests with no reported cost: "Total excludes N requests without a reported cost". Say what it means in one more line: spend adds only reported costs.
+- A missing amount where the gateway cannot say where the request ran: "Cost not recorded" (never "Free", never blank, never "0"). Give it a help line that says why.
 - Before a paid run: "This uses [model], a paid model. About USD 0.02."
 
 ## Glossary (one name per concept)
@@ -27,18 +31,24 @@ Applies to every word in the product UI. Marketing pages (azizam.dev) follow it 
 | **Model** | An AI model a request runs on | backend, route |
 | **Model name** | The exact string to paste into an app | alias (for members), model id |
 | **Alias** | Builder surfaces only: another accepted model name | - |
-| **Capability** | What you can do: Chat, Images, Video, Voice, Transcription, Music, Sound effects, Embeddings | intent, resource class, kind |
+| **Capability** | What you can do: Chat, Images, Video, Voice, Transcription, Music, Sound effects, Audio, Decisions, Document search, Reranking | intent, resource class, kind |
 | **Workflow** | A configured multi-step process with inputs and outputs | pipeline, graph, binding |
-| **App** | Something that connects to the gateway (Open WebUI, a phone app, Daisy) | client, integration, consumer |
+| **App** | Something that connects to the gateway: a chat app, a script, a phone. Each app has its own keys and plan | integration, consumer |
+| **Client** | The program you set up to use the gateway (Open WebUI, Codex) | app (for the program), integration |
 | **Key** | The secret an app uses | token, credential, API key (except in the "API key" field an app asks for) |
 | **Access plan** | What a person or app may use and spend | profile, policy, plan (alone) |
 | **Person** | Anyone with an account | user, account, principal |
 | **Owner** / **Admin** / **Member** | Roles | operator (in UI), superuser |
 | **Request** | One call an app makes | job (except long media jobs), execution |
+| **Request history** | What your apps sent, kept for a short time so you can check it or run it again. Covers every request kind, such as chat, images or speech | prompt history, log, audit trail |
 | **Receipt** | The record of one request: who, what, outcome, cost, time | log, audit row, trace |
 | **Creation** | One generated image, video or audio file in Library | asset, media item, artifact |
+| **Prompt** | The words a creation was made from, as Library shows and copies them | words (as a label for one creation), input text |
+| **Saved words and chats** | The setting that keeps each creation's prompt, and chats an app asks Azizam to keep. Its name in Settings and Your settings. Its switch reads "Keep the words you used to make things". Its states say "words": "Words aren’t kept", "Only you can see kept words" | prompt memory, prompt keeping, prompts or "Keep prompts" (as a setting name) |
 | **Spend** | Money recorded against providers | cost (for totals), billing |
 | **Cap** | A spend limit | quota, budget (in UI) |
+
+The word “embeddings” may appear only in owner technical helper text.
 
 ## Words that never appear in member surfaces
 

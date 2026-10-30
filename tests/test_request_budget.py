@@ -22,6 +22,10 @@ from gateway import media_jobs
 from tests.test_event_loop_guard import gateway  # noqa: F401 - fixture
 
 MAX_OPENS = 3
+# Home (and Status, which reads Home) also reads the person's kept chats: one read of the media database and one
+# erasure-fence read of the admin database. Measured at 4 on 2026-10-23. The chats stay in Home so that an owner's
+# Home adds no request (web DESIGN.md section 6), which is why the extra open is accepted here and only here.
+MAX_OPENS_BY_PATH = {"/me/api/home": 4, "/me/api/status": 4}
 SAMPLES = 20
 # Per-open delay of the diagnostic run.  The run only shows in a failure note how a slow disk would add up (opens x delay);
 # nothing asserts on its time, so 1 ms shows the same shape as 100 ms at a hundredth of the wait.
@@ -90,4 +94,4 @@ def test_endpoint_budget(gateway, path, auth):  # noqa: F811
     slow, _, _ = asyncio.run(_measure(path, headers, cookies, INJECTED_DELAY))
     p50, p95, injected_p95 = _p(fast[2:], .5), _p(fast[2:], .95), max(slow[1:])
     note = f"{path}: opens={max(warm)} {dict(opened)} p50={p50*1000:.0f}ms p95={p95*1000:.0f}ms injected_p95={injected_p95*1000:.0f}ms"
-    assert max(warm) <= MAX_OPENS, f"PERF {note}"
+    assert max(warm) <= MAX_OPENS_BY_PATH.get(path, MAX_OPENS), f"PERF {note}"

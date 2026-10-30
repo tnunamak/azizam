@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable, Mapping, Sequence
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+from gateway import operation_security
 from gateway.receipts import new_request_id
 
 JSON = dict[str, Any]
@@ -692,6 +693,10 @@ def _request_headers(request_id: str, extra: Mapping[str, str] | None = None) ->
     return headers
 
 
+# These routes take an App key (or a trusted address) through deps.authenticate; the API reference states it.
+APP_KEY_OPENAPI = operation_security.openapi_extra(operation_security.APP_KEY)
+
+
 def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
     def guard(request: Request, path: str) -> tuple[Any, Any] | Response:
         auth = deps.authenticate(request, path)
@@ -699,7 +704,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
             return auth
         return auth, deps.profile_for(auth)
 
-    @app.get("/typesafe/v1/models")
+    @app.get("/typesafe/v1/models", openapi_extra=APP_KEY_OPENAPI)
     async def list_typesafe_models(request: Request) -> Response:
         gate = guard(request, "/typesafe/v1/models")
         if isinstance(gate, Response):
@@ -897,10 +902,10 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
             headers=_response_headers(request_id, result),
         )
 
-    app.add_api_route("/v1/systemone", systemone, methods=["POST"])
-    app.add_api_route("/typesafe/v1/systemone", systemone, methods=["POST"])
+    app.add_api_route("/v1/systemone", systemone, methods=["POST"], openapi_extra=APP_KEY_OPENAPI)
+    app.add_api_route("/typesafe/v1/systemone", systemone, methods=["POST"], openapi_extra=APP_KEY_OPENAPI)
 
-    @app.post("/v1/decisions")
+    @app.post("/v1/decisions", openapi_extra=APP_KEY_OPENAPI)
     async def reserved_openai_decisions(request: Request) -> Response:
         gate = guard(request, "/v1/decisions")
         if isinstance(gate, Response):

@@ -40,7 +40,7 @@ function renderLibrary(assets: unknown[]) {
     requested.push(path);
     if (path.includes("folder_state=1")) return Response.json({ media_folder: null, removal_plan: null });
     if (path.startsWith("/me/api/media?")) return Response.json({ assets, models: [], next_cursor: null });
-    if (path.includes("/download?")) {
+    if (path.includes("/download")) {
       const id = decodeURIComponent(path.split("/")[4]);
       return Response.json({ download_url: `/signed/${id}/original` });
     }
@@ -67,7 +67,7 @@ describe("Library tiles load small previews", () => {
       item("clip", "video", { thumbnail_url: "/signed/clip/thumb", poster_asset_id: "poster", duration_s: 4 }),
     ]);
     fireEvent.error(await screen.findByAltText("Prompt clip"));
-    await waitFor(() => expect(requested).toContain("/me/api/media/poster/download?scope=me"));
+    await waitFor(() => expect(requested).toContain("/me/api/media/poster/download"));
     await waitFor(() => expect(screen.queryByRole("status", { name: "Loading video poster" })).toBeNull());
     expect(screen.getByRole("button", { name: "Play Prompt clip" })).toBeVisible();
     expect(document.querySelector("video")).toHaveAttribute("poster", "/signed/poster/original");
@@ -83,7 +83,7 @@ describe("Library tiles load small previews", () => {
     const thumbnailProbe = dialog.querySelector('img[src="/signed/clip/thumb"]');
     expect(thumbnailProbe).not.toBeNull();
     fireEvent.error(thumbnailProbe!);
-    await waitFor(() => expect(requested).toContain("/me/api/media/poster/download?scope=me"));
+    await waitFor(() => expect(requested).toContain("/me/api/media/poster/download"));
     await waitFor(() => expect(dialog.querySelector("video")).toHaveAttribute("poster", "/signed/poster/original"));
     expect(screen.queryByRole("status", { name: "Loading video poster" })).toBeNull();
   });
@@ -159,7 +159,7 @@ describe("Library tiles load small previews", () => {
     expect(video).not.toBeNull();
     expect(video).toHaveAttribute("preload", "none");
     expect(video).not.toHaveAttribute("src");
-    expect(requested.filter((path) => path.includes("/download?"))).toEqual([]);
+    expect(requested.filter((path) => path.includes("/download"))).toEqual([]);
   });
 
   test("a video whose preview fails to load falls back to the source frame at 0.1 s", async () => {

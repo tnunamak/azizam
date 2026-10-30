@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+from tests.support.app_keys import accountable_person, unguarded
 import json
 import time
 from pathlib import Path
@@ -63,6 +64,12 @@ def hh(tmp_path, monkeypatch):
                            robin_app=robin_app, store=store, owner_ctx=owner_ctx)
 
 
+def _person_for(path, app_id):
+    """The App's accountable person, who is the only actor that may issue its key (owner visibility step 2)."""
+    owner_id = admin_store.get_app(app_id, path=path)["owner_user_id"]
+    return AdminContext(subject=owner_id, actor_id=owner_id, actor_kind="user", roles=frozenset({"owner"}))
+
+
 def _ctx_for(api_key: str, admin: Path) -> proxy.AuthContext:
     identity = runtime_identity_for_app_credential_hash(hash_api_key(api_key), path=admin)
     assert identity is not None
@@ -77,9 +84,9 @@ def _robin_key(hh) -> str:
 def test_service_app_key_has_no_person_or_prompt_memory(hh):
     sa = admin_store.ensure_service_account("ha", path=hh.admin)
     svc = service_app("Home Assistant", path=hh.admin)
-    result = hh.store.create_credential(app_id=svc["id"], data={}, actor=hh.owner_ctx)
+    result = hh.store.create_credential(app_id=svc["id"], data={}, actor=_person_for(hh.admin, svc["id"]))
     assert result["prompt_memory"]["person_id"] is None
-    assert "not remembered" in result["prompt_memory"]["description"]
+    assert "are not kept" in result["prompt_memory"]["description"]
     assert "explicitly ask to save a conversation" in result["prompt_memory"]["description"]
     key = result["api_key"]
     auth = _ctx_for(key, hh.admin)
@@ -103,6 +110,7 @@ def test_removed_admins_service_key_keeps_app_access_without_person(hh):
     # (test_signin_who_can_enter), but keys made before that rule still exist.
     # Model one directly: it was minted by the administrator, who is removed below.
     key = generate_app_api_key()
+    unguarded(hh.admin)  # a key a removed admin's service key made, written before the guards
     admin_store.create_credential_hash(subject_kind="app", subject_id=svc["id"], hash=hash_api_key(key),
                                        prefix=key[:8], created_by=admin_member["id"], path=hh.admin)
     accounts.change_person(admin_member["id"], hh.owner["id"], remove=True, path=hh.admin)
@@ -148,14 +156,14 @@ def test_service_output_stays_in_library_without_prompt_or_full_metadata(hh):
     prompt_memory.put_member(hh.robin["id"], remember=False, retention="never", path=hh.admin)
     sa = admin_store.ensure_service_account("webui", path=hh.admin)
     svc = service_app("Open WebUI", path=hh.admin)
-    auth = _ctx_for(hh.store.create_credential(app_id=svc["id"], data={}, actor=hh.owner_ctx)["api_key"], hh.admin)
+    auth = _ctx_for(hh.store.create_credential(app_id=svc["id"], data={}, actor=_person_for(hh.admin, svc["id"]))["api_key"], hh.admin)
     ctx = proxy._begin_media_delivery(auth)
     try:
         proxy._note_media_metadata_body({"prompt": "robin typed this in the shared web UI"})
         asset_id = proxy.store_asset_bytes(_png(), kind="img", suffix=".png", owner_key_hash=proxy._asset_owner_key(auth))
     finally:
         proxy.media_delivery._CONTEXT.set(None)
-    scope = me_media._MediaScope(app_ids=None, viewer_person_id=hh.owner["id"], user_ids=None, audit_everyone=True)
+    scope = me_media._member_media_scope(hh.owner["id"], hh.admin)
     items = me_media._media_items(
         request=Request({"type": "http", "method": "GET", "path": "/me/api/media", "headers": []}),
         scope=scope, signed_url_builder=lambda *_a, **_k: "u", asset_path_resolver=proxy.asset_cache_path,
@@ -163,35 +171,11 @@ def test_service_output_stays_in_library_without_prompt_or_full_metadata(hh):
         asset_catalog_provider=me_media.create_asset_catalog_provider(proxy.IMAGE_CACHE_DIR),
         asset_metadata_reader=proxy._read_asset_metadata, admin_db_path=hh.admin, media_jobs_path=hh.jobs,
         receipts_path=hh.receipts, prompt_memory_path=hh.jobs)
-    item = next(i for i in items if i["asset_id"] == asset_id)
-    assert item["prompt"] is None
+    # A service App's output names no person, so no person's Library lists it, and its prompt reaches nobody (D51, D52).
+    assert asset_id not in {i["asset_id"] for i in items}
     assert prompt_memory.get_person_prompts(hh.owner["id"]) == {}
-    assert item["workflow_download_url"] is None
-    assert item["source"]["app_id"] == svc["id"]
-    assert "robin typed this" not in item["title"]
+    assert "robin typed this" not in str(items)
 
-
-
-def test_owner_key_on_members_app_is_no_person_but_media_is_visible(hh):
-    result = hh.store.create_credential(app_id=hh.robin_app["id"], data={}, actor=hh.owner_ctx)
-    auth = _ctx_for(result["api_key"], hh.admin)
-    assert auth.identity.person_id is None
-    assert result["prompt_memory"]["person_id"] is None
-    assert "not remembered" in result["prompt_memory"]["description"]
-    assert "explicitly ask to save a conversation" in result["prompt_memory"]["description"]
-    ctx = proxy._begin_media_delivery(auth)
-    try:
-        proxy._note_media_metadata_body({"prompt": SENTINEL})
-        asset_id = proxy.store_asset_bytes(_png(SENTINEL), kind="img", suffix=".png", owner_key_hash=proxy._asset_owner_key(auth))
-    finally:
-        proxy.media_delivery._CONTEXT.set(None)
-    assert ctx.prompt_decision.reason == "no_person"
-    assert prompt_memory.get_person_prompts(hh.owner["id"]) == {}
-    assert prompt_memory.get_person_prompts(hh.robin["id"]) == {}
-    items = _library(hh, me_media._member_media_scope(hh.robin["id"], hh.admin))
-    item = next(i for i in items if i["asset_id"] == asset_id)
-    assert item["source"]["app_id"] == hh.robin_app["id"]
-    assert item["prompt"] is None and item["workflow_download_url"] is None
 
 
 def _library(hh, scope):
@@ -204,28 +188,28 @@ def _library(hh, scope):
         receipts_path=hh.receipts, prompt_memory_path=hh.jobs)
 
 
-@pytest.mark.parametrize("makers", [[], ["another-person"]])
-def test_app_library_visibility_does_not_depend_on_maker_metadata(hh, makers):
+@pytest.mark.parametrize("makers,visible", [([], True), (["another-person"], False)])
+def test_a_recorded_maker_decides_and_an_empty_maker_falls_back_to_the_personal_app(hh, makers, visible):
     auth = _ctx_for(_robin_key(hh), hh.admin)
     asset_id = proxy.store_asset_bytes(_png(), kind="img", suffix=".png", owner_key_hash=proxy._asset_owner_key(auth), maker_person_id=None)
     meta = proxy._read_asset_metadata(asset_id)
     meta["maker_person_ids"] = makers
     proxy._write_asset_metadata(asset_id, meta)
     items = _library(hh, me_media._member_media_scope(hh.robin["id"], hh.admin))
-    assert asset_id in {item["asset_id"] for item in items}
+    assert (asset_id in {item["asset_id"] for item in items}) is visible
 
 
 def test_legacy_service_key_stays_no_person(hh):
     sa = admin_store.ensure_service_account("legacy-svc", path=hh.admin)
     app = service_app("Shared", path=hh.admin)
-    admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key("old-service"), prefix="old", path=hh.admin)
+    admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key("old-service"), prefix="old", path=hh.admin, created_by=accountable_person(hh.admin, app["id"]))
     assert _ctx_for("old-service", hh.admin).identity.person_id is None
 
 
 def test_service_key_full_signed_download_is_refused(hh, monkeypatch):
     sa = admin_store.ensure_service_account("full-export", path=hh.admin)
     app = service_app("Shared", path=hh.admin)
-    key = hh.store.create_credential(app_id=app["id"], data={}, actor=hh.owner_ctx)["api_key"]
+    key = hh.store.create_credential(app_id=app["id"], data={}, actor=_person_for(hh.admin, app["id"]))["api_key"]
     auth = _ctx_for(key, hh.admin)
     ctx = proxy._begin_media_delivery(auth)
     try:
@@ -245,8 +229,9 @@ def test_service_key_full_signed_download_is_refused(hh, monkeypatch):
 
 def test_unresolved_legacy_personal_key_has_no_prompt_access(hh):
     prompt_memory.put_member(hh.robin["id"], remember=False, retention="never", path=hh.admin)
+    unguarded(hh.admin)  # a legacy personal key whose creator is not its person, written before the guards
     admin_store.create_credential_hash(subject_kind="app", subject_id=hh.robin_app["id"],
-        hash=hash_api_key("legacy-off-key"), prefix="old", path=hh.admin)
+        hash=hash_api_key("legacy-off-key"), prefix="old", path=hh.admin, created_by=hh.owner["id"])
     auth = _ctx_for("legacy-off-key", hh.admin)
     ctx = proxy._begin_media_delivery(auth)
     try:
@@ -271,9 +256,9 @@ def test_own_personal_key_warns_about_prompt_access(hh, self_service):
     else:
         app = admin_store.create_app("Owner Try", kind="personal",
                                      owner_user_id=hh.owner["id"], access_plan="person", path=hh.admin)
-        result = hh.store.create_credential(app_id=app["id"], data={}, actor=hh.owner_ctx)
+        result = hh.store.create_credential(app_id=app["id"], data={}, actor=_person_for(hh.admin, app["id"]))
         person = hh.owner["id"]
     assert result["prompt_memory"]["person_id"] == person
-    assert "follow your prompt-memory settings" in result["prompt_memory"]["description"]
-    assert "Anyone holding it can access your saved prompts" in result["prompt_memory"]["description"]
+    assert "follow your saved words and chats setting" in result["prompt_memory"]["description"]
+    assert "Anyone holding it can access your saved words and chats" in result["prompt_memory"]["description"]
     assert _ctx_for(result["api_key"], hh.admin).identity.person_id == person

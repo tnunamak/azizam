@@ -32,8 +32,8 @@ export function SignInConnections({ empty }: { empty: ReactNode }) {
   });
   return (
     <SettingsSection
-      title="Connected with sign-in"
-      description="Apps you approved by signing in. Disconnecting stops them at once."
+      title="Signed-in apps"
+      description="ChatGPT, Claude.ai and other apps that sign in instead of using a key."
     >
       <div className="p-4">
         {isPending ? (

@@ -53,7 +53,7 @@ export function ReceiptsSection() {
     <SettingsSection
       id="receipts"
       title="Receipts"
-      description="Request metadata keeps your usage and spend history. Prompts are not stored in receipts."
+      description="Request metadata keeps your usage and spend history. The words you used are not stored in receipts."
     >
       {!owner ? (
         <p className="text-muted-foreground text-meta p-4">

@@ -714,7 +714,7 @@ class ChunkExecutionTests(unittest.IsolatedAsyncioTestCase):
                 self.reaped = True
 
         process = FakeProcess()
-        with patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)):
+        with patch("gateway.off_loop_spawn.start", new=AsyncMock(return_value=process)):
             task = asyncio.create_task(stt_chunking.run_media_command(
                 ["local-media-command"],
                 timeout_seconds=61,

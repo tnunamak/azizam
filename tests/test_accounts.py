@@ -1,6 +1,8 @@
 """Hermetic account lifecycle tests using temporary SQLite and ASGI clients."""
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import logging
+from tests.support.app_keys import accountable_person
 import sqlite3
 import threading
 import time
@@ -44,6 +46,13 @@ def invited_member(account_db, email="member@example.test"):
 def rows(path, sql, values=()):
     with accounts.connection(path) as conn:
         return [dict(row) for row in conn.execute(sql, values).fetchall()]
+
+
+def session_app_without_plan(path, user_id):
+    app = admin_store.ensure_session_app_for_user(user_id, name="Azizam", path=path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE apps SET access_plan=NULL WHERE id=?", (app["id"],))
+    return app
 
 
 def expect_error(code, operation):
@@ -200,6 +209,27 @@ def test_throttle_persists_ip_bucket_across_email_addresses(account_db):
     expect_error("login_rate_limited", lambda: accounts.throttle("same-ip", "fresh@example.test", path=path, now=1001))
 
 
+def test_the_gateway_setting_raises_the_per_address_limit_and_keeps_the_per_email_limit(account_db, monkeypatch):
+    path, _ = account_db
+    monkeypatch.setenv("AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW", "2000")
+    for index in range(10):
+        accounts.throttle(f"ip-{index}", "member@example.test", path=path, now=1000)
+    expect_error("login_rate_limited", lambda: accounts.throttle("new-ip", "member@example.test", path=path, now=1001))
+
+
+@pytest.mark.parametrize("setting", ["0", "-5", "many", "1.5"])
+def test_an_invalid_login_attempt_setting_logs_one_line_and_keeps_sixty(account_db, monkeypatch, caplog, setting):
+    path, _ = account_db
+    monkeypatch.setenv("AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW", setting)
+    monkeypatch.setattr(accounts, "_invalid_login_attempts_logged", False)
+    with caplog.at_level(logging.WARNING, logger="gateway.accounts"):
+        for index in range(60):
+            accounts.throttle("same-ip", f"member-{index}@example.test", path=path, now=1000)
+        expect_error("login_rate_limited", lambda: accounts.throttle("same-ip", "fresh@example.test", path=path, now=1001))
+    warnings = [record for record in caplog.records if "AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW" in record.getMessage()]
+    assert [record.levelno for record in warnings] == [logging.WARNING]
+
+
 def test_plan_change_applies_to_every_app_that_uses_the_persons_plan(account_db, fast_password_work):
     path, plan = account_db
     user, first_app, _ = invited_member(account_db)
@@ -344,6 +374,89 @@ def test_builtin_invite_login_session_cookie_and_no_store(account_db, account_cl
     assert len(rows(path, "SELECT * FROM account_sessions")) == 1
 
 
+def test_password_sign_in_repairs_a_null_plan_session_app(account_db, account_client, fast_password_work):
+    path, _ = account_db
+    user, _, _ = invited_member(account_db)
+    app = session_app_without_plan(path, user["id"])
+    client, _ = account_client
+
+    response = client.post("/auth/api/login", json={"email": user["email"], "password": PASSWORD})
+
+    assert response.status_code == 200, response.text
+    repaired = admin_store.get_app(app["id"], path=path)
+    assert repaired["access_plan"] == admin_store.PERSON_ASSIGNMENT
+
+
+def test_password_sign_in_does_not_update_a_healthy_session_app(account_db, account_client, fast_password_work):
+    path, _ = account_db
+    user, _, _ = invited_member(account_db)
+    app = admin_store.ensure_session_app_for_user(user["id"], name="Azizam", path=path)
+    quoted_app_id = str(app["id"]).replace("'", "''")
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TRIGGER protect_healthy_session_app BEFORE UPDATE ON apps "
+            f"WHEN OLD.id='{quoted_app_id}' BEGIN SELECT RAISE(ABORT, 'healthy session App was updated'); END"
+        )
+    client, _ = account_client
+
+    response = client.post("/auth/api/login", json={"email": user["email"], "password": PASSWORD})
+
+    assert response.status_code == 200, response.text
+    assert admin_store.get_app(app["id"], path=path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
+
+
+def test_password_sign_in_never_repairs_another_persons_session_app(account_db, account_client, fast_password_work):
+    path, _ = account_db
+    alice, _, _ = invited_member(account_db, "alice@example.test")
+    bob, _, _ = invited_member(account_db, "bob@example.test")
+    bobs_app = session_app_without_plan(path, bob["id"])
+    client, _ = account_client
+
+    response = client.post("/auth/api/login", json={"email": alice["email"], "password": PASSWORD})
+
+    assert response.status_code == 200, response.text
+    assert admin_store.get_session_app_for_user(alice["id"], path=path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
+    assert admin_store.get_app(bobs_app["id"], path=path)["access_plan"] is None
+
+
+def test_a_failed_session_app_repair_does_not_fail_the_sign_in(account_db, account_client, fast_password_work, monkeypatch):
+    path, _ = account_db
+    user, _, _ = invited_member(account_db)
+    client, _ = account_client
+
+    def broken_repair(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(admin_store, "ensure_session_app_for_user", broken_repair)
+    response = client.post("/auth/api/login", json={"email": user["email"], "password": PASSWORD})
+
+    assert response.status_code == 200, response.text
+    assert len(rows(path, "SELECT * FROM account_sessions")) == 1
+
+
+def test_invite_acceptance_repairs_a_null_plan_session_app(account_db, account_client):
+    path, plan = account_db
+    client, state = account_client
+    user = admin_store.upsert_oidc_user(
+        "https://identity.example", "subject-one", email="person@example.test", path=path,
+    )
+    accounts.record_oidc_verification(user["id"], True, path=path)
+    app = session_app_without_plan(path, user["id"])
+    session = session_from_claims(
+        {"sub": user["id"], "email": user["email"]}, role="none", cookie=CookieConfig(secure=False),
+    )
+    state["session"] = session
+    _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], email=user["email"], path=path)
+    csrf = {"x-azizam-csrf": csrf_token_for_session(session, signing_key=SIGNING_KEY)}
+
+    response = client.post(
+        "/auth/api/invite/accept", json={"token": token, "email": user["email"], "name": "Person"}, headers=csrf,
+    )
+
+    assert response.status_code == 200, response.text
+    assert admin_store.get_app(app["id"], path=path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
+
+
 @pytest.mark.parametrize("password", ["", "x" * 1025])
 def test_invite_accept_rejects_password_outside_boundary(account_db, account_client, fast_password_work, password):
     path, plan = account_db
@@ -421,6 +534,43 @@ def test_both_with_no_provider_turned_on_reads_as_built_in_only(account_db, acco
     admin_store.put_operator_setting("sign_in", {"mode": "both"}, path=path)
     options = client.get("/auth/api/options").json()
     assert options["built_in"] is True and options["oidc"] is False
+
+
+def test_options_never_name_the_owner_to_an_anonymous_caller(account_db, account_client):
+    # The sign-in page is public, so anyone can read its options. An owner with a clean display name is still not
+    # published there: the answer carries no owner name at all, and the page names the instance only.
+    path, _ = account_db
+    client, _ = account_client
+    named = admin_store.upsert_oidc_user("https://idp.example.test", "named", email="robin@example.test",
+                                         display_name=" Sam Okafor ", path=path)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=named["id"], now=10**10, path=path)
+    assert admin_store.owner_display_name(path=path) == "Sam Okafor"
+    answer = client.get("/auth/api/options")
+    assert answer.status_code == 200
+    assert "owner_name" not in answer.json()
+    assert "Sam Okafor" not in answer.text
+    assert "robin@example.test" not in answer.text
+
+
+def test_invite_page_names_the_owner_by_role_not_by_name(account_db, account_client):
+    # The invite page is public too: an invitee reads "The gateway owner invited you", never the owner's own name.
+    path, plan = account_db
+    client, _ = account_client
+    owner = admin_store.upsert_oidc_user("https://idp.example.test", "owner", email="robin@example.test",
+                                         display_name="Sam Okafor", path=path)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], now=10**10, path=path)
+    body = client.post("/admin/api/invites", headers=OWNER_HEADERS,
+                       json={"access_plan": plan["id"], "email": "person@example.test", "expires_in": 60}).json()
+    public = client.post("/auth/api/invite", json={"token": body["url"].split("token=", 1)[1]})
+    assert public.status_code == 200
+    assert public.json()["owner_name"] == "The gateway owner"
+    assert "Sam Okafor" not in public.text
+
+
+def test_options_report_fresh_sign_in_once_account_switcher_a2_ships(account_client):
+    # The sign-in page shows its refused-sign-in screen only when the gateway says every single sign-on is fresh.
+    client, _ = account_client
+    assert client.get("/auth/api/options").json()["fresh_sign_in"] is True
 
 
 def test_invalid_account_request_bodies_fail(account_client):
@@ -655,17 +805,19 @@ def test_oidc_invite_binding_gives_preexisting_apps_the_invited_plan(account_db,
     user = admin_store.upsert_oidc_user("https://identity.example", "existing-subject", email="person@example.test", path=path)
     for index in range(2):
         app = admin_store.create_app(f"Existing app {index}", kind="personal", owner_user_id=user["id"], access_plan="person", path=path)
-        admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=f"preexisting-{index}", prefix="test", path=path)
+        admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=f"preexisting-{index}", prefix="test", path=path, created_by=accountable_person(path, app["id"]))
     accounts.record_oidc_verification(user["id"], True, path=path)
     session = session_from_claims({"sub": user["id"], "email": user["email"]}, role="none", cookie=CookieConfig(secure=False))
     state["session"] = session
     _, token = accounts.create_link("invite", "owner", plan_id=plan["id"], email=user["email"], path=path)
     response = client.post("/auth/api/invite/accept", json={"token": token, "email": user["email"], "name": "Person"}, headers={"x-azizam-csrf": csrf_token_for_session(session, signing_key=SIGNING_KEY)})
     assert response.status_code == 200
-    apps = rows(path, "SELECT * FROM apps WHERE owner_user_id=?", (user["id"],))
+    apps = rows(path, "SELECT * FROM apps WHERE owner_user_id=? AND id NOT IN (SELECT app_id FROM session_apps)",
+                (user["id"],))
     assert len(apps) == 3
     assert len(rows(path, "SELECT * FROM credentials")) == 3
     assert {app["access_plan"] for app in apps} == {"person"}
+    assert admin_store.get_session_app_for_user(user["id"], path=path)["access_plan"] == admin_store.PERSON_ASSIGNMENT
     assert accounts.plan_for_user(user["id"], path=path) == plan["id"]
 
 

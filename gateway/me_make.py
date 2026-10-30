@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Callable, Mapping, Protocol
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from gateway import admin_store, media_jobs, ownership, prompt_memory, receipt_store
+from gateway import admin_store, media_jobs, ownership, prompt_memory, receipt_store, request_source
 from gateway.admin_oidc import AdminSession
 from gateway.public_failure import PublicFailure, describe, project_job
 from gateway import output_availability
@@ -299,6 +299,73 @@ def resume_jobs(*, runtime: MakeRuntime, jobs_path: Path, enabled: bool = True) 
     return resumed
 
 
+def record_dispatch(
+    job_id: str,
+    *,
+    backend: str | None,
+    started_at_ms: int,
+    remote: bool,
+    jobs_path: Path,
+    receipts_path: Path,
+) -> bool:
+    """Record on the job's own receipt where its work ran and when it began.
+
+    The runtime calls this once work has reached a backend. A job refused
+    before that point never calls it, so its receipt stays unrecorded.
+    """
+    try:
+        job = media_jobs.get(job_id, path=jobs_path)
+        request_id = str((job or {}).get("request_id") or "")
+        if not request_id:
+            return False
+        return receipt_store.record_dispatch(
+            request_id, backend=backend, started_at_ms=started_at_ms, remote=remote, path=receipts_path,
+        )
+    except Exception as exc:  # noqa: BLE001 - the picture is made; its receipt is best-effort here.
+        log.warning("make job %s dispatch not recorded: %s", job_id, type(exc).__name__)
+        return False
+
+
+def person_job_state(job_id: str, person_id: str, *, admin_path: Path, jobs_path: Path) -> dict[str, Any] | None:
+    """A person's own make job, as the picture logic reads it: its status and the ids of its pictures.
+
+    None when the job is not theirs or does not exist. Pictures are still read through the Library.
+    """
+    try:
+        job = _own_make_job(job_id, person_id, admin_path=admin_path, jobs_path=jobs_path)
+    except PublicFailure:
+        return None
+    asset_ids = [str(asset["asset_id"]) for asset in job.get("assets") or []
+                 if str(asset.get("asset_id") or "").startswith("img_")]
+    return {"status": str(job.get("status") or ""), "asset_ids": asset_ids}
+
+
+def start_person_job(
+    request: Request,
+    body: Mapping[str, Any],
+    *,
+    user: Mapping[str, Any],
+    runtime: MakeRuntime,
+    find_owned_asset: OwnedAssetFinder,
+    admin_path: Path,
+    jobs_path: Path,
+    receipts_path: Path,
+) -> dict[str, Any]:
+    """Start a make job for a person from inside the gateway, on the same path a make page request takes.
+
+    The gateway uses it for work the person asked for indirectly, such as their avatar. The job is stamped with
+    the person as its maker, so it shows in their Library. Raises PublicFailure when the job cannot start.
+    """
+    try:
+        _status, job = _submit(
+            request, dict(body), user=user, runtime=runtime, find_owned_asset=find_owned_asset,
+            idempotency_key=None, admin_path=admin_path, jobs_path=jobs_path, receipts_path=receipts_path,
+        )
+    except _AdmissionRefused:
+        raise PublicFailure("make_unavailable", 503) from None
+    return job
+
+
 def _submit(
     request: Request,
     body: Any,
@@ -355,6 +422,8 @@ def _submit(
         metadata={"mode": JOB_MODE, "requested_model": model[:160],
                   **({"source_asset_id": source_asset_id} if source_asset_id else {})},
     )
+    # The session names the person the job is for. The job is stamped with that person, never with the App's owner.
+    request_source.note_maker(app_id, user_id)
     try:
         created = media_jobs.create(job, outstanding_limits=_outstanding_limits(app_id, runtime.limits),
                                     input_data=backend_body, path=jobs_path)
@@ -388,7 +457,15 @@ def _submit(
         _fail(job.job_id, failure.message, jobs_path)
         raise failure from None
     _event(job.job_id, "queued", media_jobs.STATUS_QUEUED, jobs_path)
-    runtime.schedule(job.job_id, run_job(job.job_id, runtime=runtime, jobs_path=jobs_path))
+    try:
+        runtime.schedule(job.job_id, run_job(job.job_id, runtime=runtime, jobs_path=jobs_path))
+    except Exception as exc:  # noqa: BLE001
+        # No task will run this job, so settle it now: it must not hold a place in the queue or a prompt.
+        log.warning("make job %s could not be scheduled: %s", job.job_id, type(exc).__name__)
+        runtime.drop_payload(job.job_id)
+        failure = PublicFailure("make_queue_failed", 500, job_id=job.job_id)
+        _fail(job.job_id, failure.message, jobs_path)
+        raise failure from None
     return 202, _client_job(job.job_id, jobs_path)
 
 

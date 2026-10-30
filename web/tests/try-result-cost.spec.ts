@@ -1,9 +1,9 @@
 import { expect, it } from "vitest";
 import { costFrom } from "../src/app/try/result-cost";
 
-it("reports no provider charge for a local result", () => {
+it("reports no charge for a local result", () => {
   expect(costFrom({ decision: "yes" }, undefined, "Local")).toBe(
-    "Local · no provider charge",
+    "Local · no charge",
   );
 });
 
@@ -14,7 +14,7 @@ it("keeps a local label for a measured zero provider charge", () => {
       new Response(null, { headers: { "x-litellm-response-cost": "0" } }),
       "Local",
     ),
-  ).toBe("Local · no provider charge");
+  ).toBe("Local · no charge");
 });
 
 it("omits missing locality and cost", () => {

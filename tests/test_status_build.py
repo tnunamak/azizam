@@ -60,37 +60,11 @@ class _WorkerGate:
         self.watchdog.join()
 
 
-async def _join_callers(count, entered):
-    """Wait until each real cache caller reaches its await and the builder starts."""
-    joined = asyncio.Event()
-    arrivals = 0
-
-    async def caller():
-        nonlocal arrivals
-        arrivals += 1
-        if arrivals == count:
-            joined.set()
-        return await status.get_cached_status({})
-
-    tasks = [asyncio.create_task(caller()) for _ in range(count)]
-    try:
-        await asyncio.wait_for(joined.wait(), timeout=5)
-        await asyncio.wait_for(entered.wait(), timeout=5)
-    except BaseException:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        raise
-    return tasks
-
-
 class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.patches = ExitStack()
         self.addCleanup(self.patches.close)
-        self.patches.enter_context(patch.object(status, "_CACHE", {"ts": 0.0, "data": None}))
-        if hasattr(status, "_BUILD_TASK"):
-            self.patches.enter_context(patch.object(status, "_BUILD_TASK", None))
+        self.patches.enter_context(patch.object(status, "_SNAPSHOT", {}))
 
     def isolate_sections(self):
         """Exercise the actual builder without host, service or filesystem probes."""
@@ -124,84 +98,13 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
                 return {"available": True}
 
             self.patches.enter_context(patch.object(status, "_metrics_section", blocking_metrics))
-            build = asyncio.create_task(status.get_cached_status({}))
+            build = asyncio.create_task(status.build_status_payload({}))
             try:
                 await gate.assert_loop_progress(self, build)
             finally:
                 gate.release.set()
                 payload = await asyncio.wait_for(build, timeout=10)
         self.assertEqual(payload["metrics"], {"available": True})
-
-    async def test_concurrent_callers_share_one_build(self):
-        release, entered = asyncio.Event(), asyncio.Event()
-        calls = 0
-        expected = {"cache_age_s": 0, "backends": []}
-
-        async def build(_config):
-            nonlocal calls
-            calls += 1
-            entered.set()
-            await release.wait()
-            return expected
-
-        self.patches.enter_context(patch.object(status, "build_status_payload", build))
-        try:
-            tasks = await _join_callers(12, entered)
-            self.assertTrue(all(not task.done() for task in tasks))
-            self.assertEqual(calls, 1)
-        finally:
-            release.set()
-            if "tasks" in locals():
-                results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=5)
-        self.assertEqual(calls, 1)
-        self.assertEqual(results, [expected] * 12)
-
-    async def test_failure_releases_all_waiters_and_can_retry(self):
-        release, entered = asyncio.Event(), asyncio.Event()
-        calls = 0
-
-        async def build(_config):
-            nonlocal calls
-            calls += 1
-            entered.set()
-            await release.wait()
-            raise RuntimeError("failed build")
-
-        self.patches.enter_context(patch.object(status, "build_status_payload", build))
-        try:
-            tasks = await _join_callers(3, entered)
-            self.assertTrue(all(not task.done() for task in tasks))
-        finally:
-            release.set()
-            if "tasks" in locals():
-                results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=5)
-        self.assertTrue(all(isinstance(row, RuntimeError) for row in results))
-        self.assertEqual([str(row) for row in results], ["failed build"] * 3)
-        self.assertEqual(calls, 1)
-        self.assertIsNone(status._CACHE["data"])
-        with patch.object(status, "build_status_payload", AsyncMock(return_value={"ok": True})) as retry:
-            self.assertEqual(await asyncio.wait_for(status.get_cached_status({}), timeout=5), {"ok": True})
-            self.assertEqual(retry.await_count, 1)
-
-    async def test_cancelled_caller_does_not_cancel_shared_build(self):
-        release, entered = asyncio.Event(), asyncio.Event()
-
-        async def build(_config):
-            entered.set()
-            await release.wait()
-            return {"ok": True}
-
-        build_fn = AsyncMock(side_effect=build)
-        self.patches.enter_context(patch.object(status, "build_status_payload", build_fn))
-        try:
-            first, second = await _join_callers(2, entered)
-            first.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await first
-        finally:
-            release.set()
-        self.assertEqual(await asyncio.wait_for(second, timeout=5), {"ok": True})
-        self.assertEqual(build_fn.await_count, 1)
 
     async def test_worker_uses_detached_config_and_live_jobs_stay_on_loop(self):
         proxy = self.isolate_sections()
@@ -222,7 +125,7 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
 
             self.patches.enter_context(patch.object(status, "_build_models", models))
             self.patches.enter_context(patch.object(status, "_live_video_jobs", jobs))
-            build = asyncio.create_task(status.get_cached_status(config))
+            build = asyncio.create_task(status.build_status_payload(config))
             try:
                 await gate.assert_loop_progress(self, build)
                 config["images"]["default_model"] = "edited"
@@ -232,21 +135,6 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
                 payload = await asyncio.wait_for(build, timeout=10)
         self.assertEqual(payload["models"], {"model": "original"})
         self.assertEqual(payload["video_jobs"][0]["percent"], 75)
-
-    async def test_cache_ttl_starts_when_build_finishes(self):
-        clock = [100.0]
-
-        async def build(_config):
-            clock[0] += status._CACHE_TTL_S + 1
-            return {"cache_age_s": 0}
-
-        with patch.object(status, "time", SimpleNamespace(monotonic=lambda: clock[0])), patch.object(
-            status, "build_status_payload", AsyncMock(side_effect=build)
-        ) as build_fn:
-            await status.get_cached_status({})
-            clock[0] += 1
-            self.assertEqual((await status.get_cached_status({}))["cache_age_s"], 1)
-            self.assertEqual(build_fn.await_count, 1)
 
     async def test_disk_pressure_stat_does_not_delay_loop(self):
         self.isolate_sections()
@@ -264,7 +152,7 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
             self.patches.enter_context(patch.object(status, "_disk_partitions", return_value=[
                 {"target": "/test-disk", "pct_used": 90}
             ]))
-            build = asyncio.create_task(status.get_cached_status({
+            build = asyncio.create_task(status.build_status_payload({
                 "model_routing": {"model_dir": "/test-models"}
             }))
             try:

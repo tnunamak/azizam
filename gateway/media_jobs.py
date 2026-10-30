@@ -27,7 +27,7 @@ see the workstream note for suggested integration points.
 
 from __future__ import annotations
 
-from gateway import request_connections
+from gateway import request_connections, request_source
 from gateway.compat import get_env
 from gateway.sqlite_startup import connect, store_startup
 
@@ -57,7 +57,7 @@ DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB
 # starts new work, and the old job keeps its history without the request ID.
 REPLAY_WINDOW_S = 14 * 24 * 3600
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "canceled"]
 PHASE_FIELDS = ("accepted_at", "queued_at", "started_at", "first_output_at", "finished_at")
@@ -152,7 +152,10 @@ ADMIN_ONLY_FIELDS = frozenset(
 # Metadata bag and the raw event payloads are internal-only. They are the
 # place where adapter-specific breadcrumbs live (prompt_id, queue position,
 # probe response codes, etc.) and they have already passed the safety guard.
-INTERNAL_ONLY_FIELDS = frozenset({"metadata", "owner_key_hash", "owner_scope", "input_hash", "creating_receipt_id"})
+INTERNAL_ONLY_FIELDS = frozenset({
+    "metadata", "owner_key_hash", "owner_scope", "input_hash", "creating_receipt_id",
+    "maker_person_id", "maker_credential_id", "maker_connection_id",
+})
 
 # Metadata/event keys that smell like raw payloads, secrets, or media bytes.
 # Sourced from ``gateway.redaction`` so receipts and media jobs share one
@@ -215,6 +218,11 @@ class MediaJob:
     previous_attempts: list[dict[str, Any]] = field(default_factory=list)
     # Durable provenance, independent of the reusable request/idempotency key.
     creating_receipt_id: str | None = None
+    # Who made the job, stamped once at creation from the authenticated request (never from the body or a parent
+    # link). Reads authorize from these alone. A job with none of them has no maker and no reader.
+    maker_person_id: str | None = None
+    maker_credential_id: str | None = None
+    maker_connection_id: str | None = None
     error_code: str | None = None
     error_category: str | None = None
     retryable: bool | None = None
@@ -260,6 +268,9 @@ class MediaJob:
             "api_key_name": self.api_key_name,
             "parent_request_id": self.parent_request_id,
             "creating_receipt_id": self.creating_receipt_id,
+            "maker_person_id": self.maker_person_id,
+            "maker_credential_id": self.maker_credential_id,
+            "maker_connection_id": self.maker_connection_id,
             "metadata": dict(self.metadata),
             "owner_scope": self.owner_scope,
             "input_hash": self.input_hash,
@@ -365,6 +376,21 @@ CREATE TABLE IF NOT EXISTS media_hidden_assets (
   hidden_at INTEGER NOT NULL,
   PRIMARY KEY (person_id, asset_id, job_id)
 );
+CREATE TABLE IF NOT EXISTS media_job_asset_origins (
+  asset_id TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  origin_id TEXT NOT NULL,
+  PRIMARY KEY (asset_id, job_id),
+  FOREIGN KEY (job_id) REFERENCES media_jobs(job_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS media_job_asset_origins_asset
+  ON media_job_asset_origins(asset_id, origin_id);
+CREATE TABLE IF NOT EXISTS media_library_erasure_fences (
+  person_id TEXT NOT NULL,
+  origin_id TEXT NOT NULL,
+  erased_at INTEGER NOT NULL,
+  PRIMARY KEY (person_id, origin_id)
+);
 CREATE TABLE IF NOT EXISTS media_jobs_schema_version (version INTEGER NOT NULL);
 
 -- Facts are immutable metadata. References can outlive receipts when a kept record survives.
@@ -405,12 +431,13 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
     row = conn.execute("SELECT version FROM media_jobs_schema_version LIMIT 1").fetchone()
+    previous_version = int(row[0]) if row is not None else None
     if row is None:
         conn.execute(
             "INSERT INTO media_jobs_schema_version(version) VALUES (?)",
             (SCHEMA_VERSION,),
         )
-    elif int(row[0]) not in (1, 2, 3, SCHEMA_VERSION):
+    elif previous_version not in (1, 2, 3, 4, 5, SCHEMA_VERSION):
         raise sqlite3.DatabaseError(
             f"media_jobs schema version mismatch: db={row[0]} code={SCHEMA_VERSION}"
         )
@@ -428,6 +455,15 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     destination_columns = {r[1] for r in conn.execute("PRAGMA table_info(retention_fact_destinations)")}
     if "created_at" not in destination_columns:
         conn.execute("ALTER TABLE retention_fact_destinations ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
+    # Version 6: the maker stamp. Rows made before it keep NULL, which means no maker and no reader (fail closed).
+    job_columns = {r[1] for r in conn.execute("PRAGMA table_info(media_jobs)")}
+    for column in ("maker_person_id", "maker_credential_id", "maker_connection_id"):
+        if column not in job_columns:
+            conn.execute(f"ALTER TABLE media_jobs ADD COLUMN {column} TEXT")
+    # Read a person's jobs by their maker stamp as a range, not a table scan. Created after the columns exist.
+    conn.execute("CREATE INDEX IF NOT EXISTS media_jobs_maker_person ON media_jobs(maker_person_id, updated_at, job_id)")
+    if previous_version is None or previous_version < SCHEMA_VERSION:
+        _backfill_asset_origins(conn)
     _repair_event_sequences(conn)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS media_job_event_sequence ON media_job_events(job_id, sequence)")
     # Baseline writers omit sequence. SQLite serializes this with their insert,
@@ -458,6 +494,45 @@ def _repair_event_sequences(conn: sqlite3.Connection, job_id: str | None = None)
         next_sequences[owner_job_id] += 1
         conn.execute("UPDATE media_job_events SET sequence=? WHERE id=?",
                      (next_sequences[owner_job_id], event_id))
+
+
+def _asset_ids(job_data: Mapping[str, Any]) -> set[str]:
+    assets = job_data.get("assets")
+    if not isinstance(assets, list):
+        return set()
+    return {
+        str(asset_id)
+        for asset in assets if isinstance(asset, Mapping)
+        for asset_id in (asset.get("asset_id") or asset.get("id"),)
+        if asset_id
+    }
+
+
+def _backfill_asset_origins(conn: sqlite3.Connection) -> None:
+    """Build the indexed asset-to-creating-request relation for an older store."""
+    pending: list[tuple[str, str, str]] = []
+    for job_id, job_json in conn.execute("SELECT job_id, job_json FROM media_jobs"):
+        try:
+            data = json.loads(job_json)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(data, Mapping):
+            continue
+        origin_id = _receipt_link_candidate(data)
+        if not origin_id:
+            continue
+        pending.extend((asset_id, str(job_id), origin_id) for asset_id in _asset_ids(data))
+        if len(pending) >= 1000:
+            conn.executemany(
+                "INSERT OR IGNORE INTO media_job_asset_origins(asset_id,job_id,origin_id) VALUES(?,?,?)",
+                pending,
+            )
+            pending.clear()
+    if pending:
+        conn.executemany(
+            "INSERT OR IGNORE INTO media_job_asset_origins(asset_id,job_id,origin_id) VALUES(?,?,?)",
+            pending,
+        )
 
 
 def init_db(path: Path = DB_PATH) -> None:
@@ -516,6 +591,9 @@ def _coerce_to_job(job_or_dict: Any) -> MediaJob:
             api_key_name=data.get("api_key_name"),
             parent_request_id=data.get("parent_request_id"),
             creating_receipt_id=data.get("creating_receipt_id"),
+            maker_person_id=data.get("maker_person_id"),
+            maker_credential_id=data.get("maker_credential_id"),
+            maker_connection_id=data.get("maker_connection_id"),
             metadata=dict(data.get("metadata") or {}),
             owner_scope=data.get("owner_scope"),
             input_hash=data.get("input_hash"),
@@ -535,6 +613,7 @@ def upsert(
     job: MediaJob | Mapping[str, Any],
     *,
     path: Path = DB_PATH,
+    maker_from_request: bool = True,
 ) -> MediaJob:
     """Insert a job row or update the row with the same ``job_id``.
 
@@ -543,8 +622,15 @@ def upsert(
     held by a different job raises ``sqlite3.IntegrityError`` and changes
     nothing; callers should look up by ``request_id`` first. An existing
     row's request ID is never restored after it was cleared.
+
+    The maker follows ``create``: a job written under an authenticated request takes that request's maker, and
+    ``maker_from_request=False`` keeps the maker the job carries. A row that already exists keeps the maker it was
+    stamped with, whoever writes it again.
     """
     record = _coerce_to_job(job)
+    if maker_from_request:
+        record.maker_person_id, record.maker_credential_id, record.maker_connection_id = (
+            request_source.job_maker(record.app_id))
     with _conn(path) as conn:
         _write_job(conn, record)
         conn.commit()
@@ -606,8 +692,12 @@ def create(
     outstanding_limits: Iterable[OutstandingLimit] = (),
     input_data: Mapping[str, Any] | None = None,
     path: Path = DB_PATH,
+    maker_from_request: bool = True,
 ) -> MediaJob:
     """Create a job; replay only matching owner, operation and submission facts.
+
+    The job's maker is the authenticated request's maker. A caller that indexes work made by someone else passes
+    ``maker_from_request=False``, and the maker it set on the job stands.
 
     A finished job older than ``REPLAY_WINDOW_S`` gives up its request ID to
     the new job instead of replaying.
@@ -630,6 +720,10 @@ def create(
     record.owner_scope = stored_owner_key(record.owner_key_hash, app_id=record.app_id) or "unscoped"
     # Never accept a caller-supplied digest as proof that the input matches.
     record.input_hash = _input_hash(record, input_data)
+    # The maker is the person and credential of the authenticated request, never a field of the submission.
+    if maker_from_request:
+        record.maker_person_id, record.maker_credential_id, record.maker_connection_id = (
+            request_source.job_maker(record.app_id))
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         if record.request_id:
@@ -649,9 +743,11 @@ def create(
             if existing:
                 data = json.loads(existing[0])
                 previous = _coerce_to_job(data)
+                # A replay returns the stored job, so it must be the same maker's job, or one maker reads another's.
                 if (not previous.owner_scope or not previous.input_hash
                         or previous.owner_scope != record.owner_scope or previous.intent != record.intent
-                        or previous.input_hash != record.input_hash):
+                        or previous.input_hash != record.input_hash
+                        or (previous.maker_person_id or None) != (record.maker_person_id or None)):
                     raise IdempotencyConflict()
                 conn.rollback()
                 return _coerce_to_job(data)
@@ -703,6 +799,10 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
         if job.request_id and job.request_id != previous[1]:
             job.request_id = previous[1] or ""
         data = json.loads(previous[0])
+        # The maker is stamped once, by create(). A later write, from a copy made before the stamp, keeps the stored one.
+        job.maker_person_id = data.get("maker_person_id")
+        job.maker_credential_id = data.get("maker_credential_id")
+        job.maker_connection_id = data.get("maker_connection_id")
         preserved = ("accepted_at",) if new_attempt else (*PHASE_FIELDS, "attempt_number", "previous_attempts")
         stale_attempt = data.get("attempt_number") != job.attempt_number
         for name in preserved:
@@ -719,8 +819,9 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
     conn.execute(
         "INSERT INTO media_jobs "
         "(job_id, request_id, intent, workflow, backend, status, progress, error, "
-        " created_at, updated_at, app_profile, api_key_name, parent_request_id, job_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        " created_at, updated_at, app_profile, api_key_name, parent_request_id, job_json, "
+        " maker_person_id, maker_credential_id, maker_connection_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(job_id) DO UPDATE SET request_id=excluded.request_id, intent=excluded.intent, "
         "workflow=excluded.workflow, backend=excluded.backend, status=excluded.status, "
         "progress=excluded.progress, error=excluded.error, created_at=excluded.created_at, "
@@ -742,8 +843,17 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
             job.api_key_name,
             job.parent_request_id,
             _job_payload(job),
+            job.maker_person_id,
+            job.maker_credential_id,
+            job.maker_connection_id,
         ),
     )
+    conn.execute("DELETE FROM media_job_asset_origins WHERE job_id=?", (job.job_id,))
+    if job.creating_receipt_id:
+        conn.executemany(
+            "INSERT INTO media_job_asset_origins(asset_id,job_id,origin_id) VALUES(?,?,?)",
+            [(asset_id, job.job_id, job.creating_receipt_id) for asset_id in sorted(_asset_ids(job.to_dict("internal")))],
+        )
 
 
 def _clear_prompt_derivatives(job: MediaJob) -> None:
@@ -818,6 +928,75 @@ def delete_person_hides_in(conn: sqlite3.Connection, person_id: str) -> int:
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_hidden_assets'").fetchone() is None:
         return 0
     return conn.execute("DELETE FROM media_hidden_assets WHERE person_id=?", (person_id,)).rowcount
+
+
+def request_ids_for_assets_in(conn: sqlite3.Connection, asset_ids: Iterable[str]) -> set[str]:
+    """The creating receipt IDs of jobs that produced these assets, inside the caller's transaction."""
+    ids = sorted({str(asset_id) for asset_id in asset_ids if asset_id})
+    if not ids or conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_job_asset_origins'"
+    ).fetchone() is None:
+        return set()
+    found: set[str] = set()
+    for offset in range(0, len(ids), 500):
+        chunk = ids[offset:offset + 500]
+        marks = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"SELECT DISTINCT origin_id FROM media_job_asset_origins WHERE asset_id IN ({marks})",
+            chunk,
+        ).fetchall()
+        found.update(str(row[0]) for row in rows if row[0])
+    return found
+
+
+def request_ids_for_jobs_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> set[str]:
+    """The creating receipt IDs of these jobs, with a legacy fallback."""
+    ids = sorted({str(job_id) for job_id in job_ids if job_id})
+    if not ids or conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_jobs'"
+    ).fetchone() is None:
+        return set()
+    found: set[str] = set()
+    for offset in range(0, len(ids), 500):
+        chunk = ids[offset:offset + 500]
+        marks = ",".join("?" for _ in chunk)
+        rows = conn.execute(f"SELECT job_json FROM media_jobs WHERE job_id IN ({marks})", chunk).fetchall()
+        for row in rows:
+            try:
+                data = json.loads(row[0])
+            except (TypeError, ValueError):
+                continue
+            if isinstance(data, Mapping):
+                origin_id = _receipt_link_candidate(data)
+                if origin_id:
+                    found.add(origin_id)
+    return found
+
+
+def fence_library_origins_in(
+    conn: sqlite3.Connection, person_id: str, origin_ids: Iterable[str], *, erased_at: int | None = None,
+) -> int:
+    """Persist per-item write fences in the caller's media transaction."""
+    ids = sorted({str(origin_id) for origin_id in origin_ids if origin_id})
+    if not person_id or not ids:
+        return 0
+    timestamp = _now() if erased_at is None else int(erased_at)
+    conn.executemany(
+        "INSERT INTO media_library_erasure_fences(person_id,origin_id,erased_at) VALUES(?,?,?) "
+        "ON CONFLICT(person_id,origin_id) DO UPDATE SET erased_at=MAX(erased_at,excluded.erased_at)",
+        [(person_id, origin_id, timestamp) for origin_id in ids],
+    )
+    return len(ids)
+
+
+def library_origin_erased_in(conn: sqlite3.Connection, person_id: str, origin_id: str) -> bool:
+    """Whether this person's Library deletion already fenced the creating request."""
+    if not person_id or not origin_id:
+        return False
+    return conn.execute(
+        "SELECT 1 FROM media_library_erasure_fences WHERE person_id=? AND origin_id=?",
+        (person_id, origin_id),
+    ).fetchone() is not None
 
 
 # The connection already waits ``busy_timeout`` for a lock; these are the retries after that.
@@ -996,9 +1175,13 @@ def recent(
     updated_since: int | None = None,
     include_active: bool = False,
     before: tuple[int, str] | None = None,
+    job_ids: list[str] | None = None,
+    request_ids: list[str] | None = None,
+    maker_person_ids: list[str] | None = None,
     path: Path = DB_PATH,
 ) -> list[dict[str, Any]]:
-    """Return up to ``limit`` most-recently-updated jobs, newest first."""
+    """Return up to ``limit`` most-recently-updated jobs, newest first. ``job_ids``, ``request_ids`` and
+    ``maker_person_ids`` are positive allow-lists."""
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
     if limit <= 0:
@@ -1015,6 +1198,12 @@ def recent(
                 ownership.append(f"json_extract(job_json, '$.{field}') IN ({','.join('?' for _ in values)})")
                 params.extend(values)
         clauses.append("(" + " OR ".join(ownership) + ")")
+    if maker_person_ids is not None:
+        # The durable maker stamp, read from its own indexed column. An empty list matches nothing.
+        if not maker_person_ids:
+            return []
+        clauses.append(f"maker_person_id IN ({','.join('?' for _ in maker_person_ids)})")
+        params.extend(maker_person_ids)
     if app_profile is not None:
         clauses.append("app_profile = ?")
         params.append(app_profile)
@@ -1036,6 +1225,16 @@ def recent(
     if before is not None:
         clauses.append("(updated_at, job_id) < (?, ?)")
         params.extend(before)
+    if job_ids is not None or request_ids is not None:
+        # One allow-list of job ids or of their request ids; an empty list matches nothing.
+        if not job_ids and not request_ids:
+            return []
+        if job_ids:
+            clauses.append(f"job_id IN ({','.join('?' for _ in job_ids)})")
+            params.extend(job_ids)
+        if request_ids:
+            clauses.append(f"request_id IN ({','.join('?' for _ in request_ids)})")
+            params.extend(request_ids)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(int(limit))
     with _conn(path) as conn:

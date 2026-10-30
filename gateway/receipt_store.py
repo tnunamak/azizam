@@ -29,7 +29,7 @@ the requested audience.
 
 from __future__ import annotations
 
-from gateway import request_connections
+from gateway import request_connections, request_history_slot
 from gateway.compat import get_env
 from gateway.sqlite_startup import connect, connect_readonly, store_startup
 
@@ -327,6 +327,7 @@ def finalize(
             raise ValueError("finish receipt with a terminal status before finalizing")
         receipt.updated_at_ms = int(now_ms if now_ms is not None else time.time() * 1000)
     data = _coerce_to_internal_dict(receipt)
+    request_history_slot.observe(data.get("request_id"), data.get("path"), data.get("parent_request_id"))
     _assert_lifecycle_data(data, terminal=True)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -343,6 +344,11 @@ def finalize(
         for field in _IMMUTABLE_ACCEPTED_FIELDS:
             if field in accepted:
                 merged[field] = accepted[field]
+        # The maker decides who reads the full retention entry, so the accepted value wins, absent or not.
+        if accepted.get("maker_person_id") is None:
+            merged.pop("maker_person_id", None)
+        else:
+            merged["maker_person_id"] = accepted["maker_person_id"]
         for field in PHASE_FIELDS:
             if accepted.get(field) is not None:
                 merged[field] = accepted[field]
@@ -372,14 +378,13 @@ def finalize(
 
 
 def _filter_for_audience(
-    data: Mapping[str, Any], audience: str, *,
-    viewer_person_id: str | None = None,
+    data: Mapping[str, Any], audience: str, *, viewer_person_id: str | None = None,
 ) -> dict[str, Any]:
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
+    # Only the maker the receipt names reads the full entry. Owning the App the request came through is not enough.
     retention_detail = audience == "internal" or bool(
-        viewer_person_id and data.get("maker_person_id") == viewer_person_id
-    )
+        viewer_person_id and data.get("maker_person_id") == viewer_person_id)
     return serialize_receipt_for_audience(
         _with_source(data), audience, from_store=True, retention_detail=retention_detail,
     )
@@ -439,6 +444,7 @@ def record(
     Uses INSERT OR REPLACE so retries with the same request_id are idempotent.
     """
     data = _coerce_to_internal_dict(receipt)
+    request_history_slot.observe(data.get("request_id"), data.get("path"), data.get("parent_request_id"))
     _assert_safe(data)
     ts = int(created_at if created_at is not None else time.time())
     with _conn(path) as conn:
@@ -465,6 +471,37 @@ def record(
         )
         conn.commit()
     return data["request_id"]
+
+
+def update_retention(request_id: str, entry: Mapping[str, Any], *, path: Path = DB_PATH) -> bool:
+    """Set one content kind's outcome on a stored receipt, after its write has resolved (section 13.3).
+
+    The other kinds' entries stay as they are. The value is checked by the same validator the receipt uses, so the
+    stored entry can only be one the receipt vocabulary allows.
+    """
+    if not request_id:
+        raise ValueError("request_id is required")
+    if not path.exists():
+        return False
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT receipt_json FROM receipts WHERE request_id = ?", (request_id,)).fetchone()
+        if row is None:
+            conn.rollback()
+            return False
+        data = _safe_loads(row[0])
+        if not isinstance(data, Mapping):
+            conn.rollback()
+            raise ValueError("cannot update malformed stored receipt")
+        kept = [item for item in (data.get("retention") or []) if item.get("kind") != entry.get("kind")]
+        data = {**data, "retention": validate_retention([*kept, dict(entry)])}
+        _assert_safe(data)
+        conn.execute(
+            "UPDATE receipts SET receipt_json = ? WHERE request_id = ?",
+            (json.dumps(data, ensure_ascii=False, sort_keys=True), request_id),
+        )
+        conn.commit()
+        return True
 
 
 def update_cost(
@@ -498,6 +535,54 @@ def update_cost(
             conn.rollback()
             raise ValueError("cannot update malformed stored receipt")
         updated = _with_cost(data, cost)
+        _assert_safe(updated)
+        conn.execute(
+            "UPDATE receipts SET receipt_json = ? WHERE request_id = ?",
+            (json.dumps(updated, ensure_ascii=False, sort_keys=True), request_id),
+        )
+        conn.commit()
+        return True
+
+
+def record_dispatch(
+    request_id: str,
+    *,
+    backend: str | None,
+    started_at_ms: int,
+    remote: bool,
+    path: Path = DB_PATH,
+) -> bool:
+    """Record where a stored receipt's work ran and when it began. The first dispatch wins.
+
+    ``remote`` can only turn on, so a request a provider served stays remote. The cost is
+    not copied: the receipt that recorded it keeps it, so one request's spend is not counted twice.
+    """
+    if not request_id:
+        raise ValueError("request_id is required")
+    if not path.exists():
+        return False
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT receipt_json FROM receipts WHERE request_id = ?",
+            (request_id,),
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return False
+        data = _safe_loads(row[0])
+        if not isinstance(data, Mapping):
+            conn.rollback()
+            raise ValueError("cannot update malformed stored receipt")
+        if data.get("started_at_ms") is not None:
+            conn.rollback()
+            return False
+        updated = {
+            **data,
+            "backend": backend,
+            "started_at_ms": int(started_at_ms),
+            "remote": bool(data.get("remote")) or bool(remote),
+        }
         _assert_safe(updated)
         conn.execute(
             "UPDATE receipts SET receipt_json = ? WHERE request_id = ?",
@@ -610,8 +695,10 @@ def recent(
     app_profile: str | None = None,
     app_ids: list[str] | None = None,
     owner_key_hashes: list[str] | None = None,
+    maker_person_id: str | None = None,
     include_null_app_id: bool = False,
     since_s: int | None = None,
+    before: tuple[int, str] | None = None,
     outer_only: bool = True,
     now_ms: int | None = None,
     stale_after_ms: int = STALE_AFTER_MS,
@@ -621,7 +708,9 @@ def recent(
 
     Optional filters: ``app_profile`` (exact match), ``app_ids`` (member-scope:
     return only receipts whose ``app_id`` is in this allow-list), and
-    ``since_s`` (only receipts written within the last N seconds).
+    ``since_s`` (only receipts written within the last N seconds). ``before`` is a
+    keyset cursor, ``(created_at, request_id)`` of the last row a caller read: only
+    rows that sort after it in this order are returned.
 
     ``app_ids`` is a positive membership filter. An empty list returns no rows
     unless ``include_null_app_id`` is set for an owner-only instance feed.
@@ -652,9 +741,15 @@ def recent(
         if include_null_app_id:
             ownership.append("app_id IS NULL")
         clauses.append("(" + " OR ".join(ownership) + ")")
+    if maker_person_id is not None:
+        clauses.append("json_extract(receipt_json, '$.maker_person_id') = ?")
+        params.append(maker_person_id)
     if since_s is not None:
         clauses.append("created_at >= ?")
         params.append(int(time.time()) - int(since_s))
+    if before is not None:
+        clauses.append("(created_at < ? OR (created_at = ? AND request_id < ?))")
+        params.extend([int(before[0]), int(before[0]), str(before[1])])
     if outer_only:
         # The unary plus keeps SQLite on the created_at index. Without it the planner takes the
         # parent_request_id index and sorts every top-level receipt to return a handful.
@@ -664,7 +759,8 @@ def recent(
     # Newest first with no owner filter: walk the created_at index and stop after `limit` rows.
     # Left to itself the planner flips between that and a full scan with a full sort on the
     # value of LIMIT (3 and 5 plan differently), so the index is named.
-    ordered = " INDEXED BY receipts_created_at" if app_ids is None and owner_key_hashes is None else ""
+    ordered = (" INDEXED BY receipts_created_at"
+               if app_ids is None and owner_key_hashes is None and maker_person_id is None else "")
 
     with _conn(path) as conn:
         query = (f"SELECT receipt_json, created_at FROM receipts{ordered}{where} "

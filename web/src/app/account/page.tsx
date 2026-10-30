@@ -21,6 +21,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SignOutEverywhereSection } from "./sign-out-everywhere";
+import { AccessSection } from "./access-section";
+import { RequestHistorySection } from "./request-history-section";
 import { accountApi } from "@/lib/account-api";
 import { useOwnerName } from "@/lib/use-owner-name";
 import {
@@ -55,7 +57,7 @@ function errorMessage(error: unknown, fallback: string) {
  * A person's own settings (DESIGN "Settings page"): a 720 column, one card
  * of rows per section. Members have no Settings in the sidebar, so this
  * lives under the account menu, as Linear's and Vercel's personal settings
- * do. Owners use it for their own prompts too.
+ * do. Owners use it for their own words too.
  */
 export default function AccountPage() {
   const viewer = useViewer();
@@ -69,12 +71,14 @@ export default function AccountPage() {
           <ErrorState
             severity="info"
             heading="Sign in as a person"
-            message="This session uses a key, which has no prompts of its own."
+            message="This session uses a key, which has no saved words or chats of its own."
             action={{ label: "Sign in", href: "/sign-in/" }}
           />
         ) : (
           <>
+            <AccessSection />
             <PromptsSection />
+            <RequestHistorySection />
             <SignOutEverywhereSection />
           </>
         )}
@@ -118,8 +122,8 @@ function PromptsSection() {
         result.prompt_purge?.pending
           ? "Deletion pending. Azizam will keep retrying."
           : count === 0
-            ? "You had no saved prompts."
-            : `Deleted ${count} saved ${count === 1 ? "prompt" : "prompts"}.`,
+            ? "You had no saved words or chats."
+            : `Deleted words for ${count} ${count === 1 ? "creation" : "creations"}.`,
       );
       void queryClient.invalidateQueries({ queryKey: promptMemoryKey });
     },
@@ -138,7 +142,7 @@ function PromptsSection() {
   if (isError || !data?.prompt_memory)
     return (
       <ErrorState
-        heading="Couldn’t load your prompt settings"
+        heading="Couldn’t load these settings"
         error={error}
         onRetry={() => void refetch()}
         retrying={isRefetching}
@@ -183,12 +187,12 @@ function PromptsSection() {
     <div>
       <SettingsSection
         id="prompts"
-        title="Prompts"
-        description="Choose whether Azizam saves what you type with what it makes."
+        title="Saved words and chats"
+        description="Library keeps the words you used to make each creation, so you can find it and make it again. Chats an app asks Azizam to keep follow this setting too."
       >
         {household.never_keep ? (
           <SettingRow
-            label="Remember what I type"
+            label="Keep the words you used to make things"
             description={
               owner
                 ? `${owner} turned this off for everyone.`
@@ -199,7 +203,7 @@ function PromptsSection() {
                 <Switch
                   checked={false}
                   disabled
-                  aria-label="Remember what I type"
+                  aria-label="Keep the words you used to make things"
                 />
               ) : (
                 <Button asChild variant="outline">
@@ -213,12 +217,12 @@ function PromptsSection() {
         ) : (
           <>
             <SettingRow
-              label="Remember what I type"
+              label="Keep the words you used to make things"
               htmlFor="remember-prompts"
               description={
                 memory.remember
-                  ? "Turning it off deletes saved prompts."
-                  : "Nothing you type is kept."
+                  ? "Turning it off deletes saved words and chats."
+                  : "No words or chats are kept."
               }
               control={
                 <Switch
@@ -233,7 +237,7 @@ function PromptsSection() {
               }
             />
             <SettingRow
-              label="Forget prompts after"
+              label="Forget them after"
               // One line on a phone too: the label truncates before the
               // control wraps under it (DESIGN: phone rows are 64).
               className="max-sm:flex-nowrap"
@@ -252,7 +256,7 @@ function PromptsSection() {
                 >
                   <SelectTrigger
                     size="sm"
-                    aria-label="Forget prompts after"
+                    aria-label="Forget them after"
                     className="sm:min-w-32"
                   >
                     <SelectValue>{memberRetentionLabel(retention)}</SelectValue>
@@ -272,7 +276,7 @@ function PromptsSection() {
               }
             />
             <SettingRow
-              label="Delete my saved prompts"
+              label="Delete saved words and chats"
               // One line on a phone too: the label truncates before the
               // control wraps under it (DESIGN: phone rows are 64).
               className="max-sm:flex-nowrap"
@@ -307,8 +311,8 @@ function PromptsSection() {
       </SettingsSection>
       <p className="text-muted-foreground text-meta mt-3">
         {owner
-          ? `No Azizam screen shows your prompts to anyone else, ${owner} included. ${owner} runs this gateway, so they could still read its files or sign in as you with a reset link.`
-          : "No Azizam screen shows your prompts to anyone else. Pictures, audio and video stay in Library whatever you choose here."}
+          ? `No Azizam screen shows your words or chats to anyone else, ${owner} included. ${owner} runs this gateway, so they could still read its files or sign in as you with a reset link.`
+          : "No Azizam screen shows your words or chats to anyone else. Pictures, audio and video stay in Library whatever you choose here."}
       </p>
       <p className="text-muted-foreground text-meta mt-3">
         Azizam cannot erase an engine’s own history, external output folders,
@@ -319,24 +323,24 @@ function PromptsSection() {
         onOpenChange={(open) => !open && setPending(null)}
         title={
           pending?.kind === "off"
-            ? "Stop remembering what you type?"
+            ? "Stop keeping words and chats?"
             : pending?.kind === "retention"
-              ? `Forget prompts after ${memberRetentionLabel(pending.value).toLowerCase()}?`
-              : "Delete your saved prompts?"
+              ? `Forget words and chats after ${memberRetentionLabel(pending.value).toLowerCase()}?`
+              : "Delete your saved words and chats?"
         }
         description={
           pending?.kind === "off"
-            ? "New prompts won’t be saved. Deletion of saved prompts may continue in the background. Your pictures, audio and videos stay in Library."
+            ? "New words and chats won’t be saved. Deletion of saved ones may continue in the background. Your pictures, audio and videos stay in Library."
             : pending?.kind === "retention"
-              ? `Prompts older than ${memberRetentionLabel(pending.value).toLowerCase()} are deleted now. Your pictures, audio and videos stay in Library.`
-              : "Every prompt saved for you is deleted. Your pictures, audio and videos stay in Library. This can’t be undone."
+              ? `Words and chats older than ${memberRetentionLabel(pending.value).toLowerCase()} are deleted now. Your pictures, audio and videos stay in Library.`
+              : "Every saved word and chat is deleted. Your pictures, audio and videos stay in Library. This can’t be undone."
         }
         confirmLabel={
           pending?.kind === "off"
             ? "Turn off"
             : pending?.kind === "retention"
-              ? "Forget older prompts"
-              : "Delete prompts"
+              ? "Forget older words and chats"
+              : "Delete words and chats"
         }
         onConfirm={async () => {
           if (!pending) return;

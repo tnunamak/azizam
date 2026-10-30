@@ -217,7 +217,7 @@ test.describe("Categories real fixture journeys", () => {
         await expect(preview.getByText("Every attached access plan allows this request.", { exact: true })).toBeVisible();
         await accessible(page, width);
 
-        await choose(page, "Capability", "Embeddings");
+        await choose(page, "Capability", "Document search");
         await preview.getByRole("button", { name: "Check access", exact: true }).click();
         await expect(preview.getByRole("status")).toContainText("Deny");
         await expect(preview.getByText("An access plan does not grant this capability with this model or workflow.", { exact: true })).toBeVisible();
@@ -239,7 +239,7 @@ test.describe("Categories real fixture journeys", () => {
         const gains = changes.getByText("Who gains access", { exact: true }).locator("..");
         const losses = changes.getByText("Who loses access", { exact: true }).locator("..");
         await expect(gains).toContainText("Person name unavailable · App name unavailable · Chat · Name unavailable");
-        await expect(losses).toContainText("Person name unavailable · App name unavailable · Embeddings · Name unavailable");
+        await expect(losses).toContainText("Person name unavailable · App name unavailable · Document search · Name unavailable");
         await expect(changes.getByText(/Nothing has been turned on/)).toBeVisible();
         expect((await active(request))?.revision).toBe(second.revision);
         await expect(current.getByText(`Revision ${second.revision}`, { exact: true })).toBeVisible();

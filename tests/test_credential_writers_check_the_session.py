@@ -16,6 +16,7 @@ Three kinds of test keep it that way:
 from __future__ import annotations
 
 import ast
+from tests.support.app_keys import accountable_person, unguarded
 import re
 import sqlite3
 import time
@@ -51,6 +52,7 @@ CREATES = re.compile(
 GUARDED = {
     "gateway/admin_store.py::create_credential_hash": "App keys, Try keys, admin keys",
     "gateway/admin_store.py::create_admin_key_with_role": "a dashboard admin key with its service account and role, in one transaction",
+    "gateway/admin_store.py::replace_app_credential": "a new App key on the signed-in person's App, in place of an old one, in one transaction",
     "gateway/admin_store.py::set_local_password_verifier": "the owner's password",
     "gateway/accounts.py::create_link": "invitation and password-reset links",
     "gateway/mcp_oauth_store.py::Store.create_grant": "an MCP connection (consent)",
@@ -59,6 +61,7 @@ GUARDED = {
     "gateway/secret_store.py::put_provider_secret": "a provider key, an engine key, the secret entries of a record, the OIDC client secret",
     "gateway/secret_store.py::delete_provider_secret": "removing a stored secret",
     "gateway/admin_store.py::add_trusted_address": "a trusted address lets a device in with no key",
+    "gateway/admin_store.py::readd_trusted_address": "an address added again on the signed-in person's App, in place of the old entry, in one transaction",
     "gateway/signin_admin.py::link_identity": "an identity-provider login bound to the owner's account",
     "gateway/admin_store.py::write_service_registry": "a registry save",
     "gateway/admin_store.py::write_service_registry_with_audit": "a registry save with its audit fact",
@@ -67,10 +70,11 @@ GUARDED = {
 
 # Writers no browser sign-in starts, with why.
 EXEMPT = {
+    "gateway/app_binding_guard.py::self_test": "inserts its fixtures inside a savepoint that is rolled back before the install returns; no row survives",
     "gateway/admin_store.py::_insert_credential_in": "inserts inside the open transaction of its two callers, both guarded above",
-    "gateway/accounts.py::accept_invite": "the holder of an invitation link; no sign-in exists yet, the new person's first key is made with the account",
+    "gateway/accounts.py::accept_invite_in": "the holder of an invitation link; no sign-in exists yet, the new person's first key is made with the account",
     "gateway/accounts.py::reset_password": "the holder of a reset link; every sign-in of the person ends with it",
-    "gateway/admin_store.py::claim_first_local_owner": "first-run setup before any sign-in exists",
+    "gateway/admin_store.py::claim_first_local_owner_in": "first-run setup before any sign-in exists",
     "gateway/mcp_oauth_store.py::Store.save_code": "follows create_grant in the same consent (grant checked there); a code only redeems a grant",
     "gateway/mcp_oauth_store.py::Store.save_token": "the client redeeming a code or refresh token of a grant; no browser is involved",
 }
@@ -86,7 +90,7 @@ REGISTRY_WRITERS = {"write_service_registry", "write_service_registry_with_audit
                     "write_service_registry_and_setting_with_audits"}
 SECRET_STORE_WRITERS = {"put_provider_secret", "delete_provider_secret"}
 CALLED_AS = ({"create_credential_hash", "create_admin_key_with_role", "set_local_password_verifier", "create_link",
-              "create_grant"} | REGISTRY_WRITERS)
+              "create_grant", "replace_app_credential"} | REGISTRY_WRITERS)
 # Writers whose plain name another function also has (the runtime's own ``add_trusted_address(actor=...)``), called
 # by their dotted names.
 CALLED_AS_DOTTED = {"admin_store.add_trusted_address", "signin_admin.link_identity"}
@@ -190,6 +194,9 @@ def writers() -> set[str]:
 # SQL that is not one written-out string, in the modules that write credential tables, with why it cannot hide a
 # credential write. Each function is listed, not each call; the strings in it are still searched (``writers_in``).
 DYNAMIC_SQL = {
+    "gateway/app_binding_guard.py::install": "runs each guard's DROP and CREATE from the module's own GUARDS constant; writes no credential row",
+    "gateway/app_binding_guard.py::_refused": "runs one forbidden statement from self_test inside its rolled-back savepoint; only the self-test's fixtures are written",
+    "gateway/app_binding_guard.py::self_test": "runs the forbidden and permitted statements listed in its own tuples inside a savepoint that is rolled back before it returns",
     "gateway/admin_store.py::_exec_schema": "executes the module's own schema and migration text",
     "gateway/admin_store.py::_drop_identity_profile_grants": "drops and counts retired tables by a name from a fixed tuple",
     "gateway/admin_store.py::get_users": "SELECT with a placeholder per id",
@@ -395,10 +402,22 @@ REVIEWED_UNGUARDED_TABLES = {
     "operator_settings": "settings; the ones that hold a secret keep it in provider_secrets, and the registry and OIDC writers are guarded",
 }
 NOT_CREDENTIAL_TABLES = {
+    # request history content: written only by the retention writer, under its lock, never by a credential
+    "kept_requests",
+    # A person's "Not now" on the one-time History notice: one row per person and when it was dismissed. It holds no
+    # secret and grants nothing. The route needs a signed-in session and the same write check as a settings choice, and
+    # it writes only that session's own person (gateway/request_history_api.py).
+    "request_history_notice_seen",
     "access_plans", "account_login_limits", "account_oidc_verification", "account_session_lineage",
     "account_session_revocations", "account_sessions", "account_signin_refusals", "apps", "asset_prompts",
-    "audit_events", "media_hidden_assets", "media_job_events", "media_job_prompt_erasure_cutoffs", "media_jobs",
-    "media_jobs_migrations", "media_jobs_schema_version", "media_volume_identity", "operator_settings_generations",
+    "audit_events", "media_hidden_assets",
+    # Which creating request made each media asset: asset, job and request ids only. Library deletes read it to find the
+    # requests behind an asset. Only the media job store writes it, on save and in the schema backfill. It grants nothing.
+    "media_job_asset_origins", "media_job_events", "media_job_prompt_erasure_cutoffs", "media_jobs",
+    "media_jobs_migrations", "media_jobs_schema_version",
+    # A person's Library erasures, by creating request: ids and a time. A later history write for an erased request is
+    # refused. It can refuse a write but never grant one, and holds no secret. Written only by the Library delete paths.
+    "media_library_erasure_fences", "media_volume_identity", "operator_settings_generations",
     # Dated retention descriptions and their source links hold no credential or authority.
     "retention_fact_destinations", "retention_fact_overrides", "retention_fact_references", "retention_fact_revisions",
     # Measurement job payloads contain experiment settings and reports, not credentials or authority.
@@ -432,7 +451,7 @@ def test_every_table_is_classified_so_a_new_credential_table_is_not_missed():
 
 
 GUARDED_NAMES = {"create_credential_hash", "create_admin_key_with_role", "create_link", "set_local_password_verifier",
-                 "create_grant"}
+                 "create_grant", "replace_app_credential"}
 
 
 def test_routes_that_make_a_credential_are_found_through_their_helpers():
@@ -482,7 +501,7 @@ def world(tmp_path):
     def make_key(session):
         state["n"] += 1
         return admin_store.create_credential_hash(
-            subject_kind="app", subject_id=app["id"], hash=f"h{state['n']}", prefix="opk_x", session=session, path=db)
+            subject_kind="app", subject_id=app["id"], hash=f"h{state['n']}", prefix="opk_x", session=session, path=db, created_by=accountable_person(db, app["id"]))
 
     def make_link(session):
         return accounts.create_link("invite", user["id"], path=db, plan_id=plan["id"], session=session)
@@ -531,7 +550,41 @@ def world(tmp_path):
 
     def make_trusted_address(session):
         state["n"] += 1
-        return admin_store.add_trusted_address(app["id"], f"10.0.0.{state['n']}", max_entries=50, session=session, path=db)
+        return admin_store.add_trusted_address(app["id"], f"10.0.0.{state['n']}", max_entries=50, session=session, path=db, created_by=accountable_person(db, app["id"]))
+
+    def make_replacement(session):
+        state["n"] += 1
+        old = admin_store.create_credential_hash(
+            subject_kind="app", subject_id=app["id"], hash=f"old{state['n']}", prefix="opk_old",
+            created_by=accountable_person(db, app["id"]), path=db)["id"]
+        return admin_store.replace_app_credential(
+            old, app_id=app["id"], person_id=user["id"], hash=f"rep{state['n']}", prefix="opk_rep",
+            display_name=None, session=session, path=db)
+
+    def replacements():
+        with closing(sqlite3.connect(db)) as conn:
+            return conn.execute("SELECT COUNT(*) FROM credentials WHERE hash LIKE 'rep%'").fetchone()[0]
+
+    def make_readd(session):
+        # The legacy address is written the way a database holds it before the cut-over: guards off, no creator.
+        # The write under test is the re-add, which makes the person its creator.
+        state["n"] += 1
+        unguarded(db)
+        entry = f"tad_legacy{state['n']}"
+        with closing(sqlite3.connect(db)) as conn:
+            conn.execute("INSERT INTO app_trusted_addresses(id, app_id, address, created_at, created_by) "
+                         "VALUES (?, ?, ?, 1, NULL)", (entry, app["id"], f"10.9.0.{state['n']}"))
+            conn.commit()
+        return admin_store.readd_trusted_address(
+            app["id"], entry, created_by=user["id"],
+            audit={"action": "app.trusted_address.readd", "actor_kind": "user", "actor_id": user["id"]},
+            session=session, path=db)
+
+    def readded():
+        # Counts the addresses this person made. A re-add replaces an entry, so the whole table does not grow.
+        with closing(sqlite3.connect(db)) as conn:
+            return conn.execute("SELECT COUNT(*) FROM app_trusted_addresses WHERE created_by = ?",
+                                (user["id"],)).fetchone()[0]
 
     def make_identity_link(session):
         state["n"] += 1
@@ -543,8 +596,10 @@ def world(tmp_path):
         "create_admin_key_with_role": (make_admin_key, lambda: count("service_accounts")),
         "put_provider_secret": (make_secret, lambda: count("provider_secrets")),
         "add_trusted_address": (make_trusted_address, lambda: count("app_trusted_addresses")),
+        "readd_trusted_address": (make_readd, readded),
         "link_identity": (make_identity_link, lambda: count("oidc_identity_links")),
         "create_credential_hash": (make_key, lambda: count("credentials")),
+        "replace_app_credential": (make_replacement, replacements),
         "create_link": (make_link, lambda: count("account_links")),
         "set_local_password_verifier": (make_password, lambda: count("local_password_credentials")),
         "create_grant": (make_grant, lambda: count("mcp_oauth_grants")),
@@ -556,7 +611,7 @@ def world(tmp_path):
                               "end": staticmethod(end), "writes": writes})
 
 
-TESTED = sorted(CALLED_AS | {"put_provider_secret", "add_trusted_address", "link_identity"})
+TESTED = sorted(CALLED_AS | {"put_provider_secret", "add_trusted_address", "link_identity", "readd_trusted_address"})
 
 
 def test_every_guarded_writer_has_a_behaviour_test():

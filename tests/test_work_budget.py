@@ -8,6 +8,7 @@ per-item query or probe; a bounded count keeps the constant part honest.
 from __future__ import annotations
 
 import time
+from tests.support.app_keys import accountable_person
 from pathlib import Path
 
 import pytest
@@ -220,7 +221,7 @@ def test_a_busy_key_is_stamped_once_per_interval(tmp_path: Path) -> None:
     user = admin_store.upsert_oidc_user("iss", "u", email="u@example.test", path=db)
     app = admin_store.create_app("A", kind="personal", owner_user_id=user["id"], access_plan="person", path=db)
     key = admin_store.create_credential_hash(
-        subject_kind="app", subject_id=app["id"], app_id=app["id"], hash="h" * 64, prefix="masked", path=db)
+        subject_kind="app", subject_id=app["id"], app_id=app["id"], hash="h" * 64, prefix="masked", path=db, created_by=accountable_person(db, app["id"]))
     seen: list[str] = []
     real = sqlite3.connect
 

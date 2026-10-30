@@ -18,11 +18,21 @@ import multirefCatalog from "./fixtures/workflows-image-edit-multiref.json";
 // pictures are typed "string" with `asset: true`, and the recommended route
 // (multipart /v1/images/edits) sends them as the file parts "image[]" and
 // "mask". Each picture gets one picker; nothing shows a made-up path.
+const HISTORY_ON = {
+  keep: true,
+  retention: "7_days",
+  parts: ["accepted"],
+  choices: ["1_day", "7_days", "30_days"],
+  allowed_parts: ["accepted", "received"],
+  notice_due: false,
+};
+
 const account = vi.hoisted(() => ({
   session: vi.fn(),
   tryKey: vi.fn(),
   revokeKey: vi.fn(),
   promptMemory: vi.fn(),
+  requestHistory: vi.fn(),
   params: new URLSearchParams(),
 }));
 vi.mock("next/navigation", () => ({
@@ -76,13 +86,14 @@ beforeEach(() => {
   });
   account.tryKey.mockResolvedValue({ id: "try-key", api_key: "test-key", reused: false, app_name: "Try", expires_at: 0 });
   account.promptMemory.mockResolvedValue(promptMemory(true));
+  account.requestHistory.mockResolvedValue({ ...HISTORY_ON });
   fetchMock.mockReset().mockImplementation(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") return json({ data: [] });
     if (url.includes("/me/api/receipts/")) return json({}, 404);
     return json(url.includes("workflows") ? activeCatalog : { aliases: [], models: [] });
   });
   vi.stubGlobal("fetch", fetchMock);
-  // The "Don't keep this prompt" switch measures itself.
+  // The keep-request-history switch measures itself.
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -135,14 +146,14 @@ describe("a picture-edit workflow on Try", () => {
     expect(text).not.toMatch(/\.bin\b|\.\/[\w-]+\.\w+|source_image|Managed by the workflow/);
   });
 
-  it("keeps the request JSON and input details for the owner, behind disclosures", async () => {
+  it("keeps the request JSON for the owner behind a disclosure, with no separate input list", async () => {
     await openWorkflow();
     expect(screen.queryByText("Advanced JSON")).toBeNull();
     expect(screen.queryByText("Input details")).toBeNull();
     cleanup();
     await openWorkflow(owner);
     expect(screen.getByText("Advanced JSON").closest("details")).not.toHaveAttribute("open");
-    expect(screen.getByText("Input details").closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByText("Input details")).toBeNull();
   });
 
   it("asks for the missing picture on its field and sends nothing", async () => {
@@ -181,7 +192,7 @@ describe("a picture-edit workflow on Try", () => {
   it("asks the gateway not to keep the prompt when the member turned memory off", async () => {
     account.promptMemory.mockResolvedValue(promptMemory(false));
     await openWorkflow();
-    await screen.findByText("Prompts aren’t kept");
+    await screen.findByText("Words aren’t kept");
     fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture|^Description/ }), {
       target: { value: "Make the sky purple" },
     });
@@ -398,8 +409,9 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
     await upload(/main picture/i, "old.png");
     await switchTo("Flux2 Klein 4B Edit");
     expect(screen.queryByText("old.png")).toBeNull();
+    // Switching back restores this workflow's own draft, so its earlier picture is still there.
     await switchTo("Qwen-Image 2.1 Multi-Reference Edit");
-    expect(screen.queryByText("old.png")).toBeNull();
+    expect(screen.getByText("old.png")).toBeVisible();
     await upload(/second picture/i, "new-second.png");
     await upload(/main picture/i, "new-main.png");
     fireEvent.change(screen.getByRole("textbox", { name: /Describe the picture|^Description/ }), {
@@ -409,6 +421,29 @@ describe("a catalog row for the Qwen-Image 2.1 multi-reference workflow", () => 
     await waitFor(() => expect(posts()).toHaveLength(1));
     expect((posts()[0][1].body as FormData).getAll("image[]").map((file) => (file as File).name))
       .toEqual(["new-main.png", "new-second.png"]);
+  });
+
+  it("restores what was typed and attached for a workflow when switching back to it", async () => {
+    activeCatalog = { workflows: [...multirefCatalog.workflows, ...catalog.workflows] };
+    await openWorkflow(owner, "Qwen-Image 2.1 Multi-Reference Edit");
+    const description = () => screen.getByRole("textbox", { name: /Describe the picture|^Description/ });
+    fireEvent.change(description(), { target: { value: "Keep the tones warm" } });
+    await userEvent.upload(
+      screen.getByRole("group", { name: /main picture/i })
+        .querySelector<HTMLInputElement>("input[data-media-file-input]")!,
+      new File(["kept"], "kept.png", { type: "image/png" }),
+    );
+    const switchTo = async (name: string) => {
+      await userEvent.click(screen.getByRole("combobox", { name: "Model" }));
+      await userEvent.click(await screen.findByRole("option", { name: new RegExp(name) }));
+    };
+    await switchTo("Flux2 Klein 4B Edit");
+    // Another workflow starts from its own example, with none of this workflow's pictures or words.
+    expect(screen.queryByText("kept.png")).toBeNull();
+    expect(description()).not.toHaveValue("Keep the tones warm");
+    await switchTo("Qwen-Image 2.1 Multi-Reference Edit");
+    expect(description()).toHaveValue("Keep the tones warm");
+    expect(screen.getByText("kept.png")).toBeVisible();
   });
 
   it("discards a Library download that finishes after a model switch", async () => {

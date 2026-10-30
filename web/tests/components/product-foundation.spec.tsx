@@ -92,7 +92,7 @@ describe("foundation product contracts", () => {
     expect(screen.getByText("Not measured yet")).toBeVisible();
     expect(screen.getByText("$0.00")).toBeVisible();
     expect(screen.getByText("$0.00004")).toBeVisible();
-    expect(screen.getByText("Local · no provider charge")).toBeVisible();
+    expect(screen.getByText("Local · no charge")).toBeVisible();
   });
   it("renders truthful availability labels for unknown and startable idle states", () => {
     render(

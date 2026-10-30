@@ -89,19 +89,30 @@ def test_status_producer_includes_selected_execution_dependency(monkeypatch):
         "fallback-route": {"config": {"protocol": "openai", "base_url": "http://engine.test", "model_id": "actual-model"}},
         "unused": {},
     }}
+    builds = []
     async def status_payload(config):
+        builds.append(config)
         return {"backends": []}
     async def evidence(*args, **kwargs):
         return {}
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
-    monkeypatch.setattr(proxy.status_endpoint, "get_cached_status", status_payload)
+    monkeypatch.setattr(proxy.status_endpoint, "build_status_payload", status_payload)
+    monkeypatch.setattr(proxy.status_endpoint, "_SNAPSHOT", {})
+    monkeypatch.setattr(proxy.status_endpoint, "_SNAPSHOT_BUILD", None)
     monkeypatch.setattr(proxy, "_models_catalog_health_evidence", evidence)
     monkeypatch.setattr(proxy, "_runtime_availability_evidence", lambda *args, **kwargs: {})
     monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda context: [])
     monkeypatch.setattr(proxy, "service_for_capability", lambda capability: None)
     monkeypatch.setattr(proxy, "_highest_priority_chat_backend", lambda: None)
     monkeypatch.setattr(proxy, "config", {})
-    payload = asyncio.run(proxy._status_payload_with_availability())
+
+    async def build_once_then_read():
+        # The build composes the availability fields. The refresher stores that build, and the status page reads it.
+        proxy.status_endpoint._store_snapshot(await proxy._build_status_snapshot())
+        return await proxy._status_payload_with_availability()
+
+    payload = asyncio.run(build_once_then_read())
+    assert len(builds) == 1, "the read must not build again"
     assert payload["_relied_on_service_ids"] == ["fallback-route", "router-selected"]
 
 

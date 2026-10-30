@@ -80,8 +80,9 @@ class Template:
         self.cases = [_row(path, f"{path}::case") for path in policy.discover(files) if path not in unrun]
         for table, outcome in (("skip", "skipped"), ("xfail", "xfailed")):
             for entry in suites.get(table, []):
-                assert entry["framework"] == "pytest", "extend _row for browser entries"
-                self.cases.append(_row(entry["case"].split("::", 1)[0], entry["case"], outcome))
+                # A pytest case is "file::name"; a browser case is "file > describe > title".
+                separator = "::" if entry["framework"] == "pytest" else " > "
+                self.cases.append(_row(entry["case"].split(separator, 1)[0], entry["case"], outcome))
 
 
 class Tree:

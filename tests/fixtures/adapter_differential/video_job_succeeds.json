@@ -217,6 +217,13 @@
     }
   ],
   "media_jobs": {
+    "media_job_asset_origins": [
+      {
+        "asset_id": "vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+        "job_id": "<job:1>",
+        "origin_id": "<job:2>"
+      }
+    ],
     "media_job_events": [
       {
         "attempt_number": 1,
@@ -312,6 +319,9 @@
           "input_hash": "<digest>",
           "intent": "video.generate",
           "job_id": "<job:1>",
+          "maker_connection_id": null,
+          "maker_credential_id": "sha256:test",
+          "maker_person_id": null,
           "metadata": {
             "completed_at": "<time>",
             "idempotency": "request",
@@ -338,6 +348,9 @@
           "upstream_http_status": null,
           "workflow": "video-ltx-2.5-t2v"
         },
+        "maker_connection_id": null,
+        "maker_credential_id": "sha256:test",
+        "maker_person_id": null,
         "parent_request_id": "<job:2>",
         "progress": 100,
         "request_id": "<job:2>",
@@ -354,7 +367,7 @@
     ],
     "media_jobs_schema_version": [
       {
-        "version": 4
+        "version": 6
       }
     ],
     "retention_fact_destinations": [
@@ -710,7 +723,7 @@
           ],
           "source_kind": "app",
           "source_label": "test-app",
-          "started_at_ms": null,
+          "started_at_ms": "<time>",
           "status": "succeeded",
           "stream": false,
           "updated_at_ms": "<time>",

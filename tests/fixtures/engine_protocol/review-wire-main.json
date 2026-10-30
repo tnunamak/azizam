@@ -126,7 +126,6 @@
   },
   {
     "ids": [
-      "ace-step-1.5-2b-base",
       "ace-step-1.5-xl-turbo",
       "anima-turbo",
       "current",
@@ -139,6 +138,7 @@
       "flux2-klein-4b-inpaint",
       "flux2-klein-4b-seamless-tile",
       "flux2-klein-edit",
+      "flux2-klein-snofs",
       "image-identity",
       "krea2-turbo",
       "krea2-turbo-snofs",
@@ -162,7 +162,6 @@
       "video-minimax-h3-keyframes-mid",
       "video-minimax-h3-long",
       "video-minimax-h3-t2v",
-      "video-wan-2.2-ti2v-5b-q8",
       "yue2-song"
     ],
     "models": 200

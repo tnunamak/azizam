@@ -2,16 +2,26 @@ import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ModelsBlock, draftsFromCheck, duplicateNames, modelsBody, type ModelDraft } from "./models-block";
+import { ModelsBlock, draftsFromCheck, duplicateNames, kindRefusal, modelsBody, type ModelDraft } from "./models-block";
 
 afterEach(() => cleanup());
 
 const detected = (id: string, public_name = id) => ({ id, public_name, context_window: null, use: "Chat" });
 
+const kinds = [
+  { id: "chat", label: "Chat" },
+  { id: "embed", label: "Document search" },
+  { id: "speech", label: "Voice" },
+  { id: "transcribe", label: "Transcription" },
+];
+const offeredKinds = ["chat", "embed"];
+
 function Harness({ initial }: { initial: ModelDraft[] }) {
   const [models, setModels] = useState(initial);
-  return <ModelsBlock models={models} onChange={setModels} emptyText="No models." />;
+  return <ModelsBlock models={models} onChange={setModels} emptyText="No models." kinds={kinds} offeredKinds={offeredKinds} />;
 }
+
+const capabilityOptions = (pick: HTMLElement) => within(pick).getAllByRole("option").map((option) => option.textContent);
 
 describe("Add a model by name says why nothing happened", () => {
   it("an empty name asks for the model name used by the server", async () => {
@@ -93,5 +103,108 @@ describe("the model list on a phone", () => {
     expect(fields).toHaveLength(2);
     for (const field of fields) expect(field).toHaveAccessibleDescription("The model’s maximum input and output size in tokens. Leave empty if unknown.");
     expect(within(document.body).getAllByText("The model’s maximum input and output size in tokens. Leave empty if unknown.")).toHaveLength(2);
+  });
+});
+
+describe("each model says what it is for", () => {
+  it("a probed model's kind is pre-filled and saved with the model", () => {
+    const models = draftsFromCheck([{ ...detected("nomic"), kind: "embed" }]);
+    expect(models[0].kind).toBe("embed");
+    expect(modelsBody(models)[0].kind).toBe("embed");
+  });
+
+  it("a model with no kind saves no kind, so every capability its engine offers still applies", () => {
+    const models = draftsFromCheck([detected("alpha")]);
+    expect(models[0].kind).toBe("");
+    expect(modelsBody(models)[0]).not.toHaveProperty("kind");
+  });
+
+  it("the Capability pick-list offers the engine's kinds, and choosing one sets it", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={draftsFromCheck([detected("alpha")])} />);
+    const pick = screen.getByLabelText("Capability");
+    expect(pick.tagName).toBe("SELECT");
+    expect(within(pick).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "All the engine offers",
+      "Chat",
+      "Document search",
+    ]);
+    expect(screen.getByText(/Turns text into numbers for search \(embeddings\)\./)).toBeVisible();
+    expect(pick).toHaveAccessibleDescription(expect.stringContaining("Turns text into numbers for search (embeddings)."));
+    expect(pick).toHaveValue("");
+    await user.selectOptions(pick, "embed");
+    expect(pick).toHaveValue("embed");
+  });
+
+  it("a read-only model shows its kind and cannot change it", () => {
+    render(
+      <ModelsBlock
+        models={draftsFromCheck([{ ...detected("nomic"), kind: "embed" }])}
+        onChange={() => undefined}
+        emptyText="No models."
+        kinds={kinds}
+        offeredKinds={offeredKinds}
+        readOnly
+      />,
+    );
+    expect(screen.getByLabelText("Capability")).toHaveValue("embed");
+    expect(screen.getByLabelText("Capability")).toBeDisabled();
+  });
+
+  it("the Capability pick-list offers only the kinds the engine offers, under their labels", () => {
+    render(
+      <ModelsBlock
+        models={draftsFromCheck([detected("alpha")])}
+        onChange={() => undefined}
+        emptyText="No models."
+        kinds={kinds}
+        offeredKinds={["chat", "speech"]}
+      />,
+    );
+    expect(capabilityOptions(screen.getByLabelText("Capability"))).toEqual(["All the engine offers", "Chat", "Voice"]);
+    expect(screen.queryByText("Turns text into numbers for search (embeddings).")).toBeNull();
+  });
+
+  it("a model keeps its kind in the pick-list when the engine no longer offers it, so the refusal can name it", () => {
+    render(
+      <ModelsBlock
+        models={draftsFromCheck([{ ...detected("nomic"), kind: "embed" }])}
+        onChange={() => undefined}
+        emptyText="No models."
+        kinds={kinds}
+        offeredKinds={["chat"]}
+      />,
+    );
+    expect(screen.getByLabelText("Capability")).toHaveValue("embed");
+    expect(capabilityOptions(screen.getByLabelText("Capability"))).toEqual(["All the engine offers", "Chat", "Document search"]);
+  });
+
+  it("a refused kind shows its message under that model's Capability control and no other", () => {
+    render(
+      <ModelsBlock
+        models={draftsFromCheck([{ ...detected("nomic"), kind: "embed" }, detected("qwen")])}
+        onChange={() => undefined}
+        emptyText="No models."
+        kinds={kinds}
+        offeredKinds={["chat"]}
+        kindError={{ index: 0, message: "This engine doesn’t offer Document search." }}
+      />,
+    );
+    const [first, second] = screen.getAllByLabelText("Capability");
+    expect(first).toHaveAttribute("aria-invalid", "true");
+    expect(first).toHaveAccessibleDescription(expect.stringContaining("This engine doesn’t offer Document search."));
+    expect(second).not.toHaveAttribute("aria-invalid");
+    expect(screen.getAllByText("This engine doesn’t offer Document search.")).toHaveLength(1);
+  });
+});
+
+describe("the server's kind refusal", () => {
+  it("is read from the field that names a model's kind, and is null for any other field", () => {
+    expect(kindRefusal("models.2.kind", "This engine doesn’t offer Voice.")).toEqual({
+      index: 2,
+      message: "This engine doesn’t offer Voice.",
+    });
+    expect(kindRefusal("models", "Two models use the same name.")).toBeNull();
+    expect(kindRefusal(null, "The gateway did not answer.")).toBeNull();
   });
 });

@@ -89,7 +89,7 @@ function mountPromptContract(personId: string, remember: boolean) {
 
 it.each([
   { remember: true, expected: "No saved prompt" },
-  { remember: false, expected: "No saved prompt. You turned off prompt keeping." },
+  { remember: false, expected: "No saved prompt. You turned off keeping words and chats." },
 ])("renders the maker's missing-prompt explanation: $remember", async ({ remember, expected }) => {
   const user = userEvent.setup();
   const fixture = mountPromptContract("me", remember);
@@ -113,10 +113,10 @@ it("does not reveal missing-prompt history or load settings for another maker", 
   try {
     await user.click(await screen.findByRole("button", { name: (name) => name.startsWith("Open Picture, ") }));
     await waitFor(() => expect(
-      fixture.client.getQueryState(["library", "download", "image", false]),
+      fixture.client.getQueryState(["library", "download", "image"]),
     ).toMatchObject({ status: "success", fetchStatus: "idle" }));
     const dialog = screen.getByRole("dialog", { name: "Picture" });
-    expect(within(dialog).queryByText(/No saved prompt|turned off prompt keeping/)).toBeNull();
+    expect(within(dialog).queryByText(/No saved prompt|turned off keeping words and chats/)).toBeNull();
     expect(fixture.fetchMock.mock.calls.filter(([input]) =>
       new URL(String(input), "https://fixture.invalid").pathname === "/me/api/prompt-memory",
     )).toHaveLength(0);
