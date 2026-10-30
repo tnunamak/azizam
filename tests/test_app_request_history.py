@@ -237,3 +237,22 @@ def test_a_receipt_can_say_why_a_shared_apps_history_was_not_kept():
     for reason in ("app_off", "app_disabled"):
         entry = {"kind": "request_history", "decision": "not_kept", "reason": reason}
         assert receipts.validate_retention([entry]) == [entry]
+
+
+# ------------------------------------------- the manager, re-read under the lock
+
+
+def test_an_app_whose_manager_changed_after_the_decision_refuses_and_commits_nothing(db):
+    _turn_on(db)
+    decision = _decide(db, now=int(time.time()))
+    successor = admin_store.upsert_oidc_user("https://fixture.test", "successor-sub", email="successor@example.test",
+                                             path=db.path)
+    conn = sqlite3.connect(db.path)
+    conn.execute("UPDATE apps SET owner_user_id=? WHERE id=?", (successor["id"], db.app))
+    conn.commit()
+    conn.close()
+
+    outcome, committed = _write(db, decision)
+
+    assert (outcome.kept, outcome.reason) == (False, "app_disabled")
+    assert committed == []
