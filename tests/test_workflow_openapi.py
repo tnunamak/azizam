@@ -27,6 +27,7 @@ from gateway.workflow_openapi import (  # noqa: E402
     short_id,
 )
 from openapi_lint import validate_openapi  # noqa: E402
+from gateway.workflows_catalog import _workflow_row  # noqa: E402
 from gateway.mesh_manifest import (  # noqa: E402
     bind_request,
     downstream_form,
@@ -261,6 +262,14 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertEqual(edit["source_image"], {"in": "file", "field": "image[]"})
         self.assertEqual(edit["reference_image_2"], {"in": "file", "field": "image[]"})
 
+    def mesh_row(self) -> dict:
+        """The people-facing workflow row for mesh, which carries the example request."""
+        (record,) = [r for r in self.registry.records() if r.id == "mesh.generate.trellis-2"]
+        return _workflow_row(
+            record, capability_rows=[], openapi_row=self.catalog[record.id], aliases=None,
+            receipts=[], jobs=[], base_url="http://testserver",
+        )
+
     def test_mesh_reserved_extensions_is_not_an_accepted_form_field(self) -> None:
         # The mesh route refuses extensions until a service option maps to it, so the
         # mapping must not accept it either.
@@ -268,10 +277,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertEqual(sync["fields"]["extensions"], {"in": "none"})
 
     def test_mesh_example_carries_the_picture_and_supported_scalars_only(self) -> None:
-        with authenticated():
-            listing = self.client.get("/me/api/workflows").json()["workflows"]
-        (mesh,) = [w for w in listing if w["id"] == "mesh.generate.trellis-2"]
-        example = mesh["example_request"]
+        example = self.mesh_row()["example_request"]
         self.assertEqual(example["content_type"], "multipart/form-data")
         self.assertEqual(set(example["files"]), {"image"})
         self.assertEqual(example["files"]["image"]["field"], "image")
@@ -280,10 +286,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         self.assertTrue(set(example["form"]) <= {"seed", "resolution", "bg_removal"})
 
     def test_mesh_example_fields_bind_through_the_mesh_route(self) -> None:
-        with authenticated():
-            listing = self.client.get("/me/api/workflows").json()["workflows"]
-        (mesh,) = [w for w in listing if w["id"] == "mesh.generate.trellis-2"]
-        example = mesh["example_request"]
+        example = self.mesh_row()["example_request"]
         manifest = load_mesh_manifest(MESH_MANIFEST)
         field_to_input = {field: name for name, field in manifest.mapping.items()}
         self.assertTrue(set(example["form"]) <= set(field_to_input))
