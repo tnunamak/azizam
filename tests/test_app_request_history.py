@@ -376,7 +376,7 @@ def test_a_direct_write_keeps_the_app_history_under_the_manager_for_the_deadline
             "record_id": record_id, "request_id": None, "person_id": decision.person_id, "app_id": db.app,
             "origin_kind": "service_key", "origin_id": db.app, "created_at": now, "policy_version": "test",
             "parts": {"accepted": {"body": {"model": "test-model"}}, "received": {"body": {"ok": True}}},
-            "omissions_by_part": {},
+            "omissions_by_part": {}, "summary": {"route": "/v1/chat/completions", "status": 200},
         }, parts, deadline)
         with request_history.write_transaction(media_path) as conn:
             request_history.insert_record(conn, record)
