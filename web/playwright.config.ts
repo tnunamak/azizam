@@ -83,6 +83,7 @@ const TRY_FILES = [
   "**/workflow-try-audit.spec.ts",
   "**/long-jobs.spec.ts",
   "**/bugfix-actions.spec.ts",
+  "**/try-mesh.spec.ts",
 ];
 
 function server(gatewayPort: number, name: string, extraEnv: Record<string, string> = {}) {
