@@ -462,6 +462,8 @@ class Decision:
     created_at: int | None = None
     kind: str = LIBRARY_PROMPT
     parts: tuple[str, ...] = ()
+    #: Set when a shared App's own setting decided request history (``app_history``); its manager is ``person_id``.
+    app_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -495,16 +497,52 @@ def prompt_mode_refusal(exc: PromptModeError) -> dict[str, Any]:
                       "param": f"extensions.{NAMESPACE}.mode"}}
 
 
+def app_history_choice(admin_path: Path | None, app_id: str | None) -> dict[str, Any] | None:
+    """A shared App's request-history setting, read without changing anything; None for no App and for a personal App.
+
+    ``active`` is False when the App is disabled or its manager is disabled or removed. The write re-reads all of
+    this under the household lock (``guard_groups``).
+    """
+    if admin_path is None or not app_id:
+        return None
+    conn = connect(admin_path, timeout=RETENTION_LOCK_TIMEOUT_SECONDS)
+    try:
+        row = conn.execute(
+            "SELECT owner_user_id, kind, history_keep, history_period, disabled_at FROM apps WHERE id=?", (app_id,),
+        ).fetchone()
+        if row is None or row[1] != "service":
+            return None
+        active = row[4] is None and _person_active(conn, str(row[0]))
+    finally:
+        conn.close()
+    return {"app_id": app_id, "owner_user_id": str(row[0]), "keep": bool(row[2]), "retention": str(row[3]),
+            "active": active}
+
+
+def _person_active(conn: sqlite3.Connection, person_id: str) -> bool:
+    """A person exists and is neither disabled nor removed (the same rule ``guard_groups`` applies)."""
+    if conn.execute("SELECT 1 FROM users WHERE id=?", (person_id,)).fetchone() is None:
+        return False
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone() is None:
+        return True
+    access = conn.execute("SELECT disabled_at, removed_at FROM account_access WHERE user_id=?", (person_id,)).fetchone()
+    return access is None or (access[0] is None and access[1] is None)
+
+
 def decide(
     kind: str, *, person_id: str | None, member: Mapping[str, Any] | None,
     household_policy: Mapping[str, Any] | None, request_body: Mapping[str, Any] | None,
     responses_store: bool | None = None, now: int | None = None, request_forget: bool = False,
+    app_history: Mapping[str, Any] | None = None,
 ) -> Decision:
     """Resolve policy before any payload, media or Responses persistence.
 
     The order is fixed: the kill switch, the request's own forget (in its body, or in the ``X-Azizam-Prompts``
     header, which ``request_forget`` carries for every kind), no person, the member's switch, then keep with the
     shorter of the member's period and the household cap.
+
+    For request history with no person, ``app_history`` (``app_history_choice``) is the shared App's own setting. It
+    takes the place of the member's switch: off keeps nothing, on keeps under the App's manager.
     """
     contract = bundled()
     mode = requested_mode(request_body)
@@ -514,6 +552,8 @@ def decide(
     if mode == "forget" or request_forget or responses_store is False:
         return Decision(person_id, False, "request_forget", kind=kind)
     if not person_id:
+        if kind == REQUEST_HISTORY and app_history is not None:
+            return _app_decision(contract, app_history, policy, now)
         return Decision(None, False, "no_person", kind=kind)
     preference = {**contract.member_defaults(kind), "remember": policy["default_remember"], **(member or {})}
     if not preference.get("remember", policy["default_remember"]):
@@ -524,6 +564,25 @@ def decide(
     seconds = contract.seconds_map()[period]
     expiry = started + seconds if seconds is not None else None
     return Decision(person_id, True, "remembered", expiry, started, kind, _parts_for(contract, kind, preference))
+
+
+def _app_decision(contract: Contract, app_history: Mapping[str, Any], policy: Mapping[str, Any],
+                  now: int | None) -> Decision:
+    """Request history for a shared App: its setting decides, under its manager. The App's parts are the kind's
+    default; the manager's own parts choice belongs to the manager's own history and does not apply here."""
+    app_id = str(app_history["app_id"])
+    if not app_history.get("active"):
+        return Decision(None, False, "app_disabled", kind=REQUEST_HISTORY, app_id=app_id)
+    if not app_history.get("keep"):
+        return Decision(None, False, "app_off", kind=REQUEST_HISTORY, app_id=app_id)
+    started = int(time.time()) if now is None else now
+    period = effective_period(str(app_history["retention"]),
+                              policy.get("retention_cap", contract.household_defaults(REQUEST_HISTORY)["retention_cap"]),
+                              REQUEST_HISTORY)
+    seconds = contract.seconds_map()[period]
+    expiry = started + seconds if seconds is not None else None
+    return Decision(str(app_history["owner_user_id"]), True, "remembered", expiry, started, REQUEST_HISTORY,
+                    contract.parts(REQUEST_HISTORY), app_id)
 
 
 def _parts_for(contract: Contract, kind: str, preference: Mapping[str, Any]) -> tuple[str, ...]:
@@ -596,21 +655,22 @@ def ensure_erasure_cutoff_table(conn: sqlite3.Connection) -> None:
 
 @contextmanager
 def guard(admin_path: Path | None, person_id: str | None = None,
-          group: str = GROUP_PROMPTS) -> Iterator[dict[str, Any]]:
+          group: str = GROUP_PROMPTS, app_id: str | None = None) -> Iterator[dict[str, Any]]:
     """Hold the admin setting's write lock through a content-bearing write.
 
     A kill-switch update waits for this write, then purges it. A write that
     starts after the update sees the new policy and is refused. The lock works
     across gateway processes because it is a SQLite transaction. The member row
-    and the erasure cutoffs are the ones of ``group`` (section 3.2).
+    and the erasure cutoffs are the ones of ``group`` (section 3.2). ``app_id`` is the shared App a request history
+    decision was made for; its setting, not the member's switch, then decides the group's keep.
     """
-    with guard_groups(admin_path, person_id, (group,)) as policies:
+    with guard_groups(admin_path, person_id, (group,), app_id=app_id) as policies:
         yield policies[group]
 
 
 @contextmanager
 def guard_groups(
-    admin_path: Path | None, person_id: str | None, groups: tuple[str, ...],
+    admin_path: Path | None, person_id: str | None, groups: tuple[str, ...], app_id: str | None = None,
 ) -> Iterator[dict[str, dict[str, Any]]]:
     """Hold one admin write lock while reading policy for several content groups.
 
@@ -683,6 +743,8 @@ def guard_groups(
                 # A member's chosen parts (request history's "also keep replies"); absent means the kind's default.
                 policy["parts"] = json.loads(member[2])
             policy["remember"] = bool(policy["remember"]) and person_enabled
+            if app_id is not None and group == GROUP_REQUEST_HISTORY:
+                policy.update(_app_history_policy(conn, app_id, person_enabled, policy["retention"]))
             policies[group] = policy
         yield policies
         conn.commit()
@@ -691,6 +753,23 @@ def guard_groups(
         raise
     finally:
         conn.close()
+
+
+def _app_history_policy(conn: sqlite3.Connection, app_id: str, person_enabled: bool,
+                        member_retention: str) -> dict[str, Any]:
+    """A shared App's request history policy, read under the lock. Its own switch, period and state decide: the
+    manager's switch and parts do not apply to the App's history (``parts`` None: the kind's default)."""
+    row = conn.execute("SELECT kind, history_keep, history_period, disabled_at FROM apps WHERE id=?", (app_id,)).fetchone()
+    active = row is not None and row[0] == "service" and row[3] is None and person_enabled
+    keep = row is not None and bool(row[1])
+    if not active:
+        reason: str | None = "app_disabled"
+    elif not keep:
+        reason = "app_off"
+    else:
+        reason = None
+    return {"remember": bool(active and keep), "retention": str(row[2]) if row is not None else member_retention,
+            "parts": None, "app_reason": reason}
 
 
 def _library_prompt_gate(policy: Mapping[str, Any], started: int, kept_until: int | None) -> tuple[bool, int | None]:
@@ -760,7 +839,7 @@ def _request_history_outcome(
     if decision.person_id is None:
         return WriteOutcome(False, "no_person")
     if not policy["remember"]:
-        return WriteOutcome(False, "member_disabled")
+        return WriteOutcome(False, str(policy.get("app_reason") or "member_disabled"))
     forgot_before = int(policy.get("forgot_before") or 0)
     if started <= forgot_before or int(decision.created_at or 0) <= forgot_before:
         return WriteOutcome(False, "erasure_cutoff")
@@ -793,7 +872,8 @@ def write(
     if kind not in KINDS:
         raise ValueError(f"unknown kind {kind!r}")
     outcome: WriteOutcome
-    with guard(admin_path, person_id, group_of_kind(kind)) as policy:
+    app_id = decision.app_id if decision is not None else None
+    with guard(admin_path, person_id, group_of_kind(kind), app_id=app_id) as policy:
         if kind == REQUEST_HISTORY:
             if decision is None:
                 raise ValueError("a request history write needs the decision made for the request")
@@ -834,7 +914,8 @@ def write_media_capture(
     prompt_outcomes: list[WriteOutcome] = []
     prompt_records: list[dict[str, Any]] = []
     groups = (GROUP_PROMPTS, GROUP_REQUEST_HISTORY) if decision is not None else (GROUP_PROMPTS,)
-    with guard_groups(admin_path, person_id, groups) as policies:
+    app_id = decision.app_id if decision is not None else None
+    with guard_groups(admin_path, person_id, groups, app_id=app_id) as policies:
         if decision is not None:
             history_values_holder: list[tuple[int | None, tuple[str, ...]]] = []
             history_outcome = _request_history_outcome(
