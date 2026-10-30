@@ -21,6 +21,9 @@ from tests.support.fake_upstream.async_client_stub import install_async_client_s
 def setup(gateway, monkeypatch):
     owner, owner_id, _, admin = owner_and_admin(gateway)
     registry = _registry(gateway)
+    # Production always stamps updated_at. Without it, read_registry stamps the clock on every read,
+    # so two reads straddling a second boundary differ.
+    registry.setdefault("updated_at", 1)
     record = service_registry.service_from_backend_config("speech-test", {
         "name": "Speech test", "host": "speech.fk.test", "port": 80,
         "capabilities": ["audio", "transcriptions"], "default_model": "test-model",
