@@ -145,3 +145,16 @@ it("shows nothing for an app the gateway gives no history setting (a personal ap
 
   expect(container).toBeEmptyDOMElement();
 });
+
+it("names the manager by role when the manager has no name", () => {
+  renderSetting({
+    ...shared,
+    request_history: { keep: true, retention: "7_days", manager_name: "" },
+  });
+
+  expect(
+    screen.getByText(
+      "Requests from this app are kept for 7 days. The person who manages this App can read them in Request history.",
+    ),
+  ).toBeVisible();
+});

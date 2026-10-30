@@ -44,7 +44,7 @@ export function RequestHistorySetting({
   }
 
   const sentence = setting.keep
-    ? `Requests from this app are kept for ${periodWords(setting.retention)}. ${setting.manager_name} can read them in Request history.`
+    ? `Requests from this app are kept for ${periodWords(setting.retention)}. ${setting.manager_name || "The person who manages this App"} can read them in Request history.`
     : "Requests from this app are not kept.";
 
   return (
