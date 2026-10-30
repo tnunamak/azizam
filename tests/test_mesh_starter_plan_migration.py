@@ -81,6 +81,23 @@ def test_a_starter_plan_the_owner_narrowed_does_not_gain_3d_models(tmp_path):
     assert "mesh" not in _stored(path, narrowed)["can_use"]
 
 
+def test_the_full_old_starter_with_one_capability_picked_does_not_gain_3d_models(tmp_path):
+    """Same name and every old capability, but one of them is a picked list: not the starter, so no mesh."""
+    path = tmp_path / "admin.db"
+    admin_store.init_db(path)
+    document = plan_document(admin_store.STARTER_PLAN_NAME, caps=OLD_CAPABILITIES)
+    document["can_use"]["image"] = {"items": ["krea2-turbo"]}
+    picked = admin_store.create_access_plan(document, path=path)["id"]
+    _forget_mesh_step(path)
+
+    admin_store.init_db(path)
+    assert "mesh" not in _stored(path, picked)["can_use"]
+
+    admin_store.init_db(path)
+    assert "mesh" not in _stored(path, picked)["can_use"]
+    assert _stored(path, picked)["can_use"]["image"] == {"items": ["krea2-turbo"]}
+
+
 def test_the_step_runs_once_so_a_later_edit_is_kept(tmp_path):
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
