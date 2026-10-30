@@ -759,7 +759,9 @@ def _app_history_policy(conn: sqlite3.Connection, app_id: str, person_enabled: b
                         member_retention: str) -> dict[str, Any]:
     """A shared App's request history policy, read under the lock. Its own switch, period and state decide: the
     manager's switch and parts do not apply to the App's history (``parts`` None: the kind's default)."""
-    row = conn.execute("SELECT kind, history_keep, history_period, disabled_at FROM apps WHERE id=?", (app_id,)).fetchone()
+    row = conn.execute(
+        "SELECT kind, history_keep, history_period, disabled_at, owner_user_id FROM apps WHERE id=?", (app_id,),
+    ).fetchone()
     active = row is not None and row[0] == "service" and row[3] is None and person_enabled
     keep = row is not None and bool(row[1])
     if not active:
@@ -769,7 +771,7 @@ def _app_history_policy(conn: sqlite3.Connection, app_id: str, person_enabled: b
     else:
         reason = None
     return {"remember": bool(active and keep), "retention": str(row[2]) if row is not None else member_retention,
-            "parts": None, "app_reason": reason}
+            "parts": None, "app_reason": reason, "app_owner": str(row[4]) if row is not None else None}
 
 
 def _library_prompt_gate(policy: Mapping[str, Any], started: int, kept_until: int | None) -> tuple[bool, int | None]:
@@ -838,6 +840,9 @@ def _request_history_outcome(
         return WriteOutcome(False, "request_forget")
     if decision.person_id is None:
         return WriteOutcome(False, "no_person")
+    if decision.app_id is not None and policy.get("app_owner") != decision.person_id:
+        # The App's manager changed after the decision: its history was decided for the previous manager.
+        return WriteOutcome(False, "app_disabled")
     if not policy["remember"]:
         return WriteOutcome(False, str(policy.get("app_reason") or "member_disabled"))
     forgot_before = int(policy.get("forgot_before") or 0)
