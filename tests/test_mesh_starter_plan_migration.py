@@ -86,7 +86,7 @@ def test_the_full_old_starter_with_one_capability_picked_does_not_gain_3d_models
     path = tmp_path / "admin.db"
     admin_store.init_db(path)
     document = plan_document(admin_store.STARTER_PLAN_NAME, caps=OLD_CAPABILITIES)
-    document["can_use"]["image"] = {"items": ["krea2-turbo"]}
+    document["can_use"]["image"] = {"items": [{"model": "krea2-turbo"}]}
     picked = admin_store.create_access_plan(document, path=path)["id"]
     _forget_mesh_step(path)
 
@@ -95,7 +95,7 @@ def test_the_full_old_starter_with_one_capability_picked_does_not_gain_3d_models
 
     admin_store.init_db(path)
     assert "mesh" not in _stored(path, picked)["can_use"]
-    assert _stored(path, picked)["can_use"]["image"] == {"items": ["krea2-turbo"]}
+    assert _stored(path, picked)["can_use"]["image"] == {"items": [{"model": "krea2-turbo"}]}
 
 
 def test_the_step_runs_once_so_a_later_edit_is_kept(tmp_path):
