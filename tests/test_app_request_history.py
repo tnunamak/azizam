@@ -188,8 +188,9 @@ def _write(db, decision):
 
 def test_the_managers_own_switch_does_not_gate_the_apps_history(db):
     _turn_on(db)
+    # Turning the switch off erases the manager's history up to now, so the switch is set before the request.
     request_history.set_member_choice(db.manager, keep=False, retention_id="7_days",
-                                      parts=["accepted", "received"], admin_path=db.path, now=NOW)
+                                      parts=["accepted", "received"], admin_path=db.path, now=NOW - 100)
     member = retention.member_choice(db.path, db.manager, retention.GROUP_REQUEST_HISTORY)
     personal = retention.decide(retention.REQUEST_HISTORY, person_id=db.manager, member=member,
                                 household_policy=None, request_body=None, now=NOW)
