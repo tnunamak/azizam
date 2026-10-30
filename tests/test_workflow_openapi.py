@@ -27,9 +27,18 @@ from gateway.workflow_openapi import (  # noqa: E402
     short_id,
 )
 from openapi_lint import validate_openapi  # noqa: E402
+from gateway.mesh_manifest import (  # noqa: E402
+    bind_request,
+    downstream_form,
+    load_mesh_manifest,
+    sniff_image,
+)
 from tests.test_mesh_route import Harness  # noqa: E402
 
 MANIFESTS = ROOT / "manifests" / "workflows"
+MESH_MANIFEST = MANIFESTS / "mesh.generate.trellis-2.yml"
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+MIB = 1 << 20
 
 
 class WorkflowOpenApiTests(unittest.TestCase):
@@ -251,6 +260,38 @@ class WorkflowOpenApiTests(unittest.TestCase):
         # route reads, in submission order; the second is not a field of its own.
         self.assertEqual(edit["source_image"], {"in": "file", "field": "image[]"})
         self.assertEqual(edit["reference_image_2"], {"in": "file", "field": "image[]"})
+
+    def test_mesh_reserved_extensions_is_not_an_accepted_form_field(self) -> None:
+        # The mesh route refuses extensions until a service option maps to it, so the
+        # mapping must not accept it either.
+        sync = self.catalog["mesh.generate.trellis-2"]["execution"]["sync"]
+        self.assertEqual(sync["fields"]["extensions"], {"in": "none"})
+
+    def test_mesh_example_carries_the_picture_and_supported_scalars_only(self) -> None:
+        with authenticated():
+            listing = self.client.get("/gateway/v1/workflows").json()["workflows"]
+        (mesh,) = [w for w in listing if w["id"] == "mesh.generate.trellis-2"]
+        example = mesh["example_request"]
+        self.assertEqual(example["content_type"], "multipart/form-data")
+        self.assertEqual(set(example["files"]), {"image"})
+        self.assertEqual(example["files"]["image"]["field"], "image")
+        self.assertNotIn("extensions", example["form"])
+        self.assertIn("resolution", example["form"])
+        self.assertTrue(set(example["form"]) <= {"seed", "resolution", "bg_removal"})
+
+    def test_mesh_example_fields_bind_through_the_mesh_route(self) -> None:
+        with authenticated():
+            listing = self.client.get("/gateway/v1/workflows").json()["workflows"]
+        (mesh,) = [w for w in listing if w["id"] == "mesh.generate.trellis-2"]
+        example = mesh["example_request"]
+        manifest = load_mesh_manifest(MESH_MANIFEST)
+        field_to_input = {field: name for name, field in manifest.mapping.items()}
+        self.assertTrue(set(example["form"]) <= set(field_to_input))
+        supplied = {field_to_input[field]: value for field, value in example["form"].items()}
+        request = bind_request(manifest, supplied, sniff_image(PNG, max_bytes=MIB))
+        fields, image = downstream_form(manifest, request)
+        self.assertEqual(set(fields), set(example["form"]))
+        self.assertEqual(image.content_type, "image/png")
 
     def test_mesh_is_one_multipart_post_with_its_picture_as_a_file_part(self) -> None:
         mesh = self.catalog["mesh.generate.trellis-2"]["execution"]
