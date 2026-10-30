@@ -13978,14 +13978,24 @@ async def _gateway_capabilities_provider(request: Request) -> list[Capability]:
     capabilities = (await asyncio.to_thread(_gateway_capabilities_for_auth_context, _auth_context_from_scope(request)))
     try:
         service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
-        return project_capabilities(
+        projected = project_capabilities(
             capabilities,
             service_records=service_records,
             evidence=await _capabilities_availability_evidence(capabilities, service_records),
             workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
         )
     except Exception:  # noqa: BLE001
-        return capabilities
+        projected = capabilities
+    return [*projected, *await _mesh_discovery_rows(_auth_context_from_scope(request))]
+
+
+async def _mesh_discovery_rows(auth_context: AuthContext) -> list[Capability]:
+    """The mesh row with this caller's policy view, as the other workflow rows get. Its state is its own live probe,
+    so it is added after the shared projection, which would otherwise overwrite it."""
+    row = await mesh_api.discovery_capability(MESH_DEPS)
+    live_registry = _live_service_registry()
+    viewed = _capability_for_access(row, auth_context, protocol=mesh_api.MESH_PROTOCOL, registry=live_registry)
+    return [] if category_enforcement.is_hidden(viewed.policy_reasons) else [viewed]
 
 
 async def _capabilities_availability_evidence(
@@ -15300,19 +15310,31 @@ def _mesh_open_receipt(auth: AuthContext, request_id: str, path: str) -> Receipt
     return ReceiptLifecycleOwner(receipt)
 
 
-FRONTEND_TRANSLATORS.register_owned("mesh", lambda app: mesh_api.register_mesh_routes(
-    app, mesh_api.MeshApiDeps(
-        manifest=MESH_MANIFEST,
-        authenticate=lambda request, path: authenticate_request(request, path),
-        frontend_records=lambda: route_registry.protocol_frontend_records(
-            registry=_live_service_registry(), proxy_config=config),
-        services=lambda: (_live_service_registry() or {}).get("services") or {},
-        open_receipt=_mesh_open_receipt,
-        leases=MESH_LEASES,
-        client_factory=lambda: httpx.AsyncClient(follow_redirects=False),
-        new_request_id=new_request_id,
-    ),
-))
+def _mesh_route_policy(auth: AuthContext, row: Mapping[str, Any]) -> PolicyDecision:
+    """The same plan evaluation the other Try workflows run, from the route's own frontend tiers. Reads no receipt."""
+    tiers = row["runtime_policy"]
+    return evaluate_and_apply(auth.identity, make_policy_request(
+        protocol=mesh_api.MESH_PROTOCOL, intent=mesh_api.MESH_INTENT, workflow=MESH_MANIFEST.id,
+        backend=MESH_MANIFEST.service_id,
+        capability_exposure=tiers["capability_exposure"],
+        capability_trust_tier=tiers["capability_trust_tier"],
+        capability_resource_tier=tiers["capability_resource_tier"],
+    ))
+
+
+MESH_DEPS = mesh_api.MeshApiDeps(
+    manifest=MESH_MANIFEST,
+    authenticate=lambda request, path: authenticate_request(request, path),
+    frontend_records=lambda: route_registry.protocol_frontend_records(
+        registry=_live_service_registry(), proxy_config=config),
+    services=lambda: (_live_service_registry() or {}).get("services") or {},
+    open_receipt=_mesh_open_receipt,
+    leases=MESH_LEASES,
+    client_factory=lambda: httpx.AsyncClient(follow_redirects=False),
+    new_request_id=new_request_id,
+    route_policy=_mesh_route_policy,
+)
+FRONTEND_TRANSLATORS.register_owned("mesh", lambda app: mesh_api.register_mesh_routes(app, MESH_DEPS))
 
 # --- identity scene + likeness check (gateway/identity_api.py) ----------------
 IDENTITY_CFG = config.get("identity", {}) or {}
