@@ -36,9 +36,16 @@ export type MeshViewerProps = {
  * model-viewer loads only in the browser, from an effect, so it is never part of the Try page's first load and never
  * runs during the static export. The element is removed on unmount, which releases its WebGL context.
  */
-export function MeshViewer({ blob, downloadName, description }: MeshViewerProps) {
+export function MeshViewer({
+  blob,
+  downloadName,
+  description,
+}: MeshViewerProps) {
   const [url, setUrl] = useState<string | null>(null);
-  const [view, setView] = useState<ViewState>({ phase: "loading", progress: 0 });
+  const [view, setView] = useState<ViewState>({
+    phase: "loading",
+    progress: 0,
+  });
   const host = useRef<HTMLDivElement>(null);
   const element = useRef<ModelViewerElement | null>(null);
 
@@ -69,35 +76,46 @@ export function MeshViewer({ blob, downloadName, description }: MeshViewerProps)
       stall = setTimeout(fail, STALL_MS);
     };
     // The import runs here, after mount, so the module is fetched only when a model is shown.
-    import("@google/model-viewer").then(() => {
-      if (!active || !host.current) return;
-      const viewer = document.createElement("model-viewer") as ModelViewerElement;
-      viewer.setAttribute("src", url);
-      viewer.setAttribute("alt", description);
-      viewer.setAttribute("camera-controls", "");
-      viewer.setAttribute("touch-action", "pan-y");
-      viewer.setAttribute("shadow-intensity", "1");
-      // Spin only for people who have not asked for less motion.
-      if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-        viewer.setAttribute("auto-rotate", "");
-      }
-      viewer.addEventListener("progress", (event: Event) => {
-        const total = (event as CustomEvent<{ totalProgress?: number }>).detail?.totalProgress ?? 0;
-        if (!active || loaded) return;
+    import("@google/model-viewer")
+      .then(() => {
+        if (!active || !host.current) return;
+        const viewer = document.createElement(
+          "model-viewer",
+        ) as ModelViewerElement;
+        viewer.setAttribute("src", url);
+        viewer.setAttribute("alt", description);
+        viewer.setAttribute("camera-controls", "");
+        viewer.setAttribute("touch-action", "pan-y");
+        viewer.setAttribute("shadow-intensity", "1");
+        // model-viewer defaults to 300x150 and frames the model for that size, so the element must fill its host.
+        viewer.style.width = "100%";
+        viewer.style.height = "100%";
+        // Spin only for people who have not asked for less motion.
+        if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+          viewer.setAttribute("auto-rotate", "");
+        }
+        viewer.addEventListener("progress", (event: Event) => {
+          const total =
+            (event as CustomEvent<{ totalProgress?: number }>).detail
+              ?.totalProgress ?? 0;
+          if (!active || loaded) return;
+          arm();
+          setView({ phase: "loading", progress: total });
+        });
+        viewer.addEventListener("load", () => {
+          loaded = true;
+          clearTimeout(stall);
+          // model-viewer's own bar can stick short of full (its final update is throttled), and ours is gone once loaded.
+          viewer.style.setProperty("--progress-bar-height", "0px");
+          if (active) setView({ phase: "ready" });
+        });
+        viewer.addEventListener("error", fail);
+        host.current.replaceChildren(viewer);
+        created = viewer;
+        element.current = viewer;
         arm();
-        setView({ phase: "loading", progress: total });
-      });
-      viewer.addEventListener("load", () => {
-        loaded = true;
-        clearTimeout(stall);
-        if (active) setView({ phase: "ready" });
-      });
-      viewer.addEventListener("error", fail);
-      host.current.replaceChildren(viewer);
-      created = viewer;
-      element.current = viewer;
-      arm();
-    }).catch(fail);
+      })
+      .catch(fail);
     return () => {
       active = false;
       clearTimeout(stall);
@@ -107,7 +125,8 @@ export function MeshViewer({ blob, downloadName, description }: MeshViewerProps)
     };
   }, [url, description]);
 
-  const percent = view.phase === "loading" ? Math.round(view.progress * 100) : 100;
+  const percent =
+    view.phase === "loading" ? Math.round(view.progress * 100) : 100;
   const status =
     view.phase === "loading"
       ? `Loading the 3D model. ${percent}%`
@@ -135,7 +154,11 @@ export function MeshViewer({ blob, downloadName, description }: MeshViewerProps)
           </div>
         )}
       </div>
-      <p role="status" aria-live="polite" className="text-muted-foreground text-sm">
+      <p
+        role="status"
+        aria-live="polite"
+        className="text-muted-foreground text-sm"
+      >
         {status}
       </p>
       <div className="flex flex-wrap gap-2">
@@ -155,7 +178,11 @@ export function MeshViewer({ blob, downloadName, description }: MeshViewerProps)
           href={url ?? undefined}
           download={downloadName}
           aria-disabled={!url || undefined}
-          className={cn(buttonVariants({ variant: "outline" }), "min-h-11", !url && "pointer-events-none opacity-50")}
+          className={cn(
+            buttonVariants({ variant: "outline" }),
+            "min-h-11",
+            !url && "pointer-events-none opacity-50",
+          )}
         >
           Download GLB
         </a>

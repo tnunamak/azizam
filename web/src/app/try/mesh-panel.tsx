@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { isNetworkFailure, networkFetch } from "@/lib/network-error";
 import {
+  MESH_BUSY_MESSAGE,
   MESH_PATH,
   MESH_PICTURE_TYPES,
   MESH_WAIT_MESSAGE,
@@ -24,6 +25,10 @@ export type MeshModeProps = {
   detail: { choices: MeshDetail[]; defaultValue: number | null };
   /** The Try key's secret, prepared on first use. Null when Try could not prepare one. */
   getSecret: () => Promise<string | null>;
+  /** The GPU is busy or starting: the form stays, but a new picture cannot be sent yet. */
+  busy: boolean;
+  /** The Photo to 3D tab is open. The viewer mounts only then, so it is never sized while its tab is hidden. */
+  active: boolean;
 };
 
 type Phase = "idle" | "running" | "done" | "error";
@@ -32,15 +37,18 @@ type Result = { blob: Blob; downloadName: string; picture: string };
 /** A refusal from the gateway, carrying the server's own message. */
 class MeshFailure extends Error {}
 
-const selectClass = "border-input bg-card rounded-control min-h-11 w-full border px-3 text-base";
+const selectClass =
+  "border-input bg-card rounded-control min-h-11 w-full border px-3 text-base";
 
 /**
  * The Photo to 3D panel: one picture in, one GLB out, shown in a viewer. It sends its own multipart request, because
  * the answer is a model, not text or a picture the generic Try result can show.
  */
-export function MeshMode({ detail, getSecret }: MeshModeProps) {
+export function MeshMode({ detail, getSecret, busy, active }: MeshModeProps) {
   const [file, setFile] = useState<File | null>(null);
-  const [resolution, setResolution] = useState<number | null>(detail.defaultValue);
+  const [resolution, setResolution] = useState<number | null>(
+    detail.defaultValue,
+  );
   const [seed, setSeed] = useState("");
   const [background, setBackground] = useState<MeshBackground>("");
   const [fieldError, setFieldError] = useState<string | null>(null);
@@ -100,7 +108,9 @@ export function MeshMode({ detail, getSecret }: MeshModeProps) {
     } catch (error) {
       if (run.signal.aborted) {
         setPhase("idle");
-        setMessage("You stopped waiting. The server may still finish the model.");
+        setMessage(
+          "You stopped waiting. The server may still finish the model.",
+        );
         return;
       }
       setPhase("error");
@@ -134,7 +144,9 @@ export function MeshMode({ detail, getSecret }: MeshModeProps) {
             className="block w-full text-sm"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           />
-          <span className="text-muted-foreground block text-xs">PNG, JPEG or WebP.</span>
+          <span className="text-muted-foreground block text-xs">
+            PNG, JPEG or WebP.
+          </span>
         </label>
         {detail.choices.length > 0 && (
           <label className="block space-y-2">
@@ -150,11 +162,15 @@ export function MeshMode({ detail, getSecret }: MeshModeProps) {
                 </option>
               ))}
             </select>
-            <span className="text-muted-foreground block text-xs">Higher detail is slower.</span>
+            <span className="text-muted-foreground block text-xs">
+              Higher detail is slower.
+            </span>
           </label>
         )}
         <details className="border-t pt-3">
-          <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">More options</summary>
+          <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
+            More options
+          </summary>
           <div className="grid gap-3 pb-3">
             <label className="block space-y-2">
               <span className="text-sm font-medium">Variation number</span>
@@ -173,7 +189,9 @@ export function MeshMode({ detail, getSecret }: MeshModeProps) {
               <select
                 className={selectClass}
                 value={background}
-                onChange={(event) => setBackground(event.target.value as MeshBackground)}
+                onChange={(event) =>
+                  setBackground(event.target.value as MeshBackground)
+                }
               >
                 <option value="">Let the service choose</option>
                 <option value="threshold">threshold</option>
@@ -188,29 +206,47 @@ export function MeshMode({ detail, getSecret }: MeshModeProps) {
           </p>
         )}
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" className="min-h-11" disabled={running}>
+          <Button type="submit" className="min-h-11" disabled={running || busy}>
             Make 3D model
           </Button>
         </div>
+        {busy && !running && (
+          <p role="status" className="text-muted-foreground text-sm">
+            {MESH_BUSY_MESSAGE}
+          </p>
+        )}
         {running && (
-          <div role="status" className="flex flex-wrap items-center gap-3 text-sm">
+          <div
+            role="status"
+            className="flex flex-wrap items-center gap-3 text-sm"
+          >
             <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             <span>{MESH_WAIT_MESSAGE}</span>
-            <Button type="button" variant="outline" className="min-h-11" onClick={cancel}>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={cancel}
+            >
               Cancel
             </Button>
           </div>
         )}
       </form>
-      <section aria-label="3D model result" className="bg-card min-w-0 space-y-3 rounded-xl border p-5">
-        {phase === "done" && result ? (
+      <section
+        aria-label="3D model result"
+        className="bg-card min-w-0 space-y-3 rounded-xl border p-5"
+      >
+        {phase === "done" && result && active ? (
           <MeshViewer
             blob={result.blob}
             downloadName={result.downloadName}
             description={`3D model made from the picture ${result.picture}`}
           />
         ) : (
-          <p className="text-muted-foreground text-sm">Your 3D model appears here.</p>
+          <p className="text-muted-foreground text-sm">
+            Your 3D model appears here.
+          </p>
         )}
         {message && (
           <p role="alert" className="text-destructive text-sm">

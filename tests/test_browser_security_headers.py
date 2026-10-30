@@ -34,6 +34,8 @@ def test_browser_media_csp_allows_generated_media_without_widening_scripts():
             assert directives["media-src"] == "'self' blob: data:"
             # Try shows a workflow's picture bytes from a blob: URL.
             assert directives["img-src"] == "'self' data: blob:"
+            # Photo to 3D fetches its generated model from a blob: URL; scripts stay as they were.
+            assert directives["connect-src"] == "'self' blob:"
             assert directives["script-src"] == "'self' 'unsafe-inline'"
             assert directives["frame-ancestors"] == "'none'"
             assert response.headers["x-content-type-options"] == "nosniff"

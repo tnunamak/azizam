@@ -7,7 +7,10 @@ function chunk(type: string, data: Buffer): Buffer {
   head.writeUInt32BE(data.length, 0);
   head.write(type, 4, "ascii");
   const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, "ascii"), data])) >>> 0, 0);
+  crc.writeUInt32BE(
+    crc32(Buffer.concat([Buffer.from(type, "ascii"), data])) >>> 0,
+    0,
+  );
   return Buffer.concat([head, data, crc]);
 }
 
@@ -17,7 +20,9 @@ function texturePng(): Buffer {
     [0x1f, 0x9e, 0x9a, 0xff, 0xff, 0xff],
     [0xf2, 0x8c, 0x28, 0x22, 0x22, 0x22],
   ];
-  const raw = Buffer.concat(rows.map((row) => Buffer.concat([Buffer.from([0]), Buffer.from(row)])));
+  const raw = Buffer.concat(
+    rows.map((row) => Buffer.concat([Buffer.from([0]), Buffer.from(row)])),
+  );
   const header = Buffer.alloc(13);
   header.writeUInt32BE(2, 0);
   header.writeUInt32BE(2, 4);
@@ -31,19 +36,73 @@ function texturePng(): Buffer {
   ]);
 }
 
-const pad4 = (buffer: Buffer) => Buffer.concat([buffer, Buffer.alloc((4 - (buffer.length % 4)) % 4)]);
+const pad4 = (buffer: Buffer) =>
+  Buffer.concat([buffer, Buffer.alloc((4 - (buffer.length % 4)) % 4)]);
 
 /** The cube's faces: four corners each, with normal and UV, and two triangles per face. */
 function cubeGeometry() {
   const faces = [
-    { normal: [0, 0, 1], corners: [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]] },
-    { normal: [0, 0, -1], corners: [[1, -1, -1], [-1, -1, -1], [-1, 1, -1], [1, 1, -1]] },
-    { normal: [1, 0, 0], corners: [[1, -1, 1], [1, -1, -1], [1, 1, -1], [1, 1, 1]] },
-    { normal: [-1, 0, 0], corners: [[-1, -1, -1], [-1, -1, 1], [-1, 1, 1], [-1, 1, -1]] },
-    { normal: [0, 1, 0], corners: [[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, -1]] },
-    { normal: [0, -1, 0], corners: [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1]] },
+    {
+      normal: [0, 0, 1],
+      corners: [
+        [-1, -1, 1],
+        [1, -1, 1],
+        [1, 1, 1],
+        [-1, 1, 1],
+      ],
+    },
+    {
+      normal: [0, 0, -1],
+      corners: [
+        [1, -1, -1],
+        [-1, -1, -1],
+        [-1, 1, -1],
+        [1, 1, -1],
+      ],
+    },
+    {
+      normal: [1, 0, 0],
+      corners: [
+        [1, -1, 1],
+        [1, -1, -1],
+        [1, 1, -1],
+        [1, 1, 1],
+      ],
+    },
+    {
+      normal: [-1, 0, 0],
+      corners: [
+        [-1, -1, -1],
+        [-1, -1, 1],
+        [-1, 1, 1],
+        [-1, 1, -1],
+      ],
+    },
+    {
+      normal: [0, 1, 0],
+      corners: [
+        [-1, 1, 1],
+        [1, 1, 1],
+        [1, 1, -1],
+        [-1, 1, -1],
+      ],
+    },
+    {
+      normal: [0, -1, 0],
+      corners: [
+        [-1, -1, -1],
+        [1, -1, -1],
+        [1, -1, 1],
+        [-1, -1, 1],
+      ],
+    },
   ];
-  const uvs = [[0, 1], [1, 1], [1, 0], [0, 0]];
+  const uvs = [
+    [0, 1],
+    [1, 1],
+    [1, 0],
+    [0, 0],
+  ];
   const positions: number[] = [];
   const normals: number[] = [];
   const texcoords: number[] = [];
@@ -83,34 +142,88 @@ export function cubeGlb(): Buffer {
     meshes: [
       {
         primitives: [
-          { attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 }, indices: 3, material: 0 },
+          {
+            attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 },
+            indices: 3,
+            material: 0,
+          },
         ],
       },
     ],
     materials: [
-      { pbrMetallicRoughness: { baseColorTexture: { index: 0 }, metallicFactor: 0, roughnessFactor: 0.8 } },
+      {
+        pbrMetallicRoughness: {
+          baseColorTexture: { index: 0 },
+          metallicFactor: 0,
+          roughnessFactor: 0.8,
+        },
+      },
     ],
     textures: [{ source: 0 }],
     images: [{ bufferView: 4, mimeType: "image/png" }],
     accessors: [
-      { bufferView: 0, componentType: 5126, count: positions.length / 3, type: "VEC3",
-        min: [-1, -1, -1], max: [1, 1, 1] },
-      { bufferView: 1, componentType: 5126, count: normals.length / 3, type: "VEC3" },
-      { bufferView: 2, componentType: 5126, count: texcoords.length / 2, type: "VEC2" },
-      { bufferView: 3, componentType: 5123, count: indices.length, type: "SCALAR" },
+      {
+        bufferView: 0,
+        componentType: 5126,
+        count: positions.length / 3,
+        type: "VEC3",
+        min: [-1, -1, -1],
+        max: [1, 1, 1],
+      },
+      {
+        bufferView: 1,
+        componentType: 5126,
+        count: normals.length / 3,
+        type: "VEC3",
+      },
+      {
+        bufferView: 2,
+        componentType: 5126,
+        count: texcoords.length / 2,
+        type: "VEC2",
+      },
+      {
+        bufferView: 3,
+        componentType: 5123,
+        count: indices.length,
+        type: "SCALAR",
+      },
     ],
     bufferViews: [
-      { buffer: 0, byteOffset: offsets[0], byteLength: positionBytes.length, target: 34962 },
-      { buffer: 0, byteOffset: offsets[1], byteLength: normalBytes.length, target: 34962 },
-      { buffer: 0, byteOffset: offsets[2], byteLength: texcoordBytes.length, target: 34962 },
-      { buffer: 0, byteOffset: offsets[3], byteLength: indexBytes.length, target: 34963 },
+      {
+        buffer: 0,
+        byteOffset: offsets[0],
+        byteLength: positionBytes.length,
+        target: 34962,
+      },
+      {
+        buffer: 0,
+        byteOffset: offsets[1],
+        byteLength: normalBytes.length,
+        target: 34962,
+      },
+      {
+        buffer: 0,
+        byteOffset: offsets[2],
+        byteLength: texcoordBytes.length,
+        target: 34962,
+      },
+      {
+        buffer: 0,
+        byteOffset: offsets[3],
+        byteLength: indexBytes.length,
+        target: 34963,
+      },
       { buffer: 0, byteOffset: offsets[4], byteLength: image.length },
     ],
     buffers: [{ byteLength: bin.length }],
   };
   // The JSON chunk pads with spaces, as the glTF spec requires; the binary chunk pads with zeros.
   const jsonText = Buffer.from(JSON.stringify(json), "utf8");
-  const jsonBytes = Buffer.concat([jsonText, Buffer.alloc((4 - (jsonText.length % 4)) % 4, 0x20)]);
+  const jsonBytes = Buffer.concat([
+    jsonText,
+    Buffer.alloc((4 - (jsonText.length % 4)) % 4, 0x20),
+  ]);
   const jsonChunk = Buffer.alloc(8 + jsonBytes.length);
   jsonChunk.writeUInt32LE(jsonBytes.length, 0);
   jsonChunk.writeUInt32LE(0x4e4f534a, 4); // "JSON"

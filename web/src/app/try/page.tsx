@@ -42,7 +42,7 @@ import {
   type WorkflowJob,
 } from "./workflow-media";
 import { outputKindOf } from "./workflow-input-meta";
-import { MESH_CAPABILITY, meshDetailChoices } from "./mesh-mode";
+import { MESH_CAPABILITY, meshDetailChoices, meshModeState } from "./mesh-mode";
 import { MeshMode } from "./mesh-panel";
 import { costFrom } from "./result-cost";
 import { chatDefaultChoice } from "./chat-default";
@@ -1480,13 +1480,10 @@ export default function TryPage() {
   const owner = viewer.admin;
   // The Photo to 3D tab exists only while the catalog lists its workflow as runnable for this viewer.
   const meshWorkflow = catalog.mesh?.[0]?.workflow;
-  const meshShown = Boolean(
-    meshWorkflow &&
-      workflowAvailabilityView(meshWorkflow.availability, {
-        owner,
-        engineBinding: meshWorkflow.engine_binding,
-      }).runnable,
-  );
+  const meshState = meshWorkflow
+    ? meshModeState(meshWorkflow.availability, { owner, engineBinding: meshWorkflow.engine_binding })
+    : "hidden";
+  const meshShown = meshState !== "hidden";
   const shownTabs = TAB_ITEMS.filter((tab) => tab.value !== "mesh" || meshShown);
   // A tab that disappears while open falls back to Chat.
   const displayedTab: TryTab = shownTabs.some((tab) => tab.value === activeTab) ? activeTab : "chat";
@@ -2791,6 +2788,8 @@ export default function TryPage() {
             return (
               <TabsContent key="mesh" value="mesh" className="mt-4" forceMount>
                 <MeshMode
+                  busy={meshState === "busy"}
+                  active={displayedTab === "mesh"}
                   detail={meshDetailChoices(meshWorkflow?.inputs ?? [])}
                   getSecret={async () => (key?.secret ?? (await prepareKey())?.secret ?? null)}
                 />

@@ -1,4 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { MeshViewer } from "./mesh-viewer";
 
@@ -36,10 +43,17 @@ beforeEach(() => {
     return url;
   });
   revokeObjectURL = vi.fn();
-  vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL }));
+  vi.stubGlobal(
+    "URL",
+    Object.assign(URL, { createObjectURL, revokeObjectURL }),
+  );
   vi.stubGlobal(
     "matchMedia",
-    vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })),
+    vi.fn(() => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    })),
   );
 });
 
@@ -52,7 +66,13 @@ afterEach(() => {
 // The module cache keeps the factory's count for the whole file, so this test must run first.
 test("does not load model-viewer until a model is shown, then loads it after mount", async () => {
   expect(mocks.loaded).not.toHaveBeenCalled();
-  const { container } = render(<MeshViewer blob={GLB} downloadName={NAME} description="3D model made from mug.png" />);
+  const { container } = render(
+    <MeshViewer
+      blob={GLB}
+      downloadName={NAME}
+      description="3D model made from mug.png"
+    />,
+  );
   const viewer = await mounted(container);
   expect(mocks.loaded).toHaveBeenCalledTimes(1);
   expect(viewer.getAttribute("alt")).toBe("3D model made from mug.png");
@@ -61,25 +81,41 @@ test("does not load model-viewer until a model is shown, then loads it after mou
 });
 
 test("auto-rotates unless the visitor asks for reduced motion", async () => {
-  const { container, unmount } = render(<MeshViewer blob={GLB} downloadName={NAME} description="mug" />);
+  const { container, unmount } = render(
+    <MeshViewer blob={GLB} downloadName={NAME} description="mug" />,
+  );
   expect((await mounted(container)).hasAttribute("auto-rotate")).toBe(true);
   unmount();
 
   vi.stubGlobal(
     "matchMedia",
-    vi.fn((query: string) => ({ matches: query === "(prefers-reduced-motion: reduce)", addEventListener() {}, removeEventListener() {} })),
+    vi.fn((query: string) => ({
+      matches: query === "(prefers-reduced-motion: reduce)",
+      addEventListener() {},
+      removeEventListener() {},
+    })),
   );
-  const again = render(<MeshViewer blob={GLB} downloadName={NAME} description="mug" />);
-  expect((await mounted(again.container)).hasAttribute("auto-rotate")).toBe(false);
+  const again = render(
+    <MeshViewer blob={GLB} downloadName={NAME} description="mug" />,
+  );
+  expect((await mounted(again.container)).hasAttribute("auto-rotate")).toBe(
+    false,
+  );
 });
 
 test("announces progress while loading and loaded when ready", async () => {
-  const { container } = render(<MeshViewer blob={GLB} downloadName={NAME} description="mug" />);
+  const { container } = render(
+    <MeshViewer blob={GLB} downloadName={NAME} description="mug" />,
+  );
   const viewer = await mounted(container);
   act(() => {
-    viewer.dispatchEvent(new CustomEvent("progress", { detail: { totalProgress: 0.42 } }));
+    viewer.dispatchEvent(
+      new CustomEvent("progress", { detail: { totalProgress: 0.42 } }),
+    );
   });
-  expect(screen.getByRole("status")).toHaveTextContent("Loading the 3D model. 42%");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Loading the 3D model. 42%",
+  );
   act(() => {
     viewer.dispatchEvent(new CustomEvent("load"));
   });
@@ -88,50 +124,79 @@ test("announces progress while loading and loaded when ready", async () => {
 });
 
 test("a final 100% progress event after load keeps the model shown as loaded", async () => {
-  const { container } = render(<MeshViewer blob={GLB} downloadName={NAME} description="mug" />);
+  const { container } = render(
+    <MeshViewer blob={GLB} downloadName={NAME} description="mug" />,
+  );
   const viewer = await mounted(container);
   act(() => {
     viewer.dispatchEvent(new CustomEvent("load"));
-    viewer.dispatchEvent(new CustomEvent("progress", { detail: { totalProgress: 1 } }));
+    viewer.dispatchEvent(
+      new CustomEvent("progress", { detail: { totalProgress: 1 } }),
+    );
   });
   expect(screen.getByRole("status")).toHaveTextContent("3D model loaded.");
 });
 
 test("shows an error state, not a blank canvas, when the model fails to load", async () => {
-  const { container } = render(<MeshViewer blob={GLB} downloadName={NAME} description="mug" />);
+  const { container } = render(
+    <MeshViewer blob={GLB} downloadName={NAME} description="mug" />,
+  );
   const viewer = await mounted(container);
   act(() => {
-    viewer.dispatchEvent(new CustomEvent("error", { detail: { type: "loadfailure" } }));
+    viewer.dispatchEvent(
+      new CustomEvent("error", { detail: { type: "loadfailure" } }),
+    );
   });
-  expect(screen.getByRole("status")).toHaveTextContent("could not be shown in this browser");
-  expect(screen.getByText("The 3D model could not be shown in this browser.", { selector: "div" })).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "could not be shown in this browser",
+  );
+  expect(
+    screen.getByText("The 3D model could not be shown in this browser.", {
+      selector: "div",
+    }),
+  ).toBeVisible();
   // The file is still there to download.
-  expect(screen.getByRole("link", { name: "Download GLB" })).toHaveAttribute("href", urls[0]);
+  expect(screen.getByRole("link", { name: "Download GLB" })).toHaveAttribute(
+    "href",
+    urls[0],
+  );
 });
 
 test("a model that stalls without an error event gives up, and progress keeps it waiting", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   try {
-    const { container } = render(<MeshViewer blob={GLB} downloadName={NAME} description="mug" />);
+    const { container } = render(
+      <MeshViewer blob={GLB} downloadName={NAME} description="mug" />,
+    );
     const viewer = await mounted(container);
     act(() => {
-      viewer.dispatchEvent(new CustomEvent("progress", { detail: { totalProgress: 0.5 } }));
+      viewer.dispatchEvent(
+        new CustomEvent("progress", { detail: { totalProgress: 0.5 } }),
+      );
     });
     act(() => vi.advanceTimersByTime(25_000));
     act(() => {
-      viewer.dispatchEvent(new CustomEvent("progress", { detail: { totalProgress: 1 } }));
+      viewer.dispatchEvent(
+        new CustomEvent("progress", { detail: { totalProgress: 1 } }),
+      );
     });
     act(() => vi.advanceTimersByTime(25_000));
-    expect(screen.getByRole("status")).toHaveTextContent("Loading the 3D model.");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Loading the 3D model.",
+    );
     act(() => vi.advanceTimersByTime(30_000));
-    expect(screen.getByRole("status")).toHaveTextContent("could not be shown in this browser");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "could not be shown in this browser",
+    );
   } finally {
     vi.useRealTimers();
   }
 });
 
 test("the download link carries the blob's object URL and the timestamped file name", async () => {
-  const { container } = render(<MeshViewer blob={GLB} downloadName={NAME} description="mug" />);
+  const { container } = render(
+    <MeshViewer blob={GLB} downloadName={NAME} description="mug" />,
+  );
   await mounted(container);
   const link = screen.getByRole("link", { name: "Download GLB" });
   expect(link).toHaveAttribute("href", urls[0]);
@@ -140,7 +205,9 @@ test("the download link carries the blob's object URL and the timestamped file n
 });
 
 test("Reset view turns the camera back to its start once the model is ready", async () => {
-  const { container } = render(<MeshViewer blob={GLB} downloadName={NAME} description="mug" />);
+  const { container } = render(
+    <MeshViewer blob={GLB} downloadName={NAME} description="mug" />,
+  );
   const viewer = await mounted(container);
   const reset = vi.fn();
   const jump = vi.fn();
@@ -157,17 +224,23 @@ test("Reset view turns the camera back to its start once the model is ready", as
 });
 
 test("replacing the blob revokes the old URL and shows the new model", async () => {
-  const { container, rerender } = render(<MeshViewer blob={GLB} downloadName={NAME} description="mug" />);
+  const { container, rerender } = render(
+    <MeshViewer blob={GLB} downloadName={NAME} description="mug" />,
+  );
   await mounted(container);
   const second = new Blob(["glTF2"], { type: "model/gltf-binary" });
   rerender(<MeshViewer blob={second} downloadName={NAME} description="mug" />);
-  await waitFor(() => expect(viewerElement(container).getAttribute("src")).toBe(urls[1]));
+  await waitFor(() =>
+    expect(viewerElement(container).getAttribute("src")).toBe(urls[1]),
+  );
   expect(revokeObjectURL).toHaveBeenCalledWith(urls[0]);
   expect(revokeObjectURL).not.toHaveBeenCalledWith(urls[1]);
 });
 
 test("unmounting revokes the URL and removes the viewer so its GPU context is released", async () => {
-  const { container, unmount } = render(<MeshViewer blob={GLB} downloadName={NAME} description="mug" />);
+  const { container, unmount } = render(
+    <MeshViewer blob={GLB} downloadName={NAME} description="mug" />,
+  );
   await mounted(container);
   const removed = vi.spyOn(viewerElement(container), "remove");
   unmount();
@@ -178,7 +251,9 @@ test("unmounting revokes the URL and removes the viewer so its GPU context is re
 
 test("repeated open and close leaves no viewer or URL behind", async () => {
   for (let index = 0; index < 3; index += 1) {
-    const { container, unmount } = render(<MeshViewer blob={GLB} downloadName={NAME} description="mug" />);
+    const { container, unmount } = render(
+      <MeshViewer blob={GLB} downloadName={NAME} description="mug" />,
+    );
     await mounted(container);
     unmount();
   }

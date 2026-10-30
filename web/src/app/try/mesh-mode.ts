@@ -1,3 +1,7 @@
+import {
+  workflowAvailabilityView,
+  type WorkflowAvailability,
+} from "@/lib/workflow-availability";
 import type { WorkflowInput } from "./workflow-inputs";
 
 /** The catalog capability of the TRELLIS.2 workflow: its row lists under "mesh", not in Workflow. */
@@ -5,7 +9,10 @@ export const MESH_CAPABILITY = "mesh";
 /** The gateway route the mesh workflow posts to. */
 export const MESH_PATH = "/v1/meshes/generate";
 export const MESH_MEDIA_TYPE = "model/gltf-binary";
-export const MESH_WAIT_MESSAGE = "Making the 3D model. This can take about a minute.";
+export const MESH_WAIT_MESSAGE =
+  "Making the 3D model. This can take about a minute.";
+export const MESH_BUSY_MESSAGE =
+  "The GPU is busy or starting up. Try again shortly.";
 export const MESH_PICTURE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 /** The seed is a 32-bit unsigned integer, as the gateway's manifest says. */
 const MAX_SEED = 4294967295;
@@ -17,14 +24,42 @@ export type MeshBackground = "" | "threshold" | "birefnet";
  * The "detail" pick-list: the manifest's resolution values, with the manifest's default selected.
  * Empty when the manifest carries no resolution input, so the mode has nothing to offer.
  */
-export function meshDetailChoices(inputs: WorkflowInput[]): { choices: MeshDetail[]; defaultValue: number | null } {
+export function meshDetailChoices(inputs: WorkflowInput[]): {
+  choices: MeshDetail[];
+  defaultValue: number | null;
+} {
   const resolution = inputs.find((input) => input.name === "resolution");
-  const values = (resolution?.enum ?? []).filter((value): value is number => typeof value === "number");
-  const fallback = typeof resolution?.default === "number" ? resolution.default : null;
+  const values = (resolution?.enum ?? []).filter(
+    (value): value is number => typeof value === "number",
+  );
+  const fallback =
+    typeof resolution?.default === "number" ? resolution.default : null;
   return {
     choices: values.map((value) => ({ value, label: String(value) })),
-    defaultValue: fallback !== null && values.includes(fallback) ? fallback : (values[0] ?? null),
+    defaultValue:
+      fallback !== null && values.includes(fallback)
+        ? fallback
+        : (values[0] ?? null),
   };
+}
+
+/**
+ * Whether the Photo to 3D mode is offered. "ready": it runs now. "busy": its GPU is busy or starting, which passes, so
+ * the mode stays and says so. "hidden": the capability is missing or its service is not healthy.
+ */
+export type MeshModeState = "ready" | "busy" | "hidden";
+
+const TEMPORARY_STATUSES = new Set(["busy", "starting"]);
+
+export function meshModeState(
+  availability: WorkflowAvailability | null | undefined,
+  options: { owner: boolean; engineBinding?: string | null },
+): MeshModeState {
+  const status = String(availability?.status ?? "").toLowerCase();
+  if (TEMPORARY_STATUSES.has(status)) return "busy";
+  return workflowAvailabilityView(availability, options).runnable
+    ? "ready"
+    : "hidden";
 }
 
 /** A client-side check of the seed box, so a bad number never leaves the page. Empty means "let the service choose". */
@@ -39,7 +74,12 @@ export function meshSeedProblem(seed: string): string | null {
 }
 
 /** The multipart body the route takes. Empty seed and background are left out, so the service chooses. */
-export function meshForm(options: { image: File; seed: string; resolution: number; background: MeshBackground }): FormData {
+export function meshForm(options: {
+  image: File;
+  seed: string;
+  resolution: number;
+  background: MeshBackground;
+}): FormData {
   const form = new FormData();
   form.append("image", options.image);
   form.append("resolution", String(options.resolution));
@@ -56,7 +96,8 @@ export function meshDownloadName(now: Date): string {
 
 /** The message to show for a failed mesh request: the server's own words, or a plain fallback when it sent none. */
 export function meshFailureMessage(payload: unknown): string {
-  const message = (payload as { error?: { message?: unknown } } | null)?.error?.message;
+  const message = (payload as { error?: { message?: unknown } } | null)?.error
+    ?.message;
   return typeof message === "string" && message.trim()
     ? message
     : "The 3D model could not be made. Try again.";
