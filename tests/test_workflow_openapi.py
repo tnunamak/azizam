@@ -27,6 +27,7 @@ from gateway.workflow_openapi import (  # noqa: E402
     short_id,
 )
 from openapi_lint import validate_openapi  # noqa: E402
+from tests.test_mesh_route import Harness  # noqa: E402
 
 MANIFESTS = ROOT / "manifests" / "workflows"
 
@@ -71,7 +72,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
                 self.assertEqual(sorted(schema.get("required", [])), wanted)
                 for name, spec in settable.items():
                     prop = schema["properties"][name]
-                    if spec["type"] == "asset":
+                    if spec["type"] in ("asset", "image"):
                         self.assertTrue(prop["x-azizam-asset"])
                         continue
                     self.assertEqual(prop["type"], spec["type"])
@@ -98,8 +99,11 @@ class WorkflowOpenApiTests(unittest.TestCase):
             self.assertEqual(self.catalog[item["id"]]["intent"], item["intent"])
 
     def test_catalog_workflows_match_capability_rows(self) -> None:
+        # The mesh row probes its service live; the harness's fake upstream answers
+        # instead, so this test never reaches a real trellis or observer.
         with authenticated(), \
-             patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
+             patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})), \
+             patch.object(proxy, "MESH_DEPS", Harness().deps()):
             rows = self.client.get("/gateway/v1/capabilities").json()["capabilities"]
         names = {
             value
@@ -200,7 +204,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
             for name, spec in record.manifest["inputs"].items():
                 if name in owned:
                     continue
-                if spec["type"] == "asset":
+                if spec["type"] in ("asset", "image"):
                     if spec.get("required"):
                         sample[name] = "data:image/png;base64,AAAA"
                     continue
@@ -247,6 +251,19 @@ class WorkflowOpenApiTests(unittest.TestCase):
         # route reads, in submission order; the second is not a field of its own.
         self.assertEqual(edit["source_image"], {"in": "file", "field": "image[]"})
         self.assertEqual(edit["reference_image_2"], {"in": "file", "field": "image[]"})
+
+    def test_mesh_is_one_multipart_post_with_its_picture_as_a_file_part(self) -> None:
+        mesh = self.catalog["mesh.generate.trellis-2"]["execution"]
+        self.assertEqual(mesh["recommended"], "sync")
+        self.assertEqual(mesh["sync"]["method"], "POST")
+        self.assertEqual(mesh["sync"]["path"], "/v1/meshes/generate")
+        self.assertEqual(mesh["sync"]["content_type"], "multipart/form-data")
+        self.assertEqual(mesh["sync"]["fields"]["image"], {"in": "file", "field": "image"})
+        self.assertEqual(mesh["sync"]["fields"]["seed"], {"in": "form", "field": "seed"})
+        self.assertEqual(mesh["sync"]["output"], "model/gltf-binary (GLB bytes)")
+        form = self.spec["components"]["schemas"][schema_name("mesh.generate.trellis-2", "WorkflowForm_")]
+        self.assertEqual(form["properties"]["image"]["format"], "binary")
+        self.assertEqual(form["required"], ["image"])
 
     def test_every_stable_alias_resolves_to_a_workflow(self) -> None:
         aliases = proxy._gateway_aliases_provider()

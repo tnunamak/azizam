@@ -71,6 +71,10 @@ _IMAGE_EDIT_MANAGED = frozenset(
 # The multipart part the OpenAI-compatible edit route reads pictures from. One
 # part per picture, in submission order; the field repeats.
 _IMAGE_EDIT_IMAGE_PART = "image[]"
+# Manifest input types that carry a picture or media reference. ``image`` is
+# the mesh route's single picture, sent as one multipart file part.
+_MEDIA_INPUT_TYPES = frozenset({"asset", "image"})
+_MESH_PATH = "/v1/meshes/generate"
 
 _JSON_TYPES = {
     "string": "string",
@@ -109,7 +113,7 @@ def _ref(name: str) -> dict[str, str]:
 
 def _input_schema(spec: Mapping[str, Any], *, form: bool) -> dict[str, Any]:
     kind = str(spec.get("type", "string"))
-    if kind == "asset":
+    if kind in _MEDIA_INPUT_TYPES:
         if form:
             out: dict[str, Any] = {"type": "string", "format": "binary"}
         else:
@@ -241,12 +245,17 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
     inputs = record.manifest.get("inputs") or {}
     intent = record.intent
     out: dict[str, dict[str, Any]] = {}
-    is_asset = {n: (s or {}).get("type") == "asset" for n, s in inputs.items()}
+    is_asset = {n: (s or {}).get("type") in _MEDIA_INPUT_TYPES for n, s in inputs.items()}
 
     if mode == "sync" and gateway_route(record):  # a native route: plain multipart form
         for name in inputs:
             field = "image" if name == "source_image" else name
             out[name] = {"in": "file" if is_asset[name] else "form", "field": field}
+        return out
+
+    if intent == "mesh.generate" and mode == "sync":  # one picture part, plain text fields
+        for name in inputs:
+            out[name] = {"in": "file" if is_asset[name] else "form", "field": name}
         return out
 
     if intent == "video.edit" and mode == "sync":  # run route: plain form
@@ -426,6 +435,10 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
                 "model": model, "fields": request_mapping(record, "sync"),
                 "output": "audio bytes (see Content-Type)"}
         async_ = job_route("audio.generate")
+    elif intent == "mesh.generate":
+        sync = {"method": "POST", "path": _MESH_PATH, "content_type": _MULTIPART,
+                "fields": request_mapping(record, "sync"),
+                "output": "model/gltf-binary (GLB bytes)"}
     elif intent.startswith("video."):
         async_ = {
             "kind": "video",

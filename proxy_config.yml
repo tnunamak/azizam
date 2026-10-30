@@ -764,7 +764,7 @@ backends:
   # It is a read-only fact source with no route of its own, so the pool refuses whenever it does not answer.
   vram-observer:
     display_name: GPU0 VRAM observer
-    description: Reports free and total memory for GPU0 to the exclusive image-to-3D pool.
+    description: Reports free and total memory of the image-to-3D graphics card to the exclusive pool.
     name: VRAM observer (nvidia-smi, GPU0)
     host: 127.0.0.1
     port: 8891
