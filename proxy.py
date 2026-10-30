@@ -14335,6 +14335,8 @@ _SECURITY_HEADERS = {
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
         "media-src 'self' blob: data:; "
+        # Photo to 3D loads the generated model from a blob: URL it fetches itself.
+        "connect-src 'self' blob:; "
         "frame-ancestors 'none'"
     ),
 }
