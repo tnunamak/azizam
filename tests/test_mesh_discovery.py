@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from gateway import mesh_api
 from gateway.capabilities import Capability, summarize_capabilities, summarize_capability
 from gateway.mesh_api import discovery_capability
 from tests.test_mesh_route import GLB, GOOD_CAPACITY, OBSERVER_URL, TRELLIS_URL, TOTAL, MIB, Harness
@@ -47,6 +48,60 @@ def test_a_healthy_pool_lists_the_mesh_row_with_its_media_type_and_route_tiers()
     assert capability.resource_tier == "batch"
     assert capability.lifecycle == "warm"
     assert capability.health == "healthy"
+    assert capability.available is True
+    assert capability.caveats == ()
+
+
+def test_concurrent_listings_share_one_health_and_one_observer_probe_within_the_ttl() -> None:
+    harness = Harness()
+    urls: list[str] = []
+    original = harness.handler
+
+    def spy(request):
+        urls.append(str(request.url))
+        return original(request)
+
+    harness.handler = spy
+    deps = harness.deps()
+
+    async def list_eight_at_once():
+        return await asyncio.gather(*(discovery_capability(deps) for _ in range(8)))
+
+    rows = asyncio.run(list_eight_at_once())
+    assert all(row.available for row in rows)
+    assert urls.count(f"{TRELLIS_URL}/health") == 1
+    assert urls.count(f"{OBSERVER_URL}/facts") == 1
+
+    # A later listing inside the fresh window reads the answer, and probes nothing.
+    assert asyncio.run(discovery_capability(deps)).available is True
+    assert urls.count(f"{TRELLIS_URL}/health") == 1
+    assert urls.count(f"{OBSERVER_URL}/facts") == 1
+
+
+def test_a_hanging_health_endpoint_does_not_hold_a_listing_once_an_answer_is_cached(monkeypatch) -> None:
+    harness = Harness()
+    deps = harness.deps()
+    assert asyncio.run(discovery_capability(deps)).available is True
+
+    # The cached answer is now due a refresh, and the refresh hangs on the health endpoint.
+    monkeypatch.setattr(mesh_api, "POOL_PROBE_FRESH_SECONDS", 0.0)
+
+    async def listing_while_health_hangs():
+        release = asyncio.Event()
+
+        async def hang_on_health(request):
+            if str(request.url) == f"{TRELLIS_URL}/health":
+                await release.wait()
+
+        harness.hook = hang_on_health
+        try:
+            # The fake transport ignores httpx timeouts, so a listing that waited on the probe would not return.
+            return await asyncio.wait_for(discovery_capability(deps), timeout=2.0)
+        finally:
+            release.set()
+
+    capability = asyncio.run(listing_while_health_hangs())
+
     assert capability.available is True
     assert capability.caveats == ()
 

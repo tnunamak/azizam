@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 import httpx
@@ -72,6 +73,19 @@ MESH_PROTOCOL = "openai.mesh"
 MAX_IMAGE_BYTES = 25 * MIB
 MAX_GLB_BYTES = 512 * MIB
 _HEALTH_TIMEOUT_SECONDS = 5.0
+# An answer of the discovery probe younger than this is served as it is. An older one is still served, while one refresh
+# runs behind it, so a slow or hung trellis host delays only the first listing.
+POOL_PROBE_FRESH_SECONDS = 10.0
+
+
+@dataclass
+class PoolProbeCache:
+    """The discovery probe's answers, one per probed pair of URLs (health, observer), and at most one probe in flight
+    per pair. Each MeshApiDeps owns one; the gateway's deps are built once, so its cache is process-wide."""
+
+    # (health URL, observer URL) -> (time.monotonic() when the probe finished, the reason or None when the pool is ready)
+    answers: dict[tuple[str, str], tuple[float, str | None]] = field(default_factory=dict)
+    inflight: dict[tuple[str, str], asyncio.Task] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -94,6 +108,8 @@ class MeshApiDeps:
     # route_policy(auth, frontend_row) -> a policy decision for this caller on this route (the same evaluator the
     # other Try workflows use). A decision with ``denied`` true refuses the request with 403 before the body is read.
     route_policy: Callable[[Any, Mapping[str, Any]], Any]
+    # Answers of the capability listing's probe only; the request path always probes live.
+    probe_cache: PoolProbeCache = field(default_factory=PoolProbeCache)
 
 
 def _retry_after_headers(spec: ExclusivePoolSpec) -> dict[str, str]:
@@ -348,7 +364,7 @@ async def discovery_capability(deps: MeshApiDeps) -> Capability:
     if problem is None:
         problem, spec, service = service_problem(deps.services(), manifest)
     if problem is None and spec is not None and service is not None:
-        problem = await _probe_pool(deps, spec, service)
+        problem = await _pool_problem(deps, spec, service)
     available = problem is None
     projection = AvailabilityProjection(
         service_id=manifest.service_id,
@@ -380,6 +396,51 @@ async def discovery_capability(deps: MeshApiDeps) -> Capability:
         caveats=() if available else (problem,),
         availability=projection.to_public_dict(),
     )
+
+
+async def _pool_problem(deps: MeshApiDeps, spec: ExclusivePoolSpec, service: Mapping[str, Any]) -> str | None:
+    """The listing's answer for the pool, from the probe cache. A pair never probed waits for its first probe, which
+    every listing that arrives meanwhile shares. A cached answer returns at once; once it is older than
+    POOL_PROBE_FRESH_SECONDS, one refresh starts behind it. A refresh that is already in flight is not doubled."""
+    config = _config_of(service)
+    base = service_base_url(config)
+    if not base:
+        return "service has no base URL"
+    observer_problem, observer_url = _observer_problem(deps, spec)
+    if observer_problem is not None:
+        return observer_problem
+    key = (base + str(config.get("health_endpoint") or "/health"), observer_url)
+    answer = deps.probe_cache.answers.get(key)
+    if answer is None:
+        return await asyncio.shield(_pool_probe_task(deps, spec, service, key))
+    finished, reason = answer
+    if time.monotonic() - finished >= POOL_PROBE_FRESH_SECONDS:
+        _pool_probe_task(deps, spec, service, key)
+    return reason
+
+
+def _pool_probe_task(deps: MeshApiDeps, spec: ExclusivePoolSpec, service: Mapping[str, Any],
+                     key: tuple[str, str]) -> asyncio.Task:
+    """The probe in flight for this pair, or a new one. Shielded by its callers, so a cancelled listing never cancels it."""
+    task = deps.probe_cache.inflight.get(key)
+    if task is None:
+        task = asyncio.ensure_future(_run_pool_probe(deps, spec, service, key))
+        deps.probe_cache.inflight[key] = task
+    return task
+
+
+async def _run_pool_probe(deps: MeshApiDeps, spec: ExclusivePoolSpec, service: Mapping[str, Any],
+                          key: tuple[str, str]) -> str | None:
+    """Probe the pool once and record the answer. Never raises: a probe that fails is a reason on the row."""
+    try:
+        try:
+            reason = await _probe_pool(deps, spec, service)
+        except Exception as error:  # noqa: BLE001 - the row carries one bounded reason, never the raw error
+            reason = f"probe failed: {type(error).__name__}"
+        deps.probe_cache.answers[key] = (time.monotonic(), reason)
+        return reason
+    finally:
+        deps.probe_cache.inflight.pop(key, None)
 
 
 async def _probe_pool(deps: MeshApiDeps, spec: ExclusivePoolSpec, service: Mapping[str, Any]) -> str | None:
