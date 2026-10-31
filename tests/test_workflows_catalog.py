@@ -772,6 +772,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
                  patch.object(proxy.media_jobs, "DB_PATH", jobs_db), \
                  patch.object(proxy, "_gateway_aliases_provider", return_value={}), \
                  patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})), \
+                 patch.object(proxy, "_mesh_discovery_rows", new=AsyncMock(return_value=[])), \
                  patch.object(proxy, "_public_base_url", return_value="http://testserver"), \
                  patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", _registry()):
                 app = FastAPI()
@@ -819,6 +820,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
                  patch.object(proxy.media_jobs, "DB_PATH", jobs_db), \
                  patch.object(proxy, "_gateway_aliases_provider", return_value={}), \
                  patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})), \
+                 patch.object(proxy, "_mesh_discovery_rows", new=AsyncMock(return_value=[])), \
                  patch.object(proxy, "_public_base_url", return_value="http://testserver"), \
                  patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", _registry()):
                 app = FastAPI()
