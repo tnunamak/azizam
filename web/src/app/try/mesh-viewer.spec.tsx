@@ -11,10 +11,10 @@ import { MeshViewer } from "./mesh-viewer";
 
 const mocks = vi.hoisted(() => ({ loaded: vi.fn() }));
 // model-viewer needs WebGL, which jsdom lacks. The factory counts imports so the lazy-load test can see them.
-vi.mock("@google/model-viewer", () => {
+const modelViewerMock = () => {
   mocks.loaded();
   return {};
-});
+};
 
 const GLB = new Blob(["glTF"], { type: "model/gltf-binary" });
 const NAME = "azizam-3d-2026-10-30T15-04-05.glb";
@@ -36,6 +36,9 @@ async function mounted(container: HTMLElement) {
 }
 
 beforeEach(() => {
+  // A fresh module registry and mock per test: the factory runs on each test's first import, whatever the order.
+  vi.resetModules();
+  vi.doMock("@google/model-viewer", modelViewerMock);
   urls = [];
   createObjectURL = vi.fn(() => {
     const url = `blob:mesh-${urls.length + 1}`;
@@ -63,7 +66,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-// The module cache keeps the factory's count for the whole file, so this test must run first.
 test("does not load model-viewer until a model is shown, then loads it after mount", async () => {
   expect(mocks.loaded).not.toHaveBeenCalled();
   const { container } = render(
