@@ -413,6 +413,8 @@ test("try catalog maps exact capability intents to the right tabs", async ({
 test("try query params select capability and preserve requested model", async ({
   page,
 }) => {
+  // The first Run mints the Try key, which can outlast a plain wait on a busy machine (see prepareTryKey).
+  await prepareTryKey(page);
   await page.route("**/me/api/models/catalog", (route) =>
     fulfilJson(route, {
       schema_version: 1,
