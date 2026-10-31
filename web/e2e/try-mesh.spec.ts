@@ -100,7 +100,11 @@ const models = [
     : []),
 ];
 
-/** Where the canvas and the element sit, in CSS pixels. A canvas that is not the element's size frames the model wrongly. */
+/**
+ * Where the element, its host and the canvas it shows sit, in CSS pixels, and the canvas's drawing buffer in device
+ * pixels. model-viewer keeps two canvases in its shadow root and shows one of them: the 2D canvas first, then the
+ * WebGL canvas once the model is visible. Only the shown one has a box, so the first canvas is not always the one.
+ */
 async function viewerGeometry(page: Page) {
   return page.locator("model-viewer").evaluate((viewer) => {
     const box = (element: Element | null | undefined) => {
@@ -109,13 +113,20 @@ async function viewerGeometry(page: Page) {
         ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
         : null;
     };
-    const canvas = viewer.shadowRoot?.querySelector("canvas") ?? null;
+    const canvases = [
+      ...(viewer.shadowRoot?.querySelectorAll("canvas") ?? []),
+    ] as HTMLCanvasElement[];
+    const canvas =
+      canvases.find((item) => getComputedStyle(item).display !== "none") ??
+      null;
     const bar =
       viewer.shadowRoot?.querySelector("#default-progress-bar > .bar") ?? null;
     return {
       element: box(viewer),
       host: box(viewer.parentElement),
       canvas: box(canvas),
+      buffer: canvas ? { width: canvas.width, height: canvas.height } : null,
+      dpr: window.devicePixelRatio,
       bar: box(bar),
     };
   });
@@ -150,6 +161,20 @@ for (const { name, size } of viewports) {
 
       await page.goto("/try/");
       await openMeshMode(page);
+      // The picture is one picker, labelled in plain words, with no file path or raw field name in the form's text.
+      const form = page.locator("form").filter({
+        has: page.getByRole("button", { name: "Make 3D model" }),
+      });
+      await expect(form.locator('input[type="file"]')).toHaveCount(1);
+      await expect(
+        form
+          .locator("label")
+          .filter({ hasText: "Picture" })
+          .locator('input[type="file"]'),
+      ).toHaveCount(1);
+      const formText = (await form.innerText()).replace(/\s+/g, " ");
+      expect(formText).not.toMatch(/\.\/[\w-]+\.\w+|\.bin\b/);
+      expect(formText).not.toMatch(/\bimage\b/);
       await page.locator('input[type="file"]').setInputFiles(PICTURE);
       await page.getByRole("button", { name: "Make 3D model" }).click();
 
@@ -170,20 +195,42 @@ for (const { name, size } of viewports) {
       await expect(
         page.getByRole("button", { name: "Reset view" }),
       ).toBeEnabled();
-      // The element fills its host and the canvas is the element's size: the framing is computed for that size.
-      const geometry = await viewerGeometry(page);
+      // The element fills its host, and the canvas the viewer shows covers the element and draws at the element's
+      // size. The drawing buffer is always element x device pixel ratio. The CSS box is the element's size at full
+      // resolution; under GPU throttling model-viewer enlarges it (adaptive resolution, render-scale event) and the
+      // element crops it. So the CSS check is "covers", not "equals". The viewer shows the WebGL canvas some time after
+      // "loaded" (seconds, in a diagnostic run), so the check polls for the settled state instead of reading once.
       // The canvas snaps to whole device pixels, so each size may differ from its box by one pixel.
       const near = (a: number | undefined, b: number | undefined) =>
         Math.abs((a ?? -Infinity) - (b ?? Infinity)) <= 1;
-      expect(near(geometry.element?.width, geometry.host?.width)).toBe(true);
-      expect(near(geometry.element?.height, geometry.host?.height)).toBe(true);
-      expect(near(geometry.canvas?.width, geometry.element?.width)).toBe(true);
-      expect(near(geometry.canvas?.height, geometry.element?.height)).toBe(
-        true,
-      );
-      expect(geometry.canvas?.width).toBeGreaterThan(200);
+      await expect
+        .poll(async () => {
+          const geometry = await viewerGeometry(page);
+          const elementWidth = geometry.element?.width ?? 0;
+          const elementHeight = geometry.element?.height ?? 0;
+          return {
+            fillsHost:
+              near(geometry.element?.width, geometry.host?.width) &&
+              near(geometry.element?.height, geometry.host?.height),
+            drawsAtElementSize:
+              near(geometry.buffer?.width, elementWidth * geometry.dpr) &&
+              near(geometry.buffer?.height, elementHeight * geometry.dpr),
+            coversElement:
+              (geometry.canvas?.width ?? 0) >= elementWidth - 1 &&
+              (geometry.canvas?.height ?? 0) >= elementHeight - 1,
+            wide: (geometry.canvas?.width ?? 0) > 200,
+          };
+        })
+        .toEqual({
+          fillsHost: true,
+          drawsAtElementSize: true,
+          coversElement: true,
+          wide: true,
+        });
       // model-viewer's own progress bar is hidden once loaded (it can stick short of full).
-      expect(geometry.bar?.height ?? 0).toBeLessThanOrEqual(0);
+      expect((await viewerGeometry(page)).bar?.height ?? 0).toBeLessThanOrEqual(
+        0,
+      );
       expect(sentBody).toContain('name="resolution"');
       expect(sentBody).toContain("1024");
       // Centre the viewer, clear of the phone's fixed tab bar at the bottom.
