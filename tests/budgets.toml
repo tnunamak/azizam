@@ -431,7 +431,9 @@
 # Mesh discovery probe cache (2026-10-30): +2 cases in tests/test_mesh_discovery.py. Train r116 = r115's 17839 + mesh's 17.
 # Mesh registry upgrade (train r116 hotfix): +6 cases in tests/test_mesh_registry_upgrade.py (upgrade adds the
 # mesh frontend and backends; step runs once; removal stays removed; PUT keeps resource_capacity; absent block).
-pytest = 17862
+# Mesh in the member catalog (train r118): +3 cases in tests/test_mesh_member_catalog.py (healthy row is ready;
+# unhealthy row is listed as not available; one probe serves every view).
+pytest = 17865
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
