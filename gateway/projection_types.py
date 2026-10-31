@@ -82,6 +82,9 @@ CONFIG_DESCRIPTOR_KEYS = (
     "billing_dimensions", "spend_caps_usd", "price", "generation_stats", "model_listing", "auth_test", "protocols",
     "default_models", "protocol_operations", "control_file_roots", "loaded_model_identity", "gateway_lifecycle",
     "auth_inject", "recommendations", "connection", "workflows",
+    # The exclusive pool's closed schema (gateway/exclusive_pool.py). It holds numbers and an observer's names, no
+    # secret; unclassified, a read hid it and the Overview showed only a count, so the operator could not see it.
+    "resource_capacity",
 )
 
 # A model row: its address is a URL like any other; the rest of the row is the model list's public data.

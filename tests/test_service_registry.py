@@ -306,7 +306,7 @@ def test_concurrent_backfill_retries_real_sqlite_cas(tmp_path: Path, monkeypatch
         record["value"]["services"]["existing"]["config"]["seeded_field"]
         == "seeded-value"
     )
-    assert len(admin_store.list_audit(action_prefix="operator.service_registry.backfill", path=db)) == 1
+    assert len(admin_store.list_audit(action_prefix="operator.service_registry.upgrade", path=db)) == 1
 
 
 def test_protocol_frontends_are_seed_data_not_python_defaults(tmp_path: Path) -> None:
