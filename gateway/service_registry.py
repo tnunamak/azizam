@@ -44,6 +44,11 @@ SERVICE_REGISTRY_SETTING_KEY = "service_registry"
 SERVICE_REGISTRY_SCHEMA_VERSION = 2
 ENGINE_RECORD_VIEW_VERSION = 2
 MODEL_POLICY_SCHEMA_VERSION = 1
+# The one-time upgrade that gives a registry seeded before the mesh release the records that release added.
+# The registry keeps no tombstones, so an id it lacks may be one an operator removed: only this step, once, adds
+# the ids named below. The step's name is recorded in ``schema_migration_steps``; a fresh seed records it too.
+MESH_UPGRADE_STEP = "service-registry-mesh-records"
+MESH_UPGRADE_BACKENDS = ("trellis", "vram-observer")
 
 SERVICE_SOURCES = frozenset({"ui", "provisioned", "builtin", "discovered", "imported"})
 PROTOCOL_FRONTEND_SOURCES = frozenset({"builtin", "ui", "provisioned", "imported"})
@@ -79,12 +84,22 @@ def ensure_service_registry(
     # from the winner's document rather than overwriting it.
     for _attempt in range(3):
         record = admin_store.get_service_registry_with_generation(path=path)
+        metadata: dict[str, Any] = {}
+        step: str | None = MESH_UPGRADE_STEP
         if record is not None:
             current = record["value"]
             registry = backfill_seed_catalog_metadata(current, proxy_config=proxy_config)
-            if stable_hash(registry) == stable_hash(current):
+            step = None
+            if not admin_store.migration_step_recorded(MESH_UPGRADE_STEP, path=path):
+                registry = add_mesh_upgrade_records(registry, proxy_config=proxy_config)
+                step = MESH_UPGRADE_STEP
+                metadata["migration_step"] = step
+                metadata["added_services"] = sorted(set(registry["services"]) - set(current.get("services") or {}))
+                metadata["added_frontends"] = sorted(
+                    set(registry["protocol_frontends"]) - set(current.get("protocol_frontends") or {}))
+            if step is None and stable_hash(registry) == stable_hash(current):
                 return registry
-            action = "operator.service_registry.backfill"
+            action = "operator.service_registry.backfill" if step is None else "operator.service_registry.upgrade"
             expected_generation = int(record["operator_settings_generation"])
         else:
             registry = build_service_registry_seed(proxy_config)
@@ -105,9 +120,11 @@ def ensure_service_registry(
                 audit_metadata={
                     "service_count": len(registry.get("services") or {}),
                     "protocol_frontend_count": len(registry.get("protocol_frontends") or {}),
+                    **metadata,
                 },
                 session=None,  # the gateway seeding its own registry at start: no browser sign-in asked
                 path=path,
+                migration_step=step,
             )
         except admin_store.OperatorSettingsGenerationConflict:
             continue
@@ -557,7 +574,39 @@ def backfill_normalized_registry(out: dict[str, Any], *, proxy_config: Mapping[s
         catalogs.get("protocol_frontends") or {},
         keys=("registered_routes", "asset_content_policies", "public_discovery"),
     )
+    _backfill_missing_builtin_frontends(
+        out["protocol_frontends"],
+        catalogs.get("protocol_frontends") or {},
+    )
     return out
+
+
+def _backfill_missing_builtin_frontends(
+    records: dict[str, dict[str, Any]],
+    seeds: Mapping[str, Any],
+) -> None:
+    """Add each builtin frontend the registry lacks. A builtin ships with the code, and the route mount already
+    serves one that is missing from the store (``route_registry.mount_frontend_records``); this keeps the stored
+    records, which the route checks and the Overview read, in agreement with what is served."""
+    for frontend_id, seed in seeds.items():
+        if frontend_id in records or not isinstance(seed, Mapping) or seed.get("source") != "builtin":
+            continue
+        records[frontend_id] = copy.deepcopy(dict(seed))
+
+
+def add_mesh_upgrade_records(registry: dict[str, Any], *, proxy_config: Mapping[str, Any]) -> dict[str, Any]:
+    """``registry`` with the ``proxy_config.yml`` backends that the mesh release added, where it lacks them.
+
+    Only ``MESH_UPGRADE_BACKENDS`` are added. Every other backend in ``proxy_config.yml`` may be one an operator
+    removed from the registry, and the registry keeps no record of that, so it is not brought back. The caller runs
+    this once (``MESH_UPGRADE_STEP``) and records the step in the same write.
+    """
+    seeds = _backend_config_seeds(proxy_config)
+    for service_id in MESH_UPGRADE_BACKENDS:
+        seed = seeds.get(service_id)
+        if seed is not None and service_id not in registry["services"]:
+            registry["services"][service_id] = copy.deepcopy(dict(seed))
+    return registry
 
 
 def _backend_config_seeds(proxy_config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:

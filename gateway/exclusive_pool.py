@@ -65,8 +65,10 @@ def parse_resource_capacity(service_id: str, block: Any) -> ExclusivePoolSpec | 
     """Return the spec when capacity is enabled, None when it is disabled. Raises ValueError when malformed.
 
     ``enabled: false`` is the durable tombstone for the whole block. Enabled capacity must be the
-    complete closed exclusive schema; there is no default for any value.
+    complete closed exclusive schema; there is no default for any value. An absent block is not enabled either.
     """
+    if block is None:
+        return None
     if not isinstance(block, Mapping):
         raise ValueError(f"service {service_id!r}: resource_capacity must be an object")
     if block.get("enabled") is False:

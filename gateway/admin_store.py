@@ -4284,6 +4284,7 @@ def write_service_registry_with_audit(
     now: int | None = None,
     session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
+    migration_step: str | None = None,
 ) -> dict[str, Any]:
     """Commit one registry revision, generation, and audit fact atomically.
 
@@ -4294,6 +4295,9 @@ def write_service_registry_with_audit(
     ``session`` is the browser sign-in that asked for the write (decision D41), checked inside this
     transaction: a registry write can move where a stored key is sent, and a sign-out that committed first
     must not be outrun. None for a write no browser sign-in started.
+
+    ``migration_step`` names a one-time upgrade whose result this write is. Its name is recorded in the same
+    transaction, so a step is recorded exactly when its registry revision is.
     """
     if not isinstance(value, Mapping):
         raise ValueError("service registry value must be a mapping")
@@ -4320,6 +4324,8 @@ def write_service_registry_with_audit(
                 metadata=audit_metadata,
                 now=ts,
             )
+            if migration_step is not None:
+                conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (migration_step,))
             conn.commit()
         except Exception:
             conn.rollback()
@@ -4331,6 +4337,12 @@ def write_service_registry_with_audit(
         "updated_by": updated_by,
         "operator_settings_generation": next_generation,
     }
+
+
+def migration_step_recorded(name: str, *, path: Path = DB_PATH) -> bool:
+    """Whether the one-time step ``name`` has been recorded for this database (see ``write_service_registry_with_audit``)."""
+    with _conn(path) as conn:
+        return conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?", (name,)).fetchone() is not None
 
 
 def write_service_registry_in_transaction(
