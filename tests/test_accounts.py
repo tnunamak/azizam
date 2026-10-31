@@ -567,10 +567,10 @@ def test_invite_page_names_the_owner_by_role_not_by_name(account_db, account_cli
     assert "Sam Okafor" not in public.text
 
 
-def test_options_do_not_report_fresh_sign_in_until_account_switcher_a2_ships(account_client):
+def test_options_report_fresh_sign_in_once_account_switcher_a2_ships(account_client):
     # The sign-in page shows its refused-sign-in screen only when the gateway says every single sign-on is fresh.
     client, _ = account_client
-    assert client.get("/auth/api/options").json()["fresh_sign_in"] is False
+    assert client.get("/auth/api/options").json()["fresh_sign_in"] is True
 
 
 def test_invalid_account_request_bodies_fail(account_client):

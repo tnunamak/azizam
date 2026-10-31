@@ -179,11 +179,15 @@ def test_a_stale_or_missing_cookie_does_not_prevent_a_password_sign_in(sg, incom
 @pytest.mark.parametrize("proof_time", ["old", "unknown"])
 def test_oidc_invite_acceptance_does_not_refresh_the_sign_in_proof(sg, proof_time):
     client = sg.client()
-    auth_time = int(time.time()) - DAY if proof_time == "old" else None
-    response = sg.sign_in(client, sub="helper", email=HELPER, groups=["/Trusted"], auth_time=auth_time)
+    response = sg.sign_in(client, sub="helper", email=HELPER, groups=["/Trusted"])
     assert response.status_code == 302
+    # A2 refuses a sign-in whose proof is old or missing. The proof is planted in the cookie of a fresh sign-in,
+    # the way a session from before A2 carries it.
+    planted = AUTH_TIME_UNKNOWN if proof_time == "unknown" else int(time.time()) - DAY
+    put_cookie(client, encode_session_cookie(replace(cookie_session(client), authenticated_at=planted),
+                                             signing_key=SIGNING_KEY))
     previous = cookie_session(client)
-    assert previous.authenticated_at == (auth_time if auth_time is not None else AUTH_TIME_UNKNOWN)
+    assert previous.authenticated_at == planted
     plan = store_plan("Invited", path=sg.path, models=["test-model"])
     _, token = accounts.create_link("invite", previous.subject, plan_id=plan["id"], path=sg.path)
 

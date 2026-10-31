@@ -26,7 +26,9 @@ from urllib.parse import urlsplit
 import httpx
 
 from gateway import log_scrub
-from gateway.admin_oidc import IDTokenClaimsError, OIDCConfig, SignInRefused, validate_id_token_claims
+from gateway.admin_oidc import (
+    IDTokenClaimsError, OIDCConfig, SignInRefused, provider_signed_in_again, validate_id_token_claims,
+)
 from gateway.signin_admin import norm_issuer
 from gateway.signin_rules import Claims
 
@@ -86,6 +88,9 @@ class TestRun:
     claim_names: tuple[str, ...] = ()
     passed_at: int = 0
     groups_seen: bool = True
+    # Whether the provider signed the person in just now, as a sign-in from the sign-in page must be (A2): the answer
+    # Settings shows as "asks for a password every time". The test passes either way.
+    fresh_login_supported: bool = False
     error_hint: str = ""
 
     @property
@@ -201,6 +206,7 @@ async def finish(
     pkce_verifier: str,
     exchange_code: Callable[..., Awaitable[dict[str, Any]]],
     verify_id_token: Callable[..., Awaitable[Mapping[str, Any]]],
+    flow_started_at: float,
     now: float | None = None,
 ) -> None:
     """Record the outcome of the provider's redirect to the callback. Never signs anyone in."""
@@ -257,6 +263,7 @@ async def finish(
     run.email_verified = claims.get("email_verified") is True
     run.claim_names = tuple(sorted(str(name) for name in claims.keys()))
     run.groups_seen = cfg.groups_claim in claims
+    run.fresh_login_supported = provider_signed_in_again(claims, since=flow_started_at)
     run.passed_at = int(time.time() if now is None else now)
     run.details = (
         f"Claims received: {', '.join(run.claim_names)}\n"

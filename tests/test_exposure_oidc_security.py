@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import replace
+import time
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
@@ -111,9 +112,10 @@ def _patch_oidc(monkeypatch: pytest.MonkeyPatch, record, calls: list[str]):
             "sub": "member-subject",
             "email": "member@example.test",
             "email_verified": True,
+            "auth_time": int(time.time()),
             "nonce": record.nonce,
             "exp": 4_000_000_000,
-            "iat": 1_700_000_000,
+            "iat": int(time.time()),
         }
 
     monkeypatch.setattr(proxy, "_oidc_exchange_code", exchange)
@@ -141,9 +143,10 @@ def _patch_oidc_by_code(monkeypatch: pytest.MonkeyPatch, records_by_code, calls:
             "sub": f"{subject}-subject",
             "email": f"{subject}@example.test",
             "email_verified": True,
+            "auth_time": int(time.time()),
             "nonce": record.nonce,
             "exp": 4_000_000_000,
-            "iat": 1_700_000_000,
+            "iat": int(time.time()),
         }
 
     monkeypatch.setattr(proxy, "_oidc_exchange_code", exchange)
@@ -458,3 +461,64 @@ def test_browser_provider_start_failure_keeps_safe_return_target(oidc_gateway, m
         assert parse_qs(urlsplit(failure.headers["location"]).query)["return_to"] == ["/"]
         assert "private" not in failure.text
         assert not client.cookies.get(_oidc_config().cookie.name)
+
+
+def test_provider_sign_out_redirects_to_end_session_with_client_id(oidc_gateway, monkeypatch):
+    """Sign out at the provider, which then returns the browser to the sign-in page. Azizam keeps no ID token,
+    so none is sent as a hint."""
+    async def discovery(issuer):
+        assert issuer == "https://idp.example"
+        return {"end_session_endpoint": "https://idp.example/logout"}
+    monkeypatch.setattr(proxy, "_provider_discovery", discovery)
+
+    response = _client().get("/login/provider-sign-out", follow_redirects=False)
+
+    assert response.status_code == 302
+    target = urlsplit(response.headers["location"])
+    assert f"{target.scheme}://{target.netloc}{target.path}" == "https://idp.example/logout"
+    assert parse_qs(target.query) == {
+        "client_id": ["gateway"],
+        "post_logout_redirect_uri": [f"{BASE_URL}/sign-in/?after=provider-sign-out"],
+    }
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_provider_sign_out_says_so_when_the_provider_publishes_no_address(oidc_gateway, monkeypatch):
+    async def discovery(issuer):
+        return {"issuer": issuer}
+    monkeypatch.setattr(proxy, "_provider_discovery", discovery)
+
+    response = _client().get("/login/provider-sign-out", follow_redirects=False)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "provider_sign_out_unavailable"
+
+
+@pytest.mark.parametrize("address", ["javascript:alert(1)", "http://idp.example/logout", "https:///logout"],
+                         ids=["script", "plain-http", "no-host"])
+def test_provider_sign_out_only_redirects_to_an_https_address(oidc_gateway, monkeypatch, address):
+    """A discovery document is the provider's word, but a browser redirect only goes to an https address."""
+    async def discovery(issuer):
+        return {"end_session_endpoint": address}
+    monkeypatch.setattr(proxy, "_provider_discovery", discovery)
+
+    response = _client().get("/login/provider-sign-out", follow_redirects=False)
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "provider_sign_out_unavailable"
+    assert "location" not in response.headers
+
+
+def test_provider_sign_out_is_throttled_like_sign_in(oidc_gateway, monkeypatch):
+    """The sign-out route shares sign-in's per-address budget (accounts.throttle_oidc): 20 a minute."""
+    async def discovery(issuer):
+        return {"end_session_endpoint": "https://idp.example/logout"}
+    monkeypatch.setattr(proxy, "_provider_discovery", discovery)
+    client = _client()
+
+    for _ in range(20):
+        assert client.get("/login/provider-sign-out", follow_redirects=False).status_code == 302
+    limited = client.get("/login/provider-sign-out", follow_redirects=False)
+
+    assert limited.status_code == 429 and limited.json()["error"]["code"] == "login_rate_limited"
+    assert limited.headers["retry-after"] == "60"

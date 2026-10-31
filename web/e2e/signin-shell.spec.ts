@@ -273,7 +273,7 @@ for (const width of [390, 1440]) {
   test.describe(`a refused sign-in at ${width} px`, () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-      // A gateway with fresh single sign-on reports it (SignInOptions.fresh_sign_in); the fixture gateway does not yet.
+      // The stub pins the provider's name; the fixture gateway reports fresh sign-in itself (the test after this loop).
       await page.route("**/auth/api/options*", (route) =>
         fulfilJson(route, { ...options, fresh_sign_in: true }),
       );
@@ -351,14 +351,14 @@ for (const width of [390, 1440]) {
   });
 }
 
-// Until the gateway reports fresh single sign-on, a refused-sign-in address is an ordinary sign-in page: no screen, no
-// sign-out link. This one runs on the fixture gateway, whose own options say fresh_sign_in is false.
-test("a refused-sign-in address shows the plain sign-in page while the gateway does not report fresh sign-in", async ({
+// The fixture gateway's own options report fresh sign-in (SignInOptions.fresh_sign_in), so a refused-sign-in address
+// shows the sign-out screen (S8) with no stub, not the ordinary sign-in page.
+test("a refused-sign-in address shows the sign-out screen on a gateway that reports fresh sign-in", async ({
   page,
 }) => {
   await page.goto("/sign-in/?error=not_fresh&return_to=%2Fsettings%2F&provider_sign_out=1");
-  await expect(page.getByRole("heading", { level: 1, name: "Sign in to Azizam" })).toBeVisible();
-  await expect(page.getByRole("link", { name: /^Sign out of / })).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1, name: /^Sign out of .+ first$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Sign in to Azizam" })).toHaveCount(0);
 });
 
 test("a stale single sign-on name opens the sign-in page with the notice, and the form under it", async ({

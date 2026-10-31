@@ -129,9 +129,9 @@ def signin_options(path, oidc: dict) -> dict:
             "oidc_label": oidc.get("label") or "single sign-on",
             # The owner's own password works whatever the switch says (see the login routes).
             "owner_password": True,
-            # True once single sign-on from this page is always fresh (account switcher A2). Until then the sign-in page
-            # keeps its refused-sign-in screen off (web/src/app/sign-in/page.tsx).
-            "fresh_sign_in": False,
+            # True because single sign-on from this page is always fresh (account switcher A2). The sign-in page shows
+            # its refused-sign-in screen only when this is true (web/src/app/sign-in/page.tsx).
+            "fresh_sign_in": True,
             # No person's name in this answer: anyone on the internet can read the sign-in page's options. The page
             # names the instance only.
             "oidc_url": "/login?return_to=%2Finvite%2F", "instance_name": "Azizam"}
