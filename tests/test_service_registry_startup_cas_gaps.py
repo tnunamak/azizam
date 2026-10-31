@@ -63,8 +63,8 @@ def test_startup_lost_seed_race_keeps_the_winner_and_audits_one_seed(monkeypatch
     assert sorted(
         (e["action"], e["actor_id"]) for e in admin_store.list_audit(path=path)
     ) == [
-        ("operator.service_registry.backfill", "test-boot"),
         ("operator.service_registry.seed", "other-boot"),
+        ("operator.service_registry.upgrade", "test-boot"),
     ]
 
 
