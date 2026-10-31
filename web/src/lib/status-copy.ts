@@ -64,7 +64,7 @@ export function statusSummaryCopy(summary: {
         ? `${labels[0]} and ${labels[1].toLowerCase()}`
         : `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)?.toLowerCase()}`;
   if (summary.state === "unavailable") {
-    const verb = labels.length === 1 && !["Images", "Decisions", "Sound effects"].includes(labels[0]) ? "is" : "are";
+    const verb = labels.length === 1 && !["Images", "3D models", "Decisions", "Sound effects"].includes(labels[0]) ? "is" : "are";
     const code = summary.reason_code;
     const ending = code === "unavailable_disabled"
       ? "disabled"

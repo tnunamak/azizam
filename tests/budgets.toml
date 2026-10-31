@@ -427,7 +427,9 @@
 # Rest of train r113 (MCP image previews, GPU memory observation, alias context; 2026-10-30): the gate collected 17616.
 # Trains r114 and r115 (2026-10-30): batch_size, App request history, label roles, Klein binding, and the mesh release; the r114 gate collected 17816 with all of them.
 # A2 (fresh sign-in, provider sign-out; train r115): +23 pytest cases on top.
-pytest = 17839
+# feat/mesh-capability on top of that tree (2026-10-30): +17 cases (mesh starter migration 6, mesh access plan 5, workflow OpenAPI mesh 4, mesh manifest 1, plan editor 1), -2 mesh access-plan cases replaced.
+# Mesh discovery probe cache (2026-10-30): +2 cases in tests/test_mesh_discovery.py. Train r116 = r115's 17839 + mesh's 17.
+pytest = 17856
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -547,7 +549,8 @@ pytest = 17839
 # L1 capability labels (2026-10-24): +11 cases in src/lib/terms.spec.ts; the full run passed all 3575 (--root web).
 # Train r113 (2026-10-29): +1 Vitest in web/tests/e2e-case-receipts.spec.ts (CI receipt reporter, 061543d23); the r113 gate counted 3582.
 # Trains r114 and r115 (2026-10-30): App request history, the label-role guard, the mesh viewer and capability; the r114 gate counted 3645.
-vitest = 3645
+# feat/mesh-capability (2026-10-30): +3 in src/app/_home/presentation.spec.ts (the 3D models summary) and +1 generated case in src/lib/terms.spec.ts (mesh label); vitest list measured 3649 (--root web).
+vitest = 3649
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).

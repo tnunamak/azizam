@@ -14,7 +14,7 @@ import yaml
 
 from gateway import service_registry
 from gateway.access_plans import ALL, CAPABILITIES, MEDIA_METADATA_LEVELS, RECEIPT_DETAIL_LEVELS
-from gateway.capability_ids import CAPABILITY_LABELS, PROTOCOL_CAPABILITIES
+from gateway.capability_ids import CAPABILITY_LABELS, INTENT_CAPABILITIES, PROTOCOL_CAPABILITIES
 
 _REGISTRY_DIR = Path(__file__).resolve().parent.parent / "registry"
 _ADMIN_SURFACES_CATALOG_NAME = "admin_surfaces.yml"
@@ -177,7 +177,7 @@ def access_plan_editor_contract(registry: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(workflow, Mapping):
             continue
         manifest = workflow.get("manifest") if isinstance(workflow.get("manifest"), Mapping) else {}
-        capability = PROTOCOL_CAPABILITIES.get(str(manifest.get("intent") or ""))
+        capability = INTENT_CAPABILITIES.get(str(manifest.get("intent") or ""))
         if capability:
             key = ("workflow", str(workflow.get("id") or workflow_id))
             items[capability][key] = items[capability].get(key, False) or bool(workflow.get("enabled", True))

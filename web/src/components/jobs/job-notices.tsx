@@ -37,6 +37,7 @@ export function jobLabel(job: LongJob) {
         audio: "Audio",
         music: "Music",
         sfx: "Sound",
+        mesh: "3D model",
       } as Record<string, string>
     )[kind] ?? "Creation"
   );

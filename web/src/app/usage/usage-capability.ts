@@ -4,6 +4,7 @@ export type UsageCapability =
   | Capability
   | "audio"
   | "embeddings"
+  | "mesh"
   | "rerank"
   | "other";
 
@@ -18,6 +19,7 @@ export function normalizeCapability(value: unknown): UsageCapability {
   if (text === "stt" || text.includes("transcri")) return "transcribe";
   if (text.includes("image")) return "image";
   if (text.includes("video")) return "video";
+  if (text.includes("mesh")) return "mesh";
   if (text.includes("rerank")) return "rerank";
   if (text.includes("embedding") || text.includes("embed")) return "embeddings";
   if (text.includes("speech") || text.includes("voice") || text === "tts")

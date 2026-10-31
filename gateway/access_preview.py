@@ -51,7 +51,7 @@ LIMITED = "limited"
 
 # The order the Models page shows its groups in.
 GROUP_ORDER = (
-    "chat", "image", "video", "music", "sfx", "speech", "audio",
+    "chat", "image", "video", "mesh", "music", "sfx", "speech", "audio",
     "transcribe", "decide", "embed", "rerank",
 )
 

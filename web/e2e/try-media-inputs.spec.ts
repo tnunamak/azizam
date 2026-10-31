@@ -1,5 +1,6 @@
 import { expect, test } from "./fixtures/isolation";
 import type { Locator } from "@playwright/test";
+import { MESH_CAPABILITY } from "../src/app/try/mesh-mode";
 
 /**
  * The text a person reads. An owner also sees each input's technical detail
@@ -31,7 +32,12 @@ type CatalogInput = {
   ignored?: boolean;
   accepted?: boolean;
 };
-type CatalogWorkflow = { id: string; title: string; inputs: CatalogInput[] };
+type CatalogWorkflow = {
+  id: string;
+  title: string;
+  capability?: string;
+  inputs: CatalogInput[];
+};
 
 const isMedia = (input: CatalogInput) =>
   (input.asset === true || input.type === "asset") &&
@@ -46,8 +52,13 @@ test("every picture and video input on Try is one picker, in plain words", async
   const { workflows } = (await response.json()) as {
     workflows: CatalogWorkflow[];
   };
-  const withMedia = workflows.filter((workflow) =>
-    workflow.inputs.some(isMedia),
+  // The Workflow tab lists every workflow except the mesh capability, which
+  // has its own Photo to 3D tab (page.tsx: `capability !== MESH_CAPABILITY`).
+  // The same rule picks the cases here, so the mesh picture input is covered by
+  // try-mesh.spec.ts instead.
+  const withMedia = workflows.filter(
+    (workflow) =>
+      workflow.capability !== MESH_CAPABILITY && workflow.inputs.some(isMedia),
   );
   // image.edit (5 Qwen/Flux edit and inpaint manifests, SeedVR2, Identity),
   // face likeness, image-to-video and the video edits.

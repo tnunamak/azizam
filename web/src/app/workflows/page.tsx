@@ -68,12 +68,13 @@ import {
   type WorkflowCatalog as WorkflowsCatalog,
 } from "./workflow-api";
 import { RelativeTime } from "@/components/product";
-type WorkflowCapability = Capability | "audio" | "music" | "sfx" | "workflow";
+type WorkflowCapability = Capability | "audio" | "music" | "sfx" | "mesh" | "workflow";
 const EMPTY_WORKFLOWS: WorkflowRow[] = [];
 
 const capabilityOrder: WorkflowCapability[] = [
   "image",
   "video",
+  "mesh",
   "music",
   "sfx",
   "audio",
@@ -99,6 +100,7 @@ function capabilityLabel(value: string) {
     {
       image: capabilityLabels.image,
       video: capabilityLabels.video,
+      mesh: capabilityLabels.mesh,
       voice: capabilityLabels.speech,
       music: capabilityLabels.music,
       sfx: capabilityLabels.sfx,

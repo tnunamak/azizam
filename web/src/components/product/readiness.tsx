@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import {
   AudioLines,
+  Box,
   CircleHelp,
   FileAudio,
   GitBranch,
@@ -49,6 +50,12 @@ const capabilityMetaMap: Record<string, CapabilityMeta> = {
     icon: Video,
     tone: "text-capability-video",
     tint: "bg-capability-video/12",
+  },
+  mesh: {
+    label: capabilityLabels.mesh,
+    icon: Box,
+    tone: "text-capability-image",
+    tint: "bg-capability-image/12",
   },
   speech: {
     label: capabilityLabels.speech,

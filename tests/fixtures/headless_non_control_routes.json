@@ -233,6 +233,7 @@
   ["POST", "/v1/images/edits", "proxy.images_edits"],
   ["POST", "/v1/images/generations", "proxy.images_generations"],
   ["POST", "/v1/images/variations", "proxy.images_variations"],
+  ["POST", "/v1/meshes/generate", "gateway.mesh_api.generate_mesh"],
   ["POST", "/v1/messages", "proxy.anthropic_messages"],
   ["POST", "/v1/messages/count_tokens", "proxy.anthropic_count_tokens"],
   ["POST", "/v1/realtime{rest:path}", "proxy.openai_realtime_unsupported"],

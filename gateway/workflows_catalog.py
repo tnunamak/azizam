@@ -703,13 +703,15 @@ def _aliases_for(workflow_id: str, aliases: Mapping[str, Any] | None) -> list[st
 
 def _capability_from_intent(intent: str, declared: Any = None) -> str:
     if isinstance(declared, str) and declared in {
-        "image", "video", "speech", "transcribe", "music", "sfx", "audio"
+        "image", "video", "speech", "transcribe", "music", "sfx", "audio", "mesh"
     }:
         return declared
     if intent.startswith("image."):
         return "image"
     if intent.startswith("video."):
         return "video"
+    if intent.startswith("mesh."):
+        return "mesh"
     if intent.startswith("audio.") or intent.startswith("speech."):
         return "audio"
     return "workflow"

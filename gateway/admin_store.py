@@ -609,6 +609,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         _add_app_history_columns(conn)
     if row is not None and _ACCESS_PLANS_VERSION <= int(row[0]) < SCHEMA_VERSION:
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    _grant_mesh_to_starter_plan(conn)
     conn.commit()
     # Until the ownership cut-over is applied, live App keys keep the person the audit log proves for them.
     # Afterwards the guards hold creators fixed, so the back-fill never runs again (gateway/app_binding_guard.py).
@@ -627,6 +628,37 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         app_binding_guard.install(conn)
     else:
         print(app_binding_guard.PENDING_NOTICE, flush=True)
+
+
+MESH_STARTER_STEP = "starter-plan-mesh"
+
+
+def _grant_mesh_to_starter_plan(conn: sqlite3.Connection) -> None:
+    """Once: the starter plan gains 3D models, the capability it was seeded without.
+
+    The starter grants every capability the gateway had when it was seeded. It gains ``mesh`` only while it is
+    still that plan: its name is the starter's and its grants are exactly the old set, each for all items.
+    Any other plan, including one an owner named or narrowed, is left alone and refuses mesh until its owner
+    grants it. Runs inside the caller's transaction.
+    """
+    from gateway.access_plans import CAPABILITIES
+
+    if conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?", (MESH_STARTER_STEP,)).fetchone():
+        return
+    before = {capability for capability in CAPABILITIES if capability != "mesh"}
+    for plan_id, plan_json in conn.execute(
+        "SELECT id, plan_json FROM access_plans WHERE name=?", (STARTER_PLAN_NAME,)
+    ).fetchall():
+        document = json.loads(plan_json)
+        can_use = document.get("can_use") if isinstance(document.get("can_use"), dict) else {}
+        if set(can_use) != before or any(can_use[capability] != {"items": "all"} for capability in before):
+            continue
+        can_use["mesh"] = {"items": "all"}
+        conn.execute(
+            "UPDATE access_plans SET plan_json = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(document, ensure_ascii=False, sort_keys=True), _now(), plan_id),
+        )
+    conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (MESH_STARTER_STEP,))
 
 
 def _rebuild_user_avatars(conn: sqlite3.Connection) -> None:

@@ -152,6 +152,7 @@ export function requestCapability(
     return "chat";
   if (value.startsWith("image") || route.includes("/images/")) return "image";
   if (value.startsWith("video") || route.includes("/videos")) return "video";
+  if (value.startsWith("mesh") || route.includes("/meshes")) return "mesh";
   if (/transcri/.test(value) || route.includes("/audio/transcriptions"))
     return "transcribe";
   if (/^(speech|audio\.speech)/.test(value) || route.includes("/audio/speech"))

@@ -11,6 +11,7 @@ from starlette.responses import FileResponse
 import proxy
 from gateway.capabilities import Capability
 from tests.support.access import identity, plan_for
+from tests.support.mesh_pool import fake_mesh_pool
 
 
 def _request():
@@ -248,8 +249,11 @@ def test_capability_availability_failure_preserves_policy(monkeypatch, failure_s
 
     monkeypatch.setattr(proxy, "_capabilities_availability_evidence", evidence)
     monkeypatch.setattr(proxy, "project_capabilities", project)
-    result = asyncio.run(proxy._gateway_capabilities_provider(_request()))
-    assert result is caps
+    with fake_mesh_pool():
+        result = asyncio.run(proxy._gateway_capabilities_provider(_request()))
+    # The provider appends the mesh discovery row after the policy-filtered
+    # capabilities, so the original rows keep their identity at the front.
+    assert result[0] is caps[0] and result[1] is caps[1]
     assert result[1].policy_available is False
     assert result[1].policy_reasons == ("synthetic denial",)
 

@@ -72,6 +72,7 @@ type Task =
   | "chat"
   | "image"
   | "video"
+  | "mesh"
   | "music"
   | "sfx"
   | "speech"
@@ -85,6 +86,7 @@ const taskOrder: Task[] = [
   "chat",
   "image",
   "video",
+  "mesh",
   "music",
   "sfx",
   "speech",
@@ -104,6 +106,7 @@ const taskLabels: Record<Task, string> = {
   chat: terms.chat,
   image: terms.image,
   video: terms.video,
+  mesh: terms.mesh,
   music: terms.music,
   sfx: terms.sfx,
   speech: terms.speech,
@@ -119,6 +122,7 @@ const taskExplainers: Record<Task, string> = {
   chat: "Answers, writing and code, for chat apps and agents.",
   image: "Make or edit a picture from a description.",
   video: "Make a short video from a description or a picture.",
+  mesh: "Make a 3D model from one picture.",
   music: "Songs and instrumentals from a description.",
   sfx: "Short sounds from a description.",
   speech: "Read text aloud.",

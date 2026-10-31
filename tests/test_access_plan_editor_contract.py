@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 from gateway.access_plans import plan_from_document
 from gateway.admin_catalog import access_plan_editor_contract
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _registry() -> dict[str, object]:
@@ -38,3 +44,17 @@ def test_new_plan_document_is_a_valid_local_only_plan():
     assert plan.paid_providers == frozenset()
     assert not plan.direct_engine_access.granted
     assert all(grant.all_items for grant in plan.can_use.values())
+
+
+def test_a_mesh_workflow_is_offered_under_3d_models_and_nothing_else():
+    registry = _registry()
+    manifest = yaml.safe_load((ROOT / "manifests/workflows/mesh.generate.trellis-2.yml").read_text())
+    registry["workflows"] = {"mesh.generate.trellis-2": {
+        "id": "mesh.generate.trellis-2", "enabled": True, "manifest": manifest,
+    }}
+    contract = access_plan_editor_contract(registry)
+    labels = {entry["id"]: entry["label"] for entry in contract["capabilities"]}
+    assert labels["mesh"] == "3D models"
+    assert _items(contract, "mesh") == {
+        "mesh.generate.trellis-2": {"kind": "workflow", "id": "mesh.generate.trellis-2", "available": True}}
+    assert "mesh.generate.trellis-2" not in _items(contract, "image")

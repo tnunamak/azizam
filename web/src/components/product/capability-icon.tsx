@@ -1,5 +1,6 @@
 import {
   MessageSquare,
+  Box,
   Image,
   Video,
   AudioLines,
@@ -14,6 +15,7 @@ export type Capability =
   | "chat"
   | "image"
   | "video"
+  | "mesh"
   | "voice"
   | "transcribe"
   | "decide"
@@ -33,6 +35,11 @@ const capabilities = {
     icon: Video,
     label: capabilityLabels.video,
     color: "text-capability-video bg-capability-video/10",
+  },
+  mesh: {
+    icon: Box,
+    label: capabilityLabels.mesh,
+    color: "text-capability-image bg-capability-image/10",
   },
   voice: {
     icon: AudioLines,

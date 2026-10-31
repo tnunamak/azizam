@@ -1303,6 +1303,43 @@
         }
       ]
     },
+    "trellis": {
+      "base_path": "/",
+      "capabilities": [
+        "mesh"
+      ],
+      "description": "Turn one image into a textured 3D model.",
+      "display_name": "Image to 3D (Trellis)",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "trellis.cpp (TRELLIS.2 image-to-3D)",
+      "port": 8890,
+      "priority": 100,
+      "resource_capacity": {
+        "enabled": true,
+        "max_claim_bytes": 8053063680,
+        "mode": "exclusive-route-pool",
+        "observer": {
+          "free_pointer": "/memory_free_bytes",
+          "path": "/vram",
+          "service": "vram-observer",
+          "total_pointer": "/memory_total_bytes"
+        },
+        "pool_id": "gpu0",
+        "reserve_bytes": 1073741824,
+        "retry_after_seconds": 30,
+        "timeout_seconds": 5
+      },
+      "role": "optional",
+      "timeout": 900
+    },
     "tts": {
       "capabilities": [
         "audio",
@@ -1426,6 +1463,26 @@
       "priority": 200,
       "role": "standby",
       "timeout": 120
+    },
+    "vram-observer": {
+      "base_path": "/",
+      "capabilities": [],
+      "description": "Reports free and total memory of the image-to-3D graphics card to the exclusive pool.",
+      "display_name": "GPU0 VRAM observer",
+      "enabled": true,
+      "health_endpoint": "/health",
+      "host": "127.0.0.1",
+      "lifecycle": {
+        "managed": false,
+        "service_name": "",
+        "type": "external"
+      },
+      "managed": false,
+      "name": "VRAM observer (nvidia-smi, GPU0)",
+      "port": 8891,
+      "priority": 100,
+      "role": "optional",
+      "timeout": 5
     }
   },
   "wires": [

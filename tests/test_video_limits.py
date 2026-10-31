@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import proxy
-from tests.support.access import authenticated  # noqa: E402
+from tests.support.access import authenticated
+from tests.support.mesh_pool import fake_mesh_pool  # noqa: E402
 from gateway.video_limits import limits_for_workflow, video_limits
 from gateway.workflow_openapi import ROOT_EXTENSION
 
@@ -69,6 +70,7 @@ class VideoLimitsDiscoveryTests(unittest.TestCase):
         for patcher in (
             patch.object(proxy, "config", cfg),
             authenticated(),
+            fake_mesh_pool(),
             patch.object(proxy.app, "openapi_schema", None),
         ):
             patcher.start()

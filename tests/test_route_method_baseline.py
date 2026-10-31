@@ -89,6 +89,17 @@ MCP_OAUTH_PREFIXES = ("/.well-known/oauth-authorization-server", "/oauth", "/me/
 AVATAR_PREFIX = "/me/api/profile/avatar"
 ENGINE_PATHS = ("/admin/api/engine-definitions", "/admin/api/engines/")
 ENGINE_PROTOCOLS_PATH = "/admin/api/engine-protocols"
+# The mesh route (gateway/mesh_api.py) is new since the baseline: POST is the route; the other methods meet the
+# catch-all, and HEAD meets the route's 405 (POST only). Live outcomes name each caller's answer.
+MESH_PATH = "/v1/meshes/generate"
+MESH_ROUTING = {
+    "POST": f"{MESH_PATH} generate_mesh",
+    "HEAD": f"405 allow=POST via {MESH_PATH} generate_mesh",
+}
+MESH_LIVE = {
+    "HEAD": "none: 405 application/json allow=POST; app: 405 application/json allow=POST; admin: 405 application/json allow=POST",
+    "OTHER": "none: 401 application/json; app: 404 application/json; admin: 401 application/json",
+}
 DELETED_PRESETS = "/admin/api/operator/service-presets"
 HOST_COMMANDS = "/admin/api/operator/host-commands"
 SESSION_PATHS = {"/admin/api/settings/sessions", "/auth/api/reauth", "/auth/api/sign-out-everywhere"}
@@ -170,6 +181,8 @@ def _deliberate(key: str) -> str | None:
         return "signin"  # owner routes added after the baseline (gateway/signin_api.py)
     if path == ENGINE_PROTOCOLS_PATH:
         return "engine_protocols"
+    if path == MESH_PATH:
+        return "mesh"
     if path.startswith(ENGINE_PATHS) or path == DELETED_PRESETS:
         return "engines"  # Add engine (gateway/engine_admin.py) replaced the preset list
     if path == HOST_COMMANDS:
@@ -277,6 +290,10 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner routes; tests/test_signin_settings_api.py and test_signin_test_flow.py cover them
         if kind == "native" and key not in old:
             continue  # a new lane; tests/test_native_passthrough.py covers it
+        if kind == "mesh" and key not in old:
+            expected = MESH_ROUTING.get(_method_of(key), "/{path:path} unmatched_route")
+            if outcome == expected:
+                continue
         if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
             continue  # new Add engine routes, or the deleted preset list falling through
         if kind == "engine_protocols" and key not in old:
@@ -352,6 +369,11 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
             continue
         if kind == "retention_ledger" and key not in old:
             continue
+        if kind == "mesh" and key not in old:
+            # POST is never a live row (it has a real handler, sharded with its siblings); the rest answer as above.
+            assert _method_of(key) != "POST", key
+            if new.get(key) == (MESH_LIVE["HEAD"] if _method_of(key) == "HEAD" else MESH_LIVE["OTHER"]):
+                continue
         if kind == "engine_protocols" and key not in old:
             assert _method_of(key) != "GET", key
             # HEAD has only a partial GET match. Other methods reach the unchanged

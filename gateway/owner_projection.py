@@ -24,7 +24,7 @@ RequestId = Annotated[str, StringConstraints(pattern=r"^req_[0-9a-f]{32}$")]
 JobId = Annotated[str, StringConstraints(pattern=r"^mj_[0-9a-f]{32}$")]
 Count = Annotated[int, Field(ge=0)]
 Number = Annotated[float, Field(ge=0, allow_inf_nan=False)]
-Capability = Literal["chat", "image", "video", "speech", "transcribe", "music", "sfx", "audio", "decide", "embed", "rerank"]
+Capability = Literal["chat", "image", "video", "speech", "transcribe", "music", "sfx", "audio", "decide", "embed", "rerank", "mesh"]
 Status = Literal["queued", "running", "succeeded", "failed", "canceled", "cancelled", "unknown"]
 Terminal = Literal["cancelled", "completed", "connect_error", "disconnected", "failed", "idle_timeout", "internal_error", "read_error", "unknown"]
 

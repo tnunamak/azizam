@@ -613,4 +613,4 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
 
 _PROTOCOLS = {"chat": "openai.chat", "embed": "openai.embeddings", "image": "openai.images",
               "video": "openai.video", "speech": "openai.audio", "transcribe": "openai.audio", "audio": "openai.audio",
-              "music": "openai.audio", "sfx": "openai.audio"}
+              "music": "openai.audio", "sfx": "openai.audio", "mesh": "openai.mesh"}
