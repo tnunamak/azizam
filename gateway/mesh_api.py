@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping
 
 import httpx
@@ -194,22 +194,24 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         gate = await asyncio.to_thread(deps.authenticate, request, MESH_PATH)
         if isinstance(gate, Response):
             return gate
-        row, record_problem = route_row(deps.frontend_records(), manifest)
+        facts = await registry_snapshot(deps)
+        row, record_problem = route_row(facts.frontend_records(), manifest)
         if row is None:
             LOG.warning("mesh route refused: %s", record_problem)
             return _unavailable(request_id)
-        problem, spec, service = service_problem(deps.services(), manifest)
+        problem, spec, service = service_problem(facts.services(), manifest)
         if problem is not None or spec is None or service is None:
             LOG.warning("mesh route refused: %s", problem)
             return _unavailable(request_id)
         decision = deps.route_policy(gate, row)
         if decision is not None and decision.denied:
             return _policy_refusal(decision, request_id)
+        observer = _observer_problem(facts, spec)
         async with deps.open_receipt(gate, request_id, MESH_PATH) as owner:
-            return await _serve(request, request_id, owner, service, spec)
+            return await _serve(request, request_id, owner, service, spec, observer)
 
     async def _serve(request: Request, request_id: str, owner: Any, service: Mapping[str, Any],
-                     spec: ExclusivePoolSpec) -> Response:
+                     spec: ExclusivePoolSpec, observer: tuple[str | None, str]) -> Response:
         try:
             form = await read_form(request, max_files=2, max_fields=len(manifest.inputs) + 2,
                                    max_part_size=MAX_IMAGE_BYTES + 1)
@@ -229,10 +231,11 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
             await form.close()
         fields, image_asset = downstream_form(manifest, mesh_request)
 
-        return await _watch_and_run(request, request_id, owner, service, spec, fields, image_asset)
+        return await _watch_and_run(request, request_id, owner, service, spec, observer, fields, image_asset)
 
     async def _watch_and_run(request: Request, request_id: str, owner: Any, service: Mapping[str, Any],
-                             spec: ExclusivePoolSpec, fields: Mapping[str, str], image: Any) -> Response:
+                             spec: ExclusivePoolSpec, observer: tuple[str | None, str], fields: Mapping[str, str],
+                             image: Any) -> Response:
         config = _config_of(service)
         base = service_base_url(config)
         if not base:
@@ -248,7 +251,8 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
                 owner.report(status="failed", reason="unhealthy")
                 return _unavailable(request_id)
 
-            work = asyncio.ensure_future(_lease_and_post(client, request_id, base, config, spec, fields, image))
+            work = asyncio.ensure_future(_lease_and_post(client, request_id, base, config, spec, observer, fields,
+                                                         image))
             watcher = asyncio.ensure_future(_watch_disconnect(request))
             try:
                 done, _ = await asyncio.wait({work, watcher}, return_when=asyncio.FIRST_COMPLETED)
@@ -268,8 +272,9 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
             raise asyncio.CancelledError()
 
     async def _lease_and_post(client: httpx.AsyncClient, request_id: str, base: str, config: Mapping[str, Any],
-                              spec: ExclusivePoolSpec, fields: Mapping[str, str], image: Any) -> bytes:
-        observer_problem, observer_url = _observer_problem(deps, spec)
+                              spec: ExclusivePoolSpec, observer: tuple[str | None, str], fields: Mapping[str, str],
+                              image: Any) -> bytes:
+        observer_problem, observer_url = observer
 
         async def observe() -> Any:
             if observer_problem is not None:
@@ -329,6 +334,14 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         return _error(502, "upstream_error", "The mesh service failed.", request_id=request_id)
 
 
+async def registry_snapshot(deps: MeshApiDeps) -> MeshApiDeps:
+    """deps whose registry readers return one snapshot, read off the event loop. The readers query the admin store, so
+    a read on the loop stalls every request; one read also keeps the route row, the service and the observer from
+    different registry versions. The probe cache is shared, not copied."""
+    frontends, services = await asyncio.to_thread(lambda: (deps.frontend_records(), deps.services()))
+    return replace(deps, frontend_records=lambda: frontends, services=lambda: services)
+
+
 def _policy_refusal(decision: Any, request_id: str) -> JSONResponse:
     """403 in the OpenAI error shape, as the other Try workflows refuse a plan denial."""
     reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
@@ -357,6 +370,7 @@ async def discovery_capability(deps: MeshApiDeps) -> Capability:
     record; its state comes from one live probe of the service health and the observer's facts. It acquires no
     capacity and dispatches nothing, and it reports an unavailable row, never an error, when a fact is missing."""
     manifest = deps.manifest
+    deps = await registry_snapshot(deps)
     row, problem = route_row(deps.frontend_records(), manifest)
     tiers = (row or {}).get("runtime_policy") or {}
     spec: ExclusivePoolSpec | None = None

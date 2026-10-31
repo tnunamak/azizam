@@ -14022,10 +14022,14 @@ async def _mesh_discovery_rows(*auth_contexts: AuthContext) -> list[Capability]:
     """The mesh row with each caller's policy view, as the other workflow rows get. Its state is its own live probe,
     so it is added after the shared projection, which would otherwise overwrite it. One probe serves every view."""
     row = await mesh_api.discovery_capability(MESH_DEPS)
-    live_registry = _live_service_registry()
-    viewed = [_capability_for_access(row, auth_context, protocol=mesh_api.MESH_PROTOCOL, registry=live_registry)
-              for auth_context in auth_contexts]
-    return [view for view in viewed if not category_enforcement.is_hidden(view.policy_reasons)]
+
+    def view() -> list[Capability]:
+        live_registry = _live_service_registry()
+        return [_capability_for_access(row, auth_context, protocol=mesh_api.MESH_PROTOCOL, registry=live_registry)
+                for auth_context in auth_contexts]
+
+    viewed = await asyncio.to_thread(view)
+    return [capability for capability in viewed if not category_enforcement.is_hidden(capability.policy_reasons)]
 
 
 async def _capabilities_availability_evidence(
