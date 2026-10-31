@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from types import SimpleNamespace
 
 from fastapi.responses import JSONResponse
 
-from gateway import admin_runtime, admin_store, content_access, mcp_oauth_store
+from gateway import admin_runtime, admin_store, content_access, mcp_oauth_store, step_up
 from gateway.runtime_auth import hash_api_key
 from tests.test_mcp_oauth import RESOURCE, World
 from tests.test_signin_who_can_enter import OWNER, csrf_for, gateway, signed_in  # noqa: F401
@@ -79,8 +80,11 @@ def test_an_owner_role_does_not_let_someone_set_another_persons_key_permission(g
 
 def test_stale_browser_sign_in_cannot_change_an_app_keys_privacy_permission(gateway):
     client = gateway.client()
-    response = gateway.sign_in(client, sub="owner", email=OWNER, auth_time=int(time.time()) - 3_600)
+    # A sign-in is fresh (A2), so the session goes stale by waiting: the step-up clock moves an hour on.
+    response = gateway.sign_in(client, sub="owner", email=OWNER)
     assert response.status_code == 302
+    later = time.time() + 3_600
+    gateway.monkeypatch.setattr(step_up, "time", SimpleNamespace(time=lambda: later))
     owner_id = gateway.user(OWNER)["id"]
     app = admin_store.create_app("Stale sign-in App", kind="personal", owner_user_id=owner_id,
                                  access_plan="person", path=gateway.path)
