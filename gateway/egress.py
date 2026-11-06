@@ -208,6 +208,7 @@ PLAIN_RESPONSE_CLASSES: dict[str, frozenset[str] | None] = {
     "stt_measurement": frozenset({"job", "policy", "samples", "settings", "settings_note", "revision", "commands", "measurement_ready", "known_limit", "trial_lengths", "trial_lengths_note"}),
     "engine_protocols": frozenset({"protocols", "problems"}),
     "engine_check": frozenset({"check", "test", "access"}),
+    "transition": frozenset({"op_id", "state", "gate", "operation", "parked", "active_leases", "last_lease_at"}),
     "provider_catalog": frozenset({"providers"}),
     "provider_reconciliation": frozenset({"reconciliations", "reconciliation"}),
     "provider_probe": frozenset({"ok", "reachable", "checked_at", "models", "partial", "message"}),

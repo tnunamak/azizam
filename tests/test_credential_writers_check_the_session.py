@@ -446,8 +446,13 @@ NOT_CREDENTIAL_TABLES = {
     "signin_seen_values", "user_avatars", "user_identity_claims", "users", "video_job_records",
     # transition_gate: one row per engine domain, its gate state (open, closed, failed_closed, reconciling) and the
     # operation that set it (gateway/transition_gate.py). It holds no secret and names no person. A closed or failed
-    # gate refuses engine transitions; nothing in it grants access to data or makes a key. T1.1 only reads it.
-    "transition_gate",
+    # gate refuses engine transitions; nothing in it grants access to data or makes a key.
+    # transition_op: one row per engine transition: its kind, target, step, state, the caller's idempotency key and
+    # request hash, and an adapter evidence id (gateway/transition_gate.py). transition_snapshot and
+    # transition_snapshot_pointer: the ledger of an engine's saved-state files and which one is current
+    # (gateway/transition_snapshots.py). None holds a secret or names a person, and no row grants access or makes a
+    # key; the transition executor writes them for owner requests and for wakes.
+    "transition_gate", "transition_op", "transition_snapshot", "transition_snapshot_pointer",
 }
 
 

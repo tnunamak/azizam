@@ -39,6 +39,7 @@ from gateway.capability_ids import MODEL_KIND_LABELS, capabilities_without_inner
 from gateway.discovery import WorkflowRecord, summarize_workflow
 from gateway.manifests import manifest_identity, validate_manifest
 from gateway.transition_gate import ServicePaths, domain_violations
+from gateway import transition_profiles
 
 
 SERVICE_REGISTRY_SETTING_KEY = "service_registry"
@@ -309,7 +310,7 @@ def _transition_domain_errors(services: Mapping[str, Any]) -> dict[str, str]:
     domain must declare pass-through activation, no gateway-owned lifecycle and no
     gateway-run selection, and every path to it must be a leased hop.
     """
-    return domain_violations(services, paths=_service_paths)
+    return domain_violations(services, paths=_service_paths, profile_known=transition_profiles.known)
 
 
 def _enforce_transition_domains(services: dict[str, Any], *, strict: bool) -> dict[str, str]:

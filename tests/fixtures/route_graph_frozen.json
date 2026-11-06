@@ -3682,7 +3682,7 @@
    "PUT": "/{path:path} unmatched_route"
   }
  },
- "openapi_sha256": "44e2063af4a6258cee63842b4272210b0904c95d8edc2cce6f53f67333066dc9",
+ "openapi_sha256": "2ce206e55ec717e2626ac7f109a35ecf224b9be54c1dddbc677778be9208b415",
  "policy": {
   "aliases": [
    {
