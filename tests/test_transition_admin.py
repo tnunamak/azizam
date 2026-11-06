@@ -73,7 +73,8 @@ class FakeEngine:
 
 
 class Ctx:
-    def __init__(self, tmp_path: Path, *, roles: tuple[str, ...] = ("owner",)) -> None:
+    def __init__(self, tmp_path: Path, *, roles: tuple[str, ...] = ("owner",),
+                 records: Callable[[], dict[str, Any]] = services) -> None:
         self.engine = FakeEngine()
         self.wall = [1_700_000_000.0]
         self.gates = GateStore(tmp_path / "transition.db")
@@ -81,7 +82,7 @@ class Ctx:
         self.drain = SwapDrain(wall_clock=lambda: self.wall[0])
         self.locks: dict[str, asyncio.Lock] = {}
         self.runtime = TransitionRuntime(
-            gates=lambda: self.gates, services=services, lock_for=lambda d: self.locks.setdefault(d, asyncio.Lock()),
+            gates=lambda: self.gates, services=records, lock_for=lambda d: self.locks.setdefault(d, asyncio.Lock()),
             drain=lambda: self.drain, protocol_invoke=self.engine)
         self.roles = roles
         router = APIRouter(prefix="/admin/api")
@@ -271,6 +272,27 @@ def test_the_gate_route_reports_active_leases_and_the_last_mint(tmp_path: Path) 
         assert after["active_leases"] == 0 and after["last_lease_at"] == pytest.approx(1_700_000_005.0), "a release keeps the last mint"
 
     run(scenario, tmp_path)
+
+
+def test_the_gate_route_shows_the_policy_the_gateway_applies(tmp_path: Path) -> None:
+    async def scenario(ctx: Ctx, client: httpx.AsyncClient) -> None:
+        policy = (await client.get(f"{BASE}/dom/gate")).json()["policy"]
+        assert policy == {"enabled": True, "profile": PROFILE, "services": ["alpha", "beta"], "admission_wait_s": 2.0,
+                          "retry_after_s": 7.0, "checkpoint_policy": "best_effort", "checkpoint_and_restore": False}
+
+    run(scenario, tmp_path)
+
+
+def test_the_gate_route_shows_a_required_checkpoint_from_any_member(tmp_path: Path) -> None:
+    def records() -> dict[str, Any]:
+        found = services()
+        found["beta"]["residency"]["transition"]["checkpoint_policy"] = "required"
+        return found
+
+    async def scenario(ctx: Ctx, client: httpx.AsyncClient) -> None:
+        assert (await client.get(f"{BASE}/dom/gate")).json()["policy"]["checkpoint_policy"] == "required"
+
+    run(scenario, tmp_path, records=records)
 
 
 def test_swap_drain_remembers_the_last_mint_per_key() -> None:
