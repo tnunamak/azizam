@@ -43,8 +43,9 @@ def _ratchets() -> dict[str, int]:
     table = tomllib.loads(BUDGETS.read_text(encoding="utf-8"))["ratchets"]
     keys = {name[len(PREFIX):]: value for name, value in table.items() if name.startswith(PREFIX)}
     assert keys, f"[ratchets] has no {PREFIX}<section> key"
-    assert all(isinstance(value, int) and value > 0 for value in keys.values()), \
-        f"each {PREFIX}<section> must be a positive integer; delete a key whose count reached zero"
+    assert all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in keys.values()), \
+        f"each {PREFIX}<section> must be a whole number; a key whose count reached zero stays at 0 (the policy check " \
+        "refuses a removed ratchet)"
     return keys
 
 

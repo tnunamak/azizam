@@ -760,27 +760,30 @@ domain_literals = 826
 # runtime()/CONFIG_HOME, containers filled by .update, walrus and loop targets and calls handed a root are counted.
 # The corrected scan measures proxy.py before C0 at 97 as well, so C1 moved no real import-time read: DECISION_RUNTIME
 # and MESH_DEPS read the config inside a lambda, which was never an import-time read. Each section slice moves its readers to the runtime
-# snapshot and lowers its key; a key is removed when its count reaches zero.
+# snapshot and lowers its key; a key whose count reaches zero stays at 0 (scripts/ci/policy.py refuses a removed ratchet).
 # 94 on 2026-11-06 (C6): the instance, media admission and service availability settings moved into the config layer, so the
-# "gateway" key (GATEWAY_CFG, RESOURCE_ADMISSION_CFG, MEDIA_JOB_ADMISSION_CFG) reached zero and is gone.
+# "gateway" key (GATEWAY_CFG, RESOURCE_ADMISSION_CFG, MEDIA_JOB_ADMISSION_CFG) reached zero.
 # C3 (aliases) lowered videos 8 to 7 (VIDEO_ALIASES) and audio 5 to 4 (AUDIO_ALIASES): both tables are derived from the
 # effective config by _workflow_alias_tables and republished at every reload. They are counted under the section their
 # source statement read, so there is no model_aliases key to lower.
-# C7 (roles, models, llm, reasoning, model_routing): llm and roles reach zero and their keys are removed; model_routing
+# C7 (roles, models, llm, reasoning, model_routing): llm and roles reach zero; model_routing
 # falls 3 -> 1 (SWITCH_TIMEOUT and UPSTREAM_READ_TIMEOUT moved; GGUF_DIR stays in the startup file until C10). models
 # keeps its one count: its startup list cannot be a section root yet (CONFIG_HOMES C7, not done).
 "import_time_config_reads.admin" = 2
 "import_time_config_reads.audio" = 4
 "import_time_config_reads.auth" = 5
 "import_time_config_reads.backends" = 23
+"import_time_config_reads.gateway" = 0
 "import_time_config_reads.identity" = 1
 "import_time_config_reads.images" = 27
+"import_time_config_reads.llm" = 0
 "import_time_config_reads.mcp" = 1
 "import_time_config_reads.model_compatibility" = 7
 "import_time_config_reads.model_routing" = 1
 "import_time_config_reads.models" = 1
 "import_time_config_reads.proxy" = 2
 "import_time_config_reads.request_body_limits" = 1
+"import_time_config_reads.roles" = 0
 "import_time_config_reads.videos" = 7
 "import_time_config_reads.whole_config" = 6
 

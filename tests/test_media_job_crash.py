@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import proxy
-from gateway import media_jobs
+from gateway import log_scrub, media_jobs
 
 SECRET = "a secret red fox at dawn"
 
@@ -32,6 +32,10 @@ class MediaJobCrashTests(unittest.IsolatedAsyncioTestCase):
         for target, name, value in (
             (media_jobs, "DB_PATH", self.jobs),
             (proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", Path(tmp.name) / "payloads"),
+            # A value another test in this worker registered with the scrubber (a short one such as "1234") can occur
+            # inside a random job id and be cut out of the log line; this test reads the id back from that line.
+            (log_scrub, "_SOURCES", {}),
+            (log_scrub, "_SNAPSHOT", None),
         ):
             patcher = patch.object(target, name, value)
             patcher.start()
