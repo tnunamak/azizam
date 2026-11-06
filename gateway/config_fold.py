@@ -48,7 +48,10 @@ AUDIT_ACTIONS = {
     ADMISSION: "operator.media_job_admission.update",
     AVAILABILITY: "operator.service_availability.update",
 }
-STEP_PREFIX = "config-homes-import:"
+# Its own step name: ``config-homes-import:<section>`` is the startup-file import of every section
+# (gateway/config_legacy_import.py), which records "nothing to import" for these sections when the file has no block.
+# Sharing the name would let that record stop this import after a boot on which this import failed.
+STEP_PREFIX = "config-homes-fold:"
 
 INSTANCE_FIELDS = ("name", "base_url", "theme_default")
 MEDIA_FIELDS = (

@@ -13,7 +13,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gateway import accounts, admin_store, config_fold, config_layers as layers, config_runtime
+from gateway import accounts, admin_store, config_fold, config_layers as layers, config_rules, config_runtime
 from gateway.admin_api import AdminContext, create_admin_router
 from gateway.admin_runtime import AdminSQLiteStore
 from gateway.settings_api import create_settings_router
@@ -196,6 +196,16 @@ def test_the_import_turns_the_old_documents_and_startup_values_into_rows_once(db
     for name in config_fold.SECTIONS:
         assert admin_store.migration_step_done(config_fold.STEP_PREFIX + name, path=db)
     assert config_fold.migrate(db, STARTUP, environ={}) == []  # once
+
+
+def test_a_failed_import_is_retried_after_the_startup_file_import_ran(db):
+    """Boot order: this import runs first. If it fails, the startup-file import of every section still runs and records
+    that the file has no block for these sections. The next boot must still import the old documents."""
+    legacy(db, "instance_presentation", {"name": "Saved", "base_url": "https://saved.example.test", "theme_default": "dark"})
+    config_rules.config_home().layer({}, path=db, registry=None, legacy_import=True, log=lambda line: None)
+    report = config_fold.migrate(db, STARTUP, environ={})
+    assert {item["section"]: item["rows"] for item in report}["instance"] == 3
+    assert config_fold.instance(db)["name"] == "Saved"
 
 
 def test_the_import_reads_the_startup_values_when_nothing_was_saved(db):
