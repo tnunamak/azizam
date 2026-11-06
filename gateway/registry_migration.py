@@ -255,3 +255,22 @@ def owner_edited_services(path: Path) -> set[str]:
     finally:
         connection.close()
     return {str(row[0]) for row in rows if row[0]}
+
+
+def differing_records(before: Mapping[str, Any], after: Mapping[str, Any]) -> list[str]:
+    """``collection/id`` of each record that is not equal in ``before`` and ``after``, an effective registry each.
+
+    Ids only: the report of a run on a copy of a live registry must carry no value of a record.
+    """
+    out: list[str] = []
+    for name in layers.COLLECTIONS:
+        old, new = before.get(name) or {}, after.get(name) or {}
+        out.extend(f"{name}/{record_id}" for record_id in sorted(set(old) | set(new))
+                   if layers.digest(old.get(record_id)) != layers.digest(new.get(record_id)))
+    return out
+
+
+def effective_after(plan: Plan, release: Mapping[str, Any]) -> dict[str, Any]:
+    """What a load serves for the document ``plan`` stores: the release under it, normalized as a load does."""
+    registry, _excluded = service_registry.read_registry(layers.layer(plan.stored, release))
+    return registry
