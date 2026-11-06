@@ -107,15 +107,17 @@ NATIVE = Obj("NativePolicy", {
 }, extras=HIDDEN)
 PROVIDER_AUTH = Obj("ProviderAuth", {"header": SHORT, "prefix": SHORT}, extras=HIDDEN)
 
+# A connection key no type names is hidden and counted, not dropped: a write built from a read keeps it (D34). A dropped
+# key was lost on every read-modify-write of the registry.
 ENGINE_CREDENTIAL = Obj("EngineCredential", {
     "secret_ref": CONFIGURED, "secret_env": SHORT, "origin": URL, "header": SHORT, "scheme": SHORT,
-})
+}, extras=HIDDEN)
 ENGINE_CONNECTION = register(Obj("EngineConnection", {
-    "dispatch": SHORT, "protocol": SHORT, "transport": SHORT, "address": URL,
-    "credentials": Obj("EngineCredentials", {"inference": ENGINE_CREDENTIAL, "control": ENGINE_CREDENTIAL}),
+    "dispatch": SHORT, "protocol": SHORT, "transport": SHORT, "address": URL, "control_address": URL,
+    "credentials": Obj("EngineCredentials", {"inference": ENGINE_CREDENTIAL, "control": ENGINE_CREDENTIAL}, extras=HIDDEN),
     "headers": HEADERS,
-    "timeouts": Obj("EngineTimeouts", {"connect_s": NUM, "first_byte_s": NUM, "total_s": NUM}),
-}))
+    "timeouts": Obj("EngineTimeouts", {"connect_s": NUM, "first_byte_s": NUM, "total_s": NUM}, extras=HIDDEN),
+}, extras=HIDDEN))
 
 OFFERING = Obj("Offering", {
     "id": SHORT, "kind": SHORT, "upstream": ANY_SCALAR, "tasks": JSON, "inputs": JSON, "options": JSON,
