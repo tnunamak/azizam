@@ -611,6 +611,13 @@ When a section is registered for the first time on an install, at boot:
    current file block again on purpose, as a new change that the dry run shows in full.
    This is the "refuse the losing write loudly" pattern ([MASTER] "Who should win": complaints cluster where the loser
    is silent).
+5. Two importers write the same section rows. C6's fold (`gateway/config_fold.py`, step
+   `config-homes-fold:<section>`) reads the settings documents that existed before the sections; this generic import
+   reads the section's top-level startup-file block. They record different step names, so neither stops the other. The
+   fold writes nothing when the section already has rows. The generic import writes the rows its plan names, so when
+   both have data for a section, the startup-file block wins where the two differ. No release ships a startup-file block
+   for a folded section today. The owner route resets owner rows that the file block does not name; the dry run lists
+   each of those resets before anything is written.
 
 Behaviour gate per section: the effective section after the import equals the legacy section before it, compared by
 canonical digest (C0 goldens).

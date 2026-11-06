@@ -490,6 +490,7 @@ def test_the_dry_run_command_lists_every_row_for_a_copy_of_a_config_file_and_wri
     config.write_text((ROOT / "proxy_config.yml").read_text(encoding="utf-8"), encoding="utf-8")
     scratch = tmp_path / "scratch.db"
     result = run_import_command("--config", str(config), "--db", str(scratch))
+    assert sorted(entry["section"] for entry in result["sections"]) == sorted(proxy.CONFIG_HOME.sections)
     report = aliases_entry(result)
     assert report["section"] == SECTION and report["status"] == "dry_run"
     assert report["row_count"] == len(report["rows"]) > 0

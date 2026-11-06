@@ -5,8 +5,9 @@ effective sections through the pure layer, and carries the result as one ``Runti
 single reference swap. A request binds the snapshot that is current when it starts (``SnapshotMiddleware``), so a reload
 that lands mid-request cannot change what that request reads.
 
-With no section registered (the state of this release) ``ConfigHome.layer`` returns the startup config object itself and
-reads no table: the effective config is exactly what it was before the layer existed.
+With no section registered ``ConfigHome.layer`` returns the startup config object itself and reads no table: the
+effective config is exactly what it was before the layer existed. The release ships its sections in
+``registry/defaults`` (see the README there).
 
 Load and write share one function, ``ConfigHome.build_candidate``: it builds every section from its rows and judges
 them together, so the order of the section ids never changes a result.
