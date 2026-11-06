@@ -322,6 +322,10 @@ def test_a_request_that_leaves_while_it_waits_for_the_lock_gives_the_wakes_lease
                 raise AssertionError("not admitted")
 
         task = asyncio.get_running_loop().create_task(request())
+        for _ in range(500):  # the wake and the owner park run on threads: wait for the park to hold the lock
+            if parks and proxy.swap_lock_for("alpha").locked():
+                break
+            await asyncio.sleep(0.01)
         await asyncio.sleep(0.05)
         assert proxy._swap_drain.in_flight("alpha") == 1, "the lease waits for the request's turn"
         task.cancel()
