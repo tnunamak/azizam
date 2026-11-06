@@ -190,7 +190,7 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # paths recovers the document with digest 07410fbacc45a00c2dd669a3213d285d782897a57de979c10c08b01b7f1cb7fe exactly.
         # Re-captured 2026-11-05 for the four /admin/api/engines/domains/... transition routes (see ADDED_PATHS); removing
         # those paths and nothing else changed in the document (tests/fixtures/headless_openapi.json adds the same four).
-        assert route_graph.openapi_digest(proxy.app) == "MERGED"
+        assert route_graph.openapi_digest(proxy.app) == "43b3c3dd5cdca3be5586a47e5c47a48e2bcceed643c1dcd0786dd17534cf4db8"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
