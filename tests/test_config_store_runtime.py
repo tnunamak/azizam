@@ -425,7 +425,7 @@ def test_with_no_section_the_layer_returns_the_startup_config_and_reads_no_table
 def test_the_release_ships_the_folded_owner_sections_the_model_aliases_and_the_c7_sections():
     # Each slice that adds a section adds its name here (CONFIG_HOMES 10).
     shipped = {"instance", "resource_admission", "service_availability", "model_aliases",
-               "llm", "model_routing", "reasoning", "roles"}
+               "llm", "model_routing", "reasoning", "roles", "videos", "audio"}
     assert set(config_runtime.load_sections()) == shipped
     assert set(proxy.CONFIG_HOME.sections) == shipped
 

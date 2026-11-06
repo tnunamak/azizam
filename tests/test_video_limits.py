@@ -60,7 +60,7 @@ class VideoLimitsTests(unittest.TestCase):
         self.assertEqual(limits_for_workflow(published, None), {})
 
     def test_the_published_cap_is_the_enforced_cap(self) -> None:
-        self.assertEqual(video_limits(proxy.config["videos"])["video-ltx-2.5-long"]["max_total_seconds"], proxy.VIDEO_MAX_TOTAL_SECONDS)
+        self.assertEqual(video_limits(proxy.config["videos"])["video-ltx-2.5-long"]["max_total_seconds"], proxy._video_max_total_seconds())
 
 
 class VideoLimitsDiscoveryTests(unittest.TestCase):

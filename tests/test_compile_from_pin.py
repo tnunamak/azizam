@@ -238,11 +238,16 @@ def test_a_route_that_compiles_from_the_pin_refuses_a_job_whose_pin_cannot_be_wr
     assert len(rig.scheduled) == 1, "only the accepted job was scheduled"
 
 
+def set_audio_workflows(rig: GatewayRig, table: dict) -> None:
+    """Publish the audio section with ``table`` as its workflows, as a reload does. The test's cleanup restores the snapshot."""
+    publish_section(rig.monkeypatch, "audio", {**proxy.config["audio"], "workflows": table})
+
+
 def add_audio_workflow(rig: GatewayRig, name: str, *, max_seconds: int, graph_file: str = "workflows/audio/tangoflux.json") -> None:
     """An owner-added audio workflow in this test's own config and registry: it reuses ``graph_file`` and has its own
     manifest id ``audio.generate.<name>``. The shipped data is not touched."""
-    rig.set(proxy, "AUDIO_WORKFLOWS_CFG", {
-        **proxy.AUDIO_WORKFLOWS_CFG, name: {"file": graph_file, "min_seconds": 1, "max_seconds": max_seconds}})
+    set_audio_workflows(rig, {
+        **proxy._audio_workflow_table(), name: {"file": graph_file, "min_seconds": 1, "max_seconds": max_seconds}})
     manifest = proxy._load_audio_workflow_manifest("tangoflux")
     manifest["id"] = f"audio.generate.{name}"
     manifest["inputs"]["duration"]["maximum"] = max_seconds
@@ -285,7 +290,7 @@ def test_a_job_pinned_under_an_owner_added_workflow_fails_when_its_model_becomes
         job_id = await accept(rig, model="tangoflux-long")
         assert job(job_id)["workflow"] == "audio.generate.tangoflux-long"
         # The owner removes the workflow and points its name at tangoflux; the gateway restarts.
-        rig.set(proxy, "AUDIO_WORKFLOWS_CFG", {k: v for k, v in proxy.AUDIO_WORKFLOWS_CFG.items() if k != "tangoflux-long"})
+        set_audio_workflows(rig, {k: v for k, v in proxy._audio_workflow_table().items() if k != "tangoflux-long"})
         rig.set(proxy, "AUDIO_ALIASES", {**proxy.AUDIO_ALIASES, "tangoflux-long": "tangoflux"})
         rig.scheduled.clear()
         assert proxy._resume_pending_audio_media_jobs() == 1
