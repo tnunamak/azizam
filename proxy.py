@@ -11515,7 +11515,8 @@ async def proxy_graph_video_create(
             workflow_name, workflow_cfg = i2v_workflow_name, i2v_cfg
     if workflow_cfg.get("requires_input_reference") and not input_reference:
         return _gateway_input_error(
-            f"Model {workflow_name} is image-to-video and requires input_reference", param="input_reference")
+            f"Model {workflow_name} is image-to-video and requires input_reference", param="input_reference",
+            job_message="This model is image-to-video and requires input_reference")
     # Long video: `shots`, or `seconds` past the model's native length when the
     # model names a chain workflow, or a chain workflow itself (video-long).
     chain_name = chain_cfg = None
@@ -11533,7 +11534,9 @@ async def proxy_graph_video_create(
                     f"Model {workflow_name} cannot render shots or clips longer than "
                     f"{workflow_cfg.get('max_seconds', 8):g} s; use video-long, ltx-2.5-long or minimax-h3",
                     param="shots" if body.get("shots") is not None else "seconds",
-                    code="long_video_not_supported")
+                    code="long_video_not_supported",
+                    job_message=f"This model cannot render shots or clips longer than "
+                                f"{workflow_cfg.get('max_seconds', 8):g} s")
     if chain_cfg is not None:
         return await _submit_video_chain(
             request, auth_context, body=body, workflow_name=str(chain_name),
@@ -11696,7 +11699,8 @@ async def proxy_graph_video_create(
     except (TypeError, ValueError):
         return _gateway_input_error("seconds must be a number")
     if seconds_val < min_seconds or seconds_val > max_seconds:
-        return _gateway_input_error(f"seconds must be between {min_seconds} and {max_seconds} for model {workflow_name}")
+        return _gateway_input_error(f"seconds must be between {min_seconds} and {max_seconds} for model {workflow_name}",
+                                    job_message=f"seconds must be between {min_seconds} and {max_seconds}")
 
     if source_seconds is not None and seconds_val > source_seconds + 0.05:
         return Response(
@@ -13173,13 +13177,16 @@ def _json_error(status: int, message: str, *, code: str | None = None, param: st
     return Response(content=json.dumps({"error": error}), status_code=status, media_type="application/json")
 
 
-def _gateway_input_error(message: str, *, code: str | None = None, param: str | None = None) -> Response:
+def _gateway_input_error(
+    message: str, *, code: str | None = None, param: str | None = None, job_message: str | None = None,
+) -> Response:
     """A 400 a media route's own checks wrote; its sentence may reach an async job's error.
 
     Only for a message that names a field and a bound. One that can hold a caller's value (a model name, a URL,
-    an unknown field's name) goes through ``_json_error``, which an async job reports with fixed words.
+    an unknown field's name) goes through ``_json_error``, which an async job reports with fixed words, or gives
+    ``job_message``: the same sentence without that value, which the job reports instead.
     """
-    return _gateway_input_refusal(_json_error(400, message, code=code, param=param), message)
+    return _gateway_input_refusal(_json_error(400, message, code=code, param=param), job_message or message)
 
 
 async def _submit_video_remix(
