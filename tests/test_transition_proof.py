@@ -21,6 +21,7 @@ from scripts.transition_proof.manifest import InputError, load_cases, read_path
 from scripts.transition_proof.runner import _bust_cache
 from tests.support.fake_upstream.transition_gateway import DOMAIN, KEY, FakeTransitionGateway
 
+CHAT_KEY = "chat-app-key-for-tests-fedcba9876543210"
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "transition-proof"
 STANDARD = {"cached_tokens_path": "usage.prompt_tokens_details.cached_tokens", "prompt_tokens_path": "usage.prompt_tokens",
             "min_cached_fraction": 0.8, "max_timing_ratio": 0.5}
@@ -583,3 +584,56 @@ def test_a_timing_ratio_in_request_mode_is_refused_and_nothing_is_sent(
     assert "max_timing_ratio" in process.stderr and "wake" in process.stderr
     process, _ = run(gateway, tmp_path, "--wake-mode", "post", *extra)  # the same manifest is fine in post mode
     assert process.returncode == 0, process.stderr
+
+
+def chat_key_file(tmp_path: Path, content: str = CHAT_KEY + "\n") -> Path:
+    path = tmp_path / "chat.key"
+    path.write_text(content)
+    return path
+
+
+def test_a_chat_key_goes_to_chat_and_the_owner_key_to_the_admin_routes(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    gateway.chat_key = CHAT_KEY  # the owner key is refused on chat, the chat key on the admin routes
+    process, result = run(gateway, tmp_path, "--chat-key-file", str(chat_key_file(tmp_path)))
+    assert process.returncode == 0 and result["status"] == "passed"
+    sent = {r["path"].startswith("/v1/"): set() for r in gateway.requests}
+    for request in gateway.requests:
+        sent[request["path"].startswith("/v1/")].add(request["authorization"])
+    assert sent == {True: {f"Bearer {CHAT_KEY}"}, False: {f"Bearer {KEY}"}}
+
+
+def test_without_a_chat_key_every_request_carries_the_owner_key(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    process, result = run(gateway, tmp_path)
+    assert process.returncode == 0 and result["status"] == "passed"
+    assert any(r["path"].startswith("/v1/") for r in gateway.requests)
+    assert {r["authorization"] for r in gateway.requests} == {f"Bearer {KEY}"}
+
+
+@pytest.mark.parametrize("content", ["", f"{CHAT_KEY}\nsecond-line\n", f"{CHAT_KEY} extra", 'bad"quote' + CHAT_KEY])
+@pytest.mark.parametrize("extra", [(), ("--dry-run",)])
+def test_a_malformed_chat_key_file_is_refused_and_not_echoed(
+        gateway: FakeTransitionGateway, tmp_path: Path, content: str, extra: tuple[str, ...]) -> None:
+    process, result = run(gateway, tmp_path, *extra, "--chat-key-file", str(chat_key_file(tmp_path, content)))
+    assert process.returncode == 2 and gateway.requests == [] and result["status"] == "invalid_input"
+    assert "the chat key file" in process.stderr and "the chat key file" in result["error"]
+    for surface in (process.stdout, process.stderr, (tmp_path / "result.json").read_text()):
+        assert CHAT_KEY[:6] not in surface and CHAT_KEY[-6:] not in surface and "second-line" not in surface
+        assert KEY not in surface
+
+
+def test_a_missing_chat_key_file_is_refused_and_names_the_chat_key(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    process, _ = run(gateway, tmp_path, "--chat-key-file", str(tmp_path / "absent.key"))
+    assert process.returncode == 2 and gateway.requests == [] and "the chat key file" in process.stderr
+
+
+def test_both_keys_are_redacted_from_the_result_including_a_reply_that_echoes_them(
+        gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    gateway.chat_key = CHAT_KEY
+    gateway.content = f"owner {KEY} chat {CHAT_KEY}"
+    gateway.echo_auth, gateway.park = True, "conflict"  # the 409 body repeats the owner Authorization header
+    process, result = run(gateway, tmp_path, "--chat-key-file", str(chat_key_file(tmp_path)))
+    assert process.returncode == 1
+    text = (tmp_path / "result.json").read_text()
+    assert result["cases"][0]["steps"][0]["reply_text"] == "owner [redacted] chat [redacted]"
+    for surface in (process.stdout, process.stderr, text):
+        assert KEY not in surface and CHAT_KEY not in surface

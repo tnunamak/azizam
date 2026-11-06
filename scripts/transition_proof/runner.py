@@ -11,7 +11,7 @@ import copy
 import email.utils
 import time
 import uuid
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 import httpx
 
@@ -26,10 +26,12 @@ KNOWN_STATES = ("running", "succeeded", "aborted", *HOLDING)
 
 class Proof:
     def __init__(self, client: httpx.Client, *, domain: str, model: str, wake_mode: str, run_id: str,
-                 poll_interval_s: float, poll_timeout_s: float, secret: Optional[str] = None,
-                 sleep: Callable[[float], None] = time.sleep) -> None:
+                 poll_interval_s: float, poll_timeout_s: float, secrets: Sequence[str] = (),
+                 chat_key: Optional[str] = None, sleep: Callable[[float], None] = time.sleep) -> None:
         self.client = client
-        self.secret = secret
+        self.secrets = tuple(secrets)
+        # The client carries the owner key. With a chat key, chat requests override that header; without one they keep it.
+        self.chat_headers = {"Authorization": f"Bearer {chat_key}"} if chat_key else None
         self.domain = domain
         self.model = model
         self.wake_mode = wake_mode
@@ -41,17 +43,18 @@ class Proof:
     # -- HTTP ---------------------------------------------------------------------------------------------
 
     def _clip(self, text: str) -> str:
-        """Redact the key, then cut: a cut taken first could leave the front half of the key in the text."""
-        if self.secret:
-            text = text.replace(self.secret, "[redacted]")
+        """Redact every key, then cut: a cut taken first could leave the front half of a key in the text."""
+        for secret in self.secrets:
+            text = text.replace(secret, "[redacted]")
         return text[:300]
 
-    def _call(self, method: str, path: str, body: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    def _call(self, method: str, path: str, body: Optional[dict[str, Any]] = None, *,
+              headers: Optional[dict[str, str]] = None) -> dict[str, Any]:
         """One request. Never raises: a transport error is a record with ``http_status`` None."""
         started = time.monotonic()
         record: dict[str, Any] = {"http_status": None, "json": None, "error": None, "retry_after": None}
         try:
-            response = self.client.request(method, path, json=body)
+            response = self.client.request(method, path, json=body, headers=headers)
             record["http_status"] = response.status_code
             record["retry_after"] = response.headers.get("retry-after")
             try:
@@ -77,7 +80,7 @@ class Proof:
         started = time.monotonic()
         retries: list[dict[str, Any]] = []
         while True:
-            reply = self._call("POST", "/v1/chat/completions", request)
+            reply = self._call("POST", "/v1/chat/completions", request, headers=self.chat_headers)
             remaining = self.poll_timeout_s - (time.monotonic() - started)
             if not retry_503 or reply["http_status"] != 503 or remaining <= 0:
                 break
