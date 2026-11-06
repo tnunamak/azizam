@@ -48,10 +48,6 @@ _DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 _LOOPBACK = {"localhost": "127.0.0.1", "::1": "127.0.0.1", "[::1]": "127.0.0.1"}
 _URL_FIELDS = ("url", "base_url", "api_base", "default_base_url", "address", "upstream")
 
-_destinations: Mapping[str, tuple[str, ...]] = MappingProxyType({})
-# The exact request paths a probe mark covers, by destination: each path a record declares (see
-# ``declared_probe_paths``), alone and under the path prefix of the record's own URL.
-_probe_paths: Mapping[str, frozenset[str]] = MappingProxyType({})
 # The path a service reads for health when its record names none.
 DEFAULT_HEALTH_PATH = "/health"
 
@@ -187,13 +183,23 @@ def declared_probe_paths(record: Mapping[str, Any]) -> set[str]:
 
 
 class Projection:
-    """The destination map and the probe paths, built from one set of services and not yet live (see ``project``)."""
+    """The destination map and the probe paths, built from one set of services and not yet live (see ``project``).
+
+    ``destinations`` maps each transition-enabled address to its domains. ``probe_paths`` maps each address to the
+    exact request paths a probe mark covers: each path a record declares (see ``declared_probe_paths``), alone and
+    under the path prefix of the record's own URL. Both maps are immutable and belong together: a reader takes the
+    whole projection once and never combines the maps of two projections.
+    """
 
     __slots__ = ("destinations", "probe_paths")
 
     def __init__(self, destinations: Mapping[str, tuple[str, ...]], probe_paths: Mapping[str, frozenset[str]]) -> None:
         self.destinations = destinations
         self.probe_paths = probe_paths
+
+
+# The live projection: one reference, replaced whole by ``install``. Read it once per check.
+_live: Projection = Projection(MappingProxyType({}), MappingProxyType({}))
 
 
 def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[Mapping[str, Any]], Iterable[str]] | None = None) -> Projection:
@@ -223,10 +229,9 @@ def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
 
 
 def install(projection: Projection) -> None:
-    """Make a projection live (one reference swap for each of the two maps)."""
-    global _destinations, _probe_paths
-    _probe_paths = projection.probe_paths
-    _destinations = projection.destinations
+    """Make a projection live: one reference swap, so a reader sees the old pair or the new pair, never a mix."""
+    global _live
+    _live = projection
 
 
 def publish(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[Mapping[str, Any]], Iterable[str]] | None = None) -> None:
@@ -234,20 +239,17 @@ def publish(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
     install(project(services, extra_probe_paths=extra_probe_paths))
 
 
-def _declared_probe(key: str, path: str) -> bool:
-    return path in _probe_paths.get(key, ())
-
-
 def mapped_destinations() -> Mapping[str, tuple[str, ...]]:
-    return _destinations
+    return _live.destinations
 
 
 def check_request(request: httpx.Request) -> None:
     """Refuse a request to a transition-enabled domain's address unless the task holds a lease for it."""
     marked = request.extensions.pop(PROBE_EXTENSION, False) is True and request.method == "GET"
     key = destination_key(request.url.host, request.url.port, request.url.scheme)
-    domains = _destinations.get(key)
-    if not domains or (marked and _declared_probe(key, request.url.path)):
+    live = _live  # one read: the destination map and the probe paths must come from the same projection
+    domains = live.destinations.get(key)
+    if not domains or (marked and request.url.path in live.probe_paths.get(key, ())):
         return
     if any(holds_lease(domain) for domain in domains):
         return

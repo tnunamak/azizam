@@ -807,8 +807,7 @@ def _enforce_leases(harness: AsyncHarness, monkeypatch) -> _Closing:
 
     for service_id, domain in (("trellis", SERVICE_DOMAIN), ("vram-observer", OBSERVER_DOMAIN)):
         harness.route.services[service_id]["residency"] = {"domain": domain, "transition": {"enabled": True, "activation": "pass_through"}}
-    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
-    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    monkeypatch.setattr(engine_egress, "_live", engine_egress._live)
     engine_egress.publish(harness.route.services)
 
     def refusal(service_id: str) -> Any:
