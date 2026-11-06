@@ -52,7 +52,8 @@ def boot(home: config_runtime.ConfigHome, db: Path, raw: dict[str, Any], *, regi
 
 
 def rows(db: Path) -> list[dict[str, Any]]:
-    return admin_store.read_config_state(path=db)["rows"]
+    """The aliases section's rows (other sections the release ships import their own startup blocks)."""
+    return [row for row in admin_store.read_config_state(path=db)["rows"] if row["section"] == SECTION]
 
 
 class AliasApp:
@@ -286,7 +287,8 @@ def test_the_import_is_one_change_of_kind_legacy_import_that_records_its_step(tm
         steps = [r[0] for r in conn.execute("SELECT name FROM schema_migration_steps")]
     finally:
         conn.close()
-    assert [kind for kind, _note in changes] == ["legacy-import"] and STEP in steps
+    mine = [kind for kind, note in changes if f"{SECTION} block" in (note or "")]
+    assert mine == ["legacy-import"] and STEP in steps
 
 
 def test_a_block_that_breaks_the_rule_is_not_imported_keeps_serving_and_is_retried_next_boot(tmp_path):
@@ -356,7 +358,8 @@ def test_a_file_with_no_block_records_the_step_so_a_later_block_is_ignored(tmp_p
     boot(config_rules.config_home(), db, {}, log=lines.append)
     later = boot(config_rules.config_home(), db, golden.raw_config("tracked"), log=lines.append)
     assert later.config[SECTION] == release_aliases() and rows(db) == []
-    assert len(lines) == 1 and "ignored" in lines[0]
+    mine = [line for line in lines if f"{SECTION} block" in line]
+    assert len(mine) == 1 and "ignored" in mine[0]
 
 
 def test_the_boot_runs_the_import_and_a_reload_never_does(tmp_path):
