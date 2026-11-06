@@ -33033,16 +33033,27 @@ app.add_middleware(NoIndexHeaderMiddleware)
 # Main
 # =============================================================================
 
+_OPENAPI_INPUTS: list[str] = [""]
+
+
 def _gateway_openapi() -> dict[str, Any]:
-    """FastAPI's schema plus the typed native workflow surface (cached)."""
-    if app.openapi_schema:
+    """FastAPI's schema plus the typed native workflow surface.
+
+    The schema is cached, but the alias tables and video limits it lists can change while the gateway runs (an
+    owner edits an alias), so the cache holds only while those inputs are the same.
+    """
+    aliases = _gateway_aliases_provider()
+    limits = video_limits(config.get("videos"))
+    inputs = json.dumps([aliases, limits], sort_keys=True, default=str)
+    if app.openapi_schema and _OPENAPI_INPUTS[0] == inputs:
         return app.openapi_schema
+    app.openapi_schema = None
     schema = _fastapi_openapi()
     _augment_workflow_openapi(
         schema,
         GATEWAY_WORKFLOW_REGISTRY.records(),
-        aliases=_gateway_aliases_provider(),
-        video_limits=video_limits(config.get("videos")),
+        aliases=aliases,
+        video_limits=limits,
     )
     from gateway.owner_openapi import augment_owner_openapi
     augment_owner_openapi(schema, app.routes)
@@ -33051,6 +33062,7 @@ def _gateway_openapi() -> dict[str, Any]:
     operation_security.augment_signed_links(schema)
     operation_security.fill_security(schema, is_public=is_public_path, key_layer_prefixes=KEY_LAYER_PREFIXES)
     app.openapi_schema = schema
+    _OPENAPI_INPUTS[0] = inputs
     return schema
 
 
