@@ -340,7 +340,7 @@ describe("a workflow with repeated image[] parts", () => {
     await upload(/Main picture/);
     await upload(/Second picture/, new File(["second"], "second.png", { type: "image/png" }));
     const main = screen.getByRole("group", { name: /Main picture/ });
-    await userEvent.click(within(main).getByRole("button", { name: /Remove picture/ }));
+    await userEvent.click(within(main).getByRole("button", { name: /^Remove / }));
     await upload(/Main picture/, new File(["replacement"], "replacement.png", { type: "image/png" }));
     await userEvent.click(screen.getByRole("button", { name: /^Run/ }));
     await waitFor(() => expect(posts()).toHaveLength(1));

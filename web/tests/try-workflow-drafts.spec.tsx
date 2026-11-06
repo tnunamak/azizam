@@ -203,7 +203,7 @@ describe("the picture a workflow last ran with", () => {
     await openTry();
     await attach(user, PNG);
     await runWithPicture(user);
-    await user.click(within(picturePlace()).getByRole("button", { name: /Remove picture/ }));
+    await user.click(within(picturePlace()).getByRole("button", { name: /^Remove / }));
     expect(within(picturePlace()).queryByText("garden.png")).toBeNull();
     expect(unsentWork()).toEqual([{ kind: "try-draft", count: 1 }]);
   });
