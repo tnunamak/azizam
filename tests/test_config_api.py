@@ -621,7 +621,9 @@ def test_the_legacy_import_route_shows_the_whole_report_in_a_dry_run_then_applie
     assert dry["removes"] == [{"pointer": "/aliases/fast", "release_value": {"target": "svc-b"}}]
     response = gw.client.post(f"{API}/sections/{SECTION}/legacy-import", headers={**OWNER, "If-Match": '"0"'})
     assert response.status_code == 200 and response.json()["rows"] == dry["rows"], response.text
-    assert layers.digest(gw.home.holder.current().config[SECTION]) == layers.digest(LEGACY_BLOCK)
+    # /mode applies at restart: the running snapshot keeps its value and the view shows the imported one as pending.
+    assert layers.digest(gw.home.holder.current().config[SECTION]) == layers.digest({**LEGACY_BLOCK, "mode": DEFAULTS["mode"]})
+    assert gw.entries()["/mode"]["pending"] is True and gw.entries()["/mode"]["value"] == "slow"
     change = gw.client.get(f"{API}/changes", headers=OWNER).json()["changes"][0]
     assert change["kind"] == "legacy-import" and len(change["items"]) == 5
     conn = sqlite3.connect(gw.db)

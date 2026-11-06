@@ -240,7 +240,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
             # dall-e-2 (an OpenAI public model name, not a local workflow id)
             # resolves to the configured variations default, not a literal
             # (nonexistent) "dall-e-2-edit" workflow.
-            self.assertEqual(captured["model"], proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW)
+            self.assertEqual(captured["model"], proxy._image_variations_default_workflow())
             self.assertEqual(captured["prompt"], proxy.IMAGE_VARIATIONS_PROMPT)
 
     def test_image_variations_unsupported_field_still_rejected_before_backend_call(self) -> None:

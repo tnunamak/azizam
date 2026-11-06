@@ -95,7 +95,7 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_an_out_of_memory_submit_on_an_idle_engine_frees_models_and_submits_again(self) -> None:
         fake = self.fakes.asgi(load_scenario("comfyui/video-manifest-oom-then-complete"))
         self.monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
-        self.monkeypatch.setattr(proxy, "IMAGE_FREE_VRAM_ON_EXHAUSTION", True)
+        self.monkeypatch.setattr(proxy, "_image_free_vram_on_exhaustion", lambda: True)
         with patch.object(proxy.asyncio, "sleep", return_value=None):
             response = await proxy._execute_video_manifest_workflow(
                 _Request(), "rife-interpolate", access_context(),  # type: ignore[arg-type]

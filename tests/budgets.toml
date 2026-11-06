@@ -523,7 +523,8 @@
 # Train 7 (2026-11-06): LiteLLM restart recheck (+2), gate read policy (+2), transition-proof chat key (+13), registry connection round trip (+10); measured 19820.
 # fix/connection-address-no-userinfo (2026-11-06): a connection address with a user, query or fragment is refused (+1); measured 19821.
 # Train 8 (2026-11-06): connection address refuses a credential (+1), transition-proof trace records parked (+0); measured 19821.
-pytest = 19821
+# feat/config-homes-c8a (2026-11-06): +25 (tests/test_config_c8a_sections.py, images and voices sections); measured 19846.
+pytest = 19846
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -775,13 +776,17 @@ domain_literals = 826
 # C7 (roles, models, llm, reasoning, model_routing): llm and roles reach zero; model_routing
 # falls 3 -> 1 (SWITCH_TIMEOUT and UPSTREAM_READ_TIMEOUT moved; GGUF_DIR stays in the startup file until C10). models
 # keeps its one count: its startup list cannot be a section root yet (CONFIG_HOMES C7, not done).
+# C8a (images, voices): images falls 27 -> 7 (20 names moved: 9 plain settings, 4 media-job settings, 5 holders, the make limits and
+# its runtime attribute). Seven remain on purpose: IMAGE_CACHE_DIR, VRAM_ESTIMATES_FILE, IMAGE_MEDIA_JOB_PAYLOAD_DIR and
+# IMAGE_SIGNED_URL_SECRET_CFG are startup settings (class S, C10); IMAGE_MEDIA_JOB_CONCURRENCY and the two semaphores it
+# sizes are class R (read once at start: the semaphores cannot resize). voices had no import-time read.
 "import_time_config_reads.admin" = 2
 "import_time_config_reads.audio" = 4
 "import_time_config_reads.auth" = 5
 "import_time_config_reads.backends" = 23
 "import_time_config_reads.gateway" = 0
 "import_time_config_reads.identity" = 1
-"import_time_config_reads.images" = 27
+"import_time_config_reads.images" = 7
 "import_time_config_reads.llm" = 0
 "import_time_config_reads.mcp" = 1
 "import_time_config_reads.model_compatibility" = 7

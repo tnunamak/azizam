@@ -50,7 +50,7 @@ class TestBackgroundRemovalOutboundPayload:
             return "bg-decider-model"
 
         auth = proxy.AuthContext(identity=auth_identity(name="p", key_hash="sha256:p"))
-        with patch.object(proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", True), \
+        with patch.object(proxy, "_image_background_removal_enabled", lambda: True), \
              patch.object(proxy, "get_active_backend", active_backend), \
              patch.dict(proxy.LLM_BACKEND_HOSTS, {"kobold": fake.base_url}), \
              patch.object(proxy, "effective_llm_model_for_host", model_for_host):
@@ -102,7 +102,7 @@ class TestBackgroundRemovalGateIsLifecycleData:
 
         auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="p", key_hash="sha256:p"))
         backends = {**proxy.config.get("backends", {}), service_id: {"lifecycle": lifecycle}}
-        with patch.object(proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", True), \
+        with patch.object(proxy, "_image_background_removal_enabled", lambda: True), \
              patch.object(proxy, "get_active_backend", active_backend), \
              patch.dict(proxy.config, {"backends": backends}), \
              patch.dict(proxy.LLM_BACKEND_HOSTS, {service_id: base_url}), \

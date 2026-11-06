@@ -414,7 +414,7 @@ def test_queued_protocol_image_jobs_do_not_depend_on_other_engine_enablement(eng
     from unittest.mock import Mock
     job=media_jobs.create(media_jobs.MediaJob(intent='image.generate',backend='prism-local',metadata={'mode':'async_image_generation'}),path=media_jobs.DB_PATH)
     monkeypatch.setattr(proxy,'COMFY_ENABLED',False)
-    monkeypatch.setattr(proxy,'IMAGE_MEDIA_JOB_RESUME_ON_START',True)
+    monkeypatch.setattr(proxy,"_image_media_job_resume_on_start",lambda: True)
     monkeypatch.setattr(proxy,'_has_image_media_job_payload',lambda _:True)
     scheduled=Mock(return_value=True)
     monkeypatch.setattr(proxy,'_schedule_image_media_job',scheduled)
@@ -426,7 +426,7 @@ def test_queued_protocol_image_jobs_do_not_depend_on_other_engine_enablement(eng
 def test_public_queued_protocol_image_runs_through_the_real_worker_and_settler(engine,monkeypatch,cancel):
     import asyncio
     monkeypatch.setattr(proxy,'_schedule_image_media_job',lambda _:False)
-    monkeypatch.setattr(proxy,'IMAGE_MEDIA_JOB_MAX_ATTEMPTS',1)
+    monkeypatch.setattr(proxy,"_image_media_job_max_attempts",lambda: 1)
     body={'model':'prism-image','prompt':'blue'}
     response=engine.client.post('/gateway/v1/media/jobs/image-generations',json=body)
     assert response.status_code==202,response.text
