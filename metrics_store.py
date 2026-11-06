@@ -28,7 +28,7 @@ import time
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, NamedTuple, Optional
 
 _default_db = Path(__file__).parent / "data" / "metrics.db"
 DB_PATH = Path(get_env("AZIZAM_METRICS_DB", _default_db))
@@ -284,6 +284,21 @@ def _matches_tags(tag_json: str, filt: Optional[dict]) -> bool:
     return all(decoded.get(k) == v for k, v in filt.items())
 
 
+# op -> SQL aggregate expression, per table kind. A rollup row stands for `count`
+# raw samples, so its avg and sum weight by count rather than averaging averages.
+_RAW_AGGREGATE_EXPR = {
+    "avg": "AVG(value)", "min": "MIN(value)", "max": "MAX(value)",
+    "sum": "SUM(value)", "count": "COUNT(*)",
+}
+_ROLLUP_AGGREGATE_EXPR = {
+    "avg": "SUM(avg_value*count)/SUM(count)",
+    "min": "MIN(min_value)",
+    "max": "MAX(max_value)",
+    "sum": "SUM(avg_value*count)",
+    "count": "SUM(count)",
+}
+
+
 def query_aggregate(
     metric: str,
     *,
@@ -304,16 +319,9 @@ def query_aggregate(
         raise ValueError(f"unsupported op: {op}")
 
     if table == "samples":
-        col = {"avg": "AVG(value)", "min": "MIN(value)", "max": "MAX(value)",
-               "sum": "SUM(value)", "count": "COUNT(*)"}[op]
+        col = _RAW_AGGREGATE_EXPR[op]
     elif table in ("samples_1min", "samples_1hour"):
-        col = {
-            "avg": "SUM(avg_value*count)/SUM(count)",
-            "min": "MIN(min_value)",
-            "max": "MAX(max_value)",
-            "sum": "SUM(avg_value*count)",
-            "count": "SUM(count)",
-        }[op]
+        col = _ROLLUP_AGGREGATE_EXPR[op]
     else:
         raise ValueError(f"unknown table: {table}")
 
@@ -470,6 +478,164 @@ def query_series(
         return _run(conn)
     with reader(DB_PATH) as c:
         return _run(c)
+
+
+class TagPartial(NamedTuple):
+    """Mergeable aggregate of the samples one stored tag set holds.
+
+    ``total`` is the sum of the raw values, or of avg_value*count for a rollup.
+    Partials from several tag sets combine into the exact answer for any op,
+    including a count-weighted average (never an average of averages).
+    """
+
+    total: float
+    count: int
+    min: float
+    max: float
+
+
+def _check_grouped_table(table: str) -> str:
+    if table not in ("samples", "samples_1min", "samples_1hour"):
+        raise ValueError(f"unknown samples table: {table!r}")
+    return table
+
+
+def _partial_exprs(table: str) -> str:
+    """SELECT list of the four TagPartial columns, from the shared op mapping."""
+    exprs = _RAW_AGGREGATE_EXPR if table == "samples" else _ROLLUP_AGGREGATE_EXPR
+    return ", ".join(exprs[op] for op in ("sum", "count", "min", "max"))
+
+
+def query_aggregate_by_tags(
+    metric: str,
+    *,
+    since_s: int,
+    table: str = "samples",
+    conn: Optional[sqlite3.Connection] = None,
+    now: Optional[int] = None,
+) -> dict[str, TagPartial]:
+    """One grouped read for every tag set of ``metric`` over [now-since_s, now].
+
+    Replaces N ``query_aggregate(..., tags_filter=f_i)`` calls, each of which
+    reads every row of the metric and filters tags in Python. Pair with
+    ``reduce_aggregate`` to answer a filter from the groups.
+    """
+    _check_grouped_table(table)
+    cutoff = (int(time.time()) if now is None else now) - since_s
+    sql = (
+        f"SELECT tags, {_partial_exprs(table)} FROM {table} "
+        "WHERE metric = ? AND ts >= ? GROUP BY tags"
+    )
+
+    def _run(c: sqlite3.Connection) -> dict[str, TagPartial]:
+        return {r[0]: TagPartial(*r[1:]) for r in c.execute(sql, (metric, cutoff))}
+
+    if conn is not None:
+        return _run(conn)
+    with reader(DB_PATH) as c:
+        return _run(c)
+
+
+def _matching_partials(groups: dict[str, Any], tags_filter: Optional[dict]) -> list[Any]:
+    # Sorted by stored tags so a filter that spans several groups merges in a stable order.
+    return [groups[t] for t in sorted(groups) if _matches_tags(t, tags_filter)]
+
+
+def reduce_aggregate(
+    groups: dict[str, TagPartial],
+    *,
+    tags_filter: Optional[dict],
+    op: str = "avg",
+) -> Optional[float]:
+    """The ``query_aggregate`` answer for ``tags_filter``, from grouped partials.
+
+    Every group whose stored tags contain the filter contributes, exactly as
+    the per-filter query matched them. None when no group matches.
+    """
+    op = op.lower()
+    if op not in ("avg", "min", "max", "sum", "count"):
+        raise ValueError(f"unsupported op: {op}")
+    parts = _matching_partials(groups, tags_filter)
+    if not parts:
+        return None
+    total = sum(p.total for p in parts)
+    count = sum(p.count for p in parts)
+    if op == "avg":
+        return total / count if count else None
+    if op == "min":
+        return min(p.min for p in parts)
+    if op == "max":
+        return max(p.max for p in parts)
+    if op == "sum":
+        return total
+    return float(count)
+
+
+def query_series_by_tags(
+    metric: str,
+    *,
+    since_s: int,
+    points: int = 60,
+    table: str = "samples",
+    conn: Optional[sqlite3.Connection] = None,
+    now: Optional[int] = None,
+) -> dict[str, dict[int, TagPartial]]:
+    """Grouped counterpart of ``query_series``: tags -> bucket start -> partial.
+
+    Buckets by ``since_s // points`` seconds in SQL, per stored tag set.
+    ``reduce_series`` merges the groups a filter matches.
+    """
+    _check_grouped_table(table)
+    if points <= 0:
+        return {}
+    cutoff = (int(time.time()) if now is None else now) - since_s
+    bucket_s = max(1, since_s // points)
+    sql = (
+        f"SELECT tags, (ts/?)*?, {_partial_exprs(table)} FROM {table} "
+        "WHERE metric = ? AND ts >= ? GROUP BY tags, ts/?"
+    )
+
+    def _run(c: sqlite3.Connection) -> dict[str, dict[int, TagPartial]]:
+        out: dict[str, dict[int, TagPartial]] = {}
+        for r in c.execute(sql, (bucket_s, bucket_s, metric, cutoff, bucket_s)):
+            out.setdefault(r[0], {})[int(r[1])] = TagPartial(*r[2:])
+        return out
+
+    if conn is not None:
+        return _run(conn)
+    with reader(DB_PATH) as c:
+        return _run(c)
+
+
+def reduce_series(
+    groups: dict[str, dict[int, TagPartial]],
+    *,
+    tags_filter: Optional[dict],
+    op: str = "avg",
+) -> list[tuple[int, float]]:
+    """The ``query_series`` answer for ``tags_filter``, from grouped buckets.
+
+    Like ``query_series``, an op other than max/min/sum/count averages.
+    """
+    buckets: dict[int, list[TagPartial]] = {}
+    for per_bucket in _matching_partials(groups, tags_filter):
+        for bk, part in per_bucket.items():
+            buckets.setdefault(bk, []).append(part)
+    out: list[tuple[int, float]] = []
+    for bk, parts in sorted(buckets.items()):
+        if op == "max":
+            out.append((bk, max(p.max for p in parts)))
+        elif op == "min":
+            out.append((bk, min(p.min for p in parts)))
+        elif op == "sum":
+            out.append((bk, sum(p.total for p in parts)))
+        elif op == "count":
+            out.append((bk, float(sum(p.count for p in parts))))
+        else:
+            count = sum(p.count for p in parts)
+            if count:
+                out.append((bk, sum(p.total for p in parts) / count))
+    return out
 
 
 def _roll_up(c: sqlite3.Connection, source: str, target: str, width: int, before: int) -> int:

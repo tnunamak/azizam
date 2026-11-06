@@ -3318,6 +3318,86 @@ def _backend_p95_latency_ms(tags_filter: dict, since_s: int, *, conn=None) -> Op
         return None
 
 
+def _batched_aggregate_fallback(
+    metrics_store, metric: str, since_s: int, op: str, filters: dict[str, dict],
+    *, conn, now: int,
+) -> dict[str, Optional[float]]:
+    """``_agg_fallback`` for every filter at once: one grouped read per table.
+
+    samples_1min answers first; raw samples answer only the filters it left
+    empty, and are read only when there is one. A failing read leaves its
+    filters to the next table, then to None, as the per-filter queries did.
+    """
+    values: dict[str, Optional[float]] = dict.fromkeys(filters)
+    pending = dict(filters)
+    for table in ("samples_1min", "samples"):
+        if not pending:
+            break
+        try:
+            groups = metrics_store.query_aggregate_by_tags(
+                metric, since_s=since_s, table=table, conn=conn, now=now,
+            )
+        except Exception:
+            continue
+        for key, tags in list(pending.items()):
+            try:
+                value = metrics_store.reduce_aggregate(groups, tags_filter=tags, op=op)
+            except Exception:
+                value = None
+            if value is not None:
+                values[key] = value
+                del pending[key]
+    return values
+
+
+def _batched_series_fallback(
+    metrics_store, metric: str, since_s: int, points: int, op: str, filters: dict[str, dict],
+    *, conn, now: int,
+) -> dict[str, list]:
+    """``_series_fallback`` for every filter at once; an empty rollup series falls back to raw."""
+    series: dict[str, list] = {key: [] for key in filters}
+    pending = dict(filters)
+    for table in ("samples_1min", "samples"):
+        if not pending:
+            break
+        try:
+            groups = metrics_store.query_series_by_tags(
+                metric, since_s=since_s, points=points, table=table, conn=conn, now=now,
+            )
+        except Exception:
+            continue
+        for key, tags in list(pending.items()):
+            try:
+                found = metrics_store.reduce_series(groups, tags_filter=tags, op=op)
+            except Exception:
+                found = []
+            if found:
+                series[key] = found
+                del pending[key]
+    return series
+
+
+def _service_history_batch(metrics_store, filters: dict[str, dict], *, conn=None) -> dict[str, dict[str, Any]]:
+    """Per-backend history inputs, by field then backend key.
+
+    Reads cost one grouped query per metric, window and table, however many
+    backends there are. ``filters`` maps a backend key to its history tags.
+    """
+    now = int(time.time())
+    day, week = 86400, 7 * 86400
+    agg = functools.partial(_batched_aggregate_fallback, metrics_store, filters=filters, conn=conn, now=now)
+    series = functools.partial(_batched_series_fallback, metrics_store, filters=filters, conn=conn, now=now)
+    return {
+        "uptime_24h": agg("service_up", since_s=day, op="avg"),
+        "uptime_7d": agg("service_up", since_s=week, op="avg"),
+        "sample_count_24h": agg("service_status_code", since_s=day, op="count"),
+        "avg_latency_24h": agg("service_latency_ms", since_s=day, op="avg"),
+        "avg_latency_7d": agg("service_latency_ms", since_s=week, op="avg"),
+        "status_series": series("service_status_code", since_s=day, points=96, op="avg"),
+        "latency_series": series("service_latency_ms", since_s=day, points=96, op="avg"),
+    }
+
+
 def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends: Optional[list[dict]] = None) -> dict:
     """Build the time-series-derived `metrics` block.
 
@@ -3537,21 +3617,25 @@ def _metrics_section_queries(metrics_store, gpus, disk, backends, *, conn=None) 
     # operational memory, not a general metrics dashboard.
     services_history: dict[str, Any] = {"window_s": 86400, "backends": {}}
     try:
+        entries: list[tuple[str, Mapping, dict[str, str]]] = []
         for backend in backends or []:
             if not isinstance(backend, Mapping):
                 continue
             key = str(backend.get("key") or backend.get("name") or "")
             if not key:
                 continue
-            tags = _backend_history_tags(backend)
-            uptime_24h = _agg_fallback("service_up", since_s=86400, op="avg", tags=tags)
-            uptime_7d = _agg_fallback("service_up", since_s=7 * 86400, op="avg", tags=tags)
-            sample_count_24h = _agg_fallback(
-                "service_status_code", since_s=86400, op="count", tags=tags
-            )
-            avg_latency_24h = _agg_fallback("service_latency_ms", since_s=86400, op="avg", tags=tags)
+            entries.append((key, backend, _backend_history_tags(backend)))
+        # A repeated key keeps its last entry, as the per-backend loop did.
+        history = _service_history_batch(
+            metrics_store, {key: tags for key, _, tags in entries}, conn=conn,
+        )
+        for key, backend, tags in entries:
+            uptime_24h = history["uptime_24h"][key]
+            uptime_7d = history["uptime_7d"][key]
+            sample_count_24h = history["sample_count_24h"][key]
+            avg_latency_24h = history["avg_latency_24h"][key]
             p95_latency_24h = _backend_p95_latency_ms(tags, since_s=86400, conn=conn)
-            avg_latency_7d = _agg_fallback("service_latency_ms", since_s=7 * 86400, op="avg", tags=tags)
+            avg_latency_7d = history["avg_latency_7d"][key]
             p95_latency_7d = _backend_p95_latency_ms(tags, since_s=7 * 86400, conn=conn)
             services_history["backends"][key] = {
                 "key": key,
@@ -3570,12 +3654,8 @@ def _metrics_section_queries(metrics_store, gpus, disk, backends, *, conn=None) 
                 "p95_latency_ms_24h": p95_latency_24h,
                 "avg_latency_ms_7d": int(avg_latency_7d) if isinstance(avg_latency_7d, (int, float)) else None,
                 "p95_latency_ms_7d": p95_latency_7d,
-                "status_24h_series": _series_fallback(
-                    "service_status_code", since_s=86400, points=96, tags=tags, op="avg"
-                ),
-                "latency_ms_24h_series": _series_fallback(
-                    "service_latency_ms", since_s=86400, points=96, tags=tags, op="avg"
-                ),
+                "status_24h_series": history["status_series"][key],
+                "latency_ms_24h_series": history["latency_series"][key],
             }
     except Exception as e:  # noqa: BLE001
         services_history["error"] = _safe_err(e)
