@@ -22823,17 +22823,14 @@ def _gateway_refusal(response: Response, category: str) -> Response:
     return response
 
 
-def _gateway_input_refusal(response: Response) -> Response:
-    """Mark the gateway's own refusal of a request's inputs, so a job keeps its sentence."""
+def _gateway_input_refusal(response: Response, message: str) -> Response:
+    """Mark the gateway's own refusal of a request's inputs and keep the sentence it wrote.
+
+    The sentence rides on the in-process object, so a job worker never reads it back from a body an upstream could
+    imitate. Validation sentences name a field and a bound, never a value the caller sent.
+    """
+    response.gateway_refusal_text = message[:300]  # type: ignore[attr-defined]
     return _gateway_refusal(response, "invalid_input")
-
-
-def _gateway_input_refusal_message(response: Response) -> str:
-    try:
-        message = json.loads(bytes(response.body))["error"]["message"]
-    except Exception:  # noqa: BLE001
-        return ""
-    return message[:300] if isinstance(message, str) else ""
 
 
 def _media_job_failure(response: Response) -> tuple[str, dict[str, Any]]:
@@ -22869,7 +22866,7 @@ def _media_job_failure(response: Response) -> tuple[str, dict[str, Any]]:
     elif category == "invalid_input" and getattr(response, "gateway_refusal", None):
         # The gateway's own validation sentence names the field and the bound, never a value. Only a refusal the
         # gateway marked in process gets here: an upstream 400 keeps the fixed sentence.
-        message = _gateway_input_refusal_message(response) or message
+        message = getattr(response, "gateway_refusal_text", "") or message
     return message, {"error_code": code or default_code, "error_category": category,
                      "retryable": category in ("capacity", "timeout")}
 
@@ -26144,7 +26141,7 @@ async def proxy_audio_generate(
     unknown_top_level = detect_unknown_audio_fields(body)
     if unknown_top_level:
         name, reason = next(iter(unknown_top_level.items()))
-        return _gateway_input_refusal(_audio_extension_error_response(reason, param=name))
+        return _gateway_input_refusal(_audio_extension_error_response(reason, param=name), reason)
     _begin_media_delivery(auth_context, receipt)
     metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
@@ -26152,7 +26149,7 @@ async def proxy_audio_generate(
     try:
         audio_graph.check_request(body)
     except audio_graph.InvalidAudioRequest as error:
-        return _gateway_input_refusal(openai_error_response(str(error), param=error.param))
+        return _gateway_input_refusal(openai_error_response(str(error), param=error.param), str(error))
 
     model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
     audio_type = body.get("type", "music")
@@ -26203,7 +26200,7 @@ async def proxy_audio_generate(
     try:
         inputs = audio_graph.manifest_inputs(body, manifest=effective)
     except audio_graph.InvalidAudioRequest as error:
-        return _gateway_input_refusal(openai_error_response(str(error), param=error.param))
+        return _gateway_input_refusal(openai_error_response(str(error), param=error.param), str(error))
     except ManifestError as error:
         print(f"[proxy] audio workflow {workflow_name} manifest cannot serve this request: {error}", flush=True)
         return openai_error_response(f"Workflow manifest for {workflow_name} cannot serve this request",
@@ -26249,7 +26246,7 @@ async def proxy_audio_generate(
     try:
         workflow = node_graph.compile_workflow(effective, _GRAPH_BINDING, workflow, inputs)
     except node_graph.InputRefused as error:
-        return _gateway_input_refusal(openai_error_response(str(error), param=error.param))
+        return _gateway_input_refusal(openai_error_response(str(error), param=error.param), str(error))
     except ManifestError as error:
         # The manifest's map does not fit its template: a deployment fault, not the caller's.
         print(f"[proxy] audio workflow {workflow_name} binding does not fit its template: {error}", flush=True)
