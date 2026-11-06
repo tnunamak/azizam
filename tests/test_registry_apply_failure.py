@@ -169,9 +169,10 @@ def _boot(live):
 
 
 def test_a_healthy_boot_reports_no_problem_and_serves_the_stored_registry(live):
+    _store_raw(live, {"good-engine": GOOD})
     config, problem = _boot(live)
     assert problem is None
-    assert set(config["backends"]) == set(proxy.config["backends"])
+    assert set(config["backends"]) == {"good-engine", "litellm"}
 
 
 def test_a_boot_with_one_bad_service_serves_the_others_and_names_the_one_it_left_out(live, capsys):

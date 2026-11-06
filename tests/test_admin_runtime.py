@@ -639,13 +639,19 @@ class AdminRuntimeTests(unittest.TestCase):
         )
 
         reopened = AdminSQLiteStore(self.db)
-        self.assertEqual(reopened.get_service_registry(), registry)
+        read = reopened.get_service_registry()
+        # A read shows the release's managed LiteLLM row too: no write hides it. The record the owner sent is as sent.
+        self.assertEqual(sorted(read["services"]), ["litellm", "local-comfy"])
+        self.assertEqual(read["services"]["local-comfy"], registry["services"]["local-comfy"])
+        self.assertEqual(read["protocol_frontends"]["gateway-native"], registry["protocol_frontends"]["gateway-native"])
         stored = admin_store.get_operator_setting(
             SERVICE_REGISTRY_SETTING_KEY,
             path=self.db,
         )
         self.assertIsNotNone(stored)
-        self.assertEqual(stored["value"], registry)  # type: ignore[index]
+        # What is stored is the owner's data: the one record sent, and the release record the owner left out, hidden.
+        self.assertEqual(sorted(stored["value"]["services"]), ["local-comfy"])  # type: ignore[index]
+        self.assertEqual(stored["value"]["tombstones"]["services"], ["openrouter"])  # type: ignore[index]
         actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
         self.assertIn("operator.service_registry.update", actions)
 

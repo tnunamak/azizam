@@ -77,4 +77,5 @@ def test_startup_conflicts_stop_after_three_fresh_attempts(monkeypatch, tmp_path
         sr.ensure_service_registry(path=path, actor="test-boot")
 
     assert len(reads) == 3
+    monkeypatch.undo()
     assert real_get(path=path) == before
