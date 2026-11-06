@@ -658,7 +658,8 @@ pytest = 19821
 # Library pick everywhere (2026-11-06): +111 vitest cases (shared media input, picker, hook, focus-ring contrast); measured with npx vitest list on the merge candidate: 3913.
 # Config homes C6 (2026-11-06): the settings page spec runs its stale-write case for 412 and 409 (+2 over the base); vitest list measured 3804 (--root web).
 # Train 4 (2026-11-06): main 3913 + the C6 settings stale-write case for 412 and 409 (+2); vitest list --json measured 3915 (--root web).
-vitest = 3915
+# Library picker polish (2026-11-06): picked-summary.spec.tsx (+4, image pixel size) and try/workflow-inputs.spec.tsx (+3, empty prompt sizes to its example); vitest list --json measured 3922 (--root web).
+vitest = 3922
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
