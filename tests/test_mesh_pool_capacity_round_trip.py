@@ -47,3 +47,7 @@ def test_a_registry_put_keeps_the_pool_capacity_exactly(gateway) -> None:
 
 def test_an_absent_capacity_block_is_not_enabled_rather_than_malformed() -> None:
     assert exclusive_pool.parse_resource_capacity("trellis", None) is None
+
+
+def test_an_absent_capacity_block_is_disabled_not_malformed():
+    assert exclusive_pool.parse_resource_capacity("trellis", None) is None
