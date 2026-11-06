@@ -376,7 +376,7 @@ resources:
     home, activity) onto `ManagementRoute`; Schemathesis and a Hypothesis state machine.
   - Credentials are per operation class and bound to the address origin. With a `control_address`, the
     control credential is bound to that origin instead; a key is never sent to an origin it is not approved for
-    (a probe goes without it, an operation is refused with `engine_credential_origin_mismatch`).
+    (a probe never carries it; an operation is refused with `engine_credential_origin_mismatch`).
     Cross-origin redirects are refused.
 
 ## 3. Routing objects (aliases and pools) (F9, F10)
