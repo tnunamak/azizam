@@ -6153,7 +6153,7 @@ def _graph_job_envelope(
             template = _resolve_workflow_artifact_path(record, artifact).read_bytes()
         return job_envelope.build_job_envelope(
             source_kind="workflow", source_id=source_id, contract=contract, binding=binding, template=template,
-            protocol_id=protocol.id, adapter_id=protocol.adapter_id or "",
+            protocol_id=protocol.id, protocol_revision=protocol.revision, adapter_id=protocol.adapter_id or "",
             interface_version=_graph_adapter(capability).interface_version,
             service_id=_GRAPH_BACKEND_ID, origin=_graph_connection().address,
         )
@@ -6173,9 +6173,7 @@ def _video_job_envelope(workflow_name: str) -> job_envelope.JobEnvelope | None:
     )
 
 
-# The manifest fields a job pins as its contract: the header a compile validates (``validate_manifest``) and the
-# input and output schemas. Everything else in a manifest is for listings and the UI, and a run does not read it.
-_PINNED_MANIFEST_FIELDS = ("schema_version", "id", "intent", "inputs", "outputs")
+_PINNED_MANIFEST_FIELDS = pinned_definitions.PINNED_MANIFEST_FIELDS
 
 
 def _compile_from_pin(capability: str) -> bool:

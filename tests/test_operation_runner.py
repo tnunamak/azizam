@@ -30,7 +30,9 @@ from gateway.engine_protocol.assets import MemoryAssetStore
 from gateway.engine_protocol.errors import ProtocolError, TransportFailure, UnsupportedByAdapter
 from gateway.engine_protocol.node_graph import NodeGraphAdapter
 from gateway.engine_protocol.transport import HttpxTransport
-from gateway.engine_protocol.types import CanonicalRequest, Connection, JobEvent, JobRef, JobState, JobStatus, Timeouts
+from gateway.engine_protocol.types import (
+    AssetsResult, CanonicalRequest, Connection, JobEvent, JobRef, JobState, JobStatus, ResultBundle, Timeouts,
+)
 from gateway.manifests import load_workflow_manifest
 from tests.support.fake_upstream import HandlerTransport, fake_upstreams  # noqa: F401 - fixture
 
@@ -157,6 +159,8 @@ def _graph_harness(fake_upstreams, tmp_path, script: list[str], *, host: str = G
         for node in manifest["bindings"]["comfyui"]["map"].values():
             for entry in node:
                 entry["node"] = names.get(entry["node"], entry["node"])
+        for selector in manifest["bindings"]["comfyui"]["selectors"].values():
+            selector["node"] = names.get(selector["node"], selector["node"])
         manifest["bindings"]["engine-b"] = manifest["bindings"].pop("comfyui")
         doc = dataclasses.replace(doc, binding="engine-b", label="Engine B")
     facts = _counters()
@@ -186,7 +190,7 @@ def _graph_harness(fake_upstreams, tmp_path, script: list[str], *, host: str = G
                 return httpx.Response(200, json={"job-1": {"status": {"completed": False}, "outputs": {}}})
             if state == "done":
                 entry = {"status": {"completed": True, "status_str": "success", "messages": []},
-                         "outputs": {save_node: {"audio": [{"filename": "tone.wav", "subfolder": "", "type": "output"}]}}}
+                         "outputs": {save_node: {"audios": [{"filename": "tone.wav", "subfolder": "", "type": "output"}]}}}
                 return httpx.Response(200, json={"job-1": entry})
             return httpx.Response(200, json={"job-1": {"status": {"status_str": "error", "messages": [
                 ["execution_error", {"node_id": save_node}]]}, "outputs": {}}})
@@ -331,6 +335,8 @@ async def _outcome(harness: Harness, job_id: str, body: dict[str, Any] = BODY) -
         refs = await jobs.run(harness.runtime, OP, body, job_id=job_id, follow_events=harness.follows_events)
     except ProtocolError as error:
         return {"error": error.code}
+    if isinstance(refs, ResultBundle):   # an adapter of interface version 2 returns the bundle it published
+        refs = [asset for result in refs.results.values() if isinstance(result, AssetsResult) for asset in result.assets]
     assets = []
     for ref in refs:
         data = await harness.store.read(ref, max_bytes=10_000_000)

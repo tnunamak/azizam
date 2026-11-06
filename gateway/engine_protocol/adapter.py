@@ -18,6 +18,16 @@ Interface version 1, with ``conn`` the ``Connection`` of the engine record:
     recover(conn, ref)                -> JobStatus | None   after a gateway restart; None = the engine lost the job
     fetch_assets(conn, ref, status)   -> tuple[AssetRef, ...]
 
+Interface version 2 keeps all of that and adds one outcome for engines that answer at once and engines that take a job:
+
+    start(conn, op, request)          -> Pending(JobRef) | Completed(ResultBundle)
+    results(conn, ref, status, request, context) -> ResultBundle   optional; after a job succeeded (else fetch_assets)
+
+Core calls ``start`` only on an adapter that declares version 2, and ``submit`` on one that declares 1. ``Pending`` is
+today's submit: core saves the job id and polls. ``Completed`` is a whole answer: core stages, publishes and ends the job in
+one commit (CODE_TO_DATA_S2 D3, D4). The names in a ``ResultBundle`` are the contract's output names, which the adapter
+reads from the binding's selectors; an adapter never invents one.
+
 Core owns the durable job state machine (F8): idempotency keys, retry
 boundaries, event order, asset lifetime and receipts. An adapter only returns
 typed references; it keeps no job state that core cannot rebuild from a
@@ -39,9 +49,13 @@ from gateway.engine_protocol.types import (
 )
 
 ADAPTER_INTERFACE_VERSION = 1
+# Interface version 2 adds ``start`` (one outcome for synchronous and asynchronous engines, CODE_TO_DATA_S2 D3). Core runs
+# an adapter that declares it through ``start`` and keeps calling ``submit`` on one that declares 1.
+ADAPTER_INTERFACE_VERSION_V2 = 2
+SUPPORTED_INTERFACE_VERSIONS = (ADAPTER_INTERFACE_VERSION, ADAPTER_INTERFACE_VERSION_V2)
 
 __all__ = [
-    "ADAPTER_INTERFACE_VERSION", "AdapterRegistry", "EngineAdapter", "Health", "Inventory", "connection_from_record",
+    "ADAPTER_INTERFACE_VERSION", "ADAPTER_INTERFACE_VERSION_V2", "SUPPORTED_INTERFACE_VERSIONS", "AdapterRegistry", "EngineAdapter", "Health", "Inventory", "connection_from_record",
 ]
 
 
@@ -111,9 +125,9 @@ class AdapterRegistry:
                                     code="adapter_not_registered")
             built = factory(description)
             version = getattr(built, "interface_version", None)
-            if version != ADAPTER_INTERFACE_VERSION:
+            if version not in SUPPORTED_INTERFACE_VERSIONS:
                 raise ProtocolError(
-                    f"The adapter '{description.adapter_id}' implements interface version {version}; this Azizam speaks version {ADAPTER_INTERFACE_VERSION}.",
+                    f"The adapter '{description.adapter_id}' implements interface version {version}; this Azizam speaks versions {list(SUPPORTED_INTERFACE_VERSIONS)}.",
                     code="adapter_version_mismatch",
                 )
         self._built[protocol_id] = built

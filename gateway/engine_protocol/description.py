@@ -11,6 +11,7 @@ the file in one pass. It names no engine.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -175,6 +176,9 @@ class ProtocolDescription:
     binding: str = ""
     retention_facts: tuple[Mapping[str, Any], ...] = ()
     result_selectors: SelectorDescriptor | None = None
+    # The digest of the parsed file, so a job can pin the exact description it was accepted with (S2 design, D9). Comments
+    # and spacing do not change it; any other edit does.
+    revision: str = ""
 
     @property
     def adapter_id(self) -> str | None:
@@ -325,8 +329,8 @@ class _Compiler:
         operations = {name: self._operation(name, op, executor) for name, op in doc["operations"].items()}
         selectors = None
         if "result_selectors" in doc:
-            if not executor.startswith("adapter:") or not doc.get("binding"):
-                self.bad("result_selectors", "only a reviewed adapter that names a binding takes output selectors")
+            if not doc.get("binding"):
+                self.bad("result_selectors", "a description that takes output selectors must name its binding")
             else:
                 try:
                     selectors = parse_descriptor(doc["result_selectors"])
@@ -341,6 +345,7 @@ class _Compiler:
             binding=str(doc.get("binding") or ""),
             retention_facts=tuple(copy.deepcopy(doc.get("retention_facts") or ())),
             result_selectors=selectors,
+            revision="sha256:" + hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest(),
         )
 
     def _advice(self, rows: list) -> tuple[Advice, ...]:

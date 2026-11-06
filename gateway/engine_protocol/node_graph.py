@@ -42,16 +42,17 @@ import httpx
 
 from gateway import log_scrub
 
-from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION
+from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION_V2
 from gateway.engine_protocol.assets import AssetStore, served_media_type
 from gateway.engine_protocol.description import ProtocolDescription
 from gateway.engine_protocol.errors import (
-    MalformedResponse, ProtocolError, TransportFailure, UnknownOperation, UnsupportedByAdapter, UpstreamError,
+    MalformedResponse, ProtocolError, SelectionRefused, TransportFailure, UnknownOperation, UnsupportedByAdapter, UpstreamError,
 )
 from gateway.engine_protocol.node_validation import validate_workflow_graph
 from gateway.engine_protocol.httpx_wire import UNSET, WireReply, failure, reply_from, supplied
 from gateway.engine_protocol.types import (
-    AssetRef, CanonicalRequest, Connection, Health, Inventory, JobEvent, JobRef, JobState, JobStatus, Reply, StreamReply,
+    AssetRef, AssetsResult, CanonicalRequest, Connection, Health, Inventory, JobEvent, JobRef, JobState, JobStatus, JsonResult,
+    Pending, Reply, ResultBundle, ResultContext, StreamReply,
 )
 from gateway.manifests import bind_backend_request, validate_inputs
 from gateway import engine_egress, output_selectors
@@ -281,15 +282,6 @@ def decode_output(handle: str) -> dict[str, Any]:
 # - An entry that is not an object, or a name that is not a plain file name or folder, is refused.
 
 
-class SelectionRefused(ProtocolError):
-    """The history entry does not hold a workflow's results as its selectors say. ``code`` names the rule."""
-
-    code = "result_refused"
-
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message, code=code)
-
-
 _SELECTOR_SOURCES = {"output_dir": "output"}   # a selector's ``from`` value, as the history's ``type``
 
 
@@ -406,7 +398,9 @@ def compile_workflow(manifest: Mapping[str, Any], binding: str, template: Mappin
             raise InputRefused(f"{name} is applied by the route, not by the graph", param=name)
     # The graph's view of the manifest: only the selected binding, without its edge-only inputs, so they get no default
     # and are not required. Other bindings are left out, so their own markers cannot make this view invalid.
-    selected = {key: value for key, value in block.items() if key != "edge_only_inputs"} if isinstance(block, Mapping) else block
+    # Selectors say how results are read, not how inputs are bound; they were checked when the manifest loaded.
+    selected = ({key: value for key, value in block.items() if key not in ("edge_only_inputs", "selectors")}
+                if isinstance(block, Mapping) else block)
     graph_manifest = dict(manifest, bindings={binding: selected},
                           inputs={name: spec for name, spec in manifest["inputs"].items() if name not in edge_only})
     supplied = {name: spec["default"] for name, spec in graph_manifest["inputs"].items()
@@ -499,7 +493,7 @@ def _headers_of(request: CanonicalRequest) -> Any:
 
 
 class NodeGraphAdapter:
-    interface_version = ADAPTER_INTERFACE_VERSION
+    interface_version = ADAPTER_INTERFACE_VERSION_V2
 
     def __init__(self, description: ProtocolDescription | None = None, *, assets: AssetStore | None = None,
                  workflow_root: Path | None = None, client_id: str | None = None,
@@ -627,8 +621,19 @@ class NodeGraphAdapter:
         if not isinstance(manifest, Mapping):
             raise UnknownOperation(f"The node-graph adapter submits {GRAPH_SUBMIT}, or an operation that carries a "
                                    f"manifest; '{op}' carries none.")
-        graph = compile_workflow(manifest, self.binding, self._template(manifest), request.body)
+        pinned = request.params.get("template")
+        template = self._pinned_template(pinned) if pinned is not None else self._template(manifest)
+        graph = compile_workflow(manifest, self.binding, template, request.body)
         return build_submit_payload(graph, self._derive_ui, client_id=self.client_id)
+
+    @staticmethod
+    def _pinned_template(template: Any) -> dict[str, Any]:
+        """A graph template the caller pinned (``request.params['template']``), checked as a file would be. It replaces the
+        read of the manifest's graph path, so a run compiles from the bytes it was accepted with."""
+        errors = validate_workflow_graph(template) if isinstance(template, Mapping) else ["the template is not an object"]
+        if errors:
+            raise ProtocolError("The pinned graph is not a valid node graph: " + "; ".join(errors), code="workflow_invalid")
+        return dict(template)
 
     def _template(self, manifest: Mapping[str, Any] | None) -> dict[str, Any]:
         """The graph template the manifest's binding names, read from under the workflow root and validated."""
@@ -804,9 +809,26 @@ class NodeGraphAdapter:
         return select_outputs(job, selectors)
 
     async def fetch_json(self, conn: Connection, file: Mapping[str, Any], *, max_bytes: int, headers: Any = UNSET,
-                         session: GraphSession | None = None) -> bytes:
+                         session: GraphSession | None = None, limits: Any = None) -> bytes:
         """The bytes of one selected file that a ``json`` result decodes. Bigger than ``max_bytes`` is refused. The value's
-        own checks (depth, items, finite numbers, repeated keys) are the result store's (``result_bundle.check_json``)."""
+        own checks (depth, items, finite numbers, repeated keys) are the result store's (``result_bundle.check_json``).
+
+        The read goes through ``output_selectors.FETCH_GATE`` (D6: concurrency and time bound), under ``limits`` (the
+        deployment's result limits; the code defaults if none are given). A caller that passes ``session`` already holds
+        a fetch slot for the whole result read, as ``results`` does, so the gate is not taken a second time."""
+        if session is None:
+            from gateway.result_bundle import ResultLimits
+
+            gate_limits = limits if limits is not None else ResultLimits()
+            try:
+                async with output_selectors.FETCH_GATE.slot(gate_limits):
+                    return await self._read_json_file(conn, file, max_bytes, headers, None)
+            except output_selectors.FetchRefused as refusal:
+                raise SelectionRefused(refusal.code, str(refusal)) from refusal
+        return await self._read_json_file(conn, file, max_bytes, headers, session)
+
+    async def _read_json_file(self, conn: Connection, file: Mapping[str, Any], max_bytes: int, headers: Any,
+                              session: GraphSession | None) -> bytes:
         async with self._use(conn, session) as use:
             reply = await use.view(view_params(file), headers=headers)
         if reply.status != 200:
@@ -835,6 +857,83 @@ class NodeGraphAdapter:
                 saved.append(await self._assets.save(chunks(), content_type=content_type, max_bytes=len(reply.raw),
                                                      name=str(info.get("filename"))))
         return tuple(saved)
+
+    # --- interface version 2 -------------------------------------------------------------------------------
+
+    async def start(self, conn: Connection, op: str, request: CanonicalRequest) -> Pending:
+        """Post the prompt. A graph engine always takes a job: the outcome is ``Pending`` and core polls."""
+        return Pending(await self.submit(conn, op, request))
+
+    async def results(self, conn: Connection, ref: JobRef, status: JobStatus, request: CanonicalRequest,
+                      context: ResultContext) -> ResultBundle:
+        """The named results of a succeeded prompt, as the binding's selectors say (or the legacy collection, if allowed).
+
+        The history entry is read once; ``collect`` says which files make each result. A ``json`` result is read as bytes
+        under the JSON size limit. An ``assets`` result is streamed into the media store through the limited store, so the
+        asset limits hold while the bytes are read. A result that is missing, or that does not fit the type its output
+        declares, refuses the whole run. Raises ``SelectionRefused``.
+        """
+        from gateway.result_bundle import LimitedAssetStore
+
+        if self._assets is None:
+            raise UnsupportedByAdapter("This adapter was built without a media store, so it cannot save assets.")
+        manifest = request.params.get("manifest")
+        block = ((manifest or {}).get("bindings") or {}).get(self.binding) if isinstance(manifest, Mapping) else None
+        if not isinstance(block, Mapping):
+            raise SelectionRefused("selectors_missing", "the request carries no binding for this engine")
+        outputs = manifest.get("outputs") or {}
+        limits = context.limits
+        store = LimitedAssetStore(self._assets, limits)
+        try:
+            async with output_selectors.FETCH_GATE.slot(limits), self._use(conn, None) as use:
+                reply = await use.history(ref.id)
+                if reply.status != 200:
+                    raise UpstreamError(reply.status, f"The history answered HTTP {reply.status}.")
+                history = reply.json()
+                job = history.get(ref.id) if isinstance(history, Mapping) else None
+                if not isinstance(job, Mapping):
+                    raise SelectionRefused("result_missing", "the engine's answer holds no history entry for the job")
+                picked = self.collect(job, block, outputs, limits=limits, legacy_allowed=context.legacy_allowed,
+                                      history_bytes=len(reply.raw or b""))
+                kinds = self._result_kinds(block, outputs, picked)
+                results: dict[str, JsonResult | AssetsResult] = {}
+                for name, files in picked.items():
+                    if kinds[name] == "json":
+                        if len(files) != 1:
+                            raise SelectionRefused("result_ambiguous", f"result {name} is one JSON value, but the engine listed {len(files)} files")
+                        results[name] = JsonResult(await self.fetch_json(conn, files[0], max_bytes=limits.json_max_bytes, session=use))
+                        reason = output_selectors.wrong_type_reason(outputs.get(name), "json", ())
+                        saved: list[AssetRef] = []
+                    else:
+                        saved = [await self._save_output(use, store, file) for file in files]
+                        results[name] = AssetsResult(tuple(saved))
+                        reason = output_selectors.wrong_type_reason(outputs.get(name), "assets", [ref_.content_type for ref_ in saved])
+                    if reason is not None:
+                        raise SelectionRefused("result_wrong_type", f"result {name}: {reason}")
+        except output_selectors.FetchRefused as refusal:
+            raise SelectionRefused(refusal.code, str(refusal)) from refusal
+        return ResultBundle(results)
+
+    def _result_kinds(self, block: Mapping[str, Any], outputs: Mapping[str, Any],
+                      picked: Mapping[str, Any]) -> dict[str, str]:
+        """The kind (``json`` or ``assets``) of each selected result. A binding with no selectors reads files only."""
+        if "selectors" not in block or self.result_selectors is None:
+            return {name: "assets" for name in picked}
+        selectors = output_selectors.check_binding(self.result_selectors, outputs, block)
+        return {name: self.result_selectors.kind_of(selectors[name]) for name in picked}
+
+    async def _save_output(self, session: GraphSession, store: Any, file: Mapping[str, Any]) -> AssetRef:
+        reply = await session.view(view_params(file))
+        if reply.status != 200 or not reply.raw:
+            raise UpstreamError(reply.status, "An output file could not be read.")
+        content_type = served_media_type(reply.headers.get("content-type"), reply.raw[:16])
+        if content_type is None:
+            raise MalformedResponse("An output file is not a media type that is served.")
+
+        async def chunks(data: bytes = reply.raw) -> AsyncIterator[bytes]:
+            yield data
+
+        return await store.save(chunks(), content_type=content_type, max_bytes=len(reply.raw), name=str(file.get("filename")))
 
 
 def job_event_from(ref: JobRef, event: Mapping[str, Any]) -> JobEvent | None:
