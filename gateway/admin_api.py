@@ -44,7 +44,7 @@ from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
 from gateway.model_presentation import service_presentation, starts_on_demand
 from gateway.backends.litellm_admin import LiteLLMAdminError
-from gateway import admin_catalog, admin_store, engine_admin, engine_check, egress, extension_packages, projection, projection_types, record_carriers, registry_import, registry_layers, secret_commands, service_registry
+from gateway import admin_catalog, admin_store, engine_admin, engine_check, egress, extension_packages, projection, projection_types, record_carriers, secret_commands, service_registry
 from gateway.session_guard import BrowserSession, SessionEnded
 
 __all__ = [
@@ -2532,24 +2532,6 @@ def create_admin_router(
             if record:
                 response.headers["ETag"] = f'"os-{record["operator_settings_generation"]}"'
         response.headers["Cache-Control"] = "no-store"
-        return response
-
-    @router.get("/operator/service-registry/sources")
-    def get_service_registry_sources(request: Request) -> JSONResponse:
-        """Per record: where its effective value comes from (release, owner, owner-added, owner-deleted) and whether the
-        release moved under the owner's change. Names only, never a value (docs/design/CONFIG_HOMES.md, 3.4 item 4)."""
-        ctx = _guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        if not hasattr(store, "path"):
-            return egress.plain_json_response(response_class="registry_sources", content={"sources": {}, "release_digest": ""})
-        stored, generation = registry_import.stored_now(store.path)
-        response = egress.plain_json_response(
-            response_class="registry_sources",
-            content={"sources": registry_layers.sources(stored, service_registry.release_registry()),
-                     "release_digest": service_registry.release_digest()},
-            headers={"ETag": f'"os-{generation}"', "Cache-Control": "no-store"},
-        )
         return response
 
     def _registry_match(request: Request) -> int:
