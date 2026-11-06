@@ -1559,15 +1559,17 @@ def _body_secret_texts(body: Any) -> list[str]:
 def _validate_service_registry(
     payload: Mapping[str, Any], *, before: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    sent = payload
     try:
         payload = record_carriers.restore_echoed_registry(payload, before)  # a read written back unchanged (decision D27)
         service_registry.validate_protocol_dispatch_registry(payload, before=before)
         registry = service_registry.normalize_service_registry(payload)
     except Exception as exc:  # noqa: BLE001
+        # No check is known to quote a value it refuses, but none may: the message leaves without the body's secrets.
         raise _RouteError(
             status.HTTP_400_BAD_REQUEST,
             "invalid_service_registry",
-            f"invalid service registry: {exc}",
+            f"invalid service registry: {projection.scrub_text(str(exc), record_carriers.request_secret_texts(sent))}",
         ) from exc
     # Not inside the try above: a refused model kind keeps its own code and field (engine_check.DraftError).
     service_registry.refuse_unoffered_kinds_in_registry(registry, before=before)
@@ -2588,6 +2590,7 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        body: Any = None
         try:
             expected_generation = _registry_match(request)
             body = await _read_json_body(request)
@@ -2604,17 +2607,19 @@ def create_admin_router(
             return exc.as_response()
         except engine_check.DraftError as exc:
             return engine_admin.EngineRouteError(
-                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+                status.HTTP_400_BAD_REQUEST, "invalid_engine",
+                projection.scrub_text(str(exc), record_carriers.request_secret_texts(body)), field=exc.field
             ).as_response()
         except PermissionError as exc:
             return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
+            # No check is known to quote a value it refuses, but none may: the message leaves without the body's secrets.
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
                 "invalid_service_registry",
-                str(exc),
+                projection.scrub_text(str(exc), record_carriers.request_secret_texts(body)),
             ).as_response()
         return _registry_response(record)
 

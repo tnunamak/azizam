@@ -196,3 +196,22 @@ def test_a_registry_write_refuses_a_connection_address_that_holds_a_credential_w
     assert wrote.status_code == 400, wrote.text
     assert "connection.address" in wrote.text and "raw-secret-value" not in wrote.text
     assert _stored_connection(gateway) == before
+
+
+def test_a_registry_refusal_never_quotes_a_secret_the_body_holds(gateway, host_isolated, monkeypatch):
+    from gateway import service_registry
+
+    owner, *_ = owner_and_admin(gateway)
+    _plant(gateway)
+    read = owner.get(REGISTRY)
+    body = read.json()["service_registry"]
+    address = "http://127.0.0.1:5053/v1?token=query-secret-value"
+    body["services"]["eng"]["config"]["address"] = address
+
+    def quoting(payload, before=None):
+        raise ValueError(f"cannot reach {address}")
+
+    monkeypatch.setattr(service_registry, "validate_protocol_dispatch_registry", quoting)
+    wrote = owner.put(REGISTRY, headers={**csrf_for(owner), "If-Match": read.headers["etag"]}, json=body)
+    assert wrote.status_code == 400, wrote.text
+    assert "cannot reach" in wrote.text and "query-secret-value" not in wrote.text
