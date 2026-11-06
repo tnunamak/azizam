@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import random
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -76,8 +77,8 @@ def test_a_generation_is_never_reused_even_after_deletion(tmp_path) -> None:
     store.retire_published(D)
     store.collect(D)
     assert store.get("g1.snap") is None
-    record(files, store, "g1.snap")  # the same handle after deletion is a new row
     record(files, store, "g2.snap")
+    record(files, store, "g3.snap")
     generations = [generation for generation, _, _ in store.rows(D)]
     assert generations == sorted(set(generations)) and len(generations) == 3
     assert generations[-1] > generations[0]
@@ -470,3 +471,94 @@ def test_snapshot_lifecycle_state_machine(tmp_path, seed) -> None:
     generations = [g for d in domains for g, _, _ in store.rows(d)]
     assert len(generations) == len(set(generations)), "a generation was reused"
     assert stats["published"] >= 5 and stats["rejected"] >= 1 and stats["deleted"] >= 3, stats
+
+
+# -- handles are per domain, and a domain never reuses one --------------------
+
+# The ledger schema as the first T1.3 commit wrote it: one live row per handle across every domain.
+FIRST_SCHEMA = """
+CREATE TABLE transition_snapshot (
+    generation    INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain        TEXT NOT NULL,
+    handle        TEXT NOT NULL,
+    op_id         TEXT NOT NULL,
+    state         TEXT NOT NULL CHECK (state IN ('pending', 'published', 'abandoned', 'deleted')),
+    compatibility TEXT NOT NULL,
+    bytes         INTEGER NOT NULL,
+    file_size     INTEGER NOT NULL,
+    file_mtime_ns INTEGER NOT NULL,
+    file_id       TEXT NOT NULL,
+    pinned        INTEGER NOT NULL DEFAULT 0,
+    created       REAL NOT NULL,
+    updated       REAL NOT NULL
+);
+CREATE UNIQUE INDEX transition_snapshot_live_handle ON transition_snapshot(handle) WHERE state != 'deleted';
+CREATE INDEX transition_snapshot_domain ON transition_snapshot(domain, state);
+CREATE TABLE transition_snapshot_pointer (
+    domain     TEXT PRIMARY KEY,
+    generation INTEGER NOT NULL REFERENCES transition_snapshot(generation)
+);
+"""
+
+
+def indexes(path: Path) -> dict[str, str]:
+    with sqlite3.connect(path) as connection:
+        return {name: sql for name, sql in connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'transition_snapshot' AND sql IS NOT NULL")}
+
+
+def test_a_ledger_of_the_first_schema_is_migrated_to_a_per_domain_live_index(tmp_path) -> None:
+    db = tmp_path / "transition.db"
+    with sqlite3.connect(db) as connection:
+        connection.executescript(FIRST_SCHEMA)
+        for generation, handle, state in ((1, "a.snap", "published"), (2, "old.snap", "deleted")):
+            connection.execute("INSERT INTO transition_snapshot(generation, domain, handle, op_id, state, compatibility, bytes,"
+                               " file_size, file_mtime_ns, file_id, created, updated) VALUES (?, ?, ?, 'op-0', ?, '{}', 1, 1, 1, '1:1', 1, 1)",
+                               (generation, D, handle, state))
+        connection.execute("INSERT INTO transition_snapshot_pointer(domain, generation) VALUES (?, 1)", (D,))
+    before = indexes(db)
+    assert "(handle)" in before["transition_snapshot_live_handle"].replace(" ", "") or "ON transition_snapshot(handle)" in before["transition_snapshot_live_handle"]
+    files = PrivateSnapshotDir(tmp_path / "snap")
+    store = SqliteSnapshotStore(db, files, SnapshotBudget(10_000, 4))
+    after = indexes(db)
+    assert "transition_snapshot_live_handle" not in after, "the global live-handle index is gone"
+    per_domain = [sql for name, sql in after.items() if "live" in name]
+    assert len(per_domain) == 1 and "(domain, handle)" in per_domain[0] and "state != 'deleted'" in per_domain[0]
+    assert store.rows(D) == ((1, "a.snap", "published"), (2, "old.snap", "deleted")), "no row was lost"
+    assert store.pointer(D) == "a.snap"
+    # What the old index refused now works: the same handle live in another domain.
+    record(files, store, "a.snap", domain="other")
+    assert store.get("a.snap", "other").domain == "other"
+    # Opening the migrated ledger again changes nothing.
+    SqliteSnapshotStore(db, files, SnapshotBudget(10_000, 4))
+    assert indexes(db) == after
+
+
+def test_the_same_handle_may_be_live_in_two_domains_and_calls_name_the_domain(tmp_path) -> None:
+    files, store = make(tmp_path)
+    publish(files, store, "same.snap", domain="one", op="op-1")
+    record(files, store, "same.snap", domain="two", op="op-2")
+    with pytest.raises(SnapshotRejected, match="more than one domain"):
+        store.publish("same.snap")
+    assert store.publish("same.snap", "two").domain == "two"
+    assert store.pointer("one") == "same.snap" and store.pointer("two") == "same.snap"
+    assert store.pin("same.snap", "one") and store.get("same.snap", "two") is not None
+    assert store.unpin("same.snap", "one")
+
+
+@pytest.mark.parametrize("path", ["live", "abandoned", "deleted"])
+def test_a_handle_an_earlier_row_of_the_domain_used_is_refused_deleted_rows_included(tmp_path, path) -> None:
+    files, store = make(tmp_path)
+    publish(files, store, "fixed.snap")
+    if path != "live":
+        store.retire_published(D)
+    if path == "deleted":
+        assert store.collect(D) == ("fixed.snap",)
+        assert store.get("fixed.snap") is None
+    put(files, "fixed.snap")
+    with pytest.raises(SnapshotRejected, match="earlier snapshot of this domain|live snapshot") as caught:
+        store.pending(domain=D, op_id="op-2", handle="fixed.snap", compatibility=COMPAT, bytes=len(BODY))
+    if path == "deleted":
+        assert "deleted rows count" in str(caught.value) and "new handle" in str(caught.value)
+    assert [row[2] for row in store.rows(D)] == [{"live": "published", "abandoned": "abandoned", "deleted": "deleted"}[path]], "no row was added"
+    record(files, store, "fresh.snap")  # another handle is fine

@@ -62,14 +62,19 @@ CREATE TABLE IF NOT EXISTS transition_snapshot (
     created       REAL NOT NULL,
     updated       REAL NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS transition_snapshot_live_handle
-    ON transition_snapshot(handle) WHERE state != 'deleted';
+CREATE UNIQUE INDEX IF NOT EXISTS transition_snapshot_live_domain_handle
+    ON transition_snapshot(domain, handle) WHERE state != 'deleted';
 CREATE INDEX IF NOT EXISTS transition_snapshot_domain ON transition_snapshot(domain, state);
 CREATE TABLE IF NOT EXISTS transition_snapshot_pointer (
     domain     TEXT PRIMARY KEY,
     generation INTEGER NOT NULL REFERENCES transition_snapshot(generation)
 );
 """
+
+
+_OLD_LIVE_HANDLE_INDEX = "DROP INDEX IF EXISTS transition_snapshot_live_handle"
+"""The first schema kept one live row per handle across every domain. A handle names a file in its own domain's
+directory, so the bound is per domain; a ledger made by the first schema is migrated when it is opened."""
 
 
 class SnapshotRejected(Exception):
@@ -191,6 +196,7 @@ class SqliteSnapshotStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         connection = self._connect()
         try:
+            connection.execute(_OLD_LIVE_HANDLE_INDEX)
             connection.executescript(_SCHEMA)
         finally:
             connection.close()
@@ -212,9 +218,16 @@ class SqliteSnapshotStore:
         return Snapshot(handle=row["handle"], domain=row["domain"], op_id=row["op_id"], state=row["state"],
                         compatibility=json.loads(row["compatibility"]), bytes=row["bytes"], created=row["created"])
 
-    def _live_row(self, connection: sqlite3.Connection, handle: str) -> Optional[sqlite3.Row]:
-        return connection.execute("SELECT * FROM transition_snapshot WHERE handle = ? AND state != 'deleted'",
-                                  (handle,)).fetchone()
+    def _live_row(self, connection: sqlite3.Connection, handle: str, domain: Optional[str] = None) -> Optional[sqlite3.Row]:
+        """The live row of ``handle`` in ``domain``. Without a domain the handle must be live in one domain only: two
+        domains may use the same handle, and a call that does not say which one is refused, not guessed."""
+        query, args = "SELECT * FROM transition_snapshot WHERE handle = ? AND state != 'deleted'", [handle]
+        if domain is not None:
+            query, args = query + " AND domain = ?", [handle, domain]
+        rows = connection.execute(query, args).fetchall()
+        if len(rows) > 1:
+            raise SnapshotRejected("the handle is live in more than one domain: name the domain")
+        return rows[0] if rows else None
 
     # -- lifecycle --------------------------------------------------------------
 
@@ -234,14 +247,22 @@ class SqliteSnapshotStore:
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
-                    if self._live_row(connection, handle) is not None:
-                        raise SnapshotRejected("handle already belongs to a live snapshot")
+                    earlier = connection.execute(
+                        "SELECT state FROM transition_snapshot WHERE domain = ? AND handle = ? ORDER BY generation DESC LIMIT 1",
+                        (domain, handle)).fetchone()
+                    if earlier is not None:
+                        # A handle names one file once. An adapter that answers every checkpoint with the same handle
+                        # would overwrite the file of a snapshot the ledger still trusts (or already deleted).
+                        raise SnapshotRejected(
+                            "handle already belongs to a live snapshot" if earlier["state"] != "deleted" else
+                            "handle was used by an earlier snapshot of this domain (deleted rows count): "
+                            "every checkpoint needs a new handle")
                     connection.execute(
                         "INSERT INTO transition_snapshot(domain, handle, op_id, state, compatibility, bytes, file_size,"
                         " file_mtime_ns, file_id, created, updated) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
                         (domain, handle, op_id, json.dumps(dict(compatibility), sort_keys=True), bytes, facts.size,
                          facts.mtime_ns, facts.file_id, now, now))
-                    row = self._live_row(connection, handle)
+                    row = self._live_row(connection, handle, domain)
                     connection.execute("COMMIT")
                 except BaseException:
                     connection.execute("ROLLBACK")
@@ -251,12 +272,12 @@ class SqliteSnapshotStore:
         assert row is not None
         return self._snapshot(row)
 
-    def publish(self, handle: str) -> Snapshot:
+    def publish(self, handle: str, domain: Optional[str] = None) -> Snapshot:
         """Verify the pending snapshot, then move the domain's pointer to it in one transaction."""
         with self._lock:
             connection = self._connect()
             try:
-                row = self._live_row(connection, handle)
+                row = self._live_row(connection, handle, domain)
                 if row is None:
                     raise SnapshotRejected("unknown snapshot")
                 if row["state"] != "pending":
@@ -287,7 +308,7 @@ class SqliteSnapshotStore:
                 except BaseException:
                     connection.execute("ROLLBACK")
                     raise
-                published = self._live_row(connection, handle)
+                published = self._live_row(connection, handle, row["domain"])
             finally:
                 connection.close()
         assert published is not None
@@ -391,18 +412,21 @@ class SqliteSnapshotStore:
 
     # -- pins, room, deletion ---------------------------------------------------
 
-    def pin(self, handle: str) -> bool:
-        return self._set_pin(handle, 1)
+    def pin(self, handle: str, domain: Optional[str] = None) -> bool:
+        return self._set_pin(handle, 1, domain)
 
-    def unpin(self, handle: str) -> bool:
-        return self._set_pin(handle, 0)
+    def unpin(self, handle: str, domain: Optional[str] = None) -> bool:
+        return self._set_pin(handle, 0, domain)
 
-    def _set_pin(self, handle: str, value: int) -> bool:
+    def _set_pin(self, handle: str, value: int, domain: Optional[str]) -> bool:
         with self._lock:
             connection = self._connect()
             try:
-                cursor = connection.execute("UPDATE transition_snapshot SET pinned = ? WHERE handle = ?"
-                                            " AND state != 'deleted'", (value, handle))
+                row = self._live_row(connection, handle, domain)
+                if row is None:
+                    return False
+                cursor = connection.execute("UPDATE transition_snapshot SET pinned = ? WHERE generation = ?",
+                                            (value, row["generation"]))
                 return cursor.rowcount == 1
             finally:
                 connection.close()
@@ -467,20 +491,20 @@ class SqliteSnapshotStore:
 
     # -- introspection (diagnostics and tests) ---------------------------------
 
-    def get(self, handle: str) -> Optional[Snapshot]:
+    def get(self, handle: str, domain: Optional[str] = None) -> Optional[Snapshot]:
         with self._lock:
             connection = self._connect()
             try:
-                row = self._live_row(connection, handle)
+                row = self._live_row(connection, handle, domain)
             finally:
                 connection.close()
         return None if row is None else self._snapshot(row)
 
-    def generation_of(self, handle: str) -> Optional[int]:
+    def generation_of(self, handle: str, domain: Optional[str] = None) -> Optional[int]:
         with self._lock:
             connection = self._connect()
             try:
-                row = self._live_row(connection, handle)
+                row = self._live_row(connection, handle, domain)
             finally:
                 connection.close()
         return None if row is None else int(row["generation"])

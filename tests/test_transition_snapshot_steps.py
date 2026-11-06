@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from gateway.transition_ops import EffectResult
 from gateway.transition_snapshot_steps import SnapshotPolicy, parse_policy, snapshot_steps
 from gateway.transition_snapshots import SqliteSnapshotStore
 from tests.support.transition_snapshot_rig import PAYLOAD, Rig
@@ -530,8 +531,8 @@ def test_a_restore_past_its_deadline_keeps_its_pin_until_the_late_restore_ends(r
     unpinned = threading.Event()
     real_unpin = rig.snapshots.unpin
 
-    def unpin(h):
-        result = real_unpin(h)
+    def unpin(h, domain=None):
+        result = real_unpin(h, domain)
         unpinned.set()
         return result
 
@@ -558,6 +559,26 @@ def test_a_restore_past_its_deadline_keeps_its_pin_until_the_late_restore_ends(r
         assert rig.snapshots.collect(D) == (handle,), "deletable once the late restore ended"
 
     asyncio.run(asyncio.wait_for(scenario(), 20))
+
+
+def test_an_adapter_that_answers_every_checkpoint_with_one_handle_fails_its_second_checkpoint(rig) -> None:
+    async def fixed(domain, intent):
+        path = rig.files.path_for(domain, "fixed.snap")
+        path.write_bytes(PAYLOAD)
+        path.chmod(0o600)
+        return EffectResult(outcome="success", handle="fixed.snap", bytes=len(PAYLOAD), evidence_ref="saved")
+
+    rig.adapter.checkpoint = fixed  # type: ignore[method-assign]
+    policy = rig.policy(query=False)
+    first = go(rig, "park", policy)
+    assert first.verdict == "continue" and rig.snapshots.pointer(D) == "fixed.snap"
+    second = go(rig, "park", policy)
+    outcome = next(r for _, step, r in rig.ops.outcomes if step == "checkpoint" and r.evidence_ref.startswith("checkpoint:snapshot_not_published"))
+    assert "earlier snapshot of this domain" in outcome.evidence_ref or "live snapshot" in outcome.evidence_ref
+    assert rig.snapshots.pointer(D) is None, "no snapshot is offered; the next start is cold"
+    assert second.verdict == "continue" and second.gate == "open", "best effort: the park went on without a snapshot"
+    required = go(rig, "park", rig.policy(query=False, required=True))
+    assert required.verdict in ("reopen", "fail_closed", "reconcile"), "required: the park does not go on"
 
 
 def test_restore_attestation_in_owner_config_is_ignored(rig) -> None:

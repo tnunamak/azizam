@@ -82,9 +82,9 @@ class SnapshotLifecycle(SnapshotStore, Protocol):
 
     def collect(self, domain: str) -> object: ...
 
-    def pin(self, handle: str) -> bool: ...
+    def pin(self, handle: str, domain: Optional[str] = None) -> bool: ...
 
-    def unpin(self, handle: str) -> bool: ...
+    def unpin(self, handle: str, domain: Optional[str] = None) -> bool: ...
 
 
 def _mapping(value: object) -> Mapping[str, object]:
@@ -264,7 +264,7 @@ class CheckpointStep:
                 domain=domain, op_id=operation.op_id, handle=handle, compatibility=compatibility,
                 bytes=result.bytes))
             await _blocking(ctx.store.set_snapshot_handle, operation.op_id, snapshot.handle)
-            await _blocking(self._snapshots.publish, snapshot.handle)
+            await _blocking(self._snapshots.publish, snapshot.handle, domain)
         except Exception as exc:  # noqa: BLE001 - the engine is unchanged; the file is not trustworthy
             return await self._not_taken(ctx, sp, f"snapshot_not_published: {exc}")
         await _blocking(ctx.store.write_outcome, operation.op_id, "checkpoint", EffectResult(
@@ -338,19 +338,19 @@ class RestoreStep:
         snapshot = await _blocking(lambda: self._snapshots.latest_published(domain, compatibility, sp.placement_keys))
         if snapshot is None:
             return "skip"
-        await _blocking(self._snapshots.pin, snapshot.handle)
+        await _blocking(self._snapshots.pin, snapshot.handle, domain)
         late: list["asyncio.Future[EffectResult]"] = []
         try:
             return await self._restore(ctx, sp, adapter, snapshot.handle, late)
         finally:
-            await self._unpin_when_idle(snapshot.handle, late)
+            await self._unpin_when_idle(domain, snapshot.handle, late)
 
-    async def _unpin_when_idle(self, handle: str, late: list["asyncio.Future[EffectResult]"]) -> None:
+    async def _unpin_when_idle(self, domain: str, handle: str, late: list["asyncio.Future[EffectResult]"]) -> None:
         """Release the pin once no restore effect is running. A restore that passed its deadline may still be reading the
         file, so its pin is released from the done-callback of that late task, never before."""
         running = [task for task in late if not task.done()]
         if not running:
-            await _blocking(self._snapshots.unpin, handle)
+            await _blocking(self._snapshots.unpin, handle, domain)
             return
         loop = asyncio.get_running_loop()
         remaining = len(running)
@@ -359,7 +359,7 @@ class RestoreStep:
             nonlocal remaining
             remaining -= 1
             if remaining == 0:
-                loop.run_in_executor(None, self._snapshots.unpin, handle)
+                loop.run_in_executor(None, self._snapshots.unpin, handle, domain)
 
         for task in running:
             task.add_done_callback(finished)
