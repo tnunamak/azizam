@@ -162,13 +162,31 @@ async def _blocking(function: Callable[..., _T], *args: object) -> _T:
     return await asyncio.to_thread(function, *args)
 
 
-async def _effect(call: Awaitable[EffectResult], deadline_s: float) -> EffectResult:
+async def _effect(call: Awaitable[EffectResult], deadline_s: float, *,
+                  late: Optional[list["asyncio.Future[EffectResult]"]] = None) -> EffectResult:
     """Run one adapter effect under its deadline. A timeout or an error is ``unknown``: the
-    effect was dispatched and its outcome is not known."""
+    effect was dispatched and its outcome is not known.
+
+    Without ``late`` the call is cancelled at the deadline. With ``late`` it is not: the effect may still be running in
+    the engine, so the caller gets the running task in ``late`` and decides what must wait for it."""
+    if late is None:
+        try:
+            return await asyncio.wait_for(call, deadline_s)
+        except asyncio.TimeoutError:
+            return EffectResult(outcome="unknown", evidence_ref="deadline_passed")
+        except Exception as exc:  # noqa: BLE001 - an adapter failure is an unknown outcome
+            return EffectResult(outcome="unknown", evidence_ref=f"adapter_error:{type(exc).__name__}")
+    task = asyncio.ensure_future(call)
+    task.add_done_callback(lambda finished: finished.cancelled() or finished.exception())  # read it: never "not retrieved"
     try:
-        return await asyncio.wait_for(call, deadline_s)
+        return await asyncio.wait_for(asyncio.shield(task), deadline_s)
     except asyncio.TimeoutError:
+        late.append(task)
         return EffectResult(outcome="unknown", evidence_ref="deadline_passed")
+    except asyncio.CancelledError:
+        if not task.done():
+            late.append(task)
+        raise
     except Exception as exc:  # noqa: BLE001 - an adapter failure is an unknown outcome
         return EffectResult(outcome="unknown", evidence_ref=f"adapter_error:{type(exc).__name__}")
 
@@ -321,17 +339,38 @@ class RestoreStep:
         if snapshot is None:
             return "skip"
         await _blocking(self._snapshots.pin, snapshot.handle)
+        late: list["asyncio.Future[EffectResult]"] = []
         try:
-            return await self._restore(ctx, sp, adapter, snapshot.handle)
+            return await self._restore(ctx, sp, adapter, snapshot.handle, late)
         finally:
-            await _blocking(self._snapshots.unpin, snapshot.handle)
+            await self._unpin_when_idle(snapshot.handle, late)
 
-    async def _restore(self, ctx: StepContext, sp: SnapshotPolicy, adapter: SnapshotAdapter, handle: str) -> StepVerdict:
+    async def _unpin_when_idle(self, handle: str, late: list["asyncio.Future[EffectResult]"]) -> None:
+        """Release the pin once no restore effect is running. A restore that passed its deadline may still be reading the
+        file, so its pin is released from the done-callback of that late task, never before."""
+        running = [task for task in late if not task.done()]
+        if not running:
+            await _blocking(self._snapshots.unpin, handle)
+            return
+        loop = asyncio.get_running_loop()
+        remaining = len(running)
+
+        def finished(_task: "asyncio.Future[EffectResult]") -> None:
+            nonlocal remaining
+            remaining -= 1
+            if remaining == 0:
+                loop.run_in_executor(None, self._snapshots.unpin, handle)
+
+        for task in running:
+            task.add_done_callback(finished)
+
+    async def _restore(self, ctx: StepContext, sp: SnapshotPolicy, adapter: SnapshotAdapter, handle: str,
+                       late: list["asyncio.Future[EffectResult]"]) -> StepVerdict:
         operation, domain = ctx.operation, ctx.operation.domain
         intent = StepIntent(step="restore", effect_key=f"{operation.op_id}:restore",
                             expected_incarnation=operation.incarnation)
         await _blocking(ctx.store.write_intent, operation.op_id, intent)
-        result = await _effect(adapter.restore(domain, handle, intent), sp.deadline("restore"))
+        result = await _effect(adapter.restore(domain, handle, intent), sp.deadline("restore"), late=late)
         if result.outcome == "unknown" and sp.restore_query:
             result = await _effect(adapter.query(domain, intent), sp.deadline("query"))
         if result.outcome == "success":

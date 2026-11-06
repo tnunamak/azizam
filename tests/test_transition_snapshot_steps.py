@@ -4,6 +4,7 @@ reveals the result through ``query``. Oracle items 8 (restore part) and 9; decis
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -519,6 +520,44 @@ def test_the_restored_snapshot_is_pinned_while_it_restores_and_released_after(ri
     go(rig, "wake", rig.policy())
     assert seen == {"collected": (), "exists": True}, "a snapshot being restored is never deleted"
     assert rig.snapshots.collect(D) == (handle,), "and it is deletable again afterwards"
+
+
+def test_a_restore_past_its_deadline_keeps_its_pin_until_the_late_restore_ends(rig) -> None:
+    """The step gave up and returned, but the engine is still reading the file: nothing may delete it yet. The pin is
+    released by the late restore's own completion."""
+    handle = seed(rig)
+    original = rig.adapter.restore
+    unpinned = threading.Event()
+    real_unpin = rig.snapshots.unpin
+
+    def unpin(h):
+        result = real_unpin(h)
+        unpinned.set()
+        return result
+
+    rig.snapshots.unpin = unpin  # type: ignore[method-assign]
+
+    async def scenario():
+        started, finish = asyncio.Event(), asyncio.Event()
+
+        async def restore(domain, h, intent):
+            started.set()
+            await finish.wait()  # still running when the deadline passes
+            return await original(domain, h, intent)
+
+        rig.adapter.restore = restore  # type: ignore[method-assign]
+        result = await run_steps(build(rig), store=rig.ops, adapter=rig.adapter, snapshots=rig.snapshots,
+                                 policy=rig.policy(deadlines={"restore": 0.05, "query": 1}, query=False), kind="wake",
+                                 domain=D, target="model-a")
+        assert started.is_set() and (result.verdict, result.gate) == ("reconcile", "reconciling")
+        assert not unpinned.is_set(), "the step returned, the late restore is still running"
+        rig.snapshots.retire_published(D)  # the pointer moves away: the row is abandoned and collectable but for its pin
+        assert rig.snapshots.collect(D) == () and rig.files.path_for(D, handle).exists()
+        finish.set()
+        await asyncio.wait_for(asyncio.to_thread(unpinned.wait, 5), 10)
+        assert rig.snapshots.collect(D) == (handle,), "deletable once the late restore ended"
+
+    asyncio.run(asyncio.wait_for(scenario(), 20))
 
 
 def test_restore_attestation_in_owner_config_is_ignored(rig) -> None:
