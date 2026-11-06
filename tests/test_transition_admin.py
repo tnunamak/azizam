@@ -18,6 +18,7 @@ from gateway import transition_profiles
 from gateway.swap_drain import SwapDrain
 from gateway.transition_admin import register_transition_routes
 from gateway.transition_adapter import DeclaredOperationAdapter
+from gateway.transition_executor import UnknownDomain
 from gateway.transition_gate import GateStore, ServicePaths, domain_violations
 from gateway.transition_ops import StepIntent
 from gateway.transition_runtime import TransitionRuntime
@@ -184,6 +185,34 @@ def test_only_the_owner_signed_in_and_a_known_domain_may_use_the_routes(tmp_path
     run(owner, tmp_path / "second")
 
 
+def test_a_service_id_is_not_a_domain_on_the_routes_or_on_a_direct_call(tmp_path: Path) -> None:
+    """``policy_for`` resolves a service id to its domain; the store, the lock and the gate are keyed on the domain, so
+    an alias must never start a transition (it would hold a second unfinished operation for one domain)."""
+    async def scenario(ctx: Ctx, client: httpx.AsyncClient) -> None:
+        body = {"kind": "park", "idempotency_key": "alias"}
+        assert (await client.post(f"{BASE}/alpha/transitions", json=body)).status_code == 404
+        assert (await client.get(f"{BASE}/alpha/gate")).status_code == 404
+        assert (await client.get(f"{BASE}/alpha/transitions/x")).status_code == 404
+        assert (await client.post(f"{BASE}/alpha/transitions/x/resolve", json={"step": "release", "outcome": "success"})).status_code == 404
+        with pytest.raises(UnknownDomain):
+            await ctx.runtime.executor().submit(domain="alpha", kind="park", idempotency_key="alias")
+        assert ctx.runtime.executor().store.current("alpha") is None and ctx.runtime.executor().store.current("dom") is None
+        assert ctx.engine.calls == [] and ctx.gates.state("dom") == "open" and ctx.gates.state("alpha") == "open"
+        real = await client.post(f"{BASE}/dom/transitions", json=body)
+        assert real.status_code == 202, "the real domain key still starts one"
+        assert (await settled(ctx, client, real.json()["op_id"]))["state"] == "succeeded"
+
+    run(scenario, tmp_path)
+
+
+def test_an_owner_fresh_window_never_reaches_the_step_policy() -> None:
+    record = services()["alpha"]
+    record["residency"]["transition"]["fresh_within_s"] = 999
+    settings = TransitionRuntime(gates=lambda: None, services=lambda: {"alpha": record, "beta": services()["beta"]},  # type: ignore[arg-type,return-value]
+                                 lock_for=lambda d: asyncio.Lock(), drain=lambda: SwapDrain(), protocol_invoke=FakeEngine()).settings("dom")
+    assert "fresh_within_s" not in settings and "fresh_within_s" not in settings["profile"]  # type: ignore[operator]
+
+
 def test_a_request_that_cannot_start_is_422(tmp_path: Path) -> None:
     async def scenario(ctx: Ctx, client: httpx.AsyncClient) -> None:
         for body in ({"kind": "explode", "idempotency_key": "a"}, {"kind": "park"}, {"kind": "park", "idempotency_key": ""},
@@ -337,7 +366,8 @@ def test_a_malformed_profile_is_skipped_not_used(tmp_path: Path) -> None:
     assert transition_profiles.load_profiles(tmp_path)["good"].attested is False, "attested defaults to false"
 
 
-@pytest.mark.parametrize("key", ["attested", "failure_semantics", "operations", "verify", "residual", "idle_evidence"])
+@pytest.mark.parametrize("key", ["attested", "failure_semantics", "operations", "verify", "residual", "idle_evidence",
+                                 "servable_check", "placement_keys", "fresh_within_s"])
 def test_an_owner_config_cannot_set_what_the_profile_holds(key: str) -> None:
     record = services()["alpha"]
     record["residency"]["transition"][key] = True

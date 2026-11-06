@@ -4,6 +4,7 @@ sees "parked", and unfinished operations are settled or held before the first ad
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from typing import Any
 
 import pytest
@@ -212,3 +213,133 @@ def test_an_owner_cannot_set_the_profile_blocks_the_snapshot_steps_trust(wired) 
     for key in ("servable_check", "placement_keys", "failure_semantics"):
         record = {"residency": {"domain": "dom", "transition": {"enabled": True, "profile": PROFILE, key: "x"}}}
         assert forbidden_profile_keys(record) == (key,)
+
+
+# -- review round: startup with an unreadable table --------------------------------------------------------
+
+
+def test_startup_completes_when_the_transition_table_is_unreadable_and_every_domain_reads_reconciling(wired, tmp_path, monkeypatch) -> None:
+    _, engine, _ = wired
+    broken = tmp_path / "broken.db"
+    broken.write_bytes(b"this is not a sqlite database" * 64)
+    store = GateStore(broken)
+    store.load()
+    assert not store.readable()
+    runtime = TransitionRuntime(gates=lambda: store, services=lambda: proxy.config.get("backends") or {},
+                                lock_for=proxy.swap_lock_for, drain=lambda: proxy._swap_drain, protocol_invoke=engine)
+
+    async def scenario() -> None:
+        await runtime.reconcile_startup()  # must not raise
+
+    asyncio.run(scenario())
+    assert store.state("dom") == "reconciling", "the gate fails closed while the table cannot be read"
+    monkeypatch.setattr(proxy, "TRANSITION_GATES", store)
+    with pytest.raises(TransitionUnavailable) as caught:
+        proxy._admit_serving_lease("alpha")
+    assert caught.value.reason == "gate_reconciling"
+    assert engine.calls == [], "nothing was asked of the engine"
+
+
+def test_startup_completes_when_the_table_reads_then_fails_during_recovery(wired) -> None:
+    store, engine, runtime = wired
+
+    def broken() -> Any:
+        raise sqlite3.OperationalError("database is locked")
+
+    runtime.executor().store.unfinished = broken  # type: ignore[method-assign]
+    asyncio.run(runtime.reconcile_startup())
+
+
+# -- review round: the waking request's lease is minted under the lock -------------------------------------
+
+
+def _quick_drain_deadline() -> None:
+    for name in ("alpha", "beta"):
+        proxy.config["backends"][name]["residency"]["transition"]["drain_deadline_s"] = 0.3
+
+
+def test_an_owner_park_that_wins_the_lock_after_the_wake_cannot_park_under_the_waking_request(wired, monkeypatch) -> None:
+    """The wake minted the request's lease under its own hold of the lock. An owner park that takes the lock before the
+    request does must wait for that lease, miss its drain deadline and abort; the request is then served."""
+    store, engine, runtime = wired
+    _quick_drain_deadline()
+    real_wake = proxy._wake_if_parked
+    parks: list[Any] = []
+
+    async def wake_then_owner_park(service_id: str, policy: Any) -> Any:
+        trigger = await real_wake(service_id, policy)
+        assert proxy._swap_drain.in_flight("alpha") == 1, "the wake minted the lease before it released the lock"
+        parks.append(await runtime.executor().submit(domain="dom", kind="park", idempotency_key="owner-park"))
+        await asyncio.sleep(0)
+        return trigger
+
+    monkeypatch.setattr(proxy, "_wake_if_parked", wake_then_owner_park)
+
+    async def scenario() -> None:
+        await park(runtime)
+        served: list[str | None] = []
+        async with proxy._admission_lock("alpha"):
+            lease = proxy._swap_drain.lease("alpha")
+            served.append(engine.resident)
+            assert proxy._swap_drain.in_flight("alpha") == 2, "the bridge lease and the request's own lease"
+            lease.release()
+        assert served == ["alpha"], "the request was served by the offering the wake loaded"
+        assert proxy._swap_drain.in_flight("alpha") == 0, "the bridge lease ends with the hold"
+        [began] = parks
+        aborted = await runtime.executor().wait(began.operation.op_id)
+        assert (aborted.state, aborted.step, aborted.step_outcome) == ("aborted", "drain", "no_change")
+        assert engine.resident == "alpha" and store.parked("dom") is None and store.state("dom") == "open"
+
+    asyncio.run(scenario())
+
+
+def test_a_request_that_leaves_while_it_waits_for_the_lock_gives_the_wakes_lease_back(wired, monkeypatch) -> None:
+    store, engine, runtime = wired
+    real_wake = proxy._wake_if_parked
+    parks: list[Any] = []
+
+    async def wake_then_owner_park(service_id: str, policy: Any) -> Any:
+        trigger = await real_wake(service_id, policy)
+        parks.append(await runtime.executor().submit(domain="dom", kind="park", idempotency_key="owner-park"))
+        await asyncio.sleep(0)
+        return trigger
+
+    monkeypatch.setattr(proxy, "_wake_if_parked", wake_then_owner_park)
+
+    async def scenario() -> None:
+        await park(runtime)
+
+        async def request() -> None:
+            async with proxy._admission_lock("alpha"):
+                raise AssertionError("not admitted")
+
+        task = asyncio.get_running_loop().create_task(request())
+        await asyncio.sleep(0.05)
+        assert proxy._swap_drain.in_flight("alpha") == 1, "the lease waits for the request's turn"
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert proxy._swap_drain.in_flight("alpha") == 0, "a request that is cancelled leaks no lease"
+        [began] = parks
+        done = await runtime.executor().wait(began.operation.op_id)
+        assert done.state == "succeeded" and store.parked("dom") == done.op_id, "with the lease gone the park drains and parks"
+
+    asyncio.run(scenario())
+
+
+def test_a_request_that_only_joins_another_wake_holds_no_bridge_lease(wired) -> None:
+    store, engine, runtime = wired
+
+    async def scenario() -> None:
+        await park(runtime)
+        counts: list[int] = []
+
+        async def request(service: str) -> None:
+            async with proxy._admission_lock(service):
+                counts.append(proxy._swap_drain.in_flight(service))
+                proxy._swap_drain.lease(service).release()
+
+        await asyncio.gather(*(request(name) for name in ("alpha", "beta", "alpha")))
+        assert sorted(counts) == [0, 0, 1], "only the request whose submit began the wake holds a bridge lease"
+        assert proxy._swap_drain.in_flight("alpha") == 0
+
+    asyncio.run(scenario())
