@@ -21,6 +21,7 @@ import pytest
 
 import proxy
 from gateway import definition_store, media_jobs, pinned_definitions
+from gateway.discovery import WorkflowRegistry
 from gateway.definition_store import DefinitionUnavailable
 from gateway.job_envelope import build_job_envelope
 from tests.support.adapter_differential_rig import GatewayRig, comfy_exchanges, history_done, scenario
@@ -237,14 +238,57 @@ def test_a_route_that_compiles_from_the_pin_refuses_a_job_whose_pin_cannot_be_wr
     assert len(rig.scheduled) == 1, "only the accepted job was scheduled"
 
 
+def add_audio_workflow(rig: GatewayRig, name: str, *, max_seconds: int, graph_file: str = "workflows/audio/tangoflux.json") -> None:
+    """An owner-added audio workflow in this test's own config and registry: it reuses ``graph_file`` and has its own
+    manifest id ``audio.generate.<name>``. The shipped data is not touched."""
+    rig.set(proxy, "AUDIO_WORKFLOWS_CFG", {
+        **proxy.AUDIO_WORKFLOWS_CFG, name: {"file": graph_file, "min_seconds": 1, "max_seconds": max_seconds}})
+    manifest = proxy._load_audio_workflow_manifest("tangoflux")
+    manifest["id"] = f"audio.generate.{name}"
+    manifest["inputs"]["duration"]["maximum"] = max_seconds
+    registry = WorkflowRegistry()
+    for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records():
+        registry.add_manifest(record.manifest, source_path=record.source_path)
+    registry.add_manifest(manifest)
+    rig.set(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry)
+
+
 def test_a_pinned_job_whose_model_now_resolves_to_another_workflow_fails_instead_of_mixing(rig: GatewayRig):
     """After an alias or ``audio.workflows`` edit and a restart, a resumed job must not compile its pinned graph with
-    the limits, policy and receipt of whatever workflow the model resolves to now."""
+    the limits, policy and receipt of whatever workflow the model resolves to now. The other workflow's limits fit
+    the request, so only the resolved-workflow check stops the run."""
     set_flag(rig, True)
+    add_audio_workflow(rig, "tangoflux-b", max_seconds=30)
 
     async def scenario_() -> str:
         job_id = await accept(rig, model="tangoflux-sfx")
-        rig.set(proxy, "AUDIO_ALIASES", {**proxy.AUDIO_ALIASES, "tangoflux-sfx": "sa3-small-sfx"})
+        rig.set(proxy, "AUDIO_ALIASES", {**proxy.AUDIO_ALIASES, "tangoflux-sfx": "tangoflux-b"})
+        await proxy._run_audio_media_job(job_id)
+        return job_id
+
+    job_id = run(scenario_())
+    failed = job(job_id)
+    assert failed["status"] == media_jobs.STATUS_FAILED
+    assert failed["error_code"] == "definition_unavailable" and failed["retryable"] is False
+    assert prompts(rig) == [], "no request reached the engine"
+
+
+def test_a_job_pinned_under_an_owner_added_workflow_fails_when_its_model_becomes_an_alias_for_the_graph_files_workflow(
+    rig: GatewayRig,
+):
+    """``tangoflux-long`` reuses tangoflux's graph file. Once ``tangoflux-long`` is an alias for ``tangoflux`` the pinned
+    manifest still names that file, but the job must fail: it would run with tangoflux's limits, policy and receipt."""
+    set_flag(rig, True)
+    add_audio_workflow(rig, "tangoflux-long", max_seconds=60)
+
+    async def scenario_() -> str:
+        job_id = await accept(rig, model="tangoflux-long")
+        assert job(job_id)["workflow"] == "audio.generate.tangoflux-long"
+        # The owner removes the workflow and points its name at tangoflux; the gateway restarts.
+        rig.set(proxy, "AUDIO_WORKFLOWS_CFG", {k: v for k, v in proxy.AUDIO_WORKFLOWS_CFG.items() if k != "tangoflux-long"})
+        rig.set(proxy, "AUDIO_ALIASES", {**proxy.AUDIO_ALIASES, "tangoflux-long": "tangoflux"})
+        rig.scheduled.clear()
+        assert proxy._resume_pending_audio_media_jobs() == 1
         await proxy._run_audio_media_job(job_id)
         return job_id
 

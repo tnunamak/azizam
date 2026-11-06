@@ -23760,6 +23760,7 @@ async def _run_audio_media_job(job_id: str) -> None:
         if _compile_from_pin(_AUDIO_GRAPH_CAPABILITY):
             try:
                 pinned_args["pinned"] = await asyncio.to_thread(_load_audio_pin, job_id)
+                pinned_args["pinned_workflow"] = job.get("workflow")
             except definition_store.DefinitionUnavailable as exc:
                 _MEDIA_JOB_LOG.warning("job %s: %s", job_id, log_scrub.describe_error(exc))
                 _mark_audio_media_job_failed(job_id, _DEFINITION_UNAVAILABLE, error_info=_DEFINITION_UNAVAILABLE_INFO)
@@ -23993,7 +23994,8 @@ async def _submit_audio_media_job(
     metadata["mode"] = "async_audio_generation"
     job.metadata = metadata
     envelope = _manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY)
-    if envelope is None and _compile_from_pin(_AUDIO_GRAPH_CAPABILITY):
+    compiles_from_pin = _compile_from_pin(_AUDIO_GRAPH_CAPABILITY)
+    if envelope is None and compiles_from_pin:
         # A route that compiles from the pin must not accept a job that pinned nothing: it could never run.
         return _pin_not_recorded_response()
 
@@ -24008,7 +24010,7 @@ async def _submit_audio_media_job(
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(
             job, input_data=body, path=media_jobs.DB_PATH, envelope=envelope,
-            require_envelope=_compile_from_pin(_AUDIO_GRAPH_CAPABILITY),
+            require_envelope=compiles_from_pin,
         )
     except EphemeralMediaPayloadCapacityError:
         _delete_audio_media_job_payload(job.job_id)
@@ -25927,14 +25929,15 @@ def _audio_extension_error_response(message: str, *, param: str = "extensions") 
 
 async def proxy_audio_generate(
     request: Request, auth_context, *, store_full: bool = False, receipt: RouteReceipt | None = None,
-    pinned: pinned_definitions.PinnedDefinitions | None = None,
+    pinned: pinned_definitions.PinnedDefinitions | None = None, pinned_workflow: str | None = None,
 ):
     """POST /v1/audio/generate — submit audio generation via ComfyUI.
 
     ``store_full`` is for the media-job executor, which stores the bytes: they
     keep full metadata and the delivery mode is applied when the asset is served.
     ``pinned`` is what the job pinned at accept. With it the manifest and the graph come from the pin, never from the
-    registry or the workflow file; without it (the synchronous route) they are read live.
+    registry or the workflow file; without it (the synchronous route) they are read live. ``pinned_workflow`` is the
+    workflow the job row recorded at submit (``audio.generate.<name>``): the model must still resolve to it.
     """
     admission = _dispatch_admission_response(
         'audio.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
@@ -25991,7 +25994,7 @@ async def proxy_audio_generate(
         try:
             manifest = pinned.manifest(_GRAPH_BINDING)
             pinned_graph = _pinned_graph(pinned)
-            if not _manifest_names_audio_workflow(manifest, workflow_name):
+            if pinned_workflow != f"audio.generate.{workflow_name}":
                 raise definition_store.DefinitionUnavailable(
                     f"job {pinned.envelope.source_id}: the model now resolves to workflow {workflow_name}, not the one it pinned")
         except definition_store.DefinitionUnavailable as exc:
