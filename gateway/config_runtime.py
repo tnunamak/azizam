@@ -308,6 +308,7 @@ class ConfigHome:
                 view.pointer: {"source": view.source, "apply": view.apply, "drift": view.drift.kind if view.drift else None}
                 for view in layers.entry_views(self.sections[name], result, rows.get(name, []))
             }
+            section_extra = tuple(extra)
             unimported = self._unimported.get(name)
             if unimported is not None:
                 # The startup block could not be imported: it keeps serving, as before the section existed.
@@ -315,9 +316,9 @@ class ConfigHome:
                 merged[name] = copy.deepcopy(block)
                 sources[name] = {pointer: {"source": SOURCE_STARTUP_FILE, "apply": "live", "drift": None}
                                  for pointer in self.sections[name].index.entries_in(block)}
-                extra = (*extra, *(layers.Problem(p.pointer, "legacy_import_blocked", layers.INVALID, p.message)
-                                   for p in faults))
-            found = [problem.as_dict() for problem in (*result.problems, *extra)]
+                section_extra += tuple(layers.Problem(p.pointer, "legacy_import_blocked", layers.INVALID, p.message)
+                                       for p in faults)
+            found = [problem.as_dict() for problem in (*result.problems, *section_extra)]
             if found:
                 problems[name] = found
         return Layer(

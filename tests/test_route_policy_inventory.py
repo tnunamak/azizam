@@ -1506,7 +1506,7 @@ def test_websocket_route_policy_inventory(gateway, monkeypatch):
 
 @pytest.mark.parametrize("gateway", ["discovery"], indirect=True)
 def test_ungoverned_discovery_snapshot(gateway, monkeypatch):
-    """Full JSON bytes of the listings stay the same, up to the order of alias names the startup file added.
+    """Full JSON bytes of the listings. The fixture pins the new order of alias names the startup file added.
 
     Those names reach the effective section through the override store (config homes C3), which orders them by
     pointer; the neutral release defaults come first. The set of rows and every value are unchanged.
