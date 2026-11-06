@@ -171,6 +171,7 @@ from gateway.admin_api import (
     registry_not_applied_response,
 )
 from gateway.settings_api import create_settings_router, instance_settings, prompt_memory_settings
+from gateway import config_api
 from gateway.activity_api import create_activity_router
 from gateway import category_presets
 from gateway.category_api import create_category_router
@@ -2938,6 +2939,11 @@ def handle_cli_command() -> bool:
             print("Usage: python3 proxy.py refresh-openai-models", file=sys.stderr)
             sys.exit(2)
         sys.exit(asyncio.run(refresh_openai_model_aliases()))
+
+    if sys.argv[1] == "config":
+        from gateway import config_cli
+
+        sys.exit(config_cli.main(sys.argv[2:], default_url=f"http://127.0.0.1:{PROXY_PORT}"))
 
     if sys.argv[1] == "generate-admin-key":
         if len(sys.argv) == 3 and sys.argv[2] in {"-h", "--help", "help"}:
@@ -16833,6 +16839,13 @@ app.include_router(create_settings_router(
     on_prompt_memory_kill=lambda: _purge_prompt_memory_on_kill(),
     purge_status_provider=lambda: _prompt_purge_status("*"),
 ))
+# Owner API over the config sections (docs/design/CONFIG_HOMES.md, 7). The dependencies are looked up per request, so
+# the layer, the registry and the reload are the ones running now.
+app.include_router(config_api.create_config_router(
+    auth=ADMIN_AUTH, admin_path=lambda: ADMIN_DB_PATH, home=lambda: CONFIG_HOME,
+    registry=ADMIN_STORE.get_service_registry, reload=lambda: reload_runtime_config(),
+    startup_block=lambda section: _bootstrap_config.get(section) if isinstance(_bootstrap_config.get(section), Mapping) else None,
+))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
 # Owner-defined categories and plans (design v3). Active rules tighten the
 # runtime decision in runtime_auth.evaluate_and_apply (category_enforcement).
@@ -19665,6 +19678,11 @@ async def admin_config_export(request: Request):
             media_type="application/json",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if request.query_params.get("format") == "v1":  # the config sections' export; C4 makes it the only one
+        document = await asyncio.to_thread(
+            config_api.build_export, CONFIG_HOME, ADMIN_DB_PATH, version=str((runtime().config.get("proxy") or {}).get("version") or "1"),
+            effective=request.query_params.get("view") == "effective", registry=ADMIN_STORE.get_service_registry())
+        return JSONResponse(document, headers={"Cache-Control": "no-store"})
     try:
         yaml_text = await asyncio.to_thread(_build_config_export_yaml)
         return Response(
