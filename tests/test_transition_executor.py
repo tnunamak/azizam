@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -25,6 +26,16 @@ ADAPTERS = pytest.mark.parametrize("adapter", ["direct", "ledger"])
 
 def run(scenario: Callable[[], Awaitable[Any]]) -> Any:
     return asyncio.run(scenario())
+
+
+async def until(condition: Callable[[], bool], *, limit_s: float = 10.0) -> None:
+    """Yield to the loop until ``condition`` holds. It waits for a state, not for a time; ``limit_s`` only ends a hang."""
+
+    async def wait() -> None:
+        while not condition():
+            await asyncio.sleep(0.001)
+
+    await asyncio.wait_for(wait(), limit_s)
 
 
 def refusal(gate_state: str, retry_after_s: float = 7.0) -> TransitionUnavailable:
@@ -241,7 +252,9 @@ def test_a_caller_cancelled_at_any_await_never_leaves_a_half_done_transition(tmp
             await asyncio.sleep(0)
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        await asyncio.sleep(0.4)
+        lock = h.locks.setdefault(DOMAIN, asyncio.Lock())
+        # The begin unit either ends with an operation whose task owns the lock, or with the lock released and no row.
+        await until(lambda: bool(h.executor.active()) or (not lock.locked() and h.store.by_idempotency_key(DOMAIN, "k") is None))
         found = h.store.by_idempotency_key(DOMAIN, "k")
         if found is None:
             assert h.gate() == "open" and not h.locks.get(DOMAIN, asyncio.Lock()).locked(), "cancelled before the lock was taken"
@@ -261,7 +274,7 @@ def test_a_caller_cancelled_while_it_waits_for_the_lock_leaves_no_operation(tmp_
         await lock.acquire()
         task = asyncio.get_running_loop().create_task(
             h.executor.submit(domain=DOMAIN, kind="park", idempotency_key="k"))
-        await asyncio.sleep(0.05)
+        await until(lambda: bool(getattr(lock, "_waiters", None)))  # the submit is queued on the lock
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         assert h.store.current(DOMAIN) is None and h.store.by_idempotency_key(DOMAIN, "k") is None
@@ -426,7 +439,9 @@ def test_a_release_that_completes_after_its_deadline_settles_nothing_by_itself(t
             h.sim.faults["release"] = "lost_reply"
         done = await h.run("park", "k")
         assert (done.state, done.step_outcome, done.stock) == ("reconciling", "unknown", None)
-        await asyncio.sleep(0.8)  # the late completion lands; the record does not move by itself
+        await until(lambda: h.sim.offering is None)  # the late completion lands in the engine
+        for _ in range(5):
+            await asyncio.sleep(0)  # and any write it would make to the record has had its turns
         assert h.store.get(done.op_id).state == "reconciling" and h.gate() == "reconciling"
 
     run(scenario)
@@ -595,7 +610,9 @@ def test_a_wake_that_is_not_done_in_time_answers_503_with_retry_after_and_keeps_
         with pytest.raises(TransitionUnavailable) as late:
             await h.executor.ensure_awake(DOMAIN, wait_s=0.05)
         assert (late.value.status_code, late.value.reason, late.value.headers) == (503, "wake_in_progress", {"Retry-After": "7"})
-        await asyncio.sleep(0.8)
+        woken = h.store.current(DOMAIN)
+        assert woken is not None
+        await h.executor.wait(woken.op_id)
         assert h.gate() == "open" and h.sim.offering == "alpha", "the wake finished without its waiter"
 
     run(scenario)
@@ -619,15 +636,84 @@ def test_a_waiter_cancelled_during_the_wake_does_not_stop_it(tmp_path: Path) -> 
     async def scenario() -> None:
         h = Harness(tmp_path)
         await h.run("park", "p")
-        h.sim.delay = 0.05
+        loading, go = asyncio.Event(), asyncio.Event()
+        real_load = h.adapter.load
+
+        async def gated_load(domain: str, target: str, intent: StepIntent) -> EffectResult:
+            loading.set()
+            await go.wait()  # the wake stays inside its load until the test lets it go
+            return await real_load(domain, target, intent)
+
+        h.adapter.load = gated_load  # type: ignore[method-assign]
         lease = TriggerLease(lambda: h.drain.lease(DOMAIN, admit=False))
-        task = asyncio.get_running_loop().create_task(h.executor.ensure_awake(DOMAIN, wait_s=2.0, trigger=lease.trigger))
-        await asyncio.sleep(0.02)
+        task = asyncio.get_running_loop().create_task(h.executor.ensure_awake(DOMAIN, wait_s=60.0, trigger=lease.trigger))
+        await asyncio.wait_for(loading.wait(), 10)
+        woken = h.store.current(DOMAIN)
+        assert woken is not None and woken.kind == "wake"
         task.cancel()
         lease.abandon()
         await asyncio.gather(task, return_exceptions=True)
-        await asyncio.sleep(0.4)
-        assert (h.gate(), h.sim.offering, h.drain.in_flight(DOMAIN)) == ("open", "alpha", 0)
+        assert h.gate() == "closed", "the waiter left; the wake is still running"
+        go.set()
+        done = await h.executor.wait(woken.op_id)
+        assert (done.state, h.gate(), h.sim.offering, h.drain.in_flight(DOMAIN)) == ("succeeded", "open", "alpha", 0)
+
+    run(scenario)
+
+
+def test_a_requester_cancelled_while_the_begin_runs_does_not_strand_the_operation(tmp_path: Path) -> None:
+    """The begin runs on a thread. A requester that is cancelled meanwhile must not leave a row with no task and a
+    released lock: the operation finishes, and the next submit is a new operation, not a Conflict."""
+
+    async def scenario() -> None:
+        h = Harness(tmp_path)
+        in_begin, let_begin_end = threading.Event(), threading.Event()
+        real_begin = h.store.begin
+
+        def slow_begin(**kwargs: Any) -> Any:
+            in_begin.set()
+            assert let_begin_end.wait(10), "the test never released the begin"
+            return real_begin(**kwargs)
+
+        h.store.begin = slow_begin  # type: ignore[method-assign]
+        task = asyncio.get_running_loop().create_task(h.executor.submit(domain=DOMAIN, kind="park", idempotency_key="p"))
+        await asyncio.wait_for(asyncio.to_thread(in_begin.wait, 10), 20)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        let_begin_end.set()
+        h.store.begin = real_begin  # type: ignore[method-assign]
+        await until(lambda: bool(h.executor.active()))  # the begin ends on its thread; the task starts on this loop
+        [op_id] = h.executor.active()
+        done = await h.executor.wait(op_id)
+        assert (done.state, h.gate(), h.sim.offering) == ("succeeded", "open", None)
+        assert not h.locks[DOMAIN].locked()
+        again = await h.executor.submit(domain=DOMAIN, kind="wake", idempotency_key="w")
+        assert isinstance(again, Begun), "the cancelled request left no stranded operation behind"
+        await h.executor.wait(again.operation.op_id)
+
+    run(scenario)
+
+
+def test_a_requester_cancelled_while_the_begin_fails_still_gives_the_lock_back(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        h = Harness(tmp_path)
+        in_begin, let_begin_end = threading.Event(), threading.Event()
+
+        def failing_begin(**kwargs: Any) -> Any:
+            in_begin.set()
+            assert let_begin_end.wait(10)
+            raise sqlite3.OperationalError("database is locked")
+
+        h.store.begin = failing_begin  # type: ignore[method-assign]
+        task = asyncio.get_running_loop().create_task(h.executor.submit(domain=DOMAIN, kind="park", idempotency_key="p"))
+        await asyncio.wait_for(asyncio.to_thread(in_begin.wait, 10), 20)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        let_begin_end.set()
+        await until(lambda: not h.locks[DOMAIN].locked())  # the unit ends on this loop after its thread returns
+        assert not h.locks[DOMAIN].locked(), "a begin that failed after its requester left released the lock"
 
     run(scenario)
 
@@ -871,7 +957,9 @@ def test_a_deadline_never_cancels_a_dispatched_effect(tmp_path: Path, adapter: s
             h.sim.delay = 0.6  # the effect runs past the 0.3 s release deadline
         done = await h.run("park", "k")
         assert (done.state, done.step_outcome) == ("reconciling", "unknown"), "the deadline records unknown"
-        await asyncio.sleep(0.8)  # the effect finishes by itself
+        await until(lambda: h.sim.offering is None)  # the effect finishes by itself
+        for _ in range(5):
+            await asyncio.sleep(0)
         assert h.sim.cancelled == [], "no effect call was cancelled"
         assert h.sim.offering is None, "the engine finished the release the deadline gave up on"
         assert h.store.get(done.op_id).step_outcome == "unknown", "a late outcome writes nothing (G10)"
