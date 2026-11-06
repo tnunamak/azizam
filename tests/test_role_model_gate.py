@@ -65,7 +65,7 @@ def _normalize(raw_models: list[dict], backends: dict | None = None) -> dict:
 
 
 def _role_entries(roles: dict, backends: dict | None = None) -> list[dict]:
-    """Call _build_role_catalog_entries under patched ROLES + config["backends"]."""
+    """Call _build_role_catalog_entries under a published roles section + config["backends"]."""
     with (
         patch.dict(proxy.config, {"backends": backends or {}}),
         section_published("roles", roles),

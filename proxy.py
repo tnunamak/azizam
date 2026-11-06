@@ -1015,7 +1015,7 @@ def _is_local_swap_backend(backend: str | None) -> bool:
     return supports_swap(driver_for_service(backend, config.get("backends")))
 
 
-# Optional catalog of additional GGUF aliases (parallel to ROLES). Each entry has
+# Optional catalog of additional GGUF aliases (parallel to the roles section). Each entry has
 # id/backend/path[/description] and is treated like a role with a pinned model:
 # clients send `model: "<id>"` and the proxy resolves it via ensure_target().
 # This lets us surface arbitrary GGUFs on /v1/models without inventing roles.
@@ -1252,7 +1252,7 @@ USE_LOADED_MODEL_ALIASES = frozenset({
     USE_LOADED_FAST_MODEL_ALIAS,
 })
 
-# Tracks model_paths we've already warned about (when PIN_LOADED_MODEL=True)
+# Tracks model_paths we've already warned about (when llm.pin_loaded_model is set)
 # so we don't spam the journal with one warning per request.
 _pin_mismatch_warned: set = set()
 

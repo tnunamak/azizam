@@ -4,7 +4,9 @@ This directory holds the release defaults of the config sections (design: `docs/
 Every file here is read-only data that ships with a release. An upgrade replaces it. The owner never edits it: an
 owner's change is a sparse override in `admin.db` (tables `config_overrides` and `config_changes`).
 
-No section ships yet. A section slice adds the first one.
+Four sections ship so far: `llm`, `model_routing`, `reasoning` and `roles` (C7). Their release files hold no host path,
+no address and no role; the one-time legacy import (`gateway/config_homes_import.py`) brings each owner's startup block
+into the section. `models` is not a section yet: its startup block is a list, and a section root must be a mapping.
 
 ## A section is two files
 
