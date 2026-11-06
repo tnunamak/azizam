@@ -351,6 +351,10 @@ Selected successful workflows are exercised separately.
 | `POST /admin/api/engines/check` | owner-bearer | denied | `gateway.engine_admin.check_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/test` | owner-bearer | denied | `gateway.engine_admin.test_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/engines/access` | owner-bearer | denied | `gateway.engine_admin.engine_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/engines/domains/{domain}/transitions` | owner-bearer | denied | `gateway.transition_admin.start_transition`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `GET /admin/api/engines/domains/{domain}/transitions/{op_id}` | owner-bearer | denied | `gateway.transition_admin.get_transition`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `GET /admin/api/engines/domains/{domain}/gate` | owner-bearer | denied | `gateway.transition_admin.get_gate`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `POST /admin/api/engines/domains/{domain}/transitions/{op_id}/resolve` | owner-bearer | denied | `gateway.transition_admin.resolve_transition`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `GET /admin/api/engines/{service_id}` | owner-bearer | denied | `gateway.engine_admin.get_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/engines/{service_id}/stt-measurements` | owner-bearer | denied | `gateway.stt_measurement_api.options`; AdminAuthenticator / _require_admin; owner role required | owner |
 | `POST /admin/api/engines/{service_id}/stt-measurements` | owner-bearer | denied | `gateway.stt_measurement_api.start`; AdminAuthenticator / _require_admin; owner role required | owner |

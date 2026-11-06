@@ -1,0 +1,26 @@
+# A reviewed transition profile (design D3): how the transition executor drives a residency domain.
+#
+# This file is reviewed data, not owner config: an owner names this profile with
+# residency.transition.profile and cannot set `attested` or the operations here (the gateway refuses a config
+# that does). Nothing in it names an engine. The operations are the names the engine's own protocol description
+# declares (registry/protocols/*.yml); the executor calls them through the http-v1 invoke path.
+#
+# What each declared operation must select from its response (response.select):
+#   idle      idle (boolean), incarnation (optional text)
+#   resident  resident (boolean), offering (text, when something is resident), ready (boolean), incarnation (optional)
+#   release   outcome, evidence_ref (optional), incarnation (optional)
+#   load      outcome, evidence_ref (optional), incarnation (optional)
+#   query     outcome, evidence_ref (optional), incarnation (optional)
+# `outcome` is one of: success, no_change, partial, failed, unknown. Anything else reads as unknown.
+profile_version: 1
+id: declared-ops-v1
+title: Operations declared in the engine's protocol description
+operations:
+  idle: transition.idle
+  resident: transition.resident
+  release: transition.release
+  load: transition.load
+  query: transition.query
+# A release whose outcome is "success" counts as stock released (D3 "Release"). The executor still checks
+# fresh, incarnation-matched evidence that nothing is resident before it believes the result.
+attested: true

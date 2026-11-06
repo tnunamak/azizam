@@ -750,6 +750,7 @@ class OwnerOperationReached(Exception):
 
 HANDLER_ERRORS = {
     "invalid_json", "invalid_request", "invalid_expiry", "empty_update",
+    "unknown_domain", "unknown_transition",
     "app_not_found", "trusted_address_not_found", "access_plan_not_found", "credential_not_found", "provider_not_found",
     "account_not_found", "invalid_defaults", "invite_not_found", "link_unavailable", "extension_package_not_found",
     "revision_not_found", "no_active_snapshot", "invalid_retention",

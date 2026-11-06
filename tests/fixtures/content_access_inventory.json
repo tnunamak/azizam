@@ -1291,6 +1291,30 @@
       "access": "operational"
     },
     {
+      "handler": "gateway.transition_admin.register_transition_routes.<locals>.start_transition",
+      "method": "POST",
+      "path": "/admin/api/engines/domains/{domain}/transitions",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.transition_admin.register_transition_routes.<locals>.get_transition",
+      "method": "GET",
+      "path": "/admin/api/engines/domains/{domain}/transitions/{op_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.transition_admin.register_transition_routes.<locals>.get_gate",
+      "method": "GET",
+      "path": "/admin/api/engines/domains/{domain}/gate",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.transition_admin.register_transition_routes.<locals>.resolve_transition",
+      "method": "POST",
+      "path": "/admin/api/engines/domains/{domain}/transitions/{op_id}/resolve",
+      "access": "operational"
+    },
+    {
       "handler": "gateway.home_api.create_home_router.<locals>.connection_test",
       "method": "POST",
       "path": "/me/api/connection-test",
