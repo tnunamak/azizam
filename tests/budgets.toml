@@ -532,6 +532,9 @@
 # C8c review fix: the status page reads the generated model list where the gateway does (+1); measured 19839.
 # Train 11 (2026-11-06): engine address guard (+4), C8c model_compatibility and identity sections (+18); measured 19848.
 # feat/config-homes-c8a (2026-11-06): +25 (tests/test_config_c8a_sections.py, images and voices sections); measured 19846.
+# fix/job-refusal-reason: a job keeps the gateway's own input-refusal sentence (+2 cases).
+# fix/job-refusal-reason-imgvid: image and video jobs keep it too (+8 cases); measured 19835.
+# Job-refusal review fixes: a job refusal drops the model name (+3 job-level, +1 helper), the audio and manifest reasons never echo a value (+2); measured 19841.
 # Train 12 (2026-11-06): C8a images and voices sections (+25), job refusal reasons, C8b; measured TBD.
 pytest = 0
 # Train r92: Try picture-upload specs, 3103 measured.
