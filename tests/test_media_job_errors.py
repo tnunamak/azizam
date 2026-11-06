@@ -385,6 +385,19 @@ class ImageVideoJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("model", job["error"].lower())
         self.assertEqual(job["error_category"], "invalid_input")
 
+    async def test_an_image_to_video_refusal_without_a_reference_does_not_name_the_model(self) -> None:
+        job = await self.run_video_job({"model": "video-minimax-h3-i2v", "prompt": "x"})
+        self.assertEqual(job["error"], "This model is image-to-video and requires input_reference")
+        self.assertEqual(job["error_category"], "invalid_input")
+
+    async def test_a_long_video_refusal_keeps_its_bound_but_not_the_model(self) -> None:
+        with patch.object(proxy, "_chain_workflow_for", lambda _model: (None, None)):
+            job = await self.run_video_job({"model": "ltx-2.5", "prompt": "x", "shots": 2})
+        self.assertTrue(job["error"].startswith("This model cannot render shots or clips longer than "), job["error"])
+        self.assertNotIn("ltx", job["error"].lower())
+        self.assertNotIn("minimax", job["error"].lower())
+        self.assertEqual(job["error_category"], "invalid_input")
+
     def test_the_job_message_of_a_route_refusal_replaces_its_sentence(self) -> None:
         refusal = proxy._gateway_input_error("Model secret-name needs X", job_message="This model needs X")
         message, info = proxy._media_job_failure(refusal)
