@@ -23750,7 +23750,7 @@ async def _run_audio_media_job(job_id: str) -> None:
         pinned_args: dict[str, Any] = {}
         if _compile_from_pin(_AUDIO_GRAPH_CAPABILITY):
             try:
-                pinned_args["pinned"] = await asyncio.to_thread(pinned_definitions.load, job_id, media_jobs.DB_PATH)
+                pinned_args["pinned"] = await asyncio.to_thread(_load_audio_pin, job_id)
             except definition_store.DefinitionUnavailable as exc:
                 _MEDIA_JOB_LOG.warning("job %s: %s", job_id, log_scrub.describe_error(exc))
                 _mark_audio_media_job_failed(job_id, _DEFINITION_UNAVAILABLE, error_info=_DEFINITION_UNAVAILABLE_INFO)
@@ -25797,18 +25797,22 @@ def _load_audio_workflow_file(workflow_cfg: dict):
     return workflow
 
 
-def _pinned_audio_graph(pinned: pinned_definitions.PinnedDefinitions):
-    """The graph a job pinned, checked as ``_load_audio_workflow_file`` checks a file. None if it cannot be used."""
-    try:
-        workflow = pinned.graph()
-    except definition_store.DefinitionUnavailable as exc:
-        _MEDIA_JOB_LOG.warning("pinned audio graph unusable: %s", log_scrub.describe_error(exc))
-        return None
+def _pinned_graph(pinned: pinned_definitions.PinnedDefinitions) -> dict[str, Any]:
+    """The graph a job pinned, checked as ``_load_audio_workflow_file`` checks a file. Raises ``DefinitionUnavailable``."""
+    workflow = pinned.graph()
     errors = validate_workflow_graph(workflow)
     if errors:
-        _MEDIA_JOB_LOG.warning("pinned audio graph invalid: %s", "; ".join(errors))
-        return None
+        raise definition_store.DefinitionUnavailable(f"the pinned graph is invalid: {'; '.join(errors)}")
     return workflow
+
+
+def _load_audio_pin(job_id: str) -> pinned_definitions.PinnedDefinitions:
+    """The job's pin, with its manifest and graph checked now, so a job that cannot run fails as ``definition_unavailable``
+    before it starts. Raises ``DefinitionUnavailable``."""
+    pinned = pinned_definitions.load(job_id, media_jobs.DB_PATH)
+    pinned.manifest(_GRAPH_BINDING)
+    _pinned_graph(pinned)
+    return pinned
 
 
 _AUDIO_SUFFIX_BY_CONTENT_TYPE = {
@@ -25961,7 +25965,20 @@ async def proxy_audio_generate(
                 code="model_not_found",
             )
         )
-    manifest = pinned.manifest(_GRAPH_BINDING) if pinned is not None else _load_audio_workflow_manifest(workflow_name)
+    if pinned is not None:
+        try:
+            manifest = pinned.manifest(_GRAPH_BINDING)
+            pinned_graph = _pinned_graph(pinned)
+        except definition_store.DefinitionUnavailable as exc:
+            _MEDIA_JOB_LOG.warning("pinned audio definitions unusable: %s", log_scrub.describe_error(exc))
+            return Response(
+                content=json.dumps({"error": {"message": "Workflow definition unavailable", "type": "api_error",
+                                              "code": "definition_unavailable"}}),
+                status_code=500,
+                media_type="application/json",
+            )
+    else:
+        manifest = _load_audio_workflow_manifest(workflow_name)
     if manifest is None:
         return Response(
             content=json.dumps({"error": {"message": f"Workflow manifest missing for {workflow_name}", "type": "api_error"}}),
@@ -25991,7 +26008,7 @@ async def proxy_audio_generate(
     seed_val = inputs.get("seed")
     # The template is the one the manifest's binding names, so the map and the graph it writes come from one place.
     graph_binding = (manifest.get("bindings") or {}).get(_GRAPH_BINDING) or {}
-    workflow = _pinned_audio_graph(pinned) if pinned is not None else _load_audio_workflow_file({"file": graph_binding.get("workflow")})
+    workflow = pinned_graph if pinned is not None else _load_audio_workflow_file({"file": graph_binding.get("workflow")})
     if not workflow:
         return Response(
             content=json.dumps({"error": {"message": f"Workflow file missing for {workflow_name}", "type": "api_error"}}),

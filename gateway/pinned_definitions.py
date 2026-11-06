@@ -25,6 +25,7 @@ from typing import Any
 
 from gateway import media_jobs
 from gateway.definition_store import DefinitionUnavailable, envelope_in, read_blob_in
+from gateway.manifests import ManifestError, validate_manifest
 from gateway.workflow_envelope import Envelope
 
 CONFIG_SECTION = "workflow_execution"
@@ -48,8 +49,15 @@ class PinnedDefinitions:
     template: bytes | None
 
     def manifest(self, binding_key: str) -> dict[str, Any]:
-        """The manifest the route compiles with: the pinned contract, and the pinned binding under ``binding_key``."""
-        return {**self.contract, "bindings": {binding_key: dict(self.binding)}}
+        """The manifest the route compiles with: the pinned contract, and the pinned binding under ``binding_key``.
+
+        A contract that is not a complete manifest (a job that pinned another shape) raises ``DefinitionUnavailable``."""
+        manifest = {**self.contract, "bindings": {binding_key: dict(self.binding)}}
+        try:
+            validate_manifest(manifest)
+        except ManifestError as exc:
+            raise DefinitionUnavailable(f"job {self.envelope.source_id}: the pinned contract is not a manifest: {exc}") from exc
+        return manifest
 
     def graph(self) -> dict[str, Any]:
         """The pinned template as a JSON object. A job that pinned no template, or one that is not an object, raises
