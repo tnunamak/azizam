@@ -573,6 +573,7 @@ def test_an_adapter_that_answers_every_checkpoint_with_one_handle_fails_its_seco
     first = go(rig, "park", policy)
     assert first.verdict == "continue" and rig.snapshots.pointer(D) == "fixed.snap"
     second = go(rig, "park", policy)
+    print("OUTCOMES", [(o, s_, r.outcome, r.evidence_ref) for o, s_, r in rig.ops.outcomes]); print(rig.snapshots.rows(D))
     outcome = next(r for _, step, r in rig.ops.outcomes if step == "checkpoint" and r.evidence_ref.startswith("checkpoint:snapshot_not_published"))
     assert "earlier snapshot of this domain" in outcome.evidence_ref or "live snapshot" in outcome.evidence_ref
     assert rig.snapshots.pointer(D) is None, "no snapshot is offered; the next start is cold"
