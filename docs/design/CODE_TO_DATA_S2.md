@@ -228,6 +228,75 @@ Every step is additive and keeps the current route path as the default. Each ste
 - The pinned contract now carries the manifest header (`schema_version`, `id`, `intent`) next to the inputs and outputs,
   because the compile validates it. The job goldens moved only by that blob.
 
+### S2.3 as built
+
+The code is `gateway/result_bundle.py`, with three additive tables on the jobs database (`result_stage`, `result_json`,
+`result_bundle`). The schema version does not change.
+
+- **Staging.** `result_stage(job_id, attempt, name, ref, state, kind, count, bytes, sha256, items_json, created)`. A
+  result is `json` (the value is in `result_json`, keyed by `ref`) or `assets` (a list of
+  `{asset_ref, media_type, size_bytes}`, no bytes). Staging a name that an earlier attempt already published is refused.
+  Staging for a job that erasure has already covered is refused, so a late worker cannot write a value after erasure.
+- **Publication.** `publish_in` runs inside `media_jobs.update_status`, through a new `before_commit(conn, job)` hook. The
+  hook runs after the transition is checked and written, and before the commit. A refused transition never runs it. In
+  that one transaction it checks the bundle limits, sets `results.bundle` in the envelope
+  (`definition_store.set_bundle_in`), writes the `result_bundle` row, marks the attempt's rows `published`, and marks
+  every other attempt's staged rows `aborted`. A pending cancel raises before the hook, so nothing is published while a
+  cancel has not settled. Any failure aborts the staged rows and fails the job with `result_refused`.
+- **Receipt.** The receipt lives in another database, so the link cannot join the transaction. `link_receipt` merges the
+  summary into the `metadata` of the job's work receipt (`receipt_store.merge_job_metadata`) and then sets
+  `receipt_linked_at`. It is idempotent by job id. The summary is `{bundle_version, bundle, envelope identity, results:
+  [{name, kind, count, size_bytes}]}`. It never holds a value. It sits in internal-tier receipt metadata, so the client
+  and admin receipt views do not change. No new receipt row is made.
+- **Startup scan.** `startup_scan` runs first in `_recover_media_jobs`. It deletes the stage rows and JSON values of
+  attempts that are neither running nor published, and links each published bundle that has no receipt.
+- **JSON store.** Values sit in `result_json` with the owner scope and the maker stamp of the job. `read_json` answers
+  `application/json` only to the maker (person, then credential, then connection) under the same owner scope; every
+  other case returns nothing. Retention is 30 days (`sweep`, called from the existing garbage-collection pass). Erasure
+  deletes values and unpublished rows. A published JSON row keeps its facts and loses its hash. No route produces JSON
+  yet; unit tests prove the store.
+- **Limits.** `workflow_execution.result_limits` in the runtime config (not in `proxy_config.yml`, so the config-homes
+  goldens do not move). Defaults: 64 assets, 256 MiB per asset, 1 GiB total, 4 MiB JSON, depth 32, 100 000 items, 1 000 000
+  characters per string. `LimitedAssetStore` wraps `AssetStore.save` and enforces count, per-asset and total bytes while
+  the stream is read; a lower cap from the caller still applies. JSON is checked for size, depth (before parsing, outside
+  strings), item count, string length, non-finite numbers and duplicate keys.
+- **Release.** Delete and the retention sweep release through `media_jobs._release_envelopes_in`, which now also calls
+  `result_bundle.release_in` in the same transaction as the job row. Person erasure, the kill switch and the cutoff all go
+  through `media_jobs.erase_prompt_derivatives`, which calls `result_bundle.erase_in`. `tests/test_result_bundle_release.py`
+  enumerates these paths from the code and fails if a new deleter appears.
+- **Audio route.** `_run_audio_media_job` checks the artifact sizes against the limits before it saves a file, then
+  finishes through `result_bundle.mirror_assets`. The bundle has one result, `assets`. The job view, the `assets` list and
+  the audio route goldens are unchanged. The bundle is published whether or not the flag is on; a job with no envelope
+  publishes a bundle and its summary carries no envelope identity.
+
+Goldens: `tests/fixtures/adapter_differential/audio_generate_job.json` moved on purpose, and only inside
+`$.media_jobs`, the dump of the internal jobs database (the envelope's `results.bundle` and the new `result_bundle`
+and `result_stage` rows). The client wire trace, the job view and the receipt goldens did not move.
+
+Decisions the design did not settle:
+- **No `results` field in the job view.** D4 adds `results: {name: {kind, count, href}}`. That field waits for S2.4,
+  when a route can produce a result that the client cannot already see as an asset. Nothing client-visible changed.
+- **The summary goes into the existing receipt.** The doc says the receipt carries envelope identity and each result's
+  name, kind, count and size. S2.3 adds that to the job's work receipt and does not add a receipt. The receipt goldens
+  did not move.
+- **The result name `assets`** is the default for a mirrored asset list. It is a name, not a vocabulary: no engine,
+  workflow, intent or modality name is in the module.
+- **A cancel that has not settled** aborts the attempt's stage at once and lets the cancel proceed. A crash before the
+  abort leaves `staged` rows; the startup scan deletes them.
+- **Link window.** A bundle whose receipt never appears is given up after 14 days (`media_jobs.REPLAY_WINDOW_S`), so the
+  scan does not retry it forever.
+- **Limits are optional config with code defaults.** Putting them in `proxy_config.yml` would move the config-homes
+  goldens; that is S2.4's call, with the selector fields.
+
+Left for S2.4 and later:
+- The image and video job routes. Their completion sites differ (several `update_status` calls with `add_assets` and
+  derived-asset paths), so a generic change was not small. They call `mirror_assets` in the next step, with their own
+  goldens.
+- The `results` field in the job view and the authenticated JSON read route (the read function exists).
+- The selectors that make a route produce a JSON result, and the streaming reader in the graph adapter that goes through
+  `LimitedAssetStore`.
+- Limits for history bytes, selector count, fetch time and concurrent fetches (D6).
+
 ## Done when: the S2 acceptance matrix
 
 1. **Data only.**

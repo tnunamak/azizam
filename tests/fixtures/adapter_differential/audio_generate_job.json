@@ -267,7 +267,7 @@
           },
           "generated": {},
           "results": {
-            "bundle": null
+            "bundle": "bundle:<job:1>:1"
           },
           "source": {
             "id": "audio.generate.tangoflux",
@@ -411,6 +411,58 @@
     "media_jobs_schema_version": [
       {
         "version": 6
+      }
+    ],
+    "result_bundle": [
+      {
+        "attempt": 1,
+        "bundle_ref": "bundle:<job:1>:1",
+        "job_id": "<job:1>",
+        "published_at": "<time>",
+        "receipt_linked_at": "<time>",
+        "summary_json": {
+          "bundle": "bundle:<job:1>:1",
+          "bundle_version": 1,
+          "envelope": {
+            "adapter_id": "node-graph",
+            "binding": "sha256:a751de5308ddba66d194fbe3a1f558456b29678cd110c5e19ed20d5e9bb3b235",
+            "contract": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
+            "interface_version": 1,
+            "source_id": "audio.generate.tangoflux",
+            "source_kind": "workflow",
+            "source_revision": "sha256:96fb2ee47fde04782208d515e5aef61b701d8bd998efed40798a6f222e2b9dc3",
+            "template": "sha256:e242aea7be6a7c821d5db8bc2d000417e256a0d15284805e10a4cb96accdd363"
+          },
+          "results": [
+            {
+              "count": 1,
+              "kind": "assets",
+              "name": "assets",
+              "size_bytes": 3644
+            }
+          ]
+        }
+      }
+    ],
+    "result_stage": [
+      {
+        "attempt": 1,
+        "bytes": 3644,
+        "count": 1,
+        "created": "<time>",
+        "items_json": [
+          {
+            "asset_ref": "aud_7d4e16a5447e1e5e59bd06dc4270335bb9a2a6a1c779a0397e4b364062c87ec9",
+            "media_type": "audio/wav",
+            "size_bytes": 3644
+          }
+        ],
+        "job_id": "<job:1>",
+        "kind": "assets",
+        "name": "assets",
+        "ref": "stage:<job:1>:1:assets",
+        "sha256": null,
+        "state": "published"
       }
     ],
     "retention_fact_destinations": [
@@ -675,6 +727,28 @@
           "manifest_id": null,
           "manifest_version": null,
           "metadata": {
+            "result_bundle": {
+              "bundle": "bundle:<job:1>:1",
+              "bundle_version": 1,
+              "envelope": {
+                "adapter_id": "node-graph",
+                "binding": "sha256:a751de5308ddba66d194fbe3a1f558456b29678cd110c5e19ed20d5e9bb3b235",
+                "contract": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
+                "interface_version": 1,
+                "source_id": "audio.generate.tangoflux",
+                "source_kind": "workflow",
+                "source_revision": "sha256:96fb2ee47fde04782208d515e5aef61b701d8bd998efed40798a6f222e2b9dc3",
+                "template": "sha256:e242aea7be6a7c821d5db8bc2d000417e256a0d15284805e10a4cb96accdd363"
+              },
+              "results": [
+                {
+                  "count": 1,
+                  "kind": "assets",
+                  "name": "assets",
+                  "size_bytes": 3644
+                }
+              ]
+            },
             "status_code": 200,
             "terminal_reason": "http_200"
           },
