@@ -82,6 +82,9 @@ NEW_PATHS = {"/setup/console"}
 SESSION_END_TOKEN_PATH = "/me/api/session/end-token"
 # Per-engine native pass-through (contract section 5): new since the baseline, off unless an engine enables it.
 NATIVE_PREFIX = "/native"
+# The gateway lifecycle hop serves completions and embeddings next to chat, and answers a POST no route serves
+# with 404 endpoint_not_served (tests/test_litellm_inner_hop_endpoints.py). Its chat path is in the baseline and unchanged.
+LIFECYCLE_HOP_PREFIX = "/internal/litellm/local/"
 # The access plan API replaced these admin routes (docs/design/ACCESS_PLANS.md): profiles, runtime
 # mappings, the policy simulator and editor, the LAN placeholder keys and the user-access defaults.
 ACCESS_PLAN_API_PREFIXES = (
@@ -206,6 +209,8 @@ def _deliberate(key: str) -> str | None:
         return "deleted"
     if path == NATIVE_PREFIX or path.startswith(NATIVE_PREFIX + "/"):
         return "native"
+    if path.startswith(LIFECYCLE_HOP_PREFIX):
+        return "lifecycle_hop"
     if (path == "/gateway/v1/requests" or path.startswith("/gateway/v1/requests/")
             or path in {"/me/api/retention", "/me/api/retention/notice-seen", "/gateway/v1/me/retention"}
             or re.fullmatch(r"/me/api/credentials/[^/]+/privacy-permission", path)):
@@ -297,6 +302,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new owner routes; tests/test_signin_settings_api.py and test_signin_test_flow.py cover them
         if kind == "native" and key not in old:
             continue  # a new lane; tests/test_native_passthrough.py covers it
+        if kind == "lifecycle_hop" and key not in old:
+            continue  # new lifecycle hop endpoints; tests/test_litellm_inner_hop_endpoints.py covers them
         if kind == "mesh" and key not in old:
             expected = MESH_ROUTING.get(_method_of(key), "/{path:path} unmatched_route")
             if outcome == expected:
@@ -381,6 +388,8 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if kind in {"ui", "deleted", "new", "access-plans", "mcp_oauth", "trusted-addresses", "adopt", "rename", "signin", "engines", "host_commands", "sessions", "session_end_token", "secret_entries", "native", "avatar", "remembered", "request_history", "provider_sign_out"}:
             continue
         if kind == "retention_ledger" and key not in old:
+            continue
+        if kind == "lifecycle_hop" and key not in old:
             continue
         if kind == "mesh" and key not in old:
             # POST is never a live row (it has a real handler, sharded with its siblings); the rest answer as above.

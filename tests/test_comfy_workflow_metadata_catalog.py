@@ -116,7 +116,7 @@ def test_object_info_falls_back_to_last_good_disk_copy(tmp_path: Path, monkeypat
         def __init__(self, *a, **k) -> None: ...
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def get(self, url): return Resp(calls["ok"])
+        def get(self, url, **kwargs): return Resp(calls["ok"])
 
     monkeypatch.setattr(module.httpx, "Client", Client)
     monkeypatch.setattr(module, "DISK_CACHE_DIR", tmp_path)

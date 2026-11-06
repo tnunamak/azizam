@@ -32,6 +32,9 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway import lifecycle_drivers
+from gateway.engine_egress import PROBE_EXTENSION
+
+PROBE = {PROBE_EXTENSION: True}
 from gateway.lifecycle_drivers import (
     CommandDriver,
     DockerDriver,
@@ -245,8 +248,8 @@ class TestExternalDriver(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(clock.delays, [0.5])
         self.assertEqual(mock_client.get.await_args_list, [
-            call("http://127.0.0.1:8080/health", timeout=1.0),
-            call("http://127.0.0.1:8080/health", timeout=1.0),
+            call("http://127.0.0.1:8080/health", timeout=1.0, extensions=PROBE),
+            call("http://127.0.0.1:8080/health", timeout=1.0, extensions=PROBE),
         ])
 
     # -- stop is a no-op — must never spawn a process -----------------------
@@ -431,7 +434,7 @@ class TestDockerDriver(unittest.TestCase):
             timeout=30.0, check=False, capture_output=True,
         )
         mock_client.get.assert_awaited_once_with(
-            "http://127.0.0.1:8090/health", timeout=1.0,
+            "http://127.0.0.1:8090/health", timeout=1.0, extensions=PROBE,
         )
 
         # Extract all subprocess.run calls and their first positional arg (the command)

@@ -19,6 +19,9 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 
 # Deliberate additions since the freeze: path prefix -> reason.
 ADDED_PATHS: dict[str, str] = {
+    "/internal/litellm/local": "the gateway lifecycle hop serves completions and embeddings next to chat (one route per endpoint "
+                               "in capability_ids.INNER_HOP_ENDPOINTS), and a POST no route serves answers 404 endpoint_not_served "
+                               "before the key check; tests/test_litellm_inner_hop_endpoints.py covers them",
     "/auth/api/clear-browser-cache": "the sign-out page asks the browser to drop cached files without waiting; tests/test_session_asset_urls.py covers it",
     "/me/api/apps/{app_id}/trusted-addresses": "a person trusts an address for their own App; tests/test_me_trusted_addresses.py covers it",
     "/me/api/credentials/{credential_id}/adopt": "a person keeps an unproven key on their own App; tests/test_me_binding_adoption.py covers it",

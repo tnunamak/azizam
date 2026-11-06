@@ -32,6 +32,7 @@ from gateway import private_io
 from gateway.access_plans import PlanCaps
 from gateway.policy import NO_ACCESS, PolicyRequest, evaluate
 from gateway.service_registry import canonical_provider_id, is_remote_provider_config
+from gateway import engine_egress
 
 USD_QUANTUM = Decimal("0.000000001")
 DEFAULT_PROVIDER_CONCURRENCY_LIMIT = 2
@@ -909,7 +910,7 @@ async def call_typesafe_systemone(
     )
     identify_provider_spend(reservation, request_id=request_id, path=ledger_path)
     close_client = client is None
-    client = client or httpx.AsyncClient(timeout=timeout)
+    client = client or engine_egress.async_client(timeout=timeout)
     try:
         response = await client.post(
             provider.base_url.rstrip('/') + ("/systemone" if provider.base_url.rstrip('/').endswith('/v1') else "/v1/systemone"),
@@ -1774,7 +1775,7 @@ async def call_openai_json(
     if not api_key:
         raise ProviderKeyMissing(f"provider {provider.id!r} key is missing")
     close_client = client is None
-    client = client or httpx.AsyncClient(timeout=timeout)
+    client = client or engine_egress.async_client(timeout=timeout)
     try:
         response = await client.post(
             _provider_url(provider, path),

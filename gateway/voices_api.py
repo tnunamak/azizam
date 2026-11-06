@@ -63,11 +63,13 @@ class VoiceApiDeps:
     quality_warn_below: Callable[[], float]
 
 
-def error_response(status: int, code: str, message: str, *, param: str | None = None) -> JSONResponse:
+def error_response(status: int, code: str, message: str, *, param: str | None = None,
+                   retry_after: int | None = None) -> JSONResponse:
     error: dict[str, Any] = {"message": message, "type": "invalid_request_error", "code": code}
     if param is not None:
         error["param"] = param
-    return JSONResponse({"error": error}, status_code=status)
+    headers = {"Retry-After": str(retry_after)} if retry_after else None
+    return JSONResponse({"error": error}, status_code=status, headers=headers)
 
 
 def voice_view(meta: Mapping[str, Any], engines: list[str]) -> dict[str, Any]:
@@ -307,7 +309,7 @@ def register_voice_routes(app: FastAPI, deps: VoiceApiDeps) -> None:
                 meta = await _create_prompt_voice(owner, name, fields, labels, description, limits, denoise)
             return JSONResponse(view(await _finish(owner, meta)))
         except VoiceError as exc:
-            return error_response(exc.status, exc.code, exc.message, param=exc.param)
+            return error_response(exc.status, exc.code, exc.message, param=exc.param, retry_after=exc.retry_after)
         except VoiceSampleError as exc:
             return error_response(400, exc.code, exc.message, param=exc.param)
         finally:

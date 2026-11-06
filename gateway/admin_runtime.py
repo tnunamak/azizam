@@ -750,6 +750,16 @@ class AdminSQLiteStore:
             admin_store.get_operator_setting(key, path=self.path)
         )
 
+    def service_availability_overrides(self) -> dict[str, Any]:
+        """The manual service-availability overrides, read alone. Raises when the store cannot be read.
+
+        ``operator_overrides`` also reads the media-admission setting and normalizes the extension package
+        index; the transition gate needs none of that on a request path.
+        """
+        setting = admin_store.get_operator_setting(SERVICE_AVAILABILITY_OVERRIDES_KEY, path=self.path)
+        value = setting["value"] if setting is not None else {}
+        return value if isinstance(value, dict) else {}
+
     def operator_overrides(self) -> dict[str, Any]:
         service_setting = admin_store.get_operator_setting(
             SERVICE_AVAILABILITY_OVERRIDES_KEY,

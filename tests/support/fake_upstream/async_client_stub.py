@@ -24,3 +24,8 @@ def install_async_client_stub(monkeypatch, post: Callable[..., Awaitable[httpx.R
             return await post(*args, **kwargs)
 
     monkeypatch.setattr(httpx, "AsyncClient", Client)
+
+
+def restore_async_client(monkeypatch, real: type) -> None:
+    """Put the real ``httpx.AsyncClient`` (``real``, captured at import) back after a fixture replaced it."""
+    monkeypatch.setattr(httpx, "AsyncClient", real)

@@ -8,7 +8,7 @@ from urllib.parse import urljoin, urlsplit
 
 from gateway import model_metadata
 from gateway.capability_ids import CAPABILITY_LABELS, PROTOCOL_CAPABILITIES
-from gateway.service_registry import is_litellm_service_record, is_remote_provider_config
+from gateway.service_registry import LEGACY_RESIDENCY_KEY, is_litellm_service_record, is_remote_provider_config
 
 
 def health_base(service: Mapping[str, Any]) -> str | None:
@@ -54,10 +54,18 @@ def service_health_endpoint(service: Mapping[str, Any]) -> str | None:
 
 
 def starts_on_demand(service: Mapping[str, Any]) -> bool:
-    """True when the service record declares ``residency: on_demand``."""
+    """True when the service record declares ``residency: on_demand``.
+
+    ``residency`` is the legacy string (in the record's config, or flat on a projected backend), or a mapping
+    (the schema-2 block that names the domain and its transition). A record can carry both; the mapping never
+    hides the string, which the runtime projection keeps under ``LEGACY_RESIDENCY_KEY``.
+    """
     config = service.get("config")
-    connection = {**(config if isinstance(config, Mapping) else {}), **service}
-    return str(connection.get("residency") or "").strip().lower() == "on_demand"
+    config = config if isinstance(config, Mapping) else {}
+    for value in (service.get("residency"), service.get(LEGACY_RESIDENCY_KEY), config.get("residency")):
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower() == "on_demand"
+    return False
 
 
 def declared_health_success(service: Mapping[str, Any], payload: Mapping[str, Any]) -> bool:

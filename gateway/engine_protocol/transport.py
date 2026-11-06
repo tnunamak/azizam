@@ -18,6 +18,7 @@ import httpx
 from gateway import engine_check
 from gateway.engine_protocol.errors import TransportFailure
 from gateway.engine_protocol.types import Timeouts
+from gateway import engine_egress
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,7 @@ class HttpxTransport:
             wire: httpx.AsyncBaseTransport = engine_check.checked_transport(destination)
         else:
             wire = self._base
-        client = httpx.AsyncClient(
+        client = engine_egress.async_client(
             transport=wire, follow_redirects=False, trust_env=False,
             timeout=httpx.Timeout(connect=timeouts.connect_s, read=timeouts.first_byte_s, write=30.0, pool=timeouts.connect_s),
         )

@@ -435,6 +435,42 @@ def test_a_draft_real_test_runs_from_the_gateway_against_the_draft_values(gatewa
     assert not _record(gateway, "tested")["config"].get("engine_tests")
 
 
+def test_the_real_test_of_a_saved_engine_in_an_enabled_residency_domain_sends_nothing(gateway, fake_upstreams):
+    """The test sends a real inference request. Without a serving lease the transition gate allows none."""
+    owner, *_ = owner_and_admin(gateway)
+    reply = {"choices": [{"index": 0, "message": {"role": "assistant", "content": "OK"}}]}
+    fake = _serve(fake_upstreams, "chat-answers-real-test", host="gated.fk.test", chat_status=200, chat_reply=reply)
+    values = {"address": f"{fake.base_url}/v1", "api_key": KEY}
+    drafted = owner.post("/admin/api/engines/test", headers=csrf_for(owner), json={
+        "definition": "openai-compatible", "capability": "chat", "model": "qwen3-32b-instruct-q4_k_m", "values": values})
+    assert drafted.status_code == 200, drafted.text
+    saved = _create(owner, {"definition": "openai-compatible", "name": "gated", "disabled": True, "values": values,
+                            "tests": {"chat": drafted.json()["test"]}})
+    assert saved.status_code == 201, saved.text
+    registry = _registry(gateway)
+    registry["services"]["gated"].setdefault("config", {})["residency"] = {
+        "transition": {"enabled": True, "activation": "pass_through"}}
+    _put_registry(gateway, registry)
+    sent_before = len(fake.requests)
+
+    refused = owner.post("/admin/api/engines/test", headers=csrf_for(owner), json={
+        "definition": "openai-compatible", "service_id": "gated", "capability": "chat",
+        "model": "qwen3-32b-instruct-q4_k_m", "values": {}})
+
+    assert refused.status_code == 503, refused.text
+    assert refused.json()["error"]["code"] == "transition_unsupported"
+    assert refused.headers["retry-after"] == "30"
+    assert len(fake.requests) == sent_before, "nothing reached the engine"
+    # The same call for a service that is not in an enabled domain is not refused for that reason.
+    plain = _registry(gateway)
+    plain["services"]["gated"]["config"].pop("residency")
+    _put_registry(gateway, plain)
+    again = owner.post("/admin/api/engines/test", headers=csrf_for(owner), json={
+        "definition": "openai-compatible", "service_id": "gated", "capability": "chat",
+        "model": "qwen3-32b-instruct-q4_k_m", "values": {}})
+    assert again.status_code != 503 or again.json()["error"]["code"] != "transition_unsupported"
+
+
 def test_the_engine_routes_need_an_administrator(gateway):
     anonymous = gateway.client()
     assert anonymous.get("/admin/api/engine-definitions").status_code == 401

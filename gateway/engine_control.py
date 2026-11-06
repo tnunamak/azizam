@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urljoin, urlsplit
 
-import httpx
 
+from gateway import engine_egress
 from gateway.engine_contract_view import connection_config, observations_config, residency_config
 from gateway.engine_credentials import credential_headers
 from gateway.engine_observations import ObservationReader
@@ -26,7 +26,7 @@ from gateway.swap_drain import SwapDrain
 class EngineControlRuntime:
     def __init__(self, service: Mapping[str, Any], *, drain: SwapDrain,
                  lock_for, observations: ObservationReader | None = None,
-                 client_factory=httpx.AsyncClient) -> None:
+                 client_factory=engine_egress.async_client) -> None:
         self.service = service
         self._drain = drain
         self._lock_for = lock_for

@@ -22,7 +22,7 @@ class _Client:
     async def __aexit__(self, *_args):
         return None
 
-    async def get(self, url: str):
+    async def get(self, url: str, **_kw):
         self._calls.append(url)
         return _Response()
 

@@ -69,6 +69,55 @@ INTENT_CAPABILITIES = {
 }
 
 
+# The OpenAI-compatible endpoints the gateway's lifecycle hop serves (``/internal/litellm/local/{backend}/v1<path>``),
+# by the capability that needs them. This is the one table: the hop routes by it, and the service registry refuses a
+# transition-enabled member that declares a capability with no row here (that member would be reached only by an
+# endpoint the hop answers with 404).
+INNER_HOP_ENDPOINTS: dict[str, tuple[str, ...]] = {
+    "chat": ("/chat/completions", "/completions"),
+    "embed": ("/embeddings",),
+}
+# The admission intent and resource class of each inner-hop endpoint, as the outer routes name them.
+INNER_HOP_ADMISSION: dict[str, tuple[str, str]] = {
+    "/chat/completions": ("chat.generate", "chat"),
+    "/completions": ("chat.generate", "chat"),
+    "/embeddings": ("text.embeddings", "embeddings"),
+}
+
+
+def capability_of_word(word: str) -> str:
+    """The capability a record's capability word stands for (an unknown word stands for itself)."""
+    text = str(word or "").strip()
+    return INTENT_CAPABILITIES.get(text, text)
+
+
+def inner_hop_endpoint_served(endpoint: str) -> bool:
+    """Whether any capability maps to the inner-hop endpoint ``endpoint`` (a path such as ``/embeddings``)."""
+    return any(endpoint in paths for paths in INNER_HOP_ENDPOINTS.values())
+
+
+def inner_hop_endpoints_for(words: Iterable[str]) -> frozenset[str]:
+    """The inner-hop endpoints that a record with these capability words is reached by."""
+    served: set[str] = set()
+    for word in words:
+        served.update(INNER_HOP_ENDPOINTS.get(capability_of_word(word), ()))
+    return frozenset(served)
+
+
+def capabilities_without_inner_endpoint(words: Iterable[str]) -> list[str]:
+    """The capability words (as declared) that stand for a real capability no inner-hop endpoint serves.
+
+    A word that maps to no capability (the ``openai`` compatibility marker, for one) asks for no endpoint, so it is
+    not refused: only a word that resolves to a ``CAPABILITY_LABELS`` key without a row in ``INNER_HOP_ENDPOINTS`` is.
+    """
+    refused: list[str] = []
+    for word in words:
+        capability = capability_of_word(word)
+        if capability in CAPABILITY_LABELS and capability not in INNER_HOP_ENDPOINTS:
+            refused.append(word)
+    return refused
+
+
 def offered_model_kinds(words: Iterable[str]) -> list[str]:
     """The kinds that an engine's record capability words serve, in MODEL_KINDS order.
 

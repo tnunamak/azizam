@@ -148,6 +148,9 @@ class MeshApiDeps:
     register_job_counter: Callable[[str, Callable[[], int]], None] | None = None
     # discard_output(asset_id): remove a stored model from the Library (one a canceled job must not keep). None keeps it.
     discard_output: Callable[[str], object] | None = None
+    # egress_refusal(service_id) -> a Response that refuses the send, or None; called just before the request is sent to the
+    # engine (never for the health read). The gateway uses it to keep an unleased path out of a transition-enabled domain.
+    egress_refusal: Callable[[str], Response | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -372,6 +375,11 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
                 owner.report(status="failed", reason="unhealthy")
                 return _unavailable(request_id)
 
+            if deps.egress_refusal is not None:
+                refusal = deps.egress_refusal(manifest.service_id)
+                if refusal is not None:
+                    owner.report(status="failed", reason="not_admitting")
+                    return refusal
             work = asyncio.ensure_future(_lease_and_post(client, request_id, base, config, spec, observer, fields,
                                                          image))
             watcher = asyncio.ensure_future(_watch_disconnect(request))
@@ -500,6 +508,13 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
             await client.aclose()
             owner.report(status="failed", reason="unhealthy")
             return _unavailable(request_id)
+        # The same send-time check as the sync route, before the job exists: a refused send leaves no job behind.
+        if deps.egress_refusal is not None:
+            refusal = deps.egress_refusal(manifest.service_id)
+            if refusal is not None:
+                await client.aclose()
+                owner.report(status="failed", reason="not_admitting")
+                return refusal
         path = jobs.path()
         job = media_jobs.MediaJob(
             intent=MESH_INTENT, workflow=manifest.id, backend=manifest.service_id, request_id=request_id,

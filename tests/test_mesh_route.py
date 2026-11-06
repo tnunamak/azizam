@@ -115,6 +115,9 @@ class Harness:
         # discard_output(asset_id): removes a stored model from the library; None keeps it.
         self.discard_output: Any = None
         self.requests = 0
+        # The gateway's send check: a Response refuses the send just before the engine is called.
+        self.egress_refusal: Any = None
+        self.egress_asked: list[str] = []
 
     def deps(self) -> MeshApiDeps:
         def authenticate(request: Request, path: str) -> Any:
@@ -153,7 +156,12 @@ class Harness:
             jobs=jobs,
             register_job_counter=self.register_job_counter,
             discard_output=self.discard_output,
+            egress_refusal=self._egress,
         )
+
+    def _egress(self, service_id: str) -> Any:
+        self.egress_asked.append(service_id)
+        return self.egress_refusal(service_id) if self.egress_refusal else None
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -288,6 +296,23 @@ def test_a_storage_fault_still_returns_the_model_without_an_asset_id() -> None:
     response = _post(_client(harness), **_multipart())
     assert response.status_code == 200 and response.content == GLB
     assert "x-asset-id" not in response.headers
+
+
+def test_a_refused_egress_sends_nothing_and_still_closes_the_receipt() -> None:
+    harness = Harness()
+    harness.egress_refusal = lambda service_id: JSONResponse({"error": {"code": "transition_unsupported"}}, status_code=503)
+    response = _post(_client(harness), **_multipart())
+    assert response.status_code == 503 and response.json()["error"]["code"] == "transition_unsupported"
+    assert harness.downstream == [], "nothing reaches the engine"
+    assert harness.egress_asked == [MANIFEST.service_id]
+    assert harness.receipts == [{"request_id": "req-test", "outcome": ("failed", "not_admitting"), "exc": None}]
+    assert harness.leases.active_claims() == 0
+
+
+def test_an_egress_check_that_allows_changes_nothing() -> None:
+    harness = Harness()
+    response = _post(_client(harness), **_multipart({"seed": "42"}))
+    assert response.status_code == 200 and harness.egress_asked == [MANIFEST.service_id]
 
 
 # --- auth, then route policy, then body --------------------------------------

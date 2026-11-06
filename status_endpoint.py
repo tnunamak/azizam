@@ -40,7 +40,7 @@ from typing import Any, Awaitable, Callable, Mapping, Optional
 import httpx
 import yaml
 
-from gateway import lifecycle_drivers
+from gateway import engine_egress, lifecycle_drivers
 from gateway import http_tls
 from gateway.resource_awareness import ResourceObserver, age_resource_view
 from gateway.http_tls import tls_context
@@ -278,7 +278,7 @@ async def _probe(
     }
     t0 = time.monotonic()
     try:
-        r = await client.get(url)
+        r = await client.get(url, extensions=engine_egress.probe())
         dt = int((time.monotonic() - t0) * 1000)
         if 200 <= r.status_code < 300:
             payload = None
@@ -530,7 +530,7 @@ async def _backend_grid(config: dict, *, deadline_s: float = _BACKEND_GRID_DEADL
     lifecycle_targets = _lifecycle_backend_targets(config)
     backends = config.get("backends", {}) or {}
     ssl_context = await _shared_probe_ssl_context()
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=ssl_context) as client:
+    async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=ssl_context) as client:
         async def configured_probe(target):
             service = backends.get(target["key"], {})
             row = await _probe(client, target["key"], target["name"], target["url"], target["role"], target["note"], service=service)
@@ -575,13 +575,13 @@ async def _llama_props_and_slots() -> tuple[Optional[dict], Optional[list[dict]]
     """
     async def _get(client, url):
         try:
-            r = await client.get(url)
+            r = await client.get(url, extensions=engine_egress.probe())
             return r.json() if r.status_code == 200 else None
         except Exception:
             return None
 
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
+        async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
             props = await _get(client, "http://127.0.0.1:5051/props")
             return props, None
     except Exception:
@@ -935,13 +935,13 @@ def _safe_float(s: str) -> Optional[float]:
 async def _comfy_queue_and_stats() -> tuple[Optional[dict], Optional[dict]]:
     async def _get(client, url):
         try:
-            r = await client.get(url)
+            r = await client.get(url, extensions=engine_egress.probe())
             return r.json() if r.status_code == 200 else None
         except Exception:
             return None
 
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
+        async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
             queue, stats = await asyncio.gather(
                 _get(client, "http://127.0.0.1:7890/queue"),
                 _get(client, "http://127.0.0.1:7890/system_stats"),
@@ -2715,13 +2715,13 @@ async def _enriched_aux_health() -> dict:
     out: dict[str, Any] = {"voxtral": None, "parakeet": None}
     async def _get(client, url):
         try:
-            r = await client.get(url)
+            r = await client.get(url, extensions=engine_egress.probe())
             return r.json() if r.status_code == 200 else None
         except Exception:
             return None
 
     try:
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
+        async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=tls_context()) as client:
             voxtral, parakeet = await asyncio.gather(
                 _get(client, "http://127.0.0.1:8001/health"),
                 _get(client, "http://127.0.0.1:5092/health"),
@@ -4471,7 +4471,7 @@ async def _sample_backend_health(config: dict) -> None:
     if not targets:
         return
     ssl_context = await _shared_probe_ssl_context()
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=ssl_context) as client:
+    async with engine_egress.async_client(timeout=_HTTP_TIMEOUT, verify=ssl_context) as client:
         rows = await asyncio.gather(*(
             _within_deadline(
                 _probe(client, t["key"], t["name"], t["url"], t["role"], t["note"], service=backends.get(t["key"], {})),

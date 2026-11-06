@@ -160,6 +160,24 @@ def test_submit_answers_202_with_the_job_while_the_engine_is_still_running(harne
     run(scenario())
 
 
+def test_a_refused_egress_answers_the_refusal_and_makes_no_job(harness: AsyncHarness) -> None:
+    from fastapi.responses import JSONResponse
+
+    harness.route.egress_refusal = lambda service_id: JSONResponse(
+        {"error": {"code": "transition_unsupported"}}, status_code=503)
+
+    async def scenario() -> None:
+        response = await harness.submit()
+        assert response.status_code == 503 and response.json()["error"]["code"] == "transition_unsupported"
+        assert harness.all_jobs() == [], "a refused send leaves no job behind"
+        assert harness.engine.events == [], "nothing reaches the engine"
+        assert harness.route.egress_asked == ["trellis"]
+        assert harness.receipts == [{"request_id": "req-test", "outcome": ("failed", "not_admitting"), "exc": None}]
+        assert not _pool_held(harness.route)
+
+    run(scenario())
+
+
 def test_the_job_is_made_by_the_person_and_credential_of_the_submitting_request(harness: AsyncHarness) -> None:
     """The job's task is detached, but it inherits the request's context, so the job is stamped with its maker and its
     owner can read it back through the generic job routes."""

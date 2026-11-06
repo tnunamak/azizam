@@ -26,6 +26,7 @@ from gateway.oidc_browser_flow import begin_browser_login
 from gateway.admin_store import SettingsConflictError
 from gateway.signin_admin import SignInError, World, norm_issuer
 from gateway.session_guard import SessionEnded
+from gateway import engine_egress
 
 RECOVERY_COMMAND = "./venv/bin/python proxy.py generate-admin-key owner-cli"
 DISCOVERY_PATH = "/.well-known/openid-configuration"
@@ -168,7 +169,7 @@ def _host(address: str) -> str:
 
 
 def default_fetch_json(url: str) -> Mapping[str, Any]:
-    with httpx.Client(timeout=10, follow_redirects=False) as client:
+    with engine_egress.client(timeout=10, follow_redirects=False) as client:
         response = client.get(url)
         response.raise_for_status()
         payload = response.json()

@@ -35,9 +35,10 @@ from gateway import admin_store, engine_check, native_lane, projection, record_c
 from gateway import secret_refs as _refs
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
-from gateway.capability_ids import MODEL_KIND_LABELS, offered_model_kinds
+from gateway.capability_ids import MODEL_KIND_LABELS, capabilities_without_inner_endpoint, offered_model_kinds
 from gateway.discovery import WorkflowRecord, summarize_workflow
 from gateway.manifests import manifest_identity, validate_manifest
+from gateway.transition_gate import ServicePaths, domain_violations
 
 
 SERVICE_REGISTRY_SETTING_KEY = "service_registry"
@@ -261,6 +262,88 @@ def read_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], list[Exclud
     return _read_registry(value, strict=False)
 
 
+def _service_paths(service_id: str, record: Mapping[str, Any]) -> ServicePaths:
+    """The ways a request reaches ``record``, split into the hops that lease and the ones that do not.
+
+    Leased: the model router's lifecycle hop (openai-compatible, ``config.gateway_lifecycle``), protocol
+    dispatch (a declared http-v1 engine protocol) and the native lane. Unleased: the model router at the
+    service's own address, and a reviewed-adapter protocol (its hops hold no lease in step T1.1).
+    """
+    from gateway.engine_protocol import description
+    from gateway.litellm_substrate import _is_openai_compatible, reaches_engine_directly
+
+    leased: list[str] = []
+    unleased: list[str] = []
+    service = normalize_service_record(service_id, record)
+    config = service["config"]
+    openai = _is_openai_compatible(service)
+    unserved: list[str] = []
+    if openai:
+        if reaches_engine_directly(service_id, record):
+            unleased.append("the model router at the engine's own address")
+        else:
+            leased.append("the gateway lifecycle hop")
+            unserved = capabilities_without_inner_endpoint(service.get("capabilities") or [])
+    connection = record.get("connection") if isinstance(record.get("connection"), Mapping) else config.get("connection")
+    protocol = connection.get("protocol") if isinstance(connection, Mapping) else None
+    if isinstance(protocol, str) and protocol.strip() and not openai:
+        doc = description.load_registry().get(protocol.strip())
+        if doc is None:
+            unleased.append(f"unknown protocol {protocol.strip()!r}")
+        elif doc.adapter_id is not None:
+            unleased.append(f"reviewed-adapter protocol {protocol.strip()!r}")
+        elif doc.executor == "http-v1":
+            leased.append("protocol dispatch")
+        else:
+            unleased.append(f"protocol {protocol.strip()!r}")
+    if bool_from_config(config.get("native_passthrough", record.get("native_passthrough")), False):
+        leased.append("the native lane")
+    return ServicePaths(leased=tuple(leased), unleased=tuple(unleased), unserved_capabilities=tuple(unserved))
+
+
+def _transition_domain_errors(services: Mapping[str, Any]) -> dict[str, str]:
+    """``{service_id: error}`` for each service a transition-enabled residency domain cannot hold.
+
+    The transition gate leases at the gateway's hops only, and step T1.1 orders no
+    gateway-run activation (gateway/transition_gate.py). So a member of an enabled
+    domain must declare pass-through activation, no gateway-owned lifecycle and no
+    gateway-run selection, and every path to it must be a leased hop.
+    """
+    return domain_violations(services, paths=_service_paths)
+
+
+def _enforce_transition_domains(services: dict[str, Any], *, strict: bool) -> dict[str, str]:
+    """Run the domain check on ``services`` after a step that can change them (backfill).
+
+    ``strict`` raises on the first violation; otherwise each violating service is removed from
+    ``services`` (it fails closed) and named in the returned ``{service_id: error}``.
+    """
+    errors = _transition_domain_errors(services)
+    if strict and errors:
+        raise ValueError(next(iter(errors.values())))
+    for service_id in errors:
+        del services[service_id]
+    return errors
+
+
+def runtime_transition_errors(backends: Mapping[str, Any]) -> dict[str, str]:
+    """``_transition_domain_errors`` on the flat runtime backend map the registry projects.
+
+    A flat backend is its record's ``config`` plus the promoted fields; wrap it back into a record shape.
+    """
+    shaped: dict[str, Any] = {}
+    for backend_id, backend in backends.items():
+        if not isinstance(backend, Mapping):
+            continue
+        record: dict[str, Any] = {"id": backend_id, "config": dict(backend)}
+        for key in ("name", "enabled", "capabilities", "priority", "role", "secret_refs", "residency", "process",
+                    "offerings", "observations", "lifecycle"):
+            if key in backend:
+                record[key] = backend[key]
+        shaped[str(backend_id)] = record
+    return _transition_domain_errors(shaped)
+
+
 def servable_part_of_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """``read_registry`` with the exclusions as ``{name: error}`` (a service by id, any other as ``kind:id``)."""
     registry, excluded = read_registry(value)
@@ -327,6 +410,11 @@ def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str,
                 migrate_engine_records_v2(temporary)
                 prepared = temporary["services"][service_id]
         record = normalize_service_record(service_id, prepared, schema_version=schema_version)
+        from gateway.litellm_substrate import foreign_lifecycle_base_error
+
+        foreign = foreign_lifecycle_base_error(record)
+        if foreign is not None:
+            raise ValueError(foreign)
         if not strict:
             _validate_model_policy_schema_markers({service_id: record})
             _validate_model_policy_graphs({service_id: record})
@@ -345,6 +433,14 @@ def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str,
     frontends = read("protocol_frontends", build_frontend)
     workflows = read("workflows", build_with_id(normalize_workflow_record))
     capabilities = read("capabilities", build_with_id(normalize_capability_record))
+
+    transition_errors = _transition_domain_errors(services)
+    if strict and transition_errors:
+        raise ValueError(next(iter(transition_errors.values())))
+    for service_id, why in transition_errors.items():
+        del services[service_id]
+        stored_key, stored = stored_services[service_id]
+        excluded.append(ExcludedRecord("services", stored_key, service_id, why, copy.deepcopy(stored)))
 
     if strict:
         _validate_model_policy_schema_markers(services)
@@ -535,7 +631,10 @@ def backfill_seed_catalog_metadata(
     *,
     proxy_config: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Merge new bundled metadata into older DB-owned registry records."""
+    """Merge new bundled metadata into older DB-owned registry records.
+
+    Raises when the merge leaves a service that a transition-enabled domain cannot hold.
+    """
     return backfill_normalized_registry(normalize_service_registry(registry), proxy_config=proxy_config)
 
 
@@ -550,11 +649,23 @@ def servable_registry_with_backfill(
     healthy boot does. Nothing is written: the stored document keeps its left-out records exactly.
     """
     servable, left_out = servable_part_of_registry(registry)
-    return backfill_normalized_registry(servable, proxy_config=proxy_config), left_out
+    backfilled = _backfill_in_place(servable, proxy_config=proxy_config)
+    # A service the merge made unfit for its transition-enabled domain is left out, like any other.
+    return backfilled, {**left_out, **_enforce_transition_domains(backfilled["services"], strict=False)}
 
 
 def backfill_normalized_registry(out: dict[str, Any], *, proxy_config: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """``out`` (an already normalized registry, changed in place) with the bundled metadata merged in."""
+    """``out`` (an already normalized registry, changed in place) with the bundled metadata merged in.
+
+    The merge can change a service's residency, so the transition-domain check runs again on the
+    result and raises if a service is no longer fit for its domain.
+    """
+    _backfill_in_place(out, proxy_config=proxy_config)
+    _enforce_transition_domains(out["services"], strict=True)
+    return out
+
+
+def _backfill_in_place(out: dict[str, Any], *, proxy_config: Mapping[str, Any] | None = None) -> dict[str, Any]:
     proxy_config = proxy_config or {}
     catalogs = load_seed_catalogs(proxy_config)
     _backfill_missing_records(
@@ -683,7 +794,49 @@ def _backfill_service_metadata(
         seed = copy.deepcopy(dict(seed))
         if isinstance(seed.get("config"), dict):
             seed["config"].pop("transforms", None)
+        # The residency block names the service's domain and its transition: it is merged apart, key by key,
+        # so a seed never replaces or extends a block the record declares.
+        seed_residency, seed_place = _take_residency(seed)
         _merge_missing_fields(record, seed)
+        _merge_residency(record, seed_residency, seed_place)
+
+
+def _take_residency(record: dict[str, Any]) -> tuple[Mapping[str, Any], str]:
+    """Remove and return the residency block ``record`` declares (top-level wins, as the gate reads it), and
+    where it was: ``"top"`` or ``"config"``. An empty mapping when it declares none. A value that is not a
+    mapping (the legacy ``residency: on_demand`` string) is left in place for the ordinary merge."""
+    config = record.get("config") if isinstance(record.get("config"), dict) else {}
+    top, nested = record.get("residency"), config.get("residency")
+    block: Mapping[str, Any] = {}
+    place = "top"
+    if isinstance(nested, Mapping):
+        config.pop("residency")
+        block, place = nested, "config"
+    if isinstance(top, Mapping):
+        record.pop("residency")
+        if top:
+            block, place = top, "top"
+    return block, place
+
+
+def _merge_residency(record: dict[str, Any], seed: Mapping[str, Any], place: str) -> None:
+    """Fill in the residency keys ``record`` lacks. Only top-level keys: a declared ``transition`` or
+    ``domain`` is never replaced, and a declared ``transition`` block never gains keys from a seed."""
+    if not seed:
+        return
+    config = record.get("config") if isinstance(record.get("config"), dict) else None
+    top = record.get("residency")
+    nested = config.get("residency") if config is not None else None
+    declared = top if isinstance(top, dict) and top else (nested if isinstance(nested, dict) and nested else None)
+    if declared is None:
+        # Nothing declared: the seed's block goes where the seed kept it.
+        if place == "config" and config is not None:
+            config["residency"] = copy.deepcopy(dict(seed))
+        else:
+            record["residency"] = copy.deepcopy(dict(seed))
+        return
+    for key, value in seed.items():
+        declared.setdefault(key, copy.deepcopy(value))
 
 
 def _merge_missing_fields(target: dict[str, Any], seed: Mapping[str, Any]) -> None:
@@ -720,6 +873,10 @@ def _backfill_collection_metadata(
 _RUNTIME_PROMOTED_FIELDS = ("name", "enabled", "role", "capabilities", "priority")
 
 
+# Where the runtime projection keeps a config's legacy ``residency`` string when a residency mapping replaces it.
+LEGACY_RESIDENCY_KEY = "legacy_residency"
+
+
 def runtime_backend_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
     """Project ONE registry service record to the flat runtime backend dict.
 
@@ -743,6 +900,15 @@ def runtime_backend_from_service(service: Mapping[str, Any]) -> dict[str, Any]:
         out["secret_refs"] = copy.deepcopy(service["secret_refs"])
     if isinstance(service.get("offerings"), list):
         out["offerings"] = copy.deepcopy(service["offerings"])
+    # A schema-2 record keeps residency at the top level. Request paths read it
+    # from this projection (load on demand, the residency domain and its
+    # transition gate), so carry a declared one.
+    if isinstance(service.get("residency"), Mapping) and service["residency"]:
+        # A record may also carry the legacy ``residency: on_demand`` string in its config. The mapping takes the
+        # key, so keep the string beside it, where the presenter's ``starts_on_demand`` reads it.
+        if isinstance(out.get("residency"), str):
+            out[LEGACY_RESIDENCY_KEY] = out["residency"]
+        out["residency"] = copy.deepcopy(dict(service["residency"]))
     # ``managed`` and the systemd service name live under ``lifecycle`` in the
     # record but flat on the backend dict; promote them for managed backends.
     process = service.get("process")
@@ -1042,7 +1208,13 @@ def apply_service_registry_to_config(
     read-only projection. Nothing writes a backend shape back into the registry.
     """
     out = copy.deepcopy(dict(proxy_config))
-    out["backends"] = runtime_backends(registry)
+    backends = runtime_backends(registry)
+    # Every boot and reload publishes through here, so this is where the domain check runs on the flat
+    # map the request paths read. A member that fails is left out of the running config (it fails closed).
+    for service_id, error in runtime_transition_errors(backends).items():
+        print(f"[service_registry] ERROR: service {service_id!r} is left out of the running config: {error}", flush=True)
+        del backends[service_id]
+    out["backends"] = backends
     return out
 
 

@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 import httpx
+from gateway import engine_egress
 
 
 class ProviderListingError(ValueError):
@@ -129,7 +130,7 @@ async def probe_provider(
         raise ProviderListingError("Configure a model-listing endpoint before running Gateway check.")
     auth_headers = provider_auth_headers(config, api_key)
     owned_client = client is None
-    client = client or httpx.AsyncClient(timeout=10, follow_redirects=False, trust_env=False)
+    client = client or engine_egress.async_client(timeout=10, follow_redirects=False, trust_env=False)
 
     async def get_json(spec: Mapping[str, Any]) -> Any:
         path = str(spec.get("path") or "")

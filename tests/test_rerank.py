@@ -6,7 +6,7 @@ import json
 import unittest
 
 import httpx
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import proxy
 
@@ -210,6 +210,27 @@ class RerankRouteTests(RouteCase):
             self.assertEqual(self._post({"query": "q", "documents": ["a"]}).status_code, 200)
         policy = proxy._enforce_runtime_route_policy.call_args.kwargs["policy"]
         self.assertEqual((policy["protocol"], policy["intent"]), ("openai.rerank", "text.embeddings"))
+
+    def test_an_enabled_residency_domain_without_a_lease_is_refused_before_any_send(self) -> None:
+        """T1.1: the rerank path takes no serving lease, so a transition-enabled domain refuses it; nothing is sent.
+
+        Two layers: the readiness check refuses first; with it stubbed open, the egress guard refuses. Both answer the gate's code."""
+        seen = self.use_upstream(_engine_answer)
+        record = self.cfg["backends"]["rerank"]
+        record["residency"] = {"domain": "rerank-domain", "transition": {"enabled": True, "activation": "pass_through"}}
+        cases = (("/v1/rerank", {"query": "q", "documents": ["a"]}), ("/rerank", {"query": "q", "texts": ["a"]}))
+        for layer, patcher in (("readiness", None),
+                               ("egress", patch.object(proxy, "_ensure_speech_service_ready", AsyncMock(return_value=None)))):
+            if patcher is not None:
+                patcher.start()
+                self.addCleanup(patcher.stop)
+            for path, body in cases:
+                with self.subTest(layer=layer, path=path):
+                    resp = self._post(body, path)
+                    self.assertEqual(resp.status_code, 503, resp.text)
+                    self.assertTrue(resp.headers.get("retry-after"))
+                    self.assertIn("transition_unsupported", resp.text, "the readiness refusal keeps its code")
+        self.assertEqual(seen, [], "no request bytes reached the engine")
 
     def test_rerank_is_an_engine_alias_with_a_stable_name(self) -> None:
         res = stable_aliases.resolve_alias(self.cfg["model_aliases"] and {"rerank": self.cfg["model_aliases"]["rerank"]}, "rerank", "rerank")

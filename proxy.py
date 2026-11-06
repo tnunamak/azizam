@@ -15,7 +15,8 @@ Features:
 - TTS passthrough to external TTS service
 """
 
-from gateway.capability_ids import INTENT_CAPABILITIES
+from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
+from gateway import engine_egress
 from gateway.compat import get_env
 from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
 from gateway.public_failure import PublicFailure
@@ -150,6 +151,10 @@ from gateway import likeness as likeness_module
 from gateway import stt_chunking, stt_measurement
 from gateway.lifecycle_drivers import SwapRecoveryFailed
 from gateway.swap_drain import ServingLease, SwapDeferred, SwapDrain, SwapDrainSettings
+from gateway.transition_gate import (
+    GateStore, TransitionPolicy, TransitionUnavailable, acquire_bounded, admit as _transition_admit, policy_for,
+    offering_effect, record_minted_lease, require_egress_lease, require_supported,
+)
 from gateway.alias_policy import (
     AliasPolicyResolutionError,
     ResolvedRequestTarget,
@@ -367,6 +372,7 @@ from gateway.litellm_substrate import (
     litellm_known_model_names,
     router_reply_timeout,
     litellm_public_model_records,
+    set_own_listen_port,
 )
 from gateway.manifests import (
     ManifestError,
@@ -629,6 +635,52 @@ def _write_litellm_config_artifact(registry: Mapping[str, Any]) -> None:
         print(f"[proxy] WARNING: LiteLLM config generation failed: {e}", flush=True)
 
 
+# Per-state_type seed strategies.  Each entry describes how to ask a live backend
+# what model it has loaded.  Add a new entry here when wiring up a new backend type
+# (vllm, ollama, etc.) — no other code needs to change.
+#
+# Keys:
+#   endpoint     – path to GET; response must be JSON
+#   model_key    – dot-path into the JSON to the loaded model identifier
+#
+# The aux (vision projector) file is not probed here: a service that has one
+# declares it in its `aux` field (see _aux_from_process).
+#
+# Dot-path format: "a.b" means data["a"]["b"].  A bare key "x" means data["x"].
+_BACKEND_STATE_STRATEGIES: dict = {
+    "llama_cpp": {
+        "endpoint": "/props",
+        "model_key": "model_path",
+    },
+    # vllm exposes /v1/models (list); take the first model id.
+    "vllm": {
+        "endpoint": "/v1/models",
+        "model_key": "data.0.id",
+    },
+    # Generic OpenAI-compatible backend (Ollama, LM Studio, etc.)
+    "openai_compatible": {
+        "endpoint": "/v1/models",
+        "model_key": "data.0.id",
+    },
+}
+
+
+def _publish_egress(backends: Mapping[str, Any] | None) -> None:
+    """Project the send-time lease check's destination map from these services (see gateway.engine_egress).
+
+    A service's loaded-state endpoint (by its ``state_type``) is a metadata read it declares, so a probe of it counts.
+    A service that names no ``state_type`` is seeded by the default strategy, so any endpoint of the table may be read.
+    """
+
+    def state_paths(record: Mapping[str, Any]) -> list[str]:
+        state_type = str((record.get("config") or record).get("state_type") or "")
+        strategies = [_BACKEND_STATE_STRATEGIES[state_type]] if state_type in _BACKEND_STATE_STRATEGIES else (
+            list(_BACKEND_STATE_STRATEGIES.values()) if not state_type else [])
+        return [str(strategy["endpoint"]) for strategy in strategies]
+
+    engine_egress.publish(backends, extra_probe_paths=state_paths)
+
+
 config, REGISTRY_APPLY_PROBLEM = _boot_effective_runtime_config(config)
 # The first snapshot: the boot config, before any reload. Reload swaps it by one reference (_publish_runtime_config).
 # The holder is the only source of what runtime() returns; the module's `config` is assigned from the snapshot.
@@ -643,6 +695,9 @@ def _publish_boot_snapshot(boot_config: Mapping[str, Any], registry_problem: Map
 
 config = _publish_boot_snapshot(config, REGISTRY_APPLY_PROBLEM)
 CONFIG_PROBLEMS = dict(CONFIG_HOME.holder.current().problems.get("config") or {})
+# The egress map follows the config the gateway boots with (registry overlay, partial and empty fallbacks included),
+# not the bootstrap file: a service held only in the registry is mapped from the first request.
+_publish_egress(config.get("backends"))
 auth_cfg = config.get("auth", {})
 admin_cfg = config.get("admin", {}) or {}
 
@@ -661,13 +716,15 @@ def bool_from_config(value, default: bool) -> bool:
 # Proxy settings
 PROXY_HOST = config.get("proxy", {}).get("host", "127.0.0.1")
 PROXY_PORT = int(get_env("AZIZAM_PORT", config.get("proxy", {}).get("port", 5000)))
+# The LiteLLM config points its internal hop at this process's own listener, not at port 5000.
+set_own_listen_port(PROXY_PORT)
 
-def _is_chat_capable_native_backend(backend_id: str, backend_cfg: Mapping) -> bool:
-    """Return True if this backend belongs in LLM_BACKEND_HOSTS.
+def _native_backend_listed(backend_id: str, backend_cfg: Mapping, serves: Callable[[set[str]], bool]) -> bool:
+    """Whether a backend belongs in a host map: enabled, a host to proxy to, and ``serves`` its capability words.
 
     Criteria (all must hold):
     - enabled (default True when absent)
-    - has at least one of the capabilities: chat, completions
+    - ``serves`` accepts the lower-cased capability words it declares
     - is NOT the LiteLLM execution substrate (that has no host to proxy to)
 
     The LiteLLM substrate is identified by execution_substrate == "litellm" or
@@ -679,7 +736,7 @@ def _is_chat_capable_native_backend(backend_id: str, backend_cfg: Mapping) -> bo
     if isinstance(caps, (str, bytes)):
         caps = [caps]
     cap_set = {str(c).strip().lower() for c in caps if str(c).strip()}
-    if not (cap_set & {"chat", "completions"}):
+    if not serves(cap_set):
         return False
     # Exclude the LiteLLM managed substrate — it has no direct host to proxy to.
     execution_substrate = str(backend_cfg.get("execution_substrate") or "").strip().lower()
@@ -693,18 +750,22 @@ def _is_chat_capable_native_backend(backend_id: str, backend_cfg: Mapping) -> bo
     return True
 
 
-def _build_llm_backend_hosts() -> dict[str, str]:
-    """Derive the {id: "http://host:port"} map of chat-capable native backends.
+def _is_chat_capable_native_backend(backend_id: str, backend_cfg: Mapping) -> bool:
+    """Return True if this backend belongs in LLM_BACKEND_HOSTS (it has chat or completions)."""
+    return _native_backend_listed(backend_id, backend_cfg, lambda caps: bool(caps & {"chat", "completions"}))
 
-    Reads config["backends"] (a boot-time projection of the DB registry) so that
-    any service added via the admin UI and marked chat-capable is automatically
-    included after a restart.
-    """
+
+def _is_inner_hop_backend(backend_id: str, backend_cfg: Mapping) -> bool:
+    """Return True if this backend belongs in INNER_HOP_BACKEND_HOSTS: some capability it declares has an inner-hop
+    endpoint (``capability_ids.INNER_HOP_ENDPOINTS``, the one table the hop and the registry share)."""
+    return _native_backend_listed(backend_id, backend_cfg, lambda caps: bool(inner_hop_endpoints_for(caps)))
+
+
+def _backend_host_map(backends: Mapping[str, Any] | None, listed: Callable[[str, Mapping], bool]) -> dict[str, str]:
+    """``{id: "http://host:port"}`` of the backends ``listed`` accepts that have a port."""
     result: dict[str, str] = {}
-    for bid, bcfg in (config.get("backends") or {}).items():
-        if not isinstance(bcfg, Mapping):
-            continue
-        if not _is_chat_capable_native_backend(bid, bcfg):
+    for bid, bcfg in (backends or {}).items():
+        if not isinstance(bcfg, Mapping) or not listed(bid, bcfg):
             continue
         host = bcfg.get("host", "127.0.0.1")
         port = bcfg.get("port")
@@ -714,7 +775,20 @@ def _build_llm_backend_hosts() -> dict[str, str]:
     return result
 
 
+def _build_llm_backend_hosts() -> dict[str, str]:
+    """Derive the {id: "http://host:port"} map of chat-capable native backends.
+
+    Reads config["backends"] (a boot-time projection of the DB registry) so that
+    any service added via the admin UI and marked chat-capable is automatically
+    included after a restart.
+    """
+    return _backend_host_map(config.get("backends"), _is_chat_capable_native_backend)
+
+
 LLM_BACKEND_HOSTS: dict[str, str] = _build_llm_backend_hosts()
+# The backends the LiteLLM lifecycle hop proxies to: every one that declares a capability with an inner-hop endpoint,
+# an embeddings-only member included (LLM_BACKEND_HOSTS lists chat-capable backends only).
+INNER_HOP_BACKEND_HOSTS: dict[str, str] = _backend_host_map(config.get("backends"), _is_inner_hop_backend)
 
 
 def configured_backend_capabilities(backend: str) -> set[str]:
@@ -951,8 +1025,12 @@ def _tts_adapter(service_id: str = _TTS_BACKEND_ID):
     return reviewed_adapters.adapter_for_backend((config.get("backends") or {}).get(service_id) or {}, "speech")
 
 
-def _tts_connection(address: str, read_s: float | None = None) -> AdapterConnection:
-    """The speech engine at ``address``; the read timeout is every speech call's own unless a call names its own."""
+def _tts_connection(address: str, read_s: float | None = None, *, service_id: str) -> AdapterConnection:
+    """The speech engine at ``address``; the read timeout is every speech call's own unless a call names its own.
+
+    A request send needs a serving lease for ``service_id``'s residency domain (a second layer under the
+    per-route refusals)."""
+    _require_egress_lease(service_id)
     read = read_s or TTS_TIMEOUT
     return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=read, total_s=read))
 
@@ -1011,14 +1089,18 @@ def _graph_adapter(capability: str = "images"):
 _GRAPH_BINDING = _graph_adapter().binding
 
 
-def _graph_connection(first_byte_s: float | None = None) -> AdapterConnection:
+def _graph_connection(first_byte_s: float | None = None, *, probe: bool = False) -> AdapterConnection:
+    """The graph engine's connection. A request send needs a serving lease for its residency domain;
+    ``probe=True`` is for a health read, a metadata read, or an address that is only named in a message."""
+    if not probe:
+        _require_egress_lease(_GRAPH_BACKEND_ID)
     return AdapterConnection(address=COMFY_HOST, timeouts=AdapterTimeouts(
         connect_s=10, first_byte_s=first_byte_s or COMFY_TIMEOUT, total_s=first_byte_s or COMFY_TIMEOUT))
 
 
-def _graph(client: Any, capability: str = "images"):
+def _graph(client: Any, capability: str = "images", *, probe: bool = False):
     """``client`` as a session of the graph adapter: its requests are the adapter's, over the caller's connection."""
-    return _graph_adapter(capability).attach(_graph_connection(), client)
+    return _graph_adapter(capability).attach(_graph_connection(probe=probe), client)
 
 # Image cache + adaptive-batching config (Fix 1 + Fix 2: honest `n`, real URLs).
 images_cfg = config.get("images", {}) or {}
@@ -1182,19 +1264,9 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
     new_emb_enabled = bool_from_config(emb_c.get("enabled"), bool(emb_c))
     new_cfy_enabled = bool_from_config(cfy_c.get("enabled"), True)
 
-    # Build LLM_BACKEND_HOSTS from the new config — reuse the same predicate
-    # as _build_llm_backend_hosts() but over the new effective_cfg.
-    new_llm_hosts: dict[str, str] = {}
-    for bid, bcfg in (effective_cfg.get("backends") or {}).items():
-        if not isinstance(bcfg, Mapping):
-            continue
-        if not _is_chat_capable_native_backend(bid, bcfg):
-            continue
-        host = bcfg.get("host", "127.0.0.1")
-        port = bcfg.get("port")
-        if not port:
-            continue
-        new_llm_hosts[bid] = f"http://{host}:{port}"
+    # Build the host maps from the new config — the same predicates as the boot-time maps.
+    new_llm_hosts = _backend_host_map(effective_cfg.get("backends"), _is_chat_capable_native_backend)
+    new_hop_hosts = _backend_host_map(effective_cfg.get("backends"), _is_inner_hop_backend)
 
     return {
         "TTS_HOST": new_tts_host,
@@ -1207,6 +1279,7 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
         "EMBEDDINGS_ENABLED": new_emb_enabled,
         "COMFY_ENABLED": new_cfy_enabled,
         "LLM_BACKEND_HOSTS": new_llm_hosts,
+        "INNER_HOP_BACKEND_HOSTS": new_hop_hosts,
     }
 
 
@@ -1332,6 +1405,8 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     for name, value in updates.items():
         _g[name] = value
     _g["CONFIG_PROBLEMS"] = dict(snapshot.problems.get("config") or {})
+    # The send-time lease check reads the destinations of the transition-enabled domains of this config.
+    _publish_egress(new_cfg.get("backends"))
 
     print(
         f"[proxy] runtime config reloaded — "
@@ -1396,19 +1471,104 @@ async def get_active_backend() -> Optional[str]:
 _service_swap_locks: dict[str, asyncio.Lock] = {}
 
 
+def _transition_policy(name: str) -> TransitionPolicy:
+    """The residency domain and transition policy of a service id or domain key, from the current config."""
+    return policy_for(name, config.get("backends") or {})
+
+
 def swap_lock_for(service_id: str) -> asyncio.Lock:
-    """Return the swap lock for *service_id*, creating it on first call."""
-    lock = _service_swap_locks.get(service_id)
+    """Return the swap lock for *service_id*'s residency domain, creating it on first call.
+
+    Services that declare one ``residency.domain`` share one lock; a service
+    that declares none is its own domain.
+    """
+    key = _transition_policy(service_id).domain
+    lock = _service_swap_locks.get(key)
     if lock is None:
-        lock = _service_swap_locks.setdefault(service_id, asyncio.Lock())
+        lock = _service_swap_locks.setdefault(key, asyncio.Lock())
     return lock
+
+
+def _strict_service_availability_overrides() -> dict[str, Any]:
+    """The manual availability overrides (that one setting only); raises when it cannot be read (no fail-open)."""
+    return ADMIN_STORE.service_availability_overrides()
+
+
+# Longest the domain lock waits for one gate or override read (seconds).
+_ADMISSION_READ_TIMEOUT_S = 2.0
+
+
+@asynccontextmanager
+async def _admission_lock(service_id: str, *, bounded: bool = True):
+    """Hold the domain swap lock. For a transition-enabled domain, with ``bounded``,
+    wait at most its ``admission_wait_s`` (then TransitionUnavailable), and admit
+    (gate open, no restricting manual override) as soon as the lock is held, before
+    any effect in the hold. The policy is read again once the lock is held, and a
+    domain that changed while this task waited is refused. The gate retry and the
+    overrides are read off the event loop; a read error refuses."""
+    policy = _transition_policy(service_id)
+    lock = swap_lock_for(service_id)
+    await acquire_bounded(lock, policy if bounded else None)
+    try:
+        held = _transition_policy(service_id)
+        if held.domain != policy.domain and (held.enabled or policy.enabled):
+            # A reload moved the service to another domain while this task waited: the lock held is not its domain's.
+            raise TransitionUnavailable(held.domain, reason="domain_changed", retry_after_s=1, service=service_id)
+        if held.enabled:
+            # The lock is held across these two reads, so each is bounded: a slow admin.db or a saturated thread
+            # pool must not serialize every request of the domain. A read that is not done in time refuses.
+            try:
+                await asyncio.wait_for(asyncio.to_thread(TRANSITION_GATES.refresh_if_due), _ADMISSION_READ_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                pass  # the gate stays as it was in memory; an unreadable table is "reconciling" and refuses below
+            try:
+                overrides = await asyncio.wait_for(
+                    asyncio.to_thread(_strict_service_availability_overrides), _ADMISSION_READ_TIMEOUT_S)
+            except Exception as exc:  # noqa: BLE001 - an unreadable or slow override store never admits
+                print(f"[transition-gate] override read failed, refusing {held.domain!r}: {type(exc).__name__}", flush=True)
+                raise TransitionUnavailable(held.domain, reason="overrides_unreadable", retry_after_s=5) from None
+            _transition_admit(held, TRANSITION_GATES.state(held.domain), overrides)
+        yield
+    finally:
+        lock.release()
+
+
+def _require_egress_lease(service_id: str) -> None:
+    """Refuse to send request bytes to ``service_id`` unless this task holds a serving lease for its
+    residency domain (a domain that is not transition-enabled is never refused). Call it where a
+    connection, client or URL to a service is built for a request. A readiness or health probe does
+    not call it."""
+    require_egress_lease(_transition_policy(service_id), service_id)
+
+
+def _inference_connection(service_id: str, record: Mapping[str, Any] | None, *args: Any, **kwargs: Any):
+    """``inference_connection`` for a request that is about to be sent to ``service_id``: it needs a serving lease."""
+    _require_egress_lease(service_id)
+    return inference_connection(record, *args, **kwargs)
+
+
+def _admit_serving_lease(name: str) -> None:
+    """At every lease mint: refuse a transition-enabled domain whose gate is not open,
+    or whose activation step T1.1 does not support. In memory only; the manual
+    overrides were checked when the hold began (``_admission_lock``)."""
+    policy = _transition_policy(name)
+    if not policy.enabled:
+        return
+    require_supported(policy, name)
+    _transition_admit(policy, TRANSITION_GATES.state(policy.domain), {})
 
 
 # Requests in flight per swap-capable backend, so a swap can wait for them
 # (gateway/swap_drain.py). A lease is granted in the same hold of
 # swap_lock_for(backend) that made its target ready, and swaps are cleared
 # under that lock. Only active when `llm.swap_drain.enabled` is true.
-_swap_drain = SwapDrain()
+def _new_swap_drain() -> SwapDrain:
+    """The gateway's lease registry: counts per residency domain; every mint passes the transition gate."""
+    return SwapDrain(key_for=lambda name: _transition_policy(name).domain, admit=_admit_serving_lease,
+                     on_mint=record_minted_lease)
+
+
+_swap_drain = _new_swap_drain()
 
 
 def _swap_drain_settings() -> SwapDrainSettings:
@@ -1421,35 +1581,6 @@ def _swap_drain_settings() -> SwapDrainSettings:
 # systemctl restart).
 _loaded_state: dict[str, dict] = {}
 _LOADED_STATE_TTL = 5.0
-
-# Per-state_type seed strategies.  Each entry describes how to ask a live backend
-# what model it has loaded.  Add a new entry here when wiring up a new backend type
-# (vllm, ollama, etc.) — no other code needs to change.
-#
-# Keys:
-#   endpoint     – path to GET; response must be JSON
-#   model_key    – dot-path into the JSON to the loaded model identifier
-#
-# The aux (vision projector) file is not probed here: a service that has one
-# declares it in its `aux` field (see _aux_from_process).
-#
-# Dot-path format: "a.b" means data["a"]["b"].  A bare key "x" means data["x"].
-_BACKEND_STATE_STRATEGIES: dict = {
-    "llama_cpp": {
-        "endpoint": "/props",
-        "model_key": "model_path",
-    },
-    # vllm exposes /v1/models (list); take the first model id.
-    "vllm": {
-        "endpoint": "/v1/models",
-        "model_key": "data.0.id",
-    },
-    # Generic OpenAI-compatible backend (Ollama, LM Studio, etc.)
-    "openai_compatible": {
-        "endpoint": "/v1/models",
-        "model_key": "data.0.id",
-    },
-}
 
 def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
     """Walk dot-separated keys/indices into a parsed JSON structure."""
@@ -1498,15 +1629,15 @@ def _engine_probe_json_sync(backend: str, endpoint: str, timeout: float) -> Any:
     if probe is None:
         return None
     url, headers = probe
-    with httpx.Client(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
-        resp = client.get(url, headers=headers)
+    with engine_egress.client(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
+        resp = client.get(url, headers=headers, extensions=engine_egress.probe())
     return resp.json() if resp.status_code == 200 else None
 
 
 async def _get_probe_json(url: str, headers: Mapping[str, str], timeout: float) -> Any:
     """The JSON a service returns at exactly this URL, or None. Redirects are not followed."""
-    async with httpx.AsyncClient(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
-        resp = await client.get(url, headers=dict(headers))
+    async with engine_egress.async_client(timeout=timeout, verify=tls_context(), follow_redirects=False) as client:
+        resp = await client.get(url, headers=dict(headers), extensions=engine_egress.probe())
     return resp.json() if resp.status_code == 200 else None
 
 
@@ -1745,6 +1876,16 @@ async def _ensure_target(
     from gateway.engine_contract_view import offerings_config, process_config, residency_config
 
     bcfg = (config.get("backends") or {}).get(backend) or {}
+    transition = _transition_policy(backend)
+    # Step T1.1 orders no gateway-run start, switch or swap in an enabled domain.
+    require_supported(transition, backend)
+    if transition.pass_through:
+        # Another owner runs this process: never start, stop or swap it here.
+        # The request only leases (bounded, gate-checked) and forwards.
+        if not take_lease:
+            return True, None
+        async with _admission_lock(backend):
+            return True, _swap_drain.lease(backend)
     # The legacy backend projection keys records by id; owned-process state
     # needs that immutable id even before the v2 registry projection lands.
     if (bcfg.get("process") or {}).get("driver") == "process" or (
@@ -1805,7 +1946,7 @@ async def _ensure_target(
                     driver.request_started(bcfg)
                 leased = False
                 try:
-                    async with swap_lock_for(backend):
+                    async with _admission_lock(backend):
                         await _swap_drain.clear_for_swap(
                             backend, SwapDrainSettings(enabled=True, timeout_s=30)
                         )
@@ -1822,7 +1963,7 @@ async def _ensure_target(
         if owned_process:
             driver.request_started(bcfg)
         try:
-            async with swap_lock_for(backend):
+            async with _admission_lock(backend):
                 return True, _swap_drain.lease(
                     backend, on_release=(lambda: driver.request_finished(bcfg)) if owned_process else None
                 )
@@ -1844,7 +1985,7 @@ async def _ensure_target(
 
     # The driver does the already-loaded short-circuit and pin-loaded skip from
     # SwapContext — no engine literal appears here.
-    async with swap_lock_for(backend):
+    async with _admission_lock(backend, bounded=take_lease):
         ctx = SwapContext(
             loaded_model=await _currently_loaded_model_for(backend),
             target_model=model,
@@ -1878,7 +2019,9 @@ async def _ensure_target_leased(
 ) -> tuple[bool, Optional[ServingLease]]:
     """ensure_target for one upstream forward, plus a lease that holds off swaps.
 
-    Returns (ready, lease). The lease is None when `llm.swap_drain` is off.
+    Returns (ready, lease). The lease is None when `llm.swap_drain` is off,
+    unless the service's residency domain is transition-enabled: then a lease is
+    always taken, and the gate may refuse it (TransitionUnavailable).
     The caller must release the lease after the final upstream byte, on error
     and on cancellation (ServingLease.hand_off does this for a stream).
 
@@ -1895,13 +2038,43 @@ async def _ensure_target_leased(
         (item.get("selection") or {}).get("implicit_load") is False
         for item in declared_offerings
     )
-    if not _swap_drain_settings().enabled and process_config(bcfg).get("driver") != "process" and not contract_lease:
+    if (not _swap_drain_settings().enabled and process_config(bcfg).get("driver") != "process"
+            and not contract_lease and not _transition_policy(backend).enabled):
         ready = await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile)
         return ready, None
     return await _ensure_target(
         backend, activation.model, activation.mmproj, activation.profile,
         take_lease=True, offering_id=activation.offering_id,
     )
+
+
+# Refusals that last until the configuration or the gateway changes, not until a transition ends.
+_TRANSITION_UNSUPPORTED_REASONS = frozenset({"activation_not_supported", "path_not_leased", "unleased_forward"})
+
+
+def _transition_error_code(refused: TransitionUnavailable) -> str:
+    return "transition_unsupported" if refused.reason in _TRANSITION_UNSUPPORTED_REASONS else "engine_transitioning"
+
+
+def _transition_unavailable_response(refused: TransitionUnavailable) -> Response:
+    """503 for a lease the transition gate refused. Nothing was dispatched."""
+    if refused.reason in _TRANSITION_UNSUPPORTED_REASONS:
+        response = openai_error_response(
+            "This engine's residency domain enables transitions, and this gateway does not lease this kind "
+            "of request for it yet.",
+            status_code=503,
+            error_type="service_unavailable",
+            code="transition_unsupported",
+        )
+    else:
+        response = openai_error_response(
+            "The engine is changing state and is not admitting requests now. Retry after the stated delay.",
+            status_code=503,
+            error_type="service_unavailable",
+            code="engine_transitioning",
+        )
+    response.headers["Retry-After"] = str(refused.retry_after_s)
+    return response
 
 
 def _swap_deferred_response(requested_model: str, deferred: SwapDeferred) -> Response:
@@ -2042,6 +2215,9 @@ def _load_admin_oidc_config():
 
 
 ADMIN_DB_PATH = _admin_db_path()
+# Gate state per residency domain. Loaded before the first request is admitted.
+TRANSITION_GATES = GateStore(ADMIN_DB_PATH.parent / "transition.db")
+TRANSITION_GATES.load()
 from gateway import secret_refs  # noqa: E402 - secret references resolve against this database
 secret_refs.use_database_of(lambda: ADMIN_DB_PATH)
 ADMIN_OIDC_CONFIG = _load_admin_oidc_config()
@@ -3290,6 +3466,8 @@ async def _ensure_litellm_local_backend_target(
         )
     except SwapDeferred as deferred:
         return _swap_deferred_response(requested_model, deferred)
+    except TransitionUnavailable as refused:
+        return _transition_unavailable_response(refused)
     except SwapRecoveryFailed as failed:
         return _swap_recovery_failed_response(requested_model, failed)
     if ready:
@@ -3574,7 +3752,7 @@ async def refresh_openai_model_aliases() -> int:
         print("Set OPENAI_MODEL_DISCOVERY_API_KEY or OPENAI_API_KEY to refresh model aliases.", file=sys.stderr)
         return 2
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+    async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
         resp = await client.get(
             OPENAI_MODELS_API_URL,
             headers={"Authorization": f"Bearer {api_key}"},
@@ -3645,8 +3823,8 @@ async def probe_backend(
     authority = f"{host}:{port}" if port else str(host)
     url = f"{scheme}://{authority}{safe_path}"
     try:
-        async with httpx.AsyncClient(verify=tls_context()) as client:
-            resp = await client.get(url, timeout=HEALTH_CHECK_TIMEOUT)
+        async with engine_egress.async_client(verify=tls_context()) as client:
+            resp = await client.get(url, timeout=HEALTH_CHECK_TIMEOUT, extensions=engine_egress.probe())
         body: Any = None
         try:
             ct = resp.headers.get("content-type", "")
@@ -3727,8 +3905,8 @@ async def _probe_service_resource_fact(bcfg: Mapping[str, Any]) -> dict[str, Any
     # accidentally inherit very long service timeouts (e.g. TTS: 86400 s).
     timeout = min(timeout, HEALTH_CHECK_TIMEOUT)
     try:
-        async with httpx.AsyncClient(verify=tls_context()) as client:
-            resp = await client.get(url, timeout=timeout, **({"headers": headers} if headers else {}))
+        async with engine_egress.async_client(verify=tls_context()) as client:
+            resp = await client.get(url, timeout=timeout, extensions=engine_egress.probe(), **({"headers": headers} if headers else {}))
             if 200 <= resp.status_code < 300:
                 return {"status": "available"}
             if resp.status_code in {502, 503, 504}:
@@ -4014,12 +4192,16 @@ async def _probe_voice_quality(reference: Path) -> dict[str, Any] | None:
     service_id, base_url = endpoint
     reason = "engine_unavailable"
     for attempt in range(3):
-        if await _ensure_speech_service_ready(service_id, label="TTS engine") is not None:
+        not_ready = await _ensure_speech_service_ready(service_id, label="TTS engine")
+        if not_ready is not None:
+            code = _readiness_refusal(not_ready)[0]
+            if code in {"transition_unsupported", "engine_transitioning"}:
+                return {"error": code}  # a gate refusal keeps its code; waiting does not change it
             reason = "engine_would_not_start"
         else:
             try:
                 resp = await _tts_adapter(service_id).invoke(
-                    _tts_connection(base_url, 120), "speech.voice_check",
+                    _tts_connection(base_url, 120, service_id=service_id), "speech.voice_check",
                     AdapterRequest(op="speech.voice_check", body={"voice_ref": str(reference)}),
                 )
                 if resp.status == 200:
@@ -4054,10 +4236,11 @@ async def _design_voice(instruct: str, script: str, seed: int) -> bytes:
     service_id, base_url = endpoint
     not_ready = await _ensure_speech_service_ready(service_id, label="Voice design engine")
     if not_ready is not None:
-        raise custom_voices.VoiceError(503, "backend_unavailable", "The voice design engine could not be started.")
+        code, retry_after = _readiness_refusal(not_ready)
+        raise custom_voices.VoiceError(503, code, "The voice design engine could not be started.", retry_after=retry_after)
     try:
         resp = await _tts_adapter(service_id).invoke(
-            _tts_connection(base_url, 180), "speech.design",
+            _tts_connection(base_url, 180, service_id=service_id), "speech.design",
             AdapterRequest(op="speech.design", body=voice_design.design_request(
                 _voice_design_settings(), script=script, instructions=instruct, seed=seed)),
         )
@@ -4095,6 +4278,7 @@ async def _reference_transcript(
             parts={"file": ("reference.wav", reference.read_bytes(), "audio/wav")},
             body={"model": str(stt.get("default_model") or "parakeet-tdt-0.6b-v3")},
         )
+        _require_egress_lease("stt")
         resp = await _stt_adapter(stt).invoke(
             AdapterConnection(address=f"http://{stt['host']}:{stt['port']}",
                               timeouts=AdapterTimeouts(connect_s=10, first_byte_s=120, total_s=120)),
@@ -4190,13 +4374,47 @@ def _service_has_managed_lifecycle(service_id: str) -> bool:
     return driver != "external"
 
 
+def _unleased_path_refusal(service_id: str | None) -> Response | None:
+    """A 503 for a hop that holds no serving lease, when ``service_id`` is in a transition-enabled domain."""
+    if not service_id:
+        return None
+    policy = _transition_policy(service_id)
+    if not policy.enabled:
+        return None
+    return _transition_unavailable_response(
+        TransitionUnavailable(policy.domain, reason="path_not_leased", service=service_id))
+
+
+def _readiness_refusal(response: Response) -> tuple[str, int]:
+    """``(code, retry_after_s)`` of the refusal ``_ensure_speech_service_ready`` answered.
+
+    A caller that cannot return the Response itself (a probe, a voice error, a rerank or realtime
+    error shape) passes these on, so a gate refusal keeps its code and its delay.
+    """
+    try:
+        code = str(json.loads(bytes(response.body))["error"]["code"] or "")
+    except (ValueError, KeyError, TypeError):
+        code = ""
+    try:
+        retry_after = max(1, int(response.headers.get("Retry-After") or 5))
+    except ValueError:
+        retry_after = 5
+    return code or "backend_unavailable", retry_after
+
+
 async def _ensure_speech_service_ready(service_id: str, *, label: str) -> Response | None:
     """Start an on-demand speech service through its lifecycle driver.
 
     Always-on (``external``) services are not probed. For a managed service a
     single health GET decides whether the unit is up; only a down service pays
     the ``systemctl start`` + health poll in ``ensure_target``.
+
+    These hops (speech, rerank, realtime, decisions) hold no serving lease yet,
+    so a transition-enabled domain refuses them here (fail closed).
     """
+    refusal = _unleased_path_refusal(service_id)
+    if refusal is not None:
+        return refusal
     if not _service_has_managed_lifecycle(service_id):
         return None
     from gateway.lifecycle_drivers import _poll_health
@@ -4252,6 +4470,7 @@ async def _stream_tts_upstream(
     response_format: str,
     native_rate: int,
     service_id: str = _TTS_BACKEND_ID,
+    host_service_id: str | None = None,
 ) -> Response:
     """Forward an engine's PCM stream to the client while it is still synthesizing.
 
@@ -4266,8 +4485,10 @@ async def _stream_tts_upstream(
     # including cancellation.
     try:
         try:
+            # The host in ``url`` can belong to another service than ``service_id``: both need the lease.
+            _require_egress_lease(host_service_id or service_id)
             upstream = await _tts_adapter(service_id).invoke(
-                _tts_connection(url.removesuffix(tts_adapter.SPEECH_PATH)), "speech.stream",
+                _tts_connection(url.removesuffix(tts_adapter.SPEECH_PATH), service_id=service_id), "speech.stream",
                 AdapterRequest(op="speech.stream", headers=headers, raw_body=body),
             )
             if isinstance(upstream, AdapterReply):
@@ -4276,6 +4497,8 @@ async def _stream_tts_upstream(
                     return _tts_gpu_memory_response()
                 return client_errors.upstream_error_response(refused.status, refused.raw, refused.headers,
                                                              request_fields=_request_fields(body))
+        except TransitionUnavailable as refused:
+            return _transition_unavailable_response(refused)
         except TransportFailure as e:
             if e.kind == "timeout":
                 return _tts_error("TTS request timeout", 504)
@@ -4529,10 +4752,14 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     if not_ready is not None:
         return not_ready
 
+    # The host can belong to another service than ``tts_service_id``; the lease check names both.
+    _tts_selected = service_for_capability("audio.speech")
+    _tts_host_service = _tts_selected[0] if _tts_selected else tts_service_id
     _tts_host = host_for_capability("audio.speech") or (TTS_HOST if TTS_ENABLED else None) or TTS_HOST
     if tts_service_id != "tts":
         _engine_service = (config.get("backends") or {}).get(tts_service_id) or {}
         _tts_host = f"http://{_engine_service.get('host')}:{_engine_service.get('port')}"
+        _tts_host_service = tts_service_id
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
         service_available=TTS_ENABLED, resource_class="audio", receipt=receipt,
@@ -4555,12 +4782,14 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             response_format=requested_response_format,
             native_rate=native_rate,
             service_id=tts_service_id,
+            host_service_id=_tts_host_service,
         )
 
     try:
         # The adapter owns the HTTP client; the answer handling below is unchanged.
+        _require_egress_lease(_tts_host_service)
         resp = await _tts_adapter(tts_service_id).invoke(
-            _tts_connection(_tts_host), "speech.synthesize",
+            _tts_connection(_tts_host, service_id=tts_service_id), "speech.synthesize",
             AdapterRequest(op="speech.synthesize", headers=headers, raw_body=body),
         )
 
@@ -4634,6 +4863,8 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             media_type=content_type
         )
 
+    except TransitionUnavailable as refused:
+        return _transition_unavailable_response(refused)
     except TransportFailure as e:
         if e.kind == "timeout":
             return _tts_error("TTS request timeout", 504)
@@ -4681,7 +4912,10 @@ def _stt_adapter(record: Mapping[str, Any]):
 
 
 def _stt_connection(execution: stt_chunking.SttExecutionConfig) -> AdapterConnection:
-    """The STT engine of one execution snapshot, with the timeouts its requests have always had."""
+    """The STT engine of one execution snapshot, with the timeouts its requests have always had.
+
+    A request send needs a serving lease for the service's residency domain."""
+    _require_egress_lease(execution.service_id)
     return AdapterConnection(address=execution.host, timeouts=AdapterTimeouts(
         connect_s=min(10.0, execution.timeout_seconds), first_byte_s=execution.timeout_seconds,
         total_s=execution.timeout_seconds))
@@ -5633,7 +5867,7 @@ def load_graph_workflow(model_name: str) -> Optional[dict]:
 
 def _graph_node_info(class_type: str) -> Optional[dict]:
     """A node type's slot definitions from ComfyUI /object_info (cached), or None."""
-    return node_info.lookup(_graph_connection().address, class_type)
+    return node_info.lookup(_graph_connection(probe=True).address, class_type)
 
 
 def _derive_ui_workflow(api: Mapping[str, Any]) -> Optional[dict]:
@@ -6078,7 +6312,7 @@ async def graph_vram_snapshot(
 ) -> tuple[Optional[int], Optional[int]]:
     """Return (free, total) VRAM bytes on GPU0 from the engine's system stats."""
     try:
-        reply = await _graph(client).stats(timeout=HEALTH_CHECK_TIMEOUT)
+        reply = await _graph(client, probe=True).stats(timeout=HEALTH_CHECK_TIMEOUT)
         if reply.status != 200:
             return None, None
         payload = reply.json()
@@ -6748,8 +6982,17 @@ async def decide_image_background_removal(
         "response_format": {"type": "json_object"},
         "chat_template_kwargs": {_QWEN3_ENABLE_THINKING_KEY: False},
     }
+    lease = None
+    if _transition_policy(service).enabled:
+        # A transition-enabled domain is sent nothing unleased: one lease, from a gate-checked hold.
+        try:
+            async with _admission_lock(service):
+                lease = _swap_drain.lease(service)
+        except TransitionUnavailable as refused:
+            return _background_removal_fallback("llm_unavailable", f"residency domain not admitting ({refused.reason})")
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(IMAGE_BACKGROUND_REMOVAL_TIMEOUT, connect=5)) as client:
+        _require_egress_lease(service)
+        async with engine_egress.async_client(timeout=httpx.Timeout(IMAGE_BACKGROUND_REMOVAL_TIMEOUT, connect=5)) as client:
             resp = await client.post(f"{target_host}/v1/chat/completions", headers=headers, json=payload)
         if resp.status_code != 200:
             return _background_removal_fallback("llm_error", log_scrub.describe_response(resp, "the chat engine refused the request"))
@@ -6762,6 +7005,9 @@ async def decide_image_background_removal(
         return parse_background_removal_decision(content, source="llm")
     except Exception as e:
         return _background_removal_fallback("llm_error", log_scrub.describe_error(e))
+    finally:
+        if lease is not None:
+            lease.release()
 
 
 def set_workflow_background_removal(workflow: dict, meta: dict, enabled: bool) -> bool:
@@ -7514,7 +7760,7 @@ def _graph_failure_response(error: Exception) -> Response | None:
         )
     if kind == "unreachable" or isinstance(error, httpx.ConnectError):
         return Response(
-            content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection()), "type": "api_error"}}),
+            content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection(probe=True)), "type": "api_error"}}),
             status_code=502,
             media_type="application/json",
         )
@@ -8496,7 +8742,7 @@ async def proxy_graph_image_request(
         workflow_name_for_batching = workflow_name
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
             admission = _dispatch_admission_response(
                 "image.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
@@ -8920,7 +9166,7 @@ async def proxy_graph_image_edit_request(
     if target_decision is not None and target_decision.denied:
         return _policy_denied_response(target_decision)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
             image_content = await image_file.read()
             # What the caller gave the workflow, before any mask is applied: the result keeps these as its sources.
             made_from = [_upload_as_output_input(image_file, image_content)]
@@ -9839,7 +10085,7 @@ async def _fetch_graph_state() -> tuple[Optional[set[str]], Optional[dict]]:
     Returns (None, None) on any error. Uses 2s timeouts per the spec.
     """
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=2.0), verify=tls_context()) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(2.0, connect=2.0), verify=tls_context()) as client:
             graph = _graph(client, "videos")
             q_resp = await graph.queue()
             h_resp = await graph.history_page(_VIDEO_RECONCILE_HISTORY_LIMIT)
@@ -9982,7 +10228,7 @@ async def _graph_ws_listener(stop_event: asyncio.Event) -> None:
     global _graph_ws_connected
     adapter = _graph_adapter("videos")
     engine = adapter.label
-    conn = _graph_connection()
+    conn = _graph_connection(probe=True)  # a push subscription: the engine's events come in, no request payload goes out
     backoff = 1.0
     last_gc = time.time()
 
@@ -10199,7 +10445,7 @@ async def _graph_queue_status(client: httpx.AsyncClient, prompt_id: str, headers
 def _graph_video_unavailable_response() -> Response:
     """502 for a video route whose engine could not be reached; the engine's name is the adapter's label."""
     return Response(
-        content=json.dumps({"error": {"message": _graph_adapter("videos").unavailable_message(_graph_connection()),
+        content=json.dumps({"error": {"message": _graph_adapter("videos").unavailable_message(_graph_connection(probe=True)),
                                       "type": "api_error"}}),
         status_code=502,
         media_type="application/json"
@@ -10499,7 +10745,7 @@ async def _load_completed_video_bytes(
     if _video_job_blocked(prompt_id, auth_context):
         raise _VideoAssetError("video_id not found", param=param, status=404)
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+    async with engine_egress.async_client(timeout=httpx.Timeout(120, connect=10)) as client:
         job = await _graph_history(client, prompt_id, headers)
         if job is None:
             raise _VideoAssetError("video_id not found", param=param, status=404)
@@ -10678,7 +10924,7 @@ async def _upload_video_workflow_assets(
     block = dict(extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {})
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(120, connect=10)) as client:
             graph = _graph(client, "videos")
             for name, (data, filename, mime) in assets.items():
                 resp = await graph.upload({"image": (filename, data, mime)}, headers=headers)
@@ -10723,7 +10969,7 @@ async def _submit_video_graph(
     """
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             admission = _dispatch_admission_response(
                 "video.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
                 service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
@@ -11496,7 +11742,7 @@ async def proxy_graph_video_create(
         # Upload to the engine's input cache (same upload used by image-edit).
         upload_headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10)) as upload_client:
+            async with engine_egress.async_client(timeout=httpx.Timeout(60, connect=10)) as upload_client:
                 files = {"image": (image_filename, image_bytes, "image/png")}
                 upload_resp = await _graph(upload_client, "videos").upload(files, headers=upload_headers)
         except Exception:
@@ -11800,7 +12046,7 @@ async def _upload_graph_input(data: bytes, filename: str, mime: str, auth_contex
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     engine = _graph_adapter("videos").label
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(120, connect=10)) as client:
             resp = await _graph(client, "videos").upload({"image": (filename, data, mime)}, headers=headers)
     except TransportFailure as exc:
         raise _VideoAssetError(f"{engine} upload failed.", status=502) from exc
@@ -12102,7 +12348,7 @@ async def proxy_graph_video_status(video_id: str, auth_context: AuthContext) -> 
 
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             job = await _graph_history(client, prompt_id, headers)
             if job is None:
                 # Not in history yet — prefer live ws state, fall back to /queue.
@@ -12226,7 +12472,7 @@ async def proxy_graph_video_content(
 
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(60, connect=10)) as client:
             job = await _graph_history(client, prompt_id, headers)
             if job is None:
                 live = _video_progress_snapshot(prompt_id)
@@ -12512,7 +12758,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     data: list[dict[str, Any]] = []
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             for prompt_id, record in page:
                 video_id = _video_id_from_prompt_id(prompt_id)
                 job = await _graph_history(client, prompt_id, headers)
@@ -12622,7 +12868,7 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
 
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             job = await _graph_history(client, prompt_id, headers)
             if job is not None:
                 current_status, _ = _job_status_from_history(job)
@@ -13336,6 +13582,12 @@ async def _serve(app: FastAPI):
 tls_context()
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+
+
+@app.exception_handler(TransitionUnavailable)
+async def _transition_unavailable_handler(_request: Request, exc: TransitionUnavailable) -> Response:
+    """A gate refusal no route caught still answers in the gateway's error shape, with its Retry-After, never FastAPI's ``{"detail"}``."""
+    return _transition_unavailable_response(exc)
 
 
 @app.exception_handler(RegistryNotApplied)
@@ -15310,10 +15562,23 @@ async def _decision_ensure_ready(service: str) -> Response | None:
 
 
 def _decision_dispatch_admission(auth: AuthContext, service_id: str | None) -> Response | None:
+    # Decision dispatch holds no serving lease; a transition-enabled domain refuses it.
+    refusal = _unleased_path_refusal(service_id)
+    if refusal is not None:
+        return refusal
     return _dispatch_admission_response(
         "decision.systemone", auth_context=auth, service_id=service_id,
         resource_class="decision",
     )
+
+
+def _egress_refusal_response(service_id: str) -> Response | None:
+    """A 503 when this task holds no serving lease for ``service_id``'s enabled domain; checked just before the send."""
+    try:
+        _require_egress_lease(service_id)
+    except TransitionUnavailable as refused:
+        return _transition_unavailable_response(refused)
+    return None
 
 
 DECISION_RUNTIME = DecisionRuntime(
@@ -15322,6 +15587,7 @@ DECISION_RUNTIME = DecisionRuntime(
     _decision_ensure_ready,
     catalog_authorize=_decision_catalog_authorized,
     admit=_decision_dispatch_admission,
+    egress_refusal=_egress_refusal_response,
 )
 
 
@@ -15570,7 +15836,8 @@ MESH_DEPS = mesh_api.MeshApiDeps(
     services=lambda: (_live_service_registry() or {}).get("services") or {},
     open_receipt=_mesh_open_receipt,
     leases=MESH_LEASES,
-    client_factory=lambda: httpx.AsyncClient(follow_redirects=False),
+    egress_refusal=_egress_refusal_response,
+    client_factory=lambda: engine_egress.async_client(follow_redirects=False),
     new_request_id=new_request_id,
     route_policy=_mesh_route_policy,
     store_output=lambda auth, output: store_workflow_output(auth, output),
@@ -15622,7 +15889,13 @@ def _identity_face_cfg() -> Mapping[str, Any]:
     return cfg if isinstance(cfg, Mapping) else {}
 
 
+_IDENTITY_FACE_SERVICE_ID = "faces"
+
+
 def _identity_face_client() -> identity_api.FaceServiceClient:
+    """The face sidecar's client. It is config data, not a registry service: its id is its own domain, so a
+    transition-enabled domain never names it, and the check keeps a future declared domain from reaching it unleased."""
+    _require_egress_lease(_IDENTITY_FACE_SERVICE_ID)
     bcfg = _identity_face_cfg()
     return identity_api.FaceServiceClient(
         f"http://{bcfg.get('host', '127.0.0.1')}:{bcfg.get('port', 8021)}",
@@ -15686,7 +15959,7 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
     if not COMFY_ENABLED:
         raise RuntimeError(f"{engine} media backend is disabled")
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+    async with engine_egress.async_client(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
         for node_id, content in uploads.items():
             try:
                 name, upload_error = await _upload_graph_image_bytes(
@@ -16025,7 +16298,7 @@ def _validate_admin_oidc_db_candidate(db_value: Mapping[str, Any]) -> bool:
 async def _provider_discovery(issuer: str):
     """The provider's OpenID discovery document: its endpoints, and its sign-out address when it publishes one."""
     discovery_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with engine_egress.async_client(timeout=10) as client:
         response = await client.get(discovery_url)
         response.raise_for_status()
         return response.json()
@@ -16049,7 +16322,7 @@ async def _admin_oidc_config_with_discovery():
 
 async def _oidc_exchange_code(code: str, *, config, pkce: PKCEPair) -> dict[str, Any]:
     log_scrub.remember(config.client_secret, "oidc-client-secret")
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with engine_egress.async_client(timeout=20) as client:
         response = await client.post(
             config.token_endpoint,
             data={
@@ -16910,8 +17183,8 @@ async def _models_catalog_health_evidence(
         if not url.startswith(("http://", "https://")):
             return None
         try:
-            async with httpx.AsyncClient(timeout=0.75, verify=context) as client:
-                response = await client.get(url)
+            async with engine_egress.async_client(timeout=0.75, verify=context) as client:
+                response = await client.get(url, extensions=engine_egress.probe())
         except httpx.TimeoutException as exc:
             raise HealthProbeTimedOut() from exc
         except httpx.ConnectError as exc:
@@ -19804,15 +20077,24 @@ async def _handle_rerank(request: Request, path: str) -> Response:
 
     service_id = str(resolution.service or "")
     service = (config.get("backends") or {}).get(service_id) or {}
-    if await _ensure_speech_service_ready(service_id, label="Rerank engine") is not None:
+    not_ready = await _ensure_speech_service_ready(service_id, label="Rerank engine")
+    if not_ready is not None:
+        code, retry_after = _readiness_refusal(not_ready)
         return _rerank_error(
-            503, "The rerank engine could not be started.", code="backend_unavailable",
-            tei=tei, kind="api_error", headers={"Retry-After": "5"},
+            503, "The rerank engine could not be started.", code=code,
+            tei=tei, kind="api_error", headers={"Retry-After": str(retry_after)},
+        )
+    try:
+        _require_egress_lease(service_id)
+    except TransitionUnavailable as refused:
+        return _rerank_error(
+            503, "The rerank engine is not admitting requests.", code=_transition_error_code(refused), tei=tei,
+            kind="api_error", headers={"Retry-After": str(refused.retry_after_s)},
         )
     url = f"http://{service['host']}:{service['port']}/v1/rerank"
     timeout = float(service.get("timeout") or 120)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(timeout, connect=10)) as client:
             upstream = await client.post(url, json=rerank_api.upstream_body(req, resolution.upstream_model))
     except httpx.HTTPError as exc:
         return _rerank_error(502, f"The rerank engine did not answer: {type(exc).__name__}.", code="backend_error", tei=tei, kind="api_error")
@@ -19915,8 +20197,14 @@ async def _handle_realtime(websocket: WebSocket) -> None:
     # Accept before starting the service: the server drops a handshake left open
     # for 10 s, and a cold start takes longer. Later failures are Realtime error events.
     await websocket.accept(subprotocol=realtime_proxy.accepted_subprotocol(offered))
-    if await _ensure_speech_service_ready(_REALTIME_SERVICE_ID, label="Realtime service") is not None:
-        return await _fail_open_realtime(websocket, "The Realtime service could not be started.", "backend_unavailable")
+    not_ready = await _ensure_speech_service_ready(_REALTIME_SERVICE_ID, label="Realtime service")
+    if not_ready is not None:
+        return await _fail_open_realtime(
+            websocket, "The Realtime service could not be started.", _readiness_refusal(not_ready)[0])
+    try:
+        _require_egress_lease(_REALTIME_SERVICE_ID)
+    except TransitionUnavailable as refused:
+        return await _fail_open_realtime(websocket, "The Realtime service is not admitting sessions.", _transition_error_code(refused))
     url = realtime_proxy.upstream_url(str(service.get("host") or "127.0.0.1"), int(service["port"]), dict(websocket.query_params))
     try:
         upstream = await ws_connect(
@@ -20661,7 +20949,7 @@ async def _proxy_offset_inpaint_tile_request(
     rounds = 0
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
             for index in range(n):
                 base_seed = (
                     fixed_seed_int + (index * 2)
@@ -25144,7 +25432,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         receipt.backend = _GRAPH_BACKEND_ID
         _capture_retention_facts(receipt)
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+    async with engine_egress.async_client(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
         graph = _graph(client, "videos")
         for input_name, (filename, raw_bytes, content_type) in asset_uploads.items():
             upload = await graph.upload({"image": (filename, raw_bytes, content_type)}, headers=headers)
@@ -25666,7 +25954,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
         _capture_retention_facts(receipt)
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             graph = _graph(client, "audio.generate")
             admission = _dispatch_admission_response(
                 "audio.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
@@ -25795,7 +26083,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             )
         if e.kind == "unreachable":
             return Response(
-                content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection()), "type": "api_error"}}),
+                content=json.dumps({"error": {"message": adapter.unavailable_message(_graph_connection(probe=True)), "type": "api_error"}}),
                 status_code=502,
                 media_type="application/json"
             )
@@ -27208,7 +27496,7 @@ async def _forward_chat_completions(
         parent_request_id=parent_request_id,
         read_timeout=UPSTREAM_READ_TIMEOUT,
     )
-    client = httpx.AsyncClient(timeout=loopback_request.timeout)
+    client = engine_egress.async_client(timeout=loopback_request.timeout)
     if stream:
         # The caller owns the client only once it is returned.
         try:
@@ -27257,7 +27545,7 @@ async def _forward_embeddings(
         source_headers=_protocol_loopback_source_headers(request),
         read_timeout=EMBEDDINGS_TIMEOUT,
     )
-    client = httpx.AsyncClient(timeout=loopback_request.timeout)
+    client = engine_egress.async_client(timeout=loopback_request.timeout)
     try:
         with _identity_handoff(auth_context) as handoff:
             return await client.post(
@@ -29002,6 +29290,22 @@ def _normalize_litellm_local_model_name(value: Any) -> str:
     return model
 
 
+def _backend_serves_inner_endpoint(backend: str, endpoint: str) -> bool:
+    """Whether the lifecycle hop answers ``endpoint`` for ``backend``: a capability it declares maps to it.
+
+    A backend that declares no capability serves the chat endpoints, and ``/chat/completions`` is always
+    served (the hop's first endpoint, which backends were never required to declare).
+    """
+    if endpoint == "/chat/completions":
+        return True
+    record = (config.get("backends") or {}).get(backend)
+    words = [str(word) for word in (record.get("capabilities") or [])] if isinstance(record, Mapping) and isinstance(
+        record.get("capabilities"), (list, tuple)) else []
+    if not words:
+        return endpoint in INNER_HOP_ENDPOINTS["chat"]
+    return endpoint in inner_hop_endpoints_for(words)
+
+
 def _litellm_local_activation_target(
     backend: str,
     requested_model: str,
@@ -29750,11 +30054,15 @@ async def _forward_current_loaded_openai_request(
         # forwarding, or reporting, the model it replaced. The lock also makes
         # this request queue behind a pending swap instead of starving it.
         lease: Optional[ServingLease] = None
-        if _swap_drain_settings().enabled:
-            async with swap_lock_for(target.backend):
-                loaded_model = await current_llm_model_for_backend(target.backend)
-                if loaded_model:
-                    lease = _swap_drain.lease(target.backend)
+        if _swap_drain_settings().enabled or _transition_policy(target.backend).enabled:
+            try:
+                async with _admission_lock(target.backend):
+                    loaded_model = await current_llm_model_for_backend(target.backend)
+                    if loaded_model:
+                        lease = _swap_drain.lease(target.backend)
+            except TransitionUnavailable as refused:
+                owner.report(status="failed", reason="failed")
+                return _transition_unavailable_response(refused)
             if not loaded_model:
                 owner.report(status="failed", reason="failed")
                 return _current_model_unavailable_response(target.backend)
@@ -29782,10 +30090,13 @@ async def _forward_current_loaded_openai_request(
             query = backend_query_string(request.url.query)
             record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(target.backend)
             try:
-                connection = inference_connection(
-                    record, request_path.removeprefix("/v1"), fallback_address=f"{target.host}/v1",
+                connection = _inference_connection(
+                    target.backend, record, request_path.removeprefix("/v1"), fallback_address=f"{target.host}/v1",
                     fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
                 )
+            except TransitionUnavailable as refused:
+                owner.report(status="failed", reason="failed")
+                return _transition_unavailable_response(refused)
             except InferenceConnectionError as exc:
                 owner.report(status="failed", reason="configuration_error")
                 return openai_error_response(str(exc), status_code=503, code="engine_credential_unavailable")
@@ -30687,11 +30998,24 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
     store = GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=_asset_owner_key(auth_context))
     lease = None
     try:
-        runtime = await asyncio.to_thread(protocol_dispatch.Runtime, target, assets=store)
+        runtime = await asyncio.to_thread(
+            protocol_dispatch.Runtime, target, assets=store, egress=lambda: _require_egress_lease(target.engine_id))
         # Check this operation's key before a selection call can change state.
         await asyncio.to_thread(runtime.connection_for, op)
-        lease = await runtime.lease(drain=_swap_drain, lock_for=swap_lock_for,
-                                    may_switch=_target_activation(auth_context) != "existing_only")
+        transition = _transition_policy(target.engine_id)
+        if transition.enabled:
+            # A transition-enabled domain is pass-through in step T1.1: no selection
+            # call; one lease, minted in a gate-checked domain hold, before dispatch.
+            require_supported(transition, target.engine_id)
+            if offering_effect(target.offering) is not None:
+                # The offering needs a gateway-run effect (a switch, or no implicit load), which pass-through
+                # does not have: the registry refuses it, and this refuses a record that arrived another way.
+                raise TransitionUnavailable(transition.domain, reason="activation_not_supported", service=target.engine_id)
+            async with _admission_lock(target.engine_id):
+                lease = _swap_drain.lease(target.engine_id)
+        else:
+            lease = await runtime.lease(drain=_swap_drain, lock_for=swap_lock_for,
+                                        may_switch=_target_activation(auth_context) != "existing_only")
         if op == "images":
             _mark_backend_started(receipt)
             response = await _protocol_image_result(runtime, body, request, auth_context, receipt, store)
@@ -30766,6 +31090,8 @@ async def _try_protocol_request(request, auth_context, op, *, body=None, receipt
         if _ADMISSION_WORKER.get():
             raise
         response = openai_error_response("Generation was canceled by the requester.", status_code=409, code="job_canceled")
+    except TransitionUnavailable as refused:
+        response = _transition_unavailable_response(refused)
     except ProtocolSwitchUnavailable as error:
         logging.getLogger("gateway.engine_protocol").warning("Engine selection failed (%s).", type(error).__name__)
         response = openai_error_response("The engine selection could not be completed or verified.", status_code=503, code="selection_unavailable")
@@ -30916,6 +31242,7 @@ async def _forward_internal_litellm_local_chat_completions(
     request: Request,
     *,
     backend: str,
+    endpoint: str = "/chat/completions",
 ) -> Response | StreamingResponse:
     if not _is_internal_litellm_lifecycle_request(request):
         return openai_error_response(
@@ -30926,7 +31253,7 @@ async def _forward_internal_litellm_local_chat_completions(
         )
 
     backend = normalize_model_id(backend)
-    upstream_base = LLM_BACKEND_HOSTS.get(backend, "").rstrip("/")
+    upstream_base = INNER_HOP_BACKEND_HOSTS.get(backend, "").rstrip("/")
     if not upstream_base:
         return openai_error_response(
             f"Unknown local LLM backend: {backend!r}.",
@@ -30951,6 +31278,13 @@ async def _forward_internal_litellm_local_chat_completions(
         backend,
         target_model,
     )
+    if not _backend_serves_inner_endpoint(backend, endpoint):
+        return openai_error_response(
+            f"Local backend {backend!r} does not serve {endpoint}.",
+            status_code=404,
+            error_type="invalid_request_error",
+            code="endpoint_not_served",
+        )
 
     availability = (await asyncio.to_thread(_service_availability_response, backend, service_label=backend))
     if availability is not None:
@@ -30962,6 +31296,8 @@ async def _forward_internal_litellm_local_chat_completions(
         ready, lease = await _ensure_target_leased(backend, activation)
     except SwapDeferred as deferred:
         return _swap_deferred_response(str(body.get("model") or target_model), deferred)
+    except TransitionUnavailable as refused:
+        return _transition_unavailable_response(refused)
     except SwapRecoveryFailed as failed:
         return _swap_recovery_failed_response(str(body.get("model") or target_model), failed)
     if not ready:
@@ -30973,7 +31309,7 @@ async def _forward_internal_litellm_local_chat_completions(
     try:
         return await _forward_internal_litellm_local_upstream(
             request, backend=backend, upstream_base=upstream_base,
-            body=body, activation=activation, target_model=target_model, lease=lease,
+            body=body, activation=activation, target_model=target_model, lease=lease, endpoint=endpoint,
         )
     finally:
         if lease is not None and not lease.handed_off:
@@ -30989,11 +31325,18 @@ async def _forward_internal_litellm_local_upstream(
     activation: "LocalModelActivation",
     target_model: str,
     lease: Optional[ServingLease],
+    endpoint: str = "/chat/completions",
 ) -> Response | StreamingResponse:
     """Forward one ready, leased request to the engine. A stream takes the lease."""
+    hop_path = f"/v1{endpoint}"
+    admission_intent, admission_class = INNER_HOP_ADMISSION.get(endpoint, ("chat.generate", "chat"))
+    if lease is None and _transition_policy(backend).enabled:
+        # A transition-enabled domain is never sent an unleased forward.
+        return _transition_unavailable_response(
+            TransitionUnavailable(_transition_policy(backend).domain, reason="unleased_forward"))
     admission = _dispatch_admission_response(
-        'chat.generate', auth_context=None, service_id=backend,
-        service_available=None, resource_class='chat',
+        admission_intent, auth_context=None, service_id=backend,
+        service_available=None, resource_class=admission_class,
     )
     if admission is not None:
         return admission
@@ -31003,13 +31346,15 @@ async def _forward_internal_litellm_local_upstream(
     # changes the final hop even while the model router retains its hop URL.
     record = (ADMIN_STORE.get_service_registry().get("services") or {}).get(backend)
     try:
-        connection = inference_connection(
-            record, "/chat/completions", fallback_address=f"{upstream_base}/v1",
+        connection = _inference_connection(
+            backend, record, endpoint, fallback_address=f"{upstream_base}/v1",
             fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
         )
+    except TransitionUnavailable as refused:
+        return _transition_unavailable_response(refused)
     except InferenceConnectionError as exc:
         _record_internal_hop_receipt(
-            request_path="/v1/chat/completions", parent_request_id=_internal_request_id_from_headers(request.headers),
+            request_path=hop_path, parent_request_id=_internal_request_id_from_headers(request.headers),
             body=body, status_code=503, terminal_reason="configuration_error",
         )
         return openai_error_response(str(exc), status_code=503, code="engine_credential_unavailable")
@@ -31043,7 +31388,7 @@ async def _forward_internal_litellm_local_upstream(
             )
         except ClientDisconnectedBeforeHeaders:
             _record_internal_hop_receipt(
-                request_path="/v1/chat/completions",
+                request_path=hop_path,
                 parent_request_id=internal_request_id,
                 body=body,
                 status_code=None,
@@ -31052,7 +31397,7 @@ async def _forward_internal_litellm_local_upstream(
             return Response(status_code=499)
         except httpx.TimeoutException:
             _record_internal_hop_receipt(
-                request_path="/v1/chat/completions",
+                request_path=hop_path,
                 parent_request_id=internal_request_id,
                 body=body,
                 status_code=None,
@@ -31066,7 +31411,7 @@ async def _forward_internal_litellm_local_upstream(
             )
         except httpx.ConnectError:
             _record_internal_hop_receipt(
-                request_path="/v1/chat/completions",
+                request_path=hop_path,
                 parent_request_id=internal_request_id,
                 body=body,
                 status_code=None,
@@ -31106,7 +31451,7 @@ async def _forward_internal_litellm_local_upstream(
                     await client.aclose()
                     was_cancelled = cancellation_token.cancelled if cancellation_token else False
                     _record_internal_hop_receipt(
-                        request_path="/v1/chat/completions",
+                        request_path=hop_path,
                         parent_request_id=internal_request_id,
                         body=body,
                         status_code=resp.status_code,
@@ -31137,7 +31482,7 @@ async def _forward_internal_litellm_local_upstream(
         was_cancelled = cancellation_token.cancelled if cancellation_token else False
         if content is None:
             _record_internal_hop_receipt(
-                request_path="/v1/chat/completions",
+                request_path=hop_path,
                 parent_request_id=internal_request_id,
                 body=body,
                 status_code=resp.status_code,
@@ -31146,7 +31491,7 @@ async def _forward_internal_litellm_local_upstream(
             return Response(status_code=499)
         await close_llm_response(client, resp)
         _record_internal_hop_receipt(
-            request_path="/v1/chat/completions",
+            request_path=hop_path,
             parent_request_id=internal_request_id,
             body=body,
             status_code=resp.status_code,
@@ -31166,7 +31511,7 @@ async def _forward_internal_litellm_local_upstream(
         # the internal-hop receipt rather than leave the request permanently
         # unresolved in the store. Re-raised unchanged after recording.
         _record_internal_hop_receipt(
-            request_path="/v1/chat/completions",
+            request_path=hop_path,
             parent_request_id=internal_request_id,
             body=body,
             status_code=None,
@@ -31253,6 +31598,49 @@ async def internal_litellm_local_chat_completions(backend: str, request: Request
     return await _forward_internal_litellm_local_chat_completions(
         request,
         backend=backend,
+        endpoint="/chat/completions",
+    )
+
+
+@app.post(
+    "/internal/litellm/local/{backend}/v1/completions",
+    include_in_schema=False,
+)
+async def internal_litellm_local_completions(backend: str, request: Request):
+    return await _forward_internal_litellm_local_chat_completions(
+        request,
+        backend=backend,
+        endpoint="/completions",
+    )
+
+
+@app.post(
+    "/internal/litellm/local/{backend}/v1/embeddings",
+    include_in_schema=False,
+)
+async def internal_litellm_local_embeddings(backend: str, request: Request):
+    return await _forward_internal_litellm_local_chat_completions(
+        request,
+        backend=backend,
+        endpoint="/embeddings",
+    )
+
+
+@app.post(
+    "/internal/litellm/local/{rest:path}",
+    include_in_schema=False,
+)
+async def internal_litellm_local_not_served(rest: str, request: Request):
+    """A POST under the lifecycle hop that no route above serves.
+
+    It is a wrong address, not a credentials problem, so it answers 404 ``endpoint_not_served``
+    before any key check (the catch-all would authenticate first and answer 401).
+    """
+    return openai_error_response(
+        f"The gateway lifecycle hop does not serve POST /{rest}.",
+        status_code=404,
+        error_type="invalid_request_error",
+        code="endpoint_not_served",
     )
 
 
@@ -31418,7 +31806,10 @@ def _native_engine_headers(target: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _native_engine_base(target: Mapping[str, Any]) -> str:
-    """Where a native call is sent: the target's host, with the credentials its record stores for that address."""
+    """Where a native call is sent: the target's host, with the credentials its record stores for that address.
+
+    A native call is a request send: it needs a serving lease for the target service's residency domain."""
+    _require_egress_lease(str(target.get("service") or ""))
     record = target.get("record")
     if isinstance(record, Mapping) and any(record.get(key + "_entries") for key in ("url", "base_url")):
         try:
@@ -31775,6 +32166,14 @@ def _refuse_native(receipt: RouteReceipt, *, status_code: int, code: str, messag
     return openai_error_response(message, status_code=status_code, code=code)
 
 
+def _refuse_native_transition(receipt: RouteReceipt, refused: TransitionUnavailable) -> Response:
+    """Record a native call the transition gate refused (no lease, nothing sent), then answer 503."""
+    receipt.metadata["refusal"] = _transition_error_code(refused)
+    receipt.finish("denied")
+    _record_native_passthrough_receipt(receipt)
+    return _transition_unavailable_response(refused)
+
+
 async def _read_capped_body(request: Request, cap: int) -> bytes | None:
     """The request body, or None once it passes ``cap`` bytes."""
     chunks: list[bytes] = []
@@ -31993,134 +32392,150 @@ async def _forward_provider_native(
     if capped is None:
         return await run_receipt_write(too_large)
     body = capped
-    receipt.stream = False
-    receipt.effective_output_limit = None
-    owner = ReceiptLifecycleOwner(receipt)
-    async with owner:
-        timeout = httpx.Timeout(
-            connect=10.0,
-            read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
-            write=60.0,
-            pool=None,
-        )
-        # Both routes send the engine its own credential for this call's class and nothing of the caller's:
-        # not the service record's auth_inject key, and not the caller's identity secrets (contract section 6).
-        headers = backend_request_headers(request.headers)
-        if native_policy is None:
-            query = backend_query_string(request.url.query)
-            if request.method.upper() in native_lane.READ_METHODS:
-                body = b""  # a read carries no body; whatever was sent with it is not the engine's to read
-        else:
-            query = native_lane.forwarded_query(request.url.query)
-        destination = await engine_check.check_destination(str(target["host"]), gateway_ports=_engine_check_self_ports)
-        if destination.transport != "ok":
-            return _fail_native(
-                owner, receipt, status_code=502, code="native_destination_blocked",
-                message=f"Engine {provider_key!r} cannot be reached by the native lane: {destination.reason}",
-                reason="destination_blocked",
-            )
-        credential_error = await _native_credential_headers(headers, target, entry.klass, provider_key)
-        if credential_error is not None:
-            return _fail_native(owner, receipt, status_code=502, **credential_error)
-        # Dial only the addresses just checked, so a second lookup cannot answer somewhere else.
-        client = httpx.AsyncClient(
-            transport=engine_check.checked_transport(destination), follow_redirects=False,
-            trust_env=False, timeout=timeout,
-        )
-        for name, value in _native_engine_headers(target).items():
-            for existing in [key for key in headers if key.lower() == name.lower()]:
-                del headers[existing]
-            headers[name] = value
-        url = f"{_native_engine_base(target)}{native_request_path}"
-        if query:
-            url += f"?{query}"
 
-        stream_context = client.stream(
-            request.method,
-            url,
-            headers=headers,
-            content=body,
-        )
+    # A transition-enabled domain is never sent an unleased call, native or not. The lease is minted
+    # after the request body is in hand (a slow upload holds no lease) and held until the reply's
+    # final byte, or any earlier return, like the inference hops.
+    native_service = str(target["service"])
+    native_lease: Optional[ServingLease] = None
+    if _transition_policy(native_service).enabled:
         try:
-            owner.mark_phase("started_at_ms")
-            upstream = await stream_context.__aenter__()
-        except httpx.TimeoutException:
-            await client.aclose()
-            owner.report(status="timed_out", reason="idle_timeout")
-            return openai_error_response(
-                f"Provider {provider_key!r} timed out while handling {native_request_path}.",
-                status_code=504,
-                error_type="service_unavailable",
-                code="provider_timeout",
+            async with _admission_lock(native_service):
+                native_lease = _swap_drain.lease(native_service)
+        except TransitionUnavailable as refused:
+            return await run_receipt_write(_refuse_native_transition, receipt, refused)
+    try:
+        receipt.stream = False
+        receipt.effective_output_limit = None
+        owner = ReceiptLifecycleOwner(receipt)
+        async with owner:
+            timeout = httpx.Timeout(
+                connect=10.0,
+                read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
+                write=60.0,
+                pool=None,
             )
-        except httpx.ConnectError:
-            await client.aclose()
-            owner.report(status="failed", reason="connect_error")
-            return openai_error_response(
-                f"Provider {provider_key!r} is unavailable for native passthrough.",
-                status_code=503,
-                error_type="service_unavailable",
-                code="provider_unavailable",
-            )
-        except Exception as error:  # noqa: BLE001
-            await client.aclose()
-            owner.report(status="failed", reason="internal_error")
-            return openai_error_response(
-                "Provider-native passthrough failed.",
-                status_code=502,
-                error_type="api_error",
-                code="provider_passthrough_error",
-            )
-
-        receipt.metadata["status_code"] = upstream.status_code
-        refusal = native_lane.reply_refusal(
-            policy, upstream.status_code, upstream.headers.get("content-length"), provider_key,
-        )
-        if refusal is not None:
-            receipt.metadata["refusal"] = refusal[1]
-            await stream_context.__aexit__(None, None, None)
-            await client.aclose()
-            owner.report(status="failed", reason="failed")
-            return openai_error_response(refusal[2], status_code=refusal[0], error_type="api_error", code=refusal[1])
-
-        if upstream.status_code >= 400:
-            # An engine's error reply is not relayed: it echoes what it was sent (decision D44).
-            try:
-                refused_body = b"".join([chunk async for chunk in _bounded_chunks(upstream.aiter_bytes(), 65536)])
-            finally:
-                await stream_context.__aexit__(None, None, None)
-                await client.aclose()
-            owner.report(status="failed", reason="failed")
-            return client_errors.upstream_error_response(upstream.status_code, refused_body, upstream.headers,
-                                                         request_id=receipt.request_id)
-
-        response_headers = native_lane.relayed_headers(upstream.headers)
-
-        async def _provider_native_body_stream():
-            sent = 0
-            try:
-                async for chunk in upstream.aiter_bytes():
-                    sent += len(chunk)
-                    if sent > policy.max_response_bytes:
-                        receipt.metadata["refusal"] = "native_response_too_large"
-                        owner.report(status="failed", reason="failed")
-                        raise _NativeResponseTooLarge
-                    yield chunk
-                owner.report(
-                    status="failed" if upstream.status_code >= 400 else "succeeded",
-                    reason="failed" if upstream.status_code >= 400 else "completed",
+            # Both routes send the engine its own credential for this call's class and nothing of the caller's:
+            # not the service record's auth_inject key, and not the caller's identity secrets (contract section 6).
+            headers = backend_request_headers(request.headers)
+            if native_policy is None:
+                query = backend_query_string(request.url.query)
+                if request.method.upper() in native_lane.READ_METHODS:
+                    body = b""  # a read carries no body; whatever was sent with it is not the engine's to read
+            else:
+                query = native_lane.forwarded_query(request.url.query)
+            destination = await engine_check.check_destination(str(target["host"]), gateway_ports=_engine_check_self_ports)
+            if destination.transport != "ok":
+                return _fail_native(
+                    owner, receipt, status_code=502, code="native_destination_blocked",
+                    message=f"Engine {provider_key!r} cannot be reached by the native lane: {destination.reason}",
+                    reason="destination_blocked",
                 )
-            finally:
+            credential_error = await _native_credential_headers(headers, target, entry.klass, provider_key)
+            if credential_error is not None:
+                return _fail_native(owner, receipt, status_code=502, **credential_error)
+            url = f"{_native_engine_base(target)}{native_request_path}"  # the send check: it needs this task's lease
+            if query:
+                url += f"?{query}"
+            # Dial only the addresses just checked, so a second lookup cannot answer somewhere else.
+            client = engine_egress.async_client(
+                transport=engine_check.checked_transport(destination), follow_redirects=False,
+                trust_env=False, timeout=timeout,
+            )
+            for name, value in _native_engine_headers(target).items():
+                for existing in [key for key in headers if key.lower() == name.lower()]:
+                    del headers[existing]
+                headers[name] = value
+
+            stream_context = client.stream(
+                request.method,
+                url,
+                headers=headers,
+                content=body,
+            )
+            try:
+                owner.mark_phase("started_at_ms")
+                upstream = await stream_context.__aenter__()
+            except httpx.TimeoutException:
+                await client.aclose()
+                owner.report(status="timed_out", reason="idle_timeout")
+                return openai_error_response(
+                    f"Provider {provider_key!r} timed out while handling {native_request_path}.",
+                    status_code=504,
+                    error_type="service_unavailable",
+                    code="provider_timeout",
+                )
+            except httpx.ConnectError:
+                await client.aclose()
+                owner.report(status="failed", reason="connect_error")
+                return openai_error_response(
+                    f"Provider {provider_key!r} is unavailable for native passthrough.",
+                    status_code=503,
+                    error_type="service_unavailable",
+                    code="provider_unavailable",
+                )
+            except Exception as error:  # noqa: BLE001
+                await client.aclose()
+                owner.report(status="failed", reason="internal_error")
+                return openai_error_response(
+                    "Provider-native passthrough failed.",
+                    status_code=502,
+                    error_type="api_error",
+                    code="provider_passthrough_error",
+                )
+
+            receipt.metadata["status_code"] = upstream.status_code
+            refusal = native_lane.reply_refusal(
+                policy, upstream.status_code, upstream.headers.get("content-length"), provider_key,
+            )
+            if refusal is not None:
+                receipt.metadata["refusal"] = refusal[1]
                 await stream_context.__aexit__(None, None, None)
                 await client.aclose()
+                owner.report(status="failed", reason="failed")
+                return openai_error_response(refusal[2], status_code=refusal[0], error_type="api_error", code=refusal[1])
 
-        return StreamingResponse(
-            owner.handoff_stream(_provider_native_body_stream()),
-            status_code=upstream.status_code,
-            headers=response_headers,
-            media_type=upstream.headers.get("content-type"),
-        )
+            if upstream.status_code >= 400:
+                # An engine's error reply is not relayed: it echoes what it was sent (decision D44).
+                try:
+                    refused_body = b"".join([chunk async for chunk in _bounded_chunks(upstream.aiter_bytes(), 65536)])
+                finally:
+                    await stream_context.__aexit__(None, None, None)
+                    await client.aclose()
+                owner.report(status="failed", reason="failed")
+                return client_errors.upstream_error_response(upstream.status_code, refused_body, upstream.headers,
+                                                             request_id=receipt.request_id)
 
+            response_headers = native_lane.relayed_headers(upstream.headers)
+
+            async def _provider_native_body_stream():
+                sent = 0
+                try:
+                    async for chunk in upstream.aiter_bytes():
+                        sent += len(chunk)
+                        if sent > policy.max_response_bytes:
+                            receipt.metadata["refusal"] = "native_response_too_large"
+                            owner.report(status="failed", reason="failed")
+                            raise _NativeResponseTooLarge
+                        yield chunk
+                    owner.report(
+                        status="failed" if upstream.status_code >= 400 else "succeeded",
+                        reason="failed" if upstream.status_code >= 400 else "completed",
+                    )
+                finally:
+                    await stream_context.__aexit__(None, None, None)
+                    await client.aclose()
+
+            return StreamingResponse(
+                owner.handoff_stream(native_lease.hand_off(_provider_native_body_stream())
+                                     if native_lease is not None else _provider_native_body_stream()),
+                status_code=upstream.status_code,
+                headers=response_headers,
+                media_type=upstream.headers.get("content-type"),
+            )
+    finally:
+        if native_lease is not None and not native_lease.handed_off:
+            native_lease.release()
 
 async def _ui_admin_page_guard(request: Request, name: str) -> Response | None:
     """Admin pages and their payloads need an admin-control role."""

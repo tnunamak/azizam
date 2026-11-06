@@ -55,6 +55,7 @@ from gateway.engine_protocol.httpx_wire import failure, lower_headers, reply_fro
 from gateway.engine_protocol.types import (
     AssetRef, CanonicalRequest, Connection, Health, Inventory, JobEvent, JobRef, JobStatus, Reply, StreamReply,
 )
+from gateway import engine_egress
 
 ADAPTER_ID = "chunked-stt"
 ROUTES = {"stt.transcribe": "/v1/audio/transcriptions", "stt.translate": "/v1/audio/translations"}
@@ -347,7 +348,7 @@ class ChunkedSttAdapter:
                     paths.append(path)
                 await stt_chunking.guard_uncut_uploads(paths, config=execution, cancellation_waiters=(),
                     deadline_at=deadline_at, on_cancel=None, resource_lease=lease)
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with engine_egress.async_client(timeout=timeout) as client:
                 if request.on_whole_file_attempt is not None:
                     request.on_whole_file_attempt()
                 resp = await stt_chunking.await_with_cancellation(
@@ -366,7 +367,7 @@ class ChunkedSttAdapter:
 
     async def _run(self, url: str, timeout: httpx.Timeout, run: SttRun) -> TranscriptReply | StreamReply:
         execution = run.execution
-        client = httpx.AsyncClient(timeout=timeout)
+        client = engine_egress.async_client(timeout=timeout)
         run.cleanup.add("http_client", client.aclose)
         wire = _RunWire(self.label, client, url, run)
         uploads = run.uploads

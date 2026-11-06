@@ -1010,7 +1010,7 @@ class ObjectInfoLookupTests(unittest.TestCase):
             def __exit__(self, *_a):
                 return None
 
-            def get(self, url):
+            def get(self, url, **_kw):
                 calls.append(url)
                 if raises:
                     raise OSError("down")

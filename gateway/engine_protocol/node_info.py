@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 import httpx
 from gateway import private_io
+from gateway import engine_egress
 
 FAILURE_TTL = 60.0
 
@@ -65,8 +66,8 @@ def lookup(host: str, class_type: str) -> Optional[dict[str, Any]]:
         return _disk_read(class_type)
     info: Optional[dict[str, Any]] = None
     try:
-        with httpx.Client(timeout=httpx.Timeout(10, connect=3)) as client:
-            response = client.get(f"{host}/object_info/{quote(class_type, safe='')}")
+        with engine_egress.client(timeout=httpx.Timeout(10, connect=3)) as client:
+            response = client.get(f"{host}/object_info/{quote(class_type, safe='')}", extensions=engine_egress.probe())
         if response.status_code == 200:
             info = response.json().get(class_type)
     except Exception:  # noqa: BLE001 - best effort, never fail a render

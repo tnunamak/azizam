@@ -326,7 +326,7 @@ class TestCheckServiceHealth(unittest.TestCase):
             async def __aexit__(self, *a):
                 pass
 
-            async def get(self, url, timeout=None):
+            async def get(self, url, timeout=None, **_kw):
                 captured_urls.append(url)
                 return _FakeResponse()
 
@@ -358,7 +358,7 @@ class TestCheckServiceHealth(unittest.TestCase):
             async def __aexit__(self, *a):
                 pass
 
-            async def get(self, url, timeout=None):
+            async def get(self, url, timeout=None, **_kw):
                 captured_urls.append(url)
                 return _FakeResponse()
 
@@ -384,7 +384,7 @@ class TestCheckServiceHealth(unittest.TestCase):
             async def __aexit__(self, *a):
                 pass
 
-            async def get(self, url, timeout=None):
+            async def get(self, url, timeout=None, **_kw):
                 return _FakeResponse()
 
         with patch.dict(proxy.config, {"backends": backends}, clear=False):
@@ -408,7 +408,7 @@ class TestCheckServiceHealth(unittest.TestCase):
             async def __aexit__(self, *a):
                 pass
 
-            async def get(self, url, timeout=None):
+            async def get(self, url, timeout=None, **_kw):
                 return _FakeResponse()
 
         with patch.dict(proxy.config, {"backends": backends}, clear=False):
@@ -443,7 +443,7 @@ class TestCheckServiceHealth(unittest.TestCase):
             async def __aexit__(self, *a):
                 pass
 
-            async def get(self, url, timeout=None):
+            async def get(self, url, timeout=None, **_kw):
                 captured_urls.append(url)
                 return _FakeResponse()
 
@@ -482,7 +482,7 @@ class TestCheckServiceHealth(unittest.TestCase):
             async def __aexit__(self, *a):
                 pass
 
-            async def get(self, url, timeout=None):
+            async def get(self, url, timeout=None, **_kw):
                 captured_urls.append(url)
                 return _FakeResponse()
 
@@ -531,7 +531,7 @@ class TestCheckServiceHealth(unittest.TestCase):
             async def __aexit__(self, *a):
                 pass
 
-            async def get(self, url, timeout=None):
+            async def get(self, url, timeout=None, **_kw):
                 raise ConnectionRefusedError("refused")
 
         with patch.dict(proxy.config, {"backends": backends}, clear=False):
@@ -554,7 +554,7 @@ class TestCheckServiceHealth(unittest.TestCase):
             async def __aexit__(self, *a):
                 pass
 
-            async def get(self, url, timeout=None):
+            async def get(self, url, timeout=None, **_kw):
                 captured_urls.append(url)
                 return _FakeResponse()
 

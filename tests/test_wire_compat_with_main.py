@@ -52,7 +52,7 @@ class FakeClient:
     async def __aexit__(self, *exc: Any) -> None:
         return None
 
-    def stream(self, method: str, url: str, headers: dict, timeout: float):  # noqa: ANN201
+    def stream(self, method: str, url: str, headers: dict, timeout: float, **_kw: Any):  # noqa: ANN201
         FakeClient.seen.append({"method": method, "url": url, "headers": dict(headers)})
         return _Refused()
 

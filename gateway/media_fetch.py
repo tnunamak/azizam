@@ -12,6 +12,7 @@ from typing import Awaitable, Callable, Mapping
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+from gateway import engine_egress
 
 
 DEFAULT_MAX_BYTES = 256 * 1024 * 1024
@@ -156,7 +157,7 @@ async def safe_fetch_media(
             async with AsyncExitStack() as resources:
                 for index, address in enumerate(addresses):
                     pinned = httpx.URL(url).copy_with(host=address)
-                    client = await resources.enter_async_context(httpx.AsyncClient(
+                    client = await resources.enter_async_context(engine_egress.async_client(
                         timeout=httpx.Timeout(30, connect=10), follow_redirects=False,
                         trust_env=False, transport=transport,
                     ))

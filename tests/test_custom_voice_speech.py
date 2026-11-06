@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import proxy
+from fastapi.responses import JSONResponse
 from tests.support.access import authenticated, service_app  # noqa: E402
 from gateway import admin_store, custom_voices as cv, media_jobs, receipt_store
 from gateway.admin_api import AdminContext
@@ -353,9 +354,16 @@ class QualityProbeTests(CustomVoiceRouteCase):
         self.ready.assert_not_awaited()
 
     def test_an_engine_that_will_not_start_is_reported(self) -> None:
-        self.ready.return_value = object()  # a non-None response means "could not be started"
+        self.ready.return_value = JSONResponse({"error": {"code": "backend_unavailable"}}, status_code=503)
         result, calls = self.probe([200])
         self.assertEqual((result, calls), ({"error": "engine_would_not_start"}, 0))
+
+    def test_a_gate_refusal_keeps_its_code_and_is_not_retried(self) -> None:
+        for code in ("transition_unsupported", "engine_transitioning"):
+            self.ready.return_value = JSONResponse({"error": {"code": code}}, status_code=503, headers={"Retry-After": "30"})
+            before = self.ready.await_count
+            self.assertEqual(self.probe([200]), ({"error": code}, 0))
+            self.assertEqual(self.ready.await_count - before, 1, "waiting does not change a gate refusal")
 
 
 class RevocationOwnershipTests(CustomVoiceRouteCase):

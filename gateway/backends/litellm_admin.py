@@ -35,6 +35,7 @@ from gateway.backends.llm_execution import (
     LiteLlmRuntimeConfig,
     litellm_url,
 )
+from gateway import engine_egress
 
 # A short timeout: these are local management calls against the sidecar, run
 # synchronously inside an admin request. They must never hang the admin UI.
@@ -176,7 +177,7 @@ class LiteLLMKeyAdminClient:
         }
         content = json.dumps(body).encode("utf-8") if body is not None else None
         try:
-            async with httpx.AsyncClient(timeout=_KEY_ADMIN_TIMEOUT_S) as client:
+            async with engine_egress.async_client(timeout=_KEY_ADMIN_TIMEOUT_S) as client:
                 resp = await client.request(
                     method, url, headers=headers, content=content
                 )

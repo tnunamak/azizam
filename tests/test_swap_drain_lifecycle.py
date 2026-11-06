@@ -60,6 +60,7 @@ def engine(tmp_path, monkeypatch) -> FakeEngine:
     monkeypatch.setattr(proxy, "_service_swap_locks", {})
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *_a, **_k: None)
     monkeypatch.setitem(proxy.LLM_BACKEND_HOSTS, BACKEND, "http://127.0.0.1:59999")
+    monkeypatch.setitem(proxy.INNER_HOP_BACKEND_HOSTS, BACKEND, "http://127.0.0.1:59999")
     monkeypatch.setenv("AZIZAM_INTERNAL_LITELLM_KEY", INTERNAL_KEY)
     return fake
 

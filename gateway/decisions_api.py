@@ -668,12 +668,21 @@ def _is_validation_detail(value: Any) -> bool:
             return False
     return True
 
+# Headers that describe the bytes of the response a refusal was first built as. The route serializes its own body, so a
+# copied length, type or encoding would describe other bytes (a refusal re-serialized to a shorter body keeps its old length).
+_FRAMING_HEADERS = frozenset({"content-length", "content-type", "transfer-encoding", "content-encoding"})
+
+
+def _without_framing(headers: Mapping[str, Any]) -> dict[str, str]:
+    return {str(k): str(v) for k, v in headers.items() if str(k).lower() not in _FRAMING_HEADERS}
+
+
 def _response_headers(request_id: str, result: DecisionDispatchResult) -> dict[str, str]:
     headers = {
         "x-azizam-remote": "1" if result.remote else "0",
         "x-azizam-cost-usd": str(result.cost_usd) if result.cost_usd is not None else "unknown",
     }
-    headers.update({str(k): str(v) for k, v in result.headers.items()})
+    headers.update(_without_framing(result.headers))
     headers["x-azizam-request-id"] = request_id
     if result.backend:
         headers["x-azizam-backend"] = result.backend
@@ -689,7 +698,7 @@ def _response_headers(request_id: str, result: DecisionDispatchResult) -> dict[s
 
 def _request_headers(request_id: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
     headers = {"x-azizam-request-id": request_id}
-    headers.update({str(k): str(v) for k, v in (extra or {}).items()})
+    headers.update(_without_framing(extra or {}))
     return headers
 
 

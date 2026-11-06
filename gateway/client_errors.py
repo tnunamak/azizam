@@ -126,6 +126,7 @@ CODE_REASONS: dict[str, str] = {
 # Codes the gateway's own routes put in an error. A reply that crosses the gateway again (a protocol frontend reading the
 # chat route, the router behind it) keeps them; an engine that echoes one gains nothing, because each is a fixed word.
 GATEWAY_CODES = frozenset({
+    "endpoint_not_served",
     "litellm_content_unverified",
     "access_plan_editor_unavailable", "account_disabled", "adapter_not_registered", "adapter_required", "adapter_version_mismatch",
     "address_invalid", "admin_action_header_required", "admin_csrf_required", "admin_forbidden", "alias_policy_unavailable",
@@ -161,6 +162,7 @@ GATEWAY_CODES = frozenset({
     "video_cancel_failed", "video_extend_not_configured", "video_extend_not_supported", "video_fps_unsupported",
     "video_generation_failed", "video_not_ready", "video_remix_not_configured", "video_too_short", "video_total_length_exceeded",
     "vision_unsupported", "voice_not_available", "workflow_manifest_missing",
+    "engine_transitioning", "transition_unsupported",
 })
 
 ERROR_CODES = frozenset(CODE_REASONS) | GATEWAY_CODES

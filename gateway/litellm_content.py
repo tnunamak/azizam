@@ -17,6 +17,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 import yaml
+from gateway import engine_egress
 
 
 @lru_cache(maxsize=1)
@@ -128,7 +129,7 @@ async def compose_database_unseen(base_url: str) -> bool:
     from gateway.backends.llm_execution import litellm_headers
     from gateway.log_scrub import env_secret
 
-    async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+    async with engine_egress.async_client(timeout=5, trust_env=False) as client:
         response = await client.get(base_url.rstrip("/") + "/health/readiness/details",
             headers=litellm_headers({}, api_key=env_secret("AZIZAM_LITELLM_API_KEY")))
         response.raise_for_status()

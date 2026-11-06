@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from gateway import runtime_secrets
+from gateway import engine_egress, runtime_secrets
 from gateway.engine_credentials import credential_headers
 
 
@@ -53,7 +53,7 @@ def _join_path(address: str, path: str) -> str:
 class ObservationReader:
     """Read one declared HTTP fact without guessing from another fact."""
 
-    def __init__(self, *, client_factory: Callable[..., httpx.AsyncClient] = httpx.AsyncClient) -> None:
+    def __init__(self, *, client_factory: Callable[..., httpx.AsyncClient] = engine_egress.async_client) -> None:
         self._client_factory = client_factory
 
     async def read(self, service: Mapping[str, Any], name: str) -> Observation:
@@ -88,7 +88,8 @@ class ObservationReader:
             headers = credential_headers(service, str(spec.get("credential_class") or "control"))
             async with asyncio.timeout(timeout_s):
                 async with self._client_factory(follow_redirects=False, trust_env=False) as client:
-                    async with client.stream("GET", url, headers=headers, timeout=timeout_s) as response:
+                    async with client.stream("GET", url, headers=headers, timeout=timeout_s,
+                                             extensions=engine_egress.probe()) as response:
                         if response.status_code != expected:
                             return UNKNOWN
                         pointer = http.get("select", spec.get("select"))

@@ -488,7 +488,9 @@
 # scripts/run-hermetic-pytest.sh --collect-only -q: 18466.
 # Leak scan follow-up (2026-11-05): +1 case (patterns unset); measured 18467.
 # Public clean on main (2026-11-05): measured on the merge candidate.
-pytest = 18787
+# T1.1 transition gate (2026-11-05): +120 cases over main 18265: the five test_transition_gate*.py files plus new cases in test_mesh_route and test_rerank; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 18385.
+# T1.1 round 4 (2026-11-05): +15 cases over round 3 (18442): egress boot, probe-path, scan, marker word, foreign base, embeddings-only member; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 18457.
+pytest = 0
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from gateway.compat import get_env
 
+import logging
 import os
 from copy import deepcopy
 import hashlib
@@ -25,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -44,14 +46,54 @@ from gateway.service_registry import (
 OPENAI_COMPATIBLE_PROTOCOLS = frozenset({"openai", "openai-compatible"})
 SECRET_PLACEHOLDER = "<external-secret>"
 LOCAL_NO_AUTH_API_KEY = "sk-local"
-DEFAULT_GATEWAY_LIFECYCLE_BASE_URL = "http://127.0.0.1:5000/internal/litellm/local"
-DEFAULT_GATEWAY_CURRENT_BASE_URL = "http://127.0.0.1:5000/internal/litellm/current/v1"
+DEFAULT_LISTEN_PORT = 5000
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_LOG = logging.getLogger(__name__)
 DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF = "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
 DEFAULT_LITELLM_KEY_HEADER = "X-Litellm-Key"
 # Bare filename: the artifact lives in the caller-provided ``base_dir`` (the
 # gateway's state dir — next to ``admin.db``), so it follows the same isolation
 # as every other store instead of being pinned to the repo ``data/`` directory.
 DEFAULT_LITELLM_CONFIG_PATH = Path("litellm.config.yaml")
+
+
+# The port of this process's own listener. The gateway sets it once at start (``AZIZAM_PORT`` or ``proxy.port``);
+# a process that never sets it (the provider sidecar, a script) reads ``AZIZAM_PORT``, then the default. The
+# internal hop that LiteLLM calls back into must be this listener, so a test gateway on another port never loops
+# to the production one.
+_own_listen_port: int | None = None
+
+
+def set_own_listen_port(port: int | None) -> None:
+    global _own_listen_port
+    _own_listen_port = int(port) if port else None
+
+
+def own_listen_port() -> int:
+    if _own_listen_port:
+        return _own_listen_port
+    try:
+        value = int(os.environ.get("AZIZAM_PORT") or DEFAULT_LISTEN_PORT)
+    except ValueError:
+        return DEFAULT_LISTEN_PORT
+    return value if 0 < value < 65536 else DEFAULT_LISTEN_PORT
+
+
+def gateway_lifecycle_base_url() -> str:
+    return f"http://127.0.0.1:{own_listen_port()}/internal/litellm/local"
+
+
+def gateway_current_base_url() -> str:
+    return f"http://127.0.0.1:{own_listen_port()}/internal/litellm/current/v1"
+
+
+def _is_own_listener(url: str) -> bool:
+    """Whether ``url`` is plain HTTP to a loopback address on this process's own port."""
+    try:
+        parsed = urlsplit(url)
+        return parsed.scheme == "http" and (parsed.hostname or "") in _LOOPBACK_HOSTS and parsed.port == own_listen_port()
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True)
@@ -75,11 +117,16 @@ def compile_litellm_substrate_config(
     services: Mapping[str, Any],
     *,
     materializer: Materializer | None = None,
+    left_out: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """A LiteLLM-compatible config fragment from Gateway-owned data.
 
     Without ``materializer`` this is the preview a management route may show: no secret is in it and none can
     be. With the runtime's, it is the executable config the router reads from a restricted file.
+
+    A record whose explicit ``gateway_lifecycle_base_url`` is not this gateway's own listener is left out, alone:
+    it is logged and named in ``left_out`` (``{service_id: reason}``) when the caller passes one. The registry
+    refuses such a record before it gets here.
     """
 
     service_records = _normalize_services(services)
@@ -93,6 +140,12 @@ def compile_litellm_substrate_config(
         config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
         _validate_remote_compile_shape(service, config)
 
+        foreign = foreign_lifecycle_base_error(service)
+        if foreign is not None:
+            _LOG.error("LiteLLM config: %s is left out. %s", service["id"], foreign)
+            if left_out is not None:
+                left_out[str(service["id"])] = foreign
+            continue
         deployments = _deployment_records(service)
         if not deployments:
             continue
@@ -288,10 +341,12 @@ def _is_openai_compatible(service: Mapping[str, Any]) -> bool:
 
 
 def reaches_engine_directly(service_id: str, record: Mapping[str, Any]) -> bool:
-    """True when the model router calls this service at its own address.
+    """True when the model router calls this service, for any of its models, at its own address.
 
-    False for a service it does not route, or one reached through the gateway's
-    lifecycle hop. Both paths use the service record's connection settings.
+    False for a service it does not route, or one whose every model is reached
+    through the gateway's lifecycle hop. Both paths use the service record's
+    connection settings. A record whose models cannot be read counts as direct:
+    the caller cannot prove otherwise.
     """
     service = normalize_service_record(service_id, record)
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
@@ -300,8 +355,8 @@ def reaches_engine_directly(service_id: str, record: Mapping[str, Any]) -> bool:
     try:
         deployments = _deployment_records(service)
     except ValueError:
-        return False
-    return not any(deployment["gateway_lifecycle"] for deployment in deployments)
+        return True
+    return any(not deployment["gateway_lifecycle"] for deployment in deployments)
 
 
 def routed_models(service_id: str, record: Mapping[str, Any]) -> tuple[list[str], str | None]:
@@ -435,7 +490,7 @@ def _current_loaded_entries(service_records: list[Mapping[str, Any]]) -> list[di
                 "model_name": alias,
                 "litellm_params": {
                     "model": f"openai/{alias}",
-                    "api_base": DEFAULT_GATEWAY_CURRENT_BASE_URL,
+                    "api_base": gateway_current_base_url(),
                     "api_key": api_key_ref,
                     **({"timeout": timeout} if timeout is not None else {}),
                 },
@@ -686,11 +741,39 @@ def _engine_request_settings(
     return out
 
 
+def _foreign_lifecycle_base_message(explicit: str, backend: str) -> str:
+    return (
+        f"gateway_lifecycle_base_url {explicit!r} of {backend!r} is not this gateway's own listener "
+        f"(http://127.0.0.1:{own_listen_port()}): the internal hop carries the gateway's internal key "
+        "and must come back to this process"
+    )
+
+
+def foreign_lifecycle_base_error(service: Mapping[str, Any]) -> str | None:
+    """Why this record's explicit ``gateway_lifecycle_base_url`` cannot be compiled, or None.
+
+    The registry refuses such a record when it is stored or read, with this reason, and the compile leaves it out
+    if one gets past, so one record never stops the compile for every model. Only a record the compile would send
+    through the gateway lifecycle hop is judged: any other record never reads the field.
+    """
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    explicit = str(config.get("gateway_lifecycle_base_url") or "").strip()
+    if not explicit or _is_own_listener(explicit) or not _is_openai_compatible(service):
+        return None
+    try:
+        deployments = _deployment_records(service)
+    except Exception:  # noqa: BLE001 - another validator names a record whose models cannot be read
+        deployments = []
+    if not (config.get("gateway_lifecycle") or any(row.get("gateway_lifecycle") for row in deployments)):
+        return None
+    return _foreign_lifecycle_base_message(explicit, str(service.get("id") or ""))
+
+
 def _gateway_lifecycle_api_base(config: Mapping[str, Any], *, backend: str) -> str:
-    base = str(
-        config.get("gateway_lifecycle_base_url")
-        or DEFAULT_GATEWAY_LIFECYCLE_BASE_URL
-    ).rstrip("/")
+    explicit = str(config.get("gateway_lifecycle_base_url") or "").strip()
+    if explicit and not _is_own_listener(explicit):
+        raise ValueError(_foreign_lifecycle_base_message(explicit, backend))
+    base = (explicit or gateway_lifecycle_base_url()).rstrip("/")
     if base.endswith("/v1"):
         return base
     return f"{base}/{backend}/v1"
@@ -804,7 +887,7 @@ def _credential_bound_to(config: Mapping[str, Any], api_base: str) -> bool:
 def _lifecycle_api_key(config: Mapping[str, Any], api_base: str) -> str:
     """The key for a gateway-lifecycle deployment: the gateway's own, only for the gateway's own base."""
     if (
-        origin_of(api_base) == origin_of(DEFAULT_GATEWAY_LIFECYCLE_BASE_URL)
+        _is_own_listener(api_base)
         or _credential_bound_to(config, api_base)
     ):
         return str(
