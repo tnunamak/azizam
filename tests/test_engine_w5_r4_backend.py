@@ -139,14 +139,15 @@ def test_stored_record_never_synthesizes_a_lifecycle_secret_carrier(tmp_path):
 def test_declared_connection_projects_credentials_and_hides_unknown_nested_fields(tmp_path):
     saved = record(connection={
         'dispatch': 'protocol', 'protocol': 'openai-compatible', 'transport': 'http',
-        'address': 'http://user:INLINE-CREDENTIAL@127.0.0.1:8080?private=INLINE-QUERY',
+        'address': 'http://127.0.0.1:8080',
         'neutral_extension': 'NESTED-CONNECTION-CANARY',
         'credentials': {'inference': {'secret_ref': 'opaque-private-reference', 'header': 'Authorization', 'scheme': 'Bearer',
                                       'origin': 'http://127.0.0.1:8080'}},
     })
-    # An unnamed key inside a credential is refused at the store (native_lane.validate_connection), so none is planted.
+    # The store refuses an unnamed key inside a credential and a credential inside a connection URL
+    # (native_lane.validate_connection), so neither is planted.
     shown = engine_admin.engine_view(load_engine_catalog(), saved, db_path=tmp_path / 'admin.db')
-    for canary in ('INLINE-CREDENTIAL', 'INLINE-QUERY', 'NESTED-CONNECTION-CANARY', 'opaque-private-reference'):
+    for canary in ('NESTED-CONNECTION-CANARY', 'opaque-private-reference'):
         assert canary not in str(shown)
     connection = shown['record']['config']['connection']
     assert connection['dispatch'] == 'protocol' and connection['credentials']['inference']['secret_ref'] == {'configured': False}

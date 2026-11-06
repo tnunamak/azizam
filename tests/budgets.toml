@@ -521,7 +521,8 @@
 # fix/chat-after-restart (2026-11-06): +3 cases for chat while the managed LiteLLM child is still starting; measured 19786.
 # Train 6 (2026-11-06): +7 connection-block cases on top of fix/chat-after-restart; measured 19793.
 # Train 7 (2026-11-06): LiteLLM restart recheck (+2), gate read policy (+2), transition-proof chat key (+13), registry connection round trip (+10); measured 19820.
-pytest = 19820
+# fix/connection-address-no-userinfo (2026-11-06): a connection address with a user, query or fragment is refused (+1); measured 19821.
+pytest = 19821
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

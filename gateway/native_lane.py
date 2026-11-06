@@ -265,12 +265,16 @@ def validate_connection(block: Any) -> None:
         return
     if not isinstance(block, Mapping):
         raise ValueError("connection must be a mapping")
-    control = block.get("control_address")
-    if control is not None:
-        parts = urlsplit(control) if isinstance(control, str) else None
+    for field in ("address", "control_address"):
+        # A connection URL is stored as written and never moved to the secret store, so it may hold no credential:
+        # a key belongs in connection.credentials. The message names the field, never its value.
+        url = block.get(field)
+        if url is None:
+            continue
+        parts = urlsplit(url) if isinstance(url, str) else None
         if (parts is None or parts.scheme not in ("http", "https") or not parts.hostname
                 or parts.username is not None or parts.password is not None or parts.query or parts.fragment):
-            raise ValueError("connection.control_address must be an http(s) URL with a host and no user, query or fragment")
+            raise ValueError(f"connection.{field} must be an http(s) URL with a host and no user, password, query or fragment")
     credentials = block.get("credentials")
     if credentials is None:
         return
