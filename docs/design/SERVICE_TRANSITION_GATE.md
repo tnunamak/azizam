@@ -307,3 +307,26 @@ An independent test design found ten points that D2 to D4 leave open. They are s
 - **G8. Retry-After.** Its value is `transition.retry_after_s`.
 - **G9. `failed_closed`.** It is a finished operation state. The gate stays `failed_closed`, which answers 503, but it accepts a new owner transition such as the compensating one. `reconciling` refuses new transitions.
 - **G10. Stale outcomes.** An outcome is written only when the operation's state, current step and incarnation match. Anything else is ignored and logged, and never becomes a `step_outcome`.
+
+### T1.3 notes (checkpoint and restore steps, 2026-11-05)
+
+Code: `gateway/transition_snapshots.py` (ledger, private directory) and `gateway/transition_snapshot_steps.py`
+(`snapshot_steps`). The executor's `StepContext.policy` must carry the reviewed profile under `policy["profile"]`;
+the steps read every attested field (`failure_semantics`, `servable_check`, reset `verify`, `placement_keys`,
+`fresh_within_s`) from that key only. Plain owner arguments are `checkpoint_policy` and `deadlines`.
+
+- **Attested `no_change`.** An adapter's `no_change` counts only when the profile declares `failure_semantics:
+  no_change` for that operation. Otherwise a failed checkpoint is `unknown` (reconcile), and a failed restore takes the
+  reset path.
+- **A failed checkpoint makes the next start cold.** The pending snapshot is abandoned before release and the
+  published pointer is cleared, so a snapshot older than the failed checkpoint is never restored.
+- **G1.** A failed reset with the default `failure_semantics: unknown` closes the gate without looking at the target.
+  With `no_change`, the failed reset left the state as it was, so the step verifies a clean target and serves cold when
+  it is clean.
+- **G7.** `servable_check` is an observation name the adapter answers. The evidence must be fresh and for this
+  incarnation; stale or missing evidence is `reconcile`.
+- **Reconcile of `pending`.** The profile of this step has no snapshot query, so a pending snapshot is abandoned and
+  deleted, never published late.
+- **Adapter additions.** The steps call `adapter.compatibility(domain)` (opaque token map; empty means unknown) and
+  `adapter.observe(domain, name)`, beside the `TransitionAdapter` methods. `SnapshotLifecycle` adds `retire_published`,
+  `has_room`, `collect`, `pin`, `unpin`, and an `ignore` argument on `latest_published`.
