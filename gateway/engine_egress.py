@@ -207,6 +207,12 @@ def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
 
     ``extra_probe_paths`` names further metadata paths a record's kind reads (the loaded-state endpoint of its
     ``state_type``): the engine kinds are known to the caller, not to this module.
+
+    Warning: a path that is listed as a probe path is sent without a lease. The paths are exact so that a health
+    check never wakes an engine. A path whose mere access starts or loads a model, such as the base URL of a backend
+    that loads on first request, or an unload or upstream-forward path, must not be a ``health_endpoint``, an
+    observation path or an extra probe path. Without a lease, such a probe would load a model that the transition
+    gate had not admitted.
     """
     built: dict[str, list[str]] = {}
     paths: dict[str, set[str]] = {}
