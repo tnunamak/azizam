@@ -324,6 +324,16 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/categories/services` | owner-bearer | denied | `gateway.category_api.categories_services`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/config/export` | owner-bearer | denied | `proxy.admin_config_export`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `POST /admin/api/config/reload` | owner-bearer | denied | `proxy.admin_config_reload`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/config` | owner-bearer | denied | `gateway.config_api.list_sections`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/config/sections/{section_id}` | owner-bearer | denied | `gateway.config_api.get_section`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/config/changes` | owner-bearer | denied | `gateway.config_api.list_changes`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/config/drift` | owner-bearer | denied | `gateway.config_api.get_drift`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/config/problems` | owner-bearer | denied | `gateway.config_api.get_problems`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PATCH /admin/api/config/changes` | owner-bearer | denied | `gateway.config_api.patch_changes`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `DELETE /admin/api/config/sections/{section_id}/entries` | owner-bearer | denied | `gateway.config_api.reset_entry`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/config/changes/{change_id}/revert` | owner-bearer | denied | `gateway.config_api.revert_change`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/config/import` | owner-bearer | denied | `gateway.config_api.import_config`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/config/sections/{section_id}/legacy-import` | owner-bearer | denied | `gateway.config_api.legacy_import`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/credentials` | owner-bearer | denied | `gateway.admin_api.list_credentials`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `DELETE /admin/api/credentials/{credential_id}` | owner-bearer | denied | `gateway.admin_api.delete_credential`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/credentials/{credential_id}/revoke` | owner-bearer | denied | `gateway.admin_api.revoke_credential`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |

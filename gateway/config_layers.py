@@ -662,6 +662,68 @@ def _rejection_text(item: Rejected) -> str:
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# The legacy import: the fewest overrides that make a section equal a startup-file block (design 8.1)
+# ---------------------------------------------------------------------------------------------------------------------
+
+ORIGIN_LEGACY = "legacy-import"
+CODE_LEGACY_UNKNOWN = "legacy_key_unknown"
+
+
+def _lost_keys(target: Any, merged: Any, segments: list[str]) -> list[str]:
+    """Pointers of keys that ``target`` holds and ``merged`` does not, or holds with another value (a leaf or a list)."""
+    if isinstance(target, Mapping) and isinstance(merged, Mapping):
+        lost: list[str] = []
+        for key, item in target.items():
+            if key not in merged:
+                lost.append(join_pointer([*segments, str(key)]))
+            else:
+                lost += _lost_keys(item, merged[key], [*segments, str(key)])
+        return lost
+    return [] if same_value(target, merged) else [join_pointer(segments) or "/"]
+
+
+def overrides_for_target(
+    section: Section, target: Any, context: Mapping[str, Any] | None = None,
+) -> tuple[list[Override], list[Problem]]:
+    """The fewest overrides that make the effective section equal ``target`` (design 8.1 step 1), and why it cannot.
+
+    A differing entry, or one only in ``target``, is a ``set``. A collection member that only the release ships is a
+    ``delete`` (a tombstone). A scalar that ``target`` leaves out gives no row: for a settings-shaped section the code
+    fallback stands, and the release default is written to equal it. The second value holds the faults that stop the
+    import: a key the section does not know, a value the schema refuses, a path that cannot merge. When it is not empty
+    the caller must not write the first (the import does not run for this section).
+    """
+    if not isinstance(target, Mapping):
+        return [], [Problem("", "not_an_object", INVALID, "the startup block must be a mapping")]
+    wanted = section.index.entries_in(target)
+    in_release = set(section.index.entries_in(section.defaults))
+    overrides: list[Override] = []
+    for pointer in wanted:
+        value, release = get_at(target, pointer), get_at(section.defaults, pointer)
+        if not same_value(value, release):
+            overrides.append(Override(pointer, OP_SET, copy.deepcopy(value), base=release, origin=ORIGIN_LEGACY))
+    for pointer in sorted(in_release - set(wanted)):
+        rule = section.index.rule_for(pointer)
+        if rule is not None and rule.kind == "member":
+            overrides.append(Override(pointer, OP_DELETE, None, base=get_at(section.defaults, pointer), origin=ORIGIN_LEGACY))
+    blocked: list[Problem] = []
+    for override in overrides:
+        blocked += check_override(section, override)
+    if blocked:
+        return overrides, blocked
+    try:
+        merged = apply_overrides(section.defaults, overrides)
+    except MergeError as error:
+        return overrides, [Problem("", "path_conflict", INVALID, str(error))]
+    blocked += [
+        Problem(pointer, CODE_LEGACY_UNKNOWN, INVALID, "the section does not take this key, so the import would lose it")
+        for pointer in _lost_keys(target, merged, [])
+    ]
+    blocked += [problem for problem in validate_section(section, merged, context) if problem.severity == INVALID]
+    return overrides, blocked
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 # The source view and the drift report
 # ---------------------------------------------------------------------------------------------------------------------
 

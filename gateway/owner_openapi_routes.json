@@ -133,6 +133,56 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "owner_only": false
   },
+  "GET /admin/api/config": {
+    "tag": "config sections",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "GET /admin/api/config/sections/{section_id}": {
+    "tag": "config sections",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "GET /admin/api/config/changes": {
+    "tag": "config sections",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "GET /admin/api/config/drift": {
+    "tag": "config sections",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "GET /admin/api/config/problems": {
+    "tag": "config sections",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "PATCH /admin/api/config/changes": {
+    "tag": "config sections",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "DELETE /admin/api/config/sections/{section_id}/entries": {
+    "tag": "config sections",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "POST /admin/api/config/changes/{change_id}/revert": {
+    "tag": "config sections",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "POST /admin/api/config/import": {
+    "tag": "config sections",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
+  "POST /admin/api/config/sections/{section_id}/legacy-import": {
+    "tag": "config sections",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "owner_only": true
+  },
   "GET /admin/api/credentials": {
     "tag": "apps and keys",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",

@@ -33,6 +33,7 @@ ADDED_PATHS: dict[str, str] = {
     "/admin/api/me/retention/ledger": "owner/admin offline retention ledger; tests/test_retention_slice6.py covers scope and no network reads",
     "/admin/api/categories/plan-reach": "the access plan editor's before-Save preview of who a change to a plan's categories reaches (owner only; it reads the rules and the plan and writes nothing); tests/test_category_audience.py covers it",
     "/admin/api/requests/{request_id}/retention/ledger": "dated ledger for a request receipt; tests/test_retention_slice6.py covers revisions",
+    "/admin/api/config": "owner-only config sections: effective values with sources, set and reset with If-Match, history, revert, drift, import and export, legacy-file import (docs/design/CONFIG_HOMES.md sections 2-7); tests/test_config_api.py covers auth, preconditions and the round trip",
     "/admin/api/settings/retention/ledger": "owner/admin retention settings ledger; tests/test_retention_slice6.py covers it",
     "/admin/api/settings/retention/systems/{system_id}/facts": "owner-edited system retention facts; tests/test_retention_slice6.py covers removal",
     "/admin/api/engines/{service_id}/retention/ledger": "engine ledger; tests/test_retention_slice6.py covers it",
@@ -184,7 +185,9 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # recovers the document with digest edfc855d1cc6a59ba843fb3cfa404ec88ad18963af237f1ccc8b2371faa0db2a exactly.
         # Re-captured 2026-11-05 after the kobold wiring left proxy.py: only the hot-reload route's description moved
         # (it no longer lists KOBOLD_HOST); tests/fixtures/headless_openapi.json shows the same one-line change.
-        assert route_graph.openapi_digest(proxy.app) == "07410fbacc45a00c2dd669a3213d285d782897a57de979c10c08b01b7f1cb7fe"
+        # Re-captured 2026-11-05 for the config section routes under /admin/api/config (see ADDED_PATHS); removing those
+        # paths recovers the document with digest 07410fbacc45a00c2dd669a3213d285d782897a57de979c10c08b01b7f1cb7fe exactly.
+        assert route_graph.openapi_digest(proxy.app) == "7e039f478555a6c946ca68732c2e389b8c7f6c838f8fa34080bdc8c9fe45edb7"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.

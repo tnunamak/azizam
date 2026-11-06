@@ -4925,6 +4925,7 @@ def _commit_config_plan(
     return {
         "change_id": change_id, "entry_count": len(items),
         "revisions": {section: config_revision_in(conn, section) for section in touched},
+        "entries": [(item["section"], item["pointer"]) for item in items],
     }
 
 

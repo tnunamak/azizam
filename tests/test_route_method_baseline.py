@@ -170,6 +170,8 @@ def _deliberate(key: str) -> str | None:
                  "/admin/api/settings/retention/ledger", "/admin/api/settings/retention/systems/sample/facts"}
             or re.fullmatch(r"/admin/api/(engines|providers)/[^/]+/retention/(facts|ledger)", path)):
         return "retention_ledger"  # owner/admin metadata routes; tests/test_retention_slice6.py covers access
+    if path.startswith("/admin/api/config/") and path not in {"/admin/api/config/export", "/admin/api/config/reload"} or path == "/admin/api/config":
+        return "config_sections"  # owner routes for the config sections (gateway/config_api.py); tests/test_config_api.py covers them
     if path.startswith(ACCESS_PLAN_API_PREFIXES) or (path.startswith("/admin/api/providers/") and path.endswith("/allowed-plans")):
         return "access-plans"
     if path.startswith("/admin/api/apps/") and "/trusted-addresses" in path:
@@ -334,6 +336,8 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
                 continue
         if kind == "retention_ledger" and key not in old:
             continue  # new offline ledger and fact editor routes
+        if kind == "config_sections" and key not in old:
+            continue  # new owner routes for the config sections
         if kind == "secret_entries" and key not in old:
             continue  # new owner routes (the secret commands, and the records the registry leaves out)
         if kind == "avatar" and key not in old:
@@ -390,6 +394,8 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
         if kind == "retention_ledger" and key not in old:
             continue
         if kind == "lifecycle_hop" and key not in old:
+            continue
+        if kind == "config_sections" and key not in old:
             continue
         if kind == "mesh" and key not in old:
             # POST is never a live row (it has a real handler, sharded with its siblings); the rest answer as above.

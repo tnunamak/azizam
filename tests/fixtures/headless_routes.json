@@ -273,6 +273,86 @@
   },
   {
     "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.config_api.list_sections",
+    "method": "GET",
+    "path": "/admin/api/config",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.config_api.get_section",
+    "method": "GET",
+    "path": "/admin/api/config/sections/{section_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.config_api.list_changes",
+    "method": "GET",
+    "path": "/admin/api/config/changes",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.config_api.get_drift",
+    "method": "GET",
+    "path": "/admin/api/config/drift",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.config_api.get_problems",
+    "method": "GET",
+    "path": "/admin/api/config/problems",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.config_api.patch_changes",
+    "method": "PATCH",
+    "path": "/admin/api/config/changes",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.config_api.reset_entry",
+    "method": "DELETE",
+    "path": "/admin/api/config/sections/{section_id}/entries",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.config_api.revert_change",
+    "method": "POST",
+    "path": "/admin/api/config/changes/{change_id}/revert",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.config_api.import_config",
+    "method": "POST",
+    "path": "/admin/api/config/import",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
+    "handler": "gateway.config_api.legacy_import",
+    "method": "POST",
+    "path": "/admin/api/config/sections/{section_id}/legacy-import",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.list_credentials",
     "method": "GET",
