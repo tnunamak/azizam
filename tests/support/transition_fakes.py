@@ -54,6 +54,15 @@ class EngineSim:
     evidence_sticky: bool = False                              # keep the evidence fault on every read
     calls: list[tuple[str, str]] = field(default_factory=list)
     delay: float = 0.0
+    cancelled: list[str] = field(default_factory=list)         # effect calls that were cancelled while they ran
+
+    async def wait(self, seconds: float, what: str) -> None:
+        """The time an effect takes inside the engine. A cancellation here is recorded: no deadline may cancel an effect."""
+        try:
+            await asyncio.sleep(seconds)
+        except asyncio.CancelledError:
+            self.cancelled.append(what)
+            raise
 
     def take_fault(self, step: str) -> Optional[str]:
         return self.faults.pop(step, None)
@@ -101,9 +110,9 @@ class DirectAdapter:
         sim = self.sim
         sim.calls.append(("release", intent.effect_key))
         fault = sim.take_fault("release")
-        await asyncio.sleep(sim.delay)
+        await sim.wait(sim.delay, intent.effect_key)
         if fault == "hang":
-            await asyncio.sleep(3600)
+            await sim.wait(3600, intent.effect_key)
         if fault == "fail":
             sim.ledger[intent.effect_key] = "refused"
             return EffectResult(outcome="no_change", evidence_ref="release-refused")
@@ -113,16 +122,16 @@ class DirectAdapter:
         sim.offering, sim.ready = None, False
         sim.ledger[intent.effect_key] = "applied"
         if fault == "lost_reply":
-            await asyncio.sleep(3600)
+            await sim.wait(3600, intent.effect_key)
         return EffectResult(outcome="success", evidence_ref=f"release:{intent.effect_key}", attested=self.attested)
 
     async def load(self, domain: str, target: str, intent: StepIntent) -> EffectResult:
         sim = self.sim
         sim.calls.append(("load", f"{intent.effect_key}:{target}"))
         fault = sim.take_fault("load")
-        await asyncio.sleep(sim.delay)
+        await sim.wait(sim.delay, intent.effect_key)
         if fault == "hang":
-            await asyncio.sleep(3600)
+            await sim.wait(3600, intent.effect_key)
         if fault == "fail":
             sim.ledger[intent.effect_key] = "refused"
             return EffectResult(outcome="no_change", evidence_ref="load-refused")
@@ -139,7 +148,7 @@ class DirectAdapter:
         sim.incarnation = f"inc-after-{intent.effect_key}"
         sim.ledger[intent.effect_key] = "applied"
         if fault == "lost_reply":
-            await asyncio.sleep(3600)
+            await sim.wait(3600, intent.effect_key)
         # A lying adapter: it reports success even for a wrong target or a target that is not ready.
         return EffectResult(outcome="success", evidence_ref=f"load:{intent.effect_key}")
 
@@ -206,7 +215,7 @@ class LedgerAdapter:
         self.sim.ledger[key] = "pending"
 
         async def settle() -> None:
-            await asyncio.sleep(self.settle_delay)
+            await self.sim.wait(self.settle_delay, key)
             self.sim.ledger[key] = apply()
             self._done[key].set()
 
@@ -283,7 +292,7 @@ ADAPTERS = {"direct": DirectAdapter, "ledger": LedgerAdapter}
 DOMAIN = "dom-a"
 FAST: dict[str, float] = {
     "drain_deadline_s": 0.4, "release_deadline_s": 0.3, "load_deadline_s": 0.3, "query_deadline_s": 0.3,
-    "probe_deadline_s": 0.2, "fresh_within_s": 2.0, "idle_poll_s": 0.01, "lock_wait_s": 1.0, "retry_after_s": 7.0,
+    "probe_deadline_s": 0.2, "idle_poll_s": 0.01, "lock_wait_s": 1.0, "retry_after_s": 7.0,
 }
 
 

@@ -858,3 +858,110 @@ def test_policy_retry_after_comes_from_the_declared_transition() -> None:
     assert (policy.retry_after_s, policy.profile, policy.lease_only) == (7.0, "p", True)
     assert refusal("reconciling", policy.retry_after_s).headers == {"Retry-After": "7"}
     assert policy_for("other", {"other": {}}).retry_after_s == 30.0
+
+
+# -- review round: effects are never cancelled, resume re-checks the load, wake errors are 503 ----------------
+
+
+@ADAPTERS
+def test_a_deadline_never_cancels_a_dispatched_effect(tmp_path: Path, adapter: str, capsys: pytest.CaptureFixture[str]) -> None:
+    async def scenario() -> None:
+        h = Harness(tmp_path, adapter=adapter, **({"can_query": False} if adapter == "direct" else {"settle_delay": 0.6, "query_wait": 0.05}))
+        if adapter == "direct":
+            h.sim.delay = 0.6  # the effect runs past the 0.3 s release deadline
+        done = await h.run("park", "k")
+        assert (done.state, done.step_outcome) == ("reconciling", "unknown"), "the deadline records unknown"
+        await asyncio.sleep(0.8)  # the effect finishes by itself
+        assert h.sim.cancelled == [], "no effect call was cancelled"
+        assert h.sim.offering is None, "the engine finished the release the deadline gave up on"
+        assert h.store.get(done.op_id).step_outcome == "unknown", "a late outcome writes nothing (G10)"
+        if adapter == "direct":
+            assert "late outcome success" in capsys.readouterr().out, "the late outcome is logged"
+
+    run(scenario)
+
+
+def test_the_fresh_window_comes_from_the_reviewed_profile_never_from_owner_config() -> None:
+    from gateway.transition_executor import DEFAULTS, fresh_within
+
+    assert fresh_within({"fresh_within_s": 999.0}) == DEFAULTS["fresh_within_s"], "an owner value is ignored"
+    assert fresh_within({"profile": {"fresh_within_s": 9.0}, "fresh_within_s": 999.0}) == 9.0
+    assert fresh_within({"profile": {"fresh_within_s": -1}}) == DEFAULTS["fresh_within_s"]
+
+
+def test_a_stale_window_in_owner_config_does_not_make_old_evidence_fresh(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        h = Harness(tmp_path, policy={"fresh_within_s": 1e9})
+        h.sim.arm_evidence("stale", after="release", sticky=True)
+        done = await h.run("park", "k")
+        assert (done.state, done.step_outcome, done.stock) == ("reconciling", "unknown", None)
+
+    run(scenario)
+
+
+@ADAPTERS
+def test_a_resume_at_open_checks_the_target_again_and_holds_when_the_engine_died(tmp_path: Path, adapter: str) -> None:
+    async def scenario() -> None:
+        h = Harness(tmp_path, adapter=adapter)
+        op = _begun(h)
+        _intent(op.op_id, h, "drain")
+        h.store.write_outcome(op.op_id, "drain", EffectResult(outcome="success"))
+        _intent(op.op_id, h, "release")
+        h.store.write_outcome(op.op_id, "release", EffectResult(outcome="success", attested=True))
+        _intent(op.op_id, h, "load")
+        h.sim.offering, h.sim.ready, h.sim.stock = "beta", True, 1
+        h.store.write_outcome(op.op_id, "load", EffectResult(outcome="success"))
+        # The process crashed here. While it was down the engine died.
+        h.sim.offering, h.sim.ready, h.sim.stock = None, False, 0
+        fresh = h.restart(tmp_path)
+        await fresh.executor.reconcile_startup()
+        held = await fresh.executor.wait(op.op_id)
+        assert (held.state, fresh.gate()) == ("reconciling", "reconciling"), "the old load evidence never opens the gate"
+        assert fresh.drain.in_flight(DOMAIN) == 0
+        assert not fresh.steps_called("load"), "the recheck only reads"
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("step_known", [True, False])
+def test_a_resume_with_the_target_still_resident_opens_as_before(tmp_path: Path, step_known: bool) -> None:
+    async def scenario() -> None:
+        h = Harness(tmp_path)
+        op = _begun(h)
+        _intent(op.op_id, h, "drain")
+        h.store.write_outcome(op.op_id, "drain", EffectResult(outcome="success"))
+        _intent(op.op_id, h, "release")
+        h.store.write_outcome(op.op_id, "release", EffectResult(outcome="success", attested=True))
+        _intent(op.op_id, h, "load")
+        h.sim.offering, h.sim.ready = "beta", True
+        h.store.write_outcome(op.op_id, "load", EffectResult(outcome="success"))
+        if step_known:
+            _intent(op.op_id, h, "open")
+        fresh = h.restart(tmp_path)
+        await fresh.executor.reconcile_startup()
+        done = await fresh.executor.wait(op.op_id)
+        assert (done.state, fresh.gate()) == ("succeeded", "open")
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("failure", ["no_offering", "store_error"])
+def test_a_wake_that_cannot_start_is_a_503_never_a_raw_error(tmp_path: Path, failure: str) -> None:
+    async def scenario() -> None:
+        h = Harness(tmp_path)
+        if failure == "no_offering":
+            h.executor._gate_parked = lambda domain: "op-gone"  # type: ignore[method-assign]
+        else:
+            await h.run("park", "p")
+
+            def broken(**kwargs: Any) -> Any:
+                raise sqlite3.OperationalError("database is locked")
+
+            h.store.begin = broken  # type: ignore[method-assign]
+        with pytest.raises(TransitionUnavailable) as refused:
+            await h.executor.ensure_awake(DOMAIN, wait_s=1.0)
+        assert (refused.value.status_code, refused.value.reason) == (503, "wake_unavailable")
+        assert refused.value.headers == {"Retry-After": "7"}
+        assert not h.locks[DOMAIN].locked()
+
+    run(scenario)

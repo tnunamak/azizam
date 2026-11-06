@@ -4,7 +4,8 @@ Every httpx client the gateway opens comes from ``async_client`` or ``client`` h
 that runs for every request the client sends, including each redirect hop and every request a long-lived client
 sends later. The hook looks up the destination ``host:port`` in a map of the transition-enabled residency domains,
 projected from the registry each time the runtime config is published (``publish``). A destination in that map
-needs the sending task to hold an unreleased lease for the domain (``transition_gate.holds_lease``); otherwise
+needs the sending task to hold an unreleased lease for the domain (``transition_gate.holds_lease``) or to be inside
+``permit_domain`` for it (the transition executor's control calls only); otherwise
 the hook raises ``TransitionUnavailable`` before the transport sees the request, so no byte leaves.
 
 The per-route guards (``_require_egress_lease`` in proxy.py and the protocol hops) stay as the second layer: they
@@ -26,7 +27,9 @@ the record, so the names agree.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlsplit
@@ -42,6 +45,25 @@ def probe() -> dict[str, Any]:
     """The request extensions of a probe: pass as ``extensions=engine_egress.probe()`` on a GET that only reads
     health or metadata. A new dict each call, because the hook removes the mark from the request's own dict."""
     return {PROBE_EXTENSION: True}
+
+
+_PERMITTED: ContextVar[frozenset[str]] = ContextVar("engine_egress_permitted_domains", default=frozenset())
+
+
+@contextmanager
+def permit_domain(domain: str) -> Iterator[None]:
+    """Let the current task send to ``domain``'s engines without a serving lease, for the ``with`` block only.
+
+    For the transition executor's own control calls (release, load, query, probes): they run while the gate is
+    closed and the executor holds the domain lock, and a serving lease would count against the drain that precedes
+    them. The permit is scoped to one domain by name; a task spawned inside the block inherits it, one spawned
+    outside never does, and a send to any other enabled domain is still refused.
+    """
+    token = _PERMITTED.set(_PERMITTED.get() | {domain})
+    try:
+        yield
+    finally:
+        _PERMITTED.reset(token)
 
 
 _DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
@@ -250,6 +272,9 @@ def check_request(request: httpx.Request) -> None:
     if not domains or (marked and _declared_probe(key, request.url.path)):
         return
     if any(holds_lease(domain) for domain in domains):
+        return
+    permitted = _PERMITTED.get()
+    if any(domain in permitted for domain in domains):
         return
     raise TransitionUnavailable(domains[0], reason="path_not_leased")
 

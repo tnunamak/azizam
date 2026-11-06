@@ -21,7 +21,7 @@ from gateway.transition_snapshot_steps import snapshot_steps  # noqa: E402
 from gateway.transition_store import SqliteOperationStore  # noqa: E402
 
 FAST = {"drain_deadline_s": 1, "idle_poll_s": 0.01, "probe_deadline_s": 1, "release_deadline_s": 2, "load_deadline_s": 2,
-        "query_deadline_s": 0.5, "lock_wait_s": 1, "fresh_within_s": 30, "retry_after_s": 7}
+        "query_deadline_s": 0.5, "lock_wait_s": 1, "retry_after_s": 7}
 
 
 def build(tmp_path, shape: str):

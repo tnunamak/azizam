@@ -24,7 +24,7 @@ from gateway.transition_runtime import TransitionRuntime
 
 PROFILE = "declared-ops-v1"
 FAST = {"admission_wait_s": 2, "drain_deadline_s": 1, "idle_poll_s": 0.01, "probe_deadline_s": 1, "release_deadline_s": 2,
-        "load_deadline_s": 2, "query_deadline_s": 0.5, "lock_wait_s": 1, "fresh_within_s": 30, "retry_after_s": 7}
+        "load_deadline_s": 2, "query_deadline_s": 0.5, "lock_wait_s": 1, "retry_after_s": 7}
 
 
 def services() -> dict[str, Any]:
