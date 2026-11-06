@@ -19,7 +19,7 @@ Rules that every implementation keeps:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Literal, Mapping, Optional, Protocol, Sequence, Union
+from typing import Callable, Collection, Literal, Mapping, Optional, Protocol, Sequence, Union
 
 TransitionKind = Literal["select", "park", "wake"]
 """``select``: make ``target`` the resident offering. ``park``: release, leave nothing resident.
@@ -236,7 +236,8 @@ class SnapshotStore(Protocol):
 
     def abandon_pending(self, domain: str, op_id: Optional[str] = None) -> Sequence[Snapshot]: ...
 
-    def latest_published(self, domain: str, compatibility: Mapping[str, str]) -> Optional[Snapshot]: ...
+    def latest_published(self, domain: str, compatibility: Mapping[str, str],
+                         ignore: Collection[str] = ()) -> Optional[Snapshot]: ...
 
 
 StepVerdict = Literal["continue", "skip", "reopen", "fail_closed", "reconcile"]

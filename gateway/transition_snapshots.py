@@ -255,7 +255,7 @@ class SqliteSnapshotStore:
                         # A handle names one file once. An adapter that answers every checkpoint with the same
                         # handle would overwrite the file of a snapshot the ledger still trusts (or already deleted).
                         raise SnapshotRejected(
-                            "handle already belongs to a live snapshot of this domain; the adapter contract is one "
+                            "handle already belongs to an earlier snapshot of this domain; the adapter contract is one "
                             "unique handle per checkpoint effect" if earlier["state"] != "deleted" else
                             "handle was used by an earlier snapshot of this domain (deleted rows count): "
                             "every checkpoint needs a new handle")

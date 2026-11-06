@@ -370,7 +370,8 @@ class RestoreStep:
         snapshot = await _blocking(lambda: self._snapshots.latest_published(domain, compatibility, sp.placement_keys))
         if snapshot is None:
             return "skip"
-        await _blocking(lambda: self._snapshots.pin(snapshot.handle, domain=domain))
+        if not await _blocking(lambda: self._snapshots.pin(snapshot.handle, domain=domain)):
+            return "skip"  # the snapshot went away after it was read: an unpinned file could be collected mid-restore
         late: list["asyncio.Future[EffectResult]"] = []
         try:
             return await self._restore(ctx, sp, adapter, snapshot.handle, late)

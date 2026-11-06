@@ -167,7 +167,7 @@ def test_pending_refuses_evidence_gaps(tmp_path) -> None:
 def test_pending_refuses_a_second_live_snapshot_on_the_same_handle_and_names_the_contract(tmp_path) -> None:
     files, store = make(tmp_path)
     record(files, store, "a.snap")
-    with pytest.raises(SnapshotRejected, match="live snapshot of this domain.*unique handle per checkpoint effect"):
+    with pytest.raises(SnapshotRejected, match="earlier snapshot of this domain.*unique handle per checkpoint effect"):
         store.pending(domain=D, op_id="o2", handle="a.snap", compatibility=COMPAT, bytes=len(BODY))
 
 

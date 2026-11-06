@@ -373,6 +373,48 @@ def test_the_reconcile_runs_once_even_when_requests_arrive_together(wired, monke
     assert runs == [1]
 
 
+def test_nothing_begins_while_the_leftover_operations_are_not_yet_settled(wired, monkeypatch) -> None:
+    store, engine, runtime = wired
+    executor, op = _leftover_operation(store, runtime, engine, with_intent=True)
+    _unreadable_at_start(store, monkeypatch)
+
+    async def scenario() -> None:
+        await runtime.reconcile_startup()
+        assert not executor.reconciled()
+        with pytest.raises(TransitionUnavailable) as caught:
+            await executor.submit(domain="dom", kind="wake", idempotency_key="early", target="alpha")
+        assert caught.value.reason == "reconciling"
+        assert executor.active() == () and executor.store.get(op.op_id).state == "running", "nothing began or moved"
+
+    asyncio.run(scenario())
+
+
+def test_the_reconcile_leaves_alone_an_operation_this_process_drives(wired, monkeypatch) -> None:
+    store, engine, runtime = wired
+    executor = runtime.executor()
+
+    async def scenario() -> None:
+        await runtime.reconcile_startup()
+        assert executor.reconciled()
+        began = await executor.submit(domain="dom", kind="park", idempotency_key="live", target=None)
+        live = began.operation.op_id
+        assert live in executor.active()
+        recovered: list[str] = []
+        real = executor._recover
+
+        async def spy(operation) -> None:
+            recovered.append(operation.op_id)
+            await real(operation)
+
+        monkeypatch.setattr(executor, "_recover", spy)
+        await executor.reconcile_startup()  # a second pass, as a late reconcile would run
+        assert live not in recovered, "the reconcile touched an operation a live task drives"
+        done = await executor.wait(live)
+        assert done.state == "succeeded", "the live operation finished on its own driver"
+
+    asyncio.run(scenario())
+
+
 # -- review round: the waking request's lease is minted under the lock -------------------------------------
 
 

@@ -426,6 +426,10 @@ class Executor:
     async def submit(self, *, domain: str, kind: TransitionKind, idempotency_key: str, target: Optional[str] = None,
                      compensates: Optional[str] = None, trigger: Optional[Callable[[], None]] = None) -> BeginResult:
         await self.ensure_reconciled()
+        if not self._ready:
+            # Nothing begins before the leftover operations are settled: the reconcile must never find an
+            # operation that a task of this process is driving.
+            raise TransitionUnavailable(domain, reason="reconciling", retry_after_s=5)
         mutex = self._submit_locks.setdefault(domain, asyncio.Lock())
         async with mutex:
             return await self._submit_serialized(domain, kind, idempotency_key, target, compensates, trigger)
@@ -436,7 +440,8 @@ class Executor:
             raise UnknownDomain(f"{domain!r} is not a residency domain key")
         policy = self._policy_of(domain)
         target = await self._resolve_target(domain, kind, target, compensates)
-        # A contender is answered without the lock: a second POST must not wait for the first transition.
+        # A contender is answered without the domain lock: a second POST waits only for the first one's begin
+        # (the submit mutex), never for the first transition.
         existing = await asyncio.to_thread(self.store.by_idempotency_key, domain, key)
         if existing is not None:
             same = existing.request_hash == request_hash(kind, target, compensates)
@@ -629,6 +634,8 @@ class Executor:
         ``closed`` or ``reconciling`` in the table, so nothing is admitted while this runs.
         """
         for operation in await asyncio.to_thread(self.store.unfinished):
+            if operation.op_id in self._tasks:
+                continue  # a task of this process drives it; only an operation nothing drives is recovered
             try:
                 await self._recover(operation)
             except Exception as exc:  # noqa: BLE001
@@ -790,11 +797,15 @@ class Executor:
         was not parked. Raises ``TransitionUnavailable`` when the wake is not done in time or did not succeed.
         """
         await self.ensure_reconciled()
-        parked_by = self._gate_parked(domain)
-        if parked_by is None:
-            return None
-        policy = self._policy_of(domain)
-        retry = int(setting(policy, "retry_after_s"))
+        try:
+            parked_by = self._gate_parked(domain)
+            if parked_by is None:
+                return None
+            policy = self._policy_of(domain)
+            retry = int(setting(policy, "retry_after_s"))
+        except Exception as exc:  # noqa: BLE001 - an unreadable gate or policy is a refusal, never a 500
+            print(f"[transition-gate] wake of {domain!r} not checkable: {type(exc).__name__}: {exc}", flush=True)
+            raise TransitionUnavailable(domain, reason="wake_unavailable", retry_after_s=5) from None
         try:
             began = await self.submit(domain=domain, kind="wake", idempotency_key=f"wake-{parked_by}", trigger=trigger)
         except TransitionUnavailable:
