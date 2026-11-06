@@ -21,7 +21,7 @@ from typing import Any, Callable, Mapping, Optional
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import egress
+from gateway import client_errors, egress
 from gateway.engine_admin import EngineRouteError, _is_owner, _owner_only
 from gateway.transition_executor import InvalidTransition, UnknownDomain
 from gateway.transition_gate import TransitionUnavailable
@@ -70,9 +70,10 @@ def register_transition_routes(router: APIRouter, *, runtime: Callable[[], Trans
         return egress.plain_json_response(dict(content), response_class="transition", status_code=code, headers=headers)
 
     def _unavailable(exc: TransitionUnavailable) -> JSONResponse:
+        seconds = client_errors.retry_after(str(exc.retry_after_s))
         return EngineRouteError(status.HTTP_503_SERVICE_UNAVAILABLE, "transition_unavailable",
                                 f"The domain cannot take this now: {exc.reason}.",
-                                headers={"Retry-After": str(exc.retry_after_s)}).as_response()
+                                headers={"Retry-After": seconds} if seconds is not None else None).as_response()
 
     @router.post("/engines/domains/{domain}/transitions")
     async def start_transition(domain: str, request: Request) -> JSONResponse:

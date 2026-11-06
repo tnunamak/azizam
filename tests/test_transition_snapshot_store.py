@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import random
 import sqlite3
+import stat
 from pathlib import Path
 
 import pytest
@@ -212,6 +213,15 @@ def test_the_snapshot_directory_must_be_private(tmp_path) -> None:
     open_dir.chmod(0o755)
     with pytest.raises(SnapshotRejected, match="private"):
         PrivateSnapshotDir(open_dir)
+
+
+def test_the_snapshot_directory_is_made_by_the_first_write_not_at_startup(tmp_path) -> None:
+    """A container that runs as root must not leave a root-only directory in a fresh data folder."""
+    root = tmp_path / "data" / "transition-snapshots"
+    files = PrivateSnapshotDir(root)
+    assert not root.exists()
+    files.path_for(D, "first.snap")
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
 
 
 # -- crash on either side of the pointer ------------------------------------
