@@ -771,8 +771,8 @@ test("Transcription: the rows' hover fill is the scroll-edge tone, a pointer, an
   const surface = await dialog.evaluate((el) => getComputedStyle(el).backgroundColor);
   await row.hover();
   await expect.poll(() => row.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
-  // The transition is 150 ms; wait until it has settled.
-  await page.waitForTimeout(250);
+  // Wait until the hover transition has finished, so the fill read is the settled one.
+  await expect.poll(() => row.evaluate((el) => el.getAnimations().length)).toBe(0);
   const fill = await row.evaluate((el) => getComputedStyle(el).backgroundColor);
   expect(contrast(fill, surface)).toBeGreaterThanOrEqual(1.2);
   expect(await row.evaluate((el) => getComputedStyle(el).cursor)).toBe("pointer");
@@ -1065,8 +1065,8 @@ for (const target of [
     await libraryClosed(page);
     const summary = page.locator('[data-slot="picked-summary"]');
     await expect(summary).toHaveCount(1);
-    // Past the dialog's exit and the guard's window, the pick is still held: nothing took it away.
-    await page.waitForTimeout(900);
+    // Once the pick has finished adding, it is still held: the second click took nothing away.
+    await expect(page.getByRole("status").filter({ hasText: /^Adding / })).toHaveCount(0);
     await expect(summary).toHaveCount(1);
     await expect(summary.locator("p > span").first()).toHaveText("A teal fish");
     await expect(page.getByRole("button", { name: "Choose a file" })).toHaveCount(0);
@@ -1081,7 +1081,7 @@ test("A double-click on a clip row picks it once and the pick survives (Transcri
   await libraryOpen(page);
   await page.getByRole("dialog").getByRole("button", { name: "A short spoken note", exact: true }).dblclick();
   await libraryClosed(page);
-  await page.waitForTimeout(900);
+  await expect(page.getByRole("status").filter({ hasText: /^Adding / })).toHaveCount(0);
   await expect(page.locator('[data-slot="picked-summary"]')).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Remove A short spoken note" })).toBeVisible();
 });

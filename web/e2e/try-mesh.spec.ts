@@ -195,8 +195,7 @@ for (const { name, size } of viewports) {
       await expect(form.locator('input[type="file"]')).toHaveCount(1);
       await expect(
         form
-          .locator("label")
-          .filter({ hasText: "Picture" })
+          .getByRole("group", { name: "Picture" })
           .locator('input[type="file"]'),
       ).toHaveCount(1);
       const formText = (await form.innerText()).replace(/\s+/g, " ");
