@@ -29,7 +29,7 @@ def protocol() -> description.ProtocolDescription:
         "id": "control-address-fixture", "protocol_version": 1, "executor": "http-v1",
         "auth": {"inference": {"kind": "bearer"}, "control": {"kind": "bearer"}},
         "operations": {
-            "generate": {"class": "inference", "request": {"method": "POST", "path": "/v1/generate"},
+            "generate": {"class": "generate", "request": {"method": "POST", "path": "/v1/generate"},
                          "response": {"framing": "json"}},
             "engine.release": {"class": "control", "request": {"method": "POST", "path": "/release"},
                                "response": {"framing": "json", "select": {"outcome": "/outcome"}}},
