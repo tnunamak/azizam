@@ -525,7 +525,9 @@
 # Train 8 (2026-11-06): connection address refuses a credential (+1), transition-proof trace records parked (+0); measured 19821.
 # fix/url-credential-gaps (2026-11-06): registry, excluded-record and provider refusals never quote a body secret (+4); measured 19825.
 # Train 9 (2026-11-06): registry, excluded-record and provider refusals never quote a body secret (+4); measured 19825.
-pytest = 19825
+# fix/schemeless-address-scrub: a schemeless address gives up its query secret to the refusal scrub (+1); measured 19826.
+# Train 10 (2026-11-06): a schemeless address gives its query secret to the refusal scrub (+1); measured 19826.
+pytest = 19826
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -660,7 +662,9 @@ pytest = 19825
 # Library pick everywhere (2026-11-06): +111 vitest cases (shared media input, picker, hook, focus-ring contrast); measured with npx vitest list on the merge candidate: 3913.
 # Config homes C6 (2026-11-06): the settings page spec runs its stale-write case for 412 and 409 (+2 over the base); vitest list measured 3804 (--root web).
 # Train 4 (2026-11-06): main 3913 + the C6 settings stale-write case for 412 and 409 (+2); vitest list --json measured 3915 (--root web).
-vitest = 3915
+# Library picker polish (2026-11-06): picked-summary.spec.tsx (+4, image pixel size) and try/workflow-inputs.spec.tsx (+3, empty prompt sizes to its example); vitest list --json measured 3922 (--root web).
+# Train 10 (2026-11-06): Library picker polish, picked image pixel size and the Try empty prompt field (+7); measured 3922.
+vitest = 3922
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).

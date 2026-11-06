@@ -745,7 +745,9 @@ def request_secret_texts(body: Any) -> list[str]:
                 found.add(node)
             if "://" in node:
                 found.update(projection.url_secret_parts(node))
-            elif key in _BODY_ADDRESS_KEYS and "@" in node:
+            elif key in _BODY_ADDRESS_KEYS:
+                # A schemeless address ("user:pass@host", "host/v1?token=...") is read as one, so its user,
+                # password, query and fragment are found too.
                 found.update(projection.url_secret_parts(f"//{node}"))
 
     walk(body)

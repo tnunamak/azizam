@@ -76,9 +76,15 @@ export function PickedSummary({
   });
   if (failure.url !== previewUrl) setFailure({ url: previewUrl, failed: false, attempt: 0 });
   const { failed, attempt } = failure;
+  // The picture's pixel size appears only once its own preview has loaded.
+  const [dimensions, setDimensions] = useState<{ url: string | null; width: number; height: number } | null>(null);
+  const imageSize =
+    kind === "image" && !failed && dimensions && dimensions.url === previewUrl
+      ? `${dimensions.width}×${dimensions.height}`
+      : null;
   const drawable = previewUrl !== null && (kind === "image" || kind === "video");
   const Icon = kindIcon(kind ?? "file");
-  const tail = facts.filter((part): part is string => Boolean(part)).join(" · ");
+  const tail = [facts[0], imageSize, ...facts.slice(1)].filter((part): part is string => Boolean(part)).join(" · ");
   return (
     <div data-slot="picked-summary" className={cn("@container", className)}>
       <div className="grid grid-cols-[4rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1 @[26rem]:grid-cols-[4rem_minmax(0,1fr)_auto] @[26rem]:items-center @[26rem]:gap-y-0">
@@ -107,7 +113,14 @@ export function PickedSummary({
                 src={previewUrl}
                 alt={previewAlt}
                 className="size-full object-cover"
-                onError={() => setFailure((current) => ({ ...current, failed: true }))}
+                onLoad={({ currentTarget }) => {
+                  const { naturalWidth: width, naturalHeight: height } = currentTarget;
+                  setDimensions(width > 0 && height > 0 ? { url: previewUrl, width, height } : null);
+                }}
+                onError={() => {
+                  setDimensions(null);
+                  setFailure((current) => ({ ...current, failed: true }));
+                }}
               />
             )
           ) : (
