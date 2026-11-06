@@ -70,9 +70,11 @@ def test_every_exclusion_still_matches_a_name_the_scan_reaches():
 def test_each_section_count_matches_its_ratchet_key():
     per_section = scanner.per_section(_inventory())
     keys = _ratchets()
-    assert set(per_section) == set(keys), (
-        f"sections with a count but no key: {sorted(set(per_section) - set(keys))}; "
-        f"keys with no count: {sorted(set(keys) - set(per_section))}. One [ratchets] key per section."
+    counted = {section for section, value in keys.items() if value > 0}
+    assert set(per_section) == counted, (
+        f"sections with a count but no key: {sorted(set(per_section) - counted)}; "
+        f"keys with no count: {sorted(counted - set(per_section))}. One [ratchets] key per section; "
+        "a section that reached zero keeps its key at 0."
     )
     for section, count in per_section.items():
         ceiling = keys[section]
