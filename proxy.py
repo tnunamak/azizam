@@ -665,20 +665,24 @@ _BACKEND_STATE_STRATEGIES: dict = {
 }
 
 
-def _publish_egress(backends: Mapping[str, Any] | None) -> None:
+def _project_egress(backends: Mapping[str, Any] | None) -> engine_egress.Projection:
     """Project the send-time lease check's destination map from these services (see gateway.engine_egress).
+
+    Pure: nothing goes live until the caller installs the result, and it installs the map before the config that
+    enables a domain, so a request never sees an enabled domain without its map entry.
 
     A service's loaded-state endpoint (by its ``state_type``) is a metadata read it declares, so a probe of it counts.
     A service that names no ``state_type`` is seeded by the default strategy, so any endpoint of the table may be read.
     """
 
     def state_paths(record: Mapping[str, Any]) -> list[str]:
-        state_type = str((record.get("config") or record).get("state_type") or "")
+        scope = record.get("config")
+        state_type = str((scope if isinstance(scope, Mapping) else record).get("state_type") or "")
         strategies = [_BACKEND_STATE_STRATEGIES[state_type]] if state_type in _BACKEND_STATE_STRATEGIES else (
             list(_BACKEND_STATE_STRATEGIES.values()) if not state_type else [])
         return [str(strategy["endpoint"]) for strategy in strategies]
 
-    engine_egress.publish(backends, extra_probe_paths=state_paths)
+    return engine_egress.project(backends, extra_probe_paths=state_paths)
 
 
 config, REGISTRY_APPLY_PROBLEM = _boot_effective_runtime_config(config)
@@ -687,17 +691,19 @@ config, REGISTRY_APPLY_PROBLEM = _boot_effective_runtime_config(config)
 def _publish_boot_snapshot(boot_config: Mapping[str, Any], registry_problem: Mapping[str, Any] | None) -> Mapping[str, Any]:
     """Publish the boot config as the first snapshot and return the config the module then holds (the snapshot's own)."""
     layer, registry_generation = config_runtime.carried(boot_config)
-    CONFIG_HOME.publish(CONFIG_HOME.snapshot(
+    snapshot = CONFIG_HOME.snapshot(
         boot_config, layer=layer, registry_generation=registry_generation, registry_problem=registry_problem,
-    ))
+    )
+    # The egress map follows the config the gateway boots with (registry overlay, partial and empty fallbacks included),
+    # not the bootstrap file: a service held only in the registry is mapped from the first request. It goes live
+    # before the snapshot, so no request sees an enabled domain without its map entry.
+    engine_egress.install(_project_egress(snapshot.config.get("backends")))
+    CONFIG_HOME.publish(snapshot)
     return CONFIG_HOME.holder.current().config
 
 
 config = _publish_boot_snapshot(config, REGISTRY_APPLY_PROBLEM)
 CONFIG_PROBLEMS = dict(CONFIG_HOME.holder.current().problems.get("config") or {})
-# The egress map follows the config the gateway boots with (registry overlay, partial and empty fallbacks included),
-# not the bootstrap file: a service held only in the registry is mapped from the first request.
-_publish_egress(config.get("backends"))
 auth_cfg = config.get("auth", {})
 admin_cfg = config.get("admin", {}) or {}
 
@@ -1373,6 +1379,8 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     # anything: a bad config must raise here and leave the old config and
     # constants serving, never a new config paired with old constants.
     updates = _derive_backend_constants(new_cfg)
+    # The send-time lease check's map is projected here too: a config the projection cannot read never goes live.
+    egress = _project_egress(new_cfg.get("backends"))
     # The snapshot is built here too, before anything is published, so a failure leaves the old one serving.
     layer, registry_generation = config_runtime.carried(new_cfg)
     snapshot = CONFIG_HOME.snapshot(
@@ -1398,6 +1406,10 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
                 app.router.routes,
                 exclude=tuple(route for route in app.router.routes if getattr(route, "path", None) in {"", "/{path:path}"}),
             )
+    # The map goes live before the snapshot: between the two, the old config meets the new map, and a destination the
+    # new map adds is refused without a lease (fail closed). The other order would let the new config send to an
+    # enabled domain that the old map does not know, with no lease check.
+    engine_egress.install(egress)
     # Publish the snapshot first: runtime() reads only the holder, so a request that starts from here on binds the new
     # snapshot whole, and `config` and the derived names below follow from it, never ahead of it.
     CONFIG_HOME.publish(snapshot)
@@ -1405,8 +1417,6 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     for name, value in updates.items():
         _g[name] = value
     _g["CONFIG_PROBLEMS"] = dict(snapshot.problems.get("config") or {})
-    # The send-time lease check reads the destinations of the transition-enabled domains of this config.
-    _publish_egress(new_cfg.get("backends"))
 
     print(
         f"[proxy] runtime config reloaded — "

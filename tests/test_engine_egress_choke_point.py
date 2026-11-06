@@ -284,11 +284,77 @@ def test_a_publish_replaces_the_map(monkeypatch) -> None:
     assert not engine_egress.mapped_destinations()
 
 
-def test_the_runtime_config_publish_projects_the_map() -> None:
-    """``proxy._publish_runtime_config`` publishes the destinations of the config it makes live."""
-    function = next(node for node in ast.walk(ast.parse(Path(proxy.__file__).read_text()))
-                    if isinstance(node, ast.FunctionDef) and node.name == "_publish_runtime_config")
-    assert "_publish_egress" in [ast.unparse(node.func) for node in ast.walk(function) if isinstance(node, ast.Call)]
+def _function(name: str) -> ast.FunctionDef:
+    return next(node for node in ast.walk(ast.parse(Path(proxy.__file__).read_text()))
+                if isinstance(node, ast.FunctionDef) and node.name == name)
+
+
+@pytest.mark.parametrize("name", ["_publish_runtime_config", "_publish_boot_snapshot"])
+def test_the_map_goes_live_before_the_config_snapshot(name) -> None:
+    """The boot and the reload install the egress map, then publish the snapshot that enables the domain."""
+    lines = {ast.unparse(node.func): node.lineno for node in ast.walk(_function(name)) if isinstance(node, ast.Call)}
+    assert "_project_egress" in lines
+    assert lines["engine_egress.install"] < lines["CONFIG_HOME.publish"]
+
+
+class _Abort(Exception):
+    pass
+
+
+def _candidate_with_an_enabled_domain() -> dict:
+    import copy
+
+    candidate = copy.deepcopy(dict(proxy.config))
+    candidate["backends"] = {**candidate.get("backends", {}), "t1-probe": _record(59130, domain="t1-dom")}
+    return candidate
+
+
+def test_a_reload_publishes_the_map_before_the_snapshot(monkeypatch) -> None:
+    """A request that binds the new snapshot must find its domain in the map: at the snapshot's publish the new map is live.
+    Failed before the fix: the map was swapped after the snapshot, so a new config met the old map."""
+    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
+    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    seen: list = []
+
+    class Home:
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+        def publish(self, snapshot):
+            seen.append(dict(engine_egress.mapped_destinations()))
+            raise _Abort
+
+    real = proxy.CONFIG_HOME
+    monkeypatch.setattr(proxy, "CONFIG_HOME", Home())
+    with pytest.raises(_Abort):
+        proxy._publish_runtime_config(_candidate_with_an_enabled_domain())
+    assert seen and seen[0].get("127.0.0.1:59130") == ("t1-dom",)
+
+
+def test_a_reload_whose_projection_raises_publishes_nothing(monkeypatch) -> None:
+    """The projection is built before anything goes live: when it raises, the old config and the old map stay."""
+    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
+    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    engine_egress.publish({"old": _record(59131, domain="old-dom")})
+    old_map, old_config, old_snapshot = engine_egress.mapped_destinations(), proxy.config, proxy.CONFIG_HOME.holder.current()
+
+    def broken(_backends):
+        raise _Abort
+
+    monkeypatch.setattr(proxy, "_project_egress", broken)
+    with pytest.raises(_Abort):
+        proxy._publish_runtime_config(_candidate_with_an_enabled_domain())
+    assert engine_egress.mapped_destinations() is old_map
+    assert proxy.config is old_config
+    assert proxy.CONFIG_HOME.holder.current() is old_snapshot
+
+
+def test_a_service_whose_config_is_not_a_mapping_is_projected_without_error() -> None:
+    """``state_paths`` read ``.get`` on ``record["config"]`` when it was truthy: a string there raised AttributeError."""
+    record = {**_record(59132, domain="dom"), "config": "not-a-mapping"}
+    projection = proxy._project_egress({"odd": record})
+    assert projection.destinations["127.0.0.1:59132"] == ("dom",)
+    assert "/v1/models" in projection.probe_paths["127.0.0.1:59132"]
 
 
 # -- the scan: nothing reaches an engine except through the factory ---------------------------------
