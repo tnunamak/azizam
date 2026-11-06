@@ -476,18 +476,24 @@ def run_import_command(*argv: str) -> dict[str, Any]:
     return json.loads(out.getvalue())
 
 
+def aliases_entry(result: dict[str, Any]) -> dict[str, Any]:
+    """The command reports every section the release ships; these tests read the aliases entry."""
+    (report,) = [entry for entry in result["sections"] if entry["section"] == SECTION]
+    return report
+
+
 def test_the_dry_run_command_lists_every_row_for_a_copy_of_a_config_file_and_writes_nothing(tmp_path):
     config = tmp_path / "proxy_config.copy.yml"
     config.write_text((ROOT / "proxy_config.yml").read_text(encoding="utf-8"), encoding="utf-8")
     scratch = tmp_path / "scratch.db"
     result = run_import_command("--config", str(config), "--db", str(scratch))
-    (report,) = result["sections"]
+    report = aliases_entry(result)
     assert report["section"] == SECTION and report["status"] == "dry_run"
     assert report["row_count"] == len(report["rows"]) > 0
     assert {"/chat/stable/default", "/embeddings/stable/embed", "/speech/engines/omnivoice"} <= {r["pointer"] for r in report["rows"]}
     assert rows(scratch) == [] and not admin_store.migration_step_recorded(STEP, path=scratch)
     # Without a --db the command makes and removes its own scratch store.
-    assert run_import_command("--config", str(config))["sections"][0]["row_count"] == report["row_count"]
+    assert aliases_entry(run_import_command("--config", str(config)))["row_count"] == report["row_count"]
 
 
 def test_the_command_applies_only_to_a_scratch_database_it_is_given(tmp_path, capsys):
@@ -497,9 +503,9 @@ def test_the_command_applies_only_to_a_scratch_database_it_is_given(tmp_path, ca
         config_legacy_import.main(["--config", str(config), "--apply"])
     assert refused.value.code == 2
     scratch = tmp_path / "scratch.db"
-    report = run_import_command("--config", str(config), "--db", str(scratch), "--apply")["sections"][0]
+    report = aliases_entry(run_import_command("--config", str(config), "--db", str(scratch), "--apply"))
     assert report["status"] == "imported" and len(rows(scratch)) == report["row_count"] + len(report["removes"])
-    again = run_import_command("--config", str(config), "--db", str(scratch))["sections"][0]
+    again = aliases_entry(run_import_command("--config", str(config), "--db", str(scratch)))
     assert again["status"] == "already_imported"
     with pytest.raises(SystemExit):
         config_legacy_import.main(["--config", str(config), "--section", "nope"])
