@@ -9,8 +9,8 @@ import copy
 import json
 import re
 from pathlib import Path
+from typing import Any
 
-import pytest
 import yaml
 
 import proxy
@@ -132,7 +132,7 @@ def test_a_store_that_cannot_be_read_at_boot_withdraws_the_sections(monkeypatch)
 
 
 def test_a_blocked_section_is_withdrawn_and_the_others_stay(monkeypatch):
-    report = {name: {"status": "imported"} for name in proxy.CONFIG_HOME.sections}
+    report: dict[str, dict[str, Any]] = {name: {"status": "imported"} for name in proxy.CONFIG_HOME.sections}
     report["llm"] = {"status": "blocked", "problems": []}
     monkeypatch.setattr(config_homes_import, "run_legacy_imports", lambda *_a, **_k: report)
     monkeypatch.setattr(proxy.CONFIG_HOME, "sections", dict(proxy.CONFIG_HOME.sections))

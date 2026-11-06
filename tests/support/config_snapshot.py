@@ -6,8 +6,7 @@ code that reads the snapshot (the decision runtime, the mesh frontend records). 
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import Any, Iterator, Mapping
+from typing import Any, Mapping
 
 import pytest
 
@@ -32,19 +31,33 @@ def publish_section(monkeypatch: pytest.MonkeyPatch, section: str, value: Any) -
     publish_config(monkeypatch, {**proxy.config, section: value})
 
 
-@contextmanager
-def section_published(section: str, value: Any) -> Iterator[None]:
-    """Publish the current config with one top-level ``section`` replaced, for the length of a ``with`` block.
+class section_published:
+    """Publish the current config with one top-level ``section`` replaced, until ``stop`` (or the end of a ``with`` block).
 
     For a test that patched a module global a reader used to read (``patch.object(proxy, "ROLES", ...)``): the reader now
-    reads ``proxy.runtime()``, which answers the published snapshot. The previous config and snapshot are restored on exit.
+    reads ``proxy.runtime()``, which answers the published snapshot. ``start``/``stop`` suit a list of patchers that the
+    test starts itself; ``with`` suits a block. The previous config and snapshot are restored on stop.
     """
-    saved_config = proxy.config
-    saved = proxy.CONFIG_HOME.holder.current()
-    proxy.config = {**saved_config, section: value}
-    proxy.CONFIG_HOME.publish(proxy.CONFIG_HOME.snapshot(proxy.config))
-    try:
-        yield
-    finally:
-        proxy.config = saved_config
-        proxy.CONFIG_HOME.holder.publish(saved)
+
+    def __init__(self, section: str, value: Any) -> None:
+        self.section = section
+        self.value = value
+        self._saved: tuple[Any, Any] | None = None
+
+    def start(self) -> None:
+        self._saved = (proxy.config, proxy.CONFIG_HOME.holder.current())
+        proxy.config = {**proxy.config, self.section: self.value}
+        proxy.CONFIG_HOME.publish(proxy.CONFIG_HOME.snapshot(proxy.config))
+
+    def stop(self) -> None:
+        if self._saved is not None:
+            proxy.config, previous = self._saved
+            proxy.CONFIG_HOME.holder.publish(previous)
+            self._saved = None
+
+    def __enter__(self) -> "section_published":
+        self.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.stop()

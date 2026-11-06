@@ -370,7 +370,7 @@ class TestRoleIsAlarmOnly(unittest.TestCase):
         }
         with (
             patch.dict(proxy.config, {"backends": backends}),
-            patch.object(proxy, "ROLES", {}),
+            section_published("roles", {}),
             patch.object(proxy, "MODELS_CATALOG", {}),
         ):
             backend, record = proxy._configured_model_record_for_id("special-model")

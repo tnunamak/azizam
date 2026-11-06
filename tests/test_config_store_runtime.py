@@ -422,9 +422,11 @@ def test_with_no_section_the_layer_returns_the_startup_config_and_reads_no_table
     assert effective is raw and type(effective) is dict
 
 
-def test_no_section_ships_in_this_release():
-    assert config_runtime.load_sections() == {}
-    assert proxy.CONFIG_HOME.sections == {}
+def test_the_sections_this_release_ships_are_the_c7_set():
+    # Each slice that adds a section adds its name here (CONFIG_HOMES 10). C7 ships these four.
+    expected = {"llm", "model_routing", "reasoning", "roles"}
+    assert set(config_runtime.load_sections()) == expected
+    assert set(proxy.CONFIG_HOME.sections) == expected
 
 
 def test_a_stored_override_reaches_the_effective_section_with_its_source_and_a_stored_bad_row_is_reported(db):
@@ -962,7 +964,8 @@ def test_n4_a_rule_that_needs_the_registry_does_not_stop_the_import_check(db):
 
 
 def test_n6_with_no_section_a_load_reads_no_registry_generation(live, monkeypatch):  # noqa: F811
-    assert not proxy.CONFIG_HOME.sections, "no section ships in this release"
+    # With no section registered the layer reads no table, so there is no generation to read.
+    monkeypatch.setattr(proxy.CONFIG_HOME, "sections", {})
     monkeypatch.setattr(proxy, "_write_litellm_config_artifact", lambda registry: None)
     monkeypatch.setattr(proxy, "_generation_of_registry", lambda registry: pytest.fail("the generation was read and thrown away"))
     effective = proxy._load_effective_runtime_config(proxy._bootstrap_config)
