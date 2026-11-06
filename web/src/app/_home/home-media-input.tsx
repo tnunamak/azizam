@@ -1,10 +1,11 @@
 "use client";
 
-import { useId, useState, type DragEvent } from "react";
+import { useEffect, useId, useRef, useState, type DragEvent, type Ref } from "react";
 import { Library, Paperclip, Upload, X } from "lucide-react";
 import { LibraryPicker } from "@/components/media-input/library-picker";
+import { FOCUS_RING } from "@/components/media-input/focus-ring";
 import { PickedSummary, useObjectUrl } from "@/components/media-input/picked-summary";
-import { LIBRARY_SOURCE, useMediaPick } from "@/components/media-input/use-media-pick";
+import { LIBRARY_SOURCE, useMediaPick, useTakeFocus } from "@/components/media-input/use-media-pick";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,21 +23,48 @@ function usePreview(file: File | null, input: MediaInput): string | null {
   return useObjectUrl(input.modality === "image" ? file : null);
 }
 
+/** What the Library called a picked file: the chip above the words says it, as the drop zone's summary does. */
+export type PickedFrom = { title?: string; seconds?: number | null };
+
+/**
+ * Takes a file handed to the composer from outside its controls (a paste), the way the dialog takes one: the type
+ * check, the size check, and ending a Library pick still arriving. Each input registers its taker by modality.
+ */
+export type PasteTakers = { current: Record<string, ((file: File) => void) | undefined> };
+
 /** The shared media-input behaviour, set up from a Home capability's declared input (its accept filter and word). */
 function useHomePick(
   input: MediaInput,
   file: File | null,
-  onFile: (file: File | null) => void,
+  onFile: (file: File | null, from?: PickedFrom) => void,
   onPendingChange?: (pending: boolean) => void,
+  takers?: PasteTakers,
 ) {
-  return useMediaPick({
+  const pick = useMediaPick({
     types: input.accept ? [input.accept] : undefined,
     noun: input.word,
     accepted: mediaPhrase(input),
     current: file,
-    commit: (picked) => onFile(picked),
+    commit: (picked, _prepared, from) => onFile(picked, from),
     onPendingChange,
   });
+  const take = pick.take;
+  const modality = input.modality;
+  // The latest take, registered for the composer's paste handler and dropped when this input goes.
+  const latestTake = useRef(take);
+  useEffect(() => {
+    latestTake.current = take;
+  });
+  useEffect(() => {
+    if (!takers) return;
+    const registry = takers.current;
+    const taker = (pasted: File) => void latestTake.current(pasted, { moveFocus: false });
+    registry[modality] = taker;
+    return () => {
+      if (registry[modality] === taker) delete registry[modality];
+    };
+  }, [takers, modality]);
+  return pick;
 }
 
 type HomePick = ReturnType<typeof useHomePick>;
@@ -67,13 +95,16 @@ function HomeLibraryPicker({ pick }: { pick: HomePick }) {
       kind={pick.kind}
       noun={pick.noun}
       types={pick.types}
+      currentId={pick.sourceAssetId}
       onPick={(item) => void pick.pickFromLibrary(item)}
     />
   );
 }
 
-const PILL =
-  "border-border text-foreground text-meta hover:bg-muted focus-visible:ring-ring inline-flex h-9 items-center gap-1.5 rounded-full border px-4 font-medium transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none max-sm:min-h-11";
+const PILL = cn(
+  "border-border text-foreground text-meta hover:bg-muted inline-flex h-9 items-center gap-1.5 rounded-full border px-4 font-medium transition-colors duration-(--motion-fast) max-sm:min-h-11",
+  FOCUS_RING,
+);
 
 /**
  * The composer's file input for one declared input modality (the way Midjourney, Runway and Meshy ask for a source
@@ -87,22 +118,29 @@ export function HomeMediaInput({
   onFile,
   disabled = false,
   onPendingChange,
+  takers,
   children,
 }: {
   input: MediaInput;
   file: File | null;
-  onFile: (file: File | null) => void;
+  onFile: (file: File | null, from?: PickedFrom) => void;
   disabled?: boolean;
   /** Told while a Library pick is arriving, so Make waits for it. */
   onPendingChange?: (pending: boolean) => void;
+  /** Where this input registers to take a pasted file. */
+  takers?: PasteTakers;
   /** An extra control under the prompt line, such as a hand-off to record in Try. */
   children?: React.ReactNode;
 }) {
   const inputId = useId();
   const [dragging, setDragging] = useState(false);
-  const pick = useHomePick(input, file, onFile, onPendingChange);
+  const pick = useHomePick(input, file, onFile, onPendingChange, takers);
   const preview = useObjectUrl(file);
   const Icon = kindIcon(input.modality);
+  const replaceButton = useRef<HTMLButtonElement>(null);
+  const chooseButton = useRef<HTMLButtonElement>(null);
+  useTakeFocus(pick, "replace", replaceButton);
+  useTakeFocus(pick, "choose", chooseButton);
 
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -153,6 +191,7 @@ export function HomeMediaInput({
           previewUrl={preview}
           previewAlt={`Your ${input.word}: ${file.name}`}
           retryLabel={`Retry preview of ${file.name}`}
+          replaceRef={replaceButton}
           onReplace={disabled ? undefined : pick.replaceChosen}
           onRemove={() => {
             pick.clear();
@@ -166,7 +205,7 @@ export function HomeMediaInput({
             Drop {mediaPhrase(input)} here
           </p>
           <div className="flex flex-wrap justify-center gap-2">
-            <button type="button" disabled={disabled} onClick={pick.openFileDialog} className={PILL}>
+            <button ref={chooseButton} type="button" disabled={disabled} onClick={pick.openFileDialog} className={PILL}>
               <Upload aria-hidden="true" className="size-4" />
               Choose {mediaPhrase(input)}
             </button>
@@ -188,37 +227,45 @@ export function HomeMediaInput({
 
 /**
  * The picked file as a chip above the text box, for a capability whose main input is words and whose file is the
- * second thing it takes (an edit): a thumbnail or icon, the name, and a way to take it out.
+ * second thing it takes (an edit): a thumbnail or icon, the name (the Library's title for an item taken from it),
+ * and a way to take it out.
  */
 export function PickedFileChip({
   input,
   file,
-  onFile,
+  title,
+  onRemove,
 }: {
   input: MediaInput;
   file: File;
-  onFile: (file: File | null) => void;
+  /** What the Library calls the file, when it came from there; otherwise the file's own name shows. */
+  title?: string | null;
+  onRemove: () => void;
 }) {
   const preview = usePreview(file, input);
   const Icon = kindIcon(input.modality);
+  const name = title ?? file.name;
   return (
     <div data-slot="home-picked-file" data-modality={input.modality} className="px-(--composer-pad) pt-3">
       <span className="bg-muted text-meta inline-flex max-w-full items-center gap-2 rounded-full py-1 pr-1 pl-1">
         {preview ? (
           // A local object address of the person's own picture: next/image has nothing to optimise.
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={preview} alt={`Your ${input.word}: ${file.name}`} className="size-8 shrink-0 rounded-full object-cover" />
+          <img src={preview} alt={`Your ${input.word}: ${name}`} className="size-8 shrink-0 rounded-full object-cover" />
         ) : (
           <span className="text-muted-foreground flex size-8 shrink-0 items-center justify-center">
             <Icon aria-hidden="true" className="size-4" />
           </span>
         )}
-        <span className="min-w-0 truncate font-medium">{file.name}</span>
+        <span className="min-w-0 truncate font-medium">{name}</span>
         <button
           type="button"
-          onClick={() => onFile(null)}
-          aria-label={`Remove ${file.name}`}
-          className="text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-ring inline-flex size-8 shrink-0 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none max-sm:size-11"
+          onClick={onRemove}
+          aria-label={`Remove ${name}`}
+          className={cn(
+            "text-muted-foreground hover:bg-border hover:text-foreground inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full max-sm:size-11",
+            FOCUS_RING,
+          )}
         >
           <X aria-hidden="true" className="size-4" />
         </button>
@@ -227,8 +274,10 @@ export function PickedFileChip({
   );
 }
 
-const ATTACH_CLASS =
-  "text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50 max-sm:size-11";
+const ATTACH_CLASS = cn(
+  "text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors duration-(--motion-fast) disabled:opacity-50 max-sm:size-11",
+  FOCUS_RING,
+);
 
 /**
  * The attach button in the toolbar, for the same kind of capability. When the Library can hold the file it opens a
@@ -241,15 +290,28 @@ export function AttachFileButton({
   onFile,
   disabled = false,
   onPendingChange,
+  takers,
+  buttonRef,
 }: {
   input: MediaInput;
   file: File | null;
-  onFile: (file: File | null) => void;
+  onFile: (file: File | null, from?: PickedFrom) => void;
   disabled?: boolean;
   /** Told while a Library pick is arriving, so Make waits for it. */
   onPendingChange?: (pending: boolean) => void;
+  /** Where this input registers to take a pasted file. */
+  takers?: PasteTakers;
+  /** The attach button, so the composer can move focus to it when the chip is removed. */
+  buttonRef?: Ref<HTMLButtonElement>;
 }) {
-  const pick = useHomePick(input, file, onFile, onPendingChange);
+  const pick = useHomePick(input, file, onFile, onPendingChange, takers);
+  const attachButton = useRef<HTMLButtonElement | null>(null);
+  useTakeFocus(pick, "replace", attachButton);
+  const setButton = (node: HTMLButtonElement | null) => {
+    attachButton.current = node;
+    if (typeof buttonRef === "function") buttonRef(node);
+    else if (buttonRef) (buttonRef as { current: HTMLButtonElement | null }).current = node;
+  };
   const label = file ? `Change ${input.word}` : `Attach ${mediaPhrase(input)}`;
   return (
     <>
@@ -266,7 +328,7 @@ export function AttachFileButton({
       {pick.libraryAvailable ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button type="button" disabled={disabled} aria-label={label} title={label} className={ATTACH_CLASS}>
+            <button ref={setButton} type="button" disabled={disabled} aria-label={label} title={label} className={ATTACH_CLASS}>
               <Paperclip aria-hidden="true" className="size-4" />
             </button>
           </DropdownMenuTrigger>
@@ -282,7 +344,7 @@ export function AttachFileButton({
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (
-        <button type="button" disabled={disabled} onClick={pick.openFileDialog} aria-label={label} title={label} className={ATTACH_CLASS}>
+        <button ref={setButton} type="button" disabled={disabled} onClick={pick.openFileDialog} aria-label={label} title={label} className={ATTACH_CLASS}>
           <Paperclip aria-hidden="true" className="size-4" />
         </button>
       )}

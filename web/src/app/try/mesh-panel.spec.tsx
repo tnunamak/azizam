@@ -99,6 +99,13 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+test("the picture field keeps its name: a group labelled Picture holds its controls", () => {
+  renderPanel();
+  const field = screen.getByRole("group", { name: "Picture" });
+  expect(field.querySelector("#mesh-picture")).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Choose a file" })).toBeTruthy();
+});
+
 test("posts the picture and the chosen detail as multipart to the mesh route with the Try key", async () => {
   fetchMock.mockResolvedValue(glb());
   const { container } = renderPanel();

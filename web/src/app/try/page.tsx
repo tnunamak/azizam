@@ -3086,8 +3086,10 @@ export default function TryPage() {
                           />
                         </div>
                       )}
-                      <div className="space-y-2">
-                        <span className="text-sm font-medium">Audio file</span>
+                      <div role="group" aria-labelledby={`${idBase}-transcribe-file-label`} className="space-y-2">
+                        <span id={`${idBase}-transcribe-file-label`} className="text-sm font-medium">
+                          Audio file
+                        </span>
                         <MediaInput
                           id={`${idBase}-transcribe-file`}
                           label="Audio file"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { libraryHoldsKind } from "@/lib/media-kind";
 import {
   MAX_MEDIA_BYTES,
@@ -17,6 +17,30 @@ import { TooBigError, libraryFile, libraryTitle, limitLabel, type LibraryPick } 
 /** The label under a choice that came from the Library. */
 export const LIBRARY_SOURCE = "From your Library";
 
+/**
+ * Where focus goes after a person's own action changes what the screen draws: "replace" after a choice is taken (the
+ * control that changes it, never the one that discards it, so one more Enter cannot throw it away) and "choose" after
+ * it is removed (the way to choose again). The control that had focus is gone by then, and focus would drop to the page.
+ */
+export type FocusRequest = "replace" | "choose";
+
+/**
+ * Gives focus to `target` once it is on screen, when the pick asked for `want`, and ends the request. It never runs on
+ * mount, because only a choice made or removed in this screen asks.
+ */
+export function useTakeFocus(
+  pick: { focusRequest: FocusRequest | null; endFocusRequest: () => void },
+  want: FocusRequest,
+  target: RefObject<HTMLElement | null>,
+) {
+  const { focusRequest, endFocusRequest } = pick;
+  useEffect(() => {
+    if (focusRequest !== want || !target.current) return;
+    target.current.focus();
+    endFocusRequest();
+  });
+}
+
 export interface MediaPickOptions<Prepared = undefined> {
   /**
    * What the input takes: full types ("image/png") or families ("image/*"). Omit it for any file; an input that
@@ -29,7 +53,11 @@ export interface MediaPickOptions<Prepared = undefined> {
   noun?: string;
   /** How the wrong-type message names what to choose ("a PNG, JPEG or WebP picture"). Defaults to the noun. */
   accepted?: string;
-  /** Largest file taken. Defaults to the shared media limit. */
+  /**
+   * Largest file taken. A screen that keeps the file as it is has no limit unless it passes one; a screen that reads
+   * the file into the request (`prepare`) is held to the shared media limit, since the file travels as text. The
+   * Library download always has a limit, this one or the shared one: it reads into memory.
+   */
   maxBytes?: number;
   /**
    * Work to do on the file before the screen keeps it (a reference input reads it into a data URI). While it runs
@@ -37,13 +65,21 @@ export interface MediaPickOptions<Prepared = undefined> {
    * screen keeps the file as it is.
    */
   prepare?: (file: File) => Promise<Prepared>;
-  /** The screen keeps the file (and what `prepare` made of it). Called only if nothing superseded the choice. */
-  commit: (file: File, prepared: Prepared) => void;
   /**
-   * The file the screen currently holds, so a source label is dropped when another route (a paste, a recording)
-   * replaced it. Leave it out when the screen holds a reference rather than the file.
+   * The screen keeps the file (and what `prepare` made of it). Called only if nothing superseded the choice.
+   * `from` says what the Library called an item picked from it.
+   */
+  commit: (file: File, prepared: Prepared, from: { title?: string; seconds?: number | null }) => void;
+  /**
+   * The file the screen currently holds, so a source label is dropped, and a pick still arriving is ended, when
+   * another route (a paste, a recording, a Remove) replaced it. Leave it out when the screen holds a reference.
    */
   current?: File | null;
+  /**
+   * The reference the screen currently holds (what `prepare` made), with the same effect as `current` for a screen
+   * that keeps a reference: `null` for none. Leave it out when the screen holds the file.
+   */
+  currentReference?: Prepared | null;
   /** Told whenever a read or download starts or ends, for a screen that must hold Run while a choice arrives. */
   onPendingChange?: (pending: boolean) => void;
 }
@@ -58,11 +94,12 @@ export interface MediaPickOptions<Prepared = undefined> {
  * unheard. A file that fails the type or size check does not cancel a pending valid choice.
  */
 export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Prepared>) {
-  const { types, current } = options;
+  const { types, current, currentReference } = options;
   const kind = options.kind !== undefined ? options.kind : kindOfTypes(types);
   const noun = options.noun ?? mediaNoun(kind);
   const accepted = options.accepted ?? withArticle(noun);
-  const maxBytes = options.maxBytes ?? MAX_MEDIA_BYTES;
+  // The size a file may be when it comes from the disk; none for a file the screen keeps as it is.
+  const maxBytes = options.maxBytes ?? (options.prepare ? MAX_MEDIA_BYTES : undefined);
   const libraryAvailable = libraryHoldsKind(kind);
 
   const fileInput = useRef<HTMLInputElement>(null);
@@ -85,7 +122,18 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     [],
   );
 
-  const [source, setSource] = useState<{ label: string; file: File | null; title?: string; seconds?: number | null } | null>(null);
+  const [source, setSource] = useState<{
+    label: string;
+    file: File | null;
+    /** What the screen committed with the file; a source is only the screen's choice while this is what it holds. */
+    committed: unknown;
+    /** The Library item it came from, so a reopened Library can mark it. */
+    assetId?: string;
+    title?: string;
+    seconds?: number | null;
+  } | null>(null);
+  // Where focus goes once the screen has drawn the new state: a choice taken (Replace) or removed (the way to choose).
+  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   // A read or download is under way: the choice is not in the form yet.
@@ -117,8 +165,20 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     const next = { controller: new AbortController() };
     active.current = next;
     setPendingState(false);
+    setFocusRequest(null);
     return next;
   }
+
+  // What the screen holds changed. If it is not what this hook committed (a paste, a recording, a Remove, a typed
+  // link) while a choice is still arriving, that choice is stale: end it, so it cannot land over the newer one.
+  const heldByScreen = currentReference !== undefined ? currentReference : current;
+  const committed = useRef<unknown>(undefined);
+  const lastHeld = useRef(heldByScreen);
+  useEffect(() => {
+    if (lastHeld.current === heldByScreen) return;
+    lastHeld.current = heldByScreen;
+    if (pending && heldByScreen !== committed.current) supersede();
+  });
 
   function startPending() {
     setPendingState(true);
@@ -129,35 +189,47 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
    * Gives the file to the screen, unless something superseded this choice first (then it does nothing and returns
    * false). A screen that keeps the file at once never shows a pending state.
    */
-  async function handOver(file: File, operation: { controller: AbortController }): Promise<boolean> {
+  async function handOver(
+    file: File,
+    operation: { controller: AbortController },
+    from: { title?: string; seconds?: number | null },
+  ): Promise<{ committed: unknown } | null> {
     const { prepare, commit } = handlers.current;
     let prepared: Prepared = undefined as Prepared;
     if (prepare) {
       startPending();
       prepared = await prepare(file);
-      if (active.current !== operation) return false;
+      if (active.current !== operation) return null;
     }
-    commit(file, prepared);
-    return true;
+    // Recorded before the screen changes, so its own commit is not read as another route's change.
+    const kept = currentReference !== undefined ? prepared : file;
+    committed.current = kept;
+    commit(file, prepared, from);
+    return { committed: kept };
   }
 
-  /** Takes a file from the file dialog, a drop or a paste: checks it, then hands it to the screen. */
-  async function take(file: File | undefined | null) {
+  /**
+   * Takes a file from the file dialog, a drop or a paste: checks it, then hands it to the screen. Focus follows the
+   * choice to Replace, unless the person was elsewhere (a paste into the words box passes `moveFocus: false`).
+   */
+  async function take(file: File | undefined | null, { moveFocus = true }: { moveFocus?: boolean } = {}) {
     if (!file) return;
     setError(null);
     if (!fileFitsTypes(file, types)) {
       setError(`That file is not ${accepted}. Choose ${accepted} file.`);
       return;
     }
-    if (file.size > maxBytes) {
+    if (maxBytes !== undefined && file.size > maxBytes) {
       setError(`That ${noun} is ${megabytes(file.size)}. Choose one under ${limitLabel(maxBytes)}.`);
       return;
     }
     const operation = supersede();
     try {
-      if (!(await handOver(file, operation))) return;
-      setSource({ label: file.name, file });
+      const handed = await handOver(file, operation, {});
+      if (!handed) return;
+      setSource({ label: file.name, file, committed: handed.committed });
       setPendingState(false);
+      if (moveFocus) setFocusRequest("replace");
     } catch {
       if (active.current !== operation) return;
       setPendingState(false);
@@ -178,13 +250,23 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
         kind,
         noun,
         types,
-        maxBytes,
+        maxBytes: maxBytes ?? MAX_MEDIA_BYTES,
         signal: operation.controller.signal,
       });
       if (active.current !== operation) return;
-      if (!(await handOver(picked, operation))) return;
-      setSource({ label: LIBRARY_SOURCE, file: picked, title: libraryTitle(pick, noun), seconds: pick.duration_s });
+      const title = libraryTitle(pick, noun);
+      const handed = await handOver(picked, operation, { title, seconds: pick.duration_s });
+      if (!handed) return;
+      setSource({
+        label: LIBRARY_SOURCE,
+        file: picked,
+        committed: handed.committed,
+        assetId: pick.asset_id,
+        title,
+        seconds: pick.duration_s,
+      });
       setPendingState(false);
+      setFocusRequest("replace");
     } catch (failure) {
       if (active.current !== operation) return;
       setPendingState(false);
@@ -196,11 +278,13 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     }
   }
 
-  const held = source && (current === undefined || source.file === current) ? source : null;
+  const watching = currentReference !== undefined || current !== undefined;
+  const held = source && (!watching || source.committed === heldByScreen) ? source : null;
 
   return {
     kind,
     noun,
+    /** The size limit for a file from the disk, or undefined when there is none. */
     maxBytes,
     /** The `accept` attribute for the file input. */
     accept: acceptAttribute(types),
@@ -218,6 +302,8 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     sourceFile: held ? held.file : null,
     /** What the Library calls the item picked from it; the file's own name is only what is sent. */
     sourceTitle: held ? (held.title ?? null) : null,
+    /** The Library item the choice came from, while it is still what the screen holds. */
+    sourceAssetId: held ? (held.assetId ?? null) : null,
     /** The length of the item picked from the Library, in seconds, when the Library knew it. */
     sourceSeconds: held?.seconds ?? null,
     take,
@@ -228,6 +314,9 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
       setLibraryOpen(true);
     },
     setLibraryOpen,
+    /** Where focus is wanted once the screen has drawn the new state; see `useTakeFocus`. */
+    focusRequest,
+    endFocusRequest: () => setFocusRequest(null),
     /**
      * Takes another in one step, the way the first was chosen: the Library again for an item from it (or one whose
      * source is not known), the file dialog for a file from disk or an input with no Library.
@@ -245,6 +334,7 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
       supersede();
       setSource(null);
       setError(null);
+      setFocusRequest("choose");
     },
     /** Ends a pending read or download without touching the choice (a typed link replaces it). */
     replace: () => {

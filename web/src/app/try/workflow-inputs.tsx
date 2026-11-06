@@ -404,6 +404,7 @@ function WorkflowInputControl({
           kind={kind}
           file={file}
           invalid={Boolean(problem)}
+          required={input.required}
           describedBy={describedBy}
           onFileChange={onFileChange}
         />
@@ -427,6 +428,7 @@ function WorkflowInputControl({
           normalizeReference={assetIdFromPasted}
           value={typeof value === "string" ? value : undefined}
           invalid={Boolean(problem)}
+          required={input.required}
           describedBy={describedBy}
           onChange={onChange}
         />

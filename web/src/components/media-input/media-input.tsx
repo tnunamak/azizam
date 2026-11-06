@@ -1,13 +1,14 @@
 "use client";
 
+import { useRef } from "react";
 import { Library, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MAX_MEDIA_BYTES, formatDuration, readAsDataUri, sizeWords, typeWords, type MediaTypes } from "@/lib/media-pick";
+import { formatDuration, readAsDataUri, sizeWords, typeWords, type MediaTypes } from "@/lib/media-pick";
 import { limitLabel } from "@/lib/library-file";
 import { LibraryPicker } from "./library-picker";
 import { PickedSummary, useObjectUrl } from "./picked-summary";
-import { LIBRARY_SOURCE, useMediaPick } from "./use-media-pick";
+import { LIBRARY_SOURCE, useMediaPick, useTakeFocus } from "./use-media-pick";
 
 function previewSource(value: string): string | null {
   // A Library asset id is not an address: its download route answers with a
@@ -38,11 +39,12 @@ export function MediaInput({
   noun,
   accepted,
   hint,
-  maxBytes = MAX_MEDIA_BYTES,
+  maxBytes,
   normalizeReference = (text) => text.trim(),
   value,
   file,
   invalid,
+  required,
   describedBy,
   onChange,
   onFileChange,
@@ -55,14 +57,20 @@ export function MediaInput({
   types?: MediaTypes;
   noun?: string;
   accepted?: string;
-  /** The line under the buttons while nothing is chosen; defaults to the size limit. */
+  /** The line under the buttons while nothing is chosen; defaults to the size limit, when there is one. */
   hint?: string;
+  /**
+   * The largest file taken. A reference input holds the media inside the request, so it is held to the shared media
+   * limit; a file input has no limit unless the screen passes one (the gateway's own limit answers for the rest).
+   */
   maxBytes?: number;
   /** Reference mode: turns what was typed under Advanced into the stored reference (a pasted Library link into its id). */
   normalizeReference?: (text: string) => string;
   value?: string | undefined;
   file?: File | null;
   invalid?: boolean;
+  /** The screen needs this input to run: the control to choose it says so to a screen reader. */
+  required?: boolean;
   describedBy?: string;
   onChange?: (value: string | undefined) => void;
   onFileChange?: (file: File | null) => void;
@@ -76,6 +84,7 @@ export function MediaInput({
     accepted,
     maxBytes,
     current: fileMode ? (file ?? null) : undefined,
+    currentReference: fileMode ? undefined : (value ?? null),
     // A reference input sends the media inside the request, so the file is read into a data URI first.
     prepare: fileMode ? undefined : readAsDataUri,
     commit: (picked, reference) => {
@@ -93,7 +102,11 @@ export function MediaInput({
   const drawn = named ? named.type.split("/")[0] : kind;
   const fromLibrary = pick.source === LIBRARY_SOURCE;
   const capitalWord = `${word[0].toUpperCase()}${word.slice(1)}`;
-  const emptyHint = hint ?? `${capitalWord}s up to ${limitLabel(maxBytes)}.`;
+  const emptyHint = hint ?? (pick.maxBytes !== undefined ? `${capitalWord}s up to ${limitLabel(pick.maxBytes)}.` : null);
+  const replaceButton = useRef<HTMLButtonElement>(null);
+  const chooseButton = useRef<HTMLButtonElement>(null);
+  useTakeFocus(pick, "replace", replaceButton);
+  useTakeFocus(pick, "choose", chooseButton);
 
   function clear() {
     pick.clear();
@@ -122,6 +135,7 @@ export function MediaInput({
           previewAlt={`Chosen ${word}`}
           retryLabel={`Retry preview of ${word} for ${label}`}
           invalid={invalid}
+          replaceRef={replaceButton}
           onReplace={pick.replaceChosen}
           onRemove={clear}
         />
@@ -129,12 +143,15 @@ export function MediaInput({
         <div className="space-y-2">
           <div className="flex flex-wrap gap-2">
             <Button
+              ref={chooseButton}
               id={id}
               type="button"
               variant="outline"
               size="sm"
               className="max-sm:h-11"
               aria-describedby={describedBy}
+              aria-required={required || undefined}
+              aria-invalid={invalid || undefined}
               onClick={pick.openFileDialog}
             >
               <Upload aria-hidden="true" />
@@ -166,7 +183,7 @@ export function MediaInput({
               </Button>
             )}
           </div>
-          {!pick.pending && (
+          {!pick.pending && emptyHint && (
             <p className="text-muted-foreground text-xs">{emptyHint}</p>
           )}
         </div>
@@ -224,6 +241,7 @@ export function MediaInput({
           kind={pick.kind}
           noun={pick.noun}
           types={pick.types}
+          currentId={pick.sourceAssetId}
           onPick={(item) => void pick.pickFromLibrary(item)}
         />
       )}

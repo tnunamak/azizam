@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import TryPage from "./page";
@@ -323,6 +323,9 @@ test("opening Transcription from Home with no file leaves it ready and sends not
   await catalogRequested();
   await screen.findByText("Audio file");
   expect(urlsFetched().some((url) => url.includes("audio/transcriptions"))).toBe(false);
+  // The field keeps its name for a screen reader: a group labelled by the visible text holds the controls.
+  const field = screen.getByRole("group", { name: "Audio file" });
+  expect(within(field).getByRole("button", { name: "Choose a file" })).toBeTruthy();
 });
 
 test("an audio file chosen from the Library is the file Transcription sends", async () => {

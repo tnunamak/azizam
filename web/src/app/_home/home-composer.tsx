@@ -31,7 +31,7 @@ import { modelDisplayName, prettifyModelId } from "@/lib/model-name";
 import type { CapabilityStateKey, CapabilityView } from "@/lib/capability-state";
 import type { HomeCapability } from "./home-api";
 import { rememberMade, storeHomeHandoff } from "./handoff";
-import { AttachFileButton, HomeMediaInput, PickedFileChip } from "./home-media-input";
+import { AttachFileButton, HomeMediaInput, PickedFileChip, type PasteTakers, type PickedFrom } from "./home-media-input";
 import {
   capabilityIs,
   capabilityLabel,
@@ -214,6 +214,26 @@ export function HomeComposer({
   const inputs = composerInputs(selected);
   const [files, setFiles] = useState<Record<string, File | null>>({});
   const fileFor = (modality: string) => files[`${kind}:${modality}`] ?? null;
+  // What the Library called a file picked from it; it names the chip only while that is still the file held.
+  const [fromLibrary, setFromLibrary] = useState<Record<string, { file: File; title: string }>>({});
+  const titleFor = (modality: string) => {
+    const entry = fromLibrary[`${kind}:${modality}`];
+    return entry && entry.file === fileFor(modality) ? entry.title : null;
+  };
+  /** A file chosen by the input's own controls (the dialog, a drop, the Library), with what the Library called it. */
+  const chooseFile = (modality: string) => (file: File | null, from?: PickedFrom) => {
+    const key = `${kind}:${modality}`;
+    setFiles((current) => ({ ...current, [key]: file }));
+    setFromLibrary((current) => {
+      const next = { ...current };
+      if (file && from?.title) next[key] = { file, title: from.title };
+      else delete next[key];
+      return next;
+    });
+  };
+  // Each file input registers how to take a pasted file, and the attach buttons how to be focused, by modality.
+  const takers = useRef<PasteTakers["current"]>({});
+  const attachButtons = useRef<Record<string, HTMLButtonElement | null>>({});
   const missingInput = inputs.media.find((input) => !fileFor(input.modality)) ?? null;
   // A Library pick is still arriving for one of the inputs: Make waits, as it would for a missing file.
   const [arriving, setArriving] = useState<Record<string, boolean>>({});
@@ -290,7 +310,10 @@ export function HomeComposer({
       const match = fileFor(input.modality) ? undefined : pasted.find((file) => fitsMediaInput(file, input));
       if (!match) continue;
       event.preventDefault();
-      setFiles((current) => ({ ...current, [`${kind}:${input.modality}`]: match }));
+      // Through the input's own pick, so a paste is checked as a chosen file is and ends a Library pick still arriving.
+      const take = takers.current[input.modality];
+      if (take) take(match);
+      else chooseFile(input.modality)(match);
       return;
     }
   }
@@ -395,7 +418,12 @@ export function HomeComposer({
                   key={`${kind}:${input.modality}`}
                   input={input}
                   file={picked}
-                  onFile={(file) => setFiles((current) => ({ ...current, [`${kind}:${input.modality}`]: file }))}
+                  title={titleFor(input.modality)}
+                  onRemove={() => {
+                    chooseFile(input.modality)(null);
+                    // The chip is gone; focus goes to the attach button, the way to choose again.
+                    attachButtons.current[input.modality]?.focus();
+                  }}
                 />
               ) : null;
             })
@@ -404,9 +432,10 @@ export function HomeComposer({
             key={`${kind}:${input.modality}`}
             input={input}
             file={fileFor(input.modality)}
-            onFile={(file) => setFiles((current) => ({ ...current, [`${kind}:${input.modality}`]: file }))}
+            onFile={chooseFile(input.modality)}
             disabled={!runnable}
             onPendingChange={arrivingFor(input)}
+            takers={takers}
           >
             {isRecordable(selected, input.modality) ? (
               <button
@@ -463,9 +492,13 @@ export function HomeComposer({
                     key={`${kind}:${input.modality}`}
                     input={input}
                     file={fileFor(input.modality)}
-                    onFile={(file) => setFiles((current) => ({ ...current, [`${kind}:${input.modality}`]: file }))}
+                    onFile={chooseFile(input.modality)}
                     disabled={!runnable}
                     onPendingChange={arrivingFor(input)}
+                    takers={takers}
+                    buttonRef={(node) => {
+                      attachButtons.current[input.modality] = node;
+                    }}
                   />
                 ))
               : null}

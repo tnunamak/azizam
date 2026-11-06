@@ -416,7 +416,7 @@ export function MeshMode({ detail, getSecret, busy, active, initialFile = null }
         <p className="text-muted-foreground text-sm">
           Send one picture. Get a 3D model you can turn around and download.
         </p>
-        <div className="space-y-2">
+        <div role="group" aria-labelledby="mesh-picture-label" className="space-y-2">
           <span id="mesh-picture-label" className="text-sm font-medium">
             Picture
           </span>

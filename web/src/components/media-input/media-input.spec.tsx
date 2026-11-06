@@ -537,7 +537,8 @@ test("the Library dialog: a caption under each picture, a duration under an audi
   expect(caption?.getAttribute("title")).toBe("A teal fish that swims by the reef");
   expect(tile.textContent).toContain("0:07");
   expect(tile.getAttribute("title")).toBe("A teal fish that swims by the reef");
-  expect(screen.getByText("Newest first.")).toBeTruthy();
+  // No subtitle: the title says what the dialog is, and the list says how it is ordered.
+  expect(screen.queryByText("Newest first.")).toBeNull();
   await waitFor(() => expect(document.activeElement).toBe(tile));
   // The close button sits in the header row, not over the title.
   const header = document.querySelector('[data-slot="library-picker-header"]')!;
@@ -672,4 +673,343 @@ test("Replace on a file from disk opens the file dialog again", () => {
     expect(click).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+});
+
+// ---- Round 5: limits, cancelling, focus, labels, targets, search, the current pick, the phone sheet ----
+
+const sized = (name: string, type: string, bytes: number) => {
+  const file = new File([new Uint8Array(8)], name, { type });
+  Object.defineProperty(file, "size", { value: bytes });
+  return file;
+};
+const fileField = () => document.querySelector("input[data-media-file-input]") as HTMLInputElement;
+const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+
+function AudioFileHarness({ onFile }: { onFile: (file: File | null) => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  return (
+    <MediaInput
+      id="audio"
+      label="Audio file"
+      kind="audio"
+      file={file}
+      onFileChange={(next) => {
+        setFile(next);
+        onFile(next);
+      }}
+    />
+  );
+}
+
+test("Try transcription takes a 30 MB audio file, and an untyped file input takes 11 MB", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  const onAudio = vi.fn();
+  render(<AudioFileHarness onFile={onAudio} />);
+  // No size line promises a limit the gateway does not have.
+  expect(screen.queryByText(/up to 10 MB/)).toBeNull();
+  fireEvent.change(fileField(), { target: { files: [sized("talk.mp3", "audio/mpeg", 30 * MB)] } });
+  expect(await screen.findByRole("button", { name: "Remove talk.mp3" })).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(onAudio).toHaveBeenCalledTimes(1);
+  cleanup();
+  const onAny = vi.fn();
+  function AnyFile() {
+    const [file, setFile] = useState<File | null>(null);
+    return (
+      <MediaInput
+        id="any"
+        label="File"
+        kind={null}
+        file={file}
+        onFileChange={(next) => {
+          setFile(next);
+          onAny(next);
+        }}
+      />
+    );
+  }
+  render(<AnyFile />);
+  fireEvent.change(fileField(), { target: { files: [sized("data.bin", "application/octet-stream", 11 * MB)] } });
+  expect(await screen.findByRole("button", { name: "Remove data.bin" })).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(onAny).toHaveBeenCalledTimes(1);
+});
+
+test("a reference input holds its picture inside the request, so 10 MB stays its limit and its hint says so", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  const onValue = vi.fn();
+  render(<ReferenceHarness onValue={onValue} />);
+  expect(screen.getByText("Pictures up to 10 MB.")).toBeTruthy();
+  fireEvent.change(fileField(), { target: { files: [sized("big.png", "image/png", 11 * MB)] } });
+  expect(screen.getByRole("alert").textContent).toContain("Choose one under 10 MB");
+  expect(onValue).not.toHaveBeenCalled();
+});
+
+test("a limit the screen passes applies to a file input", () => {
+  render(<MediaInput id="capped" label="File" kind="audio" maxBytes={2 * MB} file={null} onFileChange={() => {}} />);
+  expect(screen.getByText("Audio clips up to 2.0 MB.")).toBeTruthy();
+  fireEvent.change(fileField(), { target: { files: [sized("long.mp3", "audio/mpeg", 3 * MB)] } });
+  expect(screen.getByRole("alert").textContent).toContain("Choose one under 2.0 MB");
+});
+
+test("a recording made while a Library pick arrives ends the pick (Try's Record)", async () => {
+  const onFile = vi.fn();
+  function WithRecord() {
+    const [file, setFile] = useState<File | null>(null);
+    return (
+      <>
+        <MediaInput
+          id="audio"
+          label="Audio file"
+          kind="audio"
+          file={file}
+          onFileChange={(next) => {
+            setFile(next);
+            onFile(next);
+          }}
+        />
+        <button type="button" onClick={() => setFile(new File(["rec"], "recording.webm", { type: "audio/webm" }))}>
+          Record
+        </button>
+      </>
+    );
+  }
+  const library = stubbedLibrary([RECORDING_ITEM]);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/download")) await held;
+      return library.impl(input, init);
+    }),
+  );
+  render(<WithRecord />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  fireEvent.click(await screen.findByRole("button", { name: "A short spoken note" }));
+  expect((await screen.findByRole("status")).textContent).toContain("Adding audio");
+  fireEvent.click(screen.getByRole("button", { name: "Record" }));
+  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+  release();
+  await settle();
+  expect(screen.getByRole("button", { name: "Remove recording.webm" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Remove A short spoken note" })).toBeNull();
+  expect(onFile).not.toHaveBeenCalled();
+});
+
+test("focus follows a person's own choice: Replace after a pick, the way to choose after Remove, never on arrival", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  render(<FileHarness onFile={() => {}} />);
+  // Drawn, not touched: nothing took focus.
+  expect(document.activeElement).toBe(document.body);
+  await openAndPick();
+  const replace = await screen.findByRole("button", { name: "Replace A teal fish" });
+  await waitFor(() => expect(document.activeElement).toBe(replace));
+  // One more Enter must not discard what was just chosen.
+  expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "Remove A teal fish" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remove A teal fish" }));
+  const choose = await screen.findByRole("button", { name: "Choose a file" });
+  await waitFor(() => expect(document.activeElement).toBe(choose));
+});
+
+test("focus goes to Replace after a file from disk too, and a screen drawn with a file already chosen takes none", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.change(fileField(), { target: { files: [new File([new Uint8Array(1024)], "fox.png", { type: "image/png" })] } });
+  const replace = await screen.findByRole("button", { name: "Replace fox.png" });
+  await waitFor(() => expect(document.activeElement).toBe(replace));
+  cleanup();
+  render(
+    <MediaInput
+      id="p"
+      label="Picture"
+      kind="image"
+      file={new File([new Uint8Array(1024)], "kept.png", { type: "image/png" })}
+      onFileChange={() => {}}
+    />,
+  );
+  await screen.findByRole("button", { name: "Replace kept.png" });
+  expect(document.activeElement).toBe(document.body);
+});
+
+test("the choose button says when the input is required and when it is invalid", () => {
+  render(<MediaInput id="r" label="Picture" kind="image" required invalid file={null} onFileChange={() => {}} />);
+  const button = screen.getByRole("button", { name: "Choose a file" });
+  expect(button.getAttribute("aria-required")).toBe("true");
+  expect(button.getAttribute("aria-invalid")).toBe("true");
+  cleanup();
+  render(<MediaInput id="r" label="Picture" kind="image" file={null} onFileChange={() => {}} />);
+  expect(screen.getByRole("button", { name: "Choose a file" }).hasAttribute("aria-required")).toBe(false);
+});
+
+test("the summary keeps its controls in a group beside the text, and its targets are 40 px (44 on a phone)", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  render(<FileHarness onFile={() => {}} />);
+  await openAndPick();
+  const summary = (await waitFor(() => {
+    const found = document.querySelector<HTMLElement>('[data-slot="picked-summary"]');
+    expect(found).not.toBeNull();
+    return found!;
+  })) as HTMLElement;
+  const replace = screen.getByRole("button", { name: "Replace A teal fish" });
+  const remove = screen.getByRole("button", { name: "Remove A teal fish" });
+  // The thumbnail is top-aligned with the name on a phone, centred from sm up.
+  expect(summary.className).toContain("items-start");
+  expect(summary.className).toContain("sm:items-center");
+  // Replace and remove sit together in one group that is a sibling of the text, never inside it.
+  expect(replace.parentElement).toBe(remove.parentElement);
+  expect(replace.parentElement!.parentElement).toBe(summary);
+  expect(summary.querySelector("p")!.contains(replace)).toBe(false);
+  expect(remove.className).toContain("size-10");
+  expect(remove.className).toContain("max-sm:size-11");
+  expect(replace.className).toContain("min-h-10");
+  expect(replace.className).toContain("max-sm:min-h-11");
+});
+
+const FIVE_ITEMS = [
+  PICTURE_ITEM,
+  { ...PICTURE_ITEM, assetId: `img_${"1".repeat(64)}`, prompt: "A red kite" },
+  { ...PICTURE_ITEM, assetId: `img_${"2".repeat(64)}`, prompt: "A blue whale" },
+  { ...PICTURE_ITEM, assetId: `img_${"3".repeat(64)}`, prompt: "Kite over the sea" },
+];
+
+test("the dialog's search filters the loaded items by title, and says so when nothing matches", async () => {
+  vi.stubGlobal("fetch", vi.fn(stubbedLibrary(FIVE_ITEMS).impl));
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  await screen.findByRole("button", { name: "A teal fish" });
+  const search = screen.getByRole("searchbox", { name: "Search your pictures" });
+  // Keyboard-reachable: a real field, in the header, before the tiles in tab order.
+  expect(document.querySelector('[data-slot="library-picker-header"]')!.contains(search)).toBe(true);
+  fireEvent.change(search, { target: { value: "KITE" } });
+  expect(screen.getByRole("button", { name: "A red kite" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Kite over the sea" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "A teal fish" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "A blue whale" })).toBeNull();
+  fireEvent.change(search, { target: { value: "zebra" } });
+  expect(screen.getByRole("status").textContent).toBe("No pictures match “zebra”.");
+  expect(screen.queryAllByRole("button", { name: /A teal fish|A red kite/ })).toEqual([]);
+  fireEvent.change(search, { target: { value: "" } });
+  expect(screen.getByRole("button", { name: "A teal fish" })).toBeTruthy();
+  // A filtered item is still picked as itself.
+  fireEvent.change(search, { target: { value: "whale" } });
+  fireEvent.click(screen.getByRole("button", { name: "A blue whale" }));
+  expect(await screen.findByRole("button", { name: "Remove A blue whale" })).toBeTruthy();
+});
+
+test("the search starts empty each time the dialog opens, and an empty Library offers none", async () => {
+  vi.stubGlobal("fetch", vi.fn(stubbedLibrary(FIVE_ITEMS).impl));
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  await screen.findByRole("button", { name: "A teal fish" });
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "kite" } });
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  await screen.findByRole("button", { name: "A teal fish" });
+  expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe("");
+  cleanup();
+  vi.stubGlobal("fetch", vi.fn(stubbedLibrary([]).impl));
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  await screen.findByText(/in your Library yet/);
+  expect(screen.queryByRole("searchbox")).toBeNull();
+});
+
+test("Replace reopens the Library with the current pick marked, scrolled into view and focused", async () => {
+  const scrolled: string[] = [];
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: function scrollIntoView(this: HTMLElement) {
+      scrolled.push(this.getAttribute("aria-label") ?? "");
+    },
+  });
+  vi.stubGlobal("fetch", vi.fn(stubbedLibrary(FIVE_ITEMS).impl));
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  fireEvent.click(await screen.findByRole("button", { name: "A blue whale" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Replace A blue whale" }));
+  const current = await screen.findByRole("button", { name: "A blue whale" });
+  // Marked for a screen reader and for the eye, and nothing else is.
+  expect(current.getAttribute("aria-current")).toBe("true");
+  expect(current.querySelector('[data-slot="library-current-mark"]')).not.toBeNull();
+  expect(document.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
+  expect(document.querySelectorAll('[data-slot="library-current-mark"]')).toHaveLength(1);
+  await waitFor(() => expect(document.activeElement).toBe(current));
+  expect(scrolled).toContain("A blue whale");
+  // A first pick (nothing held) marks nothing and focuses the first tile.
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: "Remove A blue whale" }));
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  const first = await screen.findByRole("button", { name: "A teal fish" });
+  expect(document.querySelectorAll('[aria-current="true"]')).toHaveLength(0);
+  await waitFor(() => expect(document.activeElement).toBe(first));
+});
+
+test("an audio row marks the current pick too", async () => {
+  vi.stubGlobal("fetch", vi.fn(stubbedLibrary([RECORDING_ITEM, { ...RECORDING_ITEM, assetId: `aud_${"4".repeat(64)}`, prompt: "A second note" }]).impl));
+  render(<AudioFileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  fireEvent.click(await screen.findByRole("button", { name: "A second note" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Replace A second note" }));
+  const row = await screen.findByRole("button", { name: "A second note" });
+  expect(row.getAttribute("aria-current")).toBe("true");
+  expect(row.querySelector('[data-slot="library-current-mark"]')).not.toBeNull();
+  expect(screen.getByRole("button", { name: "A short spoken note" }).hasAttribute("aria-current")).toBe(false);
+});
+
+test("the dialog: 40 px close, a darker pointer hover, one focus ring, and no subtitle", async () => {
+  vi.stubGlobal("fetch", vi.fn(stubbedLibrary([RECORDING_ITEM]).impl));
+  render(<AudioFileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  const row = await screen.findByRole("button", { name: "A short spoken note" });
+  const close = screen.getByRole("button", { name: "Close" });
+  expect(close.className).toContain("size-10");
+  expect(close.className).toContain("max-sm:size-11");
+  for (const control of [close, row]) {
+    expect(control.className).toContain("focus-visible:ring-2");
+    expect(control.className).toContain("focus-visible:ring-offset-2");
+    expect(control.className).toContain("focus-visible:ring-focus-ring");
+    expect(control.className).toContain("cursor-pointer");
+  }
+  // The hover fill is the scroll-edge tone, not the 1.05:1 wash it was.
+  expect(row.className).toContain("hover:bg-border");
+  expect(row.className).not.toMatch(/hover:bg-muted/);
+  expect(screen.queryByText("Newest first.")).toBeNull();
+});
+
+test("under 640 px the picker is a full-height bottom sheet, and its bottom edge shows while more is below", async () => {
+  vi.stubGlobal("fetch", vi.fn(stubbedLibrary(FIVE_ITEMS).impl));
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  await screen.findByRole("button", { name: "A teal fish" });
+  const sheet = screen.getByRole("dialog");
+  for (const phone of [
+    "max-sm:bottom-0",
+    "max-sm:top-auto",
+    "max-sm:left-0",
+    "max-sm:max-w-none",
+    "max-sm:translate-y-0",
+    "max-sm:rounded-b-none",
+    "max-sm:h-[calc(100dvh-1rem)]",
+  ]) {
+    expect(sheet.className).toContain(phone);
+  }
+  // The header is outside the scrolling body, so it stays put.
+  const header = document.querySelector<HTMLElement>('[data-slot="library-picker-header"]')!;
+  const body = document.querySelector<HTMLElement>('[data-slot="library-picker-body"]')!;
+  expect(body.contains(header)).toBe(false);
+  expect(body.className).toContain("overflow-y-auto");
+  expect(body.className).toContain("max-sm:data-[more-below]:shadow-");
+  // More list below the fold: the edge shows; scrolled to the end: it goes.
+  const metrics = { scrollHeight: 900, clientHeight: 400, scrollTop: 0 };
+  for (const key of ["scrollHeight", "clientHeight", "scrollTop"] as const) {
+    Object.defineProperty(body, key, { configurable: true, get: () => metrics[key], set: (value) => (metrics[key] = value) });
+  }
+  fireEvent.scroll(body);
+  expect(body.hasAttribute("data-more-below")).toBe(true);
+  metrics.scrollTop = 500;
+  fireEvent.scroll(body);
+  expect(body.hasAttribute("data-more-below")).toBe(false);
 });

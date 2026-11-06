@@ -25,6 +25,9 @@
   --border: #d7e0e2;
   --input: #7b8e93;
   --ring: #1a8c9c;
+  /* The keyboard focus ring on a control that sits on --background or a fill near it: the dark teal of Run and
+     Make, 3:1 or more against the page and the hover fills (web/tests/focus-ring-contrast.spec.ts). */
+  --focus-ring: #0d4552;
 
   /* Action and link */
   --primary: #0d4552;
@@ -201,6 +204,7 @@
   --border: #213e46;
   --input: #58777f;
   --ring: #8cc8cb;
+  --focus-ring: #8cc8cb;
   --primary: #368087;
   --primary-foreground: #ffffff;
   --link: #8cc8cb;
@@ -349,6 +353,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-focus-ring: var(--focus-ring);
   --color-link: var(--link);
   --color-chrome: var(--chrome);
   --color-chrome-raised: var(--chrome-raised);

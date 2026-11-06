@@ -117,6 +117,9 @@ async function libraryOpen(page: Page) {
   await expect(dialog).toBeVisible();
   // Focus starts on the first tile, not on the close button.
   await expect(dialog.locator("ul button").first()).toBeFocused();
+  // Measured at rest: the dialog scales in, and a box read mid-animation is not where it settles.
+  await expect.poll(() => dialog.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
+  await expect.poll(() => dialog.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
   // The title is left-aligned, and the close button sits inside the dialog's padding, on the title's first line,
   // clear of the title.
   const title = (await dialog.locator('[data-slot="dialog-title"]').boundingBox())!;
@@ -127,7 +130,9 @@ async function libraryOpen(page: Page) {
   expect(close.x + close.width).toBeLessThanOrEqual(frame.x + frame.width - 20);
   expect(close.y).toBeGreaterThanOrEqual(frame.y + 8);
   expect(Math.abs(close.y + close.height / 2 - (title.y + 12))).toBeLessThan(5);
-  await expect(dialog.locator('[data-slot="dialog-description"]')).toHaveText("Newest first.");
+  // No subtitle: the title says what the dialog is.
+  await expect(dialog.locator('[data-slot="dialog-description"]')).toHaveCount(0);
+  await expect(dialog).not.toContainText("Newest first.");
   // The title wraps only where the words run out of room: it is not balanced (the page's headings are, which would
   // end each line a hundred pixels short of the close button), and a wrapped title's first line reaches to within a
   // word of it.
@@ -144,8 +149,6 @@ async function libraryOpen(page: Page) {
   });
   expect(wrap.style).not.toBe("balance");
   if (wrap.count > 1) expect(close.x - title.x - wrap.longest).toBeLessThan(100);
-  await expect.poll(() => dialog.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
-  await expect.poll(() => dialog.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
   // The surface is opaque: an rgb() colour, or an rgba() whose alpha is 1.
   const surface = await dialog.evaluate((el) => getComputedStyle(el).backgroundColor);
   expect(surface).not.toMatch(/rgba\(.*,\s*0?\.\d+\)$/);
@@ -425,6 +428,9 @@ for (const view of VIEWPORTS) {
     await page.goto("/try/?capability=mesh");
     if (view.width >= 640) await page.getByRole("tab", { name: "Photo to 3D" }).click();
     else await page.getByRole("combobox", { name: "Task", exact: true }).selectOption("mesh");
+    // The field keeps its name: a group labelled "Picture" holds the controls.
+    const field = page.getByRole("group", { name: "Picture", exact: true });
+    await expect(field.getByRole("button", { name: "Choose a file" })).toBeVisible();
     await page.getByRole("button", { name: "Choose from Library" }).click();
     await page.getByRole("button", { name: "A teal fish" }).waitFor();
     const kindRequests = listed.filter((search) => search.includes("kind="));
@@ -448,6 +454,10 @@ for (const view of VIEWPORTS) {
 for (const view of VIEWPORTS) {
   test(`Transcription: the audio file comes from the Library at ${view.name}px`, async ({ page }) => {
     const listed = await openTranscribe(page, view);
+    // The field keeps its name: a group labelled "Audio file" holds the controls, as a workflow input's does.
+    const field = page.getByRole("group", { name: "Audio file", exact: true });
+    await expect(field.getByRole("button", { name: "Choose a file" })).toBeVisible();
+    await expect(field.getByRole("button", { name: "Choose from Library" })).toBeVisible();
     await page.getByRole("button", { name: "Choose from Library" }).click();
     await page.getByRole("button", { name: "A short spoken note" }).waitFor();
     await expect(page.getByRole("button", { name: "A teal fish" })).toHaveCount(0);
@@ -569,14 +579,28 @@ for (const view of VIEWPORTS) {
     }
     await shot(page, `library-full-${view.name}`);
     // The dialog has a maximum height; the tiles scroll inside it while the header and its close button stay put.
-    expect(frame.height).toBeLessThanOrEqual(view.height * 0.85 + 1);
+    // A phone's sheet takes the screen's height (less a sliver of page above it) and sits on the bottom edge.
+    if (view.width < 640) {
+      expect(frame.height).toBeGreaterThan(view.height * 0.9);
+      expect(frame.y + frame.height).toBeCloseTo(view.height, 0);
+    } else {
+      expect(frame.height).toBeLessThanOrEqual(view.height * 0.85 + 1);
+    }
     const body = dialog.locator('[data-slot="library-picker-body"]');
     expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight + 100)).toBe(true);
+    // On a phone the sheet's bottom edge shows while more of the list lies below, and goes at the end.
+    if (view.width < 640) {
+      await expect(body).toHaveAttribute("data-more-below", "true");
+      expect(await body.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none");
+    } else {
+      expect(await body.evaluate((el) => getComputedStyle(el).boxShadow)).toBe("none");
+    }
     const close = dialog.getByRole("button", { name: "Close" });
     const before = (await close.boundingBox())!;
     await body.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
     await expect.poll(() => body.evaluate((el) => Math.round(el.scrollTop + el.clientHeight) >= el.scrollHeight - 1)).toBe(true);
     await expect(close).toBeInViewport({ ratio: 1 });
+    await expect(body).not.toHaveAttribute("data-more-below");
     await expect(header).toHaveAttribute("data-scrolled", "true");
     await expect.poll(edge).not.toBe("rgba(0, 0, 0, 0)");
     expect(await header.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none");
@@ -605,4 +629,196 @@ test("The Library dialog at 360px: the title clears the close button", async ({ 
   await libraryClosed(page);
   await pickedSummary(page, page, LONG_MEMO, "WAV");
   await shot(page, "transcribe-picked-long-360");
+});
+
+// ---- Round 5 ----
+
+/** Photo to 3D with the Library stubbed: the page whose picker lists pictures. */
+async function openPhoto(page: Page, viewport: { width: number; height: number }, items: Item[] = ITEMS) {
+  await page.setViewportSize(viewport);
+  await page.route("**/me/api/workflows", (route) => fulfilJson(route, meshCatalog));
+  await routeLibrary(page, items);
+  await page.goto("/try/?capability=mesh");
+  if (viewport.width >= 640) await page.getByRole("tab", { name: "Photo to 3D" }).click();
+  else await page.getByRole("combobox", { name: "Task", exact: true }).selectOption("mesh");
+}
+
+const channels = (colour: string) => (colour.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+function luminance(colour: string) {
+  const [r, g, b] = channels(colour).map((value) => {
+    const unit = value / 255;
+    return unit <= 0.03928 ? unit / 12.92 : ((unit + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrast(a: string, b: string) {
+  const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (high + 0.05) / (low + 0.05);
+}
+
+/** The focus ring as the browser draws it: the gap colour and width, then the ring colour and its outer edge. */
+function parseRing(boxShadow: string) {
+  const layers = boxShadow.split(/,(?![^(]*\))/).map((layer) => layer.trim());
+  const parsed = layers.map((layer) => ({
+    colour: layer.match(/rgba?\([^)]*\)/)![0],
+    spread: Number(layer.match(/(\d+(?:\.\d+)?)px\s*$/)?.[1] ?? 0),
+  }));
+  // Tailwind adds an empty (transparent) shadow layer after the ring; it is not part of the ring.
+  const drawn = parsed.filter((layer) => !/rgba\(0, 0, 0, 0\)/.test(layer.colour));
+  const gap = drawn[0];
+  const ring = drawn[drawn.length - 1];
+  return { gapColour: gap.colour, gapWidth: gap.spread, ringColour: ring.colour, ringWidth: ring.spread - gap.spread };
+}
+
+test("Photo to 3D: a keyboard open rings the first picture in the dark teal of Run", async ({ page }) => {
+  await openPhoto(page, { width: 1440, height: 900 });
+  const trigger = page.getByRole("button", { name: "Choose from Library" });
+  for (let presses = 0; presses < 80; presses += 1) {
+    if (await trigger.evaluate((el) => el === document.activeElement)) break;
+    await page.keyboard.press("Tab");
+  }
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press("Enter");
+  await libraryOpen(page);
+  const dialog = page.getByRole("dialog");
+  const tile = dialog.locator("ul button").first();
+  await expect(tile).toBeFocused();
+  const ring = parseRing(await tile.evaluate((el) => getComputedStyle(el).boxShadow));
+  expect(ring.ringWidth).toBe(2);
+  expect(ring.gapWidth).toBe(2);
+  // The ring is the colour of Run, and it reads against the dialog it sits on.
+  const run = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--primary").trim());
+  expect(run).toBe("#0d4552");
+  expect(channels(ring.ringColour)).toEqual([13, 69, 82]);
+  const surface = await dialog.evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(contrast(ring.ringColour, surface)).toBeGreaterThanOrEqual(3);
+  // The gap is the dialog's own colour, so the ring does not bleed into the tile.
+  expect(ring.gapColour).toBe(surface);
+  await shot(page, "photo-to-3d-keyboard-focus-1440");
+  // Tab on to a second tile and back: the ring follows focus, one at a time.
+  await page.keyboard.press("Tab");
+  await expect(dialog.locator("ul button").nth(1)).toBeFocused();
+});
+
+test("Transcription: the rows' hover fill is the scroll-edge tone, a pointer, and the ring clears 3:1 against it", async ({ page }) => {
+  await openTranscribe(page, { width: 1440, height: 900 });
+  await page.getByRole("button", { name: "Choose from Library" }).click();
+  await libraryOpen(page);
+  const dialog = page.getByRole("dialog");
+  const row = dialog.getByRole("button", { name: "Meeting recap", exact: true });
+  const surface = await dialog.evaluate((el) => getComputedStyle(el).backgroundColor);
+  await row.hover();
+  await expect.poll(() => row.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+  // The transition is 150 ms; wait until it has settled.
+  await page.waitForTimeout(250);
+  const fill = await row.evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(contrast(fill, surface)).toBeGreaterThanOrEqual(1.2);
+  expect(await row.evaluate((el) => getComputedStyle(el).cursor)).toBe("pointer");
+  expect(await dialog.getByRole("button", { name: "Close" }).evaluate((el) => getComputedStyle(el).cursor)).toBe("pointer");
+  // Focus the same row by keyboard: its ring against the fill it now sits on, and against the dialog.
+  await row.focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(row).toBeFocused();
+  const ring = parseRing(await row.evaluate((el) => getComputedStyle(el).boxShadow));
+  expect(ring.ringWidth).toBe(2);
+  expect(contrast(ring.ringColour, fill)).toBeGreaterThanOrEqual(3);
+  expect(contrast(ring.ringColour, surface)).toBeGreaterThanOrEqual(3);
+  await shot(page, "transcribe-row-hover-focus-1440");
+});
+
+for (const view of VIEWPORTS) {
+  test(`Photo to 3D: Replace marks, scrolls to and focuses the current picture at ${view.name}px`, async ({ page }) => {
+    await openPhoto(page, view, MANY_PICTURES);
+    await page.getByRole("button", { name: "Choose from Library" }).click();
+    await libraryOpen(page);
+    // A picture far down the list, so reopening has to scroll to it.
+    const far = MANY_PICTURES[MANY_PICTURES.length - 1].prompt;
+    await page.getByRole("dialog").getByRole("button", { name: far, exact: true }).scrollIntoViewIfNeeded();
+    await page.getByRole("dialog").getByRole("button", { name: far, exact: true }).click();
+    await libraryClosed(page);
+    const replace = page.getByRole("button", { name: `Replace ${far}` });
+    await expect(replace).toBeFocused();
+    await replace.click();
+    const dialog = page.getByRole("dialog");
+    const current = dialog.getByRole("button", { name: far, exact: true });
+    await expect(current).toHaveAttribute("aria-current", "true");
+    await expect(current.locator('[data-slot="library-current-mark"]')).toBeVisible();
+    await expect(current).toBeFocused();
+    await expect(current).toBeInViewport({ ratio: 1 });
+    await expect(dialog.locator('[aria-current="true"]')).toHaveCount(1);
+    await expect.poll(() => dialog.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
+    await shot(page, `photo-to-3d-replace-current-${view.name}`);
+  });
+
+  test(`Photo to 3D: the picker's search filters by title and says when nothing matches at ${view.name}px`, async ({ page }) => {
+    await openPhoto(page, view);
+    await page.getByRole("button", { name: "Choose from Library" }).click();
+    await libraryOpen(page);
+    const dialog = page.getByRole("dialog");
+    const search = dialog.getByRole("searchbox", { name: "Search your pictures" });
+    await expect(search).toBeVisible();
+    // Keyboard-reachable: Shift+Tab from the first picture lands in the search field.
+    await page.keyboard.press("Shift+Tab");
+    await expect(search).toBeFocused();
+    await search.fill("reef");
+    await expect(dialog.locator("ul button")).toHaveCount(1);
+    await expect(dialog.getByRole("button", { name: "Sunset over a reef", exact: true })).toBeVisible();
+    await shot(page, `library-search-results-${view.name}`);
+    await search.fill("zebra");
+    await expect(dialog.locator("ul button")).toHaveCount(0);
+    await expect(dialog.getByRole("status")).toHaveText("No pictures match “zebra”.");
+    await shot(page, `library-search-empty-${view.name}`);
+    await search.fill("");
+    await expect(dialog.locator("ul button")).toHaveCount(PICTURES.length);
+  });
+}
+
+test("Transcription: a 30 MB audio file is taken and sent", async ({ page }) => {
+  await openTranscribe(page, { width: 1440, height: 900 });
+  await page.locator("input[data-media-file-input]").setInputFiles({
+    name: "long-talk.wav",
+    mimeType: "audio/wav",
+    buffer: Buffer.concat([WAV, Buffer.alloc(30 * 1024 * 1024)]),
+  });
+  await expect(page.getByRole("button", { name: "Remove long-talk.wav" })).toBeVisible();
+  // Next's own route announcer is an empty alert; the picker's error would carry words.
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toHaveCount(0);
+  const request = page.waitForRequest("**/audio/transcriptions");
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  expect(((await request).postDataBuffer() as Buffer).length).toBeGreaterThan(30 * 1024 * 1024);
+});
+
+test("Transcription: focus goes to Replace after a pick and to Choose a file after Remove, never on arrival", async ({ page }) => {
+  await openTranscribe(page, { width: 1440, height: 900 });
+  await expect(page.locator("body")).toBeFocused();
+  await page.getByRole("button", { name: "Choose from Library" }).click();
+  await libraryOpen(page);
+  await page.getByRole("button", { name: "A short spoken note" }).click();
+  await libraryClosed(page);
+  await expect(page.getByRole("button", { name: "Replace A short spoken note" })).toBeFocused();
+  await page.getByRole("button", { name: "Remove A short spoken note" }).click();
+  await expect(page.getByRole("button", { name: "Choose a file" })).toBeFocused();
+});
+
+test("A Library item picked on a phone is a row: the thumbnail on the name's line, Replace and Remove on the right", async ({ page }) => {
+  await openTranscribe(page, { width: 390, height: 844 });
+  await page.getByRole("button", { name: "Choose from Library" }).click();
+  await libraryOpen(page);
+  await page.getByRole("dialog").getByRole("button", { name: LONG_MEMO, exact: true }).click();
+  await libraryClosed(page);
+  const summary = page.locator('[data-slot="picked-summary"]');
+  const thumb = (await summary.locator("> div").first().boundingBox())!;
+  const text = (await summary.locator("p").boundingBox())!;
+  const name = (await summary.locator("p > span").first().boundingBox())!;
+  const replace = (await summary.getByRole("button", { name: `Replace ${LONG_MEMO}` }).boundingBox())!;
+  const remove = (await summary.getByRole("button", { name: `Remove ${LONG_MEMO}` }).boundingBox())!;
+  // The thumbnail and the name start on the same line.
+  expect(Math.abs(thumb.y - name.y)).toBeLessThanOrEqual(4);
+  // The controls are a group to the right of the text, on its row, not a line under it.
+  expect(replace.x).toBeGreaterThanOrEqual(text.x + text.width - 1);
+  expect(remove.x).toBeGreaterThan(replace.x);
+  expect(replace.y).toBeLessThan(text.y + text.height);
+  expect(Math.abs(replace.y - remove.y)).toBeLessThanOrEqual(2);
+  await shot(page, "transcribe-picked-long-390");
 });

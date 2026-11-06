@@ -714,7 +714,10 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     expect(await screen.findByRole("menuitem", { name: "Choose a picture" })).toBeVisible();
     fireEvent.click(await screen.findByRole("menuitem", { name: "Choose from Library" }));
     fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
-    await waitFor(() => expect(document.querySelector('[data-slot="home-picked-file"]')).toHaveTextContent("library-picture.png"));
+    // The chip names the picture by what the Library calls it; the file keeps its own name for the request.
+    await waitFor(() => expect(document.querySelector('[data-slot="home-picked-file"]')).toHaveTextContent("A teal fish"));
+    expect(document.querySelector('[data-slot="home-picked-file"]')).not.toHaveTextContent("library-picture.png");
+    expect(screen.getByRole("button", { name: "Remove A teal fish" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Change picture" })).toBeVisible();
   });
 
@@ -744,8 +747,121 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Adding picture…");
     expect(makeButton().getAttribute("aria-disabled")).toBe("true");
     release();
-    await waitFor(() => expect(document.querySelector('[data-slot="home-picked-file"]')).toHaveTextContent("library-picture.png"));
+    await waitFor(() => expect(document.querySelector('[data-slot="home-picked-file"]')).toHaveTextContent("A teal fish"));
     await waitFor(() => expect(makeButton().getAttribute("aria-disabled")).toBe("false"));
+  });
+
+  /** A Library whose download is held back until `release()`. */
+  function heldLibrary() {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const base = stubbedLibrary([PICTURE_ITEM]).impl;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes("/download")) await held;
+        return base(input, init);
+      }),
+    );
+    return { release };
+  }
+  const letLateAnswerArrive = () => new Promise((resolve) => setTimeout(resolve, 30));
+
+  it("a file of any size is taken: 30 MB of audio on Home, and 11 MB of a picture", async () => {
+    await chooseKind([textRow, audioRow], "Transcription");
+    const big = new File([new Uint8Array(8)], "talk.mp3", { type: "audio/mpeg" });
+    Object.defineProperty(big, "size", { value: 30 * 1024 * 1024 });
+    fireEvent.change(fileInput(/Choose a recording/), { target: { files: [big] } });
+    expect(await screen.findByText("talk.mp3")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Transcribe" }).getAttribute("aria-disabled")).toBe("false");
+    cleanup();
+    await chooseKind([textRow, meshRow], "3D models");
+    const picture11 = picture();
+    Object.defineProperty(picture11, "size", { value: 11 * 1024 * 1024 });
+    fireEvent.change(fileInput(/Choose a picture/), { target: { files: [picture11] } });
+    expect(await screen.findByText("fox.png")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a pasted picture ends a Library pick still arriving: the late pick does not replace it", async () => {
+    await chooseKind([textRow, meshRow], "3D models");
+    const library = heldLibrary();
+    fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Adding picture…");
+    const composer = document.querySelector('[data-slot="composer"]') as HTMLElement;
+    fireEvent.paste(composer, { clipboardData: { files: [picture()] } });
+    expect(await screen.findByText("fox.png")).toBeVisible();
+    expect(screen.queryByRole("status")).toBeNull();
+    library.release();
+    await letLateAnswerArrive();
+    expect(screen.getByText("fox.png")).toBeVisible();
+    expect(screen.queryByText("A teal fish", { selector: "[data-slot=picked-summary] span" })).toBeNull();
+    expect(screen.queryByText(/From your Library/)).toBeNull();
+  });
+
+  it("a pasted file of the wrong type is not taken", async () => {
+    await chooseKind([textRow, meshRow], "3D models");
+    const composer = document.querySelector('[data-slot="composer"]') as HTMLElement;
+    fireEvent.paste(composer, { clipboardData: { files: [new File(["x"], "notes.txt", { type: "text/plain" })] } });
+    // Not a picture: nothing is taken and the zone is unchanged.
+    expect(screen.queryByText("notes.txt")).toBeNull();
+    expect(document.querySelector('[data-slot="picked-summary"]')).toBeNull();
+  });
+
+  it("removing the chip ends a Library pick that is replacing it: the late pick does not come back", async () => {
+    await chooseKind([textRow, editRow], "Edit");
+    fireEvent.change(await screen.findByRole("textbox", { name: "Describe what you want" }), { target: { value: "make it night" } });
+    fireEvent.change(fileInput(/Choose a picture/), { target: { files: [picture()] } });
+    await screen.findByText("fox.png");
+    const library = heldLibrary();
+    const change = screen.getByRole("button", { name: "Change picture" });
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", { configurable: true, value: () => false });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+    change.focus();
+    fireEvent.keyDown(change, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Choose from Library" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Adding picture…");
+    fireEvent.click(screen.getByRole("button", { name: "Remove fox.png" }));
+    expect(screen.queryByRole("status")).toBeNull();
+    library.release();
+    await letLateAnswerArrive();
+    expect(document.querySelector('[data-slot="home-picked-file"]')).toBeNull();
+    expect(makeButton().getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("focus stays with the person: Replace after a pick, the way to choose after Remove, never on arrival", async () => {
+    await chooseKind([textRow, meshRow], "3D models");
+    // Nothing takes focus because the page drew.
+    expect(document.body).toBe(document.activeElement);
+    withLibrary([PICTURE_ITEM]);
+    fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+    const replace = await screen.findByRole("button", { name: "Replace A teal fish" });
+    await waitFor(() => expect(document.activeElement).toBe(replace));
+    fireEvent.click(screen.getByRole("button", { name: "Remove A teal fish" }));
+    const choose = await screen.findByRole("button", { name: "Choose a picture" });
+    await waitFor(() => expect(document.activeElement).toBe(choose));
+  });
+
+  it("removing the chip puts focus on the attach button", async () => {
+    await chooseKind([textRow, editRow], "Edit");
+    fireEvent.change(fileInput(/Choose a picture/), { target: { files: [picture()] } });
+    await screen.findByText("fox.png");
+    fireEvent.click(screen.getByRole("button", { name: "Remove fox.png" }));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Attach a picture" }));
+  });
+
+  it("the chip's Remove is a 40 px target (44 on a phone)", async () => {
+    await chooseKind([textRow, editRow], "Edit");
+    fireEvent.change(fileInput(/Choose a picture/), { target: { files: [picture()] } });
+    await screen.findByText("fox.png");
+    const remove = screen.getByRole("button", { name: "Remove fox.png" });
+    expect(remove.className).toContain("size-10");
+    expect(remove.className).toContain("max-sm:size-11");
+    expect(remove.className).toContain("focus-visible:ring-2");
   });
 
   it("audio: a recording input, and a hand-off to record in Try that carries no file", async () => {
