@@ -266,7 +266,7 @@ class ConfigHome:
             if section_id in self._warned_ignored or not isinstance(block, Mapping) or not block:
                 continue
             effective = self.build_candidate(self._stored_rows(path), registry)[section_id].effective
-            differing = config_legacy_import.ignored_entries(self.sections[section_id], block, effective)
+            differing = config_legacy_import.ignored_entries(self, section_id, block, effective, registry)
             if differing:
                 self._warned_ignored.add(section_id)
                 log(f"[proxy] WARNING: the startup file's {section_id} block is ignored (it was imported once); "

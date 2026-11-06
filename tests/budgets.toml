@@ -537,7 +537,8 @@
 # Job-refusal review fixes: a job refusal drops the model name (+3 job-level, +1 helper), the audio and manifest reasons never echo a value (+2); measured 19841.
 # feat/config-homes-c8b: +15 cases in tests/test_config_c8b_sections.py (videos and audio sections), +1 import-read scan case; measured 19837.
 # Train 12 (2026-11-06): C8a images and voices sections (+25), job refusal reasons (+16), C8b videos and audio sections (+16); measured 19905.
-pytest = 19905
+# Train 12 gate fix: an unchanged restart warns about no section (+1); measured 19906.
+pytest = 19906
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
