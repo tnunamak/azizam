@@ -53,7 +53,7 @@ class FakeTransitionGateway:
         self.cold_cached_reported, self.content = None, "answer"
         self.cold_delay_s, self.warm_delay_s = 0.25, 0.01
         self.requests: list[dict[str, Any]] = []
-        self.gate, self.parked = "open", False
+        self.gate, self.parked, self.parked_by = "open", False, None
         self.ops: dict[str, dict[str, Any]] = {}
         self._cached: list[list[dict[str, Any]]] = []
         self._server = LoopbackServer(self._app)
@@ -101,7 +101,7 @@ class FakeTransitionGateway:
             return 404, {"error": "unknown domain"}
         rest = path[len(prefix):]
         if rest == "gate":
-            return 200, {"gate": self.gate, "op_id": None}
+            return 200, {"gate": self.gate, "op_id": None, "parked": self.parked_by}
         if method == "POST" and rest == "transitions":
             return self._begin(body)
         if method == "GET" and rest.startswith("transitions/"):
@@ -123,7 +123,7 @@ class FakeTransitionGateway:
         if mode == "conflict":
             return 409, {"op_id": "op-other", "state": "running", "echo": self._echo()}
         op_id = f"op-{len(self.ops) + 1}"
-        self.ops[op_id] = {"kind": body["kind"], "key": body["idempotency_key"], "state": "running",
+        self.ops[op_id] = {"op_id": op_id, "kind": body["kind"], "key": body["idempotency_key"], "state": "running",
                            "polls_left": self.polls_to_finish}
         self.gate = "closed"
         return 202, {"op_id": op_id, "state": "running", "gate": "closed"}
@@ -147,6 +147,7 @@ class FakeTransitionGateway:
         self.gate = {"succeeded": "open", "failed_closed": "failed_closed", "reconciling": "reconciling"}[op["state"]]
         if op["state"] == "succeeded":
             self.parked = op["kind"] == "park"
+            self.parked_by = op["op_id"] if self.parked else None
             if self.parked and self.cache == "lost":
                 self._cached.clear()
 

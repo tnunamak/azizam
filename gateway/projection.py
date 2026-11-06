@@ -582,7 +582,8 @@ def _stored_item(item: Any, stored_items: list[Mapping[str, Any]]) -> Mapping[st
     """The stored list item ``item`` was read from, so its hidden settings can be put back; None when there is none.
 
     Never by position: an item with an ``id`` matches the one stored item with that id; any other item matches the one
-    stored item that holds every setting the item shows, unchanged. No match, or two, keeps nothing.
+    stored item that holds every setting the item shows, unchanged. An item that shows nothing matches nothing, and
+    no match, or two, keeps nothing.
     """
     if not isinstance(item, Mapping):
         return None

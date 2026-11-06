@@ -68,10 +68,12 @@ class Proof:
         record["seconds"] = round(time.monotonic() - started, 4)
         return record
 
-    def _gate(self) -> Optional[str]:
+    def _gate(self) -> dict[str, Any]:
+        """The gate read: ``gate`` is admission, which stays open after a park so a request can wake the domain;
+        ``parked`` is the op_id of the park that parked it, else None. Both None when the read fails."""
         reply = self._call("GET", f"{ADMIN_DOMAINS}/{self.domain}/gate")
-        data = reply["json"]
-        return data.get("gate") if reply["http_status"] == 200 and isinstance(data, dict) else None
+        data = reply["json"] if reply["http_status"] == 200 and isinstance(reply["json"], dict) else {}
+        return {"gate": data.get("gate"), "parked": data.get("parked")}
 
     def _chat(self, body: dict[str, Any], config: Any, *, retry_503: bool = False) -> dict[str, Any]:
         """One chat request. With ``retry_503`` a 503 is not final: wait for its Retry-After and send again, until
@@ -170,9 +172,9 @@ class Proof:
             return passed
 
         def observe(at: str) -> Optional[str]:
-            gate = self._gate()
-            record["gate_trace"].append({"at": at, "gate": gate})
-            return gate
+            read = self._gate()
+            record["gate_trace"].append({"at": at, **read})
+            return read["gate"]
 
         def skip_rest(*names: str) -> None:
             steps.extend({"name": name, "status": "skipped", "ok": False} for name in names)

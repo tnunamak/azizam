@@ -183,3 +183,16 @@ def test_a_registry_write_refuses_a_credential_key_it_cannot_take_without_its_va
     assert wrote.status_code == 400, wrote.text
     assert "api_key" in wrote.text and "raw-secret-value" not in wrote.text
     assert "api_key" not in json.dumps(_stored_connection(gateway))
+
+
+def test_a_registry_write_refuses_a_connection_address_that_holds_a_credential_without_its_value(gateway, host_isolated):
+    owner, *_ = owner_and_admin(gateway)
+    _plant(gateway)
+    before = _stored_connection(gateway)
+    read = owner.get(REGISTRY)
+    body = read.json()["service_registry"]
+    body["services"]["eng"]["config"]["connection"]["address"] = "http://user:raw-secret-value@127.0.0.1:5053"
+    wrote = owner.put(REGISTRY, headers={**csrf_for(owner), "If-Match": read.headers["etag"]}, json=body)
+    assert wrote.status_code == 400, wrote.text
+    assert "connection.address" in wrote.text and "raw-secret-value" not in wrote.text
+    assert _stored_connection(gateway) == before
