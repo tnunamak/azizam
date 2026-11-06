@@ -1,0 +1,159 @@
+# Release defaults of the videos section (docs/design/CONFIG_HOMES.md, C8b). Read-only; an owner's value is an override.
+# Each workflow names a graph file this release ships under workflows/videos/ and the limits that file was built for.
+# CODE_TO_DATA S3 moves these facts into workflow manifests; the section retires then. The stable video names are in
+# model_aliases; `aliases` holds the older exact names of a workflow, which the gateway serves beside them.
+default_workflow: video-ltx-2.5-t2v
+extend_workflow: video-ltx-2.5-long
+max_total_seconds: 40
+allow_untracked_ids: false
+chain_segment_seconds: 8
+workflows:
+  video-ltx-2.5-t2v:
+    file: workflows/videos/video-ltx-2.5-t2v.json
+    i2v_workflow: video-ltx-2.5-i2v
+    chain_workflow: video-ltx-2.5-long
+    min_seconds: 1
+    max_seconds: 10
+    max_size: 1280x704
+    default_size: 960x512
+    size_multiple: 64
+    frame_rate: 24
+  video-ltx-2.5-i2v:
+    file: workflows/videos/video-ltx-2.5-i2v.json
+    chain_workflow: video-ltx-2.5-long
+    requires_input_reference: true
+    min_seconds: 1
+    max_seconds: 10
+    max_size: 1280x704
+    default_size: 960x512
+    size_multiple: 64
+    frame_rate: 24
+  video-minimax-h3-t2v:
+    file: workflows/videos/video-minimax-h3-t2v.json
+    i2v_workflow: video-minimax-h3-i2v
+    chain_workflow: video-minimax-h3-long
+    min_seconds: 2
+    max_seconds: 10
+    max_size: 1344x768
+    default_size: 960x544
+    frame_rate: 24
+    length_step: 17
+    length_offset: 5
+  video-minimax-h3-i2v:
+    file: workflows/videos/video-minimax-h3-i2v.json
+    chain_workflow: video-minimax-h3-long
+    requires_input_reference: true
+    min_seconds: 2
+    max_seconds: 10
+    max_size: 1344x768
+    default_size: 960x544
+    frame_rate: 24
+    length_step: 17
+    length_offset: 5
+  video-ltx-2.5-keyframes:
+    file: workflows/videos/video-ltx-2.5-keyframes.json
+    requires_input_reference: true
+    requires_extensions: true
+    min_seconds: 1
+    max_seconds: 10
+    max_size: 1280x704
+    default_size: 960x512
+    size_multiple: 64
+    frame_rate: 24
+  video-ltx-2.5-keyframes-mid:
+    file: workflows/videos/video-ltx-2.5-keyframes-mid.json
+    requires_input_reference: true
+    requires_extensions: true
+    min_seconds: 1
+    max_seconds: 10
+    max_size: 1280x704
+    default_size: 960x512
+    size_multiple: 64
+    frame_rate: 24
+  video-minimax-h3-keyframes:
+    file: workflows/videos/video-minimax-h3-keyframes.json
+    requires_input_reference: true
+    requires_extensions: true
+    min_seconds: 2
+    max_seconds: 10
+    max_size: 1344x768
+    default_size: 960x544
+    frame_rate: 24
+    length_step: 17
+    length_offset: 5
+  video-minimax-h3-keyframes-mid:
+    file: workflows/videos/video-minimax-h3-keyframes-mid.json
+    requires_input_reference: true
+    requires_extensions: true
+    min_seconds: 2
+    max_seconds: 10
+    max_size: 1344x768
+    default_size: 960x544
+    frame_rate: 24
+    length_step: 17
+    length_offset: 5
+  video-scail-2-replace:
+    file: workflows/videos/video-scail-2-replace.json
+    subject_select: true
+    requires_extensions: true
+    source_video_input: source_video
+    min_seconds: 1
+    max_seconds: 4
+    default_seconds: 4
+    max_size: 832x448
+    default_size: 832x448
+    frame_rate: 24
+    length_step: 4
+    length_offset: 1
+    max_length: 81
+  video-ltx-2.5-long:
+    builder: ltx25_chain
+    file: workflows/videos/video-ltx-2.5-long.json
+    min_seconds: 1
+    max_seconds: 40
+    max_size: 1280x720
+    default_size: 960x512
+    frame_rate: 24
+  video-minimax-h3-long:
+    builder: h3_chain
+    file: workflows/videos/video-minimax-h3-long.json
+    chain_segment_seconds: 10
+    min_seconds: 2
+    max_seconds: 40
+    max_size: 1344x768
+    default_size: 960x544
+    size_multiple: 32
+    frame_rate: 24
+aliases:
+  default: video-ltx-2.5-t2v
+  ltx-2.5: video-ltx-2.5-t2v
+  ltx-2.5-t2v: video-ltx-2.5-t2v
+  ltx-2.5-i2v: video-ltx-2.5-i2v
+  ltx-2.5-keyframes: video-ltx-2.5-keyframes
+  ltx-2.5-keyframes-mid: video-ltx-2.5-keyframes-mid
+  minimax-h3: video-minimax-h3-t2v
+  minimax-h3-t2v: video-minimax-h3-t2v
+  minimax-h3-i2v: video-minimax-h3-i2v
+  minimax-h3-keyframes: video-minimax-h3-keyframes
+  minimax-h3-keyframes-mid: video-minimax-h3-keyframes-mid
+  h3-keyframes: video-minimax-h3-keyframes
+  h3-keyframes-mid: video-minimax-h3-keyframes-mid
+  h3: video-minimax-h3-t2v
+  minimax-h3-long: video-minimax-h3-long
+  h3-long: video-minimax-h3-long
+  ltx-2.5-long: video-ltx-2.5-long
+  ltx-2.3: video-ltx-2.5-t2v
+  ltx-2.3-distilled: video-ltx-2.5-t2v
+  ltx-2.3-fast: video-ltx-2.5-t2v
+  ltx-2.3-distilled-fast: video-ltx-2.5-t2v
+  ltx-2.3-pure-distilled: video-ltx-2.5-t2v
+  ltx-2.3-22b: video-ltx-2.5-t2v
+  ltx-2.3-detail: video-ltx-2.5-t2v
+  ltx-2.3-long: video-ltx-2.5-long
+  ltx-2.3-long-form: video-ltx-2.5-long
+  video-ltx-2.3-distilled: video-ltx-2.5-t2v
+  video-ltx-2.3-pure-distilled: video-ltx-2.5-t2v
+  video-ltx-2.3-detail: video-ltx-2.5-t2v
+  video-ltx-2.3-long: video-ltx-2.5-long
+  character-replace: video-scail-2-replace
+  scail-2: video-scail-2-replace

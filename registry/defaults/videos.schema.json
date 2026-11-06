@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/videos",
+  "title": "videos",
+  "description": "Video generation workflows and their limits (docs/design/CONFIG_HOMES.md, C8b). The stable names are in model_aliases; `aliases` keeps the older exact names.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "default_workflow": {
+      "description": "Workflow a video request runs when it names no model.",
+      "type": "string",
+      "minLength": 1
+    },
+    "remix_workflow": {
+      "description": "Workflow of POST /v1/videos/{id}/remix and /v1/videos/edits. Unset: both answer 501.",
+      "type": "string",
+      "minLength": 1
+    },
+    "extend_workflow": {
+      "description": "Chain workflow of POST /v1/videos/extensions. Unset: it answers 501.",
+      "type": "string",
+      "minLength": 1
+    },
+    "max_total_seconds": {
+      "description": "Longest stitched video, source included.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "chain_segment_seconds": {
+      "description": "Longest single segment of a chain, unless the workflow says otherwise.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "allow_untracked_ids": {
+      "description": "Serve video ids made before job records were kept.",
+      "type": "boolean"
+    },
+    "aliases": {
+      "description": "Older exact names of a workflow, lower-case, each naming a workflow id. The stable names are in model_aliases and win on a clash.",
+      "x-azizam-entry": "collection",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "workflows": {
+      "x-azizam-entry": "collection",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "description": "One video workflow: the graph file and the limits it was built for. Replaced whole by an owner edit.",
+        "x-azizam-entry": "atomic",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file"
+        ],
+        "properties": {
+          "file": {
+            "description": "Graph file, relative to the install or absolute.",
+            "type": "string",
+            "minLength": 1
+          },
+          "manifest": {
+            "type": "string",
+            "minLength": 1
+          },
+          "builder": {
+            "description": "Names a chain builder: the workflow joins segments of a longer video.",
+            "type": "string",
+            "minLength": 1
+          },
+          "i2v_workflow": {
+            "description": "Workflow that runs when the request has an input image.",
+            "type": "string",
+            "minLength": 1
+          },
+          "chain_workflow": {
+            "description": "Workflow that serves requests longer than this one runs.",
+            "type": "string",
+            "minLength": 1
+          },
+          "requires_input_reference": {
+            "type": "boolean"
+          },
+          "requires_extensions": {
+            "type": "boolean"
+          },
+          "subject_select": {
+            "type": "boolean"
+          },
+          "source_video_input": {
+            "type": "string",
+            "minLength": 1
+          },
+          "min_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "max_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "default_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "max_size": {
+            "type": "string",
+            "pattern": "^[0-9]+x[0-9]+$"
+          },
+          "default_size": {
+            "type": "string",
+            "pattern": "^[0-9]+x[0-9]+$"
+          },
+          "size_multiple": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "frame_rate": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "length_step": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "length_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_length": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "chain_segment_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      }
+    }
+  }
+}

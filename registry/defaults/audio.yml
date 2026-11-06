@@ -1,0 +1,36 @@
+# Release defaults of the audio section (docs/design/CONFIG_HOMES.md, C8b). Read-only; an owner's value is an override.
+# Each workflow names a graph file this release ships under workflows/audio/ and the limits that file was built for.
+# CODE_TO_DATA S7 moves these facts into workflow manifests; the section retires then. The stable audio names are in
+# model_aliases; `aliases` holds the older exact names of a workflow, which the gateway serves beside them. The workflow directory is a storage root and stays in the startup file (C10).
+default_workflow: ace-step-1.5-xl-turbo
+workflows:
+  ace-step-1.5-xl-turbo:
+    file: workflows/audio/ace-step-1.5-xl-turbo.json
+    max_seconds: 300
+    min_seconds: 1
+  tangoflux:
+    file: workflows/audio/tangoflux.json
+    max_seconds: 30
+    min_seconds: 1
+  sa3-small-sfx:
+    file: workflows/audio/sa3-small-sfx.json
+    max_seconds: 120
+    min_seconds: 1
+    default_duration: 10
+    normalize_peak_db: -1.0
+  yue2-song:
+    file: workflows/audio/yue2-song.json
+    max_seconds: 240
+    min_seconds: 10
+    default_duration: 120
+aliases:
+  ace-step: ace-step-1.5-xl-turbo
+  ace-step-1.5: ace-step-1.5-xl-turbo
+  ace-step-xl: ace-step-1.5-xl-turbo
+  tangoflux-sfx: tangoflux
+  ambient: sa3-small-sfx
+  sa3: sa3-small-sfx
+  sa3-sfx: sa3-small-sfx
+  stable-audio-3-sfx: sa3-small-sfx
+  yue2: yue2-song
+  yue: yue2-song
