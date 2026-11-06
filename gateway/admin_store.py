@@ -4255,7 +4255,9 @@ class OperatorSettingsGenerationConflict(ValueError):
 def get_service_registry_with_generation(*, path: Path = DB_PATH) -> dict[str, Any] | None:
     """Return the one active registry document, effective (the release records under the owner's data), and its CAS value.
 
-    ``get_service_registry_json_with_generation`` answers the stored owner-data document itself.
+    ``get_service_registry_json_with_generation`` answers the stored owner-data document itself. A stored value that
+    does not parse raises ValueError here (a registry PUT answers it 400); a start or a read that must keep serving
+    uses ``get_service_registry_json_with_generation`` with ``service_registry._stored_document`` instead.
     """
     from gateway import registry_layers, service_registry
 
