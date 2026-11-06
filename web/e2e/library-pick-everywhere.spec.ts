@@ -365,6 +365,10 @@ for (const view of VIEWPORTS) {
     );
     await page.goto("/try/?workflow=video.generate.ltx-2.5-i2v");
     const group = page.getByRole("group", { name: /Starting picture/ });
+    // The helper text is for a person: no field name, no request body, no gateway description. An owner's request
+    // details are folded away under "API details".
+    const helperText = await group.evaluate((el) => (el as HTMLElement).innerText);
+    expect(helperText).not.toMatch(/Writes|Request body|Media input|input_reference|data URI/);
     await group.getByRole("button", { name: "Choose from Library" }).click();
     await page.getByRole("button", { name: "A teal fish" }).waitFor();
     const kindRequests = listed.filter((search) => search.includes("kind="));

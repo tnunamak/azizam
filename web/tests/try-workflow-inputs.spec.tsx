@@ -483,8 +483,10 @@ describe("WorkflowInputs", () => {
       within(picture).getByRole("button", { name: "Choose a file" }),
     ).toBeVisible();
     expect(screen.queryByRole("textbox", { name: /Source image/ })).toBeNull();
-    // The owner's detail is the picture's own helper text, not a separate list.
-    expect(within(picture).getByText(/Sent as the file part source_image\./)).toBeVisible();
+    // The owner's detail is in a folded disclosure under the picture, not in its helper text.
+    const detail = within(picture).getByText("API details").closest("details");
+    expect(detail).not.toHaveAttribute("open");
+    expect(detail).toHaveTextContent(/Sent as the file part source_image\./);
     expect(screen.queryByText("Input details")).toBeNull();
     // An ignored input is not a control, so it has no row, and nothing lists it apart.
     expect(screen.queryByRole("textbox", { name: "Seed" })).toBeNull();
@@ -522,12 +524,15 @@ describe("WorkflowInputs", () => {
       expect(screen.queryByText("Input details")).toBeNull();
     });
 
-    it("adds the owner's technical detail to that same helper text, with no separate list", () => {
+    it("gives the owner the technical detail in a folded disclosure, never in the helper text", () => {
       render(<Form owner />);
       const control = screen.getByRole("spinbutton", { name: "Change strength" });
-      expect(control.closest("label")).toHaveTextContent(
-        "Keep at 1 to change the whole picture. Writes strength · range 0 to 1. Workflow extension.",
-      );
+      expect(control.closest("label")).toHaveTextContent("Keep at 1 to change the whole picture.");
+      expect(control.closest("label")).not.toHaveTextContent(/Writes strength/);
+      const disclosure = screen.getByText("API details").closest("details");
+      expect(disclosure).not.toBeNull();
+      expect(disclosure).not.toHaveAttribute("open");
+      expect(disclosure).toHaveTextContent("Writes strength · range 0 to 1. Workflow extension.");
       expect(screen.queryByText("Input details")).toBeNull();
     });
   });

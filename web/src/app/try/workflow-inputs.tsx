@@ -339,7 +339,7 @@ function WorkflowInputControl({
     ? "This setting cannot be changed here yet."
     : inputHint(input, outputKind);
   const errorId = problem ? `${id}-error` : undefined;
-  const hintId = hint || detail ? `${id}-hint` : undefined;
+  const hintId = hint ? `${id}-hint` : undefined;
   // The helper line, then the problem: both are what the control says about itself.
   const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
   const disabled = parentDisabled || isUnsupportedValue(value);
@@ -360,13 +360,18 @@ function WorkflowInputControl({
       </span>
     </span>
   );
-  // The hint and, for an owner, the technical detail: one helper line, in two spans.
-  const hintLine = hint || detail ? (
+  // The helper line is what the control says to a person. Where the value goes and how it is sent is a builder's
+  // detail: an owner gets it in a folded disclosure after the control, never in the helper line.
+  const hintLine = hint ? (
     <span id={hintId} className="text-muted-foreground text-xs">
-      {hint ? <span>{hint}</span> : null}
-      {hint && detail ? " " : null}
-      {detail ? <span data-slot="input-detail">{detail}</span> : null}
+      {hint}
     </span>
+  ) : null;
+  const detailLine = detail ? (
+    <details data-slot="input-detail" className="text-muted-foreground text-xs">
+      <summary className="min-h-8 cursor-pointer py-1">API details</summary>
+      <span className="block">{detail}</span>
+    </details>
   ) : null;
   const problemLine = problem ? (
     <span
@@ -403,6 +408,7 @@ function WorkflowInputControl({
           onFileChange={onFileChange}
         />
         {problemLine}
+        {detailLine}
       </div>
     );
   }
@@ -425,21 +431,25 @@ function WorkflowInputControl({
           onChange={onChange}
         />
         {problemLine}
+        {detailLine}
       </div>
     );
   }
 
   return (
-    <label className={wrapper}>
-      {header}
-      {controlFor(input, id, label, value, disabled || fileInput, fileInput, onChange, {
-        placeholder: inputPlaceholder(input, outputKind),
-        invalid: Boolean(problem),
-        describedBy,
-      })}
-      {hintLine}
-      {problemLine}
-    </label>
+    <div className={wrapper}>
+      <label className="flex min-w-0 flex-col gap-2">
+        {header}
+        {controlFor(input, id, label, value, disabled || fileInput, fileInput, onChange, {
+          placeholder: inputPlaceholder(input, outputKind),
+          invalid: Boolean(problem),
+          describedBy,
+        })}
+        {hintLine}
+        {problemLine}
+      </label>
+      {detailLine}
+    </div>
   );
 }
 
