@@ -492,7 +492,8 @@
 # T1.1 round 4 (2026-11-05): +15 cases over round 3 (18442): egress boot, probe-path, scan, marker word, foreign base, embeddings-only member; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 18457.
 # T1.1 round 5 (2026-11-05): +8 cases over round 4 (18980): probe-path prefix, egress map before snapshot, projection failure, non-mapping config, mesh health and observer probes; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 18988.
 # T1.1 domain leases ported onto the public root (2026-11-05): collect-only measured 18980 (main 18787 + T1.1 cases + 1 async egress case).
-pytest = 18988
+# Transition proof harness (2026-11-05): +21 cases in tests/test_transition_proof.py; collect-only measured 19009 (18988 + 21).
+pytest = 19009
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
