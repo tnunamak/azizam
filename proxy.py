@@ -432,7 +432,7 @@ from gateway.runtime_auth import (
 )
 from gateway.protocols import anthropic as anthropic_protocol
 from gateway.protocols import ollama as ollama_protocol
-from gateway import config_runtime, provider_execution, providers
+from gateway import config_homes_import, config_runtime, provider_execution, providers
 from gateway.provider_admin import create_provider_admin_router, provider_ledger_spending_snapshot
 from gateway.providers import provider_lookup
 
@@ -686,6 +686,23 @@ def _project_egress(backends: Mapping[str, Any] | None) -> engine_egress.Project
     return engine_egress.project(backends, extra_probe_paths=state_paths)
 
 
+def _import_config_sections_at_boot() -> None:
+    """The one-time import of each section's startup block (CONFIG_HOMES 8.1), before the layer is built. A block that
+    does not fit, and a store that cannot be read, withdraw the section: the startup file serves it this boot."""
+    try:
+        report = config_homes_import.run_legacy_imports(CONFIG_HOME, path=ADMIN_DB_PATH, startup=_bootstrap_config)
+    except Exception as error:  # noqa: BLE001 - boot continues on the startup files, loudly
+        print(f"[proxy] ERROR: the config sections could not be imported; the startup file serves them this boot: "
+              f"{_failure_text(error)}", flush=True)
+        report = {name: {"status": "store_unreadable"} for name in CONFIG_HOME.sections}
+    for name, row in sorted(report.items()):
+        if row["status"] in ("blocked", "store_unreadable"):
+            CONFIG_HOME.sections.pop(name, None)
+            print(f"[proxy] ERROR: config section {name!r} is not imported ({row['status']}); the startup file serves it: "
+                  f"{row.get('problems') or ''}"[:400], flush=True)
+
+
+_import_config_sections_at_boot()
 config, REGISTRY_APPLY_PROBLEM = _boot_effective_runtime_config(config)
 # The first snapshot: the boot config, before any reload. Reload swaps it by one reference (_publish_runtime_config).
 # The holder is the only source of what runtime() returns; the module's `config` is assigned from the snapshot.
@@ -952,10 +969,9 @@ def host_for_capability(capability: str) -> str | None:
     return None
 
 
-# Model routing - auto-detect backend from filesystem
-routing_cfg = config.get("model_routing", {})
-GGUF_DIR = routing_cfg.get("gguf_dir", "/media/windows/AI Models/LLMs/GGUF")
-SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
+# Model routing - auto-detect backend from filesystem. The model directory is a startup setting (CONFIG_HOMES C10): it is
+# read from the startup file, because the model_routing section does not carry it.
+GGUF_DIR = (_bootstrap_config.get("model_routing") or {}).get("gguf_dir", "/media/windows/AI Models/LLMs/GGUF")
 # Idle (inter-chunk) timeout when forwarding /v1/chat/completions and /v1/completions
 # to the LLM backend. This is the max silence between bytes — NOT a wall-clock cap.
 # It governs:
@@ -967,11 +983,26 @@ SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
 # processing; vision PP for a small image adds ~30-40s; long structured outputs
 # at >5 tok/s never approach this. 600s (10 min) of silence is well past any
 # legitimate work and tight enough that a hung backend frees the socket promptly.
-UPSTREAM_READ_TIMEOUT = float(os.environ.get("UPSTREAM_READ_TIMEOUT", routing_cfg.get("upstream_read_timeout", 600)))
+
+
+def upstream_read_timeout() -> float:
+    """model_routing.upstream_read_timeout, read per call from the snapshot (CONFIG_HOMES C7). An UPSTREAM_READ_TIMEOUT
+    in the environment still wins until C10 removes that override."""
+    env = os.environ.get("UPSTREAM_READ_TIMEOUT")
+    if env:
+        return float(env)
+    return float((runtime().config.get("model_routing") or {}).get("upstream_read_timeout", 600))
+
 # Roles: logical aliases for backends. Lets clients send `model: "default"` instead of
 # hardcoding a filename. Roles map to a backend type (any enabled
 # registry backend) — never to a specific model file for unmanaged backends.
-ROLES = config.get("roles", {})
+
+
+def _roles() -> Mapping[str, Any]:
+    """The roles of the snapshot this call reads (CONFIG_HOMES C7). A role is one entry of the roles section."""
+    roles = runtime().config.get("roles")
+    return roles if isinstance(roles, Mapping) else {}
+
 
 # A local-swap backend is one whose lifecycle driver swaps models (driver data on
 # the service record). Any backend whose role entry carries a "path" key is also
@@ -1207,8 +1238,12 @@ _OPENAI_VIDEO_STATUS_BY_INTERNAL = {
 # llama-turbo to swap models — it serves with whatever's loaded and logs a
 # one-shot warning per distinct mismatched path. Manual swaps via `llm-switch`
 # remain the supported way to change the loaded GGUF.
-llm_cfg = config.get("llm", {}) or {}
-PIN_LOADED_MODEL = bool(llm_cfg.get("pin_loaded_model", True))
+
+
+def _pin_loaded_model() -> bool:
+    """llm.pin_loaded_model, read per call from the snapshot (CONFIG_HOMES C7)."""
+    return bool((runtime().config.get("llm") or {}).get("pin_loaded_model", True))
+
 
 USE_LOADED_MODEL_ALIAS = "current"
 USE_LOADED_FAST_MODEL_ALIAS = "current-fast"
@@ -1588,7 +1623,7 @@ _swap_drain = _new_swap_drain()
 
 def _swap_drain_settings() -> SwapDrainSettings:
     """`llm.swap_drain`, read per call so a config reload applies."""
-    return SwapDrainSettings.from_llm_config(config.get("llm"))
+    return SwapDrainSettings.from_llm_config(runtime().config.get("llm"))
 
 # Loaded-state cache, one entry per swap-managed backend. Seeded from the
 # backend's state endpoint on first read after startup, then reset after every
@@ -2006,7 +2041,7 @@ async def _ensure_target(
             target_model=model,
             loaded_aux=_currently_loaded_aux_for(backend),
             target_aux=mmproj or None,
-            pin_loaded=bool(bcfg.get("pin_loaded_model", PIN_LOADED_MODEL)),
+            pin_loaded=bool(bcfg.get("pin_loaded_model", _pin_loaded_model())),
             target_profile=profile,
         )
         drain = _swap_drain_settings()
@@ -3610,7 +3645,7 @@ async def _prepare_litellm_local_llm_request(
             ), body
 
     if request_path in ("/v1/chat/completions", "/v1/completions"):
-        role_cfg = ROLES.get(model_name) if isinstance(ROLES, dict) else None
+        role_cfg = _roles().get(model_name)
         if isinstance(role_cfg, Mapping):
             sampling = role_cfg.get("sampling")
             if isinstance(sampling, Mapping):
@@ -13947,14 +13982,13 @@ def _role_catalog_ids_for_loaded_path(
             loaded_base,
         }
 
-    if isinstance(ROLES, dict):
-        for role_name, role_def in ROLES.items():
-            if not isinstance(role_def, Mapping) or role_def.get("backend") != backend:
-                continue
-            role_model = role_def.get("model")
-            if role_model:
-                if matches_path(role_model):
-                    ids.add(str(role_name))
+    for role_name, role_def in _roles().items():
+        if not isinstance(role_def, Mapping) or role_def.get("backend") != backend:
+            continue
+        role_model = role_def.get("model")
+        if role_model:
+            if matches_path(role_model):
+                ids.add(str(role_name))
 
     for model_id, spec in MODELS_CATALOG.items():
         if not isinstance(spec, Mapping) or spec.get("backend") != backend:
@@ -16831,7 +16865,7 @@ app.include_router(
         ),
         # Add engine never calls the gateway itself: its default ports and the one it listens on.
         engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
-        engine_hop_timeout=lambda: UPSTREAM_READ_TIMEOUT,
+        engine_hop_timeout=upstream_read_timeout,
         stt_measurements=STT_MEASUREMENTS,
         frontend_status=lambda: FRONTEND_MOUNTS.status(),
         registry_problem=lambda: REGISTRY_APPLY_PROBLEM,
@@ -16868,7 +16902,7 @@ app.include_router(create_settings_router(
 app.include_router(config_api.create_config_router(
     auth=ADMIN_AUTH, admin_path=lambda: ADMIN_DB_PATH, home=lambda: CONFIG_HOME,
     registry=ADMIN_STORE.get_service_registry, reload=lambda: reload_runtime_config(),
-    startup_block=lambda section: _bootstrap_config.get(section) if isinstance(_bootstrap_config.get(section), Mapping) else None,
+    startup_block=lambda section: config_homes_import.block_for(section, _bootstrap_config),
 ))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
 # Owner-defined categories and plans (design v3). Active rules tighten the
@@ -26457,7 +26491,7 @@ def _configured_model_record_for_id(model_id: str) -> tuple[str | None, Mapping[
     if not normalized:
         return None, None
 
-    role = ROLES.get(normalized) if isinstance(ROLES, Mapping) else None
+    role = _roles().get(normalized)
     if isinstance(role, Mapping):
         backend = str(role.get("backend") or "").strip() or None
         return backend, role
@@ -26730,47 +26764,46 @@ def _build_role_catalog_entries() -> list[dict]:
     known_backends: frozenset[str] = frozenset((config.get("backends") or {}).keys())
     entries: list[dict] = []
 
-    if isinstance(ROLES, dict):
-        for role_name, role_def in ROLES.items():
-            if not isinstance(role_def, dict):
+    for role_name, role_def in _roles().items():
+        if not isinstance(role_def, dict):
+            continue
+        backend = role_def.get("backend")
+        # Skip entries whose backend is not known in the registry.
+        if not backend or backend not in known_backends:
+            continue
+        is_local_swap = _is_local_swap_backend(backend) or bool(role_def.get("path"))
+        model_value = role_def.get("model")
+        if is_local_swap:
+            # Local-swap: model is a GGUF path.
+            model_path = model_value if isinstance(model_value, str) else None
+            entry = {
+                "id": str(role_name),
+                "object": "model",
+                "created": _entry_created_ts(model_path),
+                "owned_by": "azizam",
+                "description": str(role_def.get("description", "") or ""),
+                "azizam_role": True,
+                "azizam_backend": backend,
+            }
+            if model_path:
+                entry["azizam_model_path"] = model_path
+        else:
+            # Remote/routed backend: model is the upstream model name (required).
+            if not model_value or not str(model_value).strip():
+                # Skip malformed remote role entry (no model name to route to).
                 continue
-            backend = role_def.get("backend")
-            # Skip entries whose backend is not known in the registry.
-            if not backend or backend not in known_backends:
-                continue
-            is_local_swap = _is_local_swap_backend(backend) or bool(role_def.get("path"))
-            model_value = role_def.get("model")
-            if is_local_swap:
-                # Local-swap: model is a GGUF path.
-                model_path = model_value if isinstance(model_value, str) else None
-                entry = {
-                    "id": str(role_name),
-                    "object": "model",
-                    "created": _entry_created_ts(model_path),
-                    "owned_by": "azizam",
-                    "description": str(role_def.get("description", "") or ""),
-                    "azizam_role": True,
-                    "azizam_backend": backend,
-                }
-                if model_path:
-                    entry["azizam_model_path"] = model_path
-            else:
-                # Remote/routed backend: model is the upstream model name (required).
-                if not model_value or not str(model_value).strip():
-                    # Skip malformed remote role entry (no model name to route to).
-                    continue
-                upstream_model = str(model_value).strip()
-                entry = {
-                    "id": str(role_name),
-                    "object": "model",
-                    "created": _entry_created_ts(None),
-                    "owned_by": "azizam",
-                    "description": str(role_def.get("description", "") or ""),
-                    "azizam_role": True,
-                    "azizam_backend": backend,
-                    "azizam_model": upstream_model,
-                }
-            entries.append(entry)
+            upstream_model = str(model_value).strip()
+            entry = {
+                "id": str(role_name),
+                "object": "model",
+                "created": _entry_created_ts(None),
+                "owned_by": "azizam",
+                "description": str(role_def.get("description", "") or ""),
+                "azizam_role": True,
+                "azizam_backend": backend,
+                "azizam_model": upstream_model,
+            }
+        entries.append(entry)
 
     for mid, cat in MODELS_CATALOG.items():
         entries.append({
@@ -27644,7 +27677,7 @@ async def _forward_chat_completions(
         internal_forward_secret=_INTERNAL_PROTOCOL_FORWARD_SECRET,
         source_headers=source_headers,
         parent_request_id=parent_request_id,
-        read_timeout=UPSTREAM_READ_TIMEOUT,
+        read_timeout=upstream_read_timeout(),
     )
     client = engine_egress.async_client(timeout=loopback_request.timeout)
     if stream:
@@ -30242,7 +30275,7 @@ async def _forward_current_loaded_openai_request(
             try:
                 connection = _inference_connection(
                     target.backend, record, request_path.removeprefix("/v1"), fallback_address=f"{target.host}/v1",
-                    fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+                    fallback_timeout=upstream_read_timeout(), db_path=ADMIN_DB_PATH, env=get_env,
                 )
             except TransitionUnavailable as refused:
                 owner.report(status="failed", reason="failed")
@@ -30589,7 +30622,7 @@ async def _forward_litellm_proxy_request(
     read_timeout = (
         EMBEDDINGS_TIMEOUT
         if request_path == "/v1/embeddings"
-        else UPSTREAM_READ_TIMEOUT
+        else upstream_read_timeout()
     )
     engine_reply_timeout = router_reply_timeout(live_registry, model_name)
     if engine_reply_timeout is not None:
@@ -31498,7 +31531,7 @@ async def _forward_internal_litellm_local_upstream(
     try:
         connection = _inference_connection(
             backend, record, endpoint, fallback_address=f"{upstream_base}/v1",
-            fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+            fallback_timeout=upstream_read_timeout(), db_path=ADMIN_DB_PATH, env=get_env,
         )
     except TransitionUnavailable as refused:
         return _transition_unavailable_response(refused)
@@ -31996,7 +32029,7 @@ def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
             "service": str(raw_cfg.get("downstream_service") or provider),
             "host": host,
             "enabled": True,
-            "timeout": float(raw_cfg.get("timeout") or UPSTREAM_READ_TIMEOUT),
+            "timeout": float(raw_cfg.get("timeout") or upstream_read_timeout()),
             # The headers the owner listed for this engine (Add engine, Request headers): references, resolved
             # where the request is sent (``_native_engine_headers``), never held here.
             "header_rows": copy.deepcopy(raw_cfg.get("headers")) if isinstance(raw_cfg.get("headers"), list) else [],
@@ -32561,7 +32594,7 @@ async def _forward_provider_native(
         async with owner:
             timeout = httpx.Timeout(
                 connect=10.0,
-                read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
+                read=float(target.get("timeout") or upstream_read_timeout()),
                 write=60.0,
                 pool=None,
             )

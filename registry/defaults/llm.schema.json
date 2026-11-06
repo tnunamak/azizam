@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/llm",
+  "title": "llm",
+  "description": "How the local LLM backend is kept loaded (docs/design/CONFIG_HOMES.md, C7).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "pin_loaded_model": {
+      "description": "When true, a request for another model does not restart the backend; the loaded model serves.",
+      "type": "boolean"
+    },
+    "swap_drain": {
+      "description": "Swap drain (gateway/swap_drain.py): a swap waits for the requests in flight. Off by default.",
+      "x-azizam-entry": "atomic",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "timeout_s": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  }
+}

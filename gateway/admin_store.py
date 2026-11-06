@@ -4391,6 +4391,13 @@ def migration_step_recorded(name: str, *, path: Path = DB_PATH) -> bool:
         return conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?", (name,)).fetchone() is not None
 
 
+def record_migration_step(name: str, *, path: Path = DB_PATH) -> None:
+    """Record the one-time step ``name`` with no change, for an import that found nothing to write (CONFIG_HOMES 8.1)."""
+    with _conn(path) as conn:
+        conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (name,))
+        conn.commit()
+
+
 def write_service_registry_in_transaction(
     conn: sqlite3.Connection,
     value: Mapping[str, Any],

@@ -56,9 +56,20 @@ def raw_config(name: str) -> dict[str, Any]:
 
 
 def effective_config(proxy: Any, name: str, admin_db: Path) -> dict[str, Any]:
-    """The effective config for ``name``, built by the boot loader on a scratch admin.db."""
+    """The effective config for ``name``, built by the boot loader on a scratch admin.db.
+
+    The boot's one-time import (CONFIG_HOMES 8.1) runs first, as it does at boot, so a section that a slice registers
+    shows what its startup block gave before it moved. An import that is blocked is an error here: the goldens are the
+    settings the startup files mean, and a block that does not import would hide them.
+    """
+    from gateway import config_homes_import
+
+    raw = copy.deepcopy(raw_config(name))
+    report = config_homes_import.run_legacy_imports(proxy.CONFIG_HOME, path=admin_db, startup=raw)
+    blocked = {section: row for section, row in report.items() if row["status"] == "blocked"}
+    assert not blocked, f"{name}: the startup block does not import: {blocked}"
     with patch.object(proxy, "ADMIN_DB_PATH", admin_db):
-        return proxy._load_effective_runtime_config(copy.deepcopy(raw_config(name)))
+        return proxy._load_effective_runtime_config(copy.deepcopy(raw))
 
 
 def _alias_samples(section: Any) -> list[tuple[str, str]]:
