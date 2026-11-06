@@ -215,8 +215,14 @@ Every step is additive and keeps the current route path as the default. Each ste
   `audio.generate`, which covers the audio, music and sound-effect job intents.
 - The job runner reads the pin before it starts (`pinned_definitions.load`). The audio route then takes its manifest
   and graph from the pin and never reads the registry or the workflow file. A job with no envelope, a missing or
-  damaged blob, or a pin that is not a manifest fails with `definition_unavailable`. A route with the flag on also
-  refuses to accept a job that pinned nothing.
+  damaged blob, or a pin that is not a manifest fails with `definition_unavailable`. So does a job whose model now
+  resolves to another workflow than the one it pinned (an alias or `audio.workflows` edit): the run never mixes a pinned
+  graph with another workflow's limits.
+- A route with the flag on refuses to accept a job that could not pin: a pin that cannot be built, or one the store
+  refuses to write, is a 503 and no job row (`media_jobs.create(require_envelope=True)`). With the flag off, writing
+  the envelope stays best effort.
+- A job pinned before S2.2 (a contract without `schema_version`, `id` and `intent`) fails `definition_unavailable`.
+  There is no reader for the old shape: the product is unreleased.
 - The deployment limits (`audio.workflows.<name>`) are not pinned. They narrow the pinned contract at run time.
 - The synchronous `/v1/audio/generate` route has no job, so it still reads the live files.
 - The pinned contract now carries the manifest header (`schema_version`, `id`, `intent`) next to the inputs and outputs,
