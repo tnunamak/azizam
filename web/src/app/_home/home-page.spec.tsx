@@ -718,6 +718,36 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     expect(screen.getByRole("button", { name: "Change picture" })).toBeVisible();
   });
 
+  it("Make waits for a Library pick that replaces a file already chosen", async () => {
+    await chooseKind([textRow, editRow], "Edit");
+    fireEvent.change(await screen.findByRole("textbox", { name: "Describe what you want" }), { target: { value: "make it night" } });
+    fireEvent.change(fileInput(/Choose a picture/), { target: { files: [picture()] } });
+    await screen.findByText("fox.png");
+    expect(makeButton().getAttribute("aria-disabled")).toBe("false");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const base = stubbedLibrary([PICTURE_ITEM]).impl;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes("/download")) await held;
+        return base(input, init);
+      }),
+    );
+    const change = screen.getByRole("button", { name: "Change picture" });
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", { configurable: true, value: () => false });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+    change.focus();
+    fireEvent.keyDown(change, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Choose from Library" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Adding picture…");
+    expect(makeButton().getAttribute("aria-disabled")).toBe("true");
+    release();
+    await waitFor(() => expect(document.querySelector('[data-slot="home-picked-file"]')).toHaveTextContent("library-picture.png"));
+    await waitFor(() => expect(makeButton().getAttribute("aria-disabled")).toBe("false"));
+  });
+
   it("audio: a recording input, and a hand-off to record in Try that carries no file", async () => {
     await chooseKind([textRow, audioRow], "Transcription");
     expect(fileInput(/Choose a recording/).getAttribute("accept")).toBe("audio/*");
