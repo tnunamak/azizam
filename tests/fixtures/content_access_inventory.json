@@ -2103,6 +2103,66 @@
       "access": "operational"
     },
     {
+      "handler": "gateway.config_api.create_config_router.<locals>.list_sections",
+      "method": "GET",
+      "path": "/admin/api/config",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.get_section",
+      "method": "GET",
+      "path": "/admin/api/config/sections/{section_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.list_changes",
+      "method": "GET",
+      "path": "/admin/api/config/changes",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.get_drift",
+      "method": "GET",
+      "path": "/admin/api/config/drift",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.get_problems",
+      "method": "GET",
+      "path": "/admin/api/config/problems",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.patch_changes",
+      "method": "PATCH",
+      "path": "/admin/api/config/changes",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.reset_entry",
+      "method": "DELETE",
+      "path": "/admin/api/config/sections/{section_id}/entries",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.revert_change",
+      "method": "POST",
+      "path": "/admin/api/config/changes/{change_id}/revert",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.import_config",
+      "method": "POST",
+      "path": "/admin/api/config/import",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.legacy_import",
+      "method": "POST",
+      "path": "/admin/api/config/sections/{section_id}/legacy-import",
+      "access": "operational"
+    },
+    {
       "handler": "proxy.admin_drain_set",
       "method": "POST",
       "path": "/admin/api/drain",
