@@ -6029,6 +6029,15 @@ _DEFINITION_UNAVAILABLE = "A definition this job was accepted with is no longer 
 _DEFINITION_UNAVAILABLE_INFO = {"error_code": "definition_unavailable", "error_category": "internal", "retryable": False}
 
 
+def _pin_not_recorded_response() -> Response:
+    """The 503 for a job that could not pin its definitions, which a route that compiles from the pin cannot run without."""
+    return Response(
+        content=json.dumps({"error": {"message": "Could not pin the workflow definition", "type": "api_error"}}),
+        status_code=503,
+        media_type="application/json",
+    )
+
+
 def _manifest_job_envelope(manifest: Mapping[str, Any] | None, capability: str) -> job_envelope.JobEnvelope | None:
     """``_graph_job_envelope`` for a job whose workflow has a manifest: its inputs and outputs, and its graph binding."""
     if not isinstance(manifest, Mapping):
@@ -23980,11 +23989,7 @@ async def _submit_audio_media_job(
     envelope = _manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY)
     if envelope is None and _compile_from_pin(_AUDIO_GRAPH_CAPABILITY):
         # A route that compiles from the pin must not accept a job that pinned nothing: it could never run.
-        return Response(
-            content=json.dumps({"error": {"message": "Could not pin the workflow definition", "type": "api_error"}}),
-            status_code=503,
-            media_type="application/json",
-        )
+        return _pin_not_recorded_response()
 
     try:
         _persist_audio_media_job_payload(
@@ -23995,10 +24000,18 @@ async def _submit_audio_media_job(
         )
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
-        created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH, envelope=envelope)
+        created = media_jobs.create(
+            job, input_data=body, path=media_jobs.DB_PATH, envelope=envelope,
+            require_envelope=_compile_from_pin(_AUDIO_GRAPH_CAPABILITY),
+        )
     except EphemeralMediaPayloadCapacityError:
         _delete_audio_media_job_payload(job.job_id)
         return _ephemeral_media_payload_busy_response()
+    except media_jobs.EnvelopeNotRecorded as exc:
+        # The pin was built but could not be written (the store or the grammar refused it): the job was not stored.
+        _delete_audio_media_job_payload(job.job_id)
+        _MEDIA_JOB_LOG.warning("audio job %s: the pin was not recorded: %s", job.job_id, log_scrub.describe_error(exc))
+        return _pin_not_recorded_response()
     except Exception as exc:  # noqa: BLE001
         _delete_audio_media_job_payload(job.job_id)
         return Response(
@@ -25869,20 +25882,23 @@ def _peak_normalize_audio(data: bytes, content_type: str, target_db: float = -1.
         return data
 
 
+def _manifest_names_audio_workflow(manifest: Mapping[str, Any], workflow_name: str) -> bool:
+    """Whether ``workflow_name`` (what ``audio.workflows`` and the aliases resolve a model to) names this manifest: its
+    id, the tail of its id after a dot, or the stem of its graph artifact."""
+    manifest_id = str(manifest.get("id") or "")
+    if manifest_id == workflow_name or manifest_id.endswith(f".{workflow_name}"):
+        return True
+    bindings = manifest.get("bindings")
+    graph_binding = bindings.get(_GRAPH_BINDING) if isinstance(bindings, Mapping) else None
+    artifact = graph_binding.get("workflow") if isinstance(graph_binding, Mapping) else None
+    return isinstance(artifact, str) and Path(artifact).stem == workflow_name
+
+
 def _load_audio_workflow_manifest(workflow_name: str) -> dict[str, Any] | None:
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         if not record.intent.startswith(("audio.", "music.", "sfx.")):
             continue
-        if record.id == workflow_name or record.id.endswith(f".{workflow_name}"):
-            return copy.deepcopy(dict(record.manifest))
-        bindings = record.manifest.get("bindings")
-        if not isinstance(bindings, Mapping):
-            continue
-        graph_binding = bindings.get(_GRAPH_BINDING)
-        if not isinstance(graph_binding, Mapping):
-            continue
-        artifact = graph_binding.get("workflow")
-        if isinstance(artifact, str) and Path(artifact).stem == workflow_name:
+        if _manifest_names_audio_workflow(record.manifest, workflow_name):
             return copy.deepcopy(dict(record.manifest))
     return None
 
@@ -25969,6 +25985,9 @@ async def proxy_audio_generate(
         try:
             manifest = pinned.manifest(_GRAPH_BINDING)
             pinned_graph = _pinned_graph(pinned)
+            if not _manifest_names_audio_workflow(manifest, workflow_name):
+                raise definition_store.DefinitionUnavailable(
+                    f"job {pinned.envelope.source_id}: the model now resolves to workflow {workflow_name}, not the one it pinned")
         except definition_store.DefinitionUnavailable as exc:
             _MEDIA_JOB_LOG.warning("pinned audio definitions unusable: %s", log_scrub.describe_error(exc))
             return Response(
