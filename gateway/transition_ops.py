@@ -19,7 +19,7 @@ Rules that every implementation keeps:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Mapping, Optional, Protocol, Sequence, Union
+from typing import Callable, Literal, Mapping, Optional, Protocol, Sequence, Union
 
 TransitionKind = Literal["select", "park", "wake"]
 """``select``: make ``target`` the resident offering. ``park``: release, leave nothing resident.
@@ -66,6 +66,9 @@ class EffectResult:
     attested: bool = False
     """Release only: True when the profile attests the verify predicate (D3 "Release").
     Without it the release is recorded as ``observed_not_resident`` and stays charged."""
+    incarnation: Optional[str] = None
+    """Interface addition (T1.2): the incarnation the adapter's evidence came from. A result for another
+    incarnation than the intent expected is ignored as stale (decision G10)."""
 
 
 @dataclass(frozen=True)
@@ -89,7 +92,8 @@ class Operation:
     state: OperationState
     step: Optional[StepName]
     target: Optional[str] = None
-    """The offering (service id) to load, for ``select``; None for ``park`` and ``wake``."""
+    """The offering (service id) to load, for ``select`` and ``wake``. A ``park`` records the offering it
+    released (read from the engine when the operation began), so a later ``wake`` knows what to load."""
     step_intent: Optional[StepIntent] = None
     step_outcome: Optional[Outcome] = None
     evidence_ref: Optional[str] = None
@@ -98,6 +102,12 @@ class Operation:
     """The op_id this operation compensates (D4 step 5), else None."""
     created: float = 0.0
     updated: float = 0.0
+    request_hash: Optional[str] = None
+    """Interface addition (T1.2, decision G4): hash of kind, target and compensates. The same key with
+    another hash is a conflict."""
+    stock: Optional[str] = None
+    """Interface addition (T1.2): after a release, ``released`` when the profile attests it, else
+    ``observed_not_resident`` (the stock stays charged in shadow). None before a release outcome."""
 
 
 @dataclass(frozen=True)
@@ -150,6 +160,19 @@ class OperationStore(Protocol):
 
     def unfinished(self) -> Sequence[Operation]:
         """Every operation not in FINISHED_STATES; startup reconciles these before admission."""
+        ...
+
+    # Interface additions (T1.2):
+    def current(self, domain: str) -> Optional[Operation]:
+        """The domain's unfinished operation (``running`` or ``reconciling``), else None."""
+        ...
+
+    def resume(self, op_id: str) -> Operation:
+        """``reconciling`` back to ``running`` (gate ``closed``) after the held step was resolved."""
+        ...
+
+    def last_target(self, domain: str) -> Optional[str]:
+        """The offering of the domain's latest successful operation (the one it loaded, or a park released)."""
         ...
 
 
@@ -229,6 +252,9 @@ class StepContext:
     snapshots: Optional[SnapshotStore]
     policy: Mapping[str, object]
     """The domain's reviewed transition profile plus its owner arguments (deadlines, policy)."""
+    trigger: Optional[Callable[[], None]] = None
+    """Interface addition (T1.2): mints the triggering request's lease. The open step calls it under the
+    lock, before the gate opens (decision G6). None when the caller wants no lease."""
 
 
 class Step(Protocol):
@@ -251,7 +277,8 @@ class TransitionExecutor(Protocol):
     """Runs one operation to a finished or holding state (T1.2)."""
 
     async def submit(self, *, domain: str, kind: TransitionKind, idempotency_key: str,
-                     target: Optional[str] = None) -> BeginResult:
+                     target: Optional[str] = None, compensates: Optional[str] = None,
+                     trigger: Optional[Callable[[], None]] = None) -> BeginResult:
         """Begin the operation and start it on an executor-owned task; return at once."""
         ...
 
