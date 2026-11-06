@@ -173,14 +173,24 @@ def import_section(
     return ImportOutcome(section_id, STATUS_IMPORTED, plan, change_id=result.get("change_id"))
 
 
-def ignored_entries(section: layers.Section, block: Any, effective: Any) -> int:
-    """How many entries of the startup block differ from the effective section (an entry on one side only counts)."""
+def ignored_entries(
+    home: Any, section_id: str, block: Any, effective: Any, registry: Mapping[str, Any] | None = None,
+) -> int:
+    """How many entries of what the startup block means differ from the effective section.
+
+    What the block means is what the import would have made of it: the release section with the block's overrides. A
+    key the block leaves out keeps its release value, as at the import, so leaving a fixed setting out is no change.
+    An entry on one side only counts. A block the import would refuse is compared as written.
+    """
     if not isinstance(block, Mapping):
         return 0
-    block = layers.owned_part(section, block)
-    pointers = set(section.index.entries_in(block)) | set(section.index.entries_in(effective))
+    section = home.sections[section_id]
+    plan = plan_import(home, section_id, block, {}, registry)
+    meant = (layers.owned_part(section, block) if plan.blocked
+             else home.build_candidate({section_id: list(plan.overrides)}, registry)[section_id].effective)
+    pointers = set(section.index.entries_in(meant)) | set(section.index.entries_in(effective))
     return sum(1 for pointer in pointers
-               if not layers.same_value(layers.get_at(block, pointer), layers.get_at(effective, pointer)))
+               if not layers.same_value(layers.get_at(meant, pointer), layers.get_at(effective, pointer)))
 
 
 @dataclass

@@ -266,7 +266,7 @@ class ConfigHome:
             if section_id in self._warned_ignored or not isinstance(block, Mapping) or not block:
                 continue
             effective = self.build_candidate(self._stored_rows(path), registry)[section_id].effective
-            differing = config_legacy_import.ignored_entries(self.sections[section_id], block, effective)
+            differing = config_legacy_import.ignored_entries(self, section_id, block, effective, registry)
             if differing:
                 self._warned_ignored.add(section_id)
                 log(f"[proxy] WARNING: the startup file's {section_id} block is ignored (it was imported once); "
@@ -452,6 +452,7 @@ class ConfigHome:
         section and no problem. The snapshot holds the problems itself, the registry's as well.
         """
         layer = layer if layer is not None else carried(config)[0]
+        config = self._holding_restart_entries(config)
         problems: dict[str, Any] = {"config": dict(layer.problems)}
         if registry_problem:
             problems["registry"] = dict(registry_problem)
@@ -459,6 +460,33 @@ class ConfigHome:
             generation=(registry_generation, layer.revisions, layer.rows_digest), config=config,
             sources=dict(layer.sources), problems=problems, derived=dict(derived or {}),
         )
+
+    def _holding_restart_entries(self, config: Mapping[str, Any]) -> Mapping[str, Any]:
+        """``config`` with each entry marked ``x-azizam-apply: restart`` at the value the running snapshot holds.
+
+        A restart entry applies at the next start (design 5.3): a reload keeps the value that runs, so the effective view
+        shows the stored value as pending. The boot has no running snapshot and takes every stored value. Returns
+        ``config`` itself when nothing is held.
+        """
+        running = self.holder.current()
+        if running is None:
+            return config
+        held: dict[str, Any] | None = None
+        for name, section in self.sections.items():
+            now, then = config.get(name), running.config.get(name)
+            if not isinstance(now, Mapping) or not isinstance(then, Mapping) or '"restart"' not in json.dumps(section.schema):
+                continue
+            for pointer in section.index.entries_in(now):
+                rule = section.index.rule_for(pointer)
+                value = layers.get_at(then, pointer)
+                if rule is None or rule.apply != "restart" or value is layers.ABSENT or layers.same_value(value, layers.get_at(now, pointer)):
+                    continue
+                if held is None:
+                    held = {key: copy.deepcopy(item) if key in self.sections else item for key, item in config.items()}
+                layers._set_at(held[name], layers.split_pointer(pointer), value)
+        if held is None:
+            return config
+        return LayeredConfig(held, *carried(config)) if isinstance(config, LayeredConfig) else held
 
     def publish(self, snapshot: RuntimeSnapshot) -> None:
         self.holder.publish(snapshot)

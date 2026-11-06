@@ -1,0 +1,25 @@
+# Release defaults of the images section (docs/design/CONFIG_HOMES.md, C8a). Read-only; an owner's value is an
+# override. The values are the code's fallbacks. The storage roots (cache_dir, vram_estimates_file) and the signing
+# secret are startup settings, not in this section. Both workflow ids below ship with the release (workflows/images).
+signed_url_ttl: 3600
+vram_reserve_bytes: 1073741824
+free_vram_on_exhaustion: true
+max_batch_size: 4
+background_removal:
+  enabled: true
+  decision_timeout: 45
+variations:
+  default_workflow: qwen-image-2.1-edit
+  denoise: 0.75
+edits:
+  multiref_default_workflow: qwen-image-2.1-edit-multiref
+media_jobs:
+  max_attempts: 3
+  retry_base_seconds: 5
+  retry_max_seconds: 30
+  resume_on_start: true
+  concurrency: 1
+  make:
+    max_prompt_chars: 32000
+    max_outstanding_per_person: 3
+    max_outstanding: 12

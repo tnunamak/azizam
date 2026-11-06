@@ -111,7 +111,7 @@
      "requested": "song"
     }
    ],
-   "effective_digest": "sha256:6562f7cfd22eda33ec2cf25341bbdfcb5604128244c7bd7eb6cd9fd5eb37a466",
+   "effective_digest": "sha256:83ceb655560713d0aac3302e0564d947bff45b8cd9efd015f3c2a0d824597667",
    "models": {
     "alias_targets": {},
     "ids": [
@@ -155,8 +155,10 @@
    },
    "section_digests": {
     "admin": "sha256:59e48897fbdd4b943a30138e6382013e9cc3f09257e1376f495fe4cbbe200958",
+    "audio": "sha256:c081193cf342e651eaf51e7b01da73435e7b296cfc2e51977f8054772e6f0f99",
     "backends": "sha256:c04579d7529a29adc687010e697af83e1f67bfae102a7e75575e29985f4c5690",
     "identity": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "images": "sha256:0951e8b6be734e4346f577973da182ab5883d834b7ba1dd915cc1b9a67f6b3b1",
     "instance": "sha256:963e67771038b092b9fc45629f4b0b76e2d83233d8caf318b54e453840dd5a42",
     "llm": "sha256:f0b23a1522a753f584618c94aa5a1a3a0be99f7aeb70aa06d6cc106be227c2c8",
     "model_aliases": "sha256:ba9cd2dc4ac70d376a20eabe454f6bfd8162c910e2963fdfa7ca8b4964024ca0",
@@ -166,7 +168,9 @@
     "reasoning": "sha256:c3433f2bac58a806843e1714e87c60766a4671f2108bce49b5c3dc0f5841eb0e",
     "resource_admission": "sha256:147b6f37d536327b1e14071848d16a39c429010b39b4b39b92f3fa39717258e7",
     "roles": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-    "service_availability": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    "service_availability": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "videos": "sha256:cb353bbc2727e35e0b9ba0d2438760ddcac96b453453316c5305a9b35553921a",
+    "voices": "sha256:eb5af7bb29a4ea13f6000c9c5228854030642ccce0b7132a6688f9332768a13f"
    }
   },
   "live_like": {
@@ -1612,7 +1616,7 @@
      }
     }
    ],
-   "effective_digest": "sha256:f8e4a45f69ba02831360b351a82f24225f5776bfebd044b932344d816ab9a732",
+   "effective_digest": "sha256:d9ef8bcde68039350ecdf8f76eda97e7c0e46331a2e7426b1ec1a51b6f50bf97",
    "models": {
     "alias_targets": {
      "character-replace": {
@@ -1802,11 +1806,11 @@
    },
    "section_digests": {
     "admin": "sha256:7c8d4df65de5cfe53acc34787826894f6f157009243229e7d8117968f74ac4e2",
-    "audio": "sha256:f18242c4d9c2e855ec35fb768060f087b1af4e9fcc421bc17c6ba24268cee3f1",
+    "audio": "sha256:ee503f2edd75f8830ab0d83fa33d91d6051083252e8585821ce408d10da7045c",
     "auth": "sha256:0942268f24f8f40bd1592c881b04e8daa46ee7500ad6bee7cafe9428e4d5292d",
     "backends": "sha256:2c1b765307ddd66af640f8c40feaa0ba5c9e7290410fcf81445608e856a0ae69",
     "identity": "sha256:27c592d8f453a5fe89ff65eea26cd76054f781c87aa5fae31bca38d2db39fe86",
-    "images": "sha256:7731877f200c797eba7f95d63f1fb13d4588986b9adfde85f85ed9b25ae7a473",
+    "images": "sha256:0951e8b6be734e4346f577973da182ab5883d834b7ba1dd915cc1b9a67f6b3b1",
     "instance": "sha256:963e67771038b092b9fc45629f4b0b76e2d83233d8caf318b54e453840dd5a42",
     "llm": "sha256:267c3ceaf8a269d3d018c00e12ddba089cb425f4dec461172df6ac2aa3b17a31",
     "model_aliases": "sha256:bcc97fd060fb1e8112dbd94b22ca25c2198b4741989dfb5548b08ddeebc34d89",
@@ -1820,7 +1824,7 @@
     "routing": "sha256:142a47bd43870c8a3fdc42602d516ef340b3ce34b9c32615b8925af51fa2c145",
     "service_availability": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "videos": "sha256:985e7f7aa4487de7d48d4dce74a5b9b79e0677df68acb30d09814f018dc355d3",
-    "voices": "sha256:d0d8ed231e06595d868a86c2fe64a83c2841fea51f47e8f0aa91f6ac0a1dac2e",
+    "voices": "sha256:73a0ad13602fc6d4c36a1821e2abeb7700e9d61d9cee542d3fe92fb34d2d0fe6",
     "workflow_execution": "sha256:170f354996c7c8bde39c18a395b0d212afbacc2a4d6fd36b581c5988e2b54f87"
    }
   },
@@ -3241,7 +3245,7 @@
      }
     }
    ],
-   "effective_digest": "sha256:2c3d3ee8a4d8951f96a545dcada40dbca81ca386275ab74e9ddea2b8f89e8f54",
+   "effective_digest": "sha256:3dd5fd5af672672c94173b6554fb65cbc93f541e8e5380a96c50fa7b3ce875f6",
    "models": {
     "alias_targets": {
      "character-replace": {
@@ -3427,11 +3431,11 @@
    },
    "section_digests": {
     "admin": "sha256:7c8d4df65de5cfe53acc34787826894f6f157009243229e7d8117968f74ac4e2",
-    "audio": "sha256:f18242c4d9c2e855ec35fb768060f087b1af4e9fcc421bc17c6ba24268cee3f1",
+    "audio": "sha256:ee503f2edd75f8830ab0d83fa33d91d6051083252e8585821ce408d10da7045c",
     "auth": "sha256:0942268f24f8f40bd1592c881b04e8daa46ee7500ad6bee7cafe9428e4d5292d",
     "backends": "sha256:2c1b765307ddd66af640f8c40feaa0ba5c9e7290410fcf81445608e856a0ae69",
     "identity": "sha256:27c592d8f453a5fe89ff65eea26cd76054f781c87aa5fae31bca38d2db39fe86",
-    "images": "sha256:7731877f200c797eba7f95d63f1fb13d4588986b9adfde85f85ed9b25ae7a473",
+    "images": "sha256:0951e8b6be734e4346f577973da182ab5883d834b7ba1dd915cc1b9a67f6b3b1",
     "instance": "sha256:963e67771038b092b9fc45629f4b0b76e2d83233d8caf318b54e453840dd5a42",
     "llm": "sha256:267c3ceaf8a269d3d018c00e12ddba089cb425f4dec461172df6ac2aa3b17a31",
     "model_aliases": "sha256:ba5fa0813ab6c5aaae7426b40a571b13dd8bcfb3bc28f29f1e7bffafcd21b479",
@@ -3445,7 +3449,7 @@
     "routing": "sha256:142a47bd43870c8a3fdc42602d516ef340b3ce34b9c32615b8925af51fa2c145",
     "service_availability": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "videos": "sha256:985e7f7aa4487de7d48d4dce74a5b9b79e0677df68acb30d09814f018dc355d3",
-    "voices": "sha256:d0d8ed231e06595d868a86c2fe64a83c2841fea51f47e8f0aa91f6ac0a1dac2e",
+    "voices": "sha256:73a0ad13602fc6d4c36a1821e2abeb7700e9d61d9cee542d3fe92fb34d2d0fe6",
     "workflow_execution": "sha256:170f354996c7c8bde39c18a395b0d212afbacc2a4d6fd36b581c5988e2b54f87"
    }
   }

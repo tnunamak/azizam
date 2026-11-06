@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import proxy
+from tests.support.config_snapshot import publish_config
 from tests.speech_tier_helpers import _base_config, _wav_bytes  # noqa: F401  (re-exported for the scenarios)
 
 
@@ -36,7 +37,10 @@ def speech_config(spool: Path, *, voices_dir: Path | None = None, stt_chunking: 
 
 
 def patch_config(rig, cfg: dict[str, Any]) -> None:
-    rig.set(proxy, "config", cfg)
+    """Serve ``cfg`` as the startup file and the published snapshot: the voices section is read from the snapshot and
+    the voice store directory, a startup setting, from the startup file (CONFIG_HOMES C8a)."""
+    rig.set(proxy, "_bootstrap_config", cfg)
+    publish_config(rig.monkeypatch, cfg)
 
 
 def multipart_upload(fields: Iterable[tuple[str, str]], audio: bytes, *, filename: str = "a.wav") -> dict[str, Any]:

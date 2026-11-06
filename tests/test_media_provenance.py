@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from tests.support.audio_workflow import audio_manifest  # noqa: E402
+from tests.support.config_snapshot import section_key_published  # noqa: E402
 from tests.support.access import plan_for, access, access_context, auth_identity  # noqa: E402
 from gateway import admin_store, asset_types, media_delivery, media_jobs, media_metadata, prompt_memory, provenance, receipt_store  # noqa: E402
 
@@ -816,7 +817,7 @@ class AudioGenerateRouteTests(unittest.TestCase):
         self.client = TestClient(proxy.app)
         for patcher in (
             patch.object(proxy, "COMFY_ENABLED", True),
-            patch.object(proxy, "AUDIO_WORKFLOWS_CFG", {"fx": {"file": str(graph)}}),
+            section_key_published("audio", "workflows", {"fx": {"file": str(graph)}}),
             patch.object(proxy, "_load_audio_workflow_manifest",
                          lambda name: audio_manifest(name, {"prompt": [("1", "text")], "seed": [("1", "seed")]},
                                                       workflow=str(graph))),

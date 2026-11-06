@@ -4,8 +4,8 @@ This directory holds the release defaults of the config sections (design: `docs/
 Every file here is read-only data that ships with a release. An upgrade replaces it. The owner never edits it: an
 owner's change is a sparse override in `admin.db` (tables `config_overrides` and `config_changes`).
 
-Ten sections ship. Three are the owner settings that existed before the layer, one holds the model aliases, and six
-hold the settings the startup file held:
+Fourteen sections ship. Three are the owner settings that existed before the layer, one holds the model aliases, and
+ten hold the settings the startup file held:
 
 | Section | Holds | Routes that write it |
 |---|---|---|
@@ -19,6 +19,10 @@ hold the settings the startup file held:
 | `roles` | the model roles (no roles in the release) | the config API |
 | `model_compatibility` | OpenAI model-name recognition and the default model of each operation (no model id in the release) | the config API |
 | `identity` | the face sidecar of the likeness check and how long the identity scene waits (no face service in the release) | the config API |
+| `images` | the signed URL lifetime, VRAM and batch limits, background removal, variations and edit workflows, and the media job limits (`concurrency` and `resume_on_start` apply at restart) | the config API |
+| `voices` | the custom voice limits, the sample rules, and the quality and design engines (the release names none) | the config API |
+| `videos` | the video workflows (graph file and limits), the default, remix and extend workflows, the length caps, the older exact workflow names | the config API |
+| `audio` | the audio workflows (graph file and length limits), the default workflow, the older exact workflow names | the config API |
 
 Each settings route keeps its request and response shape. A write is a revision-checked change of the section: a missing
 `If-Match` is 428 and a stale one is 412. On first boot after the upgrade, the values in the old `operator_settings`
@@ -33,7 +37,8 @@ A section that an older release read from the startup file is imported once at t
 `gateway/config_legacy_import.py`). To read what the import would write for a copy of a startup file, without touching a
 live database: `python -m gateway.config_legacy_import --config <copy of the file>`. A schema may list, at its root, the
 keys of the old block that the section does not own (`x-azizam-startup-only`); the import leaves them in the startup
-file. `model_routing` lists `gguf_dir`, a storage root a later slice moves. `model_compatibility` lists `generated_aliases_file`: the generated OpenAI model list is the release file `registry/openai_model_aliases.generated.yml`, so its path is not a setting. `models` is not a section yet: its startup
+file. `model_routing` lists `gguf_dir`, a storage root a later slice moves. The audio workflow directory is a storage root and also stays in the startup file (`audio` lists `workflows_dir` the same way); `images` lists `cache_dir`,
+`vram_estimates_file` and `signed_url_secret`; `voices` lists `dir`. `model_compatibility` lists `generated_aliases_file`: the generated OpenAI model list is the release file `registry/openai_model_aliases.generated.yml`, so its path is not a setting. `models` is not a section yet: its startup
 block is a list, and a section root must be a mapping.
 
 ## A section is two files
@@ -57,7 +62,7 @@ report. Code is still needed for whatever reads the setting, and for an optional
 | `x-azizam-entry` | `collection` | Each member of this object is one entry. The owner may add members only if the schema allows them (`additionalProperties` or `patternProperties`). |
 | | `atomic` | This node is one entry. Its inner structure is replaced whole. Lists are always atomic. |
 | (none) | | An object recurses into its properties. A scalar or a list is an entry. |
-| `x-azizam-apply` | `live` (default), `restart` | When a change takes effect. |
+| `x-azizam-apply` | `live` (default), `restart` | When a change takes effect. A reload keeps the value that runs for a `restart` entry; the effective view shows the stored value as pending until the next start. |
 | `x-azizam-fail` | `inherit` (default), `closed` | What an invalid override does. `inherit` keeps the release value. `closed` leaves the entry absent. A `closed` entry must be optional in the schema, so that its absence is valid. |
 | `x-azizam-secret` | `true` | The entry holds only a secret reference (`sref_...`). A plain value is refused. |
 | `x-azizam-startup-only` | list of key names, root only | Keys of the old startup-file block that the section does not own. The one-time import leaves them in the startup file instead of refusing the block. |

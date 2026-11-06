@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/images",
+  "title": "images",
+  "description": "Image generation, editing and media-job settings (docs/design/CONFIG_HOMES.md, C8a). The storage roots and the URL signing secret are startup settings.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-azizam-startup-only": [
+    "cache_dir",
+    "vram_estimates_file",
+    "signed_url_secret"
+  ],
+  "properties": {
+    "signed_url_ttl": {
+      "description": "Seconds a signed image URL stays valid.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "vram_reserve_bytes": {
+      "description": "Free VRAM, in bytes, kept as a safety margin when the batch size is computed.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "free_vram_on_exhaustion": {
+      "description": "Unload idle models once when admission or an out-of-memory error shows the current residency blocks the workflow.",
+      "type": "boolean"
+    },
+    "max_batch_size": {
+      "description": "Hard ceiling on the images made in one engine prompt, whatever the VRAM headroom.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "background_removal": {
+      "description": "The transparent, opaque or auto background option.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Whether the background option is served.",
+          "type": "boolean"
+        },
+        "decision_timeout": {
+          "description": "Seconds the automatic (auto) decision may take.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "variations": {
+      "description": "How /v1/images/variations runs: through an edit-capable workflow with a fixed prompt.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_workflow": {
+          "description": "The edit-capable workflow id a variations request runs.",
+          "type": "string",
+          "minLength": 1
+        },
+        "denoise": {
+          "description": "Partial-denoise strength, used only when the workflow declares a denoise input.",
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "edits": {
+      "description": "Image edit routing.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "multiref_default_workflow": {
+          "description": "The workflow id for a multi-image edit that otherwise resolves to the default edit workflow.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "media_jobs": {
+      "description": "Durable image, audio and make jobs.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": {
+          "description": "Attempts a job gets before it fails for good.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "retry_base_seconds": {
+          "description": "First retry delay in seconds; each retry doubles it.",
+          "type": "number",
+          "minimum": 0
+        },
+        "retry_max_seconds": {
+          "description": "Longest retry delay in seconds.",
+          "type": "number",
+          "minimum": 0
+        },
+        "resume_on_start": {
+          "description": "Whether the jobs that were running at shutdown resume at start. Read at start.",
+          "type": "boolean",
+          "x-azizam-apply": "restart"
+        },
+        "concurrency": {
+          "description": "Jobs that run at once. The limit is sized at start.",
+          "type": "integer",
+          "minimum": 1,
+          "x-azizam-apply": "restart"
+        },
+        "make": {
+          "description": "Limits of the session make jobs (/me/api/make/jobs).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_prompt_chars": {
+              "description": "Longest prompt, in characters.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_outstanding_per_person": {
+              "description": "Queued or running make jobs one person may hold.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_outstanding": {
+              "description": "Queued or running make jobs in all.",
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

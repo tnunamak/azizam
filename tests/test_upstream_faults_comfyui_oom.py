@@ -27,7 +27,7 @@ def _generate(fakes: FakeUpstreams, monkeypatch, scenario: str):
     monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
     monkeypatch.setattr(proxy, "get_vram_estimate", lambda *a: 100)  # known cost: no VRAM probe round
     monkeypatch.setattr(proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**12))
-    monkeypatch.setattr(proxy, "IMAGE_FREE_VRAM_ON_EXHAUSTION", True)
+    monkeypatch.setattr(proxy, "_image_free_vram_on_exhaustion", lambda: True)
     monkeypatch.setattr(proxy, "_build_image_response_payload", lambda request, images, response_format, warning_headers, **kw: proxy.Response(
         json.dumps({"count": len(images)}), status_code=200, media_type="application/json", headers=warning_headers))
 

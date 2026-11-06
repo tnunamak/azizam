@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import section_key_published  # noqa: E402
 from tests.support.access import auth_identity  # noqa: E402
 from gateway import admin_store, media_jobs, prompt_memory, video_job_records  # noqa: E402
 from tests.test_video_list_delete_remix import (  # noqa: E402
@@ -220,9 +221,9 @@ class OwnershipAfterRestartTests(VideoRegistryTestCase):
                 self.assertEqual((await call(who)).status_code, 404, call.__name__)
 
     async def test_allow_untracked_ids_restores_the_old_fallback(self) -> None:
-        with patch.object(proxy, "VIDEO_ALLOW_UNTRACKED_IDS", True):
+        with section_key_published("videos", "allow_untracked_ids", True):
             self.assertEqual((await self._status(BOB)).status_code, 200)
-        self.assertFalse(proxy.VIDEO_ALLOW_UNTRACKED_IDS)  # default off
+        self.assertFalse(proxy._video_allow_untracked_ids())  # default off
 
     async def test_unknown_id_still_works_when_auth_is_disabled(self) -> None:
         self.assertEqual((await self._status(proxy.NO_AUTH_CONTEXT)).status_code, 200)

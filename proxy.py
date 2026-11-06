@@ -1167,7 +1167,9 @@ def _graph(client: Any, capability: str = "images", *, probe: bool = False):
     return _graph_adapter(capability).attach(_graph_connection(probe=probe), client)
 
 # Image cache + adaptive-batching config (Fix 1 + Fix 2: honest `n`, real URLs).
-images_cfg = config.get("images", {}) or {}
+# The storage roots and the URL signing secret are startup settings: the images section does not carry them
+# (CONFIG_HOMES C8a, x-azizam-startup-only), so they are read from the startup file until C10.
+images_cfg = _bootstrap_config.get("images", {}) or {}
 IMAGE_CACHE_DIR = Path(images_cfg.get(
     "cache_dir",
     str(Path(__file__).parent / "cache" / "images"),
@@ -1176,69 +1178,155 @@ VRAM_ESTIMATES_FILE = Path(images_cfg.get(
     "vram_estimates_file",
     str(Path(__file__).parent / "cache" / "vram_estimates.json"),
 ))
-IMAGE_SIGNED_URL_TTL = int(images_cfg.get("signed_url_ttl", 3600))
 IMAGE_SIGNED_URL_SECRET_CFG = str(images_cfg.get("signed_url_secret", "") or "")
-IMAGE_VRAM_RESERVE_BYTES = int(images_cfg.get("vram_reserve_bytes", 1 * 1024 * 1024 * 1024))
-IMAGE_FREE_VRAM_ON_EXHAUSTION = bool_from_config(images_cfg.get("free_vram_on_exhaustion"), True)
-IMAGE_MAX_BATCH_SIZE = int(images_cfg.get("max_batch_size", 4))
-IMAGE_BACKGROUND_REMOVAL_CFG = images_cfg.get("background_removal", {}) or {}
-IMAGE_BACKGROUND_REMOVAL_ENABLED = bool_from_config(IMAGE_BACKGROUND_REMOVAL_CFG.get("enabled"), True)
-IMAGE_BACKGROUND_REMOVAL_TIMEOUT = float(IMAGE_BACKGROUND_REMOVAL_CFG.get("decision_timeout", 45))
-IMAGE_MEDIA_JOBS_CFG = images_cfg.get("media_jobs", {}) or {}
-IMAGE_VARIATIONS_CFG = images_cfg.get("variations", {}) or {}
-IMAGE_EDITS_CFG = images_cfg.get("edits", {}) or {}
-# Routes /v1/images/variations through an edit-capable workflow with a fixed
-# generic prompt (variations has no prompt of its own). The packaged default
-# mirrors the configured image-edit model.
-IMAGE_VARIATIONS_DEFAULT_WORKFLOW = str(
-    IMAGE_VARIATIONS_CFG.get("default_workflow", "qwen-image-2.1-edit")
-)
-# Partial-denoise strength applied only when the resolved workflow's manifest
-# declares a `denoise` input -- otherwise the workflow's own default stands.
-IMAGE_VARIATIONS_DENOISE = float(IMAGE_VARIATIONS_CFG.get("denoise", 0.75))
-IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW = str(
-    IMAGE_EDITS_CFG.get("multiref_default_workflow", "qwen-image-2.1-edit-multiref")
-)
-IMAGE_MEDIA_JOB_PAYLOAD_DIR = Path(IMAGE_MEDIA_JOBS_CFG.get(
+IMAGE_MEDIA_JOB_PAYLOAD_DIR = Path((images_cfg.get("media_jobs") or {}).get(
     "payload_dir",
     str(Path(__file__).parent / "data" / "image_media_jobs"),
 ))
-IMAGE_MEDIA_JOB_MAX_ATTEMPTS = int(IMAGE_MEDIA_JOBS_CFG.get("max_attempts", 3))
-IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS = float(IMAGE_MEDIA_JOBS_CFG.get("retry_base_seconds", 5))
-IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS = float(IMAGE_MEDIA_JOBS_CFG.get("retry_max_seconds", 30))
-IMAGE_MEDIA_JOB_CONCURRENCY = max(1, int(IMAGE_MEDIA_JOBS_CFG.get("concurrency", 1)))
-IMAGE_MEDIA_JOB_RESUME_ON_START = bool_from_config(
-    os.environ.get("IMAGE_MEDIA_JOB_RESUME_ON_START", IMAGE_MEDIA_JOBS_CFG.get("resume_on_start")),
-    True,
-)
+
+
+def _images_section() -> Mapping[str, Any]:
+    """The images section of the snapshot this call reads (CONFIG_HOMES C8a)."""
+    section = runtime().config.get("images")
+    return section if isinstance(section, Mapping) else {}
+
+
+def _images_group(name: str) -> Mapping[str, Any]:
+    group = _images_section().get(name)
+    return group if isinstance(group, Mapping) else {}
+
+
+def image_signed_url_ttl() -> int:
+    """images.signed_url_ttl: seconds a signed image URL stays valid."""
+    return max(1, int(_images_section().get("signed_url_ttl", 3600)))
+
+
+def _image_vram_reserve_bytes() -> int:
+    return int(_images_section().get("vram_reserve_bytes", 1 * 1024 * 1024 * 1024))
+
+
+def _image_free_vram_on_exhaustion() -> bool:
+    return bool_from_config(_images_section().get("free_vram_on_exhaustion"), True)
+
+
+def _image_max_batch_size() -> int:
+    return int(_images_section().get("max_batch_size", 4))
+
+
+def _image_background_removal_enabled() -> bool:
+    return bool_from_config(_images_group("background_removal").get("enabled"), True)
+
+
+def _image_background_removal_timeout() -> float:
+    return float(_images_group("background_removal").get("decision_timeout", 45))
+
+
+# Routes /v1/images/variations through an edit-capable workflow with a fixed
+# generic prompt (variations has no prompt of its own). The packaged default
+# mirrors the configured image-edit model.
+def _image_variations_default_workflow() -> str:
+    return str(_images_group("variations").get("default_workflow", "qwen-image-2.1-edit"))
+
+
+# Partial-denoise strength applied only when the resolved workflow's manifest
+# declares a `denoise` input -- otherwise the workflow's own default stands.
+def _image_variations_denoise() -> float:
+    return float(_images_group("variations").get("denoise", 0.75))
+
+
+def _image_multiref_edit_default_workflow() -> str:
+    return str(_images_group("edits").get("multiref_default_workflow", "qwen-image-2.1-edit-multiref"))
+
+
+def _image_media_jobs_group() -> Mapping[str, Any]:
+    return _images_group("media_jobs")
+
+
+def _image_media_job_max_attempts() -> int:
+    return int(_image_media_jobs_group().get("max_attempts", 3))
+
+
+def _image_media_job_retry_base_seconds() -> float:
+    return float(_image_media_jobs_group().get("retry_base_seconds", 5))
+
+
+def _image_media_job_retry_max_seconds() -> float:
+    return float(_image_media_jobs_group().get("retry_max_seconds", 30))
+
+
+def _image_media_job_resume_on_start() -> bool:
+    """images.media_jobs.resume_on_start (applies at restart: the snapshot keeps the value that runs). An
+    IMAGE_MEDIA_JOB_RESUME_ON_START in the environment still wins until C10 removes that override."""
+    return bool_from_config(
+        os.environ.get("IMAGE_MEDIA_JOB_RESUME_ON_START", _image_media_jobs_group().get("resume_on_start")), True,
+    )
+
+
+# The job concurrency is the size of two semaphores built here, so it applies at restart (CONFIG_HOMES class R): it is
+# the one images value that is still read at import, with the semaphores it sizes.
+IMAGE_MEDIA_JOB_CONCURRENCY = max(1, int(((runtime().config.get("images") or {}).get("media_jobs") or {}).get("concurrency", 1)))
 _image_media_job_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
 _image_media_job_tasks: set[asyncio.Task] = set()
+
+
 # Session make jobs (/me/api/make/jobs) share the image job concurrency.
-_SESSION_MAKE_CFG = IMAGE_MEDIA_JOBS_CFG.get("make", {}) or {}
-SESSION_MAKE_LIMITS = me_make.MakeLimits(
-    max_prompt_chars=max(1, int(_SESSION_MAKE_CFG.get("max_prompt_chars", 32_000))),
-    per_person=max(1, int(_SESSION_MAKE_CFG.get("max_outstanding_per_person", 3))),
-    household=max(1, int(_SESSION_MAKE_CFG.get("max_outstanding", 12))),
-)
+def _session_make_limits() -> me_make.MakeLimits:
+    make = _image_media_jobs_group().get("make")
+    make = make if isinstance(make, Mapping) else {}
+    return me_make.MakeLimits(
+        max_prompt_chars=max(1, int(make.get("max_prompt_chars", 32_000))),
+        per_person=max(1, int(make.get("max_outstanding_per_person", 3))),
+        household=max(1, int(make.get("max_outstanding", 12))),
+    )
+
+
 _image_media_job_scheduled: set[str] = set()
 
-# Video config (parallel to images). Maps `model:` aliases -> ComfyUI workflow JSON.
-videos_cfg = config.get("videos", {})
-VIDEO_DEFAULT_WORKFLOW = videos_cfg.get("default_workflow", "video-ltx-13b-q8")
-VIDEO_WORKFLOWS = videos_cfg.get("workflows", {}) or {}
-# Workflow id that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
-# Unset means both routes return a clear 501 (video_remix_not_configured). The
-# routes submit as `video-remix`, so that alias must point at the same workflow.
-VIDEO_REMIX_WORKFLOW = videos_cfg.get("remix_workflow") or None
-# Long video (extensions, `shots`, `seconds` past a model's native length).
-# `extend_workflow` names the chain workflow POST /v1/videos/extensions runs;
-# unset returns 501. `max_total_seconds` caps the stitched length: each added
-# segment loses some fidelity, so a hard cap beats silent degradation.
-VIDEO_EXTEND_WORKFLOW = videos_cfg.get("extend_workflow") or None
-VIDEO_MAX_TOTAL_SECONDS = float(videos_cfg.get("max_total_seconds", 40))
-# Escape hatch for videos made before records were persisted (see _video_job_blocked).
-VIDEO_ALLOW_UNTRACKED_IDS = bool(videos_cfg.get("allow_untracked_ids", False))
-VIDEO_CHAIN_SEGMENT_SECONDS = float(videos_cfg.get("chain_segment_seconds", 8))
+# Video config (parallel to images): the `videos` section (CONFIG_HOMES C8b), read from the snapshot on every call.
+# `workflows` maps `model:` ids to ComfyUI workflow JSON.
+def _videos() -> Mapping[str, Any]:
+    """The `videos` section of the snapshot this call reads. A snapshot without it gives an empty mapping."""
+    section = runtime().config.get("videos")
+    return section if isinstance(section, Mapping) else {}
+
+
+def _video_default_workflow() -> str:
+    return _videos().get("default_workflow", "video-ltx-13b-q8")
+
+
+def _video_workflow_table() -> Mapping[str, Any]:
+    return _videos().get("workflows") or {}
+
+
+def _video_remix_workflow() -> str | None:
+    """Workflow id that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
+    Unset means both routes return a clear 501 (video_remix_not_configured). The
+    routes submit as `video-remix`, so that alias must point at the same workflow."""
+    return _videos().get("remix_workflow") or None
+
+
+def _video_extend_workflow() -> str | None:
+    """Long video (extensions, `shots`, `seconds` past a model's native length).
+    `extend_workflow` names the chain workflow POST /v1/videos/extensions runs;
+    unset returns 501."""
+    return _videos().get("extend_workflow") or None
+
+
+def _video_max_total_seconds() -> float:
+    """`max_total_seconds` caps the stitched length: each added segment loses some
+    fidelity, so a hard cap beats silent degradation."""
+    return float(_videos().get("max_total_seconds", 40))
+
+
+def _video_allow_untracked_ids() -> bool:
+    """Escape hatch for videos made before records were persisted (see _video_job_blocked)."""
+    return bool(_videos().get("allow_untracked_ids", False))
+
+
+def _video_chain_segment_seconds() -> float:
+    return float(_videos().get("chain_segment_seconds", 8))
+
+
 _OPENAI_VIDEO_STATUS_BY_INTERNAL = {
     "queued": "queued",
     "running": "in_progress",
@@ -3361,7 +3449,7 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
     if operation == "image_edits":
         return image_edit_default_model()
     if operation == "videos":
-        return VIDEO_DEFAULT_WORKFLOW
+        return _video_default_workflow()
     if operation == "embeddings":
         return embeddings_model() if EMBEDDINGS_ENABLED else ""
     return requested_model
@@ -4339,13 +4427,15 @@ _VOICE_STORES: dict[tuple[str, custom_voices.VoiceLimits], custom_voices.VoiceSt
 
 
 def _voice_settings() -> Mapping[str, Any]:
-    section = config.get("voices")
+    """The voices section of the snapshot this call reads (CONFIG_HOMES C8a)."""
+    section = runtime().config.get("voices")
     return section if isinstance(section, Mapping) else {}
 
 
 def _voice_store() -> custom_voices.VoiceStore:
     settings = _voice_settings()
-    root = Path(str(settings.get("dir") or "data/voices"))
+    # The store directory is a startup setting: the voices section does not carry it (x-azizam-startup-only, until C10).
+    root = Path(str((_bootstrap_config.get("voices") or {}).get("dir") or "data/voices"))
     if not root.is_absolute():
         root = CONFIG_PATH.parent / root
     mode = str(settings.get("consent_mode") or "optional")
@@ -6973,11 +7063,11 @@ def compute_max_batch(free_vram: Optional[int], per_image: Optional[int]) -> int
         return 1
     if not isinstance(free_vram, int) or free_vram <= 0:
         return 1
-    budget = max(0, free_vram - IMAGE_VRAM_RESERVE_BYTES)
+    budget = max(0, free_vram - _image_vram_reserve_bytes())
     if budget < per_image:
         return 0  # caller surfaces 503 with Retry-After
     cap = max(1, budget // per_image)
-    return min(int(cap), max(1, IMAGE_MAX_BATCH_SIZE))
+    return min(int(cap), max(1, _image_max_batch_size()))
 
 
 def apply_batch_size(workflow: dict, meta: dict, batch_size: int) -> bool:
@@ -7043,7 +7133,7 @@ def _parse_image_output_shape(
     output_format, fmt_err = parse_output_format(output_format_raw)
     if fmt_err:
         _record_image_input(receipt, "output_format", rejected_reason=fmt_err)
-        return output_format, None, "auto", openai_error_response(
+        return output_format, None, "auto", _image_input_refusal(
             fmt_err, param="output_format", code="invalid_value",
         )
     if output_format_raw not in (None, ""):
@@ -7052,14 +7142,14 @@ def _parse_image_output_shape(
     conflict = background_format_conflict(background, output_format)
     if conflict:
         _record_image_input(receipt, "background", rejected_reason="conflicts_with_output_format")
-        return output_format, None, "auto", openai_error_response(
+        return output_format, None, "auto", _image_input_refusal(
             conflict, param="background", code="invalid_value",
         )
 
     output_compression, comp_err = parse_output_compression(output_compression_raw, output_format)
     if comp_err:
         _record_image_input(receipt, "output_compression", rejected_reason=comp_err)
-        return output_format, None, "auto", openai_error_response(
+        return output_format, None, "auto", _image_input_refusal(
             comp_err, param="output_compression", code="invalid_value",
         )
     if output_compression_raw not in (None, ""):
@@ -7068,7 +7158,7 @@ def _parse_image_output_shape(
     quality, quality_err = parse_quality(quality_raw)
     if quality_err:
         _record_image_input(receipt, "quality", rejected_reason=quality_err)
-        return output_format, output_compression, quality, openai_error_response(
+        return output_format, output_compression, quality, _image_input_refusal(
             quality_err, param="quality", code="invalid_value",
         )
     if quality_raw not in (None, ""):
@@ -7192,7 +7282,7 @@ async def decide_image_background_removal(
     """
     if force_bypass:
         return _background_removal_fallback("forced_bypass", "edit mask supplied")
-    if not IMAGE_BACKGROUND_REMOVAL_ENABLED:
+    if not _image_background_removal_enabled():
         return _background_removal_fallback("disabled")
     prompt = str(prompt or "").strip()
     if not prompt:
@@ -7247,7 +7337,7 @@ async def decide_image_background_removal(
             return _background_removal_fallback("llm_unavailable", f"residency domain not admitting ({refused.reason})")
     try:
         _require_egress_lease(service)
-        async with engine_egress.async_client(timeout=httpx.Timeout(IMAGE_BACKGROUND_REMOVAL_TIMEOUT, connect=5)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(_image_background_removal_timeout(), connect=5)) as client:
             resp = await client.post(f"{target_host}/v1/chat/completions", headers=headers, json=payload)
         if resp.status_code != 200:
             return _background_removal_fallback("llm_error", log_scrub.describe_response(resp, "the chat engine refused the request"))
@@ -7792,7 +7882,7 @@ def _gateway_asset_metadata_payload(
         "updated_at": updated_at_value,
         "content_url": build_signed_asset_url(request, asset_id),
         "content_route": f"/v1/assets/{asset_id}/content",
-        "expires_in": IMAGE_SIGNED_URL_TTL,
+        "expires_in": image_signed_url_ttl(),
         "owner_scoped": bool(metadata.get("owner_key_hashes")),
     }
 
@@ -7820,13 +7910,14 @@ def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str |
     if mode == thumbnails.THUMB_MODE:
         # The expiry steps once per TTL, so the URL is the same all window long
         # and the browser can keep the preview between visits.
-        expires = (int(time.time()) // IMAGE_SIGNED_URL_TTL + 2) * IMAGE_SIGNED_URL_TTL
+        ttl = image_signed_url_ttl()
+        expires = (int(time.time()) // ttl + 2) * ttl
         if session:
             expires = min(expires, int(session.expires_at), int(session.latest_expiry))
         sig = (_sign_asset_token(asset_id, expires, mode, family, subject, timing) if session
                else _sign_asset_token(asset_id, expires, mode))
         return f"{proto}://{host}/v1/assets/{asset_id}/thumbnail?expires={expires}&sig={sig}{binding}"
-    expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
+    expires = int(time.time()) + image_signed_url_ttl()
     if session:
         expires = min(expires, int(session.expires_at), int(session.latest_expiry))
     sig = (_sign_asset_token(asset_id, expires, mode, family, subject, timing) if session
@@ -8387,12 +8478,12 @@ async def _generate_images_with_adaptive_batching(
         #   - Subsequent rounds (or any round when we have an estimate):
         #     compute cap from free_now / estimate. If we have no estimate but
         #     are past round 1, assume the cost is small (model already
-        #     resident) and trust IMAGE_MAX_BATCH_SIZE as the ceiling.
+        #     resident) and trust images.max_batch_size as the ceiling.
         if rounds_run == 1 and estimate is None:
             batch_target = 1
         elif estimate is not None:
             cap = compute_max_batch(free_now, estimate)
-            if cap == 0 and IMAGE_FREE_VRAM_ON_EXHAUSTION and not models_freed:
+            if cap == 0 and _image_free_vram_on_exhaustion() and not models_freed:
                 models_freed = await _free_graph_models_if_idle(client)
                 if models_freed:
                     free_now = await graph_free_vram_bytes(client)
@@ -8410,7 +8501,7 @@ async def _generate_images_with_adaptive_batching(
             # and can produce images. Trust the configured ceiling — any
             # OOM here is data we'll capture on the next request via the
             # measurement code below.
-            batch_target = min(IMAGE_MAX_BATCH_SIZE, images_remaining)
+            batch_target = min(_image_max_batch_size(), images_remaining)
 
         if isinstance(batch_limit, int) and not isinstance(batch_limit, bool):
             batch_target = min(batch_target, max(1, batch_limit))
@@ -8453,7 +8544,7 @@ async def _generate_images_with_adaptive_batching(
             vram_probe=probe,
             request=request,
         )
-        if err is not None and not models_freed and IMAGE_FREE_VRAM_ON_EXHAUSTION:
+        if err is not None and not models_freed and _image_free_vram_on_exhaustion():
             try:
                 body = json.loads(err.body.decode("utf-8")) if getattr(err, "body", None) else {}
                 error_text = str(((body.get("error") or {}).get("message") or "")).lower()
@@ -8772,16 +8863,7 @@ async def proxy_graph_image_request(
     background, background_err = parse_image_background(body.get("background"))
     if background_err:
         _record_image_input(receipt, "background", rejected_reason=background_err)
-        return Response(
-            content=json.dumps({"error": {
-                "message": background_err,
-                "type": "invalid_request_error",
-                "param": "background",
-                "code": "invalid_value",
-            }}),
-            status_code=400,
-            media_type="application/json",
-        )
+        return _gateway_input_error(background_err, param="background", code="invalid_value")
     if "background" in body:
         _record_image_input(receipt, "background")
     output_format, output_compression, quality, output_shape_error = _parse_image_output_shape(
@@ -8796,10 +8878,10 @@ async def proxy_graph_image_request(
     n = body.get("n", 1)
     if isinstance(n, bool) or not isinstance(n, int):
         _record_image_input(receipt, "n", rejected_reason="not_integer")
-        return openai_error_response("n must be an integer", param="n")
+        return _image_input_refusal("n must be an integer", param="n")
     if n < 1 or n > 10:
         _record_image_input(receipt, "n", rejected_reason="out_of_range")
-        return openai_error_response("n must be between 1 and 10", param="n")
+        return _image_input_refusal("n must be between 1 and 10", param="n")
     _record_image_input(receipt, "n")
     response_format = body.get(
         "response_format",
@@ -8807,11 +8889,7 @@ async def proxy_graph_image_request(
     )
     if response_format not in ("b64_json", "url"):
         _record_image_input(receipt, "response_format", rejected_reason="unsupported_value")
-        return Response(
-            content=json.dumps({"error": {"message": "response_format must be 'b64_json' or 'url'", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json",
-        )
+        return _gateway_input_error("response_format must be 'b64_json' or 'url'")
     _record_image_input(receipt, "response_format")
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
@@ -8828,11 +8906,7 @@ async def proxy_graph_image_request(
 
     if not prompt:
         _record_image_input(receipt, "prompt", rejected_reason="missing")
-        return Response(
-            content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
-        )
+        return _gateway_input_error("prompt is required")
     _record_image_input(receipt, "prompt")
 
     manifest = _find_image_manifest("image.generate", str(model))
@@ -9823,9 +9897,9 @@ async def proxy_graph_image_variations_request(
         except ModelCompatibilityError as e:
             _record_image_input(receipt, "model", rejected_reason="model_incompatible")
             return model_compatibility_error(e)
-        model = IMAGE_VARIATIONS_DEFAULT_WORKFLOW if model_resolution.is_openai_alias else requested_model
+        model = _image_variations_default_workflow() if model_resolution.is_openai_alias else requested_model
     else:
-        model = IMAGE_VARIATIONS_DEFAULT_WORKFLOW
+        model = _image_variations_default_workflow()
     if not (model.endswith("-edit") or model.endswith("-inpaint")):
         model = f"{model}-edit"
     if receipt is not None:
@@ -9842,7 +9916,7 @@ async def proxy_graph_image_variations_request(
         # manifest actually declares it -- an unsupported extension input
         # would otherwise be rejected with a 400 by the edit route itself.
         overlay["extensions"] = json.dumps({
-            WORKFLOW_EXTENSION_NAMESPACE: {"denoise": IMAGE_VARIATIONS_DENOISE}
+            WORKFLOW_EXTENSION_NAMESPACE: {"denoise": _image_variations_denoise()}
         })
 
     overlay_request = _OverlayFormRequest(request, form, overlay)
@@ -10003,7 +10077,7 @@ def _video_job_blocked(prompt_id: str, auth_context: AuthContext | None) -> bool
     """
     if prompt_id in _video_job_records:
         return not _video_job_visible(prompt_id, auth_context)
-    if VIDEO_ALLOW_UNTRACKED_IDS:
+    if _video_allow_untracked_ids():
         return False
     return _asset_owner_key(auth_context) is not None
 
@@ -10545,16 +10619,17 @@ def _resolve_video_workflow(model: str) -> tuple[Optional[str], Optional[dict]]:
     """
     candidate = (model or "").strip()
     if not candidate:
-        candidate = VIDEO_DEFAULT_WORKFLOW
+        candidate = _video_default_workflow()
 
+    workflows = _video_workflow_table()
     # 1) direct workflow name
-    if candidate in VIDEO_WORKFLOWS:
-        return candidate, VIDEO_WORKFLOWS[candidate]
+    if candidate in workflows:
+        return candidate, workflows[candidate]
 
     # 2) alias
     alias_target = VIDEO_ALIASES.get(candidate.lower())
-    if alias_target and alias_target in VIDEO_WORKFLOWS:
-        return alias_target, VIDEO_WORKFLOWS[alias_target]
+    if alias_target and alias_target in workflows:
+        return alias_target, workflows[alias_target]
 
     return None, None
 
@@ -10964,11 +11039,15 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
 class _VideoAssetError(Exception):
     """A video-workflow asset input could not be resolved."""
 
-    def __init__(self, message: str, *, param: str, status: int = 400, code: str | None = None):
+    def __init__(self, message: str, *, param: str, status: int = 400, code: str | None = None,
+                 echoes_input: bool = False):
         super().__init__(message)
         self.param = param
         self.status = status
         self.code = code
+        # True when the message holds text the caller or a fetch sent (a URL, a transport error): an async job
+        # must not keep it. Every other message names a field and a bound.
+        self.echoes_input = echoes_input
 
 
 def _video_asset_error_response(exc: "_VideoAssetError") -> Response:
@@ -10979,7 +11058,10 @@ def _video_asset_error_response(exc: "_VideoAssetError") -> Response:
     }
     if exc.code:
         error["code"] = exc.code
-    return Response(content=json.dumps({"error": error}), status_code=exc.status, media_type="application/json")
+    response = Response(content=json.dumps({"error": error}), status_code=exc.status, media_type="application/json")
+    if exc.status < 500 and not exc.echoes_input:
+        return _gateway_input_refusal(response, str(exc))
+    return response
 
 
 async def _load_completed_video_bytes(
@@ -11062,7 +11144,8 @@ async def _resolve_video_workflow_asset(
             try:
                 data, name = await _load_completed_video_bytes(video_id, auth_context)
             except _VideoAssetError as exc:
-                raise _VideoAssetError(str(exc), param=param, status=exc.status, code=exc.code) from exc
+                raise _VideoAssetError(str(exc), param=param, status=exc.status, code=exc.code,
+                                       echoes_input=exc.echoes_input) from exc
             return data, name, "video/mp4"
         if isinstance(value, Mapping):
             value = value.get("url") or value.get("data")
@@ -11070,11 +11153,11 @@ async def _resolve_video_workflow_asset(
             header, _, b64 = value.partition(",")
             mime = header[len(_DATA_URI_PREFIX):].split(";", 1)[0].strip().lower()
             if not mime.startswith("video/"):
-                raise _VideoAssetError(f"{param} data URI must be video/*, got {mime or 'no type'}", param=param)
+                raise _VideoAssetError(f"{param} data URI must be video/*", param=param)
             try:
                 data = base64.b64decode(b64, validate=False)
             except Exception as exc:
-                raise _VideoAssetError(f"{param} is not valid base64: {exc}", param=param) from exc
+                raise _VideoAssetError(f"{param} is not valid base64", param=param) from exc
             return data, f"source{video_inputs.suffix_for_video(None, mime)}", mime
         if not isinstance(value, str) or not value.strip().startswith(("http://", "https://")):
             raise _VideoAssetError(
@@ -11084,13 +11167,13 @@ async def _resolve_video_workflow_asset(
         try:
             fetched = await _fetch_media_url(value.strip(), auth_context, request=request)
         except Exception as exc:
-            raise _VideoAssetError(f"failed to download {param}: {exc}", param=param) from exc
+            raise _VideoAssetError(f"failed to download {param}: {exc}", param=param, echoes_input=True) from exc
         mime = fetched.content_type if fetched.content_type != "application/octet-stream" else "video/mp4"
         return fetched.data, f"source{video_inputs.suffix_for_video(fetched.filename, mime)}", mime
     try:
         data, name = await _resolve_input_reference(value, auth_context, request=request)
     except _InputReferenceError as exc:
-        raise _VideoAssetError(f"{param}: {exc}", param=param) from exc
+        raise _VideoAssetError(f"{param}: {exc}", param=param, echoes_input=True) from exc
     suffix = Path(name).suffix.lower()
     mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}.get(suffix, "image/png")
     return data, name, mime
@@ -11520,17 +11603,9 @@ async def proxy_graph_video_create(
 
     raw_prompt = body.get("prompt")
     if raw_prompt is not None and not isinstance(raw_prompt, str):
-        return Response(
-            content=json.dumps({"error": {
-                "message": "prompt must be a string",
-                "type": "invalid_request_error",
-                "param": "prompt",
-            }}),
-            status_code=400,
-            media_type="application/json",
-        )
+        return _gateway_input_error("prompt must be a string", param="prompt")
     prompt = (raw_prompt or "").strip()
-    requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    requested_model = body.get("model") or _video_default_workflow()
     public_model = str(requested_model)
     size_from_body = body.get("size")
     seconds = body.get("seconds")
@@ -11539,11 +11614,7 @@ async def proxy_graph_video_create(
     image_strength = body.get("image_strength")  # optional float 0..1, default 1.0 when input_reference present
 
     if not prompt and body.get("shots") is None:
-        return Response(
-            content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
-        )
+        return _gateway_input_error("prompt is required")
 
     # OpenAI-compat: rewrite sora-* aliases to the local default before workflow lookup.
     try:
@@ -11570,19 +11641,13 @@ async def proxy_graph_video_create(
     # is selected when the request carries input_reference.
     i2v_workflow_name = workflow_cfg.get("i2v_workflow")
     if input_reference and i2v_workflow_name:
-        i2v_cfg = VIDEO_WORKFLOWS.get(i2v_workflow_name)
+        i2v_cfg = _video_workflow_table().get(i2v_workflow_name)
         if i2v_cfg:
             workflow_name, workflow_cfg = i2v_workflow_name, i2v_cfg
     if workflow_cfg.get("requires_input_reference") and not input_reference:
-        return Response(
-            content=json.dumps({"error": {
-                "message": f"Model {workflow_name} is image-to-video and requires input_reference",
-                "type": "invalid_request_error",
-                "param": "input_reference",
-            }}),
-            status_code=400,
-            media_type="application/json",
-        )
+        return _gateway_input_error(
+            f"Model {workflow_name} is image-to-video and requires input_reference", param="input_reference",
+            job_message="This model is image-to-video and requires input_reference")
     # Long video: `shots`, or `seconds` past the model's native length when the
     # model names a chain workflow, or a chain workflow itself (video-long).
     chain_name = chain_cfg = None
@@ -11596,11 +11661,13 @@ async def proxy_graph_video_create(
         if body.get("shots") is not None or (beyond_native and workflow_cfg.get("chain_workflow")):
             chain_name, chain_cfg = _chain_workflow_for(requested_model)
             if chain_cfg is None:
-                return _json_error(
-                    400, f"Model {workflow_name} cannot render shots or clips longer than "
+                return _gateway_input_error(
+                    f"Model {workflow_name} cannot render shots or clips longer than "
                     f"{workflow_cfg.get('max_seconds', 8):g} s; use video-long, ltx-2.5-long or minimax-h3",
                     param="shots" if body.get("shots") is not None else "seconds",
-                    code="long_video_not_supported")
+                    code="long_video_not_supported",
+                    job_message=f"This model cannot render shots or clips longer than "
+                                f"{workflow_cfg.get('max_seconds', 8):g} s")
     if chain_cfg is not None:
         return await _submit_video_chain(
             request, auth_context, body=body, workflow_name=str(chain_name),
@@ -11738,8 +11805,8 @@ async def proxy_graph_video_create(
                 ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
             )
         except video_subject.SubjectError as exc:
-            return _json_error(400, str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
-                               code="invalid_workflow_extension")
+            return _gateway_input_error(str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
+                                        code="invalid_workflow_extension")
 
     # Validate / clamp request inputs.
     max_seconds = float(workflow_cfg.get("max_seconds", 8))
@@ -11761,24 +11828,10 @@ async def proxy_graph_video_create(
         else:
             seconds_val = min(5.0, max_seconds)
     except (TypeError, ValueError):
-        return Response(
-            content=json.dumps({"error": {"message": "seconds must be a number", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
-        )
+        return _gateway_input_error("seconds must be a number")
     if seconds_val < min_seconds or seconds_val > max_seconds:
-        return Response(
-            content=json.dumps({
-                "error": {
-                    "message": (
-                        f"seconds must be between {min_seconds} and {max_seconds} for model {workflow_name}"
-                    ),
-                    "type": "invalid_request_error",
-                }
-            }),
-            status_code=400,
-            media_type="application/json"
-        )
+        return _gateway_input_error(f"seconds must be between {min_seconds} and {max_seconds} for model {workflow_name}",
+                                    job_message=f"seconds must be between {min_seconds} and {max_seconds}")
 
     if source_seconds is not None and seconds_val > source_seconds + 0.05:
         return Response(
@@ -12172,8 +12225,9 @@ def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
     if video_extend.engine_for(cfg.get("builder")):
         return name, cfg
     target = cfg.get("chain_workflow")
-    if target and target in VIDEO_WORKFLOWS and video_extend.engine_for(VIDEO_WORKFLOWS[target].get("builder")):
-        return str(target), VIDEO_WORKFLOWS[target]
+    workflows = _video_workflow_table()
+    if target and target in workflows and video_extend.engine_for(workflows[target].get("builder")):
+        return str(target), workflows[target]
     return None, None
 
 
@@ -12330,7 +12384,7 @@ async def _submit_video_chain(
     except video_controls.VideoControlError as exc:
         return _json_error(400, str(exc), param=exc.param, code="invalid_video_control")
     audio_disabled = chain_controls.get(video_controls.AUDIO_CONTROL) is False
-    workflow_cfg = VIDEO_WORKFLOWS.get(workflow_name) or {}
+    workflow_cfg = _video_workflow_table().get(workflow_name) or {}
     engine = video_extend.engine_for(workflow_cfg.get("builder"))
     try:
         options = _parse_chain_options(body, engine)
@@ -12389,18 +12443,18 @@ async def _submit_video_chain(
     try:
         segments = engine.plan_segments(
             shots, fps=fps, has_source=extending,
-            max_segment_seconds=float(workflow_cfg.get("chain_segment_seconds", VIDEO_CHAIN_SEGMENT_SECONDS)),
+            max_segment_seconds=float(workflow_cfg.get("chain_segment_seconds", _video_chain_segment_seconds())),
             state_ledger=options.get("state_ledger"))
     except video_extend.PlanError as exc:
         return _json_error(400, str(exc), code=exc.code, param=exc.param)
     source_frames = probe.frames if probe is not None else 0
     total_seconds = video_extend.total_seconds(segments, fps, source_frames)
-    if total_seconds > VIDEO_MAX_TOTAL_SECONDS + 0.05:
+    if total_seconds > _video_max_total_seconds() + 0.05:
         return _json_error(
             400,
             f"total video length would be {total_seconds:.1f} s"
             + (f" ({source_frames / fps:.1f} s source + {total_seconds - source_frames / fps:.1f} s new)" if extending else "")
-            + f", over the {VIDEO_MAX_TOTAL_SECONDS:g} s limit (videos.max_total_seconds). "
+            + f", over the {_video_max_total_seconds():g} s limit (videos.max_total_seconds). "
             "Quality drops with each added segment; finish this video or start a new one.",
             code="video_total_length_exceeded", param="seconds")
 
@@ -12523,7 +12577,7 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
     service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
-    if not VIDEO_EXTEND_WORKFLOW:
+    if not _video_extend_workflow():
         return _json_error(
             501, "Video extension is not configured on this gateway. Set videos.extend_workflow "
             "in proxy_config.yml to enable it.", code="video_extend_not_configured")
@@ -12560,7 +12614,7 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
         if source_id else None)
     requested = body.get("model")
     if not requested:
-        requested = source_model if source_model and _chain_workflow_for(source_model)[1] else VIDEO_EXTEND_WORKFLOW
+        requested = source_model if source_model and _chain_workflow_for(source_model)[1] else _video_extend_workflow()
     workflow_name, cfg = _chain_workflow_for(requested)
     if not cfg:
         return _json_error(400, f"model {requested!r} cannot extend videos; use video-long, ltx-2.5-long or minimax-h3",
@@ -13255,6 +13309,18 @@ def _json_error(status: int, message: str, *, code: str | None = None, param: st
     return Response(content=json.dumps({"error": error}), status_code=status, media_type="application/json")
 
 
+def _gateway_input_error(
+    message: str, *, code: str | None = None, param: str | None = None, job_message: str | None = None,
+) -> Response:
+    """A 400 a media route's own checks wrote; its sentence may reach an async job's error.
+
+    Only for a message that names a field and a bound. One that can hold a caller's value (a model name, a URL,
+    an unknown field's name) goes through ``_json_error``, which an async job reports with fixed words, or gives
+    ``job_message``: the same sentence without that value, which the job reports instead.
+    """
+    return _gateway_input_refusal(_json_error(400, message, code=code, param=param), job_message or message)
+
+
 async def _submit_video_remix(
     request: Request,
     auth_context: AuthContext,
@@ -13264,7 +13330,7 @@ async def _submit_video_remix(
     remixed_from_video_id: str | None,
 ) -> Response:
     """Create a remix job: the standard video create pipeline with `source_video` bound."""
-    if not VIDEO_REMIX_WORKFLOW:
+    if not _video_remix_workflow():
         return _json_error(
             501,
             "Video remix is not configured on this gateway. Set "
@@ -13336,7 +13402,7 @@ async def proxy_graph_video_remix(
     async with _video_progress_lock:
         if _video_job_blocked(prompt_id, auth_context):
             return _json_error(404, "video_id not found", kind="not_found")
-    if not VIDEO_REMIX_WORKFLOW:
+    if not _video_remix_workflow():
         return _json_error(
             501,
             "Video remix is not configured on this gateway. Set "
@@ -15203,7 +15269,7 @@ app.include_router(
         capabilities_provider=_gateway_capabilities_provider,
         receipt_store_path=receipt_store.DB_PATH,
         resource_lister=_gateway_resource_lister,
-        asset_url_ttl_s=IMAGE_SIGNED_URL_TTL,
+        asset_url_ttl_s=image_signed_url_ttl,
         asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
@@ -15236,7 +15302,10 @@ class _SessionMakeRuntime:
     job semaphore, so at most the configured concurrency run at once.
     """
 
-    limits = SESSION_MAKE_LIMITS
+    @property
+    def limits(self) -> me_make.MakeLimits:
+        """images.media_jobs.make, read per call from the snapshot (CONFIG_HOMES C8a)."""
+        return _session_make_limits()
 
     def __init__(self) -> None:
         self._gates: dict[str, _MakePublishGate] = {}
@@ -20677,7 +20746,8 @@ class ImageEditMaskContext:
 
 
 def _image_error_response(message: str, *, param: str, code: str) -> Response:
-    return Response(
+    """The gateway's own refusal of an image input; each message names a field and a bound, never a value."""
+    return _gateway_input_refusal(Response(
         content=json.dumps({
             "error": {
                 "message": message,
@@ -20688,7 +20758,12 @@ def _image_error_response(message: str, *, param: str, code: str) -> Response:
         }),
         status_code=400,
         media_type="application/json",
-    )
+    ), message)
+
+
+def _image_input_refusal(message: str, *, param: str, code: str | None = None) -> Response:
+    """A 400 the image route's own checks wrote; its sentence may reach an async job's error."""
+    return _gateway_input_refusal(openai_error_response(message, param=param, code=code), message)
 
 
 def _open_image_for_route(content: bytes, *, param: str):
@@ -21421,7 +21496,7 @@ def _prefer_inpaint_workflow_for_mask(model: str) -> str:
 def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> str:
     """Resolve edit defaults while keeping explicit workflow selections intact."""
     selected = model
-    if selected == IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW:
+    if selected == _image_multiref_edit_default_workflow():
         if has_mask:
             return _prefer_inpaint_workflow_for_mask(image_edit_default_model())
         return selected
@@ -21438,7 +21513,7 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
         return _prefer_inpaint_workflow_for_mask(selected)
 
     if image_count > 1 and selected == image_edit_default_model():
-        return IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW
+        return _image_multiref_edit_default_workflow()
     return selected
 
 
@@ -22867,6 +22942,16 @@ def _gateway_refusal(response: Response, category: str) -> Response:
     return response
 
 
+def _gateway_input_refusal(response: Response, message: str) -> Response:
+    """Mark the gateway's own refusal of a request's inputs and keep the sentence it wrote.
+
+    The sentence rides on the in-process object, so a job worker never reads it back from a body an upstream could
+    imitate. Validation sentences name a field and a bound, never a value the caller sent.
+    """
+    response.gateway_refusal_text = message[:300]  # type: ignore[attr-defined]
+    return _gateway_refusal(response, "invalid_input")
+
+
 def _media_job_failure(response: Response) -> tuple[str, dict[str, Any]]:
     """The plain error sentence and typed facts (``media_jobs.ERROR_FIELDS``) of a failed attempt.
 
@@ -22897,6 +22982,10 @@ def _media_job_failure(response: Response) -> tuple[str, dict[str, Any]]:
     default_code, message = _JOB_FAILURE_COPY[category]
     if category == "capacity" and getattr(response, "gateway_refusal", None):
         message = _admission_refusal_message(response)
+    elif category == "invalid_input" and getattr(response, "gateway_refusal", None):
+        # The gateway's own validation sentence names the field and the bound, never a value. Only a refusal the
+        # gateway marked in process gets here: an upstream 400 keeps the fixed sentence.
+        message = getattr(response, "gateway_refusal_text", "") or message
     return message, {"error_code": code or default_code, "error_category": category,
                      "retryable": category in ("capacity", "timeout")}
 
@@ -22911,15 +23000,17 @@ def _retry_after_seconds(response: Response) -> float | None:
         return None
     if value < 0:
         return None
-    return min(value, IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS)
+    return min(value, _image_media_job_retry_max_seconds())
 
 
 def _image_media_job_retry_decision(
     response: Response,
     *,
     attempt: int,
-    max_attempts: int = IMAGE_MEDIA_JOB_MAX_ATTEMPTS,
+    max_attempts: int | None = None,
 ) -> tuple[str, float] | None:
+    if max_attempts is None:
+        max_attempts = _image_media_job_max_attempts()
     if attempt >= max_attempts:
         return None
     status_code = int(getattr(response, "status_code", 0) or 0)
@@ -22944,8 +23035,8 @@ def _image_media_job_retry_decision(
     retry_after = _retry_after_seconds(response)
     if retry_after is not None:
         return reason, retry_after
-    backoff = IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1))
-    return reason, min(backoff, IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS)
+    backoff = _image_media_job_retry_base_seconds() * (2 ** max(0, attempt - 1))
+    return reason, min(backoff, _image_media_job_retry_max_seconds())
 
 
 def _assets_from_image_response(response: Response) -> list[dict[str, Any]]:
@@ -23174,7 +23265,7 @@ def _recover_media_jobs() -> None:
     _resume_pending_audio_media_jobs()
     _resume_pending_video_media_jobs()
     me_make.resume_jobs(runtime=_SESSION_MAKE_RUNTIME, jobs_path=media_jobs.DB_PATH,
-                        enabled=IMAGE_MEDIA_JOB_RESUME_ON_START)
+                        enabled=_image_media_job_resume_on_start())
     supported = {"async_image_generation", "async_audio_generation", "async_video_generation", me_make.JOB_MODE}
     for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
         mode = (job.get("metadata") or {}).get("mode")
@@ -23287,7 +23378,7 @@ async def _run_image_media_job(job_id: str) -> None:
         except ValueError:
             return
 
-        max_attempts = max(1, IMAGE_MEDIA_JOB_MAX_ATTEMPTS)
+        max_attempts = max(1, _image_media_job_max_attempts())
         for attempt in range(1, max_attempts + 1):
             current = media_jobs.get(job_id, path=media_jobs.DB_PATH) or {}
             if (current.get("metadata") or {}).get("cancel_requested_at"):
@@ -23354,8 +23445,8 @@ async def _run_image_media_job(job_id: str) -> None:
                 )
                 if attempt < max_attempts:
                     delay = min(
-                        IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1)),
-                        IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS,
+                        _image_media_job_retry_base_seconds() * (2 ** max(0, attempt - 1)),
+                        _image_media_job_retry_max_seconds(),
                     )
                     media_jobs.append_event(
                         job_id,
@@ -23512,7 +23603,7 @@ def _resume_pending_image_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
+        if not _image_media_job_resume_on_start() or (not opted_in(service) and not COMFY_ENABLED):
             _mark_image_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -24114,7 +24205,7 @@ def _resume_pending_audio_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
+        if not _image_media_job_resume_on_start() or (not opted_in(service) and not COMFY_ENABLED):
             _mark_audio_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -24145,16 +24236,16 @@ async def _submit_audio_media_job(
         return policy_response
 
     request_id = f"audjob_{uuid.uuid4().hex}"
-    workflow_name, _workflow_cfg = _resolve_audio_workflow(str(body.get("model", AUDIO_DEFAULT_WORKFLOW)))
+    workflow_name, _workflow_cfg = _resolve_audio_workflow(str(body.get("model", _audio_default_workflow())))
     if not workflow_name:
-        requested_model = str(body.get("model", AUDIO_DEFAULT_WORKFLOW))
+        requested_model = str(body.get("model", _audio_default_workflow()))
         return model_compatibility_error(
             ModelCompatibilityError(
                 f"Model '{requested_model}' is not available for audio generation.",
                 code="model_not_found",
             )
         )
-    requested_model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
+    requested_model = body.get("model", _audio_default_workflow())
     manifest = _load_audio_workflow_manifest(workflow_name)
     policy_decision = evaluate_and_apply(
         auth_context.identity,
@@ -24316,7 +24407,7 @@ def _validate_video_media_job_body(body: Mapping[str, Any]) -> tuple[str | None,
             media_type="application/json",
         )
 
-    requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    requested_model = body.get("model") or _video_default_workflow()
     try:
         model_resolution = resolve_model_for_operation("videos", requested_model)
     except ModelCompatibilityError as exc:
@@ -24741,7 +24832,7 @@ def _resume_pending_video_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
+        if not _image_media_job_resume_on_start() or (not opted_in(service) and not COMFY_ENABLED):
             _mark_video_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -24785,7 +24876,7 @@ def _video_media_job_step_auth(
     if auth_context is None:
         return _MEDIA_JOB_CALLER_GONE, dict(_MEDIA_JOB_CALLER_GONE_INFO)
     body = payload.get("body") if isinstance(payload.get("body"), Mapping) else {}
-    requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    requested_model = body.get("model") or _video_default_workflow()
     workflow_name = str(job.get("workflow") or "")
     decision = _video_job_policy_decision(auth_context, requested_model, workflow_name)
     if decision.denied:
@@ -24820,7 +24911,7 @@ async def _submit_video_media_job(
     if error_response is not None:
         return error_response
     assert workflow_name is not None
-    requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    requested_model = body.get("model") or _video_default_workflow()
     policy_decision = _video_job_policy_decision(auth_context, requested_model, workflow_name)
     if policy_decision.denied:
         return _policy_denied_response(policy_decision)
@@ -25778,7 +25869,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             )
 
         job, error = await submit_and_collect()
-        if error is not None and IMAGE_FREE_VRAM_ON_EXHAUSTION:
+        if error is not None and _image_free_vram_on_exhaustion():
             if refusal["out_of_memory"]:
                 if await _free_graph_models_if_idle(client):
                     refusal["out_of_memory"] = False
@@ -25976,25 +26067,41 @@ async def videos_extend(request: Request):
 # Audio Generation via ComfyUI (ACE-Step + TangoFlux)
 # =============================================================================
 
-_audio_cfg = config.get("audio", {}) or {}
-AUDIO_DEFAULT_WORKFLOW = _audio_cfg.get("default_workflow", "ace-step-1.5-xl-turbo")
-_AUDIO_WORKFLOWS_DIR_CFG = _audio_cfg.get("workflows_dir", "./workflows/audio")
+# The workflow directory is a storage root: it stays in the startup file (CONFIG_HOMES C10). The rest of the `audio`
+# section (CONFIG_HOMES C8b) is read from the snapshot on every call.
+# The config section the audio settings live in, named once for the startup read below and the snapshot read in _audio().
+_AUDIO_SECTION = "audio"
+_AUDIO_WORKFLOWS_DIR_CFG = (_bootstrap_config.get(_AUDIO_SECTION) or {}).get("workflows_dir", "./workflows/audio")
 AUDIO_WORKFLOWS_DIR = Path(_AUDIO_WORKFLOWS_DIR_CFG)
 if not AUDIO_WORKFLOWS_DIR.is_absolute():
     AUDIO_WORKFLOWS_DIR = (Path(__file__).parent / _AUDIO_WORKFLOWS_DIR_CFG).resolve()
-AUDIO_WORKFLOWS_CFG = (_audio_cfg.get("workflows", {}) or {})
+
+
+def _audio() -> Mapping[str, Any]:
+    """The `audio` section of the snapshot this call reads. A snapshot without it gives an empty mapping."""
+    section = runtime().config.get(_AUDIO_SECTION)
+    return section if isinstance(section, Mapping) else {}
+
+
+def _audio_default_workflow() -> str:
+    return _audio().get("default_workflow", "ace-step-1.5-xl-turbo")
+
+
+def _audio_workflow_table() -> Mapping[str, Any]:
+    return _audio().get("workflows") or {}
 
 
 def _resolve_audio_workflow(model: str) -> tuple:
     """Map model to (name, cfg). Returns (None, None) if not found."""
     candidate = (model or "").strip()
     if not candidate:
-        candidate = AUDIO_DEFAULT_WORKFLOW
-    if candidate in AUDIO_WORKFLOWS_CFG:
-        return candidate, AUDIO_WORKFLOWS_CFG[candidate]
+        candidate = _audio_default_workflow()
+    workflows = _audio_workflow_table()
+    if candidate in workflows:
+        return candidate, workflows[candidate]
     alias_target = AUDIO_ALIASES.get(candidate.lower())
-    if alias_target and alias_target in AUDIO_WORKFLOWS_CFG:
-        return alias_target, AUDIO_WORKFLOWS_CFG[alias_target]
+    if alias_target and alias_target in workflows:
+        return alias_target, workflows[alias_target]
     return None, None
 
 
@@ -26171,7 +26278,7 @@ async def proxy_audio_generate(
     unknown_top_level = detect_unknown_audio_fields(body)
     if unknown_top_level:
         name, reason = next(iter(unknown_top_level.items()))
-        return _audio_extension_error_response(reason, param=name)
+        return _gateway_input_refusal(_audio_extension_error_response(reason, param=name), reason)
     _begin_media_delivery(auth_context, receipt)
     metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
@@ -26179,9 +26286,9 @@ async def proxy_audio_generate(
     try:
         audio_graph.check_request(body)
     except audio_graph.InvalidAudioRequest as error:
-        return openai_error_response(str(error), param=error.param)
+        return _gateway_input_refusal(openai_error_response(str(error), param=error.param), str(error))
 
-    model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
+    model = body.get("model", _audio_default_workflow())
     audio_type = body.get("type", "music")
 
     workflow_name, workflow_cfg = _resolve_audio_workflow(model)
@@ -26230,7 +26337,7 @@ async def proxy_audio_generate(
     try:
         inputs = audio_graph.manifest_inputs(body, manifest=effective)
     except audio_graph.InvalidAudioRequest as error:
-        return openai_error_response(str(error), param=error.param)
+        return _gateway_input_refusal(openai_error_response(str(error), param=error.param), str(error))
     except ManifestError as error:
         print(f"[proxy] audio workflow {workflow_name} manifest cannot serve this request: {error}", flush=True)
         return openai_error_response(f"Workflow manifest for {workflow_name} cannot serve this request",
@@ -26276,7 +26383,7 @@ async def proxy_audio_generate(
     try:
         workflow = node_graph.compile_workflow(effective, _GRAPH_BINDING, workflow, inputs)
     except node_graph.InputRefused as error:
-        return openai_error_response(str(error), param=error.param)
+        return _gateway_input_refusal(openai_error_response(str(error), param=error.param), str(error))
     except ManifestError as error:
         # The manifest's map does not fit its template: a deployment fault, not the caller's.
         print(f"[proxy] audio workflow {workflow_name} binding does not fit its template: {error}", flush=True)
@@ -26447,7 +26554,7 @@ async def audio_generate(request: Request):
 def _audio_models_for_caller(auth_context: AuthContext) -> list[dict[str, Any]]:
     """Audio workflows this caller may see; runs category reads, so call it off the loop."""
     models = []
-    for name, cfg in AUDIO_WORKFLOWS_CFG.items():
+    for name, cfg in _audio_workflow_table().items():
         if not discovery_allows(auth_context.identity, make_policy_request(
             protocol="openai.audio", intent=INTENT_AUDIO_GENERATE,
             model=name, workflow=f"audio.generate.{name}",
