@@ -132,7 +132,7 @@ GATEWAY_CODES = frozenset({
     "address_invalid", "admin_action_header_required", "admin_csrf_required", "admin_forbidden", "alias_policy_unavailable",
     "ambiguous_faces", "asset_missing", "backend_error", "backend_not_found", "backend_recovery_failed", "both_methods_off",
     "builtin_disabled", "canceled", "cannot_start_model", "client_disconnected", "csrf_required", "current_model_unavailable",
-    "cursor_not_found", "custom_voice_engine_unsupported", "decision_backend_error", "engine_address_needs_confirmation",
+    "cursor_not_found", "custom_voice_engine_unsupported", "decision_backend_error", "definition_unavailable", "engine_address_needs_confirmation",
     "engine_credential_origin_mismatch", "engine_credential_unavailable", "engine_protocol_unavailable", "export_failed",
     "face_too_small", "gpu_memory_unavailable", "hosted_tool_not_supported", "idempotency_conflict", "image_client_disconnected",
     "image_generation_timeout", "image_post_processing_failed", "incomplete_rule", "invalid_client", "invalid_connection",

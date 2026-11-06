@@ -23813,7 +23813,7 @@ async def _run_audio_media_job(job_id: str) -> None:
         status_code = int(getattr(response, "status_code", 0) or 0)
         if not 200 <= status_code < 300:
             error = _image_response_json(response).get("error")
-            if isinstance(error, Mapping) and error.get("code") == _DEFINITION_UNAVAILABLE_INFO["error_code"]:
+            if client_errors.error_fields(error)["code"] == _DEFINITION_UNAVAILABLE_INFO["error_code"]:
                 # The route found the job's pin unusable or no longer the workflow its model names.
                 _mark_audio_media_job_failed(job_id, _DEFINITION_UNAVAILABLE, http_status=status_code,
                                              error_info=_DEFINITION_UNAVAILABLE_INFO)
