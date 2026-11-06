@@ -153,8 +153,28 @@ def test_a_record_write_checks_the_control_address_of_either_connection_block(wh
                                                   "config": {"connection": record()["connection"]}})
 
 
-def test_a_record_with_a_malformed_top_level_control_address_is_not_stored():
+def test_a_record_with_a_malformed_control_address_in_its_config_is_not_stored():
     connection = dict(record()["connection"], control_address="http://127.0.0.1:7002/?token=x")
     with pytest.raises(ValueError, match="control_address"):
         service_registry.upsert_service_in_registry({"services": {}}, service_id="fixture",
-                                                    raw={"id": "fixture", "connection": connection})
+                                                    raw={"id": "fixture", "config": {"connection": connection}})
+
+
+def test_the_control_path_never_sends_to_a_control_address_with_a_user():
+    from gateway.engine_control import EngineControlRuntime
+    from gateway.swap_drain import SwapDrain
+
+    sent_to: list = []
+
+    def client_factory(*_a, **_k):
+        sent_to.append("client")
+        raise AssertionError("no client is made")
+
+    connection = dict(record()["connection"], control_address="http://u:p@127.0.0.1:7002")
+    service = {"id": "fixture", "connection": connection,
+               "protocol_operations": {"engine.release": {"method": "POST", "path": "/release"}}}
+    runtime = EngineControlRuntime(service, drain=SwapDrain(), lock_for=lambda _scope: asyncio.Lock(),
+                                   client_factory=client_factory)
+    with pytest.raises(ValueError, match="user"):
+        run(runtime.invoke("engine.release", {}))
+    assert sent_to == []
