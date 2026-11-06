@@ -1128,6 +1128,38 @@ test("A key press on Remove right after a pick removes it", async ({ page }) => 
   await expect(page.getByRole("button", { name: "Choose a file" })).toBeFocused();
 });
 
+for (const [width, inline] of [
+  [434, true],
+  [420, true],
+  [400, false],
+] as const) {
+  test(`A picked row ${width}px wide keeps Replace and Remove ${inline ? "beside the title" : "under the facts"}`, async ({ page }) => {
+    await openTranscribe(page, { width: 1440, height: 900 });
+    await page.getByRole("button", { name: "Choose from Library" }).click();
+    await libraryOpen(page);
+    await page.getByRole("dialog").getByRole("button", { name: LONG_MEMO, exact: true }).click();
+    await libraryClosed(page);
+    const summary = page.locator('[data-slot="picked-summary"]');
+    // The row answers to its own width: pin it to a width (the desktop Workflow field is about 434 px).
+    await summary.evaluate((el, pinned) => {
+      el.style.width = `${pinned}px`;
+      el.style.maxWidth = `${pinned}px`;
+    }, width);
+    await expect.poll(async () => Math.round((await summary.boundingBox())!.width)).toBe(width);
+    const { text, row } = await titleShare(summary);
+    const replace = (await summary.getByRole("button", { name: `Replace ${LONG_MEMO}` }).boundingBox())!;
+    const remove = (await summary.getByRole("button", { name: `Remove ${LONG_MEMO}` }).boundingBox())!;
+    expect(Math.abs(replace.y - remove.y)).toBeLessThanOrEqual(2);
+    expect(remove.x + remove.width).toBeLessThanOrEqual(row.x + row.width + 1);
+    if (inline) {
+      expect(replace.x).toBeGreaterThanOrEqual(text.x + text.width - 1);
+      expect(replace.y).toBeLessThan(text.y + text.height);
+    } else {
+      expect(replace.y).toBeGreaterThanOrEqual(text.y + text.height - 1);
+    }
+  });
+}
+
 test("The desktop dialog's top edge stays where it is while a search shrinks the list, and its bottom moves instead", async ({ page }) => {
   await openPhoto(page, { width: 1440, height: 900 }, MANY_PICTURES);
   await page.getByRole("button", { name: "Choose from Library" }).click();

@@ -25,7 +25,7 @@ export function useObjectUrl(file: File | null | undefined): string | null {
  * big it is, and Replace and remove controls in a group on the right. The sites differ only in the words, never in
  * the layout.
  *
- * The name gets all the free width. Where the row is wide (a container of 28 rem or more) the Replace and remove
+ * The name gets all the free width. Where the row is wide (a container of 26 rem or more) the Replace and remove
  * controls sit in a group on its right. Where it is narrow they would take half of it and cut the name to two words,
  * so they move under the facts, in the name's column, and the name keeps the full width for up to two lines.
  *
@@ -81,10 +81,10 @@ export function PickedSummary({
   const tail = facts.filter((part): part is string => Boolean(part)).join(" · ");
   return (
     <div data-slot="picked-summary" className={cn("@container", className)}>
-      <div className="grid grid-cols-[4rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1 @md:grid-cols-[4rem_minmax(0,1fr)_auto] @md:items-center @md:gap-y-0">
+      <div className="grid grid-cols-[4rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1 @[26rem]:grid-cols-[4rem_minmax(0,1fr)_auto] @[26rem]:items-center @[26rem]:gap-y-0">
         <div
           className={cn(
-            "bg-muted/40 rounded-media row-span-2 flex size-16 shrink-0 items-center justify-center overflow-hidden border @md:row-span-1",
+            "bg-muted/40 rounded-media row-span-2 flex size-16 shrink-0 items-center justify-center overflow-hidden border @[26rem]:row-span-1",
             invalid ? "border-destructive" : "border-input",
           )}
         >
@@ -131,7 +131,7 @@ export function PickedSummary({
             </span>
           )}
         </p>
-        <div className="col-start-2 row-start-2 -ml-3 flex flex-wrap items-center gap-1 @md:col-start-3 @md:row-start-1 @md:ml-0 @md:shrink-0">
+        <div className="col-start-2 row-start-2 -ml-3 flex flex-wrap items-center gap-1 @[26rem]:col-start-3 @[26rem]:row-start-1 @[26rem]:ml-0 @[26rem]:shrink-0">
           {drawable && failed && (
             <Button
               type="button"

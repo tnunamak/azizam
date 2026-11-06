@@ -177,7 +177,10 @@ export function MediaInput({
                 size="sm"
                 className="max-sm:h-11"
                 aria-label={`Remove ${word} for ${label}`}
-                onClick={clear}
+                // The second click of a double-click on a tile can land here while the download runs.
+                onClick={(event) => {
+                  if (!isStrayClickAfterPick(event)) clear();
+                }}
               >
                 <X aria-hidden="true" />
                 Remove

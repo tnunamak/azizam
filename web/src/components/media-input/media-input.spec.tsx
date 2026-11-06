@@ -853,12 +853,12 @@ test("the summary keeps its controls in a group beside the text, and its targets
   })) as HTMLElement;
   const replace = screen.getByRole("button", { name: "Replace A teal fish" });
   const remove = screen.getByRole("button", { name: "Remove A teal fish" });
-  // The row answers to its own width, not the window's: under 28 rem the controls drop under the facts, in the
-  // name's column; from 28 rem up they are a group on the right. The name's column takes all the free width.
+  // The row answers to its own width, not the window's: under 26 rem the controls drop under the facts, in the
+  // name's column; from 26 rem up they are a group on the right. The name's column takes all the free width.
   const grid = summary.firstElementChild as HTMLElement;
   expect(summary.className).toContain("@container");
   expect(grid.className).toContain("grid-cols-[4rem_minmax(0,1fr)]");
-  expect(grid.className).toContain("@md:grid-cols-[4rem_minmax(0,1fr)_auto]");
+  expect(grid.className).toContain("@[26rem]:grid-cols-[4rem_minmax(0,1fr)_auto]");
   const text = summary.querySelector("p")!;
   expect(text.className).toContain("min-w-0");
   expect(text.className).not.toMatch(/(^|\s)(w-|basis-)/);
@@ -867,7 +867,7 @@ test("the summary keeps its controls in a group beside the text, and its targets
   expect(replace.parentElement!.parentElement).toBe(grid);
   expect(text.contains(replace)).toBe(false);
   expect(replace.parentElement!.className).toContain("col-start-2 row-start-2");
-  expect(replace.parentElement!.className).toContain("@md:col-start-3 @md:row-start-1");
+  expect(replace.parentElement!.className).toContain("@[26rem]:col-start-3 @[26rem]:row-start-1");
   expect(remove.className).toContain("size-10");
   expect(remove.className).toContain("max-sm:size-11");
   expect(replace.className).toContain("min-h-10");
@@ -1142,4 +1142,43 @@ test("the desktop dialog's top edge is fixed, not centred, so the search field d
   expect(dialog.className).toContain("sm:top-[12vh]");
   expect(dialog.className).toContain("sm:translate-y-0");
   expect(dialog.className).toContain("sm:max-h-[80vh]");
+});
+
+// ---- Round 6, follow-up ----
+
+test("the second click of a double-click on a tile does not remove the pick while its download is still running", async () => {
+  const served = route(undefined, true);
+  vi.stubGlobal("fetch", served.mock);
+  const onFile = vi.fn();
+  render(<FileHarness onFile={onFile} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  // The first click of the double-click picks the tile; the download is held back.
+  fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }), { detail: 1, clientX: 300, clientY: 400 });
+  const remove = await screen.findByRole("button", { name: "Remove picture for Picture to change" });
+  await waitFor(() => expect(served.signals.length).toBeGreaterThan(1));
+  // The second click arrives on the same spot, on the Remove shown while the picture is being added.
+  fireEvent.click(remove, { detail: 2, clientX: 301, clientY: 400 });
+  expect(screen.getByRole("status").textContent).toContain("Adding picture");
+  expect(served.signals.every((signal) => signal.aborted)).toBe(false);
+  served.release();
+  await waitFor(() => expect(onFile).toHaveBeenCalledTimes(1));
+  expect((onFile.mock.calls[0][0] as File).type).toBe("image/png");
+  expect(await screen.findByRole("button", { name: "Remove A teal fish" })).toBeTruthy();
+});
+
+test("a click on the pending Remove from somewhere else does end the pick", async () => {
+  const served = route(undefined, true);
+  vi.stubGlobal("fetch", served.mock);
+  const onFile = vi.fn();
+  render(<FileHarness onFile={onFile} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }), { detail: 1, clientX: 300, clientY: 400 });
+  const remove = await screen.findByRole("button", { name: "Remove picture for Picture to change" });
+  await waitFor(() => expect(served.signals.length).toBeGreaterThan(1));
+  fireEvent.click(remove, { detail: 1, clientX: 700, clientY: 90 });
+  await waitFor(() => expect(screen.queryByText(/Adding picture/)).toBeNull());
+  served.release();
+  await settle();
+  // Remove told the screen it holds nothing, and no file ever arrived.
+  expect(onFile.mock.calls.every(([file]) => file === null)).toBe(true);
 });
