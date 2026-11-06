@@ -226,14 +226,14 @@ def _config_snapshot_of_one_test() -> Iterator[None]:
     saved = holder.current() if holder is not None else None
     saved_config = module.config if module is not None else None
     egress = sys.modules.get("gateway.engine_egress")
-    saved_egress = (egress._destinations, egress._probe_paths) if egress is not None else None
+    saved_egress = egress._live if egress is not None else None
     yield
     if holder is not None and saved is not None:
         holder.publish(saved)
     if module is not None:
         module.config = saved_config
     if egress is not None and saved_egress is not None:
-        egress._destinations, egress._probe_paths = saved_egress
+        egress._live = saved_egress
 
 
 @pytest.fixture(scope="session")

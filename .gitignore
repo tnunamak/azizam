@@ -162,3 +162,12 @@ data/provider_spend.db-*
 # Provider secret store key (0600) and mutation lock: runtime state, never commit
 data/provider-secrets.key
 data/.provider-mutation.lock
+
+# Runtime state under data/ is never committed: only data/.gitkeep is tracked. Session secrets, databases,
+# caches and locks live here on a running gateway.
+data/*
+!data/.gitkeep
+# Scratch from web builds, exports and browser tooling run at the repository root.
+/.azizam-web-build-*/
+/.azizam-web-export-*/
+/.playwright-mcp/

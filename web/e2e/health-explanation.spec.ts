@@ -83,6 +83,9 @@ test("health popover explains a measured outage and links to Status", async ({
   await expect(banner).toBeVisible();
   const action = banner.getByRole("link", { name: "See Status", exact: true });
   await action.focus();
+  // A gate run once sent this Enter to another link (it opened Models): press it
+  // only once the banner action holds focus.
+  await expect(action).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/status\/?#engines$/);
   // D1: engines and providers share one section on Status.
