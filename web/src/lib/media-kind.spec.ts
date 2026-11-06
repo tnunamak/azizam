@@ -3,6 +3,7 @@ import {
   kindFilterOptions,
   kindFromMediaType,
   kindIcon,
+  kindLayout,
   kindLabel,
   kindPluralLabel,
   kindUntitledName,
@@ -94,5 +95,19 @@ describe("libraryHoldsKind", () => {
     expect(libraryHoldsKind("pheromone")).toBe(false);
     rememberKindNames([{ kind: "pheromone", label: "Pheromone", plural: "Pheromones", untitled: "Pheromone" }]);
     expect(libraryHoldsKind("pheromone")).toBe(true);
+  });
+});
+
+describe("kindLayout", () => {
+  it("lays pictures and video out as a grid of thumbnails", () => {
+    expect(kindLayout("image")).toBe("grid");
+    expect(kindLayout("video")).toBe("grid");
+  });
+
+  it("lays any kind with nothing to look at out as a list, named or not", () => {
+    expect(kindLayout("audio")).toBe("list");
+    expect(kindLayout("model")).toBe("list");
+    expect(kindLayout("pheromone")).toBe("list");
+    expect(kindLayout("file")).toBe("list");
   });
 });

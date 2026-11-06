@@ -19,13 +19,36 @@ export type LibraryAsset = {
   derived_title?: string | null;
   /** Length in seconds, for audio and video, when the Library knows it. */
   duration_s?: number | null;
+  /** Unix seconds, or a date string, when the item was made. */
+  created_at?: number | string | null;
   available?: boolean;
   // Signed links the list carries for showing the item; they are not for sending.
   thumbnail_url?: string | null;
   download_url?: string | null;
 };
 
-export type LibraryPick = Pick<LibraryAsset, "asset_id" | "media_type" | "size_bytes" | "prompt" | "derived_title">;
+export type LibraryPick = Pick<
+  LibraryAsset,
+  "asset_id" | "media_type" | "size_bytes" | "prompt" | "derived_title" | "duration_s"
+>;
+
+/** When an item was made, as a short date ("Oct 20", with the year when it is not this year); null when unknown. */
+export function libraryDate(
+  createdAt: LibraryAsset["created_at"],
+  now: Date = new Date(),
+): string | null {
+  if (createdAt == null || createdAt === "") return null;
+  const date =
+    typeof createdAt === "number"
+      ? new Date(createdAt < 5_000_000_000 ? createdAt * 1000 : createdAt)
+      : new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
 
 /**
  * What the Library calls an item: its prompt, else the name it was derived from, else a plain "<Noun> from your

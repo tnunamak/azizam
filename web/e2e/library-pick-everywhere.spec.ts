@@ -22,7 +22,7 @@ const fixture = (name: string) => readFileSync(path.resolve(__dirname, "fixtures
 const PNG = fixture("teal-fish.png");
 const WAV = fixture("spoken-note.wav");
 
-type Item = { id: string; kind: string; type: string; prompt: string; bytes: Buffer; seconds?: number };
+type Item = { id: string; kind: string; type: string; prompt: string; bytes: Buffer; seconds?: number; madeDaysAgo?: number };
 const picture = (n: number, prompt: string, file: string): Item => ({
   id: `img_${String(n).repeat(64)}`,
   kind: "image",
@@ -30,7 +30,7 @@ const picture = (n: number, prompt: string, file: string): Item => ({
   prompt,
   bytes: fixture(file),
 });
-const recording = (n: number, prompt: string): Item => ({
+const recording = (n: number, prompt: string, madeDaysAgo: number): Item => ({
   id: `aud_${String(n).repeat(64)}`,
   kind: "audio",
   type: "audio/wav",
@@ -38,6 +38,7 @@ const recording = (n: number, prompt: string): Item => ({
   bytes: WAV,
   // The Library's own length for the clip (the fixture runs 2.9 s).
   seconds: 3,
+  madeDaysAgo,
 });
 const PICTURES = [
   picture(1, "A teal fish", "teal-fish.png"),
@@ -45,10 +46,15 @@ const PICTURES = [
   picture(3, "Mountain lake at noon", "mountain-lake.png"),
   picture(4, "City after dark", "city-night.png"),
 ];
+// Two memos share a first half and differ at the end, and one title is long enough to take two lines: a row has to
+// show all of each, or the clips cannot be told apart.
+const LONG_MEMO = "Voice memo: groceries and the dry cleaning by six";
 const RECORDINGS = [
-  recording(5, "A short spoken note"),
-  recording(6, "Voice memo: groceries"),
-  recording(7, "Meeting recap"),
+  recording(5, "A short spoken note", 1),
+  recording(6, "Voice memo: groceries for Sunday dinner", 3),
+  recording(7, "Voice memo: groceries for Monday lunch", 5),
+  recording(8, LONG_MEMO, 9),
+  recording(9, "Meeting recap", 14),
 ];
 const ITEMS = [...PICTURES, ...RECORDINGS];
 // The same four pictures again under new names, so the dialog fills and scrolls: a Library past one screen.
@@ -79,6 +85,9 @@ async function routeLibrary(page: Page, items: Item[] = ITEMS) {
         media_type: item.type,
         prompt: item.prompt,
         ...(item.seconds ? { duration_s: item.seconds } : {}),
+        ...(item.madeDaysAgo !== undefined
+          ? { created_at: Math.floor(Date.now() / 1000) - item.madeDaysAgo * 86_400 }
+          : {}),
         available: true,
         thumbnail_url: `/signed/${item.id}`,
         download_url: `/signed/${item.id}`,
@@ -118,6 +127,23 @@ async function libraryOpen(page: Page) {
   expect(close.x + close.width).toBeLessThanOrEqual(frame.x + frame.width - 20);
   expect(close.y).toBeGreaterThanOrEqual(frame.y + 8);
   expect(Math.abs(close.y + close.height / 2 - (title.y + 12))).toBeLessThan(5);
+  await expect(dialog.locator('[data-slot="dialog-description"]')).toHaveText("Newest first.");
+  // The title wraps only where the words run out of room: it is not balanced (the page's headings are, which would
+  // end each line a hundred pixels short of the close button), and a wrapped title's first line reaches to within a
+  // word of it.
+  const wrap = await dialog.locator('[data-slot="dialog-title"]').evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    // The text is several nodes; a line is the nodes sharing a top edge.
+    const lines = new Map<number, number>();
+    for (const rect of Array.from(range.getClientRects())) {
+      const top = Math.round(rect.top);
+      lines.set(top, (lines.get(top) ?? 0) + rect.width);
+    }
+    return { style: getComputedStyle(el).textWrapStyle, count: lines.size, longest: Math.max(...lines.values()) };
+  });
+  expect(wrap.style).not.toBe("balance");
+  if (wrap.count > 1) expect(close.x - title.x - wrap.longest).toBeLessThan(100);
   await expect.poll(() => dialog.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
   await expect.poll(() => dialog.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
   // The surface is opaque: an rgb() colour, or an rgba() whose alpha is 1.
@@ -143,22 +169,44 @@ async function libraryClosed(page: Page) {
  * name is only what is sent), where it came from with its type and size, and a single remove control named for the
  * title, with a 44 px hit area on a phone. The thumbnail, if it is a picture, has loaded.
  */
-async function pickedSummary(page: Page, scope: Page | Locator, title: string, type: string) {
+async function pickedSummary(
+  page: Page,
+  scope: Page | Locator,
+  title: string,
+  type: string,
+  facts?: RegExp,
+) {
   const summary = scope.locator('[data-slot="picked-summary"]');
   await expect(summary).toHaveCount(1);
   await expect(summary.locator("p > span").first()).toHaveText(title);
+  // The name takes up to two lines, so a long title is not cut to one.
+  const name = await summary.locator("p > span").first().evaluate((el) => ({
+    lines: Math.round(el.clientHeight / parseFloat(getComputedStyle(el).lineHeight)),
+  }));
+  expect(name.lines).toBeLessThanOrEqual(2);
   await expect(summary).toContainText("From your Library");
   await expect(summary).toContainText(type);
   await expect(summary).not.toContainText("library-");
+  // What the Library knew about the item (its length, for a clip) is in the facts line, between type and size.
+  if (facts) await expect(summary).toContainText(facts);
   const remove = summary.getByRole("button", { name: `Remove ${title}` });
-  await expect(summary.getByRole("button")).toHaveCount(1);
+  const replace = summary.getByRole("button", { name: `Replace ${title}` });
+  await expect(summary.getByRole("button")).toHaveCount(2);
   await expect(remove).toBeVisible();
+  await expect(replace).toBeVisible();
+  await expect(replace).toHaveText("Replace");
   const phone = (page.viewportSize()?.width ?? 1440) < 640;
-  const box = (await remove.boundingBox())!;
-  if (phone) {
-    expect(box.width).toBeGreaterThanOrEqual(44);
-    expect(box.height).toBeGreaterThanOrEqual(44);
+  // Both controls are at least 40 x 40 CSS px at every width (44 on a phone), and they do not overlap.
+  const minimum = phone ? 44 : 40;
+  const boxes = [(await replace.boundingBox())!, (await remove.boundingBox())!];
+  for (const box of boxes) {
+    expect(box.width).toBeGreaterThanOrEqual(minimum);
+    expect(box.height).toBeGreaterThanOrEqual(minimum);
   }
+  expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x);
+  // The row does not run past the screen.
+  const frame = (await summary.boundingBox())!;
+  expect(boxes[1].x + boxes[1].width).toBeLessThanOrEqual(frame.x + frame.width + 1);
   // On a phone the source and the facts sit on two lines, with no separator stranded between them.
   const separator = summary.locator("span.max-sm\\:hidden");
   if (phone) await expect(separator).toBeHidden();
@@ -168,6 +216,69 @@ async function pickedSummary(page: Page, scope: Page | Locator, title: string, t
       summary.evaluate((el) => Array.from(el.querySelectorAll("img")).every((img) => img.complete && img.naturalWidth > 0)),
     )
     .toBe(true);
+}
+
+/** The Transcription page with a model that takes audio, and the Library stubbed. */
+async function openTranscribe(page: Page, viewport: { width: number; height: number }) {
+  await page.setViewportSize(viewport);
+  await page.route("**/me/api/models/catalog*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await fulfilJson(
+      route,
+      {
+        ...body,
+        models: [
+          ...(body.models ?? []),
+          {
+            id: "demo-transcribe",
+            name: "demo-transcribe",
+            capability: "transcribe",
+            capabilities: [{ intent: "speech.transcription", input_modalities: ["audio"] }],
+            locality: "local",
+          },
+        ],
+      },
+      { response },
+    );
+  });
+  const listed = await routeLibrary(page);
+  await page.route("**/audio/transcriptions", (route) => fulfilJson(route, { text: "hello there" }));
+  await page.goto("/try/?capability=transcribe");
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toContainText("Demo Transcribe");
+  return listed;
+}
+
+/**
+ * Audio is a list, one row per clip: the icon, the whole title (up to two lines, never cut to one), the length and the
+ * date. Two clips whose titles start alike can be told apart, and a long title is shown in full.
+ */
+async function audioList(page: Page) {
+  const dialog = page.getByRole("dialog");
+  const list = dialog.locator("ul");
+  expect(await list.evaluate((el) => getComputedStyle(el).display)).toBe("flex");
+  const rows = dialog.locator("ul button");
+  await expect(rows).toHaveCount(RECORDINGS.length);
+  const tops = new Set<number>();
+  for (const recorded of RECORDINGS) {
+    const row = dialog.getByRole("button", { name: recorded.prompt, exact: true });
+    await expect(row.locator("svg")).toHaveCount(1);
+    const title = row.locator("span.line-clamp-2");
+    await expect(title).toHaveText(recorded.prompt);
+    await expect(title).toHaveAttribute("title", recorded.prompt);
+    // Not clipped: the text fits the lines it was given, and those are at most two.
+    const fit = await title.evaluate((el) => ({
+      clipped: el.scrollHeight > el.clientHeight + 1,
+      lines: Math.round(el.clientHeight / parseFloat(getComputedStyle(el).lineHeight)),
+    }));
+    expect(fit.clipped, recorded.prompt).toBe(false);
+    expect(fit.lines).toBeLessThanOrEqual(2);
+    await expect(row).toContainText("0:03");
+    await expect(row).toContainText(/\b[A-Z][a-z]{2} \d{1,2}\b/);
+    tops.add(Math.round((await row.boundingBox())!.y));
+  }
+  // One row per clip, one under another.
+  expect(tops.size).toBe(RECORDINGS.length);
 }
 
 async function shot(page: Page, name: string) {
@@ -218,8 +329,16 @@ for (const view of VIEWPORTS) {
     expect(kindRequests.length).toBeGreaterThan(0);
     expect(kindRequests.every((search) => search.includes("kind=image"))).toBe(true);
     await libraryOpen(page);
-    // Each picture has its title as a one-line caption under it.
-    await expect(page.getByRole("dialog").getByRole("button", { name: "A teal fish" }).locator("span.truncate")).toHaveText("A teal fish");
+    // Each picture has its title as a caption under it (up to two lines, with the whole title on hover).
+    const caption = page.getByRole("dialog").getByRole("button", { name: "A teal fish" }).locator("span.line-clamp-2");
+    await expect(caption).toHaveText("A teal fish");
+    await expect(caption).toHaveAttribute("title", "A teal fish");
+    // The dialog is about 720 px wide on a desktop, with five tiles to a row from the lg breakpoint.
+    const frame = (await page.getByRole("dialog").boundingBox())!;
+    if (view.width >= 1024) {
+      expect(frame.width).toBeGreaterThan(700);
+      expect(frame.width).toBeLessThanOrEqual(721);
+    }
     await shot(page, `home-picker-${view.name}`);
     await page.getByRole("button", { name: "A teal fish" }).click();
     await libraryClosed(page);
@@ -324,32 +443,7 @@ for (const view of VIEWPORTS) {
 
 for (const view of VIEWPORTS) {
   test(`Transcription: the audio file comes from the Library at ${view.name}px`, async ({ page }) => {
-    await page.setViewportSize({ width: view.width, height: view.height });
-    await page.route("**/me/api/models/catalog*", async (route) => {
-      const response = await route.fetch();
-      const body = await response.json();
-      await fulfilJson(
-        route,
-        {
-          ...body,
-          models: [
-            ...(body.models ?? []),
-            {
-              id: "demo-transcribe",
-              name: "demo-transcribe",
-              capability: "transcribe",
-              capabilities: [{ intent: "speech.transcription", input_modalities: ["audio"] }],
-              locality: "local",
-            },
-          ],
-        },
-        { response },
-      );
-    });
-    const listed = await routeLibrary(page);
-    await page.route("**/audio/transcriptions", (route) => fulfilJson(route, { text: "hello there" }));
-    await page.goto("/try/?capability=transcribe");
-    await expect(page.getByRole("combobox", { name: "Model", exact: true })).toContainText("Demo Transcribe");
+    const listed = await openTranscribe(page, view);
     await page.getByRole("button", { name: "Choose from Library" }).click();
     await page.getByRole("button", { name: "A short spoken note" }).waitFor();
     await expect(page.getByRole("button", { name: "A teal fish" })).toHaveCount(0);
@@ -357,12 +451,13 @@ for (const view of VIEWPORTS) {
     expect(kindRequests.length).toBeGreaterThan(0);
     expect(kindRequests.every((search) => search.includes("kind=audio"))).toBe(true);
     await libraryOpen(page);
-    // The Library already carries the clip's length, so the tile shows it under the name.
-    await expect(page.getByRole("dialog").getByRole("button", { name: "A short spoken note" })).toContainText("0:03");
+    await audioList(page);
     await shot(page, `transcribe-picker-${view.name}`);
     await page.getByRole("button", { name: "A short spoken note" }).click();
     await libraryClosed(page);
-    await pickedSummary(page, page, "A short spoken note", "WAV");
+    await pickedSummary(page, page, "A short spoken note", "WAV", /WAV · 0:03 · \d[\d.]* [KM]B/);
+    // Recording replaces the chosen file, and the page says so rather than leaving the Record button to surprise.
+    await expect(page.getByText("Recording replaces the audio file above.")).toBeVisible();
     await shot(page, `transcribe-picked-${view.name}`);
     const request = page.waitForRequest("**/audio/transcriptions");
     await page.getByRole("button", { name: "Run", exact: true }).click();
@@ -371,6 +466,63 @@ for (const view of VIEWPORTS) {
     expect(posted.includes(WAV)).toBe(true);
   });
 }
+
+for (const view of VIEWPORTS) {
+  test(`Transcription: Replace takes another clip in one step at ${view.name}px`, async ({ page }) => {
+    await openTranscribe(page, view);
+    // Nothing is chosen yet: no Replace, and no note about recording over a file.
+    await expect(page.getByText("Recording replaces the audio file above.")).toHaveCount(0);
+    await page.getByRole("button", { name: "Choose from Library" }).click();
+    await libraryOpen(page);
+    await page.getByRole("button", { name: "A short spoken note" }).click();
+    await libraryClosed(page);
+    await pickedSummary(page, page, "A short spoken note", "WAV");
+
+    // Replace opens the same dialog; closing it leaves the choice as it was.
+    await page.getByRole("button", { name: "Replace A short spoken note" }).click();
+    await libraryOpen(page);
+    await shot(page, `transcribe-replace-${view.name}`);
+    await page.keyboard.press("Escape");
+    await libraryClosed(page);
+    await pickedSummary(page, page, "A short spoken note", "WAV");
+
+    // Choosing another from it swaps the clip: the page holds the new one and sends its bytes.
+    await page.getByRole("button", { name: "Replace A short spoken note" }).click();
+    await libraryOpen(page);
+    await page.getByRole("dialog").getByRole("button", { name: "Meeting recap", exact: true }).click();
+    await libraryClosed(page);
+    await pickedSummary(page, page, "Meeting recap", "WAV", /WAV · 0:03/);
+    await expect(page.getByText("A short spoken note")).toHaveCount(0);
+    await shot(page, `transcribe-replaced-${view.name}`);
+    const request = page.waitForRequest("**/audio/transcriptions");
+    await page.getByRole("button", { name: "Run", exact: true }).click();
+    expect(((await request).postDataBuffer() as Buffer).includes(WAV)).toBe(true);
+  });
+}
+
+test("Transcription: a keyboard open puts a visible focus ring on the first clip", async ({ page }) => {
+  await openTranscribe(page, { width: 1440, height: 900 });
+  const trigger = page.getByRole("button", { name: "Choose from Library" });
+  for (let presses = 0; presses < 60; presses += 1) {
+    if (await trigger.evaluate((el) => el === document.activeElement)) break;
+    await page.keyboard.press("Tab");
+  }
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press("Enter");
+  await libraryOpen(page);
+  const first = page.getByRole("dialog").locator("ul button").first();
+  await expect(first).toBeFocused();
+  expect(await first.evaluate((el) => el.matches(":focus-visible"))).toBe(true);
+  // The ring is a drawn shadow around the row, not just a state the browser knows about.
+  const ring = await first.evaluate((el) => getComputedStyle(el).boxShadow);
+  expect(ring).not.toBe("none");
+  expect(ring).toMatch(/\d+px/);
+  await shot(page, "transcribe-keyboard-focus-1440");
+  // Enter on the focused clip picks it.
+  await page.keyboard.press("Enter");
+  await libraryClosed(page);
+  await expect(page.locator('[data-slot="picked-summary"]')).toHaveCount(1);
+});
 
 for (const view of VIEWPORTS) {
   test(`A Library of ${MANY_PICTURES.length} pictures scrolls inside the dialog at ${view.name}px`, async ({ page }) => {
@@ -384,9 +536,35 @@ for (const view of VIEWPORTS) {
     await libraryOpen(page);
     const dialog = page.getByRole("dialog");
     await expect(dialog.locator("ul button")).toHaveCount(MANY_PICTURES.length);
+    const frame = (await dialog.boundingBox())!;
+    const header = dialog.locator('[data-slot="library-picker-header"]');
+    // At the top the header has no edge; once the tiles scroll under it, it has one.
+    await expect(header).not.toHaveAttribute("data-scrolled");
+    const edge = () => header.evaluate((el) => getComputedStyle(el).borderBottomColor);
+    expect(await edge()).toBe("rgba(0, 0, 0, 0)");
+    // Three tiles to a row on a phone, five on a desktop (lg and up).
+    const firstRow = await dialog.locator("ul button").evaluateAll((nodes) => {
+      const top = nodes[0].getBoundingClientRect().top;
+      return nodes.filter((node) => Math.abs(node.getBoundingClientRect().top - top) < 2).length;
+    });
+    expect(firstRow).toBe(view.width >= 1024 ? 5 : 3);
+    // At the desktop width every caption shows what makes it different: "City after dark 10" is whole, not cut to
+    // "City after dar…", so it can be told from "… 11".
+    if (view.width >= 1024) {
+      expect(frame.width).toBeGreaterThan(700);
+      expect(frame.width).toBeLessThanOrEqual(721);
+      const clipped = await dialog.locator("ul button span.line-clamp-2").evaluateAll((nodes) =>
+        nodes
+          .filter((node) => node.scrollHeight > node.clientHeight + 1 || node.scrollWidth > node.clientWidth + 1)
+          .map((node) => node.textContent),
+      );
+      expect(clipped).toEqual([]);
+      await expect(dialog.getByRole("button", { name: "City after dark 10", exact: true }).locator("span.line-clamp-2")).toHaveText(
+        "City after dark 10",
+      );
+    }
     await shot(page, `library-full-${view.name}`);
     // The dialog has a maximum height; the tiles scroll inside it while the header and its close button stay put.
-    const frame = (await dialog.boundingBox())!;
     expect(frame.height).toBeLessThanOrEqual(view.height * 0.85 + 1);
     const body = dialog.locator('[data-slot="library-picker-body"]');
     expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight + 100)).toBe(true);
@@ -395,6 +573,9 @@ for (const view of VIEWPORTS) {
     await body.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
     await expect.poll(() => body.evaluate((el) => Math.round(el.scrollTop + el.clientHeight) >= el.scrollHeight - 1)).toBe(true);
     await expect(close).toBeInViewport({ ratio: 1 });
+    await expect(header).toHaveAttribute("data-scrolled", "true");
+    await expect.poll(edge).not.toBe("rgba(0, 0, 0, 0)");
+    expect(await header.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none");
     const after = (await close.boundingBox())!;
     expect(after.y).toBe(before.y);
     expect((await dialog.boundingBox())!.y).toBe(frame.y);
@@ -404,35 +585,20 @@ for (const view of VIEWPORTS) {
 }
 
 test("The Library dialog at 360px: the title clears the close button", async ({ page }) => {
-  await page.setViewportSize({ width: 360, height: 740 });
-  await page.route("**/me/api/models/catalog*", async (route) => {
-    const response = await route.fetch();
-    const body = await response.json();
-    await fulfilJson(
-      route,
-      {
-        ...body,
-        models: [
-          ...(body.models ?? []),
-          {
-            id: "demo-transcribe",
-            name: "demo-transcribe",
-            capability: "transcribe",
-            capabilities: [{ intent: "speech.transcription", input_modalities: ["audio"] }],
-            locality: "local",
-          },
-        ],
-      },
-      { response },
-    );
-  });
-  await routeLibrary(page);
-  await page.goto("/try/?capability=transcribe");
+  await openTranscribe(page, { width: 360, height: 740 });
   await page.getByRole("button", { name: "Choose from Library" }).click();
   await libraryOpen(page);
+  await audioList(page);
   await shot(page, "transcribe-picker-360");
   await page.getByRole("button", { name: "A short spoken note" }).click();
   await libraryClosed(page);
-  await pickedSummary(page, page, "A short spoken note", "WAV");
+  await pickedSummary(page, page, "A short spoken note", "WAV", /WAV · 0:03/);
   await shot(page, "transcribe-picked-360");
+  // The long memo's title fits the picked row on a phone, over two lines at most.
+  await page.getByRole("button", { name: "Replace A short spoken note" }).click();
+  await libraryOpen(page);
+  await page.getByRole("dialog").getByRole("button", { name: LONG_MEMO, exact: true }).click();
+  await libraryClosed(page);
+  await pickedSummary(page, page, LONG_MEMO, "WAV");
+  await shot(page, "transcribe-picked-long-360");
 });

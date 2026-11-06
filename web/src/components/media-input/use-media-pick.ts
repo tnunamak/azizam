@@ -85,7 +85,7 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     [],
   );
 
-  const [source, setSource] = useState<{ label: string; file: File | null; title?: string } | null>(null);
+  const [source, setSource] = useState<{ label: string; file: File | null; title?: string; seconds?: number | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   // A read or download is under way: the choice is not in the form yet.
@@ -183,7 +183,7 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
       });
       if (active.current !== operation) return;
       if (!(await handOver(picked, operation))) return;
-      setSource({ label: LIBRARY_SOURCE, file: picked, title: libraryTitle(pick, noun) });
+      setSource({ label: LIBRARY_SOURCE, file: picked, title: libraryTitle(pick, noun), seconds: pick.duration_s });
       setPendingState(false);
     } catch (failure) {
       if (active.current !== operation) return;
@@ -218,6 +218,8 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     sourceFile: held ? held.file : null,
     /** What the Library calls the item picked from it; the file's own name is only what is sent. */
     sourceTitle: held ? (held.title ?? null) : null,
+    /** The length of the item picked from the Library, in seconds, when the Library knew it. */
+    sourceSeconds: held?.seconds ?? null,
     take,
     pickFromLibrary,
     openFileDialog: () => fileInput.current?.click(),
@@ -226,6 +228,18 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
       setLibraryOpen(true);
     },
     setLibraryOpen,
+    /**
+     * Takes another in one step, the way the first was chosen: the Library again for an item from it (or one whose
+     * source is not known), the file dialog for a file from disk or an input with no Library.
+     */
+    replaceChosen: () => {
+      if (libraryAvailable && (!held || held.label === LIBRARY_SOURCE)) {
+        supersede();
+        setLibraryOpen(true);
+      } else {
+        fileInput.current?.click();
+      }
+    },
     /** Ends a pending read or download and forgets the source: Remove, or an edit that replaces the choice. */
     clear: () => {
       supersede();

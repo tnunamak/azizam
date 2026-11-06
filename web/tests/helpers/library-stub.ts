@@ -12,6 +12,10 @@ export type StubbedItem = {
   mediaType: string;
   bytes: number[];
   prompt: string;
+  /** The Library's length for the item, in seconds. */
+  seconds?: number;
+  /** When the item was made, in unix seconds. */
+  createdAt?: number;
 };
 
 export const PICTURE_ITEM: StubbedItem = {
@@ -51,6 +55,8 @@ export function stubbedLibrary(
             kind: item.kind,
             media_type: item.mediaType,
             prompt: item.prompt,
+            ...(item.seconds ? { duration_s: item.seconds } : {}),
+            ...(item.createdAt ? { created_at: item.createdAt } : {}),
             available: true,
             thumbnail_url: signed(item),
             download_url: signed(item),

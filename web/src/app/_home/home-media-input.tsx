@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/cn";
 import { kindIcon } from "@/lib/media-kind";
-import { sizeWords, typeWords } from "@/lib/media-pick";
+import { formatDuration, sizeWords, typeWords } from "@/lib/media-pick";
 import type { MediaInput } from "./home-model";
 import { fitsMediaInput, mediaPhrase } from "./home-model";
 
@@ -144,11 +144,16 @@ export function HomeMediaInput({
         <PickedSummary
           name={pick.sourceTitle ?? file.name}
           source={pick.source === LIBRARY_SOURCE ? LIBRARY_SOURCE : null}
-          facts={[typeWords(file.type), sizeWords(file.size)]}
+          facts={[
+            typeWords(file.type),
+            pick.sourceSeconds && pick.sourceSeconds > 0 ? formatDuration(pick.sourceSeconds) : null,
+            sizeWords(file.size),
+          ]}
           kind={file.type.split("/")[0] || input.modality}
           previewUrl={preview}
           previewAlt={`Your ${input.word}: ${file.name}`}
           retryLabel={`Retry preview of ${file.name}`}
+          onReplace={disabled ? undefined : pick.replaceChosen}
           onRemove={() => {
             pick.clear();
             onFile(null);

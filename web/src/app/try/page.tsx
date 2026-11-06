@@ -3116,6 +3116,11 @@ export default function TryPage() {
                           Stop
                         </Button>
                       </div>
+                      {file && !recording && (
+                        <p className="text-muted-foreground text-xs">
+                          Recording replaces the audio file above.
+                        </p>
+                      )}
                     </div>
                   )}
                   {tab.value === "decide" && (

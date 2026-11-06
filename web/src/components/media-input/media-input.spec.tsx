@@ -469,7 +469,7 @@ test("the From your Library label goes when a pasted or recorded file replaces t
   expect(screen.getByText("pasted.png")).toBeTruthy();
 });
 
-test("a chosen file is one summary: name, source and size, with one remove control, in both modes", async () => {
+test("a chosen file is one summary: name, source and size, with Replace and remove controls, in both modes", async () => {
   vi.stubGlobal("fetch", route().mock);
   function Both() {
     const [file, setFile] = useState<File | null>(null);
@@ -490,7 +490,8 @@ test("a chosen file is one summary: name, source and size, with one remove contr
   for (const summary of Array.from(document.querySelectorAll<HTMLElement>('[data-slot="picked-summary"]'))) {
     expect(summary.textContent).toContain("fox.png");
     expect(summary.textContent).toContain("2 KB");
-    expect(summary.querySelectorAll("button").length).toBe(1);
+    // Two controls: Replace and remove.
+    expect(Array.from(summary.querySelectorAll("button")).map((button) => button.textContent)).toEqual(["Replace", ""]);
   }
   fireEvent.click(screen.getAllByRole("button", { name: "Remove fox.png" })[1]);
   expect(document.querySelectorAll('[data-slot="picked-summary"]').length).toBe(1);
@@ -530,10 +531,13 @@ test("the Library dialog: a caption under each picture, a duration under an audi
   render(<FileHarness onFile={() => {}} />);
   fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
   const tile = await screen.findByRole("button", { name: "A teal fish that swims by the reef" });
-  expect(tile.querySelector("span.truncate")?.textContent).toBe("A teal fish that swims by the reef");
+  // The caption takes up to two lines and carries the whole title on hover.
+  const caption = tile.querySelector("span.line-clamp-2");
+  expect(caption?.textContent).toBe("A teal fish that swims by the reef");
+  expect(caption?.getAttribute("title")).toBe("A teal fish that swims by the reef");
   expect(tile.textContent).toContain("0:07");
   expect(tile.getAttribute("title")).toBe("A teal fish that swims by the reef");
-  expect(screen.getByText("Your Library, newest first.")).toBeTruthy();
+  expect(screen.getByText("Newest first.")).toBeTruthy();
   await waitFor(() => expect(document.activeElement).toBe(tile));
   // The close button sits in the header row, not over the title.
   const header = document.querySelector('[data-slot="library-picker-header"]')!;
@@ -546,4 +550,126 @@ test("an item with no duration shows no duration line", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
   const tile = await screen.findByRole("button", { name: "A teal fish" });
   expect(tile.textContent).toBe("A teal fish");
+});
+
+const DAY = 86_400;
+const NOW_S = Math.floor(Date.now() / 1000);
+const memo = (letter: string, prompt: string, daysAgo: number) => ({
+  ...RECORDING_ITEM,
+  assetId: `aud_${letter.repeat(64)}`,
+  prompt,
+  seconds: 83,
+  createdAt: NOW_S - daysAgo * DAY,
+});
+
+test("audio is a list of rows, each with the icon, the whole title, the length and the date", async () => {
+  const sunday = memo("c", "Voice memo: groceries for Sunday dinner, and the long list of things to do before the guests arrive", 2);
+  const monday = memo("d", "Voice memo: groceries for Monday lunch", 4);
+  const library = stubbedLibrary([sunday, monday]);
+  vi.stubGlobal("fetch", vi.fn(library.impl));
+  render(<MediaInput id="clip" label="Audio file" kind="audio" file={null} onFileChange={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  const first = await screen.findByRole("button", { name: sunday.prompt.slice(0, 80) });
+  const second = await screen.findByRole("button", { name: monday.prompt });
+  const list = first.closest("ul")!;
+  expect(list.className).toContain("flex-col");
+  expect(list.className).not.toContain("grid");
+  for (const row of [first, second]) {
+    expect(row.querySelector("svg")).not.toBeNull();
+    expect(row.querySelector("img, video")).toBeNull();
+    expect(row.textContent).toContain("1:23");
+    expect(row.textContent).toMatch(/\b[A-Z][a-z]{2} \d{1,2}\b/);
+    const title = row.querySelector("span.line-clamp-2")!;
+    expect(title.getAttribute("title")).toBe(row.getAttribute("aria-label"));
+  }
+  // Two clips that begin alike are told apart by the end of the title, and neither is cut to one line.
+  expect(first.querySelector("span.line-clamp-2")?.textContent).toContain("Sunday dinner");
+  expect(second.querySelector("span.line-clamp-2")?.textContent).toContain("Monday lunch");
+  expect(first.querySelector("span.truncate")).toBeNull();
+});
+
+test("a picture or a video is a grid; a kind with nothing to look at is a list", async () => {
+  const library = stubbedLibrary([PICTURE_ITEM, { ...RECORDING_ITEM, kind: "model", mediaType: "model/gltf-binary", prompt: "A chair" }]);
+  vi.stubGlobal("fetch", vi.fn(library.impl));
+  render(<MediaInput id="picture" label="Picture" kind="image" file={null} onFileChange={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  const tile = await screen.findByRole("button", { name: "A teal fish" });
+  expect(tile.closest("ul")!.className).toContain("grid-cols-3");
+  // Five to a row from lg, so a desktop dialog shows more at once.
+  expect(tile.closest("ul")!.className).toContain("lg:grid-cols-5");
+  cleanup();
+  vi.stubGlobal("fetch", vi.fn(library.impl));
+  render(<MediaInput id="solid" label="Model" kind="model" file={null} onFileChange={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  const row = await screen.findByRole("button", { name: "A chair" });
+  expect(row.closest("ul")!.className).toContain("flex-col");
+});
+
+test("the header shows an edge once the tiles have scrolled under it", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  await screen.findByRole("button", { name: "A teal fish" });
+  const header = document.querySelector<HTMLElement>('[data-slot="library-picker-header"]')!;
+  const body = document.querySelector<HTMLElement>('[data-slot="library-picker-body"]')!;
+  expect(header.hasAttribute("data-scrolled")).toBe(false);
+  body.scrollTop = 40;
+  fireEvent.scroll(body);
+  expect(header.hasAttribute("data-scrolled")).toBe(true);
+  body.scrollTop = 0;
+  fireEvent.scroll(body);
+  expect(header.hasAttribute("data-scrolled")).toBe(false);
+});
+
+test("a picked Library clip shows its length between the type and the size", async () => {
+  const library = stubbedLibrary([{ ...RECORDING_ITEM, seconds: 3 }]);
+  vi.stubGlobal("fetch", vi.fn(library.impl));
+  function AudioHarness() {
+    const [file, setFile] = useState<File | null>(null);
+    return <MediaInput id="clip" label="Audio file" kind="audio" file={file} onFileChange={setFile} />;
+  }
+  render(<AudioHarness />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  fireEvent.click(await screen.findByRole("button", { name: "A short spoken note" }));
+  const summary = await waitFor(() => {
+    const found = document.querySelector<HTMLElement>('[data-slot="picked-summary"]');
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  expect(summary.textContent).toMatch(/From your Library.*WAV · 0:03 · \d+(\.\d+)? [KM]B/);
+});
+
+test("Replace opens the Library again for a Library pick, and a new pick takes the old one's place", async () => {
+  const library = stubbedLibrary([
+    PICTURE_ITEM,
+    { ...PICTURE_ITEM, assetId: `img_${"e".repeat(64)}`, prompt: "A red kite" },
+  ]);
+  vi.stubGlobal("fetch", vi.fn(library.impl));
+  const onFile = vi.fn();
+  render(<FileHarness onFile={onFile} />);
+  await openAndPick();
+  fireEvent.click(await screen.findByRole("button", { name: "Replace A teal fish" }));
+  expect(await screen.findByRole("heading", { name: "Choose a picture from your Library" })).toBeTruthy();
+  // Leaving the dialog keeps the choice.
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("button", { name: "Remove A teal fish" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Replace A teal fish" }));
+  fireEvent.click(await screen.findByRole("button", { name: "A red kite" }));
+  expect(await screen.findByRole("button", { name: "Remove A red kite" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Remove A teal fish" })).toBeNull();
+  expect(onFile).toHaveBeenLastCalledWith(expect.any(File));
+});
+
+test("Replace on a file from disk opens the file dialog again", () => {
+  vi.stubGlobal("fetch", route().mock);
+  render(<FileHarness onFile={() => {}} />);
+  const input = document.querySelector<HTMLInputElement>("input[data-media-file-input]")!;
+  fireEvent.change(input, { target: { files: [new File([new Uint8Array(1024)], "fox.png", { type: "image/png" })] } });
+  const click = vi.spyOn(input, "click");
+  return screen.findByRole("button", { name: "Replace fox.png" }).then((replace) => {
+    fireEvent.click(replace);
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
 });

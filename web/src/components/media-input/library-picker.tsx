@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/product";
-import { kindIcon } from "@/lib/media-kind";
+import { kindIcon, kindLayout } from "@/lib/media-kind";
 import { networkFetch } from "@/lib/network-error";
 import {
   fileFitsTypes,
@@ -21,7 +21,7 @@ import {
   withArticle,
   type MediaTypes,
 } from "@/lib/media-pick";
-import { libraryTitle, type LibraryAsset, type LibraryPick } from "@/lib/library-file";
+import { libraryDate, libraryTitle, type LibraryAsset, type LibraryPick } from "@/lib/library-file";
 
 type LibraryPage = { assets?: LibraryAsset[]; next_cursor?: string | null };
 
@@ -50,6 +50,8 @@ export function LibraryPicker({
 }) {
   const noun = nounOverride ?? mediaNoun(kind);
   const Icon = kindIcon(kind);
+  // A picture or video is a grid of thumbnails; a kind with nothing to look at (audio) is a list of rows.
+  const layout = kindLayout(kind);
   const [state, setState] = useState<"idle" | "loading" | "error" | "ready">(
     "idle",
   );
@@ -57,6 +59,8 @@ export function LibraryPicker({
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [more, setMore] = useState<"idle" | "loading" | "error">("idle");
   const [unshown, setUnshown] = useState<Set<string>>(new Set());
+  // The tiles have scrolled under the header: it shows an edge so they do not run into it.
+  const [scrolled, setScrolled] = useState(false);
   const content = useRef<HTMLDivElement>(null);
   const [attempt, setAttempt] = useState(0);
   const [previousOpen, setPreviousOpen] = useState(open);
@@ -74,6 +78,7 @@ export function LibraryPicker({
       setAssets([]);
       setNextCursor(null);
       setUnshown(new Set());
+      setScrolled(false);
     }
   }
 
@@ -172,12 +177,19 @@ export function LibraryPicker({
           event.preventDefault();
           content.current?.focus();
         }}
-        className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-2xl"
+        className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-[720px]!"
       >
         {/* The header and its close button stay put; the tiles scroll under them. */}
-        <div data-slot="library-picker-header" className="flex flex-col gap-2 text-left">
+        <div
+          data-slot="library-picker-header"
+          data-scrolled={scrolled || undefined}
+          className={`flex flex-col gap-2 border-b pb-3 text-left transition-[border-color,box-shadow] ${
+            scrolled ? "border-border shadow-[0_8px_8px_-8px_rgb(0_0_0/0.18)]" : "border-transparent"
+          }`}
+        >
           <div className="flex items-start gap-3">
-            <DialogTitle className="min-w-0 flex-1 leading-snug!">
+            {/* text-pretty: the page's balanced headings would wrap this title early and leave the line half empty. */}
+            <DialogTitle className="min-w-0 flex-1 leading-snug! text-pretty">
               Choose {withArticle(noun)} from your Library
             </DialogTitle>
             {/* As tall as the title's first line, so the button is centred on it and sits inside the dialog's padding. */}
@@ -191,15 +203,27 @@ export function LibraryPicker({
               </DialogClose>
             </div>
           </div>
-          <DialogDescription>Your Library, newest first.</DialogDescription>
+          <DialogDescription>Newest first.</DialogDescription>
         </div>
-        <div data-slot="library-picker-body" className="-m-1 flex min-h-0 flex-col gap-4 overflow-y-auto p-1">
+        <div
+          data-slot="library-picker-body"
+          onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
+          className="-m-1 flex min-h-0 flex-col gap-4 overflow-y-auto p-1"
+        >
           {state === "loading" && (
-            <div aria-busy="true" className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-              {Array.from({ length: 8 }, (_, index) => (
-                <Skeleton key={index} className="aspect-square w-full" />
-              ))}
-            </div>
+            layout === "grid" ? (
+              <div aria-busy="true" className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
+                {Array.from({ length: 10 }, (_, index) => (
+                  <Skeleton key={index} className="aspect-square w-full" />
+                ))}
+              </div>
+            ) : (
+              <div aria-busy="true" className="flex flex-col gap-2">
+                {Array.from({ length: 5 }, (_, index) => (
+                  <Skeleton key={index} className="h-14 w-full" />
+                ))}
+              </div>
+            )
           )}
           {state === "error" && (
             <ErrorState
@@ -216,8 +240,41 @@ export function LibraryPicker({
               No {noun}s in your Library yet. Make one, or choose a file.
             </p>
           )}
-          {state === "ready" && assets.length > 0 && (
-            <ul className="grid grid-cols-3 gap-x-2 gap-y-3 sm:grid-cols-4">
+          {state === "ready" && assets.length > 0 && layout === "list" && (
+            <ul className="flex flex-col gap-1">
+              {assets.map((asset) => {
+                const title = libraryTitle(asset, noun);
+                const length =
+                  typeof asset.duration_s === "number" && asset.duration_s > 0
+                    ? formatDuration(asset.duration_s)
+                    : null;
+                const facts = [length, libraryDate(asset.created_at)].filter(Boolean).join(" · ");
+                return (
+                  <li key={asset.asset_id} className="min-w-0">
+                    <button
+                      type="button"
+                      title={title}
+                      aria-label={title}
+                      onClick={() => onPick(asset)}
+                      className="focus-visible:ring-ring/50 hover:bg-muted/60 rounded-media flex min-h-14 w-full items-center gap-3 p-2 text-left focus-visible:ring-[3px] focus-visible:outline-none"
+                    >
+                      <span className="rounded-media bg-muted/40 text-muted-foreground flex size-10 shrink-0 items-center justify-center border">
+                        <Icon aria-hidden="true" className="size-5" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span title={title} className="line-clamp-2 text-sm font-medium break-words">
+                          {title}
+                        </span>
+                        {facts && <span className="text-muted-foreground text-meta block">{facts}</span>}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {state === "ready" && assets.length > 0 && layout === "grid" && (
+            <ul className="grid grid-cols-3 gap-x-2 gap-y-3 sm:grid-cols-4 lg:grid-cols-5">
               {assets.map((asset) => {
                 const title = libraryTitle(asset, noun);
                 // The list's own signed links show the item; the download route
@@ -226,7 +283,6 @@ export function LibraryPicker({
                   (kind === "image" ? asset.thumbnail_url : null) ??
                   asset.download_url;
                 const src = link && !unshown.has(asset.asset_id) ? link : null;
-                const drawn = kind === "image" || kind === "video";
                 const length =
                   typeof asset.duration_s === "number" && asset.duration_s > 0
                     ? formatDuration(asset.duration_s)
@@ -241,14 +297,10 @@ export function LibraryPicker({
                       className="focus-visible:ring-ring/50 rounded-media flex w-full flex-col gap-1 text-left focus-visible:ring-[3px] focus-visible:outline-none"
                     >
                       <span className="rounded-media bg-muted/40 flex aspect-square w-full items-center justify-center overflow-hidden border">
-                        {!drawn || !src ? (
+                        {!src ? (
                           <span className="text-muted-foreground flex flex-col items-center gap-1 p-1 text-xs">
-                            {drawn ? (
-                              <ImageIcon aria-hidden="true" className="size-6" />
-                            ) : (
-                              <Icon aria-hidden="true" className="size-6" />
-                            )}
-                            {drawn && "Preview unavailable"}
+                            <ImageIcon aria-hidden="true" className="size-6" />
+                            Preview unavailable
                           </span>
                         ) : kind === "video" ? (
                           <video
@@ -269,7 +321,9 @@ export function LibraryPicker({
                           />
                         )}
                       </span>
-                      <span className="text-meta block truncate font-medium">{title}</span>
+                      <span title={title} className="text-meta line-clamp-2 font-medium break-words">
+                        {title}
+                      </span>
                       {length && (
                         <span className="text-muted-foreground text-meta -mt-1 block">{length}</span>
                       )}

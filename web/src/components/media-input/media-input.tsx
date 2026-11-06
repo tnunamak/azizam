@@ -3,7 +3,7 @@
 import { Library, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { MAX_MEDIA_BYTES, readAsDataUri, sizeWords, typeWords, type MediaTypes } from "@/lib/media-pick";
+import { MAX_MEDIA_BYTES, formatDuration, readAsDataUri, sizeWords, typeWords, type MediaTypes } from "@/lib/media-pick";
 import { limitLabel } from "@/lib/library-file";
 import { LibraryPicker } from "./library-picker";
 import { PickedSummary, useObjectUrl } from "./picked-summary";
@@ -108,12 +108,21 @@ export function MediaInput({
           key={fileMode ? "file" : "reference"}
           name={pick.sourceTitle ?? (named ? named.name : dataUriChosen ? `Chosen ${word}` : `${capitalWord} from a link`)}
           source={fromLibrary ? LIBRARY_SOURCE : null}
-          facts={named ? [typeWords(named.type), sizeWords(named.size)] : []}
+          facts={
+            named
+              ? [
+                  typeWords(named.type),
+                  pick.sourceSeconds && pick.sourceSeconds > 0 ? formatDuration(pick.sourceSeconds) : null,
+                  sizeWords(named.size),
+                ]
+              : []
+          }
           kind={drawn}
           previewUrl={preview}
           previewAlt={`Chosen ${word}`}
           retryLabel={`Retry preview of ${word} for ${label}`}
           invalid={invalid}
+          onReplace={pick.replaceChosen}
           onRemove={clear}
         />
       ) : (

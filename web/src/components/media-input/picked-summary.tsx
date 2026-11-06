@@ -21,7 +21,7 @@ export function useObjectUrl(file: File | null | undefined): string | null {
 /**
  * What every media input shows once something is chosen: a thumbnail (or the kind's icon), the name (the Library's
  * title for an item taken from it, else the file's name), a line under it with where it came from and what and how
- * big it is, and one remove control on the same row. The sites differ only in the words, never in the layout.
+ * big it is, and a Replace and a remove control on the same row. The sites differ only in the words, never in the layout.
  *
  * On a phone the source sits on its own line over the facts ("PNG · 19 KB"), so no separator is stranded at the end
  * of a line; from `sm` up they share one line, "From your Library · PNG · 19 KB".
@@ -35,6 +35,7 @@ export function PickedSummary({
   previewAlt,
   retryLabel,
   invalid = false,
+  onReplace,
   onRemove,
   className,
 }: {
@@ -49,6 +50,8 @@ export function PickedSummary({
   previewAlt: string;
   retryLabel: string;
   invalid?: boolean;
+  /** Takes another in one step: opens the way the first was chosen. Leave it out where there is no other to take. */
+  onReplace?: () => void;
   onRemove: () => void;
   className?: string;
 }) {
@@ -97,42 +100,59 @@ export function PickedSummary({
           <Icon aria-hidden="true" className="text-muted-foreground size-6" />
         )}
       </div>
-      <p className="min-w-0 flex-1">
-        <span className="block truncate font-medium">{name}</span>
-        {(source || tail) && (
-          <span className="text-muted-foreground text-meta block">
-            {source && <span className="max-sm:block">{source}</span>}
-            {source && tail ? <span className="max-sm:hidden"> · </span> : null}
-            {tail && <span className="whitespace-nowrap">{tail}</span>}
+      {/* On a phone the controls sit under the text, so the name keeps the row's width; from sm up they follow it. */}
+      <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+        <p className="min-w-0 flex-1">
+          <span className="line-clamp-2 font-medium break-words" title={name}>
+            {name}
           </span>
-        )}
-        {drawable && failed && (
-          <span role="status" className="text-muted-foreground text-meta block">
-            Preview unavailable
-          </span>
-        )}
-      </p>
-      {drawable && failed && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="max-sm:h-11"
-          aria-label={retryLabel}
-          onClick={() => setFailure((current) => ({ ...current, failed: false, attempt: current.attempt + 1 }))}
-        >
-          Retry
-        </Button>
-      )}
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label={`Remove ${name}`}
-        title={`Remove ${name}`}
-        className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex size-9 shrink-0 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none max-sm:size-11"
-      >
-        <X aria-hidden="true" className="size-4" />
-      </button>
+          {(source || tail) && (
+            <span className="text-muted-foreground text-meta block">
+              {source && <span className="max-sm:block">{source}</span>}
+              {source && tail ? <span className="max-sm:hidden"> · </span> : null}
+              {tail && <span className="whitespace-nowrap">{tail}</span>}
+            </span>
+          )}
+          {drawable && failed && (
+            <span role="status" className="text-muted-foreground text-meta block">
+              Preview unavailable
+            </span>
+          )}
+        </p>
+        <div className="flex shrink-0 items-center gap-1 max-sm:-ml-3">
+          {drawable && failed && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="max-sm:h-11"
+              aria-label={retryLabel}
+              onClick={() => setFailure((current) => ({ ...current, failed: false, attempt: current.attempt + 1 }))}
+            >
+              Retry
+            </Button>
+          )}
+          {onReplace && (
+            <button
+              type="button"
+              onClick={onReplace}
+              aria-label={`Replace ${name}`}
+              className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring text-meta inline-flex min-h-10 shrink-0 items-center justify-center rounded-md px-3 font-medium focus-visible:ring-2 focus-visible:outline-none max-sm:min-h-11"
+            >
+              Replace
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onRemove}
+            aria-label={`Remove ${name}`}
+            title={`Remove ${name}`}
+            className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex size-10 shrink-0 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none max-sm:size-11"
+          >
+            <X aria-hidden="true" className="size-4" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

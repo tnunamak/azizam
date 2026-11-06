@@ -33,6 +33,20 @@ const KIND_ICONS: Record<string, LucideIcon> = {
   file: File,
 };
 
+/**
+ * How the Library picker lays a kind out. A kind with a picture to show (an image, a video's first frame) is a grid
+ * of thumbnails. Any other kind has nothing to look at, so its items differ only by name, length and date: they are
+ * a list of rows, each with room for a full title. A kind not named here is a list.
+ */
+const KIND_LAYOUTS: Record<string, "grid" | "list"> = {
+  image: "grid",
+  video: "grid",
+};
+
+export function kindLayout(kind: MediaKind): "grid" | "list" {
+  return KIND_LAYOUTS[kind] ?? "list";
+}
+
 /** The kinds the Library lists first, in this order; any other kind follows by name. */
 const KIND_ORDER = ["image", "video", "audio"];
 
