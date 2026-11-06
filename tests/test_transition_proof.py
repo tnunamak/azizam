@@ -541,7 +541,7 @@ def test_retry_after_zero_waits_one_poll_interval_and_does_not_spin(
     assert process.returncode == 1
     sent = [r for r in gateway.requests if r["path"] == "/v1/chat/completions"]
     assert len(sent) <= 1 + 8  # the seed, then about one resend per 0.2 s for 1 s (a spin sends hundreds)
-    assert all(r["waited_s"] >= 0.19 for r in steps(result)["followup"]["retries"])
+    assert all(r["waited_s"] >= 0.19 for r in steps(result)["followup"]["retries"][:-1])  # the last wait is cut to the deadline
 
 
 def test_a_cold_baseline_that_reports_a_large_cached_count_fails_the_assertion(
