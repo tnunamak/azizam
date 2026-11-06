@@ -760,7 +760,7 @@ def test_lifecycle_backed_service_can_override_gateway_internal_target_to_its_ow
 
 @pytest.mark.parametrize("base", [
     "http://gateway.internal/v1", "http://127.0.0.1:5000/internal/litellm/local",
-    "https://127.0.0.1:5123/v1", "http://10.0.0.5:5123/v1",
+    "https://127.0.0.1:5123/v1", "http://192.0.2.5:5123/v1",
 ])
 def test_an_explicit_lifecycle_base_that_is_not_this_gateways_own_listener_is_refused(monkeypatch, base) -> None:
     """A gateway on another port must never send its internal key, or loop its hop, to :5000 or any other host.
@@ -775,7 +775,7 @@ def test_an_explicit_lifecycle_base_that_is_not_this_gateways_own_listener_is_re
     assert "not this gateway's own listener" in excluded[0].error
 
 
-@pytest.mark.parametrize("base", ["http://gateway.internal/v1", "http://10.0.0.5:5123/v1"])
+@pytest.mark.parametrize("base", ["http://gateway.internal/v1", "http://192.0.2.5:5123/v1"])
 def test_one_foreign_lifecycle_base_does_not_stop_the_compile_for_other_records(monkeypatch, caplog, base) -> None:
     """Failed before the fix: the ValueError aborted the compile, ``litellm_known_model_names`` and the sidecar."""
     monkeypatch.setattr(litellm_substrate, "_own_listen_port", 5123)
@@ -793,7 +793,7 @@ def test_one_foreign_lifecycle_base_does_not_stop_the_compile_for_other_records(
 def test_a_foreign_lifecycle_base_on_a_record_that_never_reads_it_is_not_refused(monkeypatch) -> None:
     """The field is read only by a record that goes through the gateway lifecycle hop."""
     monkeypatch.setattr(litellm_substrate, "_own_listen_port", 5123)
-    direct = _lifecycle_service(gateway_lifecycle_base_url="http://10.0.0.5:5123/v1")["local"]
+    direct = _lifecycle_service(gateway_lifecycle_base_url="http://192.0.2.5:5123/v1")["local"]
     direct["config"].pop("gateway_lifecycle")
     assert litellm_substrate.foreign_lifecycle_base_error(direct) is None
 

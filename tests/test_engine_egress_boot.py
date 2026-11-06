@@ -25,7 +25,7 @@ GOOD = {"kind": "local", "enabled": True,
                    "models": [{"id": "m1"}], "gateway_lifecycle": True,
                    "residency": {"domain": "gpu-boot-test", "transition": PASS}}}
 BAD = {"kind": "local", "enabled": True,
-       "config": {"host": "10.0.0.9", "port": 59712, "models": ["this is not a model record"]}}
+       "config": {"host": "192.0.2.9", "port": 59712, "models": ["this is not a model record"]}}
 
 
 def _boot(tmp_path: Path, services: dict) -> dict:
