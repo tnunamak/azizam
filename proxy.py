@@ -25964,7 +25964,9 @@ async def videos_extend(request: Request):
 
 # The workflow directory is a storage root: it stays in the startup file (CONFIG_HOMES C10). The rest of the `audio`
 # section (CONFIG_HOMES C8b) is read from the snapshot on every call.
-_AUDIO_WORKFLOWS_DIR_CFG = (_bootstrap_config.get("audio") or {}).get("workflows_dir", "./workflows/audio")
+# The config section the audio settings live in, named once for the startup read below and the snapshot read in _audio().
+_AUDIO_SECTION = "audio"
+_AUDIO_WORKFLOWS_DIR_CFG = (_bootstrap_config.get(_AUDIO_SECTION) or {}).get("workflows_dir", "./workflows/audio")
 AUDIO_WORKFLOWS_DIR = Path(_AUDIO_WORKFLOWS_DIR_CFG)
 if not AUDIO_WORKFLOWS_DIR.is_absolute():
     AUDIO_WORKFLOWS_DIR = (Path(__file__).parent / _AUDIO_WORKFLOWS_DIR_CFG).resolve()
@@ -25972,7 +25974,7 @@ if not AUDIO_WORKFLOWS_DIR.is_absolute():
 
 def _audio() -> Mapping[str, Any]:
     """The `audio` section of the snapshot this call reads. A snapshot without it gives an empty mapping."""
-    section = runtime().config.get("audio")
+    section = runtime().config.get(_AUDIO_SECTION)
     return section if isinstance(section, Mapping) else {}
 
 

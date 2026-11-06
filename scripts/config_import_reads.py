@@ -210,18 +210,41 @@ def _loaded_names(nodes: list[ast.AST]) -> set[str]:
     return out
 
 
-def _direct_sections(nodes: list[ast.AST], derived: set[str]) -> set[str]:
-    """Sections named by ``X.get("k")`` or ``X["k"]`` where X is a derived name or ``runtime().config``."""
+def _string_constants(tree: ast.Module) -> dict[str, str]:
+    """Module-level names bound once, to a string literal: ``_AUDIO_SECTION = "audio"``. A name bound again anywhere at
+    module level is left out, so a key read through it is the literal it names wherever it is read."""
+    bound = collections.Counter(
+        target for unit in _units(tree.body) for target in unit.targets)
+    return {
+        st.targets[0].id: st.value.value for st in tree.body
+        if isinstance(st, ast.Assign) and len(st.targets) == 1 and isinstance(st.targets[0], ast.Name)
+        and isinstance(st.value, ast.Constant) and isinstance(st.value.value, str) and bound[st.targets[0].id] == 1
+    }
+
+
+def _key(node: ast.AST, constants: dict[str, str]) -> object:
+    """The key a ``.get`` argument or a subscript names: a literal, or a module string constant (``_string_constants``)."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        return constants.get(node.id)
+    return None
+
+
+def _direct_sections(nodes: list[ast.AST], derived: set[str], constants: dict[str, str] | None = None) -> set[str]:
+    """Sections named by ``X.get("k")`` or ``X["k"]`` where X is a derived name or ``runtime().config``. ``k`` may be a
+    module string constant (``_string_constants``)."""
+    constants = constants or {}
     found: set[str] = set()
     for root in nodes:
         for child in _executed(root):
             base = key = None
             owner: ast.AST | None = None
             if (isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.func.attr == "get"
-                    and child.args and isinstance(child.args[0], ast.Constant)):
-                owner, key = child.func.value, child.args[0].value
-            elif isinstance(child, ast.Subscript) and isinstance(child.slice, ast.Constant):
-                owner, key = child.value, child.slice.value
+                    and child.args):
+                owner, key = child.func.value, _key(child.args[0], constants)
+            elif isinstance(child, ast.Subscript):
+                owner, key = child.value, _key(child.slice, constants)
             if owner is None or not isinstance(key, str):
                 continue
             if isinstance(owner, ast.Name) and owner.id in derived:
@@ -248,9 +271,10 @@ def _dotted(node: ast.AST) -> str:
     return ".".join(reversed(parts))
 
 
-def _sections_of(nodes: list[ast.AST], derived: set[str], carried: dict[str, set[str]]) -> set[str]:
+def _sections_of(nodes: list[ast.AST], derived: set[str], carried: dict[str, set[str]],
+                 constants: dict[str, str] | None = None) -> set[str]:
     """The sections ``nodes`` read: named directly, carried by a derived name they read, or known from the callee."""
-    sections = _direct_sections(nodes, derived)
+    sections = _direct_sections(nodes, derived, constants)
     for name in _loaded_names(nodes) & (derived | SNAPSHOT_ROOTS):
         sections |= carried.get(name, set())
     sections |= {
@@ -264,6 +288,7 @@ def scan(source: str, hidden: dict[str, str] | None = None) -> Inventory:
     """Scan ``source``. ``hidden`` is the hand-listed names for proxy.py (``HIDDEN``); pass ``{}`` for a fragment."""
     hidden = HIDDEN if hidden is None else hidden
     tree = ast.parse(source)
+    constants = _string_constants(tree)
     derived = set(ROOTS)
     sources = ROOTS | SNAPSHOT_ROOTS  # names whose read starts a closure
     carried: dict[str, set[str]] = {name: {ROOT_SECTION[name]} for name in ROOT_SECTION}
@@ -274,7 +299,7 @@ def scan(source: str, hidden: dict[str, str] | None = None) -> Inventory:
         if not reads:
             continue
         targets = list(dict.fromkeys(unit.targets))
-        sections = _sections_of(unit.exprs, derived, carried)
+        sections = _sections_of(unit.exprs, derived, carried, constants)
         passed: list[ast.AST] = []
         if unit.call is not None:
             passed = [*unit.call.args, *[k.value for k in unit.call.keywords]]
@@ -288,7 +313,7 @@ def scan(source: str, hidden: dict[str, str] | None = None) -> Inventory:
             if target in unit.own:  # `X, Y = a, b`: X belongs to what `a` reads, and to nothing if `a` reads no config
                 if not _loaded_names([unit.own[target]]) & (derived | SNAPSHOT_ROOTS):
                     continue
-                mine = _sections_of([unit.own[target]], derived, carried)
+                mine = _sections_of([unit.own[target]], derived, carried, constants)
             derived.add(target)
             carried.setdefault(target, set()).update(mine)
             owners[target].update(mine)
