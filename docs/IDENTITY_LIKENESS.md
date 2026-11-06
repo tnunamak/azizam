@@ -79,7 +79,7 @@ warns (`pose_risks_likeness`). A result head turned past |yaw| 0.45 gets a note 
 
 `mode=auto` (default) returns `202` and a media job unless `attempts=1` and `refine=off`. Poll
 `GET /gateway/v1/media/jobs/{id}` (`status`, `progress` 0-100), then `GET .../content` for the picture and
-the scores. The job waits for ComfyUI up to `identity.max_wait_s` (3600) instead of the 300 s image timeout,
+the scores. The job waits for ComfyUI up to `identity.max_wait_s` (3600, an `identity` section setting) instead of the 300 s image timeout,
 so a prompt queued behind a long video is not cancelled. Jobs live in memory: a gateway restart fails them
 ("submit it again"). `mode=sync` keeps the connection open for the whole run. The `/v1/images/edits` alias
 stays synchronous unless `extensions["com.azizam.workflow"].mode` is `async`.
@@ -149,6 +149,6 @@ look at the picture.
 2. Models in `/media/windows/AI Models/insightface/models/{buffalo_l,antelopev2}/` (about 1.1 GB; the
    unzipped `buffalo_l.zip` and `antelopev2.zip` from the insightface v0.7 release).
 3. `cp services/face-service/face-service.service ~/.config/systemd/user/ && systemctl --user
-   daemon-reload`. The gateway starts it on demand (`identity.face_service` in `proxy_config.yml`);
+   daemon-reload`. The gateway starts it on demand (`identity.face_service`, an `identity` config section entry the owner sets with the config API; an install that had it in `proxy_config.yml` has it imported once at first boot);
    it exits after 15 idle minutes.
 4. Restart the gateway with `scripts/safe-restart`.

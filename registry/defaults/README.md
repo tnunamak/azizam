@@ -4,8 +4,8 @@ This directory holds the release defaults of the config sections (design: `docs/
 Every file here is read-only data that ships with a release. An upgrade replaces it. The owner never edits it: an
 owner's change is a sparse override in `admin.db` (tables `config_overrides` and `config_changes`).
 
-Eight sections ship. Three are the owner settings that existed before the layer, one holds the model aliases, and four
-hold the model settings the startup file held:
+Ten sections ship. Three are the owner settings that existed before the layer, one holds the model aliases, and six
+hold the settings the startup file held:
 
 | Section | Holds | Routes that write it |
 |---|---|---|
@@ -17,6 +17,8 @@ hold the model settings the startup file held:
 | `model_routing` | the model switch and upstream read timeouts | the config API |
 | `reasoning` | the reasoning settings (no reader yet: an edit is stored and changes nothing) | the config API |
 | `roles` | the model roles (no roles in the release) | the config API |
+| `model_compatibility` | OpenAI model-name recognition and the default model of each operation (no model id in the release) | the config API |
+| `identity` | the face sidecar of the likeness check and how long the identity scene waits (no face service in the release) | the config API |
 
 Each settings route keeps its request and response shape. A write is a revision-checked change of the section: a missing
 `If-Match` is 428 and a stale one is 412. On first boot after the upgrade, the values in the old `operator_settings`
@@ -31,7 +33,7 @@ A section that an older release read from the startup file is imported once at t
 `gateway/config_legacy_import.py`). To read what the import would write for a copy of a startup file, without touching a
 live database: `python -m gateway.config_legacy_import --config <copy of the file>`. A schema may list, at its root, the
 keys of the old block that the section does not own (`x-azizam-startup-only`); the import leaves them in the startup
-file. `model_routing` lists `gguf_dir`, a storage root a later slice moves. `models` is not a section yet: its startup
+file. `model_routing` lists `gguf_dir`, a storage root a later slice moves. `model_compatibility` lists `generated_aliases_file`: the generated OpenAI model list is the release file `registry/openai_model_aliases.generated.yml`, so its path is not a setting. `models` is not a section yet: its startup
 block is a list, and a section root must be a mapping.
 
 ## A section is two files
