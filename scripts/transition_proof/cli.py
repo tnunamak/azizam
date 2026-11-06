@@ -113,7 +113,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # Overwrite any earlier result first: if this run dies before its own result is written, the file must not
     # keep an old "passed".
-    secrets = [k for k in (key, chat_key) if k]
+    secrets = sorted((k for k in (key, chat_key) if k), key=len, reverse=True)  # longest first: no key leaves a fragment of another
     _write(args.out, {**result, "status": "running"}, secrets)
     timeout = httpx.Timeout(args.request_timeout_s, connect=10.0)
     try:

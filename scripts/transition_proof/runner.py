@@ -29,7 +29,7 @@ class Proof:
                  poll_interval_s: float, poll_timeout_s: float, secrets: Sequence[str] = (),
                  chat_key: Optional[str] = None, sleep: Callable[[float], None] = time.sleep) -> None:
         self.client = client
-        self.secrets = tuple(secrets)
+        self.secrets = tuple(sorted(secrets, key=len, reverse=True))  # longest first: no key leaves a fragment of another
         # The client carries the owner key. With a chat key, chat requests override that header; without one they keep it.
         self.chat_headers = {"Authorization": f"Bearer {chat_key}"} if chat_key else None
         self.domain = domain

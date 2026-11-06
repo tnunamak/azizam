@@ -637,3 +637,14 @@ def test_both_keys_are_redacted_from_the_result_including_a_reply_that_echoes_th
     assert result["cases"][0]["steps"][0]["reply_text"] == "owner [redacted] chat [redacted]"
     for surface in (process.stdout, process.stderr, text):
         assert KEY not in surface and CHAT_KEY not in surface
+
+
+
+def test_a_chat_key_that_holds_the_owner_key_leaves_no_fragment(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    longer = KEY + "-and-more"
+    gateway.chat_key = longer
+    gateway.content = f"echo {longer} end"
+    gateway.park = "conflict"
+    process, result = run(gateway, tmp_path, "--chat-key-file", str(chat_key_file(tmp_path, longer + "\n")))
+    text = (tmp_path / "result.json").read_text()
+    assert "-and-more" not in text and KEY not in text, "the longer key is redacted whole, before the owner key"
