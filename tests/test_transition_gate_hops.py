@@ -34,6 +34,7 @@ from tests.fake_systemd_engine import MODEL, fake_svc
 from tests.support.fake_upstream import HandlerTransport
 from tests.support.fake_upstream.transport import HostRouter
 from tests.support.fake_upstream.async_client_stub import install_async_client_stub, restore_async_client
+from tests.support.config_snapshot import pin_inner_hop_hosts
 from tests.support.stopped_engine import StoppedEngine
 from tests.test_swap_drain_lifecycle import (  # noqa: F401 - engine is a fixture
     BACKEND,
@@ -72,7 +73,7 @@ def gate(engine, monkeypatch, tmp_path):
     monkeypatch.setitem(proxy.config, "backends", backends)
     for name in (ALIAS, OTHER):
         monkeypatch.setitem(proxy.LLM_BACKEND_HOSTS, name, "http://127.0.0.1:59999")
-        monkeypatch.setitem(proxy.INNER_HOP_BACKEND_HOSTS, name, "http://127.0.0.1:59999")
+    pin_inner_hop_hosts(monkeypatch, {name: "http://127.0.0.1:59999" for name in (ALIAS, OTHER)})
     _set_drain(monkeypatch, enabled=False)
     store = GateStore(tmp_path / "transition.db")
     store.load()
@@ -701,7 +702,7 @@ def stopped(gate, monkeypatch, tmp_path):
     engine = StoppedEngine(monkeypatch, tmp_path, service_id=BACKEND)
     engine.install(monkeypatch, engine.record())
     monkeypatch.setitem(proxy.LLM_BACKEND_HOSTS, BACKEND, engine.url)
-    monkeypatch.setitem(proxy.INNER_HOP_BACKEND_HOSTS, BACKEND, engine.url)
+    pin_inner_hop_hosts(monkeypatch, {BACKEND: engine.url})
     engine.sends = []
 
     async def closed(execution_request, **_kwargs):

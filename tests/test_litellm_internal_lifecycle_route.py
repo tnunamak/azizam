@@ -202,10 +202,10 @@ def test_internal_litellm_local_route_activates_and_forwards_directly() -> None:
         os.environ,
         {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
-    ), patch.dict(
-        proxy.INNER_HOP_BACKEND_HOSTS,
-        {"kobold": "http://127.0.0.1:5051"},
-        clear=True,
+    ), patch.object(
+        proxy,
+        "inner_hop_backend_hosts",
+        return_value={"kobold": "http://127.0.0.1:5051"},
     ), patch.object(
         proxy,
         "_service_availability_response",
@@ -250,10 +250,10 @@ def test_internal_litellm_local_route_still_closes_client_when_response_close_fa
         os.environ,
         {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
-    ), patch.dict(
-        proxy.INNER_HOP_BACKEND_HOSTS,
-        {"kobold": "http://127.0.0.1:5051"},
-        clear=True,
+    ), patch.object(
+        proxy,
+        "inner_hop_backend_hosts",
+        return_value={"kobold": "http://127.0.0.1:5051"},
     ), patch.object(
         proxy,
         "_service_availability_response",
@@ -287,10 +287,10 @@ def test_internal_litellm_local_route_reports_activation_failure() -> None:
         os.environ,
         {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
-    ), patch.dict(
-        proxy.INNER_HOP_BACKEND_HOSTS,
-        {"kobold": "http://127.0.0.1:5051"},
-        clear=True,
+    ), patch.object(
+        proxy,
+        "inner_hop_backend_hosts",
+        return_value={"kobold": "http://127.0.0.1:5051"},
     ), patch.object(
         proxy,
         "_service_availability_response",
@@ -324,10 +324,10 @@ def test_internal_litellm_local_route_resolves_activation_path_from_model_data()
         os.environ,
         {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
-    ), patch.dict(
-        proxy.INNER_HOP_BACKEND_HOSTS,
-        {"kobold": "http://127.0.0.1:5051"},
-        clear=True,
+    ), patch.object(
+        proxy,
+        "inner_hop_backend_hosts",
+        return_value={"kobold": "http://127.0.0.1:5051"},
     ), patch.object(
         proxy,
         "config",
@@ -388,10 +388,10 @@ def test_internal_litellm_route_preserves_q8_profile_alias_and_forwards_backend_
         os.environ,
         {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
-    ), patch.dict(
-        proxy.INNER_HOP_BACKEND_HOSTS,
-        {"kobold": "http://127.0.0.1:5051"},
-        clear=True,
+    ), patch.object(
+        proxy,
+        "inner_hop_backend_hosts",
+        return_value={"kobold": "http://127.0.0.1:5051"},
     ), patch.object(
         proxy,
         "config",
@@ -454,10 +454,10 @@ def test_internal_litellm_route_preserves_rp_context_profile_and_huihui_model() 
         os.environ,
         {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
-    ), patch.dict(
-        proxy.INNER_HOP_BACKEND_HOSTS,
-        {"kobold": "http://127.0.0.1:5051"},
-        clear=True,
+    ), patch.object(
+        proxy,
+        "inner_hop_backend_hosts",
+        return_value={"kobold": "http://127.0.0.1:5051"},
     ), patch.object(
         proxy,
         "config",

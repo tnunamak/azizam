@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.config_snapshot import publish_config
 from gateway.capability_ids import INNER_HOP_ENDPOINTS, capabilities_without_inner_endpoint, inner_hop_endpoints_for
 
 KEY = {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"}
@@ -51,9 +52,8 @@ def hop(monkeypatch):
                 "emb": {"host": "127.0.0.1", "port": 5099, "capabilities": ["chat", "embed"], "enabled": True},
                 "chatonly": {"host": "127.0.0.1", "port": 5098, "capabilities": ["chat"], "enabled": True},
                 "embonly": {"host": "127.0.0.1", "port": 5097, "capabilities": ["openai", "embeddings"], "enabled": True}}
-    monkeypatch.setitem(proxy.config, "backends", backends)
-    # the real builder, not a hand-set list: the hop serves the members that capability_ids.INNER_HOP_ENDPOINTS names
-    monkeypatch.setattr(proxy, "INNER_HOP_BACKEND_HOSTS", proxy._backend_host_map(backends, proxy._is_inner_hop_backend))
+    # the real derivation, not a hand-set list: the hop serves the members that capability_ids.INNER_HOP_ENDPOINTS names
+    publish_config(monkeypatch, {**proxy.config, "backends": backends})
     monkeypatch.setattr(proxy, "send_llm_execution_request", fake_send)
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *a, **k: None)
     monkeypatch.setattr(proxy, "ensure_target", AsyncMock(return_value=True))
@@ -102,7 +102,7 @@ def test_an_embeddings_only_member_is_served_by_the_hop_through_the_real_host_ma
     """Failed before the fix: the hop's host map listed chat-capable backends only, so an embeddings-only member
     answered 404 backend_not_found."""
     client, sent = hop
-    assert "embonly" in proxy.INNER_HOP_BACKEND_HOSTS and "embonly" not in proxy.LLM_BACKEND_HOSTS
+    assert "embonly" in proxy.inner_hop_backend_hosts() and "embonly" not in proxy.LLM_BACKEND_HOSTS
     response = client.post("/internal/litellm/local/embonly/v1/embeddings", headers=AUTH,
                            json={"model": "openai/m", "input": "hi"})
     assert response.status_code == 200, response.text

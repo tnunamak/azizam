@@ -792,9 +792,14 @@ def _build_llm_backend_hosts() -> dict[str, str]:
 
 
 LLM_BACKEND_HOSTS: dict[str, str] = _build_llm_backend_hosts()
-# The backends the LiteLLM lifecycle hop proxies to: every one that declares a capability with an inner-hop endpoint,
-# an embeddings-only member included (LLM_BACKEND_HOSTS lists chat-capable backends only).
-INNER_HOP_BACKEND_HOSTS: dict[str, str] = _backend_host_map(config.get("backends"), _is_inner_hop_backend)
+
+
+def inner_hop_backend_hosts() -> dict[str, str]:
+    """The backends the LiteLLM lifecycle hop proxies to: every one that declares a capability with an inner-hop
+    endpoint, an embeddings-only member included (LLM_BACKEND_HOSTS lists chat-capable backends only). Derived from the
+    request's own config snapshot on each call, so a reload needs no module-level copy of it. The hop is an internal
+    route called once per local activation, and the scan is one pass over the registry's backends."""
+    return _backend_host_map(runtime().config.get("backends"), _is_inner_hop_backend)
 
 
 def configured_backend_capabilities(backend: str) -> set[str]:
@@ -1272,7 +1277,6 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
 
     # Build the host maps from the new config — the same predicates as the boot-time maps.
     new_llm_hosts = _backend_host_map(effective_cfg.get("backends"), _is_chat_capable_native_backend)
-    new_hop_hosts = _backend_host_map(effective_cfg.get("backends"), _is_inner_hop_backend)
 
     return {
         "TTS_HOST": new_tts_host,
@@ -1285,7 +1289,6 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
         "EMBEDDINGS_ENABLED": new_emb_enabled,
         "COMFY_ENABLED": new_cfy_enabled,
         "LLM_BACKEND_HOSTS": new_llm_hosts,
-        "INNER_HOP_BACKEND_HOSTS": new_hop_hosts,
     }
 
 
@@ -1527,8 +1530,9 @@ async def _admission_lock(service_id: str, *, bounded: bool = True):
         if held.enabled:
             # The lock is held across these two reads, so each is bounded: a slow admin.db or a saturated thread
             # pool must not serialize every request of the domain. A read that is not done in time refuses.
+            gates = TRANSITION_GATES if TRANSITION_GATES is not None else await asyncio.to_thread(_transition_gates)
             try:
-                await asyncio.wait_for(asyncio.to_thread(TRANSITION_GATES.refresh_if_due), _ADMISSION_READ_TIMEOUT_S)
+                await asyncio.wait_for(asyncio.to_thread(gates.refresh_if_due), _ADMISSION_READ_TIMEOUT_S)
             except asyncio.TimeoutError:
                 pass  # the gate stays as it was in memory; an unreadable table is "reconciling" and refuses below
             try:
@@ -1537,7 +1541,7 @@ async def _admission_lock(service_id: str, *, bounded: bool = True):
             except Exception as exc:  # noqa: BLE001 - an unreadable or slow override store never admits
                 print(f"[transition-gate] override read failed, refusing {held.domain!r}: {type(exc).__name__}", flush=True)
                 raise TransitionUnavailable(held.domain, reason="overrides_unreadable", retry_after_s=5) from None
-            _transition_admit(held, TRANSITION_GATES.state(held.domain), overrides)
+            _transition_admit(held, gates.state(held.domain), overrides)
         yield
     finally:
         lock.release()
@@ -1565,7 +1569,7 @@ def _admit_serving_lease(name: str) -> None:
     if not policy.enabled:
         return
     require_supported(policy, name)
-    _transition_admit(policy, TRANSITION_GATES.state(policy.domain), {})
+    _transition_admit(policy, _transition_gates().state(policy.domain), {})
 
 
 # Requests in flight per swap-capable backend, so a swap can wait for them
@@ -2225,9 +2229,26 @@ def _load_admin_oidc_config():
 
 
 ADMIN_DB_PATH = _admin_db_path()
-# Gate state per residency domain. Loaded before the first request is admitted.
-TRANSITION_GATES = GateStore(ADMIN_DB_PATH.parent / "transition.db")
-TRANSITION_GATES.load()
+# Gate state per residency domain. The store opens on first use (``_transition_gates``) and the lifespan opens it
+# before the first request is admitted; a test sets this name to a store of its own.
+TRANSITION_GATES: GateStore | None = None
+_TRANSITION_GATES_LOCK = threading.Lock()
+
+
+def _transition_gates() -> GateStore:
+    """The gate store: the one set on the module, else the one opened beside the admin database on first use. Opening
+    reads the table once (``GateStore.load``); concurrent first callers open it once."""
+    store = TRANSITION_GATES
+    if store is not None:
+        return store
+    with _TRANSITION_GATES_LOCK:
+        if TRANSITION_GATES is None:
+            opened = GateStore(ADMIN_DB_PATH.parent / "transition.db")
+            opened.load()
+            globals()["TRANSITION_GATES"] = opened
+        return TRANSITION_GATES
+
+
 from gateway import secret_refs  # noqa: E402 - secret references resolve against this database
 secret_refs.use_database_of(lambda: ADMIN_DB_PATH)
 ADMIN_OIDC_CONFIG = _load_admin_oidc_config()
@@ -13372,6 +13393,8 @@ async def _serve(app: FastAPI):
     await asyncio.to_thread(_report_session_view_key_problem)
     await asyncio.to_thread(prompt_memory.require_resolvable_periods, admin_path=ADMIN_DB_PATH)
     await asyncio.to_thread(STT_MEASUREMENTS.startup_cleanup)
+    # The gate table is read before the first request is admitted, off the event loop.
+    await asyncio.to_thread(_transition_gates)
     # Try deadline repair before serving; recurring maintenance retries failures.
     await _repair_prompt_deadlines_at_startup()
     await asyncio.to_thread(_adopt_bootstrap_signin_lists)
@@ -31264,7 +31287,7 @@ async def _forward_internal_litellm_local_chat_completions(
         )
 
     backend = normalize_model_id(backend)
-    upstream_base = INNER_HOP_BACKEND_HOSTS.get(backend, "").rstrip("/")
+    upstream_base = inner_hop_backend_hosts().get(backend, "").rstrip("/")
     if not upstream_base:
         return openai_error_response(
             f"Unknown local LLM backend: {backend!r}.",

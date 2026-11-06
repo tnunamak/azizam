@@ -112,9 +112,11 @@ def test_a_graph_relative_to_its_package_pins_as_the_run_resolves_it(tmp_path: P
 
 
 def test_an_unreadable_graph_file_pins_nothing_and_does_not_raise(caplog: pytest.LogCaptureFixture):
-    manifest = {"id": "x", "inputs": {}, "outputs": {}, "bindings": {proxy._GRAPH_BINDING: {"workflow": "workflows/none.json"}}}
+    # A distinctive id: log_scrub replaces any registered secret value in a log line, and another test on the same
+    # worker may have registered a short one such as "x".
+    manifest = {"id": "graph-envelope-probe", "inputs": {}, "outputs": {}, "bindings": {proxy._GRAPH_BINDING: {"workflow": "workflows/none.json"}}}
     assert proxy._manifest_job_envelope(manifest, proxy._GRAPH_CAPABILITY) is None
-    assert "no envelope for x" in caplog.text
+    assert "no envelope for graph-envelope-probe" in caplog.text
 
 
 def test_an_image_manifest_pins():
