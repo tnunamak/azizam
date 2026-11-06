@@ -1564,12 +1564,14 @@ async def _admission_lock(service_id: str, *, bounded: bool = True):
         yield
     finally:
         try:
-            lock.release()
-        finally:
+            # The bridge lease ends before the lock does, so a request that takes the lock next never counts it. The
+            # request's own lease, minted inside the hold, keeps the count above zero.
             if bridge is not None:
                 bridge.release()
             if trigger is not None:
                 trigger.abandon()  # a mint that comes late does nothing
+        finally:
+            lock.release()
 
 
 def _require_egress_lease(service_id: str) -> None:
