@@ -1491,6 +1491,24 @@ SERVICE_RECORD_FIELDS = (
 )
 
 
+def _fold_top_level_connection(service_id: str, raw: Mapping[str, Any], config: dict[str, Any]) -> None:
+    """Store a top-level ``connection`` block (the engine contract's shape) as ``config.connection``.
+
+    The stored record keeps one connection block, in its config. A record that gives both, and they differ, is
+    refused rather than one of them being dropped.
+    """
+    top = raw.get("connection")
+    if top is None:
+        return
+    if not isinstance(top, Mapping):
+        raise ValueError(f"service {service_id!r}: connection must be a mapping")
+    nested = config.get("connection")
+    if nested is not None and nested != top:
+        raise ValueError(f"service {service_id!r}: connection is given at the top level and in config, and they "
+                         "differ; give one")
+    config["connection"] = copy.deepcopy(dict(top))
+
+
 def normalize_service_record(
     service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None, check_secrets: bool = True,
 ) -> dict[str, Any]:
@@ -1507,6 +1525,7 @@ def normalize_service_record(
     if not isinstance(config, Mapping):
         config = {}
     config = copy.deepcopy(dict(config))
+    _fold_top_level_connection(service_id, raw, config)
     raw_models = config.get("models")
     if isinstance(raw_models, list):
         normalized_models: list[Any] = []
