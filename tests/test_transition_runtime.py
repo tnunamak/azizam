@@ -24,6 +24,7 @@ def wired(monkeypatch, tmp_path):
     store.load()
     monkeypatch.setattr(proxy, "TRANSITION_GATES", store)
     monkeypatch.setattr(proxy, "_swap_drain", proxy._new_swap_drain())
+    monkeypatch.setattr(proxy, "_service_swap_locks", {})
     monkeypatch.setattr(proxy, "_strict_service_availability_overrides", lambda: {})
     engine = FakeEngine()
     runtime = TransitionRuntime(gates=lambda: store, services=lambda: proxy.config.get("backends") or {},
