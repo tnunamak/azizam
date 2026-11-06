@@ -210,11 +210,37 @@ def _loaded_names(nodes: list[ast.AST]) -> set[str]:
     return out
 
 
+def _bindings(tree: ast.AST) -> collections.Counter:
+    """How often each name is bound anywhere in ``tree``, in any scope: assignment and deletion targets (augmented,
+    annotated, ``for``, ``with``, walrus, comprehension), imports, ``def`` and ``class`` names, arguments, ``except``
+    names, match captures and ``global``/``nonlocal`` declarations."""
+    bound: collections.Counter = collections.Counter()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bound[node.id] += 1
+        elif isinstance(node, ast.alias):
+            bound[node.asname or node.name.split(".")[0]] += 1
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound[node.name] += 1
+        elif isinstance(node, ast.arg):
+            bound[node.arg] += 1
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bound[node.name] += 1
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            bound[node.name] += 1
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            bound[node.rest] += 1
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                bound[name] += 1
+    return bound
+
+
 def _string_constants(tree: ast.Module) -> dict[str, str]:
-    """Module-level names bound once, to a string literal: ``_AUDIO_SECTION = "audio"``. A name bound again anywhere at
-    module level is left out, so a key read through it is the literal it names wherever it is read."""
-    bound = collections.Counter(
-        target for unit in _units(tree.body) for target in unit.targets)
+    """Module-level names bound once, to a string literal: ``_AUDIO_SECTION = "audio"``. A name bound anywhere else in
+    the file, in any scope (``_bindings``), is left out, so a key read through a constant is the literal it names
+    wherever it is read."""
+    bound = _bindings(tree)
     return {
         st.targets[0].id: st.value.value for st in tree.body
         if isinstance(st, ast.Assign) and len(st.targets) == 1 and isinstance(st.targets[0], ast.Name)
