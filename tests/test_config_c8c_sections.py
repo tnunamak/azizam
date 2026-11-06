@@ -226,3 +226,14 @@ def test_an_unconfigured_face_service_answers_not_configured():
         response = asyncio.run(proxy._identity_ensure_face_service())
     assert response is not None and response.status_code == 503
     assert "not configured" in json.loads(response.body)["error"]["message"]
+
+
+def test_the_status_page_reads_the_generated_model_list_where_the_gateway_does(monkeypatch, tmp_path):
+    import proxy
+    import status_endpoint
+
+    monkeypatch.delenv("OPENAI_MODEL_ALIASES_FILE", raising=False)
+    assert status_endpoint.openai_aliases_file() == proxy.openai_model_aliases_file()
+    assert status_endpoint.openai_aliases_file().is_file()
+    monkeypatch.setenv("OPENAI_MODEL_ALIASES_FILE", str(tmp_path / "list.yml"))
+    assert status_endpoint.openai_aliases_file() == proxy.openai_model_aliases_file() == tmp_path / "list.yml"
