@@ -962,6 +962,6 @@ def test_a_wake_that_cannot_start_is_a_503_never_a_raw_error(tmp_path: Path, fai
             await h.executor.ensure_awake(DOMAIN, wait_s=1.0)
         assert (refused.value.status_code, refused.value.reason) == (503, "wake_unavailable")
         assert refused.value.headers == {"Retry-After": "7"}
-        assert not h.locks[DOMAIN].locked()
+        assert not h.locks.get(DOMAIN, asyncio.Lock()).locked()
 
     run(scenario)
