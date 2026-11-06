@@ -54,7 +54,7 @@ from gateway.engine_protocol.types import (
     AssetRef, CanonicalRequest, Connection, Health, Inventory, JobEvent, JobRef, JobState, JobStatus, Reply, StreamReply,
 )
 from gateway.manifests import bind_backend_request, validate_inputs
-from gateway import engine_egress
+from gateway import engine_egress, output_selectors
 
 ADAPTER_ID = "node-graph"
 OPERATIONS = (
@@ -266,6 +266,113 @@ def decode_output(handle: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Which files are a workflow's results (pure; no I/O)
+# ---------------------------------------------------------------------------
+#
+# A binding's selectors say where each named result is: a node of the graph and the file list under it in the history
+# entry. The rules below are the adapter's, and each has a test:
+#
+# - Only files in the output directory count (``type`` is ``output``; an entry with no type is one). A load node's echo
+#   of its source (``input``) and a preview (``temp``) are never results.
+# - A node, a list or an entry that is missing, ``null`` or empty, or that holds no output-directory file, is the same
+#   thing: the result is missing, and the run is refused. Nothing fills the gap.
+# - Order is the order of the history. The same file listed twice is kept once, at its first place.
+# - ``take: all`` is the whole list, ``first`` is its first file, ``single`` is the file and refuses a list of more.
+# - An entry that is not an object, or a name that is not a plain file name or folder, is refused.
+
+
+class SelectionRefused(ProtocolError):
+    """The history entry does not hold a workflow's results as its selectors say. ``code`` names the rule."""
+
+    code = "result_refused"
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message, code=code)
+
+
+_SELECTOR_SOURCES = {"output_dir": "output"}   # a selector's ``from`` value, as the history's ``type``
+
+
+def _plain_name(value: Any, *, folder: bool) -> bool:
+    if not isinstance(value, str):
+        return False
+    if folder and value == "":
+        return True
+    if "\\" in value or (not folder and "/" in value):
+        return False
+    return bool(value) and all(part not in ("", ".", "..") for part in value.split("/"))
+
+
+def _output_files(entries: Any, directory_type: str, *, result: str) -> list[dict[str, Any]]:
+    """The output-directory files of one history list, in order, each once. Raises ``SelectionRefused`` for an entry that
+    is not an object or names a path that leaves its folder."""
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
+        raise SelectionRefused("result_malformed", f"the file list for result {result} is not a list")
+    files: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            raise SelectionRefused("result_malformed", f"an entry for result {result} is not an object")
+        if entry.get("type", "output") != directory_type:
+            continue
+        filename, subfolder = entry.get("filename"), entry.get("subfolder", "") or ""
+        if not _plain_name(filename, folder=False) or not _plain_name(subfolder, folder=True):
+            raise SelectionRefused("result_malformed", f"an entry for result {result} names a file that cannot be read")
+        if (filename, subfolder) in seen:
+            continue
+        seen.add((filename, subfolder))
+        files.append({"filename": filename, "subfolder": subfolder, "type": directory_type})
+    return files
+
+
+def _history_outputs(job: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    outputs = (job or {}).get("outputs") if isinstance(job, Mapping) else None
+    return outputs if isinstance(outputs, Mapping) else {}
+
+
+def select_outputs(job: Mapping[str, Any] | None, selectors: Mapping[str, Mapping[str, str]]) -> dict[str, tuple[dict[str, Any], ...]]:
+    """The files of each named result, by its selector, from one history entry. Raises ``SelectionRefused``."""
+    history = _history_outputs(job)
+    chosen: dict[str, tuple[dict[str, Any], ...]] = {}
+    for name, selector in selectors.items():
+        node_output = history.get(selector["node"])
+        entries = node_output.get(selector["key"]) if isinstance(node_output, Mapping) else None
+        files = _output_files(entries, _SELECTOR_SOURCES[selector["from"]], result=name)
+        if not files:
+            raise SelectionRefused("result_missing", f"result {name} is not in the engine's answer")
+        if selector["take"] == "single" and len(files) != 1:
+            raise SelectionRefused("result_ambiguous", f"result {name} is one file, but the engine listed {len(files)}")
+        chosen[name] = tuple(files[:1] if selector["take"] in ("first", "single") else files)
+    return chosen
+
+
+def legacy_select(job: Mapping[str, Any] | None, outputs: Mapping[str, Any]) -> dict[str, tuple[dict[str, Any], ...]]:
+    """The files of a contract that declares no selectors: the output-directory files under any known output key.
+
+    This is the fallback for a contract older than selectors. It reads the output directory only, and it refuses what it
+    would have to guess: a contract of more than one result, or files that come from more than one place in the answer.
+    """
+    if len(outputs) != 1:
+        raise SelectionRefused("result_ambiguous", f"a contract with {len(outputs)} results needs selectors to tell them apart")
+    (name,) = outputs
+    places: list[list[dict[str, Any]]] = []
+    for node_output in _history_outputs(job).values():
+        if not isinstance(node_output, Mapping):
+            continue
+        for key in OUTPUT_KEYS:
+            files = _output_files(node_output.get(key), "output", result=name)
+            if files:
+                places.append(files)
+    if not places:
+        raise SelectionRefused("result_missing", f"result {name} is not in the engine's answer")
+    if len(places) > 1:
+        raise SelectionRefused("result_ambiguous", f"result {name} could be files from {len(places)} places in the engine's answer")
+    return {name: tuple(places[0])}
+
+
+# ---------------------------------------------------------------------------
 # Compiling a manifest-backed workflow (pure; no I/O)
 # ---------------------------------------------------------------------------
 
@@ -400,6 +507,8 @@ class NodeGraphAdapter:
         self.label = (description.label if description is not None else "") or _DEFAULT_LABEL
         # The key under a workflow manifest's ``bindings`` that holds this engine's graph ("" when the description names none).
         self.binding = description.binding if description is not None else ""
+        # The selector form this engine's bindings take, declared in its protocol description (None: it takes none).
+        self.result_selectors = description.result_selectors if description is not None else None
         self._assets = assets
         # Where a manifest's graph path is resolved. Without it a manifest-backed request cannot compile.
         self._root = workflow_root
@@ -671,6 +780,41 @@ class NodeGraphAdapter:
                     out.append(reply.raw)
         return out
 
+    def collect(self, job: Mapping[str, Any] | None, block: Mapping[str, Any], outputs: Mapping[str, Any], *, limits: Any,
+                legacy_allowed: bool, history_bytes: int | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
+        """The files of each named result of a finished prompt, by the binding's selectors (or the legacy collection).
+
+        ``block`` is the binding, ``outputs`` the contract's declared results, ``limits`` the deployment's result limits
+        and ``history_bytes`` the size of the history answer that ``job`` came from. A binding with selectors is read by
+        them. One with none is read by ``legacy_select`` if ``legacy_allowed``, and refused if not. Raises
+        ``SelectionRefused``; a refused run delivers nothing.
+        """
+        if history_bytes is not None and history_bytes > limits.max_history_bytes:
+            raise SelectionRefused("history_too_large", f"the engine's answer is larger than {limits.max_history_bytes} bytes")
+        if "selectors" not in block:
+            if not legacy_allowed:
+                raise SelectionRefused("selectors_missing", "this workflow declares no output selectors, and the legacy collection is off")
+            return legacy_select(job, outputs)
+        if self.result_selectors is None:
+            raise SelectionRefused("selectors_unsupported", "this engine's description takes no output selectors")
+        try:
+            selectors = output_selectors.check_binding(self.result_selectors, outputs, block, max_selectors=limits.max_selectors)
+        except output_selectors.SelectorError as exc:
+            raise SelectionRefused(exc.code, str(exc)) from exc
+        return select_outputs(job, selectors)
+
+    async def fetch_json(self, conn: Connection, file: Mapping[str, Any], *, max_bytes: int, headers: Any = UNSET,
+                         session: GraphSession | None = None) -> bytes:
+        """The bytes of one selected file that a ``json`` result decodes. Bigger than ``max_bytes`` is refused. The value's
+        own checks (depth, items, finite numbers, repeated keys) are the result store's (``result_bundle.check_json``)."""
+        async with self._use(conn, session) as use:
+            reply = await use.view(view_params(file), headers=headers)
+        if reply.status != 200:
+            raise UpstreamError(reply.status, "A result file could not be read.")
+        if len(reply.raw or b"") > max_bytes:
+            raise SelectionRefused("json_too_large", f"a JSON result is larger than {max_bytes} bytes")
+        return reply.raw or b""
+
     async def fetch_assets(self, conn: Connection, ref: JobRef, status: JobStatus) -> tuple[AssetRef, ...]:
         if self._assets is None:
             raise UnsupportedByAdapter("This adapter was built without a media store, so it cannot save assets.")
@@ -718,8 +862,8 @@ def job_event_from(ref: JobRef, event: Mapping[str, Any]) -> JobEvent | None:
 
 
 __all__ = [
-    "ADAPTER_ID", "CONTROL_TIMEOUT_S", "GRAPH_SUBMIT", "GraphSession", "InputRefused", "NodeGraphAdapter",
+    "ADAPTER_ID", "CONTROL_TIMEOUT_S", "GRAPH_SUBMIT", "GraphSession", "InputRefused", "NodeGraphAdapter", "SelectionRefused",
     "build_submit_payload", "compile_workflow", "decode_output", "encode_output", "execution_error_message",
     "execution_error_node_id", "first_audio_output", "first_video_output", "history_state", "job_event_from",
-    "output_entries", "queue_position", "queue_prompt_ids", "view_params",
+    "legacy_select", "output_entries", "queue_position", "queue_prompt_ids", "select_outputs", "view_params",
 ]

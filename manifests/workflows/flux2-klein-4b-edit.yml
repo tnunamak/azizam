@@ -62,6 +62,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/images/flux2-klein-4b-edit.json
+    selectors:
+      image: {node: '9', key: images, from: output_dir, decode: none, take: all}
     # applied by the route as a post-composite preservation mask (gateway/image route), not by a graph node.
     edge_only_inputs: [mask]
     map:

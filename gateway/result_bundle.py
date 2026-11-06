@@ -73,6 +73,12 @@ class ResultLimits:
     json_max_depth: int = 32
     json_max_items: int = 100_000
     json_max_string_length: int = 1_000_000
+    # Reading the engine's answer (D6): selectors in one binding, bytes of the history answer, seconds for one fetch,
+    # and result fetches in flight at once.
+    max_selectors: int = 16
+    max_history_bytes: int = 8 * 1024 * 1024
+    fetch_timeout_s: int = 300
+    max_concurrent_fetches: int = 8
 
 
 def limits_from_config(config: Mapping[str, Any]) -> ResultLimits:

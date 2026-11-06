@@ -30,7 +30,7 @@ def rig(tmp_path: Path):
     with GatewayRig("result-bundle-audio", tmp_path) as made:
         made.set(proxy, "_schedule_audio_media_job", lambda job_id: made.scheduled.append(job_id) or True)
         fake = made.engine("comfy", scenario("comfyui", "result-bundle-audio", comfy_exchanges(
-            history=history_done("audio", "tone_00001_.wav"), views=[(_wav(), "audio/wav")], strict=False)),
+            history=history_done("audios", "tone_00001_.wav", node="3"), views=[(_wav(), "audio/wav")], strict=False)),
             host=COMFY_HOST)
         made.set(proxy, "COMFY_HOST", fake.base_url)
         yield made
@@ -76,9 +76,9 @@ def test_a_finished_audio_job_publishes_a_bundle_that_mirrors_its_assets(rig: Ga
     assert done["status"] == media_jobs.STATUS_SUCCEEDED, done.get("error")
     (asset,) = done["assets"]
     summary = result_bundle.bundle_summary(job_id, path=media_jobs.DB_PATH)
-    assert summary["results"] == [{"name": "assets", "kind": "assets", "count": 1, "size_bytes": asset["size_bytes"]}]
+    assert summary["results"] == [{"name": "audio", "kind": "assets", "count": 1, "size_bytes": asset["size_bytes"]}]
     assert rows("SELECT name, state, items_json FROM result_stage WHERE job_id = ?", job_id) == [
-        ("assets", "published", json.dumps([{"asset_ref": asset["asset_id"], "media_type": asset["media_type"],
+        ("audio", "published", json.dumps([{"asset_ref": asset["asset_id"], "media_type": asset["media_type"],
                                              "size_bytes": asset["size_bytes"]}], sort_keys=True, separators=(",", ":")))]
     # The pin is recorded in the envelope the summary names.
     assert summary["envelope"]["source_kind"] == "workflow" and summary["envelope"]["adapter_id"]
@@ -126,7 +126,7 @@ def test_a_crash_before_the_receipt_link_is_repaired_by_the_startup_scan(rig: Ga
     # The scan runs from the recovery that every start runs.
     proxy._recover_media_jobs()
     linked = receipt_store.get(request_id, path=receipt_store.DB_PATH)["metadata"]["result_bundle"]
-    assert linked["results"][0]["name"] == "assets"
+    assert linked["results"][0]["name"] == "audio"
 
 
 def test_recovery_deletes_the_stage_of_a_dead_attempt_before_any_job_resumes(rig: GatewayRig):

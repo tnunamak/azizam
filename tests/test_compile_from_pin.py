@@ -41,7 +41,7 @@ def rig(tmp_path: Path):
     with GatewayRig("compile-from-pin", tmp_path) as made:
         made.set(proxy, "_schedule_audio_media_job", lambda job_id: made.scheduled.append(job_id) or True)
         fake = made.engine("comfy", scenario("comfyui", "compile-from-pin", comfy_exchanges(
-            history=history_done("audio", "tone_00001_.wav"), views=[(_wav(), "audio/wav")], strict=False)),
+            history=history_done("audios", "tone_00001_.wav", node="3"), views=[(_wav(), "audio/wav")], strict=False)),
             host=COMFY_HOST)
         made.set(proxy, "COMFY_HOST", fake.base_url)
         yield made

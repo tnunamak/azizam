@@ -212,12 +212,12 @@
       {
         "body": {
           "kind": "binary",
-          "len": 315,
+          "len": 416,
           "magic": "7b226d6170223a7b",
-          "sha256": "a751de5308ddba66d194fbe3a1f558456b29678cd110c5e19ed20d5e9bb3b235"
+          "sha256": "09a920503b389268c94a2d52c00f7a33445e09459552a9990c7a7657c1689aa7"
         },
         "created": "<time>",
-        "sha": "sha256:a751de5308ddba66d194fbe3a1f558456b29678cd110c5e19ed20d5e9bb3b235"
+        "sha": "sha256:09a920503b389268c94a2d52c00f7a33445e09459552a9990c7a7657c1689aa7"
       },
       {
         "body": {
@@ -232,12 +232,12 @@
     ],
     "definition_ref": [
       {
-        "blob_sha": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
+        "blob_sha": "sha256:09a920503b389268c94a2d52c00f7a33445e09459552a9990c7a7657c1689aa7",
         "holder_kind": "job",
         "job_id": "<job:1>"
       },
       {
-        "blob_sha": "sha256:a751de5308ddba66d194fbe3a1f558456b29678cd110c5e19ed20d5e9bb3b235",
+        "blob_sha": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
         "holder_kind": "job",
         "job_id": "<job:1>"
       },
@@ -252,7 +252,7 @@
         "created": "<time>",
         "envelope_json": {
           "definitions": {
-            "binding": "sha256:a751de5308ddba66d194fbe3a1f558456b29678cd110c5e19ed20d5e9bb3b235",
+            "binding": "sha256:09a920503b389268c94a2d52c00f7a33445e09459552a9990c7a7657c1689aa7",
             "contract": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
             "protocol": {
               "id": "node-graph",
@@ -272,7 +272,7 @@
           "source": {
             "id": "audio.generate.tangoflux",
             "kind": "workflow",
-            "revision": "sha256:96fb2ee47fde04782208d515e5aef61b701d8bd998efed40798a6f222e2b9dc3"
+            "revision": "sha256:e924018abad5fa93d59a449d637e1d7e1f23cc509d53551639d26427d357d491"
           },
           "upstream": {
             "origin_digest": "sha256:1e234fab60fcadd9d9362e437c5366d789d810a656c59ce14ecf27b6b48859d2",
@@ -425,19 +425,19 @@
           "bundle_version": 1,
           "envelope": {
             "adapter_id": "node-graph",
-            "binding": "sha256:a751de5308ddba66d194fbe3a1f558456b29678cd110c5e19ed20d5e9bb3b235",
+            "binding": "sha256:09a920503b389268c94a2d52c00f7a33445e09459552a9990c7a7657c1689aa7",
             "contract": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
             "interface_version": 1,
             "source_id": "audio.generate.tangoflux",
             "source_kind": "workflow",
-            "source_revision": "sha256:96fb2ee47fde04782208d515e5aef61b701d8bd998efed40798a6f222e2b9dc3",
+            "source_revision": "sha256:e924018abad5fa93d59a449d637e1d7e1f23cc509d53551639d26427d357d491",
             "template": "sha256:e242aea7be6a7c821d5db8bc2d000417e256a0d15284805e10a4cb96accdd363"
           },
           "results": [
             {
               "count": 1,
               "kind": "assets",
-              "name": "assets",
+              "name": "audio",
               "size_bytes": 3644
             }
           ]
@@ -459,8 +459,8 @@
         ],
         "job_id": "<job:1>",
         "kind": "assets",
-        "name": "assets",
-        "ref": "stage:<job:1>:1:assets",
+        "name": "audio",
+        "ref": "stage:<job:1>:1:audio",
         "sha256": null,
         "state": "published"
       }
@@ -732,19 +732,19 @@
               "bundle_version": 1,
               "envelope": {
                 "adapter_id": "node-graph",
-                "binding": "sha256:a751de5308ddba66d194fbe3a1f558456b29678cd110c5e19ed20d5e9bb3b235",
+                "binding": "sha256:09a920503b389268c94a2d52c00f7a33445e09459552a9990c7a7657c1689aa7",
                 "contract": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
                 "interface_version": 1,
                 "source_id": "audio.generate.tangoflux",
                 "source_kind": "workflow",
-                "source_revision": "sha256:96fb2ee47fde04782208d515e5aef61b701d8bd998efed40798a6f222e2b9dc3",
+                "source_revision": "sha256:e924018abad5fa93d59a449d637e1d7e1f23cc509d53551639d26427d357d491",
                 "template": "sha256:e242aea7be6a7c821d5db8bc2d000417e256a0d15284805e10a4cb96accdd363"
               },
               "results": [
                 {
                   "count": 1,
                   "kind": "assets",
-                  "name": "assets",
+                  "name": "audio",
                   "size_bytes": 3644
                 }
               ]

@@ -33,6 +33,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/images/seedvr2-upscale.json
+    selectors:
+      image: {node: '11', key: images, from: output_dir, decode: none, take: all}
     map:
       source_image:
         - node: "1"

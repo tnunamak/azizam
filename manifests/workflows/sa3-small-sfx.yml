@@ -33,6 +33,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/audio/sa3-small-sfx.json
+    selectors:
+      audio: {node: '8', key: audio, from: output_dir, decode: none, take: first}
     map:
       prompt:
       - node: '3'

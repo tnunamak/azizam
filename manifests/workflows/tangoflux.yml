@@ -40,6 +40,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/audio/tangoflux.json
+    selectors:
+      audio: {node: '3', key: audios, from: output_dir, decode: none, take: first}
     map:
       prompt:
         - node: "2"

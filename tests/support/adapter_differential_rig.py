@@ -80,11 +80,11 @@ QUEUE_IDLE = {"queue_running": [], "queue_pending": []}
 
 
 def history_done(outputs_key: str = "images", filename: str = "out.png", prompt_id: str = "p1", *,
-                 subfolder: str = "", count: int = 1) -> dict[str, Any]:
+                 subfolder: str = "", count: int = 1, node: str = "9") -> dict[str, Any]:
     items = [{"filename": filename if count == 1 else f"{Path(filename).stem}_{i}{Path(filename).suffix}",
               "subfolder": subfolder, "type": "output"} for i in range(count)]
     return {prompt_id: {"status": {"status_str": "success", "completed": True, "messages": []},
-                        "outputs": {"9": {outputs_key: items}}}}
+                        "outputs": {node: {outputs_key: items}}}}
 
 
 def comfy_exchanges(*, views: Iterable[tuple[bytes, str]] = (), prompt: Mapping[str, Any] | None = None,
