@@ -330,3 +330,44 @@ the steps read every attested field (`failure_semantics`, `servable_check`, rese
 - **Adapter additions.** The steps call `adapter.compatibility(domain)` (opaque token map; empty means unknown) and
   `adapter.observe(domain, name)`, beside the `TransitionAdapter` methods. `SnapshotLifecycle` adds `retire_published`,
   `has_room`, `collect`, `pin`, `unpin`, and an `ignore` argument on `latest_published`.
+
+### Running the proof harness
+
+`scripts/transition-proof` checks, against a running gateway, that a parked and woken domain kept its cached prefix.
+It uses the HTTP surface above and the chat route. It names no engine: the domain, the model alias and the frozen
+bodies are arguments, and how to read "cached" is data in the case manifest.
+
+```
+scripts/transition-proof --base-url http://192.0.2.10:5000 --domain <domain> --model <alias> \
+    --cases cases/manifest.json --owner-key-file <path> --out result.json [--wake-mode post|request] [--dry-run]
+```
+
+For each case it runs: seed request (reply text, timing, usage), `park` (with an idempotency key) and a poll of the
+operation until it finishes or holds, then the wake, then the follow-up (the seed's messages plus the follow-up
+question), then the assertions. `--wake-mode post` (default) posts `wake` and polls it. `--wake-mode request` sends the
+follow-up and lets the gateway wake the domain; the follow-up time then includes the wake. The harness replaces each
+body's `model` with `--model` and always sends `stream: false`. It reads the key from the file, never prints it, and
+replaces it with `[redacted]` in the result if a gateway echoes it.
+
+The manifest keeps the operator's frozen-case format and adds `cache_check` (top level, or per case to override):
+
+```json
+{"cache_check": {"cached_tokens_path": "usage.prompt_tokens_details.cached_tokens",
+                 "prompt_tokens_path": "usage.prompt_tokens",
+                 "min_cached_fraction": 0.8, "max_timing_ratio": 0.5},
+ "cases": [{"label": "4k", "file": "4k-seed.json", "sha256": "<64 hex>",
+            "followup": "A question about the seed.", "count_estimate": {"input_tokens": 4158}}]}
+```
+
+Paths are dotted (`choices.0.message.content`). The cached count in the follow-up reply must be at least
+`min_cached_fraction` of the seed's prompt tokens (read from the seed reply; `count_estimate` is the fallback).
+`max_timing_ratio` is optional: the harness then sends the follow-up once more with a unique first line, so no prefix
+can match, and requires the follow-up time to be at most that fraction of this cold time.
+
+The result JSON lists every step (op ids, idempotency keys, states seen, timings, usage), the gate state before and
+after park and after wake, and one pass or fail per assertion. Exit codes: `0` all assertions passed; `1` a step or
+assertion failed (the first failing case stops the run, and the later cases are `not_run`); `2` an input is wrong and
+nothing was sent (manifest, a body whose sha256 differs, a missing or empty key file). The harness never resolves a
+held gate: a `failed_closed` or `reconciling` operation is reported and left to the owner. `--dry-run` validates the
+manifest, the bodies and their sha256, and sends nothing.
+
