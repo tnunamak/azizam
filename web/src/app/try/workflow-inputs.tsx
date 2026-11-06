@@ -591,8 +591,12 @@ function controlFor(
       rows={1}
       className={cn(
         PLACEHOLDER_CLASS,
+        isShortSingleLine(String(value ?? "")) && "min-h-11 resize-none py-1 shadow-none",
+        // An empty field sizes to its example instead: one line looks the same, and an example that wraps on a
+        // narrow field shows its second line instead of having it cut off.
         isShortSingleLine(String(value ?? "")) &&
-          "h-11 min-h-11 resize-none field-sizing-fixed py-1 shadow-none",
+          (String(value ?? "") !== "" || !extras.placeholder) &&
+          "h-11 field-sizing-fixed",
       )}
       {...aria}
       placeholder={extras.placeholder}
