@@ -31,7 +31,7 @@ from typing import Any
 
 import yaml
 
-from gateway import admin_store, engine_check, native_lane, projection, record_carriers, url_binding
+from gateway import admin_store, engine_check, native_lane, projection, record_carriers, registry_layers, url_binding
 from gateway import secret_refs as _refs
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
@@ -46,11 +46,6 @@ SERVICE_REGISTRY_SETTING_KEY = "service_registry"
 SERVICE_REGISTRY_SCHEMA_VERSION = 2
 ENGINE_RECORD_VIEW_VERSION = 2
 MODEL_POLICY_SCHEMA_VERSION = 1
-# The one-time upgrade that gives a registry seeded before the mesh release the records that release added.
-# The registry keeps no tombstones, so an id it lacks may be one an operator removed: only this step, once, adds
-# the ids named below. The step's name is recorded in ``schema_migration_steps``; a fresh seed records it too.
-MESH_UPGRADE_STEP = "service-registry-mesh-records"
-MESH_UPGRADE_BACKENDS = ("trellis", "vram-observer")
 
 SERVICE_SOURCES = frozenset({"ui", "provisioned", "builtin", "discovered", "imported"})
 PROTOCOL_FRONTEND_SOURCES = frozenset({"builtin", "ui", "provisioned", "imported"})
@@ -73,44 +68,41 @@ _INLINE_SECRET_FIELDS = frozenset({
 })
 
 
-def ensure_service_registry(
-    proxy_config: Mapping[str, Any],
-    *,
-    path: Path = admin_store.DB_PATH,
-    actor: str = "system",
-) -> dict[str, Any]:
-    """Return the DB-owned registry, seeding/backfilling with bounded CAS retry."""
+def ensure_service_registry(*, path: Path = admin_store.DB_PATH, actor: str = "system") -> dict[str, Any]:
+    """Return the DB-owned registry, effective: the release records under the owner's data.
 
-    # Concurrent boots are legitimate: one can seed or backfill while another
-    # process gets far enough to observe the previous document.  Recompute
-    # from the winner's document rather than overwriting it.
+    A database with no registry gets the empty owner document (it inherits every release record). A registry stored
+    before the layer (docs/design/CONFIG_HOMES.md, 8.3) is migrated once to the owner-data form, and the step is
+    recorded in the same write. Nothing is seeded from ``proxy_config.yml`` and no release field is copied into the
+    store: the release is read at every load. Bounded CAS retry, as concurrent boots are legitimate.
+    """
+    release = release_registry()
     for _attempt in range(3):
-        record = admin_store.get_service_registry_with_generation(path=path)
+        record = admin_store.get_service_registry_json_with_generation(path=path)
         metadata: dict[str, Any] = {}
-        step: str | None = MESH_UPGRADE_STEP
-        if record is not None:
-            current = record["value"]
-            registry = backfill_seed_catalog_metadata(current, proxy_config=proxy_config)
-            step = None
-            if not admin_store.migration_step_recorded(MESH_UPGRADE_STEP, path=path):
-                registry = add_mesh_upgrade_records(registry, proxy_config=proxy_config)
-                step = MESH_UPGRADE_STEP
-                metadata["migration_step"] = step
-                metadata["added_services"] = sorted(set(registry["services"]) - set(current.get("services") or {}))
-                metadata["added_frontends"] = sorted(
-                    set(registry["protocol_frontends"]) - set(current.get("protocol_frontends") or {}))
-            if step is None and stable_hash(registry) == stable_hash(current):
-                return registry
-            action = "operator.service_registry.backfill" if step is None else "operator.service_registry.upgrade"
-            expected_generation = int(record["operator_settings_generation"])
-        else:
-            registry = build_service_registry_seed(proxy_config)
+        step: str | None = registry_layers.LAYERING_STEP
+        if record is None:
+            stored = registry_layers.empty_stored(SERVICE_REGISTRY_SCHEMA_VERSION)
             action = "operator.service_registry.seed"
             expected_generation = 0
+        else:
+            stored = _stored_document(record["value_json"])
+            if registry_layers.is_layered(stored):
+                if not admin_store.migration_step_recorded(registry_layers.LAYERING_STEP, path=path):
+                    admin_store.record_migration_step(registry_layers.LAYERING_STEP, path=path)
+                return normalize_service_registry(registry_layers.layer(stored, release))
+            from gateway import registry_migration
 
+            plan = registry_migration.plan_layering(
+                stored, release, load_seed_catalogs({}), owner_edited_services=registry_migration.owner_edited_services(path))
+            stored = plan.stored
+            action = "operator.service_registry.layering"
+            expected_generation = int(record["operator_settings_generation"])
+            metadata = {"migration_step": step, "patched": len(plan.patches),
+                        "tombstoned": sum(len(ids) for ids in plan.tombstones.values())}
         try:
-            written = admin_store.write_service_registry_with_audit(
-                registry,
+            admin_store.write_service_registry_with_audit(
+                stored,
                 expected_generation=expected_generation,
                 updated_by=actor,
                 audit_action=action,
@@ -120,19 +112,71 @@ def ensure_service_registry(
                 audit_target_kind="operator_setting",
                 audit_target_id=SERVICE_REGISTRY_SETTING_KEY,
                 audit_metadata={
-                    "service_count": len(registry.get("services") or {}),
-                    "protocol_frontend_count": len(registry.get("protocol_frontends") or {}),
+                    "service_count": len(stored.get("services") or {}),
+                    "protocol_frontend_count": len(stored.get("protocol_frontends") or {}),
                     **metadata,
                 },
-                session=None,  # the gateway seeding its own registry at start: no browser sign-in asked
+                session=None,  # the gateway migrating its own registry at start: no browser sign-in asked
                 path=path,
                 migration_step=step,
+                stored_form=True,
             )
         except admin_store.OperatorSettingsGenerationConflict:
             continue
-        return written["value"]
+        return normalize_service_registry(registry_layers.layer(stored, release))
 
     raise RuntimeError("service registry changed during bounded startup retry")
+
+
+def _stored_document(document: str) -> dict[str, Any]:
+    """The stored JSON as an object; a damaged or non-object value reads as an empty one, as ``get_operator_setting`` does."""
+    try:
+        value = json.loads(document)
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+@lru_cache(maxsize=4)
+def _release_registry(directory: str, signature: tuple[tuple[str, int, int], ...]) -> dict[str, Any]:
+    catalogs = load_seed_catalogs({"registry": {"catalog_dir": directory}})
+    document = normalize_service_registry({
+        "schema_version": 1,
+        **{name: catalogs.get(name) or {} for name, _kind in _SECTIONS},
+        "updated_at": 1,
+    })
+    # The release names the host its own key is meant for, as a seed always did.
+    document = bind_credential_origins(document, document["services"])
+    migrate_engine_records_v2(document)
+    registry, excluded = read_registry(document)
+    if excluded:
+        raise ValueError(f"the release records do not validate: {excluded[0].name}: {excluded[0].error}")
+    return {"schema_version": registry["schema_version"], **{name: registry[name] for name, _kind in _SECTIONS}}
+
+
+def _release_key(catalog_dir: Path | None) -> tuple[str, tuple[tuple[str, int, int], ...]]:
+    directory = Path(catalog_dir or DEFAULT_CATALOG_DIR)
+    signature = tuple(
+        (name, stat.st_mtime_ns, stat.st_size)
+        for name in ("services.yml", "protocol_frontends.yml", "workflows.yml", "capabilities.yml")
+        for stat in [(directory / name).stat()] if (directory / name).exists()
+    )
+    return str(directory), signature
+
+
+def release_registry(catalog_dir: Path | None = None) -> dict[str, Any]:
+    """The release layer: the records bundled in ``registry/``, normalized the way a stored record is. A fresh copy."""
+    return copy.deepcopy(_release_registry(*_release_key(catalog_dir)))
+
+
+@lru_cache(maxsize=4)
+def _release_digest(directory: str, signature: tuple[tuple[str, int, int], ...]) -> str:
+    return registry_layers.digest(_release_registry(directory, signature))
+
+
+def release_digest() -> str:
+    """A label of the release records, so a cache of a layered registry never outlives a change of the release."""
+    return _release_digest(*_release_key(None))
 
 
 def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any] | None:
@@ -140,7 +184,7 @@ def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any]
     if record is None:
         return None
     snapshot, _excluded, default_timestamp = _normalized_registry_snapshot(
-        record["operator_settings_generation"], record["value_json"],
+        record["operator_settings_generation"], record["value_json"], release_digest(),
     )
     # Existing callers may edit these dictionaries before submitting a CAS
     # write. Never expose the cached object to a caller's mutations.
@@ -156,69 +200,28 @@ def load_service_registry_exclusions(*, path: Path = admin_store.DB_PATH) -> lis
     if record is None:
         return []
     _registry, excluded, _default = _normalized_registry_snapshot(
-        record["operator_settings_generation"], record["value_json"],
+        record["operator_settings_generation"], record["value_json"], release_digest(),
     )
     return [replace(item, record=copy.deepcopy(item.record)) for item in excluded]
 
 
 @lru_cache(maxsize=16)
-def _normalized_registry_snapshot(generation: int, document: str) -> tuple[dict[str, Any], tuple["ExcludedRecord", ...], bool]:
+def _normalized_registry_snapshot(
+    generation: int, document: str, release: str,
+) -> tuple[dict[str, Any], tuple["ExcludedRecord", ...], bool]:
     # The CAS generation and JSON are read by one SELECT. Including the JSON
     # also separates databases and protects against a restored/recreated DB
-    # reusing a generation. No TTL or process-local writer notification.
+    # reusing a generation. The release digest keeps a cached registry from outliving a change of the release
+    # records it was layered over. No TTL or process-local writer notification.
     # Match get_operator_setting's treatment of damaged/non-object JSON.
-    try:
-        value = json.loads(document)
-    except json.JSONDecodeError:
-        value = {}
-    if not isinstance(value, dict):
-        value = {}
-    registry, excluded = read_registry(value)
+    value = _stored_document(document)
+    registry, excluded = read_registry(registry_layers.layer(value, release_registry()))
     for record in excluded:
         # Once per stored document, not once per request: this body runs only when the cache misses.
         print(f"[service_registry] ERROR: {record.section} record {record.id!r} is left out of the registry: {record.error}", flush=True)
     return registry, tuple(excluded), not bool(value.get("updated_at"))
 
 
-def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, Any]:
-    catalogs = load_seed_catalogs(proxy_config)
-    services = dict(catalogs.get("services") or {})
-    for raw_id, raw in (proxy_config.get("backends") or {}).items():
-        if not isinstance(raw, Mapping):
-            continue
-        service_id = normalize_id(raw_id)
-        if not service_id:
-            continue
-        source = str(raw.get("source") or "provisioned")
-        services[service_id] = service_from_backend_config(
-            service_id,
-            raw,
-            source=source,
-            provenance={
-                "seed": f"proxy_config.yml:backends.{raw_id}",
-                "seed_hash": stable_hash(raw),
-            },
-        )
-
-    seeded = normalize_service_registry({
-        "schema_version": 1,
-        "services": services,
-        "protocol_frontends": catalogs.get("protocol_frontends") or {},
-        "workflows": catalogs.get("workflows") or {},
-        "capabilities": catalogs.get("capabilities") or {},
-        "seeded_from": "registry catalog + proxy_config.yml",
-        "seed_hash": stable_hash(
-            {
-                "catalogs": catalogs,
-                "backends": proxy_config.get("backends") or {},
-            }
-        ),
-        "updated_at": int(time.time()),
-    })
-    # The seed comes from the operator's own files, so a key it names is meant for the host it names.
-    seeded = bind_credential_origins(seeded, seeded["services"])
-    migrate_engine_records_v2(seeded)
-    return seeded
 
 
 def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -627,242 +630,30 @@ def _validate_public_alias_uniqueness(services: Mapping[str, Mapping[str, Any]])
         )
 
 
-def backfill_seed_catalog_metadata(
-    registry: Mapping[str, Any],
-    *,
-    proxy_config: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Merge new bundled metadata into older DB-owned registry records.
-
-    Raises when the merge leaves a service that a transition-enabled domain cannot hold.
-    """
-    return backfill_normalized_registry(normalize_service_registry(registry), proxy_config=proxy_config)
 
 
-def servable_registry_with_backfill(
-    registry: Mapping[str, Any],
-    *,
-    proxy_config: Mapping[str, Any] | None = None,
-) -> tuple[dict[str, Any], dict[str, str]]:
-    """``servable_part_of_registry`` with the bundled metadata backfilled into the records that validate.
-
-    A partial boot serves the managed LiteLLM row and every bundled field an older store lacks, as a
-    healthy boot does. Nothing is written: the stored document keeps its left-out records exactly.
-    """
-    servable, left_out = servable_part_of_registry(registry)
-    backfilled = _backfill_in_place(servable, proxy_config=proxy_config)
-    # A service the merge made unfit for its transition-enabled domain is left out, like any other.
-    return backfilled, {**left_out, **_enforce_transition_domains(backfilled["services"], strict=False)}
 
 
-def backfill_normalized_registry(out: dict[str, Any], *, proxy_config: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """``out`` (an already normalized registry, changed in place) with the bundled metadata merged in.
-
-    The merge can change a service's residency, so the transition-domain check runs again on the
-    result and raises if a service is no longer fit for its domain.
-    """
-    _backfill_in_place(out, proxy_config=proxy_config)
-    _enforce_transition_domains(out["services"], strict=True)
-    return out
 
 
-def _backfill_in_place(out: dict[str, Any], *, proxy_config: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    proxy_config = proxy_config or {}
-    catalogs = load_seed_catalogs(proxy_config)
-    _backfill_missing_records(
-        out["services"],
-        catalogs.get("services") or {},
-    )
-    _backfill_service_metadata(
-        out["services"],
-        catalogs.get("services") or {},
-    )
-    _backfill_service_metadata(
-        out["services"],
-        _backend_config_seeds(proxy_config),
-    )
-    _backfill_collection_metadata(
-        out["protocol_frontends"],
-        catalogs.get("protocol_frontends") or {},
-        keys=("registered_routes", "asset_content_policies", "public_discovery"),
-    )
-    _backfill_missing_builtin_frontends(
-        out["protocol_frontends"],
-        catalogs.get("protocol_frontends") or {},
-    )
-    return out
 
 
-def _backfill_missing_builtin_frontends(
-    records: dict[str, dict[str, Any]],
-    seeds: Mapping[str, Any],
-) -> None:
-    """Add each builtin frontend the registry lacks. A builtin ships with the code, and the route mount already
-    serves one that is missing from the store (``route_registry.mount_frontend_records``); this keeps the stored
-    records, which the route checks and the Overview read, in agreement with what is served."""
-    for frontend_id, seed in seeds.items():
-        if frontend_id in records or not isinstance(seed, Mapping) or seed.get("source") != "builtin":
-            continue
-        records[frontend_id] = copy.deepcopy(dict(seed))
 
 
-def add_mesh_upgrade_records(registry: dict[str, Any], *, proxy_config: Mapping[str, Any]) -> dict[str, Any]:
-    """``registry`` with the ``proxy_config.yml`` backends that the mesh release added, where it lacks them.
-
-    Only ``MESH_UPGRADE_BACKENDS`` are added. Every other backend in ``proxy_config.yml`` may be one an operator
-    removed from the registry, and the registry keeps no record of that, so it is not brought back. The caller runs
-    this once (``MESH_UPGRADE_STEP``) and records the step in the same write.
-    """
-    seeds = _backend_config_seeds(proxy_config)
-    for service_id in MESH_UPGRADE_BACKENDS:
-        seed = seeds.get(service_id)
-        if seed is not None and service_id not in registry["services"]:
-            registry["services"][service_id] = copy.deepcopy(dict(seed))
-    return registry
 
 
-def _backend_config_seeds(proxy_config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    """Build backfill seeds from ``proxy_config.yml``'s own ``backends`` block.
-
-    ``proxy_config.yml`` is the source of truth for operator-authored,
-    fail-closed CAPABILITY declarations a backend opts into (e.g.
-    ``auth_inject``) — these are never edited via the
-    admin UI/DB, unlike ``models``/model-policy data which the registry owns
-    exclusively once seeded (see ``test_existing_registry_model_rows_are_not_
-    silently_upgraded_from_yaml``). Without this, a capability block added to
-    an existing backend's YAML after the DB was first seeded would never
-    reach an already-seeded deployment: ``ensure_service_registry`` only reads
-    YAML on first seed, and the ordinary bundled-catalog backfill above sources
-    from ``registry/services.yml``/``proxy_config["services"]``, not
-    ``proxy_config["backends"]``.
-
-    Reuses ``service_from_backend_config`` (the same first-seed path) so the
-    produced seed records have the identical shape/``source`` the ordinary
-    backfill gate already checks — this only ever fills fields the existing
-    record is missing (``_merge_missing_fields``); it never overwrites an
-    operator/DB-owned value.
-    """
-    seeds: dict[str, dict[str, Any]] = {}
-    for raw_id, raw in (proxy_config.get("backends") or {}).items():
-        if not isinstance(raw, Mapping):
-            continue
-        service_id = normalize_id(raw_id)
-        if not service_id:
-            continue
-        source = str(raw.get("source") or "provisioned")
-        seeds[service_id] = service_from_backend_config(
-            service_id,
-            raw,
-            source=source,
-            provenance={
-                "seed": f"proxy_config.yml:backends.{raw_id}",
-                "seed_hash": stable_hash(raw),
-            },
-        )
-    return seeds
 
 
-def _backfill_missing_records(
-    records: dict[str, dict[str, Any]],
-    seeds: Mapping[str, Any],
-) -> None:
-    for record_id, seed in seeds.items():
-        if record_id in records or not isinstance(seed, Mapping):
-            continue
-        # The DB registry is the source of truth after first seed. Do not
-        # resurrect ordinary bundled/catalog services an operator removed.
-        # The managed LiteLLM substrate is the sole exception because the
-        # gateway owns that process and remove_service_from_registry blocks its
-        # deletion in current registries; old registries may predate the row.
-        if is_litellm_service_record(record_id, seed):
-            records[record_id] = copy.deepcopy(dict(seed))
 
 
-def _backfill_service_metadata(
-    records: dict[str, dict[str, Any]],
-    seeds: Mapping[str, Any],
-) -> None:
-    for record_id, record in records.items():
-        seed = seeds.get(record_id)
-        if not isinstance(seed, Mapping):
-            continue
-        record_source = str(record.get("source") or "").strip()
-        seed_source = str(seed.get("source") or "").strip()
-        if record_source and seed_source and record_source != seed_source:
-            continue
-        # Attachments are operator-owned after first seed. In particular, a
-        # deleted attachment must not be restored by metadata backfill.
-        seed = copy.deepcopy(dict(seed))
-        if isinstance(seed.get("config"), dict):
-            seed["config"].pop("transforms", None)
-        # The residency block names the service's domain and its transition: it is merged apart, key by key,
-        # so a seed never replaces or extends a block the record declares.
-        seed_residency, seed_place = _take_residency(seed)
-        _merge_missing_fields(record, seed)
-        _merge_residency(record, seed_residency, seed_place)
 
 
-def _take_residency(record: dict[str, Any]) -> tuple[Mapping[str, Any], str]:
-    """Remove and return the residency block ``record`` declares (top-level wins, as the gate reads it), and
-    where it was: ``"top"`` or ``"config"``. An empty mapping when it declares none. A value that is not a
-    mapping (the legacy ``residency: on_demand`` string) is left in place for the ordinary merge."""
-    config = record.get("config") if isinstance(record.get("config"), dict) else {}
-    top, nested = record.get("residency"), config.get("residency")
-    block: Mapping[str, Any] = {}
-    place = "top"
-    if isinstance(nested, Mapping):
-        config.pop("residency")
-        block, place = nested, "config"
-    if isinstance(top, Mapping):
-        record.pop("residency")
-        if top:
-            block, place = top, "top"
-    return block, place
 
 
-def _merge_residency(record: dict[str, Any], seed: Mapping[str, Any], place: str) -> None:
-    """Fill in the residency keys ``record`` lacks. Only top-level keys: a declared ``transition`` or
-    ``domain`` is never replaced, and a declared ``transition`` block never gains keys from a seed."""
-    if not seed:
-        return
-    config = record.get("config") if isinstance(record.get("config"), dict) else None
-    top = record.get("residency")
-    nested = config.get("residency") if config is not None else None
-    declared = top if isinstance(top, dict) and top else (nested if isinstance(nested, dict) and nested else None)
-    if declared is None:
-        # Nothing declared: the seed's block goes where the seed kept it.
-        if place == "config" and config is not None:
-            config["residency"] = copy.deepcopy(dict(seed))
-        else:
-            record["residency"] = copy.deepcopy(dict(seed))
-        return
-    for key, value in seed.items():
-        declared.setdefault(key, copy.deepcopy(value))
 
 
-def _merge_missing_fields(target: dict[str, Any], seed: Mapping[str, Any]) -> None:
-    for key, seed_value in seed.items():
-        if key not in target:
-            target[key] = copy.deepcopy(seed_value)
-            continue
-        target_value = target.get(key)
-        if isinstance(target_value, dict) and isinstance(seed_value, Mapping):
-            _merge_missing_fields(target_value, seed_value)
 
 
-def _backfill_collection_metadata(
-    records: dict[str, dict[str, Any]],
-    seeds: Mapping[str, Any],
-    *,
-    keys: tuple[str, ...],
-) -> None:
-    for record_id, record in records.items():
-        seed = seeds.get(record_id)
-        if not isinstance(seed, Mapping):
-            continue
-        for key in keys:
-            if key not in record and key in seed:
-                record[key] = copy.deepcopy(seed[key])
 
 
 # Runtime fields the registry promotes to the top of a service record but that

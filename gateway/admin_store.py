@@ -4253,11 +4253,17 @@ class OperatorSettingsGenerationConflict(ValueError):
 
 
 def get_service_registry_with_generation(*, path: Path = DB_PATH) -> dict[str, Any] | None:
-    """Return the one active registry document and its server-owned CAS value."""
+    """Return the one active registry document, effective (the release records under the owner's data), and its CAS value.
+
+    ``get_service_registry_json_with_generation`` answers the stored owner-data document itself.
+    """
+    from gateway import registry_layers, service_registry
+
     record = get_service_registry_json_with_generation(path=path)
     if record is None:
         return None
-    record["value"] = json.loads(record.pop("value_json"))
+    stored = json.loads(record.pop("value_json"))
+    record["value"] = registry_layers.layer(stored, service_registry.release_registry()) if isinstance(stored, dict) else stored
     return record
 
 
@@ -4288,8 +4294,12 @@ def write_service_registry(
     expected_generation: int, now: int | None = None,
     session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
+    stored_form: bool = False,
 ) -> dict[str, Any]:
     """Atomically write the active registry and advance its only CAS counter.
+
+    ``value`` is the whole effective registry the caller edited; what is stored is the part that differs from the
+    release (``gateway/registry_layers.py``). ``stored_form`` says ``value`` is already that owner-data document.
 
     This is the sole production writer for ``operator.service_registry``.  It
     intentionally owns no artifact/reload effect: those occur after commit.
@@ -4305,7 +4315,7 @@ def write_service_registry(
             session_guard.require_live(conn, session)
             next_generation = write_service_registry_in_transaction(
                 conn, value, updated_by=updated_by,
-                expected_generation=expected_generation, now=ts,
+                expected_generation=expected_generation, now=ts, stored_form=stored_form,
             )
             conn.commit()
         except Exception:
@@ -4331,8 +4341,12 @@ def write_service_registry_with_audit(
     session: session_guard.BrowserSession | None = None,
     path: Path = DB_PATH,
     migration_step: str | None = None,
+    stored_form: bool = False,
 ) -> dict[str, Any]:
     """Commit one registry revision, generation, and audit fact atomically.
+
+    ``value`` is the whole effective registry; what is stored is the part that differs from the release
+    (``stored_form``: ``value`` is already the owner-data document, as the layering migration writes it).
 
     This is the production writer for ordinary registry mutations.  Artifact
     publication and reload stay outside this transaction because they observe
@@ -4358,6 +4372,7 @@ def write_service_registry_with_audit(
                 updated_by=updated_by,
                 expected_generation=expected_generation,
                 now=ts,
+                stored_form=stored_form,
             )
             _record_audit_in_transaction(
                 conn,
@@ -4405,8 +4420,12 @@ def write_service_registry_in_transaction(
     updated_by: str | None,
     expected_generation: int,
     now: int,
+    stored_form: bool = False,
 ) -> int:
     """Write the registry and increment its generation in a caller-owned transaction.
+
+    ``value`` is the whole effective registry; the document stored is the owner data in it (``stored_form``: ``value``
+    is that document already). The generation counts stored writes, so its semantics are the same as before the layer.
 
     Lifecycle cutover/deactivation need their pointer, audit, and registry
     update to commit together.  This is deliberately the only internal escape
@@ -4423,11 +4442,18 @@ def write_service_registry_in_transaction(
         )
     # A service id owns its overrides. Remove them in the same transaction as
     # the registry change so deleting and recreating an id cannot revive facts.
+    from gateway import registry_layers, service_registry
+
     previous = conn.execute(
         "SELECT value_json FROM operator_settings WHERE key='service_registry'"
     ).fetchone()
-    old_services = json.loads(previous[0]).get("services", {}) if previous else {}
-    removed_ids = set(old_services) - set(value.get("services") or {})
+    release = service_registry.release_registry()
+    before = json.loads(previous[0]) if previous else {}
+    before = before if isinstance(before, dict) else {}
+    # A service the write drops is one the effective registry had and the new one lacks, a release record included.
+    old_services = registry_layers.layer(before, release).get("services", {})
+    value = dict(value) if stored_form else registry_layers.unlayer(value, release, before)
+    removed_ids = set(old_services) - set(registry_layers.layer(value, release).get("services") or {})
     conn.executemany(
         "DELETE FROM retention_fact_overrides WHERE target_type IN ('engine','provider') AND target_id=?",
         [(str(service_id),) for service_id in removed_ids],
