@@ -117,7 +117,6 @@ def compile_litellm_substrate_config(
     services: Mapping[str, Any],
     *,
     materializer: Materializer | None = None,
-    left_out: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """A LiteLLM-compatible config fragment from Gateway-owned data.
 
@@ -125,8 +124,8 @@ def compile_litellm_substrate_config(
     be. With the runtime's, it is the executable config the router reads from a restricted file.
 
     A record whose explicit ``gateway_lifecycle_base_url`` is not this gateway's own listener is left out, alone:
-    it is logged and named in ``left_out`` (``{service_id: reason}``) when the caller passes one. The registry
-    refuses such a record before it gets here.
+    it is logged. The registry refuses such a record before it gets here and the Overview reports it there
+    (``REGISTRY_APPLY_PROBLEM``), so this is the second layer and reports nothing of its own.
     """
 
     service_records = _normalize_services(services)
@@ -143,8 +142,6 @@ def compile_litellm_substrate_config(
         foreign = foreign_lifecycle_base_error(service)
         if foreign is not None:
             _LOG.error("LiteLLM config: %s is left out. %s", service["id"], foreign)
-            if left_out is not None:
-                left_out[str(service["id"])] = foreign
             continue
         deployments = _deployment_records(service)
         if not deployments:

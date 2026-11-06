@@ -782,12 +782,10 @@ def test_one_foreign_lifecycle_base_does_not_stop_the_compile_for_other_records(
     bad = _lifecycle_service(gateway_lifecycle_base_url=base)["local"]
     good = {"id": "good", "name": "Good", "capabilities": ["openai"],
             "config": {"protocol": "openai-compatible", "gateway_lifecycle": True, "models": {"default": "other.gguf"}}}
-    left_out: dict[str, str] = {}
-    compiled = compile_litellm_substrate_config({"local": bad, "good": good}, left_out=left_out)
+    compiled = compile_litellm_substrate_config({"local": bad, "good": good})
     assert {entry["model_info"]["gateway_backend"] for entry in compiled["model_list"]
             if entry["model_info"].get("gateway_backend")} == {"good"}
-    assert list(left_out) == ["local"] and "not this gateway's own listener" in left_out["local"]
-    assert "local is left out" in caplog.text
+    assert "local is left out" in caplog.text and "not this gateway's own listener" in caplog.text
     names = litellm_substrate.litellm_known_model_names({"services": {"local": bad, "good": good}})
     assert names
 
