@@ -5,8 +5,10 @@ import asyncio
 import ast
 import json
 import os
+import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -127,6 +129,74 @@ def test_unverified_managed_refuses_before_content_leaves(monkeypatch, tmp_path)
     assert json.loads(response.body)['error']['code'] == 'litellm_content_unverified'
 
 
+def _verified_managed_gate(monkeypatch):
+    gate = content.ContentGate()
+    monkeypatch.setattr(content, 'gate', gate)
+    monkeypatch.setattr(gate, 'mode', lambda _: 'managed')
+    monkeypatch.setattr(gate, 'generation', lambda _: ('child',))
+    async def verified(_): return None
+    monkeypatch.setattr(content, 'database_problem', verified)
+    return gate
+
+
+def _starting_child() -> socket.socket:
+    """A bound port that is not listening yet: connections are refused, as while LiteLLM starts."""
+    child = socket.socket()
+    child.bind(('127.0.0.1', 0))
+    return child
+
+
+def test_verified_child_that_is_still_starting_is_awaited(monkeypatch):
+    gate = _verified_managed_gate(monkeypatch)
+    with _starting_child() as child:
+        base = f'http://127.0.0.1:{child.getsockname()[1]}'
+        async def run():
+            assert await content.execution_refusal(base) is None
+            asyncio.get_running_loop().call_later(0.5, child.listen)
+            started = time.monotonic()
+            await content.wait_while_starting(base)
+            return time.monotonic() - started
+        assert asyncio.run(run()) >= 0.5
+        assert gate.listening == ('child',)
+
+
+def test_child_that_never_listens_is_awaited_only_to_the_bound(monkeypatch):
+    gate = _verified_managed_gate(monkeypatch)
+    monkeypatch.setattr(content, 'LISTEN_WAIT_SECONDS', 0.3)
+    with _starting_child() as child:
+        started = time.monotonic()
+        base = f'http://127.0.0.1:{child.getsockname()[1]}'
+        async def run():
+            assert await content.execution_refusal(base) is None
+            await content.wait_while_starting(base)
+        asyncio.run(run())
+        assert 0.3 <= time.monotonic() - started < 5
+    assert gate.listening is None
+
+
+def test_chat_sent_while_the_managed_child_starts_waits_and_succeeds(monkeypatch, tmp_path, fake_upstreams):
+    from tests.support.fake_upstream import load_scenario
+    from tests.support.gateway import gateway_client, register_litellm, use_admin_db
+    _verified_managed_gate(monkeypatch)
+    served = []
+    child = _starting_child()
+    register_litellm(monkeypatch, use_admin_db(monkeypatch, tmp_path), f'http://127.0.0.1:{child.getsockname()[1]}')
+    scenario = load_scenario('openai-compatible/chat-text', model='fk-model', content='ok')
+    async def run():
+        # The fake takes over the socket and closes it at teardown.
+        asyncio.get_running_loop().call_later(0.5, lambda: served.append(fake_upstreams.loopback(scenario, sock=child)))
+        async with gateway_client() as client:
+            body = {'model': 'fk-model', 'messages': [{'role': 'user', 'content': 'hello'}]}
+            return await client.post('/v1/chat/completions', json=body)
+    try:
+        response = asyncio.run(run())
+    finally:
+        if not served:
+            child.close()
+    assert response.status_code == 200, response.text
+    assert len(served[0].requests) == 1
+
+
 def test_launch_proof_is_bound_to_process_and_config(monkeypatch, tmp_path):
     config = tmp_path / 'config.yaml'
     config.write_text(yaml.safe_dump(compile_litellm_substrate_config({})))
@@ -178,13 +248,14 @@ def test_every_substrate_url_caller_is_classified():
                     parent = parents[parent]
                 found.setdefault(str(path.relative_to(ROOT)), set()).add(parent.name)
     # Model listing and key CRUD carry no request content. Both execution
-    # callers must await execution_refusal before they build the URL.
+    # callers must await execution_refusal, then wait while the gateway's own
+    # child starts, before they build the URL.
     assert found == expected
     for filename, name in [('proxy.py', '_forward_litellm_proxy_request'), ('gateway/provider_execution.py', 'execute_paid_litellm')]:
         tree = ast.parse((ROOT / filename).read_text())
         function = next(node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef) and node.name == name)
         source = ast.unparse(function)
-        assert source.index('await execution_refusal(') < source.index('litellm_url(')
+        assert source.index('await execution_refusal(') < source.index('await wait_while_starting(') < source.index('litellm_url(')
 
 
 def test_restart_during_check_cannot_reuse_approval(monkeypatch):

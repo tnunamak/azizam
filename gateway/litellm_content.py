@@ -103,6 +103,10 @@ SELECT
 
 
 CHECK_TIMEOUT_SECONDS = 10
+# The launcher writes its proof before LiteLLM binds its port, and LiteLLM then takes about 25 s to start.
+# A request that finds the verified child still starting waits this long for the port, then goes on.
+LISTEN_WAIT_SECONDS = 60
+LISTEN_POLL_SECONDS = 0.5
 
 
 async def _database_check(database_url: str) -> str | None:
@@ -185,6 +189,8 @@ class ContentGate:
         self.next_check_at = 0.0
         # Set while the start-up check runs; a request that finds no verdict waits for it.
         self.warm_settled: asyncio.Event | None = None
+        # The verified managed generation that has accepted a connection.
+        self.listening: tuple[Any, ...] | None = None
 
     def start_warming(self, base_url: str, *, window_seconds: float = 120, poll_seconds: float = 2) -> asyncio.Task:
         """Run the first check in the background, so a request after start finds a verdict.
@@ -279,6 +285,33 @@ class ContentGate:
             self.retry_seconds = min(60, self.retry_seconds * 2) if self.problem else 30
             return self.problem
 
+    async def wait_listening(self, base_url: str) -> None:
+        """Wait, bounded, until the verified managed child accepts connections on its port.
+
+        A verified generation can still be starting: its proof exists before its port is open. Only a refused
+        connection waits; any other answer or error ends the wait, so the request itself meets it. At the bound
+        the request goes on, and the connect error answers 503 backend_unavailable with Retry-After.
+        """
+        generation = self.checked
+        if self.mode(base_url) != "managed" or generation is None or generation == self.listening:
+            return
+        endpoint = urlsplit(base_url)
+        end = time.monotonic() + LISTEN_WAIT_SECONDS
+        while True:
+            try:
+                _reader, writer = await asyncio.wait_for(asyncio.open_connection(endpoint.hostname, endpoint.port),
+                                                         timeout=CHECK_TIMEOUT_SECONDS)
+            except ConnectionRefusedError:
+                if time.monotonic() >= end:
+                    return
+                await asyncio.sleep(LISTEN_POLL_SECONDS)
+                continue
+            except OSError:
+                return
+            writer.close()
+            self.listening = generation
+            return
+
     def status(self, base_url: str) -> dict[str, Any]:
         mode = self.mode(base_url)
         if mode == "compose" and self.unseen_database:
@@ -301,6 +334,11 @@ async def execution_refusal(base_url: str):
         return None
     from gateway.egress import safe_error_response
     return safe_error_response(503, "litellm_content_unverified", gate.status(base_url)["detail"])
+
+
+async def wait_while_starting(base_url: str) -> None:
+    """Call after ``execution_refusal`` admits a request: waits, bounded, while the gateway's own child starts."""
+    await gate.wait_listening(base_url)
 
 
 def deployment_status(registry: Mapping[str, Any] | None = None) -> dict[str, Any]:

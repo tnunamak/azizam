@@ -22,8 +22,10 @@ from .app import FakeDisconnect
 
 
 class LoopbackServer:
-    def __init__(self, app: typing.Callable) -> None:
+    def __init__(self, app: typing.Callable, *, sock: socket.socket | None = None) -> None:
+        """``sock``: serve on this bound socket instead of a new port. Until ``start``, it refuses connections."""
         self.app = app
+        self._sock = sock
         self._loop: asyncio.AbstractEventLoop | None = None
         self._server: asyncio.AbstractServer | None = None
         self._ready = threading.Event()
@@ -53,7 +55,9 @@ class LoopbackServer:
     def _run(self) -> None:
         self._loop = asyncio.new_event_loop()
         try:
-            self._server = self._loop.run_until_complete(asyncio.start_server(self._handle, "127.0.0.1", 0))
+            listen = (asyncio.start_server(self._handle, sock=self._sock) if self._sock is not None
+                      else asyncio.start_server(self._handle, "127.0.0.1", 0))
+            self._server = self._loop.run_until_complete(listen)
             self.port = self._server.sockets[0].getsockname()[1]
         except BaseException as error:  # noqa: BLE001 - reported to start()
             self._error = error
