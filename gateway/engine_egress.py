@@ -126,12 +126,34 @@ def _path_of(value: Any) -> str | None:
     return text if text.startswith("/") and text != "/" else None
 
 
+def observer_paths_declared_by(services: Mapping[str, Any]) -> dict[str, set[str]]:
+    """The observer paths other records name, by the id of the service they are read from.
+
+    A record that sets ``resource_capacity.observer`` asks its observer service for facts at ``path``: that path is
+    an observer read of the observer service, so its record declares it (``project`` adds it to that service's paths).
+    """
+    found: dict[str, set[str]] = {}
+    for record in services.values():
+        if not isinstance(record, Mapping):
+            continue
+        for scope in (record, record.get("config")):
+            capacity = scope.get("resource_capacity") if isinstance(scope, Mapping) else None
+            observer = capacity.get("observer") if isinstance(capacity, Mapping) else None
+            if not isinstance(observer, Mapping) or not isinstance(observer.get("service"), str):
+                continue
+            path = _path_of(observer.get("path"))
+            if path:
+                found.setdefault(observer["service"].strip(), set()).add(path)
+    return found
+
+
 def declared_probe_paths(record: Mapping[str, Any]) -> set[str]:
     """The paths a service record declares as health, metadata or observer reads (the only paths a probe mark covers).
 
     These are the record's ``health_endpoint`` (and the default health path), its ``context_window_probe`` endpoint,
     the path of each declared observation, the ``verify_endpoint`` of its lifecycle driver, and the same fields of
-    each offering. ``publish`` allows each path as written and under the path prefix of the record's own URL.
+    each offering. (The observer path another record names for this service is added by ``project``.)
+    ``project`` allows each path as written and under the path prefix of the record's own URL.
     """
     found: set[str] = {DEFAULT_HEALTH_PATH}
     scopes: list[Mapping[str, Any]] = [record]
@@ -182,13 +204,14 @@ def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
     """
     built: dict[str, list[str]] = {}
     paths: dict[str, set[str]] = {}
+    observer_paths = observer_paths_declared_by(services or {})
     for service_id, record in (services or {}).items():
         if not isinstance(record, Mapping):
             continue
         policy = policy_for(str(service_id), services)
         if not policy.enabled:
             continue
-        declared = declared_probe_paths(record)
+        declared = declared_probe_paths(record) | observer_paths.get(str(service_id), set())
         if extra_probe_paths is not None:
             declared.update(path for path in map(_path_of, extra_probe_paths(record)) if path)
         for key, prefixes in _destination_prefixes(record).items():
