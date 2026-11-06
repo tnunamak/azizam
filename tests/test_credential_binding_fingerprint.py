@@ -44,7 +44,9 @@ ATTACKS = {
     "config.url alone": [("url", NEW_HOST)],
     "the credential origin alone": [("connection.credentials.inference.origin", NEW_HOST)],
     "config.address": [("address", NEW_HOST)],
-    "connection.address": [("connection.address", NEW_HOST)],
+    # A lone connection.address move is refused before any binding check (see the test below), so the attack moves
+    # the address the service is dialed at with it.
+    "connection.address with the dialed address": [("connection.address", NEW_HOST), ("base_url", f"{NEW_HOST}/v1")],
     "base_url alone": [("base_url", f"{NEW_HOST}/v1")],
 }
 
@@ -75,6 +77,14 @@ def test_a_non_owner_administrator_cannot_redirect_the_key_through_the_admin_sav
     admin = AdminContext(subject="admin-user", roles=frozenset({"admin"}), actor_kind="user")
     with pytest.raises(PermissionError):
         store._settle_credential_bindings(_attacked(name), admin)
+
+
+
+def test_a_connection_address_moved_alone_away_from_the_dialed_host_is_refused():
+    # The record would show and edit one host while routing kept dialing the old one, and the key stays put.
+    with pytest.raises(ValueError, match="connection.address") as refused:
+        service_registry.credential_binding_changes(_stored(), _with(_stored(), "connection.address", NEW_HOST))
+    assert "203.0.113.7" not in str(refused.value)
 
 
 def test_the_owner_moving_the_engine_rebinds_the_key_to_the_new_host(tmp_path):
