@@ -11,6 +11,12 @@ import { kindLabel } from "./media-kind";
 export const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
 export const MAX_MEDIA_LABEL = "10 MB";
 
+/** A file's size in the words a person reads under its name ("12 KB", "1.4 MB"). */
+export function sizeWords(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return megabytes(bytes);
+}
+
 export function megabytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
 }

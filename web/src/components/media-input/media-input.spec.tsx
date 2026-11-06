@@ -468,3 +468,30 @@ test("the From your Library label goes when a pasted or recorded file replaces t
   expect(screen.queryByText("From your Library")).toBeNull();
   expect(screen.getByText("pasted.png")).toBeTruthy();
 });
+
+test("a chosen file is one summary: name, source and size, with one remove control, in both modes", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  function Both() {
+    const [file, setFile] = useState<File | null>(null);
+    const [value, setValue] = useState<string | undefined>(undefined);
+    return (
+      <>
+        <MediaInput id="as-file" label="As file" kind="image" file={file} onFileChange={setFile} />
+        <MediaInput id="as-reference" label="As reference" kind="image" value={value} onChange={setValue} />
+      </>
+    );
+  }
+  render(<Both />);
+  const inputs = document.querySelectorAll<HTMLInputElement>("input[data-media-file-input]");
+  const kb = new File([new Uint8Array(2048)], "fox.png", { type: "image/png" });
+  fireEvent.change(inputs[0], { target: { files: [kb] } });
+  fireEvent.change(inputs[1], { target: { files: [kb] } });
+  await waitFor(() => expect(document.querySelectorAll('[data-slot="picked-summary"]').length).toBe(2));
+  for (const summary of Array.from(document.querySelectorAll<HTMLElement>('[data-slot="picked-summary"]'))) {
+    expect(summary.textContent).toContain("fox.png");
+    expect(summary.textContent).toContain("2 KB");
+    expect(summary.querySelectorAll("button").length).toBe(1);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Remove picture for As reference" }));
+  expect(document.querySelectorAll('[data-slot="picked-summary"]').length).toBe(1);
+});

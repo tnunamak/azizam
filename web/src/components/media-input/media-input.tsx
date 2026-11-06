@@ -1,14 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Library, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { kindIcon } from "@/lib/media-kind";
-import { MAX_MEDIA_BYTES, readAsDataUri, type MediaTypes } from "@/lib/media-pick";
+import { MAX_MEDIA_BYTES, readAsDataUri, sizeWords, type MediaTypes } from "@/lib/media-pick";
 import { limitLabel } from "@/lib/library-file";
 import { LibraryPicker } from "./library-picker";
-import { useMediaPick } from "./use-media-pick";
+import { PickedSummary, useObjectUrl } from "./picked-summary";
+import { LIBRARY_SOURCE, useMediaPick } from "./use-media-pick";
 
 function previewSource(value: string): string | null {
   // A Library asset id is not an address: its download route answers with a
@@ -16,23 +15,6 @@ function previewSource(value: string): string | null {
   return /^data:(?:image|video)\//i.test(value) || /^https?:\/\//i.test(value)
     ? value
     : null;
-}
-
-/** A preview link for a chosen file, revoked when the file changes. */
-function useObjectUrl(file: File | null | undefined): string | null {
-  const [objectUrl, setObjectUrl] = useState<{
-    file: File;
-    url: string;
-  } | null>(null);
-  useEffect(() => {
-    if (!file || typeof URL.createObjectURL !== "function") {
-      return;
-    }
-    const next = URL.createObjectURL(file);
-    setObjectUrl({ file, url: next });
-    return () => URL.revokeObjectURL(next);
-  }, [file]);
-  return objectUrl && objectUrl.file === file ? objectUrl.url : null;
 }
 
 /**
@@ -102,26 +84,16 @@ export function MediaInput({
     },
   });
   const { noun: word } = pick;
-  const [previewFailed, setPreviewFailed] = useState(false);
-  const [previewAttempt, setPreviewAttempt] = useState(0);
   const fileUrl = useObjectUrl(fileMode ? file : null);
   const chosen = fileMode ? Boolean(file) : Boolean(value);
   const preview = fileMode ? fileUrl : value ? previewSource(value) : null;
   const dataUriChosen = !fileMode && Boolean(value?.startsWith("data:"));
-  // What the preview draws: the chosen file's own family, else the input's kind.
-  const drawn = fileMode && file ? file.type.split("/")[0] : kind;
-
-  const [previousPreviewInput, setPreviousPreviewInput] = useState({
-    value,
-    file,
-  });
-  if (
-    previousPreviewInput.value !== value ||
-    previousPreviewInput.file !== file
-  ) {
-    setPreviousPreviewInput({ value, file });
-    setPreviewFailed(false);
-  }
+  // The file the summary names: the chosen one, or in reference mode the file the reference was read from.
+  const named = fileMode ? (file ?? null) : (pick.sourceFile);
+  const drawn = named ? named.type.split("/")[0] : kind;
+  const fromLibrary = pick.source === LIBRARY_SOURCE;
+  const capitalWord = `${word[0].toUpperCase()}${word.slice(1)}`;
+  const emptyHint = hint ?? `${capitalWord}s up to ${limitLabel(maxBytes)}.`;
 
   function clear() {
     pick.clear();
@@ -129,55 +101,28 @@ export function MediaInput({
     else onChange?.(undefined);
   }
 
-  const PlaceholderIcon = kindIcon(kind ?? "file");
-  const sourceLabel = !chosen
-    ? null
-    : (pick.source ??
-      (fileMode
-        ? (file?.name ?? null)
-        : dataUriChosen
-          ? null
-          : "Added from a link"));
-  const emptyHint =
-    hint ?? `${word[0].toUpperCase()}${word.slice(1)}s up to ${limitLabel(maxBytes)}.`;
-
   return (
     <div className="space-y-3">
-      <div className="flex items-start gap-3">
-        <div
-          className={`bg-muted/40 rounded-media flex size-24 shrink-0 items-center justify-center overflow-hidden border ${
-            invalid ? "border-destructive" : "border-input"
-          } ${chosen ? "" : "border-dashed"}`}
-        >
-          {chosen && preview && !previewFailed && (drawn === "video" || drawn === "image") ? (
-            drawn === "video" ? (
-              <video
-                key={previewAttempt}
-                src={preview}
-                muted
-                preload="metadata"
-                className="size-full object-cover"
-                aria-label={`Chosen ${word}`}
-                onError={() => setPreviewFailed(true)}
-              />
-            ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                key={previewAttempt}
-                src={preview}
-                alt={`Chosen ${word}`}
-                className="size-full object-cover"
-                onError={() => setPreviewFailed(true)}
-              />
-            )
-          ) : (
-            <PlaceholderIcon
-              aria-hidden="true"
-              className="text-muted-foreground size-6"
-            />
-          )}
-        </div>
-        <div className="min-w-0 flex-1 space-y-2">
+      {chosen ? (
+        <PickedSummary
+          key={fileMode ? "file" : "reference"}
+          name={named ? named.name : `Chosen ${word}`}
+          details={
+            named
+              ? [fromLibrary && LIBRARY_SOURCE, sizeWords(named.size)]
+              : [!dataUriChosen && "Added from a link"]
+          }
+          kind={drawn}
+          previewUrl={preview}
+          noun={word}
+          previewAlt={`Chosen ${word}`}
+          retryLabel={`Retry preview of ${word} for ${label}`}
+          removeLabel={`Remove ${word} for ${label}`}
+          invalid={invalid}
+          onRemove={clear}
+        />
+      ) : (
+        <div className="space-y-2">
           <div className="flex flex-wrap gap-2">
             <Button
               id={id}
@@ -203,22 +148,7 @@ export function MediaInput({
                 Choose from Library
               </Button>
             )}
-            {chosen && previewFailed && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="max-sm:h-11"
-                aria-label={`Retry preview of ${word} for ${label}`}
-                onClick={() => {
-                  setPreviewFailed(false);
-                  setPreviewAttempt((count) => count + 1);
-                }}
-              >
-                Retry
-              </Button>
-            )}
-            {(chosen || pick.pending) && (
+            {pick.pending && (
               <Button
                 type="button"
                 variant="ghost"
@@ -232,28 +162,22 @@ export function MediaInput({
               </Button>
             )}
           </div>
-          {pick.pending ? (
-            <p role="status" className="text-muted-foreground text-xs">
-              Adding {word}…
-              {pick.blockedSubmit && " Wait for it to finish, then run again."}
-            </p>
-          ) : (
-            <p className="text-muted-foreground text-xs">
-              {sourceLabel ?? emptyHint}
-            </p>
-          )}
-          {chosen && previewFailed && (
-            <p role="status" className="text-muted-foreground text-xs">
-              Preview unavailable
-            </p>
-          )}
-          {pick.error && (
-            <p role="alert" className="text-destructive text-xs">
-              {pick.error}
-            </p>
+          {!pick.pending && (
+            <p className="text-muted-foreground text-xs">{emptyHint}</p>
           )}
         </div>
-      </div>
+      )}
+      {pick.pending && (
+        <p role="status" className="text-muted-foreground text-xs">
+          Adding {word}…
+          {pick.blockedSubmit && " Wait for it to finish, then run again."}
+        </p>
+      )}
+      {pick.error && (
+        <p role="alert" className="text-destructive text-xs">
+          {pick.error}
+        </p>
+      )}
       <input
         ref={pick.fileInput}
         type="file"

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useId, useState, type DragEvent } from "react";
-import { AudioLines, FileIcon, ImageIcon, Library, Paperclip, Upload, Video, X } from "lucide-react";
+import { useId, useState, type DragEvent } from "react";
+import { Library, Paperclip, Upload, X } from "lucide-react";
 import { LibraryPicker } from "@/components/media-input/library-picker";
+import { PickedSummary, useObjectUrl } from "@/components/media-input/picked-summary";
 import { LIBRARY_SOURCE, useMediaPick } from "@/components/media-input/use-media-pick";
 import {
   DropdownMenu,
@@ -11,33 +12,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/cn";
+import { kindIcon } from "@/lib/media-kind";
+import { sizeWords } from "@/lib/media-pick";
 import type { MediaInput } from "./home-model";
 import { fitsMediaInput, mediaPhrase } from "./home-model";
 
-/** The icon for the modality's IANA top-level type; any other modality gets the plain file icon. */
-function iconFor(modality: string) {
-  if (modality === "image") return ImageIcon;
-  if (modality === "audio") return AudioLines;
-  if (modality === "video") return Video;
-  return FileIcon;
-}
-
-function sizeWords(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
-}
-
-/** A preview address for a chosen picture, revoked when the file changes. */
+/** A preview address for a chosen picture, which is all the chip draws. */
 function usePreview(file: File | null, input: MediaInput): string | null {
-  const [preview, setPreview] = useState<{ file: File; url: string } | null>(null);
-  const previewable = input.modality === "image" && file !== null && typeof URL.createObjectURL === "function";
-  useEffect(() => {
-    if (!previewable || !file) return;
-    const url = URL.createObjectURL(file);
-    setPreview({ file, url });
-    return () => URL.revokeObjectURL(url);
-  }, [file, previewable]);
-  return preview && preview.file === file ? preview.url : null;
+  return useObjectUrl(input.modality === "image" ? file : null);
 }
 
 /** The shared media-input behaviour, set up from a Home capability's declared input (its accept filter and word). */
@@ -119,8 +101,8 @@ export function HomeMediaInput({
   const inputId = useId();
   const [dragging, setDragging] = useState(false);
   const pick = useHomePick(input, file, onFile, onPendingChange);
-  const preview = usePreview(file, input);
-  const Icon = iconFor(input.modality);
+  const preview = useObjectUrl(file);
+  const Icon = kindIcon(input.modality);
 
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
@@ -157,32 +139,20 @@ export function HomeMediaInput({
         onChange={pick.onFileInputChange}
       />
       {file ? (
-        <div className="flex items-center gap-3">
-          {preview ? (
-            // A local object address of the person's own picture: next/image has nothing to optimise.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={preview} alt={`Your ${input.word}: ${file.name}`} className="size-16 shrink-0 rounded-lg object-cover" />
-          ) : (
-            <span className="bg-muted text-muted-foreground flex size-16 shrink-0 items-center justify-center rounded-lg">
-              <Icon aria-hidden="true" className="size-6" />
-            </span>
-          )}
-          <p className="min-w-0 flex-1">
-            <span className="block truncate font-medium">{file.name}</span>
-            <span className="text-muted-foreground text-meta block">{pick.source === LIBRARY_SOURCE ? `${LIBRARY_SOURCE} · ` : ""}{sizeWords(file.size)}</span>
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              pick.clear();
-              onFile(null);
-            }}
-            aria-label={`Remove ${file.name}`}
-            className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex size-9 shrink-0 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none max-sm:size-11"
-          >
-            <X aria-hidden="true" className="size-4" />
-          </button>
-        </div>
+        <PickedSummary
+          name={file.name}
+          details={[pick.source === LIBRARY_SOURCE && LIBRARY_SOURCE, sizeWords(file.size)]}
+          kind={file.type.split("/")[0] || input.modality}
+          previewUrl={preview}
+          noun={input.word}
+          previewAlt={`Your ${input.word}: ${file.name}`}
+          retryLabel={`Retry preview of ${file.name}`}
+          removeLabel={`Remove ${file.name}`}
+          onRemove={() => {
+            pick.clear();
+            onFile(null);
+          }}
+        />
       ) : (
         <div className="flex flex-col items-center gap-2 py-3 text-center sm:py-4">
           <Icon aria-hidden="true" className="text-muted-foreground size-6" />
@@ -224,7 +194,7 @@ export function PickedFileChip({
   onFile: (file: File | null) => void;
 }) {
   const preview = usePreview(file, input);
-  const Icon = iconFor(input.modality);
+  const Icon = kindIcon(input.modality);
   return (
     <div data-slot="home-picked-file" data-modality={input.modality} className="px-(--composer-pad) pt-3">
       <span className="bg-muted text-meta inline-flex max-w-full items-center gap-2 rounded-full py-1 pr-1 pl-1">

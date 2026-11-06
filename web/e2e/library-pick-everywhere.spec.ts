@@ -1,6 +1,6 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import type { Page, Route } from "@playwright/test";
+import type { Locator, Page, Route } from "@playwright/test";
 import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
 import { expect, test } from "./fixtures/isolation";
 import { fulfilBytes, fulfilJson } from "./fixtures/intercept";
@@ -17,15 +17,44 @@ import { fulfilBytes, fulfilJson } from "./fixtures/intercept";
 const SHOTS = process.env.LIBPICK_SHOTS ?? path.resolve(__dirname, "../test-results/library-pick");
 mkdirSync(SHOTS, { recursive: true });
 
-const PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
-  "base64",
-);
-const WAV = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WAVEfmt "), Buffer.alloc(16)]);
+// Real pictures (640x640, with content a person can judge) and a real 3 s audio clip, generated once and committed.
+const fixture = (name: string) => readFileSync(path.resolve(__dirname, "fixtures/library", name));
+const PNG = fixture("teal-fish.png");
+const WAV = fixture("spoken-note.wav");
 
-const PICTURE = { id: `img_${"a".repeat(64)}`, kind: "image", type: "image/png", prompt: "A teal fish", bytes: PNG };
-const RECORDING = { id: `aud_${"b".repeat(64)}`, kind: "audio", type: "audio/wav", prompt: "A short spoken note", bytes: WAV };
-const ITEMS = [PICTURE, RECORDING];
+type Item = { id: string; kind: string; type: string; prompt: string; bytes: Buffer };
+const picture = (n: number, prompt: string, file: string): Item => ({
+  id: `img_${String(n).repeat(64)}`,
+  kind: "image",
+  type: "image/png",
+  prompt,
+  bytes: fixture(file),
+});
+const recording = (n: number, prompt: string): Item => ({
+  id: `aud_${String(n).repeat(64)}`,
+  kind: "audio",
+  type: "audio/wav",
+  prompt,
+  bytes: WAV,
+});
+const PICTURES = [
+  picture(1, "A teal fish", "teal-fish.png"),
+  picture(2, "Sunset over a reef", "sunset-reef.png"),
+  picture(3, "Mountain lake at noon", "mountain-lake.png"),
+  picture(4, "City after dark", "city-night.png"),
+];
+const RECORDINGS = [
+  recording(5, "A short spoken note"),
+  recording(6, "Voice memo: groceries"),
+  recording(7, "Meeting recap"),
+];
+const ITEMS = [...PICTURES, ...RECORDINGS];
+// The same four pictures again under new names, so the dialog fills and scrolls.
+const MANY_PICTURES = Array.from({ length: 14 }, (_, index) => ({
+  ...PICTURES[index % PICTURES.length],
+  id: `img_${(index + 10).toString(16).padStart(2, "0").repeat(32)}`,
+  prompt: `${PICTURES[index % PICTURES.length].prompt}${index >= PICTURES.length ? ` ${Math.floor(index / PICTURES.length) + 1}` : ""}`,
+}));
 
 const VIEWPORTS = [
   { name: "390", width: 390, height: 844 },
@@ -33,14 +62,14 @@ const VIEWPORTS = [
 ];
 
 /** The Library as the member API serves it, for the kind the picker asks for. */
-async function routeLibrary(page: Page) {
+async function routeLibrary(page: Page, items: Item[] = ITEMS) {
   const listed: string[] = [];
   await page.route("**/me/api/media?**", (route) => {
     const url = new URL(route.request().url());
     listed.push(url.search);
     const kind = url.searchParams.get("kind");
     return fulfilJson(route, {
-      assets: ITEMS.filter((item) => !kind || item.kind === kind).map((item) => ({
+      assets: items.filter((item) => !kind || item.kind === kind).map((item) => ({
         asset_id: item.id,
         kind: item.kind,
         media_type: item.type,
@@ -54,7 +83,7 @@ async function routeLibrary(page: Page) {
       next_cursor: null,
     });
   });
-  for (const item of ITEMS) {
+  for (const item of items) {
     await page.route(`**/me/api/media/${item.id}/download`, (route) =>
       fulfilJson(route, { download_url: `/signed/${item.id}` }),
     );
@@ -63,6 +92,50 @@ async function routeLibrary(page: Page) {
     );
   }
   return listed;
+}
+
+/**
+ * The Library dialog is fully open: it has stopped animating, nothing of the page shows through its surface, and
+ * every picture in it has loaded. A capture taken before this shows a half-faded dialog.
+ */
+async function libraryOpen(page: Page) {
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => dialog.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
+  await expect.poll(() => dialog.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
+  // The surface is opaque: an rgb() colour, or an rgba() whose alpha is 1.
+  const surface = await dialog.evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(surface).not.toMatch(/rgba\(.*,\s*0?\.\d+\)$/);
+  expect(surface).not.toBe("rgba(0, 0, 0, 0)");
+  await expect
+    .poll(() =>
+      dialog.evaluate((el) =>
+        Array.from(el.querySelectorAll("img")).every((img) => img.complete && img.naturalWidth > 0),
+      ),
+    )
+    .toBe(true);
+}
+
+/** The dialog has finished closing: it is out of the page, so no fading ghost is left to capture. */
+async function libraryClosed(page: Page) {
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+}
+
+/**
+ * Every site shows what it holds as the one shared summary: the file's name, where it came from, and a single
+ * remove control. The thumbnail, if it is a picture, has loaded.
+ */
+async function pickedSummary(scope: Page | Locator, name: string) {
+  const summary = scope.locator('[data-slot="picked-summary"]');
+  await expect(summary).toHaveCount(1);
+  await expect(summary).toContainText(name);
+  await expect(summary).toContainText("From your Library");
+  await expect(summary.getByRole("button")).toHaveCount(1);
+  await expect
+    .poll(() =>
+      summary.evaluate((el) => Array.from(el.querySelectorAll("img")).every((img) => img.complete && img.naturalWidth > 0)),
+    )
+    .toBe(true);
 }
 
 async function shot(page: Page, name: string) {
@@ -112,10 +185,11 @@ for (const view of VIEWPORTS) {
     const kindRequests = listed.filter((search) => search.includes("kind="));
     expect(kindRequests.length).toBeGreaterThan(0);
     expect(kindRequests.every((search) => search.includes("kind=image"))).toBe(true);
+    await libraryOpen(page);
     await shot(page, `home-picker-${view.name}`);
     await page.getByRole("button", { name: "A teal fish" }).click();
-    await expect(page.getByText("library-picture.png")).toBeVisible();
-    await expect(page.getByText(/From your Library/)).toBeVisible();
+    await libraryClosed(page);
+    await pickedSummary(page, "library-picture.png");
     await shot(page, `home-picked-${view.name}`);
     await page.getByRole("button", { name: "Make", exact: true }).click();
     await expect(page).toHaveURL(/\/try\/\?capability=mesh/);
@@ -140,9 +214,11 @@ for (const view of VIEWPORTS) {
     const kindRequests = listed.filter((search) => search.includes("kind="));
     expect(kindRequests.length).toBeGreaterThan(0);
     expect(kindRequests.every((search) => search.includes("kind=image"))).toBe(true);
+    await libraryOpen(page);
     await shot(page, `try-workflow-picker-${view.name}`);
     await page.getByRole("button", { name: "A teal fish" }).click();
-    await expect(group.getByText("From your Library", { exact: true })).toBeVisible();
+    await libraryClosed(page);
+    await pickedSummary(group, "library-picture.png");
     await expect(group.getByRole("img", { name: "Chosen picture" })).toBeVisible();
     await page.getByRole("textbox", { name: /Describe the video/ }).fill("A teal fish swims past a reef.");
     await shot(page, `try-workflow-picked-${view.name}`);
@@ -194,9 +270,11 @@ for (const view of VIEWPORTS) {
     const kindRequests = listed.filter((search) => search.includes("kind="));
     expect(kindRequests.length).toBeGreaterThan(0);
     expect(kindRequests.every((search) => search.includes("kind=image"))).toBe(true);
+    await libraryOpen(page);
     await shot(page, `photo-to-3d-picker-${view.name}`);
     await page.getByRole("button", { name: "A teal fish" }).click();
-    await expect(page.getByText("From your Library", { exact: true })).toBeVisible();
+    await libraryClosed(page);
+    await pickedSummary(page, "library-picture.png");
     await shot(page, `photo-to-3d-picked-${view.name}`);
     const request = page.waitForRequest("**/v1/meshes/generate");
     await page.getByRole("button", { name: "Make 3D model" }).click();
@@ -240,14 +318,31 @@ for (const view of VIEWPORTS) {
     const kindRequests = listed.filter((search) => search.includes("kind="));
     expect(kindRequests.length).toBeGreaterThan(0);
     expect(kindRequests.every((search) => search.includes("kind=audio"))).toBe(true);
+    await libraryOpen(page);
     await shot(page, `transcribe-picker-${view.name}`);
     await page.getByRole("button", { name: "A short spoken note" }).click();
-    await expect(page.getByText("From your Library", { exact: true })).toBeVisible();
+    await libraryClosed(page);
+    await pickedSummary(page, "library-audio-clip.wav");
     await shot(page, `transcribe-picked-${view.name}`);
     const request = page.waitForRequest("**/audio/transcriptions");
     await page.getByRole("button", { name: "Run", exact: true }).click();
     const posted = (await request).postDataBuffer() as Buffer;
     expect(posted.includes(Buffer.from('filename="library-audio-clip.wav"'))).toBe(true);
     expect(posted.includes(WAV)).toBe(true);
+  });
+}
+
+for (const view of VIEWPORTS) {
+  test(`The Library dialog full of pictures at ${view.name}px`, async ({ page }) => {
+    await page.setViewportSize({ width: view.width, height: view.height });
+    await page.route("**/me/api/workflows", (route) => fulfilJson(route, meshCatalog));
+    await routeLibrary(page, MANY_PICTURES);
+    await page.goto("/try/?capability=mesh");
+    if (view.width >= 640) await page.getByRole("tab", { name: "Photo to 3D" }).click();
+    else await page.getByRole("combobox", { name: "Task", exact: true }).selectOption("mesh");
+    await page.getByRole("button", { name: "Choose from Library" }).click();
+    await libraryOpen(page);
+    await expect(page.getByRole("dialog").locator("ul button")).toHaveCount(MANY_PICTURES.length);
+    await shot(page, `library-full-${view.name}`);
   });
 }

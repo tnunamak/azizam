@@ -570,7 +570,7 @@ describe("media selection races", () => {
       url.includes("/download") ? pending : Promise.resolve(json(libraryAssets)));
     const changed = vi.fn();
     const view = render(<MediaInput id="picture" label="Picture" kind="image"
-      file={PNG} onFileChange={changed} />);
+      file={null} onFileChange={changed} />);
     fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
     fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
     if (action === "file") {

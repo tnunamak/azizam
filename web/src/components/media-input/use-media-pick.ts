@@ -196,6 +196,8 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     }
   }
 
+  const held = source && (current === undefined || source.file === current) ? source : null;
+
   return {
     kind,
     noun,
@@ -211,7 +213,9 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     blockedSubmit,
     error,
     /** "From your Library" or the chosen file's name, while it is still the file the screen holds. */
-    source: source && (current === undefined || source.file === current) ? source.label : null,
+    source: held ? held.label : null,
+    /** The file the source label is about; in reference mode the media itself is a data URI, and this names it. */
+    sourceFile: held ? held.file : null,
     take,
     pickFromLibrary,
     openFileDialog: () => fileInput.current?.click(),
