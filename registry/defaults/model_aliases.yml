@@ -1,0 +1,36 @@
+# Release defaults for the model aliases (docs/design/CONFIG_HOMES.md, slice C3).
+#
+# The release names no model, no role and no service. Each stable name below exists but points nowhere
+# (null), so a request for it answers "alias_not_configured" until the owner sets a target.
+# Engine tables (speech, transcriptions, rerank, decisions) and the OpenAI-name patterns ship empty:
+# they name services and models, which only the owner knows.
+chat:
+  stable:
+    default: null
+    fast: null
+    vision: null
+    coder: null
+embeddings:
+  stable:
+    embed: null
+images:
+  stable:
+    image: null
+    image-fast: null
+image_edits:
+  stable:
+    image: null
+    image-fast: null
+    image-edit: null
+    image-edit-fast: null
+videos:
+  stable:
+    video: null
+    video-fast: null
+    video-long: null
+    video-quality: null
+audio_generate:
+  stable:
+    music: null
+    song: null
+    sfx: null

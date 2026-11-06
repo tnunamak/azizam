@@ -436,7 +436,7 @@ from gateway.runtime_auth import (
 )
 from gateway.protocols import anthropic as anthropic_protocol
 from gateway.protocols import ollama as ollama_protocol
-from gateway import config_fold, config_runtime, provider_execution, providers
+from gateway import config_fold, config_rules, config_runtime, provider_execution, providers
 from gateway.provider_admin import create_provider_admin_router, provider_ledger_spending_snapshot
 from gateway.providers import provider_lookup
 
@@ -470,9 +470,9 @@ admin_cfg = config.get("admin", {}) or {}
 ADMIN_DB_PATH = _configured_admin_db_path(admin_cfg)
 
 
-# The release's config sections (registry/defaults/) and the snapshot of the running config. With no section shipped the
-# layer returns the startup config unchanged (docs/design/CONFIG_HOMES.md, C1).
-CONFIG_HOME = config_runtime.ConfigHome()
+# The release's config sections (registry/defaults/, each with its rule from gateway/config_rules.py) and the snapshot of
+# the running config (docs/design/CONFIG_HOMES.md, C1).
+CONFIG_HOME = config_rules.config_home()
 # {section: [problem, ...]} for the sections whose stored overrides were rejected or dangle; {} when all is well.
 CONFIG_PROBLEMS: dict[str, Any] = {}
 
@@ -486,7 +486,8 @@ def _layer_for(raw_config: Mapping[str, Any], registry: Mapping[str, Any], *, bo
     """The override layer for ``registry``. A reload lets an unreadable override store raise, so the old config keeps
     serving. A boot has no old config: it serves the release defaults with the same registry and reports the store."""
     try:
-        return CONFIG_HOME.layer(raw_config, path=ADMIN_DB_PATH, registry=registry)
+        # A boot first imports each section's startup block once (docs/design/CONFIG_HOMES.md, 8.1); a reload never does.
+        return CONFIG_HOME.layer(raw_config, path=ADMIN_DB_PATH, registry=registry, legacy_import=boot)
     except Exception as error:  # noqa: BLE001
         if not boot:
             raise
@@ -706,6 +707,22 @@ def _project_egress(backends: Mapping[str, Any] | None) -> engine_egress.Project
     return engine_egress.project(backends, extra_probe_paths=state_paths)
 
 
+# Workflow alias tables of the video and audio-generate paths. They are folded from `model_aliases` (stable_aliases.
+# fold_workflow_aliases), so they follow an alias edit: _derive_backend_constants returns them, and a reload republishes.
+VIDEO_ALIASES: dict[str, str] = {}
+AUDIO_ALIASES: dict[str, str] = {}
+
+
+def _workflow_alias_tables(effective_cfg: Mapping[str, Any]) -> dict[str, dict[str, str]]:
+    """``VIDEO_ALIASES`` and ``AUDIO_ALIASES`` from the effective config. A config without the sections gives empty tables."""
+    def table(section: str) -> dict[str, str]:
+        raw = (effective_cfg.get(section) or {}).get("aliases") or {}
+        return {str(name).strip().lower(): str(target).strip() for name, target in raw.items()}
+
+    names = ("VIDEO_ALIASES", "AUDIO_ALIASES")
+    return {name: table(section) for name, (_operation, section) in zip(names, stable_aliases.LEGACY_ALIAS_TABLES)}
+
+
 config, REGISTRY_APPLY_PROBLEM = _boot_effective_runtime_config(config)
 # The first snapshot: the boot config, before any reload. Reload swaps it by one reference (_publish_runtime_config).
 # The holder is the only source of what runtime() returns; the module's `config` is assigned from the snapshot.
@@ -720,6 +737,7 @@ def _publish_boot_snapshot(boot_config: Mapping[str, Any], registry_problem: Map
     # before the snapshot, so no request sees an enabled domain without its map entry.
     engine_egress.install(_project_egress(snapshot.config.get("backends")))
     CONFIG_HOME.publish(snapshot)
+    globals().update(_workflow_alias_tables(snapshot.config))
     return CONFIG_HOME.holder.current().config
 
 
@@ -1194,10 +1212,6 @@ _image_media_job_scheduled: set[str] = set()
 videos_cfg = config.get("videos", {})
 VIDEO_DEFAULT_WORKFLOW = videos_cfg.get("default_workflow", "video-ltx-13b-q8")
 VIDEO_WORKFLOWS = videos_cfg.get("workflows", {}) or {}
-VIDEO_ALIASES = {
-    str(k).strip().lower(): str(v).strip()
-    for k, v in (videos_cfg.get("aliases", {}) or {}).items()
-}
 # Workflow id that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
 # Unset means both routes return a clear 501 (video_remix_not_configured). The
 # routes submit as `video-remix`, so that alias must point at the same workflow.
@@ -1307,6 +1321,7 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
         "EMBEDDINGS_ENABLED": new_emb_enabled,
         "COMFY_ENABLED": new_cfy_enabled,
         "LLM_BACKEND_HOSTS": new_llm_hosts,
+        **_workflow_alias_tables(effective_cfg),
     }
 
 
@@ -3406,7 +3421,7 @@ def resolve_model_for_operation(operation: str, requested_model: str) -> ModelRe
 
 def model_compatibility_error(error: "str | Exception") -> Response:
     code = getattr(error, "code", None)
-    status_code = 503 if code == "model_not_deployed" else 404 if code == "model_not_found" else 400
+    status_code = 503 if code in ("model_not_deployed", "alias_not_configured") else 404 if code == "model_not_found" else 400
     body: dict[str, Any] = {
         "message": str(error),
         "type": "service_unavailable" if status_code == 503 else "invalid_request_error",
@@ -15104,6 +15119,8 @@ def _stable_alias_model_entries() -> list[dict[str, Any]]:
     entries: dict[str, dict[str, Any]] = {}
     for op, view in _gateway_aliases_provider().items():
         for row in view.get("stable", []):
+            if row.get("configured") is False:
+                continue  # no target yet: listing it would offer a model that answers alias_not_configured
             entry = entries.setdefault(row["alias"], {
                 "id": row["alias"],
                 "object": "model",
@@ -25905,7 +25922,6 @@ AUDIO_WORKFLOWS_DIR = Path(_AUDIO_WORKFLOWS_DIR_CFG)
 if not AUDIO_WORKFLOWS_DIR.is_absolute():
     AUDIO_WORKFLOWS_DIR = (Path(__file__).parent / _AUDIO_WORKFLOWS_DIR_CFG).resolve()
 AUDIO_WORKFLOWS_CFG = (_audio_cfg.get("workflows", {}) or {})
-AUDIO_ALIASES = (_audio_cfg.get("aliases", {}) or {})
 
 
 def _resolve_audio_workflow(model: str) -> tuple:

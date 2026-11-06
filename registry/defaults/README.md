@@ -4,18 +4,27 @@ This directory holds the release defaults of the config sections (design: `docs/
 Every file here is read-only data that ships with a release. An upgrade replaces it. The owner never edits it: an
 owner's change is a sparse override in `admin.db` (tables `config_overrides` and `config_changes`).
 
-Three sections ship, the owner settings that existed before the layer:
+Four sections ship. Three are the owner settings that existed before the layer; the fourth holds the model aliases:
 
 | Section | Holds | Routes that write it |
 |---|---|---|
 | `instance` | the instance name, public base URL and default theme | `PUT /admin/api/settings/instance` |
 | `resource_admission` | the media job admission limits (`media_jobs`) | `PUT /admin/api/operator/media-job-admission` |
 | `service_availability` | per-service availability overrides, keyed by service id (no release entries) | `PUT /admin/api/operator/service-availability` |
+| `model_aliases` | the stable names, engines and voice aliases of each operation | the config API (`/admin/api/config`) |
 
-Each route keeps its request and response shape. A write is a revision-checked change of the section: a missing
+Each settings route keeps its request and response shape. A write is a revision-checked change of the section: a missing
 `If-Match` is 428 and a stale one is 412. On first boot after the upgrade, the values in the old `operator_settings`
 keys (`instance_presentation`, `media_job_admission_overrides`, `service_availability_overrides`) become override rows
 once. The old keys stay in the database, unread, until a later release deletes them, so a rollback still finds them.
+
+The `model_aliases` release defaults are neutral: they name stable aliases with no target and name no model, engine or
+service. A name with no target answers `alias_not_configured` until the owner sets it. The semantic rule for the section
+is in `gateway/stable_aliases.py` (`alias_problems`) and is registered in `gateway/config_rules.py`.
+
+A section that an older release read from the startup file is imported once at the first boot (design 8.1, step 1;
+`gateway/config_legacy_import.py`). To read what the import would write for a copy of a startup file, without touching a
+live database: `python -m gateway.config_legacy_import --config <copy of the file>`.
 
 ## A section is two files
 
