@@ -118,18 +118,28 @@ See [streaming speech recipes](LOCAL_CLIENT_RECIPES.md#model-aliases-stable-name
 
 ## Defaults
 
-Defaults live in `proxy_config.yml`:
+Defaults are the `model_compatibility` config section. The release ships it neutral
+(`registry/defaults/model_compatibility.yml`: no model id). The owner's values are overrides in `admin.db`, edited
+through the config API (`/admin/api/config`) and live on the next request. An install that started on a
+`proxy_config.yml` with a `model_compatibility` block has that block imported once at its first boot of this release.
+After that the file's block is ignored. The section holds:
 
 ```yaml
 model_compatibility:
   enabled: true
-  generated_aliases_file: openai_model_aliases.generated.yml
+  openai_models_api_url: https://api.openai.com/v1/models
+  include_private: false
   defaults:
     speech: mistralai/Voxtral-4B-TTS-2603
     transcriptions: parakeet-tdt-0.6b-v3
     images: flux2-klein-4b
     image_edits: flux2-klein-4b-edit
+  aliases: {}
 ```
+
+The path of the generated OpenAI model list is not a setting: it is the release file
+`registry/openai_model_aliases.generated.yml`. A `generated_aliases_file` key in an old startup file is left in the
+file and not used.
 
 For chat, completions, and embeddings, LiteLLM is the execution substrate and
 its catalog is the source of truth for provider/model-group execution. Gateway
@@ -173,7 +183,7 @@ OPENAI_MODEL_DISCOVERY_API_KEY='sk-...' ./venv/bin/python proxy.py refresh-opena
 The command writes:
 
 ```text
-openai_model_aliases.generated.yml
+registry/openai_model_aliases.generated.yml
 ```
 
 The generated file stores model IDs and inferred categories. Runtime request

@@ -1,0 +1,5 @@
+# Release defaults of the identity section (docs/design/CONFIG_HOMES.md, C8c). Read-only; an owner's value is an
+# override. The release ships no face service: it names a host, a port and a unit of one install. Until the owner
+# configures one, the likeness check and the identity scene answer "The face service is not configured." (503).
+# max_wait_s is the code's own fallback.
+max_wait_s: 3600

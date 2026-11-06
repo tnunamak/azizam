@@ -3147,23 +3147,52 @@ def handle_cli_command() -> bool:
 # Model compatibility
 # =============================================================================
 
-compat_cfg = config.get("model_compatibility", {})
-MODEL_COMPAT_ENABLED = bool_from_config(
-    get_env("AZIZAM_MODEL_COMPAT_ENABLED", compat_cfg.get("enabled")),
-    True,
-)
-OPENAI_MODEL_ALIASES_FILE = config_path(
-    os.environ.get("OPENAI_MODEL_ALIASES_FILE", compat_cfg.get("generated_aliases_file")),
-    "openai_model_aliases.generated.yml",
-)
-OPENAI_MODELS_API_URL = compat_cfg.get("openai_models_api_url", "https://api.openai.com/v1/models")
-OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE = bool_from_config(
-    os.environ.get("OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE", compat_cfg.get("include_private")),
-    False,
-)
-MODEL_COMPAT_DEFAULTS = compat_cfg.get("defaults", {})
-MODEL_COMPAT_ALIASES = compat_cfg.get("aliases", {})
-TTS_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("speech") or tts_cfg.get("default_model", "mistralai/Voxtral-4B-TTS-2603")
+def _compat_cfg() -> Mapping[str, Any]:
+    """The model_compatibility section of the snapshot this call reads (CONFIG_HOMES C8c)."""
+    section = runtime().config.get("model_compatibility")
+    return section if isinstance(section, Mapping) else {}
+
+
+def model_compat_enabled() -> bool:
+    """model_compatibility.enabled. An AZIZAM_MODEL_COMPAT_ENABLED in the environment still wins until C10 removes it."""
+    return bool_from_config(get_env("AZIZAM_MODEL_COMPAT_ENABLED", _compat_cfg().get("enabled")), True)
+
+
+# The generated OpenAI model list is release data (registry/), not a setting: its path is fixed. The environment
+# variable stays as an override until C10 removes the non-startup env overrides.
+GENERATED_OPENAI_MODEL_ALIASES_FILE = Path(__file__).parent / "registry" / "openai_model_aliases.generated.yml"
+
+
+def openai_model_aliases_file() -> Path:
+    return config_path(os.environ.get("OPENAI_MODEL_ALIASES_FILE"), str(GENERATED_OPENAI_MODEL_ALIASES_FILE))
+
+
+def openai_models_api_url() -> str:
+    return _compat_cfg().get("openai_models_api_url", "https://api.openai.com/v1/models")
+
+
+def openai_model_discovery_include_private() -> bool:
+    return bool_from_config(
+        os.environ.get("OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE", _compat_cfg().get("include_private")),
+        False,
+    )
+
+
+def model_compat_defaults() -> Mapping[str, Any]:
+    """model_compatibility.defaults: the model each operation uses when the request names none."""
+    defaults = _compat_cfg().get("defaults")
+    return defaults if isinstance(defaults, Mapping) else {}
+
+
+def model_compat_aliases() -> Mapping[str, Any]:
+    aliases = _compat_cfg().get("aliases")
+    return aliases if isinstance(aliases, Mapping) else {}
+
+
+def tts_backend_model() -> str:
+    return model_compat_defaults().get("speech") or tts_cfg.get("default_model", "mistralai/Voxtral-4B-TTS-2603")
+
+
 SUPPORTED_TTS_RESPONSE_FORMATS = {"wav", "mp3", "opus", "aac", "flac", "pcm"}
 TTS_RESPONSE_MEDIA_TYPES = {
     "wav": "audio/wav",
@@ -3173,9 +3202,19 @@ TTS_RESPONSE_MEDIA_TYPES = {
     "flac": "audio/flac",
     "pcm": "audio/pcm",
 }
-STT_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("transcriptions") or stt_cfg.get("default_model", "parakeet-tdt-0.6b-v3")
-EMBEDDINGS_MODEL = MODEL_COMPAT_DEFAULTS.get("embeddings") or EMBEDDINGS_BACKEND_MODEL
-IMAGE_EDIT_DEFAULT_MODEL = MODEL_COMPAT_DEFAULTS.get("image_edits", "qwen-image-2.1-edit")
+
+
+def stt_backend_model() -> str:
+    return model_compat_defaults().get("transcriptions") or stt_cfg.get("default_model", "parakeet-tdt-0.6b-v3")
+
+
+def embeddings_model() -> str:
+    return model_compat_defaults().get("embeddings") or EMBEDDINGS_BACKEND_MODEL
+
+
+def image_edit_default_model() -> str:
+    return model_compat_defaults().get("image_edits", "qwen-image-2.1-edit")
+
 
 OPENAI_STATIC_MODEL_CATEGORIES = {
     "dall-e-2": "images",
@@ -3225,11 +3264,12 @@ def normalize_model_id(model_name: str) -> str:
 
 def load_generated_openai_model_aliases() -> dict[str, str]:
     """Load generated OpenAI model IDs and their inferred categories."""
-    if not OPENAI_MODEL_ALIASES_FILE.exists():
+    path = openai_model_aliases_file()
+    if not path.exists():
         return {}
 
     try:
-        with open(OPENAI_MODEL_ALIASES_FILE) as f:
+        with open(path) as f:
             data = yaml.safe_load(f) or {}
     except Exception as e:
         print(f"[proxy] Warning: Failed to load OpenAI model aliases: {e}", flush=True)
@@ -3247,10 +3287,8 @@ def load_generated_openai_model_aliases() -> dict[str, str]:
 
 
 def configured_model_alias_category(model_name: str) -> Optional[str]:
-    if not isinstance(MODEL_COMPAT_ALIASES, dict):
-        return None
-
-    alias_cfg = MODEL_COMPAT_ALIASES.get(model_name) or MODEL_COMPAT_ALIASES.get(normalize_model_id(model_name))
+    aliases = model_compat_aliases()
+    alias_cfg = aliases.get(model_name) or aliases.get(normalize_model_id(model_name))
     if isinstance(alias_cfg, dict):
         return alias_cfg.get("category") or alias_cfg.get("operation")
     if isinstance(alias_cfg, str):
@@ -3306,26 +3344,26 @@ def is_openai_model_alias(model_name: str) -> bool:
 
 
 def default_model_for_operation(operation: str, requested_model: str = "") -> str:
-    configured_default = MODEL_COMPAT_DEFAULTS.get(operation)
+    configured_default = model_compat_defaults().get(operation)
     if configured_default:
         return configured_default
 
     if operation in ("chat", "completions"):
         return requested_model
     if operation == "speech":
-        return TTS_BACKEND_MODEL
+        return tts_backend_model()
     if operation == "transcriptions":
-        return STT_BACKEND_MODEL
+        return stt_backend_model()
     if operation == "translations":
-        return STT_BACKEND_MODEL
+        return stt_backend_model()
     if operation == "images":
         return COMFY_DEFAULT_MODEL
     if operation == "image_edits":
-        return IMAGE_EDIT_DEFAULT_MODEL
+        return image_edit_default_model()
     if operation == "videos":
         return VIDEO_DEFAULT_WORKFLOW
     if operation == "embeddings":
-        return EMBEDDINGS_MODEL if EMBEDDINGS_ENABLED else ""
+        return embeddings_model() if EMBEDDINGS_ENABLED else ""
     return requested_model
 
 
@@ -3401,7 +3439,7 @@ def resolve_model_for_operation(operation: str, requested_model: str) -> ModelRe
             f"Model '{requested_model}' is not available for {operation} requests.",
             code="model_not_found",
         )
-    if not MODEL_COMPAT_ENABLED or not requested_model:
+    if not model_compat_enabled() or not requested_model:
         return ModelResolution(
             requested_model=requested_model,
             effective_model=requested_model,
@@ -3945,7 +3983,7 @@ async def refresh_openai_model_aliases() -> int:
 
     async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
         resp = await client.get(
-            OPENAI_MODELS_API_URL,
+            openai_models_api_url(),
             headers={"Authorization": f"Bearer {api_key}"},
         )
     if resp.status_code != 200:
@@ -3958,7 +3996,7 @@ async def refresh_openai_model_aliases() -> int:
         model_id = item.get("id", "")
         if not model_id:
             continue
-        if not OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE:
+        if not openai_model_discovery_include_private():
             owned_by = item.get("owned_by", "")
             is_private_fine_tune = ":" in model_id or model_id.startswith("ft:")
             if owned_by not in OPENAI_PUBLIC_MODEL_OWNERS or is_private_fine_tune:
@@ -3972,12 +4010,13 @@ async def refresh_openai_model_aliases() -> int:
 
     output = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "source": OPENAI_MODELS_API_URL,
+        "source": openai_models_api_url(),
         "models": sorted(model_entries, key=lambda entry: entry["id"]),
     }
-    with open(OPENAI_MODEL_ALIASES_FILE, "w") as f:
+    target = openai_model_aliases_file()
+    with open(target, "w") as f:
         yaml.safe_dump(output, f, sort_keys=False)
-    print(f"Wrote {len(model_entries)} OpenAI model aliases to {OPENAI_MODEL_ALIASES_FILE}.")
+    print(f"Wrote {len(model_entries)} OpenAI model aliases to {target}.")
     return 0
 
 
@@ -4912,7 +4951,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                 if service_response is not None:
                     return service_response
                 headers = prepare_downstream_headers(request.headers, auth_context, tts_service_id)
-        body_json["model"] = model_resolution.effective_model or TTS_BACKEND_MODEL
+        body_json["model"] = model_resolution.effective_model or tts_backend_model()
 
         engine_streams = engine is not None and bool_from_config(engine.get("streaming"), False)
         if engine_streams:
@@ -5770,7 +5809,7 @@ async def proxy_stt_request(
                     )
                     lease.workspace = workspace
                     receipt.resource_decision = stt_chunking.resource_evidence(lease, replay)
-            effective_model = model_resolution.effective_model or execution.default_model or STT_BACKEND_MODEL
+            effective_model = model_resolution.effective_model or execution.default_model or stt_backend_model()
             if model_resolution.is_openai_alias and execution.default_model:
                 effective_model = execution.default_model
             fields = stt_chunking.replace_model_field(fields, model=effective_model)
@@ -9160,7 +9199,7 @@ async def proxy_graph_image_edit_request(
     image_file = image_files[0] if image_files else None
     mask_file = form.get("mask")
     prompt = form.get("prompt", "")
-    requested_model = form.get("model", IMAGE_EDIT_DEFAULT_MODEL)
+    requested_model = form.get("model", image_edit_default_model())
     model = requested_model
     requested_size = form.get("size")
     size = requested_size
@@ -13591,7 +13630,7 @@ async def _serve(app: FastAPI):
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
     print(f"[proxy] ComfyUI backend: {COMFY_HOST} (enabled: {COMFY_ENABLED})", flush=True)
-    print(f"[proxy] Model compatibility: {'enabled' if MODEL_COMPAT_ENABLED else 'disabled'}", flush=True)
+    print(f"[proxy] Model compatibility: {'enabled' if model_compat_enabled() else 'disabled'}", flush=True)
     # Keep the last good ComfyUI node definitions on disk, so embedding a workflow
     # in generated media survives a ComfyUI that is restarting at submit time.
     node_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "comfy_object_info"
@@ -14498,8 +14537,8 @@ def _gateway_catalog_finish(
 def _workflow_availability_services(registry: Mapping[str, Any]) -> dict[str, Any]:
     """Add the on-demand sidecar declaration to the availability-only registry view."""
     services = dict(registry.get("services") or {})
-    face_config = (config.get("identity") or {}).get("face_service")
-    if isinstance(face_config, Mapping) and face_config:
+    face_config = _identity_face_cfg()
+    if face_config:
         services["faces"] = {"enabled": True, "name": str(face_config.get("name") or "Face service"),
                              "config": dict(face_config)}
     return {**registry, "services": services}
@@ -16106,15 +16145,20 @@ async def _live_probe_evidence() -> dict[str, dict[str, Any]]:
     return evidence
 
 # --- identity scene + likeness check (gateway/identity_api.py) ----------------
-IDENTITY_CFG = config.get("identity", {}) or {}
 IDENTITY_MODEL_ID = "image-identity"
 IDENTITY_MANIFEST_ID = "image.edit.image-identity"
 _IDENTITY_ROUTE_POLICY = {"protocol": "openai.images", "intent": "image.edit", "backend": _GRAPH_BACKEND_ID}
 _identity_template_cache: tuple[dict[str, Any], dict[str, Any]] | None = None
 
 
+def _identity_cfg() -> Mapping[str, Any]:
+    """The identity section of the snapshot this call reads (CONFIG_HOMES C8c)."""
+    section = runtime().config.get("identity")
+    return section if isinstance(section, Mapping) else {}
+
+
 def _identity_face_cfg() -> Mapping[str, Any]:
-    cfg = IDENTITY_CFG.get("face_service")
+    cfg = _identity_cfg().get("face_service")
     return cfg if isinstance(cfg, Mapping) else {}
 
 
@@ -16209,7 +16253,7 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
             raise identity_api.IdentityUnavailable(admission)
         error, images = await _graph_run_round(
             client, graph, dict(headers), "identity scene",
-            max_wait_s=int(IDENTITY_CFG.get("max_wait_s", 3600)),
+            max_wait_s=int(_identity_cfg().get("max_wait_s", 3600)),
         )
     if error is not None:
         try:
@@ -21379,7 +21423,7 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
     selected = model
     if selected == IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW:
         if has_mask:
-            return _prefer_inpaint_workflow_for_mask(IMAGE_EDIT_DEFAULT_MODEL)
+            return _prefer_inpaint_workflow_for_mask(image_edit_default_model())
         return selected
 
     if not (selected.endswith("-edit") or selected.endswith("-inpaint")):
@@ -21393,7 +21437,7 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
     if has_mask:
         return _prefer_inpaint_workflow_for_mask(selected)
 
-    if image_count > 1 and selected == IMAGE_EDIT_DEFAULT_MODEL:
+    if image_count > 1 and selected == image_edit_default_model():
         return IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW
     return selected
 
@@ -26923,9 +26967,9 @@ def _build_role_catalog_entries() -> list[dict]:
             "azizam_model_path": cat.get("path"),
         })
 
-    if EMBEDDINGS_ENABLED and EMBEDDINGS_MODEL:
+    if EMBEDDINGS_ENABLED and embeddings_model():
         entries.append({
-            "id": EMBEDDINGS_MODEL,
+            "id": embeddings_model(),
             "object": "model",
             "created": int(time.time()),
             "owned_by": "azizam",

@@ -47,7 +47,7 @@ SYMLINKED_REPO_ENTRIES = (
     "workflows", "registry", "manifests", "extensions", "engines", "services",
     "providers", "integrations", "skills",
 )
-COPIED_SOURCE_FILES = ("openai_model_aliases.generated.yml",)
+COPIED_SOURCE_FILES = ("registry/openai_model_aliases.generated.yml",)
 
 
 def _backup(source: Path, target: Path) -> None:
@@ -70,7 +70,7 @@ def copy_data(source: Path, state: Path) -> None:
     private_io.atomic_copy_file(source / "proxy_config.yml", state / "source_proxy_config.yml")
     for name in COPIED_SOURCE_FILES:
         if (source / name).exists():
-            private_io.atomic_copy_file(source / name, state / name)
+            private_io.atomic_copy_file(source / name, state / Path(name).name)
 
 
 def _retarget(node, engine_port: int, engine_url: str):
