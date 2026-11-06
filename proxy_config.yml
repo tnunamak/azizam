@@ -1616,6 +1616,7 @@ voices:
   design_engine: omnivoice    # renders `type: prompt` voices once from a text description
 model_compatibility:
   enabled: true
+  generated_aliases_file: openai_model_aliases.generated.yml
   openai_models_api_url: https://api.openai.com/v1/models
   include_private: false
   defaults:
