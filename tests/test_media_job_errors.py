@@ -236,5 +236,147 @@ class AudioJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(PROMPT, json.dumps(job))
 
 
+URL = "https://clips.caller-example.test/private/fox-secret.mp4"
+
+
+def _routes_open(**extra: Any):
+    """The checks every media route makes before it reads a body, switched open."""
+    return patch.multiple(
+        proxy, COMFY_ENABLED=True, IMAGE_MEDIA_JOB_MAX_ATTEMPTS=1,
+        _dispatch_admission_response=lambda *a, **kw: None,
+        _service_availability_response=lambda *a, **kw: None, **extra)
+
+
+@pytest.mark.usefixtures("isolated_receipts")
+class ImageVideoJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
+    """An async image or video job keeps the gateway's own validation sentence, and never a caller's value."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        self.db = root / "media_jobs.db"
+        media_jobs.init_db(self.db)
+        for patcher in (
+            patch.object(media_jobs, "DB_PATH", self.db),
+            patch.object(proxy, "IMAGE_CACHE_DIR", root / "images"),
+            patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", root / "payloads"),
+            authenticated(),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def failed(self, job_id: str) -> dict[str, Any]:
+        job = media_jobs.get(job_id, audience="client", path=self.db)
+        assert job is not None
+        self.assertEqual(job["status"], media_jobs.STATUS_FAILED, job)
+        return job
+
+    async def run_image_job(self, body: dict[str, Any]) -> dict[str, Any]:
+        with patch.object(proxy, "_schedule_image_media_job", lambda _job_id: True):
+            response = await proxy._dispatch_gateway_media_job_submission(
+                request=_JsonRequest({}),  # type: ignore[arg-type]
+                payload={"intent": "image.generate", "request": body}, audience="client")
+        assert response is not None and response.status_code == 202, getattr(response, "body", None)
+        job_id = json.loads(response.body.decode("utf-8"))["job_id"]
+        with _routes_open():
+            await proxy._run_image_media_job(job_id)
+        return self.failed(job_id)
+
+    async def run_video_job(self, body: dict[str, Any], create=None) -> dict[str, Any]:
+        job = media_jobs.MediaJob(intent="video.generate", request_id="req_video_refusal")
+        media_jobs.create(job, path=self.db)
+        payload: dict[str, Any] = {}
+        with patch.object(proxy, "_spool_media_job_payload", lambda _job_id, spooled: payload.update(spooled)):
+            proxy._persist_image_media_job_payload(
+                job.job_id, body=body, request=_JsonRequest(body),  # type: ignore[arg-type]
+                auth_context=proxy.AuthContext(identity=authenticated().identity))
+        patches = [patch.object(proxy, "_load_video_media_job_payload", lambda _job_id: payload)]
+        if create is not None:
+            patches.append(patch.object(proxy, "proxy_graph_video_create", create))
+        with _routes_open(), patches[0], (patches[1] if create is not None else patch.object(proxy, "COMFY_ENABLED", True)):
+            await proxy._run_video_media_job(job.job_id)
+        return self.failed(job.job_id)
+
+    async def test_an_image_job_refused_by_gateway_validation_keeps_the_sentence(self) -> None:
+        job = await self.run_image_job({"model": "flux2-klein-4b", "prompt": PROMPT, "n": 11})
+        self.assertEqual(job["error"], "n must be between 1 and 10")
+        self.assertEqual(job["error_category"], "invalid_input")
+        self.assertNotIn(PROMPT, json.dumps(job))
+
+    async def test_the_image_edit_mask_refusal_is_the_gateways_own(self) -> None:
+        refusal = proxy._image_error_response(
+            "mask must have the same dimensions as image", param="mask", code="invalid_mask_dimensions")
+        message, info = proxy._media_job_failure(refusal)
+        self.assertEqual(message, "mask must have the same dimensions as image")
+        self.assertEqual(info["error_category"], "invalid_input")
+
+    async def test_a_video_job_refused_by_gateway_validation_keeps_the_sentence(self) -> None:
+        job = await self.run_video_job({"model": "ltx-2.5", "prompt": 5})
+        self.assertEqual(job["error"], "prompt must be a string")
+        self.assertEqual(job["error_category"], "invalid_input")
+
+    async def test_a_video_asset_refusal_keeps_the_gateways_sentence(self) -> None:
+        with self.assertRaises(proxy._VideoAssetError) as caught:
+            await proxy._resolve_video_workflow_asset(
+                "not-a-url", kind="video", param="extensions.com.azizam.workflow.video", auth_context=None)
+
+        async def refuse(*_args, **_kwargs):
+            return proxy._video_asset_error_response(caught.exception)
+
+        job = await self.run_video_job({"model": "ltx-2.5", "prompt": PROMPT}, create=refuse)
+        self.assertEqual(job["error"], str(caught.exception))
+        self.assertIn("http(s) URL", job["error"])
+        self.assertNotIn(PROMPT, job["error"])
+
+    async def test_a_video_asset_error_from_a_caller_url_never_names_the_url(self) -> None:
+        """The download failure echoes the URL and the transport's text; the job keeps the fixed sentence."""
+
+        async def unreachable(*_args, **_kwargs):
+            raise OSError(f"cannot reach {URL}")
+
+        with patch.object(proxy, "_fetch_media_url", unreachable), self.assertRaises(proxy._VideoAssetError) as caught:
+            await proxy._resolve_video_workflow_asset(
+                URL, kind="video", param="extensions.com.azizam.workflow.video", auth_context=None)
+        self.assertIn(URL, str(caught.exception))
+        sync = proxy._video_asset_error_response(caught.exception)
+        self.assertEqual(sync.status_code, 400)
+
+        async def refuse(*_args, **_kwargs):
+            return proxy._video_asset_error_response(caught.exception)
+
+        job = await self.run_video_job({"model": "ltx-2.5", "prompt": PROMPT}, create=refuse)
+        self.assertEqual(job["error"], "The gateway did not accept this job's inputs.")
+        self.assertEqual(job["error_category"], "invalid_input")
+        self.assertNotIn("caller-example", json.dumps(job))
+
+    async def test_an_image_input_failure_that_echoes_its_input_never_names_it(self) -> None:
+        """``_resolve_input_reference`` words its download and decode failures with the caller's text."""
+        for value in (URL, "data:image/png;base64,@@@@"):
+            with self.subTest(value=value):
+                async def unreachable(*_args, **_kwargs):
+                    raise proxy._InputReferenceError(f"failed to download input_reference: cannot reach {value}")
+
+                with patch.object(proxy, "_resolve_input_reference", unreachable), \
+                        self.assertRaises(proxy._VideoAssetError) as caught:
+                    await proxy._resolve_video_workflow_asset(
+                        value, kind="image", param="extensions.com.azizam.workflow.image", auth_context=None)
+                self.assertIn(value, str(caught.exception))
+                message, _info = proxy._media_job_failure(proxy._video_asset_error_response(caught.exception))
+                self.assertEqual(message, "The gateway did not accept this job's inputs.")
+
+    async def test_a_video_asset_error_from_an_upstream_failure_is_not_marked(self) -> None:
+        refusal = proxy._video_asset_error_response(proxy._VideoAssetError("engine upload failed.", param="p", status=502))
+        message, info = proxy._media_job_failure(refusal)
+        self.assertEqual(message, "Media generation failed (upstream HTTP 502).")
+        self.assertEqual(info["error_category"], "upstream")
+
+    async def test_a_prompt_the_route_echoes_in_a_model_refusal_keeps_the_fixed_sentence(self) -> None:
+        """An unknown model name is the caller's value: the refusal names it, the job must not."""
+        job = await self.run_video_job({"model": f"no-such-{PROMPT}", "prompt": "x"})
+        self.assertEqual(job["error"], "The gateway did not accept this job's inputs.")
+        self.assertNotIn(PROMPT, json.dumps(job))
+
+
 if __name__ == "__main__":
     unittest.main()
