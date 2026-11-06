@@ -4,6 +4,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { PICTURE_ITEM, RECORDING_ITEM, stubbedLibrary } from "../../../tests/helpers/library-stub";
 import { MediaInput } from "./media-input";
 
 const ID = `img_${"a".repeat(64)}`;
@@ -382,4 +383,88 @@ test("closing the Library drops the list's signed links", async () => {
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(document.querySelector(`img[src="${THUMB}"]`)).toBeNull();
+});
+
+test("an input that takes any file shows no Library button and sends no Library request", () => {
+  const fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  render(<MediaInput id="anything" label="Attachment" kind={null} file={null} onFileChange={() => {}} />);
+  expect(screen.getByRole("button", { name: "Choose a file" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Choose from Library" })).toBeNull();
+  expect(document.querySelector("input[data-media-file-input]")?.getAttribute("accept")).toBeNull();
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+test("a kind the Library cannot hold shows no Library button", () => {
+  render(<MediaInput id="scent" label="Pheromone" kind="pheromone" file={null} onFileChange={() => {}} />);
+  expect(screen.getByRole("button", { name: "Choose a file" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Choose from Library" })).toBeNull();
+});
+
+test("an audio input lists the audio kind and gets an audio file", async () => {
+  const library = stubbedLibrary([PICTURE_ITEM, RECORDING_ITEM]);
+  vi.stubGlobal("fetch", vi.fn(library.impl));
+  const onFile = vi.fn();
+  render(<MediaInput id="clip" label="Audio file" kind="audio" file={null} onFileChange={onFile} />);
+  expect(document.querySelector("input[data-media-file-input]")?.getAttribute("accept")).toBe("audio/*");
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  expect(await screen.findByRole("heading", { name: "Choose an audio clip from your Library" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "A teal fish" })).toBeNull();
+  fireEvent.click(await screen.findByRole("button", { name: "A short spoken note" }));
+  await waitFor(() => expect(onFile).toHaveBeenCalledTimes(1));
+  expect((onFile.mock.calls[0][0] as File).type).toBe("audio/wav");
+  expect(library.listed.every((url) => url.includes("kind=audio"))).toBe(true);
+});
+
+test("an input that takes some types of a kind filters the file dialog, the list and a chosen file", async () => {
+  const library = stubbedLibrary([
+    PICTURE_ITEM,
+    { ...PICTURE_ITEM, assetId: `img_${"d".repeat(64)}`, mediaType: "image/gif", prompt: "A spinning gif" },
+  ]);
+  vi.stubGlobal("fetch", vi.fn(library.impl));
+  const onFile = vi.fn();
+  render(
+    <MediaInput
+      id="mesh"
+      label="Picture"
+      kind="image"
+      types={["image/png", "image/jpeg", "image/webp"]}
+      accepted="a PNG, JPEG or WebP picture"
+      hint="PNG, JPEG or WebP."
+      file={null}
+      onFileChange={onFile}
+    />,
+  );
+  expect(screen.getByText("PNG, JPEG or WebP.")).toBeTruthy();
+  expect(document.querySelector("input[data-media-file-input]")?.getAttribute("accept")).toBe(
+    "image/png,image/jpeg,image/webp",
+  );
+  fireEvent.change(document.querySelector("input[data-media-file-input]")!, {
+    target: { files: [new File(["g"], "spin.gif", { type: "image/gif" })] },
+  });
+  expect(screen.getByRole("alert").textContent).toContain("That file is not a PNG, JPEG or WebP picture");
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  await screen.findByRole("button", { name: "A teal fish" });
+  expect(screen.queryByRole("button", { name: "A spinning gif" })).toBeNull();
+});
+
+test("the From your Library label goes when a pasted or recorded file replaces the pick", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  function Replaceable() {
+    const [file, setFile] = useState<File | null>(null);
+    return (
+      <>
+        <MediaInput id="picture" label="Picture" kind="image" file={file} onFileChange={setFile} />
+        <button type="button" onClick={() => setFile(new File(["x"], "pasted.png", { type: "image/png" }))}>
+          Paste
+        </button>
+      </>
+    );
+  }
+  render(<Replaceable />);
+  await openAndPick();
+  expect(await screen.findByText("From your Library")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+  expect(screen.queryByText("From your Library")).toBeNull();
+  expect(screen.getByText("pasted.png")).toBeTruthy();
 });

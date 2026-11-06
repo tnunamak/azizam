@@ -1,6 +1,7 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { PICTURE_ITEM, stubbedLibrary } from "../../../tests/helpers/library-stub";
 import { MeshMode, type MeshModeProps } from "./mesh-panel";
 import {
   MESH_BUSY_MESSAGE,
@@ -117,6 +118,35 @@ test("posts the picture and the chosen detail as multipart to the mesh route wit
   expect(form.get("resolution")).toBe("512");
   expect(form.has("seed")).toBe(false);
   expect(form.has("bg_removal")).toBe(false);
+});
+
+test("a picture chosen from the Library is the multipart file the mesh route gets", async () => {
+  const library = stubbedLibrary([PICTURE_ITEM], (url) =>
+    Promise.resolve(url === "/v1/meshes/generate" ? glb() : refusal(404, {})),
+  );
+  fetchMock.mockImplementation(library.impl);
+  renderPanel();
+  await userEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  await userEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+  expect(await screen.findByText("From your Library")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Make 3D model" }));
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url === "/v1/meshes/generate")).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => url === "/v1/meshes/generate") as [string, RequestInit];
+  const image = (call[1].body as FormData).get("image") as File;
+  expect(image.name).toBe("library-picture.png");
+  expect(image.type).toBe("image/png");
+  expect(library.listed[0]).toContain("kind=image");
+});
+
+test("a picture type the mesh route does not take is refused before it is sent", async () => {
+  const { container } = renderPanel();
+  const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+  fireEvent.change(input, { target: { files: [new File(["g"], "spin.gif", { type: "image/gif" })] } });
+  expect(await screen.findByRole("alert")).toHaveTextContent("That file is not a PNG, JPEG or WebP picture.");
+  await userEvent.click(screen.getByRole("button", { name: "Make 3D model" }));
+  expect(await screen.findByText("Choose a picture first.")).toBeVisible();
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 test("sends the seed and background removal from the more-options fields", async () => {

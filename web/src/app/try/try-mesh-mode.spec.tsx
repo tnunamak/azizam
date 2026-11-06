@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import TryPage from "./page";
 import { MESH_BUSY_MESSAGE } from "./mesh-mode";
 import { storeHomeHandoff } from "@/app/_home/handoff";
+import { PICTURE_ITEM, RECORDING_ITEM, stubbedLibrary } from "../../../tests/helpers/library-stub";
 
 vi.mock("@google/model-viewer", () => ({}));
 
@@ -322,4 +323,47 @@ test("opening Transcription from Home with no file leaves it ready and sends not
   await catalogRequested();
   await screen.findByText("Audio file");
   expect(urlsFetched().some((url) => url.includes("audio/transcriptions"))).toBe(false);
+});
+
+test("an audio file chosen from the Library is the file Transcription sends", async () => {
+  const library = stubbedLibrary([PICTURE_ITEM, RECORDING_ITEM], async (url) => {
+    if (url.includes("audio/transcriptions")) return Response.json({ text: "hello there" });
+    return url.includes("workflows")
+      ? Response.json(catalogWith())
+      : Response.json({ aliases: [], models: [{ id: "stt-a", name: "Words", capabilities: ["transcribe"], locality: "local" }] });
+  });
+  fetchMock.mockReset().mockImplementation(library.impl);
+  mocks.params = new URLSearchParams("capability=transcribe&model=stt-a");
+  render(<TryPage />);
+  await userEvent.click(await screen.findByRole("button", { name: "Choose from Library" }));
+  expect(screen.queryByRole("button", { name: "A teal fish" })).toBeNull();
+  await userEvent.click(await screen.findByRole("button", { name: "A short spoken note" }));
+  expect(await screen.findByText("From your Library")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Run" }));
+
+  await waitFor(() => expect(urlsFetched().some((url) => url.includes("audio/transcriptions"))).toBe(true));
+  const call = fetchMock.mock.calls.find(([url]) => String(url).includes("audio/transcriptions"));
+  const sent = (call?.[1].body as FormData).get("file") as File;
+  expect(sent.name).toBe("library-audio-clip.wav");
+  expect(sent.type).toBe("audio/wav");
+  expect(library.listed.every((url) => url.includes("kind=audio"))).toBe(true);
+});
+
+test("Photo to 3D offers the Library for its picture, filtered to the picture kind", async () => {
+  const library = stubbedLibrary([PICTURE_ITEM, RECORDING_ITEM], async (url) => {
+    if (url.includes("meshes")) return glb();
+    return url.includes("workflows")
+      ? Response.json(catalogWith(meshRow({ available: true })))
+      : Response.json(models);
+  });
+  fetchMock.mockReset().mockImplementation(library.impl);
+  render(<TryPage />);
+  await userEvent.click(await screen.findByRole("tab", { name: "Photo to 3D" }));
+  await userEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  await userEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+  expect(await screen.findByText("From your Library")).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Make 3D model" }));
+  await waitFor(() => expect(urlsFetched().some((url) => url.includes("meshes"))).toBe(true));
+  const meshCall = fetchMock.mock.calls.find(([url]) => String(url).includes("meshes"));
+  expect(((meshCall?.[1].body as FormData).get("image") as File).name).toBe("library-picture.png");
 });

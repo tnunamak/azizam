@@ -6,6 +6,7 @@ import {
   kindLabel,
   kindPluralLabel,
   kindUntitledName,
+  libraryHoldsKind,
   rememberKindNames,
 } from "./media-kind";
 
@@ -74,5 +75,24 @@ describe("kindFilterOptions", () => {
 
   it("is only All when nothing occurs", () => {
     expect(kindFilterOptions([]).map((option) => option.value)).toEqual(["all"]);
+  });
+});
+
+describe("libraryHoldsKind", () => {
+  it.each(["image", "video", "audio", "model", "text"])("holds %s, a kind the Library draws", (kind) => {
+    expect(libraryHoldsKind(kind)).toBe(true);
+  });
+
+  it("does not hold a type nobody could name, or no kind at all (an input that takes any file)", () => {
+    expect(libraryHoldsKind("file")).toBe(false);
+    expect(libraryHoldsKind(null)).toBe(false);
+    expect(libraryHoldsKind(undefined)).toBe(false);
+    expect(libraryHoldsKind("")).toBe(false);
+  });
+
+  it("holds a kind only the gateway has named, once it has", () => {
+    expect(libraryHoldsKind("pheromone")).toBe(false);
+    rememberKindNames([{ kind: "pheromone", label: "Pheromone", plural: "Pheromones", untitled: "Pheromone" }]);
+    expect(libraryHoldsKind("pheromone")).toBe(true);
   });
 });

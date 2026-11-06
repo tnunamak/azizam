@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import HomePage from "@/app/_home/home-page";
 import { takeHomeHandoff } from "@/app/_home/handoff";
 import { ViewerContext } from "@/components/shell/session";
+import { PICTURE_ITEM, RECORDING_ITEM, stubbedLibrary, type StubbedItem } from "../../../tests/helpers/library-stub";
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -638,6 +639,83 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     const composer = document.querySelector('[data-slot="composer"]') as HTMLElement;
     fireEvent.paste(composer, { clipboardData: { files: [picture()] } });
     expect(await screen.findByText("fox.png")).toBeVisible();
+  });
+
+  /** Routes the Library's list, download and signed-file requests to `items`; every other request goes where it went. */
+  function withLibrary(items: StubbedItem[]) {
+    const base = globalThis.fetch;
+    const library = stubbedLibrary(items, (url, init) => base(url, init));
+    vi.stubGlobal("fetch", vi.fn(library.impl));
+    return library;
+  }
+
+  it("a picture input offers the Library; a pick becomes the file Make sends to Try", async () => {
+    await chooseKind([textRow, meshRow], "3D models");
+    const library = withLibrary([PICTURE_ITEM]);
+    fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+    expect(await screen.findByText("library-picture.png")).toBeVisible();
+    expect(screen.getByText(/From your Library/)).toBeVisible();
+    expect(library.listed[0]).toContain("kind=image");
+    await waitFor(() => expect(makeButton().getAttribute("aria-disabled")).toBe("false"));
+    fireEvent.click(makeButton());
+    const file = takeHomeHandoff("mesh")?.files?.[0];
+    expect(file?.name).toBe("library-picture.png");
+    expect(file?.type).toBe("image/png");
+  });
+
+  it("Make waits while a Library pick is still arriving", async () => {
+    await chooseKind([textRow, meshRow], "3D models");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const library = stubbedLibrary([PICTURE_ITEM]);
+    const base = library.impl;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes("/download")) await held;
+        return base(input, init);
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Adding picture…");
+    expect(makeButton().getAttribute("aria-disabled")).toBe("true");
+    release();
+    expect(await screen.findByText("library-picture.png")).toBeVisible();
+    await waitFor(() => expect(makeButton().getAttribute("aria-disabled")).toBe("false"));
+  });
+
+  it("a recording input lists the Library's audio, and a pick is the recording", async () => {
+    await chooseKind([textRow, audioRow], "Transcription");
+    const library = withLibrary([PICTURE_ITEM, RECORDING_ITEM]);
+    fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    expect(await screen.findByRole("heading", { name: "Choose a recording from your Library" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "A teal fish" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "A short spoken note" }));
+    expect(await screen.findByText("library-recording.wav")).toBeVisible();
+    expect(library.listed.every((url) => url.includes("kind=audio"))).toBe(true);
+  });
+
+  it("an input whose kind the Library cannot hold has no Library button", async () => {
+    await chooseKind([textRow, smellRow], "Smell");
+    fileInput(/Choose a chemical/);
+    expect(screen.queryByRole("button", { name: "Choose from Library" })).toBeNull();
+  });
+
+  it("the attach button of a capability that takes words and a file offers file or Library", async () => {
+    await chooseKind([textRow, editRow], "Edit");
+    withLibrary([PICTURE_ITEM]);
+    const attach = screen.getByRole("button", { name: "Attach a picture" });
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", { configurable: true, value: () => false });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+    attach.focus();
+    fireEvent.keyDown(attach, { key: "Enter" });
+    expect(await screen.findByRole("menuitem", { name: "Choose a picture" })).toBeVisible();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Choose from Library" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+    await waitFor(() => expect(document.querySelector('[data-slot="home-picked-file"]')).toHaveTextContent("library-picture.png"));
+    expect(screen.getByRole("button", { name: "Change picture" })).toBeVisible();
   });
 
   it("audio: a recording input, and a hand-off to record in Try that carries no file", async () => {
