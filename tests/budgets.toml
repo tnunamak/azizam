@@ -517,8 +517,8 @@
 # Train 4 (2026-11-06): train 3 (19647) + config homes C6 (+29 fold and response cases, +1 boot-order retry case) + C3 (+37); scripts/run-hermetic-pytest.sh --collect-only -q measured 19714.
 # Config homes C7 (2026-11-06): +17 cases, test_config_c7_sections.py (release files, legacy import, blocked and unreadable boots, snapshot readers); scripts/run-hermetic-pytest.sh --collect-only -q measured 19180.
 # Config homes C7 on train 4 (2026-11-06): train 4 (19714) + the C7 section tests, rewritten for the generic import (+17); measured 19731.
-# Train 5 (2026-11-06): +17 control-address cases, +31 declared snapshot operation cases; measured 19781.
-pytest = 19781
+# Train 5 (2026-11-06): +18 control-address cases, +31 declared snapshot operation cases; measured 19782.
+pytest = 19782
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
