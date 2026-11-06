@@ -135,9 +135,11 @@ def _collection(document: Mapping[str, Any], name: str) -> Mapping[str, Any]:
 def layer(stored: Mapping[str, Any], release: Mapping[str, Any]) -> dict[str, Any]:
     """The effective document: the release records, under the owner's patches, replacements, additions and tombstones.
 
-    A stored document that is not in the owner-data form is read as one whose every record is a complete patch, so a
-    document written before the layer (or by hand) reads as it always did, plus the release records it lacks.
+    A stored document that is not in the owner-data form holds whole records, so each replaces the release record of
+    its id outright (a merge patch cannot delete a key), and it still inherits the release records it lacks. The
+    startup step rewrites such a document into the owner-data form before anything reads it.
     """
+    layered = is_layered(stored)
     effective: dict[str, Any] = {key: copy.deepcopy(value) for key, value in stored.items() if key not in _META_KEYS}
     for name in COLLECTIONS:
         base, owned, hidden = _collection(release, name), _collection(stored, name), tombstones_of(stored, name)
@@ -146,7 +148,7 @@ def layer(stored: Mapping[str, Any], release: Mapping[str, Any]) -> dict[str, An
             if record_id not in hidden and record_id not in owned:
                 records[record_id] = copy.deepcopy(record)
         for record_id, entry in owned.items():
-            records[record_id] = apply_entry(base[record_id], entry) if record_id in base else _whole(entry)
+            records[record_id] = apply_entry(base[record_id], entry) if layered and record_id in base else _whole(entry)
         effective[name] = records
     return effective
 

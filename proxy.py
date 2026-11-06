@@ -19840,7 +19840,7 @@ async def admin_config_export(request: Request):
             media_type="application/json",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if request.query_params.get("format") == "v1":  # the config sections' export; C4 makes it the only one
+    if request.query_params.get("format") == "v1":  # the one export: the config sections and the registry's owner layer
         document = await asyncio.to_thread(
             config_api.build_export, CONFIG_HOME, ADMIN_DB_PATH, version=str((runtime().config.get("proxy") or {}).get("version") or "1"),
             effective=request.query_params.get("view") == "effective", registry=ADMIN_STORE.get_service_registry())
