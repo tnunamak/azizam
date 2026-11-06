@@ -70,6 +70,7 @@ GUARDED = {
 
 # Writers no browser sign-in starts, with why.
 EXEMPT = {
+    "gateway/config_api.py::create_config_router.import_config.build.write_registry": "runs inside admin_store.apply_config_change, which checks the sign-in in the same transaction before it judges the change",
     "gateway/app_binding_guard.py::self_test": "inserts its fixtures inside a savepoint that is rolled back before the install returns; no row survives",
     "gateway/admin_store.py::_insert_credential_in": "inserts inside the open transaction of its two callers, both guarded above",
     "gateway/accounts.py::accept_invite_in": "the holder of an invitation link; no sign-in exists yet, the new person's first key is made with the account",
