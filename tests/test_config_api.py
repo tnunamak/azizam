@@ -7,12 +7,14 @@ the same dependencies the gateway gives it; one test class at the end mounts it 
 from __future__ import annotations
 
 import copy
+import http.server
 import json
 import sqlite3
 import subprocess
 import sys
+import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 from fastapi import FastAPI
@@ -48,6 +50,7 @@ class Gateway:
         self.startup = startup if startup is not None else {}
         self.reloads = 0
         self.reload_error: Exception | None = None
+        self.during_reload: Callable[[], None] | None = None  # runs inside the reload, before it fails: another writer's turn
         app = FastAPI()
         app.include_router(config_api.create_config_router(
             auth=self.auth, admin_path=self.db, home=lambda: self.home, registry=lambda: {}, reload=self.reload,
@@ -73,6 +76,9 @@ class Gateway:
         self.home.publish(self.home.snapshot(self.home.attach(dict(layer.config), layer), layer=layer))
 
     def reload(self) -> None:
+        if self.during_reload is not None:
+            hook, self.during_reload = self.during_reload, None
+            hook()
         if self.reload_error is not None:
             raise self.reload_error
         self.reloads += 1
@@ -263,14 +269,37 @@ def test_a_secret_entry_takes_a_reference_and_a_literal_null_is_a_value(gw):
     assert entries["/note"]["source"] == "owner-added" and entries["/note"]["value"] is None
 
 
-@pytest.mark.parametrize("body", [None, [], {"items": []}, {"items": [{"section": SECTION}]},
-                                  {"items": [{"section": SECTION, "pointer": "/timeout", "op": "set"}]},
-                                  {"items": [{"section": SECTION, "pointer": "/timeout", "op": "zap"}]},
-                                  {"items": [setting("/timeout", 5)], "if_match": [1]}])
-def test_a_malformed_body_is_400_and_writes_nothing(gw, body):
+@pytest.mark.parametrize("body,code", [
+    (None, "invalid_json"), ([], "invalid_json"), ({"items": []}, "invalid_request"),
+    ({"items": [{"section": SECTION}]}, "invalid_request"),
+    ({"items": [{"section": SECTION, "pointer": "/timeout", "op": "set"}]}, "invalid_request"),
+    ({"items": [{"section": SECTION, "pointer": "/timeout", "op": "zap"}]}, "invalid_request"),
+    ({"items": [setting("/timeout", 5)], "if_match": [1]}, "invalid_request"),
+])
+def test_a_malformed_body_is_400_with_the_codes_the_admin_api_uses_and_writes_nothing(gw, body, code):
     response = gw.client.patch(f"{API}/changes", content=json.dumps(body) if body is not None else b"not json", headers=OWNER)
-    assert response.status_code == 400 and response.json()["error"]["code"] == "invalid_body"
+    assert response.status_code == 400 and response.json()["error"]["code"] == code
     assert gw.counts() == (0, 0)
+
+
+def test_a_body_that_is_not_text_for_a_note_is_400_on_every_write_route_and_writes_nothing(tmp_path):
+    gw = Gateway(tmp_path, startup={SECTION: {**copy.deepcopy(DEFAULTS), "timeout": 99}})
+    committed = gw.patch(setting("/timeout", 60)).json()["change_id"]
+    before = gw.counts()
+    document = export_of(gw)
+    for note in (5, ["x"], {"a": 1}, True):
+        attempts = {
+            "patch": gw.patch(setting("/timeout", 70), note=note),
+            "revert": gw.client.post(f"{API}/changes/{committed}/revert",
+                                     json={"if_match": {SECTION: gw.revision()}, "note": note}, headers=OWNER),
+            "import": gw.client.post(f"{API}/import", json=import_body(document, gw, note=note), headers=OWNER),
+            "legacy-import": gw.client.post(f"{API}/sections/{SECTION}/legacy-import", json={"note": note},
+                                            headers={**OWNER, "If-Match": gw.revision()}),
+        }
+        for route, response in attempts.items():
+            assert response.status_code == 400, (route, note, response.text)
+            assert response.json()["error"]["code"] == "invalid_request", (route, note)
+    assert gw.counts() == before, "no route wrote anything"
 
 
 def test_the_same_pointer_twice_in_one_change_is_400(gw):
@@ -358,6 +387,67 @@ def test_a_reload_that_fails_after_the_commit_keeps_the_change_and_says_which_on
     assert gw.entries()["/timeout"]["pending"] is False and gw.home.reload_failed is None
 
 
+def test_a_failed_reload_after_a_revert_names_the_revert_and_its_entries(gw):
+    first = gw.patch(setting("/timeout", 60)).json()["change_id"]
+    gw.reload_error = RuntimeError("snapshot build failed")
+    response = gw.client.post(f"{API}/changes/{first}/revert", json={"if_match": {SECTION: gw.revision()}}, headers=OWNER)
+    assert response.status_code == 202
+    body = response.json()
+    assert "entries" not in body, "the store's own record is not part of the answer"
+    view = gw.client.get(f"{API}/sections/{SECTION}", headers=OWNER).json()
+    failed = view["reload_failed"]
+    assert failed is not None and failed["change_id"] == body["change_id"] != first
+    assert failed["entries"] == [{
+        "section": SECTION, "pointer": "/timeout", "serving": {"present": True, "value": 60}, "stored": None}]
+
+
+def test_a_failed_reload_names_its_own_change_when_a_second_writer_commits_during_it(gw):
+    def writer_b() -> None:
+        gw.patch(setting("/tags", ["b"]))  # commits B, whose own reload fails as well, and notes B as the last commit
+
+    gw.reload_error = RuntimeError("snapshot build failed")
+    gw.during_reload = writer_b
+    response = gw.patch(setting("/timeout", 60))
+    assert response.status_code == 202
+    failed = gw.client.get(f"{API}/sections/{SECTION}", headers=OWNER).json()["reload_failed"]
+    assert failed["change_id"] == response.json()["change_id"], "A's record names A, not the writer that committed last"
+    assert [(e["section"], e["pointer"]) for e in failed["entries"]] == [(SECTION, "/timeout")]
+
+
+def test_a_failed_reload_names_its_own_change_when_a_publish_clears_the_shared_note_during_it(gw):
+    gw.reload_error = RuntimeError("snapshot build failed")
+    gw.during_reload = gw.reload_ok  # a publish clears the last-commit note while A's reload is still running
+    response = gw.patch(setting("/timeout", 60))
+    assert response.status_code == 202
+    failed = gw.client.get(f"{API}/sections/{SECTION}", headers=OWNER).json()["reload_failed"]
+    assert failed is not None and failed["change_id"] == response.json()["change_id"]
+    assert [(e["section"], e["pointer"]) for e in failed["entries"]] == [(SECTION, "/timeout")]
+
+
+def test_an_object_value_is_served_with_its_keys_in_the_order_the_owner_sent(gw):
+    response = gw.client.patch(
+        f"{API}/changes", headers=OWNER,
+        content=b'{"items": [{"section": "fixture", "pointer": "/pair", "op": "set", "value": {"right": "R", "left": "L"}}],'
+                b' "if_match": {"fixture": "0"}}')
+    assert response.status_code == 200, response.text
+    assert list(gw.entries()["/pair"]["value"]) == ["right", "left"]
+    assert list(gw.home.holder.current().config[SECTION]["pair"]) == ["right", "left"]
+    conn = sqlite3.connect(gw.db)
+    try:
+        stored = conn.execute("SELECT value_json FROM config_overrides WHERE pointer='/pair'").fetchone()[0]
+    finally:
+        conn.close()
+    assert stored == '{"right": "R", "left": "L"}'
+
+
+def test_a_legacy_import_keeps_the_key_order_of_the_startup_block(tmp_path):
+    block = {**copy.deepcopy(DEFAULTS), "pair": {"right": "R", "left": "L"}}
+    gw = Gateway(tmp_path, startup={SECTION: block})
+    response = gw.client.post(f"{API}/sections/{SECTION}/legacy-import", headers={**OWNER, "If-Match": "0"})
+    assert response.status_code == 200, response.text
+    assert list(gw.entries()["/pair"]["value"]) == ["right", "left"]
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Export, import and the round trip
 # ---------------------------------------------------------------------------------------------------------------------
@@ -383,7 +473,7 @@ def test_the_export_holds_overrides_and_secret_references_and_nothing_else(gw):
 
 def round_trip_changes(gw: Gateway) -> None:
     response = gw.patch(
-        setting("/timeout", 60), setting("/tags", ["z"]), setting("/pair", {"left": "L", "right": "R"}),
+        setting("/timeout", 60), setting("/tags", ["z"]), setting("/pair", {"right": "R", "left": "L"}),
         setting("/aliases/extra", {"engine": "eng-1"}), setting("/note", None), setting("/limits/min", 1), setting("/limits/max", 2),
         tombstone("/aliases/fast"), setting("/token", REF), setting("/policy", "off"), setting("/mode", "slow"),
     )
@@ -398,6 +488,9 @@ def test_round_trip_export_then_import_into_an_empty_owner_layer_gives_the_same_
     response = target.client.post(f"{API}/import", json=import_body(export_of(source), target), headers=OWNER)
     assert response.status_code == 200, response.text
     assert target.digest() == source.digest(), "export then import gives the same effective config"
+    for gateway in (source, target):
+        assert list(gateway.entries()["/pair"]["value"]) == ["right", "left"], "the owner's key order is served, not sorted"
+        assert list(gateway.home.holder.current().config[SECTION]["pair"]) == ["right", "left"]
     assert export_of(target)["sections"] == export_of(source)["sections"], "and the same export"
     again = target.client.post(f"{API}/import", json=import_body(export_of(source), target), headers=OWNER)
     assert again.json()["change_id"] is None and again.json()["entry_count"] == 0, "importing the same file twice is a no-op"
@@ -611,6 +704,51 @@ def test_the_command_line_exports_and_imports_with_a_dry_run_first(tmp_path, cap
     assert "dry run only" in capsys.readouterr().err
     assert config_cli.main(["--url", "http://gateway.test", "import", str(out_file), "--apply"], transport=run.transport) == 0
     assert target.digest() == source.digest()
+
+
+class _Redirector(http.server.BaseHTTPRequestHandler):
+    """Answers 302 to ``target`` and records what each server was sent."""
+    target = ""
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    def do_GET(self) -> None:  # noqa: N802 - the http.server hook name
+        type(self).seen.append((self.path, dict(self.headers)))
+        if self.path.startswith("/admin/api/config"):
+            self.send_response(302)
+            self.send_header("Location", type(self).target)
+            self.end_headers()
+        else:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+
+def test_the_command_line_does_not_follow_a_redirect_and_never_sends_the_key_elsewhere(tmp_path, capsys, monkeypatch):
+    seen: list[tuple[str, dict[str, str]]] = []
+    elsewhere = type("Elsewhere", (_Redirector,), {"seen": seen})
+    other = http.server.ThreadingHTTPServer(("127.0.0.1", 0), elsewhere)
+    gateway_side = type("Gateway", (_Redirector,), {"seen": seen})
+    gateway_side.target = f"http://127.0.0.1:{other.server_port}/stolen"
+    front = http.server.ThreadingHTTPServer(("127.0.0.1", 0), gateway_side)
+    servers = [other, front]
+    threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in servers]
+    for thread in threads:
+        thread.start()
+    try:
+        monkeypatch.setenv("AZIZAM_ADMIN_KEY", "owner-key-secret")
+        code = config_cli.main(["--url", f"http://127.0.0.1:{front.server_port}", "get"])
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+    captured = capsys.readouterr()
+    assert code == 1 and "HTTP 302" in captured.err and "redirect" in captured.err
+    assert [path for path, _ in seen] == ["/admin/api/config"], "the redirect target was never asked"
+    assert "owner-key-secret" not in captured.out + captured.err
 
 
 def test_the_command_line_needs_an_address_and_a_key(monkeypatch, capsys):

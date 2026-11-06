@@ -30,10 +30,20 @@ Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, Any]]
 API = "/admin/api/config"
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect: urllib would copy the Authorization header (the owner key) to the redirect target."""
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def urllib_transport(method: str, url: str, headers: dict[str, str], body: bytes | None) -> tuple[int, Any]:
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310 - the operator names the gateway
+        with _OPENER.open(request, timeout=120) as response:  # noqa: S310 - the operator names the gateway
             status, raw = response.status, response.read()
     except urllib.error.HTTPError as error:
         status, raw = error.code, error.read()
@@ -58,6 +68,9 @@ class Client:
             sent["Content-Type"] = "application/json"
             data = json.dumps(body).encode("utf-8")
         status, payload = self.transport(method, self.url + path, sent, data)
+        if 300 <= status < 400:  # the key was sent to this address only; a redirect is never followed
+            raise CliError(f"HTTP {status}: the gateway answered with a redirect, which the command does not follow "
+                           "(check --url, then retry)")
         if status >= 400 or (status == 202 and isinstance(payload, dict)):
             if status < 400:  # committed, but the reload did not finish: the operator must read it
                 print(json.dumps(payload, indent=2, sort_keys=True), file=sys.stderr)

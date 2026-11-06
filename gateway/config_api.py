@@ -46,8 +46,14 @@ def _with(key: str, value: Any) -> dict[str, Any]:
     return {} if value is layers.ABSENT else {key: value}
 
 
-def _dump(value: Any) -> str:
+def _canonical(value: Any) -> str:
+    """Key-sorted JSON: for a stored release base, which is only ever compared, never served."""
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _store(value: Any) -> str:
+    """JSON of an owner's value as given: object keys keep their order, so the first write serves what was sent."""
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _revision_text(value: Any) -> str:
@@ -171,17 +177,27 @@ def create_config_router(
             return _error(403, "owner_required", "Owner role required")
         return ctx
 
-    async def read_body(request: Request, *, required: bool = True) -> dict[str, Any] | JSONResponse:
+    async def read_body(request: Request) -> dict[str, Any] | JSONResponse:
+        """The JSON object body, with the codes ``admin_api._read_json_body`` answers. An empty body is ``{}``."""
         raw = await request.body()
-        if not raw.strip():
-            return {} if not required else _error(400, "invalid_body", "Send a JSON object.")
+        if not raw:
+            return {}
         try:
             body = json.loads(raw)
         except ValueError:
-            return _error(400, "invalid_body", "The body is not valid JSON.")
+            return _error(400, "invalid_json", "The body is not valid JSON.")
+        if body is None:
+            return {}
         if not isinstance(body, dict):
-            return _error(400, "invalid_body", "The body must be a JSON object.")
+            return _error(400, "invalid_json", "The body must be a JSON object.")
         return body
+
+    def read_note(body: Mapping[str, Any]) -> str | None | JSONResponse:
+        """The optional ``note`` of a write body: text or absent. Every write route reads it here."""
+        note = body.get("note")
+        if note is not None and not isinstance(note, str):
+            return _error(400, "invalid_request", "note must be text.")
+        return note
 
     def unknown_section(section_id: str) -> JSONResponse:
         return _error(404, "unknown_section", f"This release ships no config section {section_id!r}.")
@@ -207,14 +223,14 @@ def create_config_router(
         if value is None:
             return {}
         if not isinstance(value, dict) or not all(isinstance(k, str) for k in value):
-            return _error(400, "invalid_body", "if_match must map a section id to its revision.")
+            return _error(400, "invalid_request", "if_match must map a section id to its revision.")
         return {name: _revision_text(revision) for name, revision in value.items()}
 
     # -- the core of every write -------------------------------------------------------------------------------------
 
     def release_base(h: config_runtime.ConfigHome, section_id: str, pointer: str) -> str | None:
         value = layers.get_at(h.sections[section_id].defaults, pointer)
-        return None if value is layers.ABSENT else _dump(value)
+        return None if value is layers.ABSENT else _canonical(value)
 
     def diff_of(
         h: config_runtime.ConfigHome, state: _State, results: Mapping[str, layers.SectionResult],
@@ -279,18 +295,22 @@ def create_config_router(
         except (admin_store.ConfigRevisionRequired, admin_store.ConfigRevisionMismatch, admin_store.ConfigChangedSince,
                 SessionEnded, LookupError, ValueError) as error:
             return store_error(error)
+        entries = [tuple(entry) for entry in result.pop("entries", ())]  # the store's own record; not part of the answer
         if dry_run:  # nothing changed, so the judge never ran
             return _ok({"dry_run": True, "valid": True, "problems": [], "revisions": if_match, "diff": []})
         if result.get("change_id") is None:
             return _ok({**result, "reload": {"status": "skipped"}})
-        entries = sorted({(item.section, item.pointer) for item in items}) if revert_of is None else []
-        h.note_commit(result["change_id"], entries)
+        change_id = result["change_id"]
+        h.note_commit(change_id, entries)
         try:
             reload()
         except Exception as error:  # noqa: BLE001 - the change is committed; the old snapshot keeps serving and says so
-            failed = h.reload_failed
-            if failed is None or failed.get("change_id") != result["change_id"]:
-                failed = h.note_reload_failed(f"{type(error).__name__}: {error}", path=db())
+            # This change's own id and entries, never the shared last-commit note: another writer may have replaced
+            # it, and a publish may have cleared it.
+            # The reload itself noted its failure text (cleaned of stored values); keep that text, not the raw one.
+            noted = h.reload_failed
+            text = noted["error"] if noted is not None else f"{type(error).__name__}: {error}"
+            failed = h.note_reload_failed(text, path=db(), change_id=change_id, entries=entries)
             return _ok({**result, "reload": {"status": "failed", "error": failed["error"]}}, status=202)
         return _ok({**result, "reload": {"status": "ok"}})
 
@@ -298,18 +318,18 @@ def create_config_router(
         h: config_runtime.ConfigHome, raw_items: Any,
     ) -> list[admin_store.ConfigItem] | JSONResponse:
         if not isinstance(raw_items, list) or not raw_items or len(raw_items) > MAX_ITEMS:
-            return _error(400, "invalid_body", f"items must be a list of 1 to {MAX_ITEMS} entries.")
+            return _error(400, "invalid_request", f"items must be a list of 1 to {MAX_ITEMS} entries.")
         items: list[admin_store.ConfigItem] = []
         problems: list[dict[str, Any]] = []
         for position, raw in enumerate(raw_items):
             where = f"items[{position}]"
             if not isinstance(raw, dict) or not isinstance(raw.get("section"), str) or not isinstance(raw.get("pointer"), str):
-                return _error(400, "invalid_body", f"{where} needs a section and a pointer.")
+                return _error(400, "invalid_request", f"{where} needs a section and a pointer.")
             op = raw.get("op")
             if op not in ("set", "delete", "reset"):
-                return _error(400, "invalid_body", f"{where}: op must be set, delete or reset.")
+                return _error(400, "invalid_request", f"{where}: op must be set, delete or reset.")
             if op == "set" and "value" not in raw:
-                return _error(400, "invalid_body", f"{where}: a set needs a value (null is a value).")
+                return _error(400, "invalid_request", f"{where}: a set needs a value (null is a value).")
             name, pointer = raw["section"], raw["pointer"]
             if name not in h.sections:
                 problems.append({"section": name, "pointer": pointer, "code": "unknown_section",
@@ -321,7 +341,7 @@ def create_config_router(
                 if faults:
                     continue
             items.append(admin_store.ConfigItem(
-                name, pointer, op, _dump(raw["value"]) if op == "set" else None,
+                name, pointer, op, _store(raw["value"]) if op == "set" else None,
                 release_base(h, name, pointer) if op != "reset" else None,
             ))
         if problems:
@@ -427,9 +447,9 @@ def create_config_router(
         if_match = parse_if_match(body.get("if_match"))
         if isinstance(if_match, JSONResponse):
             return if_match
-        note = body.get("note")
-        if note is not None and not isinstance(note, str):
-            return _error(400, "invalid_body", "note must be text.")
+        note = read_note(body)
+        if isinstance(note, JSONResponse):
+            return note
         items = build_items(home(), body.get("items"))
         if isinstance(items, JSONResponse):
             return items
@@ -459,14 +479,17 @@ def create_config_router(
         ctx = guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        body = await read_body(request, required=False)
+        body = await read_body(request)
         if isinstance(body, JSONResponse):
             return body
         if_match = parse_if_match(body.get("if_match"))
         if isinstance(if_match, JSONResponse):
             return if_match
+        note = read_note(body)
+        if isinstance(note, JSONResponse):
+            return note
         return await asyncio.to_thread(
-            run_change, ctx, [], if_match=if_match, kind="revert", origin="api", note=body.get("note"), dry_run=False,
+            run_change, ctx, [], if_match=if_match, kind="revert", origin="api", note=note, dry_run=False,
             revert_of=change_id)
 
     # -- import ------------------------------------------------------------------------------------------------------
@@ -504,8 +527,8 @@ def create_config_router(
                             row.value, db_path=db()):
                         needs_secret.append({"section": name, "pointer": pointer, "code": "needs_secret"})
                 items.append(admin_store.ConfigItem(
-                    name, pointer, row.op, _dump(row.value) if row.op == layers.OP_SET else None,
-                    None if row.base is layers.ABSENT else _dump(row.base),
+                    name, pointer, row.op, _store(row.value) if row.op == layers.OP_SET else None,
+                    None if row.base is layers.ABSENT else _canonical(row.base),
                 ))
         if problems:
             return _error(422, "config_invalid", f"{len(problems)} problem(s) in the import", problems=problems)
@@ -521,10 +544,13 @@ def create_config_router(
             return body
         mode = body.get("mode", "replace")
         if mode not in MODES:
-            return _error(400, "invalid_body", f"mode must be one of {', '.join(MODES)}.")
+            return _error(400, "invalid_request", f"mode must be one of {', '.join(MODES)}.")
         if_match = parse_if_match(body.get("if_match"))
         if isinstance(if_match, JSONResponse):
             return if_match
+        note = read_note(body)
+        if isinstance(note, JSONResponse):
+            return note
         dry_run = request.query_params.get("dry_run") in ("1", "true")
 
         def build() -> JSONResponse:
@@ -537,7 +563,7 @@ def create_config_router(
                 return _ok({"dry_run": dry_run, "change_id": None, "entry_count": 0, "diff": [], "valid": True,
                             "problems": [], "revisions": {}, **report})
             response = run_change(ctx, items, if_match=if_match, kind="import", origin="import",
-                                  note=body.get("note"), dry_run=dry_run)
+                                  note=note, dry_run=dry_run)
             payload = json.loads(response.body)
             if "error" in payload:
                 return response
@@ -550,9 +576,12 @@ def create_config_router(
         ctx = guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        body = await read_body(request, required=False)
+        body = await read_body(request)
         if isinstance(body, JSONResponse):
             return body
+        note = read_note(body)
+        if isinstance(note, JSONResponse):
+            return note
         dry_run = request.query_params.get("dry_run") in ("1", "true")
         revision = request.headers.get("if-match")
 
@@ -583,8 +612,8 @@ def create_config_router(
                     continue
                 items.append(admin_store.ConfigItem(
                     section_id, override.pointer, override.op,
-                    _dump(override.value) if override.op == layers.OP_SET else None,
-                    None if override.base is layers.ABSENT else _dump(override.base),
+                    _store(override.value) if override.op == layers.OP_SET else None,
+                    None if override.base is layers.ABSENT else _canonical(override.base),
                 ))
             kept = {override.pointer for override in overrides}
             resets = sorted(existing.keys() - kept)
@@ -603,7 +632,7 @@ def create_config_router(
                 return _error(428, "revision_required", f"Send If-Match with the revision of {section_id}.", sections=[section_id])
             response = run_change(
                 ctx, items, if_match={section_id: _revision_text(revision)} if revision else {}, kind="legacy-import",
-                origin="legacy-import", note=body.get("note"), dry_run=dry_run)
+                origin="legacy-import", note=note, dry_run=dry_run)
             payload = json.loads(response.body)
             if "error" in payload:
                 return response
