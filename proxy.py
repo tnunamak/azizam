@@ -529,11 +529,12 @@ def _generation_of_registry(registry: Mapping[str, Any]) -> Any:
     """
     try:
         stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
+        # ``registry`` is the normalized effective registry, so the stored effective one is normalized to compare.
+        same = stored is not None and service_registry.stable_hash(
+            service_registry.normalize_service_registry(stored["value"])) == service_registry.stable_hash(registry)
     except Exception:  # noqa: BLE001 - the generation is a label; the load goes on without it
         return None
-    if stored is None or service_registry.stable_hash(stored["value"]) != service_registry.stable_hash(registry):
-        return None
-    return stored["operator_settings_generation"]
+    return stored["operator_settings_generation"] if same else None
 
 
 # What the Overview reports when the stored registry is not what is running (None when it is):

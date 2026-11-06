@@ -24,7 +24,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 COLLECTIONS: tuple[str, ...] = ("services", "protocol_frontends", "workflows", "capabilities")
@@ -160,11 +160,14 @@ def _whole(entry: Any) -> Any:
 
 def unlayer(
     effective: Mapping[str, Any], release: Mapping[str, Any], previous: Mapping[str, Any] | None = None,
+    *, undeletable: Callable[[str, str, Mapping[str, Any]], bool] | None = None,
 ) -> dict[str, Any]:
     """The stored (owner-data) document for ``effective``: what differs from the release, and what the owner deleted.
 
     ``previous`` is the stored document being replaced. A patch that did not change keeps the release digest it was
     written against (``bases``), so the drift report still shows a release change the owner has not looked at.
+    ``undeletable(collection, id, release_record)`` names a release record that no write may hide: a write that omits
+    it leaves it inherited, as the managed LiteLLM row always was (the registry route refuses to remove it).
     """
     stored: dict[str, Any] = {key: copy.deepcopy(value) for key, value in effective.items() if key not in _META_KEYS}
     tombstones: dict[str, list[str]] = {}
@@ -185,7 +188,9 @@ def unlayer(
             old_entry = _collection(before, name).get(record_id)
             old_base = _collection(_collection(before, BASES_KEY), name).get(record_id)
             named_bases[record_id] = old_base if old_base and old_entry == entry else digest(base[record_id])
-        gone = sorted(record_id for record_id in base if record_id not in kept)
+        gone = sorted(
+            record_id for record_id in base
+            if record_id not in kept and not (undeletable and undeletable(name, record_id, base[record_id])))
         for record_id in gone:
             old_base = _collection(_collection(before, BASES_KEY), name).get(record_id)
             was_hidden = record_id in tombstones_of(before, name)

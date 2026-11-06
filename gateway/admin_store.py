@@ -4452,7 +4452,11 @@ def write_service_registry_in_transaction(
     before = before if isinstance(before, dict) else {}
     # A service the write drops is one the effective registry had and the new one lacks, a release record included.
     old_services = registry_layers.layer(before, release).get("services", {})
-    value = dict(value) if stored_form else registry_layers.unlayer(value, release, before)
+    value = dict(value) if stored_form else registry_layers.unlayer(
+        value, release, before,
+        undeletable=lambda collection, record_id, record: collection == "services"
+        and service_registry.is_litellm_service_record(record_id, record),
+    )
     removed_ids = set(old_services) - set(registry_layers.layer(value, release).get("services") or {})
     conn.executemany(
         "DELETE FROM retention_fact_overrides WHERE target_type IN ('engine','provider') AND target_id=?",

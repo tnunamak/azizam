@@ -61,3 +61,15 @@ def seed_registry_from_backends(path: Path, proxy_config: Mapping[str, Any]) -> 
     """Create ``path`` with a registry holding the engines in ``proxy_config["backends"]``, as an owner's records."""
     admin_store.init_db(path)
     return write_service_registry_for_test(seed_registry_document(proxy_config), path=path)
+
+
+def write_legacy_registry_for_test(value: Mapping[str, Any], *, path: Path, updated_by: str = "test") -> dict[str, Any]:
+    """Store ``value`` as a registry written before the release layer: a whole document, held as given."""
+    current = admin_store.get_service_registry_json_with_generation(path=path)
+    return admin_store.write_service_registry(
+        value,
+        updated_by=updated_by,
+        expected_generation=int(current["operator_settings_generation"]) if current else 0,
+        path=path,
+        stored_form=True,
+    )
