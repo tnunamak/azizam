@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# The Pi integration's offline tests as a gate step: install, typecheck, then
+# `node --test` over every test file except live.test.ts (it needs a real
+# gateway and is the `live` tier in tests/suites.toml). Case receipts go to
+# $CASE_RECEIPTS_FILE through the reporter given as $1.
+set -euo pipefail
+reporter=$1
+cd "${BASH_SOURCE[0]%/*}/../../integrations/pi"
+npm ci --no-audit --no-fund
+npx tsc --noEmit
+files=()
+for file in test/*.test.ts; do
+  [[ $file == test/live.test.ts ]] || files+=("$file")
+done
+exec node --test --test-reporter=spec --test-reporter-destination=stdout \
+  --test-reporter="$reporter" --test-reporter-destination=stderr "${files[@]}"

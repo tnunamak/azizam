@@ -1,0 +1,15 @@
+kind: translator
+id: test-demo-protocol-translator
+name: Test Demo Protocol Translator
+mode: bundled-python
+language: python
+interfaces:
+  - protocol.request_to_canonical
+  - protocol.response_from_canonical
+entrypoints:
+  request_to_canonical: code.demo_translator:request_to_canonical
+  response_from_canonical: code.demo_translator:response_from_canonical
+package_path: code
+permissions: {}
+trust_tier: bundled
+description: Fixture translator declaration for validating staged package code.

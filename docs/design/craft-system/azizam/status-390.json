@@ -1,0 +1,1289 @@
+{
+ "scope": "main",
+ "url": "/ui/status/",
+ "tokens": {
+  "foreground": "rgb(16, 35, 42)",
+  "muted": "rgb(61, 79, 85)",
+  "pageBg": "rgb(243, 246, 246)",
+  "cardBg": "rgb(255, 255, 255)",
+  "mutedBg": "rgb(233, 238, 239)"
+ },
+ "layout": {
+  "viewport": {
+   "w": 390,
+   "h": 844
+  },
+  "pageHeight": 1657,
+  "sidebarWidth": 0,
+  "main": {
+   "x": 0,
+   "w": 390,
+   "padding": "24px 20px 112px 20px",
+   "maxWidth": "1200px"
+  },
+  "contentMaxWidth": "896px",
+  "contentMaxWidthEl": "div.max-w-4xl min-w-0",
+  "contentLeftFromViewport": 20,
+  "contentRightFromViewport": 20,
+  "contentLeftFromMainEdge": 20,
+  "contentRightFromMainEdge": 20,
+  "titleTop": 87,
+  "titleTopFromMain": 31,
+  "title": {
+   "text": "Status",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px"
+  },
+  "sectionContainer": "div.max-w-4xl min-w-0",
+  "sections": [
+   {
+    "tag": "header",
+    "classes": "mb-8",
+    "top": 80,
+    "height": 112,
+    "sample": "Status Refresh Video degraded Checked ju"
+   },
+   {
+    "tag": "div",
+    "classes": "flex min-w-0 flex-col gap-10",
+    "top": 224,
+    "height": 1321,
+    "sample": "Needs attention Video requests can fail "
+   }
+  ],
+  "sectionGaps": [
+   32
+  ],
+  "stackGaps": [
+   {
+    "parent": "div.max-w-4xl min-w-0",
+    "gap": 32,
+    "from": "Status Refresh Video degraded ",
+    "to": "Needs attention Video requests"
+   },
+   {
+    "parent": "div.flex min-w-0 flex-col gap-10",
+    "gap": 40,
+    "from": "Needs attention Video requests",
+    "to": "Capabilities Chat Images Video"
+   },
+   {
+    "parent": "section.space-y-3",
+    "gap": 12,
+    "from": "Needs attention",
+    "to": "Video requests can fail right "
+   },
+   {
+    "parent": "article.bg-card rounded-panel min-w-0 border p-4 sm:p-5",
+    "gap": 16,
+    "from": "Video requests can fail right ",
+    "to": "What's wrong Video studio is a"
+   },
+   {
+    "parent": "div.flex min-w-0 flex-col gap-10 xl:contents",
+    "gap": 40,
+    "from": "Capabilities Chat Images Video",
+    "to": "Engines and providers Other en"
+   },
+   {
+    "parent": "section.",
+    "gap": 12,
+    "from": "Capabilities",
+    "to": "Chat Images Video Degraded Voi"
+   },
+   {
+    "parent": "section.",
+    "gap": 12,
+    "from": "Engines and providers",
+    "to": "Other engines: 4 ready, 1 turn"
+   }
+  ],
+  "headingGaps": [
+   {
+    "tag": "h2",
+    "text": "Needs attention",
+    "gap": 12
+   },
+   {
+    "tag": "h3",
+    "text": "Video requests can fail right ",
+    "gap": 16
+   },
+   {
+    "tag": "h2",
+    "text": "Capabilities",
+    "gap": 12
+   },
+   {
+    "tag": "h2",
+    "text": "Engines and providers",
+    "gap": 12
+   }
+  ]
+ },
+ "text": [
+  {
+   "tag": "h1",
+   "text": "Status",
+   "role": "h1",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 87,
+    "w": 65.8,
+    "h": 30,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Video degraded",
+   "role": "span",
+   "fontSize": 20,
+   "fontWeight": 600,
+   "lineHeight": 28,
+   "letterSpacing": "-0.3px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 50,
+    "y": 140,
+    "w": 139.8,
+    "h": 28,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Checked",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 50,
+    "y": 172,
+    "w": 113,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "time",
+   "text": "just now",
+   "role": "time",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 110,
+    "y": 173,
+    "w": 53,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Needs attention",
+   "role": "h2",
+   "fontSize": 16,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "-0.24px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 228,
+    "w": 113.4,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h3",
+   "text": "Video requests can fail right now",
+   "role": "h3",
+   "fontSize": 16,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "-0.24px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 69,
+    "y": 285,
+    "w": 232.1,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "dt",
+   "text": "What's wrong",
+   "role": "dt",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 325,
+    "w": 316,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "dd",
+   "text": "Video studio is answering with errors.",
+   "role": "dd",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 349,
+    "w": 316,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "dt",
+   "text": "Affects",
+   "role": "dt",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 377,
+    "w": 316,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Video: no other engine serves it.",
+   "role": "dd",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 401,
+    "w": 316,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Check the engine’s log and restart it.",
+   "role": "p",
+   "fontSize": 15,
+   "fontWeight": 500,
+   "lineHeight": 22,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 449,
+    "w": 316,
+    "h": 22,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Inspect Video studio",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(255, 255, 255)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 483,
+    "w": 182,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "h4",
+   "text": "Last 24 hours",
+   "role": "h4",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 564,
+    "w": 316,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Degraded since about 1:30 PM",
+   "role": "p",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 22,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 592,
+    "w": 316,
+    "h": 22,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Down for 4 hours and degraded for 2 in t",
+   "role": "p",
+   "fontSize": 15,
+   "fontWeight": 400,
+   "lineHeight": 22,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 622,
+    "w": 316,
+    "h": 88,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "li",
+   "text": "Up",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 718,
+    "w": 33,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "li",
+   "text": "Degraded",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 82,
+    "y": 718,
+    "w": 79,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "li",
+   "text": "Down",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 173,
+    "y": 718,
+    "w": 52,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "3:30 PM",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(74, 92, 98)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 782,
+    "w": 51,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "9:30 PM",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(74, 92, 98)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 109,
+    "y": 782,
+    "w": 51,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "3:30 AM",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(74, 92, 98)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 181,
+    "y": 782,
+    "w": 52,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "9:30 AM",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(74, 92, 98)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 253,
+    "y": 782,
+    "w": 52,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Now",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(74, 92, 98)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 326,
+    "y": 782,
+    "w": 27,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "summary",
+   "text": "Hour by hour",
+   "role": "summary",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 806,
+    "w": 88,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Show details",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(10, 102, 118)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 37,
+    "y": 870,
+    "w": 102,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Capabilities",
+   "role": "h2",
+   "fontSize": 16,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "-0.24px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 975,
+    "w": 83.1,
+    "h": 24,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Chat",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 61,
+    "y": 1028,
+    "w": 292,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Images",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 61,
+    "y": 1073,
+    "w": 292,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Video",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 61,
+    "y": 1117,
+    "w": 221,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Degraded",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(180, 83, 9)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 290,
+    "y": 1117,
+    "w": 63,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Voice",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 61,
+    "y": 1161,
+    "w": 292,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Transcription",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 61,
+    "y": 1205,
+    "w": 292,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Music",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 61,
+    "y": 1249,
+    "w": 292,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Sound effects",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 61,
+    "y": 1293,
+    "w": 292,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Embeddings",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 61,
+    "y": 1337,
+    "w": 265,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Off",
+   "role": "li",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(74, 92, 98)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 334,
+    "y": 1337,
+    "w": 19,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "h2",
+   "text": "Engines and providers",
+   "role": "h2",
+   "fontSize": 16,
+   "fontWeight": 600,
+   "lineHeight": 24,
+   "letterSpacing": "-0.24px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 1413,
+    "w": 156,
+    "h": 24,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "4 ready, 1 turned off.",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 1466,
+    "w": 229,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Other engines:",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 1467,
+    "w": 93,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "1 set up.",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 1488,
+    "w": 229,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Remote providers:",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 1489,
+    "w": 117,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Show all",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(10, 102, 118)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 41,
+    "y": 1512,
+    "w": 75,
+    "h": 20,
+    "inViewport": false
+   }
+  }
+ ],
+ "controls": [
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "sm",
+   "tag": "button",
+   "role": null,
+   "text": "Refresh",
+   "height": 44,
+   "width": 44,
+   "borderRadius": "6px",
+   "padding": "0px 10px 0px 10px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 274,
+    "y": 80,
+    "w": 44,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": "icon-sm",
+   "tag": "button",
+   "role": null,
+   "text": "Status actions",
+   "height": 44,
+   "width": 44,
+   "borderRadius": "6px",
+   "padding": "0px 0px 0px 0px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 326,
+    "y": 80,
+    "w": 44,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "primary",
+   "size": "default",
+   "tag": "a",
+   "role": null,
+   "text": "Inspect Video studio",
+   "height": 44,
+   "width": 182,
+   "borderRadius": "6px",
+   "padding": "0px 14px 0px 14px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(13, 69, 82)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 37,
+    "y": 483,
+    "w": 182,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "link",
+   "size": null,
+   "tag": "button",
+   "role": null,
+   "text": "Show details",
+   "height": 44,
+   "width": 102,
+   "borderRadius": "0px",
+   "padding": "0px 0px 0px 0px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "text-link inline-flex min-h-11 items-center gap-1 text-sm font-medium sm:min-h-8",
+   "box": {
+    "x": 37,
+    "y": 870,
+    "w": 102,
+    "h": 44,
+    "inViewport": false
+   }
+  },
+  {
+   "type": "button",
+   "variant": "secondary(outline)",
+   "size": null,
+   "tag": "button",
+   "role": null,
+   "text": "Other engines: 4 ready, 1 turned off.Rem",
+   "height": 92,
+   "width": 350,
+   "borderRadius": "10px",
+   "padding": "12px 20px 12px 20px",
+   "borderWidth": "1px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "classes": "bg-card hover:border-input rounded-panel flex min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-sm",
+   "box": {
+    "x": 20,
+    "y": 1453,
+    "w": 350,
+    "h": 92,
+    "inViewport": false
+   }
+  }
+ ],
+ "controlGroups": [],
+ "cards": [
+  {
+   "tag": "article",
+   "slot": null,
+   "classes": "bg-card rounded-panel min-w-0 border p-4 sm:p-5",
+   "padding": "16px 16px 16px 16px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 20,
+    "y": 268,
+    "w": 350,
+    "h": 663,
+    "inViewport": true
+   },
+   "firstText": "Video requests can fail right now What's"
+  },
+  {
+   "tag": "ul",
+   "slot": null,
+   "classes": "bg-card rounded-panel grid border px-4 sm:grid-cols-2 sm:gap-x-8",
+   "padding": "0px 16px 0px 16px",
+   "borderRadius": "10px",
+   "border": "1px solid rgb(215, 224, 226)",
+   "boxShadow": "none",
+   "background": "rgb(255, 255, 255)",
+   "hasBorder": true,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 20,
+    "y": 1015,
+    "w": 350,
+    "h": 354,
+    "inViewport": false
+   },
+   "firstText": "Chat Images Video Degraded Voice Transcr"
+  }
+ ],
+ "rowLists": [
+  {
+   "kind": "list",
+   "parent": "ul.text-muted-foreground.flex.flex-wrap.gap-x-3",
+   "count": 3,
+   "visualRows": 1,
+   "perRow": 3,
+   "itemHeights": [
+    20,
+    20,
+    20
+   ],
+   "heights": [
+    20
+   ],
+   "gaps": [],
+   "columnGaps": [
+    12,
+    12
+   ],
+   "layout": "horizontal",
+   "inTablist": false,
+   "spanPx": 20,
+   "sample": "Up",
+   "box": {
+    "x": 37,
+    "y": 718,
+    "w": 316,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "list",
+   "parent": "ul.bg-card.rounded-panel.grid.border",
+   "count": 8,
+   "visualRows": 8,
+   "perRow": 1,
+   "itemHeights": [
+    44,
+    44,
+    44,
+    44,
+    44,
+    44,
+    44,
+    44
+   ],
+   "heights": [
+    44,
+    44,
+    44,
+    44,
+    44,
+    44,
+    44,
+    44
+   ],
+   "gaps": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 352,
+   "sample": "Chat",
+   "box": {
+    "x": 20,
+    "y": 1015,
+    "w": 350,
+    "h": 354,
+    "inViewport": false
+   }
+  },
+  {
+   "kind": "sibling-group",
+   "parent": "div.text-subtle-foreground.mt-1.flex.justify-between",
+   "count": 5,
+   "visualRows": 1,
+   "perRow": 5,
+   "itemHeights": [
+    20,
+    20,
+    20,
+    20,
+    20
+   ],
+   "heights": [
+    20
+   ],
+   "gaps": [],
+   "columnGaps": [
+    20.8,
+    20.8,
+    20.8,
+    20.8
+   ],
+   "layout": "horizontal",
+   "inTablist": false,
+   "spanPx": 20,
+   "sample": "3:30 PM",
+   "box": {
+    "x": 37,
+    "y": 782,
+    "w": 316,
+    "h": 20,
+    "inViewport": true
+   }
+  }
+ ],
+ "icons": {
+  "16x16": 13,
+  "20x20": 2
+ },
+ "textColors": {
+  "rgb(16, 35, 42)": 20,
+  "rgb(61, 79, 85)": 12,
+  "rgb(255, 255, 255)": 1,
+  "rgb(74, 92, 98)": 6,
+  "rgb(10, 102, 118)": 2,
+  "rgb(180, 83, 9)": 1
+ },
+ "bgColors": {
+  "rgb(255, 255, 255)": 5,
+  "rgb(13, 69, 82)": 1,
+  "rgb(46, 158, 99)": 19,
+  "rgb(217, 119, 6)": 3,
+  "rgb(198, 40, 40)": 5
+ },
+ "surface": "status",
+ "width": 390,
+ "actualRoute": "/ui/status/",
+ "bodyTextLength": 709
+}

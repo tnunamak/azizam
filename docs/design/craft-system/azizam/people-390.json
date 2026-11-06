@@ -1,0 +1,1304 @@
+{
+ "scope": "main",
+ "url": "/ui/people/",
+ "tokens": {
+  "foreground": "rgb(16, 35, 42)",
+  "muted": "rgb(61, 79, 85)",
+  "pageBg": "rgb(243, 246, 246)",
+  "cardBg": "rgb(255, 255, 255)",
+  "mutedBg": "rgb(233, 238, 239)"
+ },
+ "layout": {
+  "viewport": {
+   "w": 390,
+   "h": 844
+  },
+  "pageHeight": 1214,
+  "sidebarWidth": 0,
+  "main": {
+   "x": 0,
+   "w": 390,
+   "padding": "24px 20px 112px 20px",
+   "maxWidth": "1200px"
+  },
+  "contentMaxWidth": "1200px",
+  "contentMaxWidthEl": "main.shell-content pb-28 sm:pb-12",
+  "contentLeftFromViewport": 20,
+  "contentRightFromViewport": 20,
+  "contentLeftFromMainEdge": 20,
+  "contentRightFromMainEdge": 20,
+  "titleTop": 87,
+  "titleTopFromMain": 31,
+  "title": {
+   "text": "People",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px"
+  },
+  "sectionContainer": "div.",
+  "sections": [
+   {
+    "tag": "header",
+    "classes": "mb-8",
+    "top": 80,
+    "height": 44,
+    "sample": "People Invite someone"
+   },
+   {
+    "tag": "div",
+    "classes": "group/tabs flex gap-2 data-[orientation=horizontal]:flex-col gap-6",
+    "top": 156,
+    "height": 946,
+    "sample": "People Invites Access plans Sam Owner ow"
+   }
+  ],
+  "sectionGaps": [
+   32
+  ],
+  "stackGaps": [
+   {
+    "parent": "div.",
+    "gap": 32,
+    "from": "People Invite someone",
+    "to": "People Invites Access plans Sa"
+   }
+  ],
+  "headingGaps": []
+ },
+ "text": [
+  {
+   "tag": "h1",
+   "text": "People",
+   "role": "h1",
+   "fontSize": 24,
+   "fontWeight": 600,
+   "lineHeight": 30,
+   "letterSpacing": "-0.36px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 87,
+    "w": 70.8,
+    "h": 30,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Invite someone",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(255, 255, 255)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 220,
+    "y": 80,
+    "w": 150,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "People",
+   "role": "tab/segment",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 23,
+    "y": 159,
+    "w": 78,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Invites",
+   "role": "tab/segment",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 105,
+    "y": 159,
+    "w": 76,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "Access plans",
+   "role": "tab/segment",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 185,
+    "y": 159,
+    "w": 118,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Sam",
+   "role": "span",
+   "fontSize": 15,
+   "fontWeight": 500,
+   "lineHeight": 22,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 246,
+    "w": 30,
+    "h": 22,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Owner",
+   "role": "badge",
+   "fontSize": 12,
+   "fontWeight": 500,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 58,
+    "y": 246,
+    "w": 54,
+    "h": 22,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "owner · Manual",
+   "role": "badge",
+   "fontSize": 12,
+   "fontWeight": 500,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 120,
+    "y": 246,
+    "w": 103,
+    "h": 22,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "admin · OIDC claim",
+   "role": "badge",
+   "fontSize": 12,
+   "fontWeight": 500,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 276,
+    "w": 122,
+    "h": 22,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "sam@example.test",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 298,
+    "w": 290,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Builder",
+   "role": "div",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 334,
+    "w": 290,
+    "h": 36,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Access plan ·",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 335,
+    "w": 90,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Assigned",
+   "role": "div",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 354,
+    "w": 290,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Last active ·",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 387,
+    "w": 82,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "time",
+   "text": "just now",
+   "role": "time",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 102,
+    "y": 387,
+    "w": 53,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Robin",
+   "role": "span",
+   "fontSize": 15,
+   "fontWeight": 500,
+   "lineHeight": 22,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 439,
+    "w": 38,
+    "h": 22,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "robin@example.test",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 461,
+    "w": 290,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Everyone",
+   "role": "div",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 499,
+    "w": 290,
+    "h": 36,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Access plan ·",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 500,
+    "w": 90,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Assigned",
+   "role": "div",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 519,
+    "w": 290,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Last active ·",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 552,
+    "w": 82,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "time",
+   "text": "1h ago",
+   "role": "time",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 102,
+    "y": 552,
+    "w": 43,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Alexandria Montgomery-Featherstonehaugh",
+   "role": "span",
+   "fontSize": 15,
+   "fontWeight": 500,
+   "lineHeight": 22,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 604,
+    "w": 290,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "alex@example.test",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 648,
+    "w": 290,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Teen",
+   "role": "div",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 684,
+    "w": 290,
+    "h": 36,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Access plan ·",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 685,
+    "w": 90,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Assigned",
+   "role": "div",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 704,
+    "w": 290,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Last active ·",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 737,
+    "w": 82,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "time",
+   "text": "2h ago",
+   "role": "time",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 102,
+    "y": 737,
+    "w": 43,
+    "h": 18,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Zoë Ångström",
+   "role": "span",
+   "fontSize": 15,
+   "fontWeight": 500,
+   "lineHeight": 22,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 789,
+    "w": 96,
+    "h": 22,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "zoe@example.test",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 811,
+    "w": 290,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Everyone",
+   "role": "div",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 849,
+    "w": 290,
+    "h": 36,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Access plan ·",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 850,
+    "w": 90,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Assigned",
+   "role": "div",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 869,
+    "w": 290,
+    "h": 16,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Last active ·",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 902,
+    "w": 82,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "time",
+   "text": "3h ago",
+   "role": "time",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 102,
+    "y": 902,
+    "w": 43,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Casey · former guest",
+   "role": "span",
+   "fontSize": 15,
+   "fontWeight": 500,
+   "lineHeight": 22,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 954,
+    "w": 142,
+    "h": 22,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Disabled",
+   "role": "badge",
+   "fontSize": 12,
+   "fontWeight": 500,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 170,
+    "y": 954,
+    "w": 65,
+    "h": 22,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "p",
+   "text": "casey@example.test",
+   "role": "p",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 976,
+    "w": 290,
+    "h": 20,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Everyone",
+   "role": "div",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 1014,
+    "w": 290,
+    "h": 36,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Access plan ·",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 1015,
+    "w": 90,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "div",
+   "text": "Assigned",
+   "role": "div",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 1034,
+    "w": 290,
+    "h": 16,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Last active ·",
+   "role": "span",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 20,
+    "y": 1067,
+    "w": 82,
+    "h": 18,
+    "inViewport": false
+   }
+  },
+  {
+   "tag": "time",
+   "text": "4d ago",
+   "role": "time",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 102,
+    "y": 1067,
+    "w": 43,
+    "h": 18,
+    "inViewport": false
+   }
+  }
+ ],
+ "controls": [
+  {
+   "type": "button",
+   "variant": "primary",
+   "size": "default",
+   "tag": "button",
+   "role": null,
+   "text": "Invite someone",
+   "height": 44,
+   "width": 150,
+   "borderRadius": "6px",
+   "padding": "0px 14px 0px 14px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgb(13, 69, 82)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 220,
+    "y": 80,
+    "w": 150,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "tab/segment",
+   "variant": null,
+   "size": null,
+   "tag": "button",
+   "role": "tab",
+   "text": "People",
+   "height": 44,
+   "width": 78,
+   "borderRadius": "6px",
+   "padding": "4px 16px 4px 16px",
+   "borderWidth": "1px",
+   "borderColor": "rgba(0, 0, 0, 0)",
+   "borderStyle": "solid",
+   "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "text-muted-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center g",
+   "box": {
+    "x": 23,
+    "y": 159,
+    "w": 78,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "tab/segment",
+   "variant": null,
+   "size": null,
+   "tag": "button",
+   "role": "tab",
+   "text": "Invites",
+   "height": 44,
+   "width": 76,
+   "borderRadius": "6px",
+   "padding": "4px 16px 4px 16px",
+   "borderWidth": "1px",
+   "borderColor": "rgba(0, 0, 0, 0)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "text-muted-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center g",
+   "box": {
+    "x": 105,
+    "y": 159,
+    "w": 76,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "tab/segment",
+   "variant": null,
+   "size": null,
+   "tag": "button",
+   "role": "tab",
+   "text": "Access plans",
+   "height": 44,
+   "width": 118,
+   "borderRadius": "6px",
+   "padding": "4px 16px 4px 16px",
+   "borderWidth": "1px",
+   "borderColor": "rgba(0, 0, 0, 0)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "text-muted-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center g",
+   "box": {
+    "x": 185,
+    "y": 159,
+    "w": 118,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "icon",
+   "tag": "button",
+   "role": null,
+   "text": "Actions for Sam",
+   "height": 44,
+   "width": 44,
+   "borderRadius": "6px",
+   "padding": "0px 0px 0px 0px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 326,
+    "y": 246,
+    "w": 44,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "icon",
+   "tag": "button",
+   "role": null,
+   "text": "Actions for Robin",
+   "height": 44,
+   "width": 44,
+   "borderRadius": "6px",
+   "padding": "0px 0px 0px 0px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 326,
+    "y": 439,
+    "w": 44,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "icon",
+   "tag": "button",
+   "role": null,
+   "text": "Actions for Alexandria Montgomery-Feathe",
+   "height": 44,
+   "width": 44,
+   "borderRadius": "6px",
+   "padding": "0px 0px 0px 0px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 326,
+    "y": 604,
+    "w": 44,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "icon",
+   "tag": "button",
+   "role": null,
+   "text": "Actions for Zoë Ångström",
+   "height": 44,
+   "width": 44,
+   "borderRadius": "6px",
+   "padding": "0px 0px 0px 0px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 326,
+    "y": 789,
+    "w": 44,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "ghost",
+   "size": "icon",
+   "tag": "button",
+   "role": null,
+   "text": "Actions for Casey · former guest",
+   "height": 44,
+   "width": 44,
+   "borderRadius": "6px",
+   "padding": "0px 0px 0px 0px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "classes": "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-control text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) ease-standard max-sm:min-h-11 max",
+   "box": {
+    "x": 326,
+    "y": 954,
+    "w": 44,
+    "h": 44,
+    "inViewport": false
+   }
+  }
+ ],
+ "controlGroups": [
+  {
+   "role": "tablist",
+   "height": 50,
+   "width": 350,
+   "borderRadius": "0px",
+   "padding": "3px",
+   "background": "rgba(0, 0, 0, 0)",
+   "border": "0px solid rgb(215, 224, 226)",
+   "items": 3,
+   "box": {
+    "x": 20,
+    "y": 156,
+    "w": 350,
+    "h": 50,
+    "inViewport": true
+   }
+  }
+ ],
+ "cards": [],
+ "rowLists": [
+  {
+   "kind": "sibling-group",
+   "parent": "div.group/tabs-list.inline-flex.w-fit.items-center",
+   "count": 3,
+   "visualRows": 1,
+   "perRow": 3,
+   "itemHeights": [
+    44,
+    44,
+    44
+   ],
+   "heights": [
+    44
+   ],
+   "gaps": [],
+   "columnGaps": [
+    4,
+    4
+   ],
+   "layout": "horizontal",
+   "inTablist": true,
+   "spanPx": 44,
+   "sample": "People",
+   "box": {
+    "x": 20,
+    "y": 156,
+    "w": 350,
+    "h": 50,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "sibling-group",
+   "parent": "div.divide-y",
+   "count": 5,
+   "visualRows": 5,
+   "perRow": 1,
+   "itemHeights": [
+    193,
+    165,
+    185,
+    165,
+    164
+   ],
+   "heights": [
+    193,
+    165,
+    185,
+    165,
+    164
+   ],
+   "gaps": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 872,
+   "sample": "Sam Owner owner · Manual admin · OIDC cl",
+   "box": {
+    "x": 20,
+    "y": 230,
+    "w": 350,
+    "h": 872,
+    "inViewport": true
+   }
+  }
+ ],
+ "icons": {
+  "16x16": 6
+ },
+ "textColors": {
+  "rgb(16, 35, 42)": 16,
+  "rgb(255, 255, 255)": 1,
+  "rgb(61, 79, 85)": 27
+ },
+ "bgColors": {
+  "rgb(13, 69, 82)": 1,
+  "rgb(233, 238, 239)": 2
+ },
+ "surface": "people",
+ "width": 390,
+ "actualRoute": "/ui/people/",
+ "bodyTextLength": 544
+}

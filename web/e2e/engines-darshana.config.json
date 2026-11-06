@@ -1,0 +1,17 @@
+{
+  "title": "Engines detect and apply review",
+  "url": "http://127.0.0.1:18580/",
+  "start": "/",
+  "crawl": {
+    "include": ["^/(engines/)?$"],
+    "extraRoutes": ["/engines/"],
+    "maxDepth": 2,
+    "maxPages": 4
+  },
+  "capture": {
+    "themes": ["light", "dark"],
+    "viewports": ["desktop", "mobile"],
+    "delay": 1000
+  },
+  "outputs": ["html", "images"]
+}

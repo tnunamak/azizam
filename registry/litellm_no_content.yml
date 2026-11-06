@@ -1,0 +1,28 @@
+# Pinned substrate contract: LiteLLM 1.86.2. Re-run the canary on upgrades.
+general_settings:
+  store_prompts_in_spend_logs: false
+  disable_spend_logs: true
+  disable_error_logs: true
+  store_model_in_db: false
+litellm_settings:
+  callbacks: []
+  success_callback: []
+  failure_callback: []
+  turn_off_message_logging: true
+  redact_messages_in_exceptions: true
+  redact_user_api_key_info: true
+  cache: false
+router_settings:
+  cache_responses: false
+environment:
+  LITELLM_LOG: CRITICAL
+  LITELLM_MODE: PRODUCTION
+  DISABLE_ADMIN_UI: 'true'
+  NO_DOCS: 'true'
+  NO_REDOC: 'true'
+# Existing spend history belongs to the owner. Do not silently delete it.
+# Proposed opt-in cleanup of old metadata: maximum_spend_logs_retention_period: 7d.
+# New spend rows are disabled regardless of this optional cleanup.
+
+legacy_spend_cleanup_proposal:
+  maximum_spend_logs_retention_period: 7d

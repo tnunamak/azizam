@@ -1,0 +1,82 @@
+{
+  "protocol": "comfyui",
+  "name": "video-manifest-run",
+  "description": "One video job: the source clip is uploaded, the graph is submitted, history reports it done with one video, the video is downloaded.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /upload/image, POST /prompt, GET /history/{prompt_id}, GET /view (ComfyUI server.py); the gateway polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "upload",
+      "match": {
+        "method": "POST",
+        "path": "/upload/image"
+      },
+      "response": {
+        "json": {
+          "name": "uploaded-sample.mp4"
+        }
+      }
+    },
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "json": {
+          "prompt_id": "prompt-1"
+        }
+      }
+    },
+    {
+      "id": "history",
+      "match": {
+        "method": "GET",
+        "path": "/history/prompt-1"
+      },
+      "response": {
+        "json": {
+          "prompt-1": {
+            "status": {
+              "completed": true
+            },
+            "outputs": {
+              "6": {
+                "videos": [
+                  {
+                    "filename": "rife.mp4",
+                    "type": "output"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "view",
+      "match": {
+        "method": "GET",
+        "path": "/view",
+        "query": {
+          "filename": "rife.mp4",
+          "type": "output"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "video/mp4"
+        },
+        "body": [
+          {
+            "text": "rendered-video"
+          }
+        ]
+      }
+    }
+  ]
+}

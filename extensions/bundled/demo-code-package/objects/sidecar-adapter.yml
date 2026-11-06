@@ -1,0 +1,18 @@
+kind: adapter
+id: test-demo-sidecar-adapter
+name: Test Demo Sidecar Adapter
+mode: sidecar
+language: python
+interfaces:
+  - health
+  - invoke
+entrypoint: python -m demo_sidecar_adapter
+permissions:
+  network:
+    outbound:
+      - ref: service.base_url
+  filesystem:
+    read: []
+    write: []
+trust_tier: local
+description: Fixture sidecar adapter declaration for validating executable package metadata.

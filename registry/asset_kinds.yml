@@ -1,0 +1,17 @@
+# The words for a kind of stored file, one row per IANA top-level media type this product has words for.
+#
+# This file is data, like the other bundled catalogs. The gateway reads it once (gateway/asset_types.py) and the web
+# reads the rows it needs from GET /me/api/media and GET /me/api/home, so neither holds a kind word. A new kind
+# ("smell") needs one row here and nothing else; a kind with no row is named from its own type.
+#
+# label:    one item ("Image").
+# plural:   the filter ("Images").
+# untitled: an item with no prompt of its own ("Picture").
+# input:    a file of this kind that a person gives a workflow ("picture", "recording", "clip").
+kinds:
+  image: {label: Image, plural: Images, untitled: Picture, input: picture}
+  video: {label: Video, plural: Video, untitled: Video, input: clip}
+  audio: {label: Audio, plural: Audio, untitled: Audio, input: recording}
+  model: {label: 3D model, plural: 3D models, untitled: 3D model, input: 3D model}
+  text: {label: Text, plural: Text, untitled: Text file, input: text file}
+  file: {label: File, plural: Files, untitled: File, input: file}

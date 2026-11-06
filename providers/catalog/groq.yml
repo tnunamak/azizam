@@ -1,0 +1,19 @@
+id: groq
+display_name: Groq
+logo_key: groq
+base_url: https://api.groq.com/openai/v1
+protocol: openai-chat
+litellm_provider: groq
+auth:
+  header: Authorization
+  prefix: Bearer
+model_listing:
+  method: GET
+  path: /models
+  items_path: data
+  id_path: id
+docs_url: https://console.groq.com/docs
+key_url: https://console.groq.com/keys
+billing_dimensions:
+  - prompt_tokens
+  - completion_tokens

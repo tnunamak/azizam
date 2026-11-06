@@ -1,0 +1,19 @@
+{
+  "users": [
+    {"label": "admin", "subject": "admin", "email": "admin@example.test", "display_name": "Fixture Admin", "role": "owner"},
+    {"label": "user_a", "subject": "user-a", "email": "user-a@example.test", "display_name": "User A", "role": "none"},
+    {"label": "user_b", "subject": "user-b", "email": "user-b@example.test", "display_name": "User B", "role": "none"}
+  ],
+  "health_cases": ["all_clear", "required_down", "degraded", "status_unavailable", "standby_stopped"],
+  "long_value": "Fixture value deliberately long enough to exercise ordinary overflow and truncation handling without a special fixture renderer.",
+  "pagination_apps": 24,
+  "invalid_app_name": "",
+  "telemetry": {"absent": "fixture.absent", "two": "fixture.two", "three": "fixture.requests", "daily": "fixture.daily", "scalar": "fixture.scalar"},
+  "policy_request": {"intent": "image.generate", "model": "fixture-model"},
+  "redacted_setting": "fixture-secret-value-never-returned",
+  "principal_name": "Fixture automation",
+  "plan_name": "Fixture plan",
+  "credential_name": "Fixture automation credential",
+  "audit_action": "fixture.seed",
+  "policy_result": {"decision": "denied", "allowed": false, "code": "not_in_access_plan", "side": "person"}
+}

@@ -1,0 +1,87 @@
+{
+  "protocol": "comfyui",
+  "name": "image-job-timeout",
+  "description": "The first history check answers 503, the second never answers, then the job stays pending until the wait budget ends; the gateway reads the queue position and cancels.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes /prompt, /history/{prompt_id}, /view, /queue, /api/jobs/{id}/cancel (tests/test_image_polling.py pre-migration handler)"
+  },
+  "exchanges": [
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "json": {
+          "prompt_id": "image-job"
+        }
+      }
+    },
+    {
+      "id": "history-unavailable",
+      "match": {
+        "method": "GET",
+        "path": "/history/image-job"
+      },
+      "response": {
+        "status": 503,
+        "json": {}
+      }
+    },
+    {
+      "id": "history-no-answer",
+      "match": {
+        "method": "GET",
+        "path": "/history/image-job"
+      },
+      "response": {
+        "wait_before_headers": "forever",
+        "json": {}
+      }
+    },
+    {
+      "id": "cancel",
+      "match": {
+        "method": "POST",
+        "path": "/api/jobs/image-job/cancel"
+      },
+      "response": {
+        "json": {
+          "cancelled": true
+        }
+      }
+    },
+    {
+      "id": "pending",
+      "match": {
+        "method": "GET",
+        "path": "/history/image-job"
+      },
+      "response": {
+        "json": {}
+      },
+      "repeat": true
+    },
+    {
+      "id": "queue",
+      "repeat": true,
+      "match": {
+        "method": "GET",
+        "path": "/queue"
+      },
+      "response": {
+        "json": {
+          "queue_running": [],
+          "queue_pending": [
+            [
+              1,
+              "image-job"
+            ]
+          ]
+        }
+      }
+    }
+  ]
+}

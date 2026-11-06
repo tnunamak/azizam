@@ -1,0 +1,1389 @@
+from __future__ import annotations
+
+import time
+from pathlib import Path
+import pytest
+
+from gateway import receipt_store
+from tests.support.access import identity, plan_for  # noqa: E402
+from gateway.availability import evidence_from_receipt_store, evidence_from_receipts, evidence_from_status_rows, merge_evidence, project_capabilities, project_service
+from gateway.capabilities import Capability
+from gateway.receipts import RouteReceipt
+
+
+@pytest.fixture(autouse=True)
+def _isolated_health_success(monkeypatch):
+    """A successful probe records its time per service id in a module-level map;
+    tests that reuse an id ("svc") would otherwise inherit each other's success."""
+    from gateway import models_catalog
+
+    monkeypatch.setattr(models_catalog, "_HEALTH_LAST_SUCCESS_S", {})
+
+
+@pytest.fixture
+def evidence_now():
+    """A fixed epoch passed through production's explicit now_s/now_ms seams."""
+    return 1_800_000_000
+
+
+_FACES = {"enabled": True, "name": "Face service", "config": {"lifecycle": {"driver": "systemd"}}}
+_COMFYUI = {"enabled": True, "name": "ComfyUI", "config": {"base_url": "http://comfyui"}}
+_FACES_STOPPED = {"source": "lifecycle", "kind": "process", "status": "stopped", "available": None,
+                  "observed_at_s": 1_000, "last_attempt_at_s": 1_000}
+
+
+def _composed_registry():
+    from gateway.discovery import WorkflowRegistry
+
+    return WorkflowRegistry.from_directory(Path(__file__).resolve().parents[1] / "manifests/workflows")
+
+
+def _composed_cap(registry, workflow_id):
+    from gateway.capabilities import capability_from_workflow_record
+
+    return capability_from_workflow_record(registry.get(workflow_id), backend="gateway")
+
+
+def test_composed_face_likeness_is_ready_to_start_when_its_sidecar_check_says_stopped():
+    registry = _composed_registry()
+    cap = _composed_cap(registry, "image.analyze.face-likeness")
+    result = project_capabilities([cap], service_records={"services": {"faces": _FACES}},
+                                  evidence={"faces": _FACES_STOPPED}, workflow_records=registry.records())
+    availability = result[0].availability
+    assert availability["status"] == "idle"
+    assert result[0].available is True
+    assert availability["reason"] == "Face service starts when you make a request."
+    # The web shows "Ready to start" only for a timed check (batch 1 rule).
+    assert availability["evidence"]["observed_at_s"] == 1_000
+
+
+def test_composed_face_likeness_is_unknown_without_a_sidecar_check():
+    registry = _composed_registry()
+    cap = _composed_cap(registry, "image.analyze.face-likeness")
+    result = project_capabilities([cap], service_records={"services": {"faces": _FACES}},
+                                  workflow_records=registry.records())
+    assert result[0].availability["status"] == "unknown"
+    assert result[0].availability["reason"] == "Face service has not been checked yet."
+    assert "observed_at_s" not in result[0].availability["evidence"]
+
+
+def test_composed_face_likeness_reports_failed_sidecar_by_name():
+    registry = _composed_registry()
+    cap = _composed_cap(registry, "image.analyze.face-likeness")
+    failed = {**_FACES_STOPPED, "status": "down", "available": False}
+    result = project_capabilities([cap], service_records={"services": {"faces": _FACES}},
+                                  evidence={"faces": failed}, workflow_records=registry.records())
+    assert result[0].available is False
+    assert result[0].availability["reason"] == "Face service is down."
+
+
+def test_composed_identity_reports_down_comfyui_dependency():
+    registry = _composed_registry()
+    cap = _composed_cap(registry, "image.edit.image-identity")
+    services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
+    result = project_capabilities([cap], service_records=services,
+                                  evidence={"faces": _FACES_STOPPED,
+                                            "comfyui": {"status": "down", "available": False, "observed_at_s": 900}},
+                                  workflow_records=registry.records())
+    assert result[0].availability["status"] == "unavailable"
+    assert result[0].availability["reason"] == "ComfyUI is down."
+    assert result[0].availability["evidence"]["observed_at_s"] == 900
+
+
+def test_real_composed_workflows_have_derived_catalog_states_offline():
+    from gateway.workflows_catalog import build_workflows_catalog
+    from gateway.models_catalog import build_models_catalog
+
+    registry = _composed_registry()
+    composed = [record for record in registry.records() if "gateway" in record.supported_backends]
+    assert {record.id for record in composed} == {
+        "image.analyze.face-likeness", "image.edit.image-identity",
+        "image.generate.flux2-klein-4b-seamless-tile",
+    }
+    caps = [_composed_cap(registry, record.id) for record in composed]
+    services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
+    projected = project_capabilities(caps, service_records=services,
+                                     evidence={"faces": _FACES_STOPPED,
+                                               "comfyui": {"status": "ready", "available": True}},
+                                     workflow_records=registry.records())
+    catalog = build_workflows_catalog(records=registry.records(), capabilities=projected)
+    states = {row["id"]: row["availability"]["status"] for row in catalog["workflows"]}
+    assert states == {
+        "image.analyze.face-likeness": "idle", "image.edit.image-identity": "idle",
+        "image.generate.flux2-klein-4b-seamless-tile": "ready",
+    }
+    models = build_models_catalog(
+        capabilities=projected,
+        model_entries=[{"id": record.manifest["bindings"]["gateway"]["model_id"],
+                        "azizam_workflow_id": record.id} for record in composed],
+        service_records=services,
+    )
+    model_states = {row["id"]: row["availability"]["status"] for row in models["models"]}
+    assert model_states == {
+        "face-likeness": "idle", "image-identity": "idle",
+        "flux2-klein-4b-seamless-tile": "ready",
+    }
+
+
+def test_workflows_catalog_carries_the_composed_reason_and_engine_only():
+    from gateway.capabilities import capability_from_workflow_record
+    from gateway.workflows_catalog import build_workflows_catalog
+
+    registry = _composed_registry()
+    composed = _composed_cap(registry, "image.edit.image-identity")
+    plain = capability_from_workflow_record(registry.get("image.generate.flux2-klein-4b"), backend="comfyui")
+    services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
+    projected = project_capabilities([composed, plain], service_records=services,
+                                     evidence={"faces": _FACES_STOPPED,
+                                               "comfyui": {"status": "down", "available": False, "observed_at_s": 900}},
+                                     workflow_records=registry.records())
+    rows = {row["id"]: row["availability"]
+            for row in build_workflows_catalog(records=registry.records(), capabilities=projected)["workflows"]}
+    identity = rows["image.edit.image-identity"]
+    assert (identity["status"], identity["reason"], identity["engine"]) == ("unavailable", "ComfyUI is down.", "comfyui")
+    assert "reason" not in rows["image.generate.flux2-klein-4b"]
+    assert "engine" not in rows["image.generate.flux2-klein-4b"]
+
+
+def test_home_rows_project_composed_workflows_from_their_engines():
+    from gateway.home_api import _capability_rows
+
+    registry = _composed_registry()
+    caps = [_composed_cap(registry, "image.analyze.face-likeness"), _composed_cap(registry, "image.edit.image-identity")]
+    services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
+    evidence = {"faces": _FACES_STOPPED,
+                "comfyui": {"status": "down", "available": False, "observed_at_s": 900}}
+    rows = {row["workflow"]: row for row in _capability_rows(caps, evidence, services, {}, registry.records())}
+    likeness = rows["image.analyze.face-likeness"]
+    assert (likeness["status"], likeness["available"]) == ("idle", True)
+    # Home's capability state needs the check time to say "Ready to start".
+    assert likeness["availability"]["evidence"]["observed_at_s"] == 1_000
+    assert "engine" not in likeness["availability"] and "reason" not in likeness["availability"]
+    assert (rows["image.edit.image-identity"]["status"], rows["image.edit.image-identity"]["available"]) == (
+        "unavailable", False)
+
+
+def test_composed_workflow_with_an_engine_off_or_not_set_up_is_off_not_down():
+    from gateway.home_api import _capability_rows
+    from gateway.workflows_catalog import build_workflows_catalog
+
+    registry = _composed_registry()
+    caps = [_composed_cap(registry, "image.analyze.face-likeness"), _composed_cap(registry, "image.edit.image-identity")]
+    # No face sidecar configured; ComfyUI turned off by the owner.
+    services = {"services": {"comfyui": {**_COMFYUI, "enabled": False}}}
+    rows = {row["workflow"]: row for row in _capability_rows(caps, {}, services, {}, registry.records())}
+    assert rows["image.analyze.face-likeness"]["reason_code"] == "unavailable_unconfigured"
+    # The first engine that is off or missing names the state and the reason.
+    assert rows["image.edit.image-identity"]["reason_code"] == "unavailable_unconfigured"
+    services = {"services": {"faces": _FACES, "comfyui": {**_COMFYUI, "enabled": False}}}
+    projected = project_capabilities(caps, service_records=services, evidence={"faces": _FACES_STOPPED},
+                                     workflow_records=registry.records())
+    catalog = {row["id"]: row["availability"]
+               for row in build_workflows_catalog(records=registry.records(), capabilities=projected)["workflows"]}
+    assert catalog["image.edit.image-identity"]["reason_code"] == "unavailable_disabled"
+    assert catalog["image.edit.image-identity"]["reason"] == "ComfyUI is turned off."
+    assert catalog["image.analyze.face-likeness"]["status"] == "idle"
+
+
+def test_composed_sidecar_check_is_read_only_and_fills_the_cached_status_gap(monkeypatch):
+    """The face sidecar is checked by lifecycle status, never started, even with a warm status cache."""
+    import asyncio
+    import proxy
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            return None
+        async def status(self, svc):
+            return "stopped"
+        async def ensure_ready(self, svc, timeout_s):
+            raise AssertionError("an availability check must not start the sidecar")
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service",
+                        lambda service_id, config_backends=None: FakeDriver())
+    probed: list[str] = []
+
+    async def refused(client, key, name, url, role, note, service=None):
+        # A stopped sidecar refuses the health GET; a GET never starts it.
+        probed.append(url)
+        return {"key": key, "service_id": key, "name": name, "url": url, "role": role, "note": note,
+                "status": "down", "live_status": "down", "latency_ms": None,
+                "last_error": "connect refused", "kind": "no_response"}
+
+    monkeypatch.setattr(status_endpoint, "_probe", refused)
+    face_config = {"host": "127.0.0.1", "port": 9, "health_endpoint": "/health",
+                   "lifecycle": {"driver": "systemd", "driver_config": {"unit": "face-service.service"}}}
+    monkeypatch.setitem(proxy.config, "identity", {"face_service": face_config})
+    services = proxy._workflow_availability_services({"services": {}})
+    monkeypatch.setattr(proxy, "_cached_status_payload_for_availability",
+                        lambda: {"backends": [], "generated_at": int(time.time())})
+    monkeypatch.setattr(proxy, "_runtime_availability_evidence",
+                        lambda records, status_payload=None, health_evidence=None, live_evidence=None:
+                        evidence_from_status_rows(status_payload["backends"]))
+    registry = _composed_registry()
+    likeness = _composed_cap(registry, "image.analyze.face-likeness")
+    evidence = asyncio.run(proxy._capabilities_availability_evidence([likeness], services))
+    assert evidence["faces"]["status"] == "stopped"
+    assert evidence["faces"]["source"] == "lifecycle"
+    assert probed == ["http://127.0.0.1:9/health"]
+    result = project_capabilities([likeness], service_records=services, evidence=evidence,
+                                  workflow_records=registry.records())
+    assert result[0].availability["status"] == "idle"
+    assert result[0].availability["reason"] == "Face service starts when you make a request."
+
+
+@pytest.mark.parametrize("observed,expected", [
+    ("active", "running"),
+    ("activating", "starting"),
+    ("deactivating", "draining"),
+    ("failed", "failed"),
+    ("inactive", "stopped"),
+    ("unknown", "unmanaged"),
+    ("unexpected", "unmanaged"),
+])
+def test_systemd_status_observes_process_state_without_health_probe(monkeypatch, observed, expected):
+    import asyncio
+    from gateway import lifecycle_drivers
+
+    def run_probe(argv):
+        assert argv == ["systemctl", "--user", "is-active", "--", "fake.service"]
+        return f"{observed}\n".encode()
+
+    monkeypatch.setattr(lifecycle_drivers, "_run_probe", run_probe)
+    service = {"lifecycle": {"driver": "systemd", "driver_config": {"unit": "fake.service", "scope": "user"}}}
+    assert asyncio.run(lifecycle_drivers.SystemdDriver().status(service)) == expected
+
+
+def test_no_health_endpoint_projects_unknown_not_unavailable():
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1"}}}},
+        fallback_capability=Capability(intent="chat.completions", backend="svc"),
+    )
+
+    assert projection.status == "unknown"
+    assert projection.up is None
+    assert projection.measured is False
+
+
+
+
+def test_disabled_service_projects_unavailable():
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": False, "config": {"base_url": "http://svc/v1"}}}},
+    )
+
+    assert projection.status == "unavailable"
+    assert projection.enabled is False
+
+
+def test_missing_service_projects_unconfigured_without_fallback():
+    projection = project_service("missing", service_records={"services": {}})
+
+    assert projection.status == "unavailable"
+    assert projection.configured is False
+
+
+def test_future_request_evidence_is_ignored(evidence_now):
+    now = evidence_now
+    evidence = evidence_from_receipts([
+        {"request_id": "future", "backend": "svc", "status": "succeeded", "updated_at_ms": (now + 60) * 1000}
+    ], now_s=now)
+
+    assert evidence == {}
+
+
+def test_same_second_terminal_failure_supersedes_success_by_milliseconds(evidence_now):
+    now = evidence_now
+    evidence = evidence_from_receipts([
+        {"request_id": "success", "backend": "svc", "status": "succeeded", "updated_at_ms": now * 1000 + 100},
+        {"request_id": "failure", "backend": "svc", "status": "failed", "status_code": 503, "updated_at_ms": now * 1000 + 900},
+    ], now_s=now + 1)
+
+    assert evidence["svc"]["request_id"] == "failure"
+    assert evidence["svc"]["available"] is False
+    assert evidence["svc"]["observed_at_ms"] == now * 1000 + 900
+
+
+def test_top_level_lifecycle_declaration_projects_idle_when_stopped():
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "lifecycle": {"driver": "systemd"}, "config": {"base_url": "http://svc/v1"}}}},
+        evidence={"svc": {"available": None, "status": "stopped", "source": "status"}},
+    )
+
+    assert projection.status == "idle"
+    assert projection.idle_startable is True
+
+def test_recent_successful_request_marks_service_ready(evidence_now):
+    now = evidence_now
+    evidence = evidence_from_receipts([
+        {"request_id": "req_1", "backend": "svc", "status": "succeeded", "_stored_at": now}
+    ], now_s=now)
+
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1"}}}},
+        evidence=evidence,
+    )
+
+    assert projection.status == "ready"
+    assert projection.up is True
+    assert projection.evidence["source"] == "request"
+
+
+def test_newer_backend_failure_supersedes_success(evidence_now):
+    now = evidence_now
+    evidence = evidence_from_receipts([
+        {"request_id": "req_old", "backend": "svc", "status": "succeeded", "_stored_at": now - 2},
+        {"request_id": "req_new", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 1},
+    ], now_s=now)
+
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1"}}}},
+        evidence=evidence,
+    )
+
+    assert projection.status == "unavailable"
+    assert projection.up is False
+    assert projection.evidence["request_id"] == "req_new"
+
+
+def test_client_failure_does_not_become_backend_down_evidence(evidence_now):
+    now = evidence_now
+    evidence = evidence_from_receipts([
+        {"request_id": "req_bad_input", "backend": "svc", "status": "failed", "status_code": 400, "_stored_at": now}
+    ], now_s=now)
+
+    assert evidence == {}
+
+
+def test_startable_stopped_probe_projects_idle():
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {
+            "base_url": "http://svc/v1",
+            "lifecycle": {"driver": "systemd"},
+        }}}},
+        evidence={"svc": {"available": None, "status": "stopped", "source": "health"}},
+    )
+
+    assert projection.status == "idle"
+    assert projection.available is True
+    assert projection.idle_startable is True
+
+
+def test_on_demand_residency_projects_a_stopped_probe_as_idle_without_a_lifecycle_driver():
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {
+            "base_url": "http://svc/v1",
+            "residency": "on_demand",
+        }}}},
+        evidence={"svc": {"available": None, "status": "stopped", "source": "health"}},
+    )
+
+    assert projection.status == "idle"
+    assert projection.idle_startable is True
+
+
+def test_projected_idle_capability_is_available():
+    caps = project_capabilities(
+        [Capability(intent="decision", backend="svc")],
+        service_records={"services": {"svc": {"enabled": True, "config": {
+            "lifecycle": {"driver": "systemd"},
+        }}}},
+        evidence={"svc": {"available": None, "status": "stopped", "source": "status"}},
+    )
+
+    assert caps[0].available is True
+    assert caps[0].availability["status"] == "idle"
+
+
+def test_policy_denial_overrides_projected_availability():
+    caps = project_capabilities(
+        [Capability(intent="decision", backend="svc", policy_available=False)],
+        service_records={"services": {"svc": {"enabled": True, "config": {
+            "lifecycle": {"driver": "systemd"},
+        }}}},
+        evidence={"svc": {"available": None, "status": "stopped", "source": "status"}},
+    )
+
+    assert caps[0].availability["available"] is True
+    assert caps[0].available is False
+
+
+def test_startable_unhealthy_probe_is_unavailable_not_idle():
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {
+            "base_url": "http://svc/v1",
+            "lifecycle": {"driver": "systemd"},
+        }}}},
+        evidence={"svc": {"available": False, "status": "unhealthy", "source": "health"}},
+    )
+
+    assert projection.status == "unavailable"
+    assert projection.idle_startable is True
+
+
+def test_request_evidence_wins_over_probe_evidence(evidence_now):
+    now = evidence_now
+    request = evidence_from_receipts([
+        {"request_id": "req_1", "backend": "svc", "status": "succeeded", "_stored_at": now}
+    ], now_s=now)
+    merged = merge_evidence(
+        {"svc": {"available": False, "status": "unavailable", "source": "health", "observed_at_s": now - 10}},
+        request,
+    )
+
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1"}}}},
+        evidence=merged,
+    )
+
+    assert projection.status == "ready"
+    assert projection.evidence["source"] == "request"
+
+
+def test_receipt_metadata_service_id_is_evidence_backend(evidence_now):
+    now = evidence_now
+    evidence = evidence_from_receipts([
+        {"request_id": "req_1", "backend": "litellm", "metadata": {"service_id": "capture-engine"}, "status": "succeeded", "_stored_at": now}
+    ], now_s=now)
+
+    assert "capture-engine" in evidence
+    assert "litellm" not in evidence
+
+
+def test_current_probe_beats_older_request_evidence(evidence_now):
+    now = evidence_now
+    request = evidence_from_receipts([
+        {"request_id": "req_1", "backend": "svc", "status": "succeeded", "_stored_at": now - 600}
+    ], now_s=now)
+    merged = merge_evidence(
+        request,
+        {"svc": {"available": False, "status": "unhealthy", "source": "health", "observed_at_s": now}},
+    )
+
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1"}}}},
+        evidence=merged,
+    )
+
+    assert projection.status == "unavailable"
+    assert projection.evidence["source"] == "health"
+
+
+def test_request_success_beats_health_no_response(evidence_now):
+    now = evidence_now
+    request = evidence_from_receipts([
+        {"request_id": "req_1", "backend": "svc", "status": "succeeded", "_stored_at": now}
+    ], now_s=now)
+    merged = merge_evidence(
+        {"svc": {"available": False, "status": "unavailable", "source": "health", "kind": "no_response", "observed_at_s": now}},
+        request,
+    )
+
+    assert merged["svc"]["source"] == "request"
+
+
+def test_public_projection_omits_request_id(evidence_now):
+    now = evidence_now
+    evidence = evidence_from_receipts([
+        {"request_id": "req_private", "backend": "svc", "status": "succeeded", "_stored_at": now}
+    ], now_s=now)
+
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1"}}}},
+        evidence=evidence,
+    )
+
+    public = projection.to_public_dict()
+    assert public["evidence"]["source"] == "request"
+    assert "request_id" not in public["evidence"]
+
+
+def test_receipt_store_evidence_uses_terminal_updated_time(tmp_path: Path, evidence_now):
+    db = tmp_path / "receipts.db"
+    receipt_store.init_db(db)
+    now = evidence_now
+    receipt_store.record({
+        "request_id": "long_success",
+        "backend": "svc",
+        "status": "succeeded",
+        "accepted_at_ms": (now - 3600) * 1000,
+        "updated_at_ms": now * 1000,
+    }, created_at=now - 3600, path=db)
+
+    evidence = evidence_from_receipt_store(db, now_s=now + 1, max_age_s=900)
+
+    assert evidence["svc"]["request_id"] == "long_success"
+
+
+def test_receipt_store_evidence_reads_internal_metadata_status_code(tmp_path: Path, evidence_now):
+    db = tmp_path / "receipts.db"
+    receipt_store.init_db(db)
+    now = evidence_now
+    old = RouteReceipt(protocol="openai", intent="chat.completions", backend="svc")
+    old.finish("ok", now_ms=(now - 2) * 1000)
+    receipt_store.record(old, created_at=now - 2, path=db)
+    failed = RouteReceipt(protocol="openai", intent="chat.completions", backend="svc")
+    failed.metadata["status_code"] = 503
+    failed.finish("error", now_ms=(now - 1) * 1000)
+    receipt_store.record(failed, created_at=now - 1, path=db)
+
+    evidence = evidence_from_receipt_store(db, now_s=now, max_age_s=900)
+
+    assert evidence["svc"]["request_id"] == failed.request_id
+    assert evidence["svc"]["available"] is False
+
+
+def test_receipt_order_uses_terminal_updated_time(evidence_now):
+    now = evidence_now
+    evidence = evidence_from_receipts([
+        {"request_id": "accepted_later", "backend": "svc", "status": "succeeded", "accepted_at_ms": (now - 10) * 1000, "updated_at_ms": (now - 10) * 1000},
+        {"request_id": "finished_later", "backend": "svc", "status": "failed", "status_code": 503, "accepted_at_ms": (now - 100) * 1000, "updated_at_ms": now * 1000},
+    ], now_s=now)
+
+    assert evidence["svc"]["request_id"] == "finished_later"
+    assert evidence["svc"]["available"] is False
+
+
+def test_backend_grid_reports_lifecycle_stopped_from_runtime_record(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            assert svc["lifecycle"]["driver_config"]["unit"] == "fake.service"
+            return None
+        async def status(self, svc):
+            return "stopped"
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", lambda service_id, config_backends=None: FakeDriver())
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "name": "Service",
+        "role": "required",
+        "lifecycle": {"driver": "systemd", "driver_config": {"unit": "fake.service"}},
+    }}}))
+
+    assert rows == [{
+        "key": "svc",
+        "service_id": "svc",
+        "name": "Service",
+        "url": None,
+        "role": "required",
+        "note": None,
+        "status": "stopped",
+        "live_status": "stopped",
+        "latency_ms": None,
+        "last_error": None,
+        "source": "lifecycle",
+        "kind": "process",
+    }]
+
+
+def test_backend_grid_lifecycle_starting_overrides_http_down(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            return None
+        async def status(self, svc):
+            return "starting"
+
+    async def fake_probe(client, key, name, url, role, note, **kwargs):
+        return {"key": key, "service_id": key, "name": name, "url": url, "role": role,
+                "note": note, "status": "down", "live_status": "down", "latency_ms": None,
+                "last_error": "connect refused"}
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", lambda service_id, config_backends=None: FakeDriver())
+    monkeypatch.setattr(status_endpoint, "_probe", fake_probe)
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "host": "127.0.0.1",
+        "port": 9,
+        "health_endpoint": "/health",
+        "lifecycle": {"driver": "command", "driver_config": {"status": ["true"]}},
+    }}}))
+
+    assert rows[0]["live_status"] == "starting"
+    assert rows[0]["source"] == "lifecycle"
+
+
+def test_backend_grid_lifecycle_running_does_not_hide_http_down(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            return None
+        async def status(self, svc):
+            return "running"
+
+    async def fake_probe(client, key, name, url, role, note, **kwargs):
+        return {"key": key, "service_id": key, "name": name, "url": url, "role": role,
+                "note": note, "status": "down", "live_status": "down", "latency_ms": None,
+                "last_error": "connect refused"}
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", lambda service_id, config_backends=None: FakeDriver())
+    monkeypatch.setattr(status_endpoint, "_probe", fake_probe)
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "host": "127.0.0.1",
+        "port": 9,
+        "health_endpoint": "/health",
+        "lifecycle": {"driver": "docker", "driver_config": {"container": "fake"}},
+    }}}))
+
+    assert rows[0]["live_status"] == "down"
+    assert rows[0].get("source") != "lifecycle"
+
+
+def test_backend_grid_lifecycle_unmanaged_is_unknown_not_stopped(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            return None
+        async def status(self, svc):
+            return "unmanaged"
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", lambda service_id, config_backends=None: FakeDriver())
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "lifecycle": {"driver": "systemd", "driver_config": {"unit": "missing.service"}},
+    }}}))
+
+    assert rows[0]["live_status"] == "unknown"
+
+
+def test_backend_grid_lifecycle_preflight_warning_is_unknown_not_stopped(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            return "systemd driver_config.unit is required but not set"
+        async def status(self, svc):
+            return "stopped"
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", lambda service_id, config_backends=None: FakeDriver())
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "lifecycle": {"driver": "systemd", "driver_config": {}},
+    }}}))
+
+    assert rows[0]["live_status"] == "unknown"
+    assert rows[0]["last_error"] == "systemd driver_config.unit is required but not set"
+
+
+def test_backend_grid_excludes_http_load_unload_from_process_lifecycle(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    def fail_driver(*args, **kwargs):
+        raise AssertionError("http-load-unload should not be treated as process lifecycle evidence")
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", fail_driver)
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "lifecycle": {"driver": "http-load-unload", "driver_config": {"load_url": "/load"}},
+    }}}))
+
+    assert rows == []
+
+
+def test_status_rows_preserve_no_response_kind_so_request_can_win(evidence_now):
+    now = evidence_now
+    status = evidence_from_status_rows([
+        {"service_id": "svc", "live_status": "down", "source": "status", "kind": "no_response"}
+    ], observed_at_s=now)
+    request = evidence_from_receipts([
+        {"request_id": "req_ok", "backend": "svc", "status": "succeeded", "updated_at_ms": now * 1000}
+    ], now_s=now)
+
+    merged = merge_evidence(status, request)
+
+    assert status["svc"]["kind"] == "no_response"
+    assert merged["svc"]["source"] == "request"
+
+
+def test_status_probe_connect_failure_marks_no_response_kind():
+    import asyncio
+    import httpx
+    import status_endpoint
+
+    class Client:
+        async def get(self, url):
+            raise httpx.ConnectError("refused")
+
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://127.0.0.1:9/health", "required", None))
+
+    assert row["live_status"] == "down"
+    assert row["kind"] == "no_response"
+
+
+def test_availability_reads_the_latest_snapshot_and_nothing_before_the_first_build(monkeypatch):
+    import proxy
+
+    monkeypatch.setattr(proxy.status_endpoint, "_SNAPSHOT", {})
+    assert proxy._cached_status_payload_for_availability() == {}
+
+    monkeypatch.setattr(proxy.status_endpoint, "_SECTION_AT", {"backends": proxy.status_endpoint._now()})
+    proxy.status_endpoint._store_snapshot({"backends": [{"key": "svc", "status": "up"}]})
+    assert proxy._cached_status_payload_for_availability()["backends"][0]["key"] == "svc"
+
+
+def test_status_probe_200_ready_false_is_not_up():
+    import asyncio
+    import json
+    import status_endpoint
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"ready": False}
+    class Client:
+        async def get(self, url):
+            return Response()
+
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/health", "required", None))
+
+    assert row["live_status"] == "down"
+    assert row["last_error"] == "readiness false"
+
+
+def test_status_probe_200_starting_is_starting_not_up():
+    import asyncio
+    import status_endpoint
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"status": "starting"}
+    class Client:
+        async def get(self, url):
+            return Response()
+
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/health", "required", None))
+
+    assert row["live_status"] == "starting"
+
+
+def test_status_probe_200_unrecognized_json_is_unknown_not_up():
+    import asyncio
+    import status_endpoint
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"object": "list", "data": []}
+    class Client:
+        async def get(self, url):
+            return Response()
+
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/v1/models", "required", None))
+
+    assert row["live_status"] == "unknown"
+
+
+def test_status_probe_404_missing_health_route_is_weak_no_response():
+    import asyncio
+    import status_endpoint
+
+    class Response:
+        status_code = 404
+        def json(self):
+            return {"error": "not found"}
+    class Client:
+        async def get(self, url):
+            return Response()
+
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/health-not-implemented", "required", None))
+
+    assert row["live_status"] == "unknown"
+    assert row["kind"] == "no_response"
+
+
+def test_status_404_missing_health_route_does_not_override_recent_success(evidence_now):
+    now = evidence_now
+    status = evidence_from_status_rows([
+        {"service_id": "svc", "live_status": "unknown", "source": "status", "kind": "no_response"}
+    ], observed_at_s=now)
+    request = evidence_from_receipts([
+        {"request_id": "req_ok", "backend": "svc", "status": "succeeded", "updated_at_ms": now * 1000}
+    ], now_s=now)
+
+    merged = merge_evidence(status, request)
+
+    assert merged["svc"]["source"] == "request"
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1", "health_endpoint": "/health-not-implemented"}}}},
+        evidence=merged,
+    )
+    assert projection.status == "ready"
+
+
+def test_alias_projection_inherits_unique_concrete_target():
+    alias = Capability(intent="chat.completions", backend="gateway", model="fast", tags=("alias", "resolves_to:actual"))
+    concrete = Capability(intent="chat.completions", backend="svc", model="actual")
+    caps = project_capabilities([alias, concrete], service_records={"services": {"svc": {"enabled": True}}},
+                                evidence={"svc": {"status": "ready", "available": True, "observed_at_s": 123}})
+    assert caps[0].backend == "svc"
+    assert caps[0].availability["status"] == "ready"
+    assert caps[0].availability["evidence"]["observed_at_s"] == 123
+
+
+def test_caller_catalog_deduplicates_same_visible_model():
+    from gateway.capabilities import summarize_capabilities
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="gateway", model="actual"),
+        Capability(intent="chat.completions", backend="svc", model="actual"),
+    ], evidence={"svc": {"status": "ready", "available": True}})
+    rows = summarize_capabilities(caps, "client")["capabilities"]
+    assert len(rows) == 1
+    assert rows[0]["availability"]["status"] == "ready"
+
+
+def test_status_targets_use_declared_base_url():
+    import status_endpoint
+    targets = status_endpoint._resolve_backend_targets({"backends": {"svc": {
+        "base_url": "https://example.test/v1", "health_endpoint": "/health",
+    }}})
+    assert targets[0]["url"] == "https://example.test/health"
+
+
+def test_ambiguous_alias_target_preserves_unknown():
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="gateway", model="fast", tags=("alias", "resolves_to:actual")),
+        Capability(intent="chat.completions", backend="a", model="actual"),
+        Capability(intent="chat.completions", backend="b", model="actual"),
+    ], evidence={"a": {"status": "ready", "available": True}})
+    assert caps[0].backend == "gateway"
+    assert caps[0].availability["status"] == "unknown"
+
+
+def test_alias_target_resolves_from_registry_model_group():
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="gateway", model="fast", tags=("alias", "resolves_to:logical")),
+    ], service_records={"services": {"svc": {"config": {"models": [{"id": "engine-id", "model_group": "logical"}]}}}},
+       evidence={"svc": {"status": "ready", "available": True}})
+    assert caps[0].backend == "svc"
+    assert caps[0].availability["status"] == "ready"
+
+
+def test_alias_target_resolves_from_missing_model_file_as_unavailable():
+    missing = str(Path(__file__).resolve().parent / "fixtures" / "missing-model.gguf")
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="gateway", model="legacy", tags=("alias", "resolves_to:legacy")),
+    ], service_records={"services": {"svc": {"enabled": True, "config": {"models": [{
+        "id": "legacy",
+        "model_group": "legacy",
+        "upstream_model": "legacy.gguf",
+        "model_path": missing,
+    }]}}}},
+       evidence={"svc": {"status": "ready", "available": True}})
+
+    assert caps[0].backend == "svc"
+    assert caps[0].availability["status"] == "unavailable"
+    assert caps[0].availability["reason"] == "Model file is not installed."
+    assert not caps[0].available
+
+
+def test_model_level_unavailability_wins_over_ready_service():
+    missing_projection = {
+        "available": False,
+        "status": "unavailable",
+        "reason": "Model file is not installed.",
+        "measured": True,
+    }
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="svc", model="legacy", availability=missing_projection),
+    ], service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1"}}}},
+       evidence={"svc": {"status": "ready", "available": True}})
+
+    assert not caps[0].available
+    assert caps[0].availability == missing_projection
+    assert caps[0].lifecycle == "stopped"
+    assert caps[0].health == "unhealthy"
+
+
+def test_alias_inherits_missing_file_reason_from_concrete_target():
+    missing = {"available": False, "status": "unavailable", "reason": "Model file is not installed.", "measured": True}
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="gateway", model="default", tags=("alias", "resolves_to:weights")),
+        Capability(intent="chat.completions", backend="svc", model="weights", availability=missing),
+    ], service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1"}}}},
+       evidence={"svc": {"status": "ready", "available": True}})
+    alias = next(cap for cap in caps if cap.model == "default")
+    assert alias.backend == "svc"
+    assert alias.availability == missing
+    assert not alias.available
+
+
+@pytest.mark.parametrize("payload,expected", [({"system": {}}, "up"), ({"devices": []}, "unknown"), ({"system": {}, "ready": False}, "down")])
+def test_declared_health_success_path_does_not_mask_readiness(payload, expected):
+    import asyncio
+    import status_endpoint
+    class Response:
+        status_code = 200
+        def json(self):
+            return payload
+    class Client:
+        async def get(self, url):
+            return Response()
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://fixture/stats", "required", None,
+                                             service={"health_success_path": "system"}))
+    assert row["live_status"] == expected
+
+
+@pytest.mark.parametrize("payload,expected", [
+    ({"object": "list", "data": [{"id": "fixture-model", "object": "model"}]}, "up"),
+    ({"object": "list", "data": []}, "unknown"),
+    ({"object": "list", "data": [{"object": "model"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "file-fixture", "object": "file"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "batch-fixture", "object": "batch"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "untyped-fixture"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "fixture-model"}], "ready": False}, "down"),
+    ({"object": "list", "data": [{"id": "fixture-model"}], "status": "degraded"}, "degraded"),
+])
+def test_openai_model_list_health_probe_requires_a_usable_model(payload, expected):
+    import asyncio
+    import status_endpoint
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return payload
+
+    class Client:
+        async def get(self, url):
+            return Response()
+
+    row = asyncio.run(status_endpoint._probe(
+        Client(), "svc", "Service", "http://fixture/v1/models", "required", None,
+        service={"health_endpoint": "/v1/models"},
+    ))
+    assert row["live_status"] == expected
+
+
+def test_openai_model_list_is_fresh_catalog_evidence_after_restart():
+    import asyncio
+    from gateway.models_catalog import probe_service_health
+
+    async def get_json(url):
+        return {"object": "list", "data": [{"id": "fixture-model", "object": "model"}]}
+
+    evidence = asyncio.run(probe_service_health({"services": {"svc": {"config": {
+        "base_url": "http://fixture/v1", "health_endpoint": "/v1/models",
+    }}}}, get_json=get_json))
+    assert evidence["svc"]["status"] == "ready"
+    assert evidence["svc"]["source"] == "health"
+    assert isinstance(evidence["svc"]["observed_at_s"], int)
+
+
+def test_catalog_configured_health_success_has_observation_time():
+    import asyncio
+    from gateway.models_catalog import probe_service_health
+    async def get_json(url):
+        assert url == "http://fixture/stats"
+        return {"system": {"version": "fixture"}}
+    evidence = asyncio.run(probe_service_health({"services": {"svc": {"config": {
+        "base_url": "http://fixture/v1", "health_endpoint": "/stats", "health_success_path": "system",
+    }}}}, get_json=get_json))
+    assert evidence["svc"]["status"] == "ready"
+    assert isinstance(evidence["svc"]["observed_at_s"], int)
+
+
+def test_workflow_idle_projection_preserves_evidence():
+    from gateway.workflows_catalog import _availability
+    caps = project_capabilities([Capability(intent="image.generate", backend="svc", workflow="fixture")],
+        service_records={"services": {"svc": {"lifecycle": {"driver": "command"}}}},
+        evidence={"svc": {"status": "stopped", "source": "lifecycle", "observed_at_s": 123}})
+    result = _availability(caps)
+    assert result["status"] == "idle"
+    assert result["available"] is True
+    assert result["evidence"]["observed_at_s"] == 123
+
+
+def test_alias_binding_inherits_target_policy_facts():
+    from gateway.capabilities import resolve_capability_targets
+    caps = resolve_capability_targets([
+        Capability(intent="chat.completions", backend="gateway", model="fast", tags=("alias", "resolves_to:actual")),
+        Capability(intent="chat.completions", backend="svc", model="actual", exposure="opt_in", trust_tier="experimental", tags=("private",)),
+    ])
+    assert caps[0].exposure == "opt_in"
+    assert caps[0].trust_tier == "experimental"
+    assert "private" in caps[0].tags
+
+
+def test_cold_capability_provider_measures_declared_services(monkeypatch, tmp_path):
+    import asyncio
+    import proxy
+    receipts = tmp_path / "cold-receipts.db"
+    receipt_store.init_db(receipts)
+    monkeypatch.setattr(proxy.receipt_store, "DB_PATH", receipts)
+    registry = {"services": {"svc": {"enabled": True, "config": {"base_url": "http://fixture", "health_endpoint": "/health"}}}}
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
+    monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda auth: [Capability(intent="chat.completions", backend="svc", model="actual")])
+    monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda request: None)
+    monkeypatch.setattr(proxy, "_cached_status_payload_for_availability", lambda: {})
+    observed = []
+    async def grid(config):
+        observed.append(config)
+        return [{"service_id": "svc", "status": "up", "observed_at_s": 123}]
+    monkeypatch.setattr(proxy.status_endpoint, "_backend_grid", grid)
+    caps = asyncio.run(proxy._gateway_capabilities_provider(None))
+    assert observed[0]["backends"]["svc"]["health_endpoint"] == "/health"
+    assert caps[0].availability["status"] == "ready"
+    assert caps[0].availability["evidence"]["observed_at_s"] == 123
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_stopped_lifecycle_is_not_overridden_by_later_connect_failure(reverse):
+    stopped = {"svc": {"status": "stopped", "source": "lifecycle", "observed_at_s": 100}}
+    no_response = {"svc": {"status": "unavailable", "available": False, "source": "health", "kind": "no_response", "observed_at_s": 101}}
+    sources = [stopped, no_response]
+    if reverse:
+        sources.reverse()
+    projection = project_service("svc", service_records={"services": {"svc": {"lifecycle": {"driver": "systemd"}}}},
+                                 evidence=merge_evidence(*sources))
+    assert projection.status == "idle"
+
+
+@pytest.mark.parametrize("allowed,expected", [(frozenset(), False), (frozenset({"workflow-id"}), True)])
+def test_workflow_alias_policy_uses_resolved_workflow_without_changing_alias(monkeypatch, allowed, expected):
+    import proxy
+    from gateway.capabilities import resolve_capability_targets, summarize_capability
+    granted = plan_for("workflow-policy", caps=("image",), workflows=sorted(allowed))
+    auth = proxy.AuthContext(identity=identity(granted))
+    alias, concrete = resolve_capability_targets([
+        Capability(intent="image.generate", backend="gateway", model="image", tags=("alias", "resolves_to:workflow-id")),
+        Capability(intent="image.generate", backend="fixture", workflow="workflow-id"),
+    ])
+    assert proxy._capability_for_access(concrete, auth).policy_available is expected
+    projected = proxy._capability_for_access(alias, auth)
+    assert projected.policy_available is expected
+    assert projected.model == "image"
+    assert projected.workflow is None
+    assert "resolved_workflow" not in summarize_capability(projected, "client")
+
+
+def test_denied_alias_shadows_allowed_same_named_model_before_filtering():
+    from gateway.capabilities import caller_visible_capabilities, resolve_capability_targets
+    alias = Capability(intent="chat.completions", backend="remote", model="fast", policy_available=False,
+                       tags=("alias", "resolves_to:remote-model"))
+    local = Capability(intent="chat.completions", backend="local", model="fast", policy_available=True)
+    assert caller_visible_capabilities([local, alias]) == [alias]
+    resolved = resolve_capability_targets([local, alias])
+    assert resolved == [alias]
+    assert [cap for cap in resolved if cap.policy_available] == []
+
+
+def test_availability_does_not_measure_services_when_caller_has_no_allowed_capabilities(monkeypatch):
+    import asyncio
+    import proxy
+    def unexpected(*args, **kwargs):
+        raise AssertionError("No allowed capabilities require measurement")
+    monkeypatch.setattr(proxy, "_cached_status_payload_for_availability", unexpected)
+    monkeypatch.setattr(proxy.status_endpoint, "_backend_grid", unexpected)
+    denied = Capability(intent="chat.completions", backend="private", policy_available=False)
+    assert asyncio.run(proxy._capabilities_availability_evidence([], {})) == {}
+    assert asyncio.run(proxy._capabilities_availability_evidence([denied], {})) == {}
+
+
+def test_availability_probes_only_caller_visible_services(monkeypatch, tmp_path):
+    import asyncio
+    import proxy
+    receipts = tmp_path / "scoped-receipts.db"
+    receipt_store.init_db(receipts)
+    monkeypatch.setattr(proxy.receipt_store, "DB_PATH", receipts)
+    registry = {"services": {name: {"config": {"base_url": f"http://{name}", "health_endpoint": "/health"}}
+                             for name in ("allowed", "private")}}
+    monkeypatch.setattr(proxy, "_cached_status_payload_for_availability", lambda: {})
+    async def grid(config):
+        assert set(config["backends"]) == {"allowed"}
+        return []
+    monkeypatch.setattr(proxy.status_endpoint, "_backend_grid", grid)
+    caps = [Capability(intent="chat.completions", backend="allowed"),
+            Capability(intent="chat.completions", backend="private", policy_available=False)]
+    assert asyncio.run(proxy._capabilities_availability_evidence(caps, registry)) == {}
+
+
+# Evidence time is the check time (design ask 3). Nothing here may invent a
+# time: absent means "not known", and the attempt and the last success are
+# separate facts.
+
+def test_status_rows_without_check_time_carry_no_time():
+    evidence = evidence_from_status_rows([{"service_id": "svc", "live_status": "up"}])
+    assert "observed_at_s" not in evidence["svc"]
+    assert "last_success_at_s" not in evidence["svc"]
+
+
+def test_status_rows_carry_snapshot_check_time_and_success_only_when_ready():
+    evidence = evidence_from_status_rows([
+        {"service_id": "up", "live_status": "up"},
+        {"service_id": "down", "live_status": "down"},
+    ], observed_at_s=100)
+    assert {key: evidence["up"][key] for key in ("observed_at_s", "last_attempt_at_s", "last_success_at_s")} == {
+        "observed_at_s": 100, "last_attempt_at_s": 100, "last_success_at_s": 100}
+    assert evidence["down"]["observed_at_s"] == 100
+    assert evidence["down"]["last_attempt_at_s"] == 100
+    assert "last_success_at_s" not in evidence["down"]
+
+
+def test_snapshot_without_generated_at_does_not_stamp_now():
+    from gateway.availability import availability_evidence_snapshot
+    evidence = availability_evidence_snapshot(
+        status_payload={"backends": [{"service_id": "svc", "live_status": "degraded"}]}, now_s=999)
+    assert "observed_at_s" not in evidence["svc"]
+    stamped = availability_evidence_snapshot(
+        status_payload={"generated_at": 120, "backends": [{"service_id": "svc", "live_status": "degraded"}]}, now_s=999)
+    assert stamped["svc"]["observed_at_s"] == 120
+
+
+def test_live_probe_judges_its_service_alone_and_a_receipt_displaces_it_only_when_at_least_as_new(monkeypatch):
+    from pathlib import Path
+    from gateway import availability
+
+    probe = {"svc": {"available": True, "status": "ready", "reason": "Service health and observer facts answered.",
+                     "observed_at_s": 100, "source": "live_probe"}}
+    health = {"svc": {"available": False, "status": "unavailable", "observed_at_s": 200, "source": "health"}}
+    # A health reading is an older view of the same service: the probe alone judges it, even when the reading is newer.
+    judged = availability.availability_evidence_snapshot(health_evidence=health, live_evidence=probe)
+    assert judged["svc"]["source"] == "live_probe"
+
+    def receipt_at(observed_at_s: int) -> None:
+        receipt = {"svc": {"available": False, "status": "unavailable", "reason": "Request failed.",
+                           "observed_at_s": observed_at_s, "source": "receipt"}}
+        monkeypatch.setattr(availability, "evidence_from_receipt_store", lambda *a, **k: receipt)
+
+    snapshot = lambda: availability.availability_evidence_snapshot(
+        live_evidence=probe, receipt_store_path=Path("receipts.db"))
+    receipt_at(50)
+    assert snapshot()["svc"]["source"] == "live_probe"
+    receipt_at(100)
+    assert snapshot()["svc"]["source"] == "receipt"
+    receipt_at(150)
+    assert snapshot()["svc"]["source"] == "receipt"
+
+
+@pytest.mark.parametrize(("flag", "expected"), [("configured", (True, False)), ("enabled", (False, True))])
+def test_a_probe_that_finds_its_service_off_projects_off_and_no_request_reading_supersedes_it(monkeypatch, flag, expected):
+    from pathlib import Path
+    from gateway import availability
+
+    probe = {"svc": {"available": False, "status": "unavailable", "reason": "service is absent",
+                     "observed_at_s": 100, "source": "live_probe", flag: False}}
+    receipt = {"svc": {"available": False, "status": "unavailable", "reason": "Request failed.",
+                       "observed_at_s": 200, "source": "receipt"}}
+    monkeypatch.setattr(availability, "evidence_from_receipt_store", lambda *a, **k: receipt)
+    evidence = availability.availability_evidence_snapshot(live_evidence=probe, receipt_store_path=Path("receipts.db"))
+    assert evidence["svc"]["source"] == "live_probe"
+    projection = availability.project_service("svc", evidence=evidence, fallback_capability=Capability(intent="mesh.generate", backend="svc"))
+    assert (projection.status, (projection.enabled, projection.configured)) == ("unavailable", expected)
+
+
+def test_failed_health_probe_keeps_attempt_time_and_last_success_separate(monkeypatch):
+    import asyncio
+    from gateway import models_catalog
+    monkeypatch.setattr(models_catalog, "_HEALTH_LAST_SUCCESS_S", {})
+    clock = {"now": 1000}
+    monkeypatch.setattr(models_catalog.time, "time", lambda: clock["now"])
+    answers = iter([{"status": "ok"}, None])
+    async def get_json(_url):
+        return next(answers)
+    registry = {"services": {"svc": {"config": {"health_endpoint": "http://svc/health"}}}}
+    ok = asyncio.run(models_catalog.probe_service_health(registry, get_json=get_json))["svc"]
+    assert (ok["observed_at_s"], ok["last_attempt_at_s"], ok["last_success_at_s"]) == (1000, 1000, 1000)
+    clock["now"] = 2000
+    failed = asyncio.run(models_catalog.probe_service_health(registry, get_json=get_json))["svc"]
+    assert failed["available"] is False and failed["kind"] == "no_response"
+    assert failed["observed_at_s"] == 2000
+    assert failed["last_attempt_at_s"] == 2000
+    assert failed["last_success_at_s"] == 1000
+    public = project_service("svc", service_records=registry, evidence={"svc": failed}).to_public_dict()["evidence"]
+    assert public["last_success_at_s"] == 1000 and public["last_attempt_at_s"] == 2000
+
+
+def test_failed_health_probe_without_known_success_has_no_success_time(monkeypatch):
+    import asyncio
+    from gateway import models_catalog
+    monkeypatch.setattr(models_catalog, "_HEALTH_LAST_SUCCESS_S", {})
+    async def get_json(_url):
+        return None
+    evidence = asyncio.run(models_catalog.probe_service_health(
+        {"services": {"svc": {"config": {"health_endpoint": "http://svc/health"}}}}, get_json=get_json))["svc"]
+    assert isinstance(evidence["observed_at_s"], int)
+    assert "last_success_at_s" not in evidence
+
+
+def test_unmeasured_health_has_no_observation_time():
+    import asyncio
+    from gateway.models_catalog import probe_service_health
+    async def get_json(_url):
+        raise AssertionError("no endpoint is declared")
+    evidence = asyncio.run(probe_service_health({"services": {"svc": {"config": {}}}}, get_json=get_json))
+    assert evidence["svc"]["status"] == "unknown"
+    assert "observed_at_s" not in evidence["svc"]
+
+
+def test_unmeasured_placeholder_does_not_mask_a_real_status_observation():
+    merged = merge_evidence(
+        {"svc": {"available": None, "status": "unknown", "source": None}},
+        {"svc": {"available": False, "status": "down", "source": "status", "observed_at_s": 100}},
+    )
+    assert merged["svc"]["status"] == "down"
+    merged = merge_evidence(
+        {"svc": {"available": False, "status": "down", "source": "status", "observed_at_s": 100}},
+        {"svc": {"available": None, "status": "unknown", "source": None}},
+    )
+    assert merged["svc"]["status"] == "down"
+
+
+def test_request_evidence_carries_last_success_separately_from_latest_failure(evidence_now):
+    now = evidence_now
+    evidence = evidence_from_receipts([
+        {"request_id": "ok", "backend": "svc", "status": "succeeded", "_stored_at": now - 100},
+        {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 10},
+    ], now_s=now)["svc"]
+    assert evidence["available"] is False
+    assert evidence["observed_at_s"] == now - 10
+    assert evidence["last_attempt_at_s"] == now - 10
+    assert evidence["last_success_at_s"] == now - 100
+
+
+# Busy versus failing (design ask 4). A service whose recent requests fail
+# with server errors is not "busy", even when its status probe says busy or
+# degraded and that probe is newer than the failed request.
+
+@pytest.mark.parametrize("raw_status", ["busy", "degraded"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_recent_5xx_request_failure_is_not_projected_as_busy(raw_status, reverse, evidence_now):
+    now = evidence_now
+    request = evidence_from_receipts([
+        {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 120},
+    ], now_s=now)
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": raw_status}], observed_at_s=now)
+    sources = [status, request]
+    if reverse:
+        sources.reverse()
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}},
+                                 evidence=merge_evidence(*sources))
+    assert projection.status == "unavailable"
+    assert projection.available is False
+    assert projection.evidence["source"] == "request"
+
+
+def test_later_request_success_clears_the_failure_and_busy_stays_busy(evidence_now):
+    now = evidence_now
+    request = evidence_from_receipts([
+        {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 120},
+        {"request_id": "ok", "backend": "svc", "status": "succeeded", "_stored_at": now - 60},
+    ], now_s=now)
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": "busy"}], observed_at_s=now)
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}},
+                                 evidence=merge_evidence(status, request))
+    assert projection.status == "busy"
+
+
+def test_busy_without_request_failure_stays_busy(evidence_now):
+    now = evidence_now
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": "busy"}], observed_at_s=now)
+    # A client-side failure (4xx) proves nothing about the backend.
+    request = evidence_from_receipts([
+        {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 400, "_stored_at": now - 10},
+    ], now_s=now)
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}},
+                                 evidence=merge_evidence(status, request))
+    assert projection.status == "busy"
+
+
+def test_degraded_health_check_keeps_member_projection_degraded():
+    evidence = evidence_from_status_rows(
+        [{"service_id": "svc", "live_status": "degraded"}], observed_at_s=500,
+    )
+    capabilities = project_capabilities(
+        [Capability(intent="chat.completions", backend="svc")],
+        service_records={"services": {"svc": {"enabled": True}}},
+        evidence=evidence,
+    )
+
+    availability = capabilities[0].availability
+    assert availability["status"] == "degraded"
+    assert availability["available"] is False
+    assert availability["up"] is True
+    assert availability["measured"] is True
+    assert capabilities[0].health == "degraded"
+
+
+def test_availability_projection_is_presentation_only_not_a_routing_input():
+    """Routing and fallback must not read gateway.availability.
+
+    The projection changes for design ask 4 are safe only while this holds.
+    """
+    import ast
+    root = Path(__file__).resolve().parents[1]
+    importers = set()
+    for path in sorted((root / "gateway").rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "gateway.availability":
+                importers.add(path.relative_to(root).as_posix())
+            elif isinstance(node, ast.ImportFrom) and node.module == "gateway" and any(a.name == "availability" for a in node.names):
+                importers.add(path.relative_to(root).as_posix())
+            elif isinstance(node, ast.Import) and any(a.name == "gateway.availability" for a in node.names):
+                importers.add(path.relative_to(root).as_posix())
+    # Discovery, Home/Status, admin Status, and catalog presentation only. The mesh module projects nothing: its probe
+    # answers as evidence, and the shared projection builds its row. The route's own gate (service_problem) never reads it.
+    assert importers <= {"gateway/home_api.py", "gateway/admin_api.py", "gateway/models_catalog.py",
+                         "gateway/capabilities.py"}
+
+    tree = ast.parse((root / "proxy.py").read_text())
+    names = {"availability_evidence_snapshot", "project_capabilities", "_runtime_availability_evidence",
+             "_capabilities_availability_evidence", "_status_payload_with_availability", "_gateway_capabilities_provider"}
+    users: dict[str, set[str]] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            used = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} & names
+            if used:
+                users[node.name] = used
+    assert set(users) <= {
+        "_gateway_capabilities_provider", "_capabilities_availability_evidence", "_runtime_availability_evidence",
+        "_status_payload_with_availability", "_with_availability", "_user_models_catalog_payload",
+        "_user_workflows_catalog_payload",
+    }
+    # The two provider callables are only handed to discovery and the Home/Status routers. Both read the same
+    # snapshot (_status_payload_with_availability); the background build is the only code that probes.
+    module_refs = [n for n in ast.walk(tree) if isinstance(n, ast.keyword)
+                   and isinstance(n.value, ast.Name) and n.value.id in {"_gateway_capabilities_provider", "_status_payload_with_availability"}]
+    assert {(k.arg, k.value.id) for k in module_refs} <= {
+        ("capabilities_provider", "_gateway_capabilities_provider"),
+        ("status_provider", "_status_payload_with_availability"),
+    }
+
+
+@pytest.mark.parametrize("raw_status", ["busy", "degraded"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_same_second_ready_health_check_beats_busy_status_row(raw_status, reverse):
+    health = {"svc": {"source": "health", "status": "ready", "available": True, "observed_at_s": 500}}
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": raw_status}], observed_at_s=500)
+    sources = [health, status]
+    if reverse:
+        sources.reverse()
+    merged = merge_evidence(*sources)
+    assert merged["svc"]["source"] == "health"
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}}, evidence=merged)
+    assert projection.status == "ready"
+
+
+def test_newer_busy_row_still_beats_older_ready_check():
+    health = {"svc": {"source": "health", "status": "ready", "available": True, "observed_at_s": 499}}
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": "busy"}], observed_at_s=500)
+    assert merge_evidence(health, status)["svc"]["source"] == "status"

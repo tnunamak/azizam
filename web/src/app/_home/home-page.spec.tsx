@@ -1,0 +1,714 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import HomePage from "@/app/_home/home-page";
+import { takeHomeHandoff } from "@/app/_home/handoff";
+import { ViewerContext } from "@/components/shell/session";
+
+const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push, replace: vi.fn(), refresh: vi.fn(), prefetch: vi.fn() }),
+  usePathname: () => "/",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+/** A capability row as the gateway sends it, with only the fields Home reads set. */
+function capability(kind: string, overrides: Record<string, unknown> = {}) {
+  return {
+    capability: kind,
+    icon_key: kind,
+    capability_title: {
+      image: "Images",
+      chat: "Chat",
+      video: "Video",
+      speech: "Voice",
+      music: "Music",
+      sfx: "Sound effects",
+    }[kind] ?? kind,
+    title: overrides.title ?? `${kind} model`,
+    use_name: overrides.use_name ?? `${kind}-model`,
+    use_names: overrides.use_names ?? [`${kind}-model`],
+    recommended_model: overrides.use_name ?? `${kind}-model`,
+    summary: `Makes ${kind} things.`,
+    intent: `${kind}.generate`,
+    input_modalities: [],
+    output_modalities: [],
+    execution: "sync",
+    streaming: false,
+    exposure: "default",
+    trust_tier: "stable",
+    resource_tier: "interactive",
+    tags: [],
+    available: true,
+    caveats: [],
+    availability: { evidence: { source: "request", observed_at_s: Math.floor(Date.now() / 1000) } },
+    status: "ready",
+    reason_code: "ready",
+    typical_seconds: 9,
+    cost_hint: { kind: "free", price_usd: null },
+    action_label: "Make",
+    // What the bundled manifest for this kind declares; the gateway sends the hint and the words on every row.
+    prompt_hint: { image: "Describe the picture you want", video: "Describe the clip you want", chat: "Ask anything" }[kind] ?? null,
+    input_words: Object.fromEntries(
+      ((overrides.input_modalities as string[] | undefined) ?? [])
+        .filter((modality) => modality !== "text")
+        .map((modality) => [modality, { image: "picture", audio: "recording", video: "clip" }[modality] ?? modality]),
+    ),
+    recordable_input_modalities: [],
+    ...overrides,
+  };
+}
+
+function homePayload(overrides: Record<string, unknown> = {}) {
+  return {
+    authenticated: true,
+    user: { id: "robin", name: "Robin Okafor", email: null, role: "member" },
+    apps: [],
+    gateway: { owner_name: "Sam" },
+    has_access_plan: true,
+    public_base_url: "https://gateway.example",
+    api_base_url: "https://gateway.example/v1",
+    csrf_token: "csrf",
+    plan_spend: null,
+    capabilities: [capability("image"), capability("chat"), capability("video", { status: "unavailable", available: false, reason_code: "unavailable_disabled" })],
+    status: { state: "ready", reason_code: "ready", affected_capability_ids: [], counts: {} },
+    receipts: [],
+    recent_chats: [],
+    ...overrides,
+  };
+}
+
+type Routes = Record<string, () => unknown>;
+
+/** Stubs fetch by path. A route that is not listed answers as an empty success, so a test names only what it needs. */
+function stubFetch(routes: Routes = {}) {
+  const calls: { path: string; method: string }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ path, method });
+      const key = Object.keys(routes).find((candidate) => path === candidate || path.startsWith(`${candidate}?`) || path.startsWith(`${candidate}/`));
+      const body = key ? routes[key]() : {};
+      if (body instanceof Promise) return body;
+      return Response.json(body, { status: method === "POST" ? 201 : 200 });
+    }),
+  );
+  return calls;
+}
+
+function renderHome(viewer: { name?: string; role?: string; admin?: boolean } = {}) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <ViewerContext.Provider
+        value={{
+          authenticated: true,
+          name: viewer.name ?? "Robin Okafor",
+          email: null,
+          role: viewer.role ?? "member",
+          admin: viewer.admin ?? false,
+        } as never}
+      >
+        <HomePage />
+      </ViewerContext.Provider>
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  push.mockReset();
+  window.sessionStorage.clear();
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+const promptBox = () => screen.findByRole("textbox", { name: "Describe the picture you want" });
+
+describe("H1 typing never waits for the capability list", () => {
+  it("takes text before /me/api/home resolves, and Make is findable but does nothing yet", async () => {
+    stubFetch({ "/me/api/home": () => new Promise(() => undefined) });
+    renderHome();
+    const box = await screen.findByRole("textbox", { name: "Describe what you want" });
+    fireEvent.change(box, { target: { value: "A fox in snow" } });
+    expect((box as HTMLTextAreaElement).value).toBe("A fox in snow");
+    const make = screen.getByRole("button", { name: "Make" });
+    // aria-disabled, never a faded native disabled: the solid control stays findable and focusable.
+    expect(make).toHaveAttribute("aria-disabled", "true");
+    expect(make).not.toBeDisabled();
+  });
+});
+
+describe("H2 the chooser is the capability rows", () => {
+  it("offers one option per row when there are two", async () => {
+    stubFetch({ "/me/api/home": () => homePayload({ capabilities: [capability("image"), capability("chat")] }), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    const group = await screen.findByRole("group", { name: "What to make" });
+    expect(within(group).getAllByRole("button")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+  });
+
+  it("shows five options and a More menu for nine rows", async () => {
+    const kinds = ["image", "chat", "video", "speech", "music", "sfx", "transcribe", "rerank2", "audio"];
+    stubFetch({ "/me/api/home": () => homePayload({ capabilities: kinds.map((kind) => capability(kind)) }), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    const group = await screen.findByRole("group", { name: "What to make" });
+    expect(within(group).getAllByRole("button")).toHaveLength(5);
+    expect(screen.getByRole("button", { name: "More" })).toBeEnabled();
+  });
+
+  it("keeps task names out of the Home code (no hard-coded task list)", () => {
+    const dir = join(__dirname);
+    const sources = readdirSync(dir)
+      .filter((name) => /\.(ts|tsx)$/.test(name) && !/\.spec\./.test(name))
+      .map((name) => readFileSync(join(dir, name), "utf8"));
+    for (const source of sources) expect(source).not.toMatch(/\bTASKS\b/);
+  });
+});
+
+describe("H3 a capability that is down explains itself where the choice is made", () => {
+  it("names the owner for a member and turns Make off", async () => {
+    stubFetch({
+      "/me/api/home": () =>
+        homePayload({
+          capabilities: [capability("video", { status: "unavailable", available: false, reason_code: "unavailable" }), capability("image")],
+        }),
+      "/me/api/media": () => ({ assets: [] }),
+    });
+    renderHome();
+    const group = await screen.findByRole("group", { name: "What to make" });
+    const video = within(group).getByRole("button", { name: /Video/ });
+    expect(within(video).getByText("Down")).toBeVisible();
+    fireEvent.click(video);
+    expect(await screen.findByText(/Video is down\. Ask Sam to look at it\./)).toBeVisible();
+    fireEvent.change(await screen.findByRole("textbox", { name: "Describe the clip you want" }), { target: { value: "a clip" } });
+    expect(screen.getByRole("button", { name: "Make" })).toHaveAttribute("aria-disabled", "true");
+  });
+});
+
+describe("H2 the chooser offers only what the person can use", () => {
+  it("leaves out a capability that is off, and gives a working option no state word", async () => {
+    stubFetch({ "/me/api/home": () => homePayload(), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    const group = await screen.findByRole("group", { name: "What to make" });
+    expect(within(group).queryByRole("button", { name: /Video/ })).toBeNull();
+    expect(within(group).getByRole("button", { name: /Chat/ })).toHaveTextContent(/^Chat$/);
+  });
+});
+
+describe("H4 the facts line says what a run costs and how long it takes", () => {
+  it("reads a local model as no charge with its time", async () => {
+    stubFetch({ "/me/api/home": () => homePayload({ capabilities: [capability("image", { typical_seconds: 9 })] }), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    expect(await screen.findByText("No charge · about 9 s")).toBeVisible();
+  });
+
+  it("shows a paid model with an amount only when the data gives one", async () => {
+    stubFetch({
+      "/me/api/home": () =>
+        homePayload({
+          capabilities: [capability("image", { typical_seconds: 20, cost_hint: { kind: "paid", price_usd: 0.04 } })],
+        }),
+      "/me/api/media": () => ({ assets: [] }),
+    });
+    renderHome();
+    expect(await screen.findByText("Paid model · about USD 0.04 · about 20 s")).toBeVisible();
+  });
+
+  it("omits a missing wait and never says unknown", async () => {
+    stubFetch({
+      "/me/api/home": () =>
+        homePayload({ capabilities: [capability("image", { typical_seconds: null, cost_hint: { kind: "unknown", price_usd: null } })] }),
+      "/me/api/media": () => ({ assets: [] }),
+    });
+    renderHome();
+    await screen.findByRole("button", { name: "Make" });
+    expect(screen.queryByText(/unknown/i)).toBeNull();
+  });
+});
+
+describe("H5 Make hands the work to Try without the prompt in the address", () => {
+  it("navigates to Try with the kind and model, and keeps the words in sessionStorage", async () => {
+    stubFetch({ "/me/api/home": () => homePayload({ capabilities: [capability("image", { use_name: "krea-2-turbo" })] }), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    fireEvent.change(await promptBox(), { target: { value: "A red fox in snow" } });
+    const historyBefore = window.history.length;
+    fireEvent.click(screen.getByRole("button", { name: "Make" }));
+    expect(push).toHaveBeenCalledWith("/try/?capability=image&model=krea-2-turbo");
+    expect(String(push.mock.calls[0][0])).not.toContain("fox");
+    expect(window.location.href).not.toContain("fox");
+    expect(window.history.length).toBe(historyBefore);
+    const stored = JSON.parse(window.sessionStorage.getItem("azizam.home.handoff") ?? "{}");
+    expect(stored).toMatchObject({ capability: "image", model: "krea-2-turbo", prompt: "A red fox in snow" });
+  });
+
+  it("sends a chat message to Try's chat tab", async () => {
+    stubFetch({ "/me/api/home": () => homePayload({ capabilities: [capability("chat", { use_name: "fast", action_label: "Send" })] }), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    fireEvent.change(await screen.findByRole("textbox", { name: "Ask anything" }), { target: { value: "Plan a trip" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(push).toHaveBeenCalledWith("/try/?capability=chat&model=fast");
+  });
+});
+
+describe("H6 Recent is the person's own work, and a make in progress comes first", () => {
+  it("puts a running make first with its time left, then results with links to Library", async () => {
+    const now = Date.now() / 1000;
+    stubFetch({
+      "/me/api/home": () =>
+        homePayload({
+          receipts: [{ request_id: "job-1", intent: "image.generate", path: "/gateway/v1/media/jobs/image-generations", status: "running", accepted_at_ms: (now - 3) * 1000 }],
+        }),
+      "/me/api/media": () => ({ assets: [{ asset_id: "asset-1", kind: "image", prompt: "Garden", download_url: "/x.png", created_at: now - 3600 }] }),
+    });
+    renderHome();
+    const list = await screen.findByRole("list", { name: "Recent work" });
+    const tiles = within(list).getAllByRole("listitem");
+    expect(tiles[0]).toHaveAttribute("data-making", "true");
+    expect(within(tiles[0]).getByText(/about \d+ s left/i)).toBeVisible();
+    const picture = await screen.findByRole("link", { name: /Garden/ });
+    expect(picture.getAttribute("href")).toMatch(/^\/library\/?\?asset=asset-1$/);
+  });
+
+  it("reads Taking longer than usual once the typical time has passed", async () => {
+    const now = Date.now() / 1000;
+    stubFetch({
+      "/me/api/home": () =>
+        homePayload({
+          receipts: [{ request_id: "job-2", intent: "image.generate", path: "/gateway/v1/media/jobs/image-generations", status: "running", accepted_at_ms: (now - 120) * 1000 }],
+        }),
+      "/me/api/media": () => ({ assets: [] }),
+    });
+    renderHome();
+    expect(await screen.findByText("Taking longer than usual")).toBeVisible();
+  });
+
+  it("opens a conversation's receipt, and lists it only when history kept it", async () => {
+    stubFetch({
+      "/me/api/home": () =>
+        homePayload({ recent_chats: [{ request_id: "req-9", record_id: "rec-9", created_at: Date.now() / 1000 - 7200, title: "Plan a two-day coastal trip" }] }),
+      "/me/api/media": () => ({ assets: [] }),
+    });
+    renderHome();
+    const link = await screen.findByRole("link", { name: /Plan a two-day coastal trip/ });
+    // Next's link keeps or drops a trailing slash by config; the receipt is what matters.
+    expect(link.getAttribute("href")).toMatch(/^\/usage\/?\?receipt=req-9$/);
+  });
+});
+
+describe("H7 a failed Recent leaves the composer working", () => {
+  it("keeps Make usable, and Try again refetches only media", async () => {
+    let mediaCalls = 0;
+    const calls = stubFetch({
+      "/me/api/home": () => homePayload(),
+      "/me/api/media": () => {
+        mediaCalls += 1;
+        if (mediaCalls === 1) throw new Error("boom");
+        return { assets: [] };
+      },
+    });
+    renderHome();
+    fireEvent.change(await promptBox(), { target: { value: "A lake" } });
+    expect(await screen.findByText("Couldn’t load your recent work.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Make" })).toBeEnabled();
+    const homeCallsBefore = calls.filter((call) => call.path === "/me/api/home").length;
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(mediaCalls).toBe(2));
+    expect(calls.filter((call) => call.path === "/me/api/home").length).toBe(homeCallsBefore);
+  });
+});
+
+describe("H8 with no work, Home offers what can be made", () => {
+  it("shows What you can make here and no Recent, and its cards are the chooser: a card chooses its kind and focuses the box", async () => {
+    stubFetch({ "/me/api/home": () => homePayload(), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    expect(await screen.findByRole("heading", { name: "What you can make here" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Recent" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Welcome, Robin" })).toBeVisible();
+    const list = within(screen.getByRole("region", { name: "What you can make here" }));
+    // One chooser on the page: the cards, not the cards and the composer's chips.
+    expect(screen.getAllByRole("group", { name: "What to make" })).toHaveLength(1);
+    const group = list.getByRole("group", { name: "What to make" });
+    fireEvent.click(within(group).getByRole("button", { name: /^Chat/ }));
+    expect(within(group).getByRole("button", { name: /^Chat/ })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Ask anything" })));
+  });
+});
+
+describe("H8 a first visit's audio cards", () => {
+  it("give speech and music a sample to play from the face, and a kind with no sample no play button", async () => {
+    const audio = { output_modalities: ["audio"] };
+    stubFetch({
+      "/me/api/home": () =>
+        homePayload({ capabilities: [capability("chat"), capability("speech", audio), capability("music", audio), capability("sfx", audio)] }),
+      "/me/api/media": () => ({ assets: [] }),
+    });
+    renderHome();
+    const group = within(await screen.findByRole("region", { name: "What you can make here" }));
+    expect(group.getByRole("button", { name: "Play a Voice sample" })).toBeVisible();
+    expect(group.getByRole("button", { name: "Play a Music sample" })).toBeVisible();
+    expect(group.getAllByRole("button", { name: /^Play a / })).toHaveLength(2);
+  });
+
+  it("with one kind to make, shows no cards: the composer keeps its single chip", async () => {
+    stubFetch({ "/me/api/home": () => homePayload({ capabilities: [capability("chat")] }), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    expect(await screen.findByRole("heading", { name: "Welcome, Robin" })).toBeVisible();
+    await waitFor(() => expect(screen.getAllByRole("group", { name: "What to make" })).toHaveLength(1));
+    expect(screen.queryByRole("region", { name: "What you can make here" })).toBeNull();
+  });
+});
+
+describe("H9 the owner panel holds operations, never content", () => {
+  it("shows the engine that is down with one action, and no prompts or titles", async () => {
+    stubFetch({
+      "/me/api/home": () => homePayload({ user: { id: "sam", name: "Sam Okafor", email: null, role: "owner" }, receipts: [{ request_id: "r", intent: "chat.completions", path: "/v1/chat/completions", status: "succeeded", accepted_at_ms: Date.now() }] }),
+      "/me/api/media": () => ({ assets: [{ asset_id: "a", kind: "image", prompt: "Secret family photo", download_url: "/x.png" }] }),
+      "/admin/api/status": () => ({
+        status: {
+          current_health: {
+            observation_available: true,
+            services: [{ service_id: "video-studio", configured: true, enabled: true, in_use: true, observation: "down", capability_title: "Video", capability_labels: ["Video"], last_error: null }],
+          },
+          backends: [],
+        },
+      }),
+      "/admin/api/operator/service-registry": () => ({ services: { "video-studio": { id: "video-studio", source: "local", enabled: true, config: {} } } }),
+      "/admin/api/providers": () => [],
+      "/admin/api/activity/requests": () => ({ requests: [] }),
+    });
+    renderHome({ role: "owner", admin: true, name: "Sam Okafor" });
+    const panel = await screen.findByRole("region", { name: "Your gateway" });
+    // One fault is one row, and the whole row is the one link to where it is fixed.
+    const engine = await within(panel).findByRole("link", { name: "Engine can’t take requests right now. Open Engines" });
+    expect(engine.getAttribute("href")).toMatch(/^\/engines\/?$/);
+    const rows = within(panel).getAllByRole("listitem");
+    for (const row of rows) expect(within(row).getAllByRole("link")).toHaveLength(1);
+    expect(panel.textContent).not.toContain("Secret family photo");
+  });
+
+  it("names what is off in one row, and never tells the owner what the owner did", async () => {
+    stubFetch({
+      "/me/api/home": () => homePayload({ user: { id: "sam", name: "Sam Okafor", email: null, role: "owner" } }),
+      "/me/api/media": () => ({ assets: [] }),
+      "/admin/api/status": () => ({ status: { current_health: { observation_available: true, services: [] }, backends: [] } }),
+      "/admin/api/operator/service-registry": () => ({ services: { "local-chat": { id: "local-chat", source: "local", enabled: true, config: {} } } }),
+      "/admin/api/providers": () => [],
+      "/admin/api/activity/requests": () => ({ requests: [] }),
+    });
+    renderHome({ role: "owner", admin: true, name: "Sam Okafor" });
+    const panel = await screen.findByRole("region", { name: "Your gateway" });
+    await waitFor(() => expect(within(panel).getAllByText("Video is off")[0]).toBeVisible());
+    expect(within(panel).getAllByRole("link", { name: /Open Engines/ })).toHaveLength(1);
+    expect(panel.textContent).not.toMatch(/Turned off by the owner|Not set up yet|Everything is working/);
+  });
+
+  it("says what works in one line, with the Status link, when nothing needs the owner", async () => {
+    stubFetch({
+      "/me/api/home": () =>
+        homePayload({
+          user: { id: "sam", name: "Sam Okafor", email: null, role: "owner" },
+          capabilities: [capability("image"), capability("chat")],
+        }),
+      "/me/api/media": () => ({ assets: [] }),
+      "/admin/api/status": () => ({ status: { current_health: { observation_available: true, services: [] }, backends: [] } }),
+      "/admin/api/operator/service-registry": () => ({ services: { "gateway-core": { id: "gateway-core", source: "builtin", enabled: true, config: {} }, "local-chat": { id: "local-chat", source: "local", enabled: true, config: {} } } }),
+      "/admin/api/providers": () => [],
+      "/admin/api/activity/requests": () => ({ requests: [] }),
+    });
+    renderHome({ role: "owner", admin: true, name: "Sam Okafor" });
+    const panel = await screen.findByRole("region", { name: "Your gateway" });
+    // The phone row says it in two words; the wide panel counts what works against what is on.
+    await waitFor(() => expect(within(panel).getByText("Everything is working")).toBeVisible());
+    expect(within(panel).getByText("2 of 2 working")).toBeVisible();
+    expect(within(panel).getAllByRole("link", { name: /Open Status/ })[0].getAttribute("href")).toMatch(/^\/status\/?$/);
+    expect(within(panel).queryAllByRole("link", { name: /Open Engines/ })).toHaveLength(0);
+  });
+});
+
+describe("H10 a member never sees the gateway panel", () => {
+  it("has no Your gateway region", async () => {
+    stubFetch({ "/me/api/home": () => homePayload(), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    await screen.findByRole("button", { name: "Make" });
+    expect(screen.queryByRole("region", { name: "Your gateway" })).toBeNull();
+  });
+});
+
+describe("H11 without an access plan, nothing can run and the member can ask", () => {
+  it("removes the composer, and Ask Sam posts once and confirms in place", async () => {
+    const calls = stubFetch({ "/me/api/home": () => homePayload({ has_access_plan: false }), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    expect(await screen.findByText("You can’t make anything yet.")).toBeVisible();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ask Sam" }));
+    expect(await screen.findByText("Sent to Sam.")).toBeVisible();
+    expect(calls.filter((call) => call.path === "/me/api/access-request" && call.method === "POST")).toHaveLength(1);
+  });
+});
+
+describe("H15 copy does not repeat itself", () => {
+  it("names each section once and offers Connect an app beside the apps", async () => {
+    stubFetch({ "/me/api/home": () => homePayload(), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    expect(await screen.findByRole("heading", { name: "What you can make here" })).toBeVisible();
+    expect(screen.getAllByRole("heading", { name: "What you can make here" })).toHaveLength(1);
+    expect(screen.getByRole("link", { name: /Connect an app/ }).getAttribute("href")).toMatch(/^\/connect\/?$/);
+  });
+});
+
+describe("H13 no model or engine names in the Home code", () => {
+  it("keeps model and engine product names out of the Home source", () => {
+    const dir = join(__dirname);
+    const files = readdirSync(dir).filter((name) => /\.(ts|tsx)$/.test(name) && !/\.spec\./.test(name));
+    const pattern = /\b(krea|ltx|qwen|gpt-image|sora|llama|vllm|ollama|whisper|minimax|kokoro|flux)\b/i;
+    for (const name of files) expect(readFileSync(join(dir, name), "utf8")).not.toMatch(pattern);
+  });
+});
+
+describe("H8 Enter makes", () => {
+  const imageRows = () => homePayload({ capabilities: [capability("image", { use_name: "krea-2-turbo", input_modalities: ["text"], output_modalities: ["image"] })] });
+
+  it("Enter makes; Shift+Enter starts a new line; Ctrl+Enter still makes", async () => {
+    stubFetch({ "/me/api/home": imageRows, "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    const box = await promptBox();
+    fireEvent.change(box, { target: { value: "A red fox in snow" } });
+    fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
+    expect(push).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenLastCalledWith("/try/?capability=image&model=krea-2-turbo");
+    fireEvent.keyDown(box, { key: "Enter", ctrlKey: true });
+    expect(push).toHaveBeenCalledTimes(2);
+  });
+
+  it("does nothing on Enter while an IME is composing, or on the Enter that confirms its candidate (Safari)", async () => {
+    stubFetch({ "/me/api/home": imageRows, "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    const box = await promptBox();
+    fireEvent.change(box, { target: { value: "A red fox in snow" } });
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+    expect(push).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: "Enter", isComposing: false, keyCode: 229 });
+    expect(push).not.toHaveBeenCalled();
+  });
+});
+
+describe("the composer follows the chosen capability's declared inputs", () => {
+  const picture = () => new File([new Uint8Array(2048)], "fox.png", { type: "image/png" });
+  const textRow = capability("image", { use_name: "krea-2-turbo", input_modalities: ["text"], output_modalities: ["image"] });
+  // Image only: the data declares no text input, so no text box is offered.
+  const meshRow = capability("mesh", {
+    capability_title: "3D models",
+    use_name: "mesh.generate.trellis-2",
+    title: "TRELLIS.2",
+    input_modalities: ["image"],
+    required_input_modalities: ["image"],
+    output_modalities: ["mesh"],
+  });
+  // Image plus text, both required (a picture to change and words to change it by).
+  const editRow = capability("edit", {
+    capability_title: "Edit",
+    use_name: "edit-model",
+    input_modalities: ["text", "image"],
+    required_input_modalities: ["text", "image"],
+    output_modalities: ["image"],
+  });
+  // Image required, text optional.
+  const noteRow = capability("restyle", {
+    capability_title: "Restyle",
+    use_name: "restyle-model",
+    input_modalities: ["text", "image"],
+    required_input_modalities: ["image"],
+    output_modalities: ["image"],
+  });
+  const audioRow = capability("transcribe", {
+    capability_title: "Transcription",
+    use_name: "ear-model",
+    input_modalities: ["audio"],
+    required_input_modalities: ["audio"],
+    output_modalities: ["text"],
+    action_label: "Transcribe",
+    recordable_input_modalities: ["audio"],
+  });
+  // An audio input that does not declare it can be recorded (a sample to analyse, say).
+  const sampleRow = capability("analyse", {
+    capability_title: "Analyse",
+    use_name: "sample-model",
+    input_modalities: ["audio"],
+    required_input_modalities: ["audio"],
+    output_modalities: ["text"],
+  });
+  // A kind that no code names: the data alone gives it a file input (no accept filter) and no text box.
+  const smellRow = capability("smell", {
+    capability_title: "Smell",
+    use_name: "nose-model",
+    input_modalities: ["chemical"],
+    required_input_modalities: ["chemical"],
+    output_modalities: ["smell"],
+  });
+
+  async function chooseKind(rows: unknown[], label: string) {
+    stubFetch({ "/me/api/home": () => homePayload({ capabilities: rows }), "/me/api/media": () => ({ assets: [] }) });
+    renderHome();
+    const group = await screen.findByRole("group", { name: "What to make" });
+    fireEvent.click(within(group).getByRole("button", { name: label }));
+  }
+  const fileInput = (name: RegExp) => screen.getByLabelText(name) as HTMLInputElement;
+  const makeButton = () => screen.getByRole("button", { name: "Make" });
+
+  it("text only: a text box and no file input", async () => {
+    await chooseKind([textRow, meshRow], "Images");
+    expect(await screen.findByRole("textbox", { name: "Describe the picture you want" })).toBeVisible();
+    expect(document.querySelector('[data-slot="home-media-input"]')).toBeNull();
+  });
+
+  it("image only: a picture input with the image accept filter, no text box, and Make waits for a picture", async () => {
+    await chooseKind([textRow, meshRow], "3D models");
+    const input = fileInput(/Choose a picture/);
+    expect(input.getAttribute("accept")).toBe("image/*");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByText("3D models start from a picture.")).toBeNull();
+    expect(makeButton().getAttribute("aria-disabled")).toBe("true");
+    // It looks unavailable, and says what it waits for beside it and on hover.
+    expect(makeButton().className).toContain("text-muted-foreground");
+    expect(makeButton().className).not.toContain("bg-make-rest");
+    expect(screen.getByText("Add a picture to start")).toBeVisible();
+    expect(makeButton().getAttribute("title")).toBe("Add a picture to start");
+    fireEvent.click(makeButton());
+    expect(push).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { files: [picture()] } });
+    expect(await screen.findByText("fox.png")).toBeVisible();
+    expect(screen.queryByText("Add a picture to start")).toBeNull();
+    expect(makeButton().getAttribute("title")).toBeNull();
+    expect(makeButton().getAttribute("aria-disabled")).toBe("false");
+    fireEvent.click(makeButton());
+    expect(push).toHaveBeenLastCalledWith("/try/?capability=mesh&model=mesh.generate.trellis-2");
+    const handoff = takeHomeHandoff("mesh");
+    expect(handoff?.files?.map((file) => file.name)).toEqual(["fox.png"]);
+  });
+
+  it("image plus text, both required: Make waits for the picture and the words", async () => {
+    await chooseKind([textRow, editRow], "Edit");
+    expect(fileInput(/Choose a picture/)).toBeTruthy();
+    const box = await screen.findByRole("textbox", { name: "Describe what you want" });
+    fireEvent.change(box, { target: { value: "make it night" } });
+    expect(makeButton().getAttribute("aria-disabled")).toBe("true");
+    fireEvent.change(fileInput(/Choose a picture/), { target: { files: [picture()] } });
+    await screen.findByText("fox.png");
+    expect(makeButton().getAttribute("aria-disabled")).toBe("false");
+    fireEvent.click(makeButton());
+    expect(push).toHaveBeenCalledTimes(1);
+    const handoff = takeHomeHandoff("edit");
+    expect(handoff).toMatchObject({ prompt: "make it night" });
+    expect(handoff?.files).toHaveLength(1);
+  });
+
+  it("image required, text optional: the text box says so, and a picture alone is enough", async () => {
+    await chooseKind([textRow, noteRow], "Restyle");
+    expect(await screen.findByRole("textbox", { name: "Add a note (optional)" })).toBeVisible();
+    fireEvent.change(fileInput(/Choose a picture/), { target: { files: [picture()] } });
+    await screen.findByText("fox.png");
+    expect(makeButton().getAttribute("aria-disabled")).toBe("false");
+  });
+
+  it("refuses a file of the wrong type and says what is wanted", async () => {
+    await chooseKind([textRow, meshRow], "3D models");
+    fireEvent.change(fileInput(/Choose a picture/), { target: { files: [new File(["x"], "notes.txt", { type: "text/plain" })] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a picture");
+    expect(makeButton().getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("takes a dropped picture and a pasted one", async () => {
+    await chooseKind([textRow, meshRow], "3D models");
+    const zone = document.querySelector('[data-slot="home-media-input"]') as HTMLElement;
+    fireEvent.drop(zone, { dataTransfer: { files: [picture()] } });
+    expect(await screen.findByText("fox.png")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Remove fox.png" }));
+    expect(screen.queryByText("fox.png")).toBeNull();
+    const composer = document.querySelector('[data-slot="composer"]') as HTMLElement;
+    fireEvent.paste(composer, { clipboardData: { files: [picture()] } });
+    expect(await screen.findByText("fox.png")).toBeVisible();
+  });
+
+  it("audio: a recording input, and a hand-off to record in Try that carries no file", async () => {
+    await chooseKind([textRow, audioRow], "Transcription");
+    expect(fileInput(/Choose a recording/).getAttribute("accept")).toBe("audio/*");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Or record in Try" }));
+    expect(push).toHaveBeenLastCalledWith("/try/?capability=transcribe&model=ear-model");
+    expect(takeHomeHandoff("transcribe")?.files).toBeUndefined();
+  });
+
+  it("the button's word comes from the capability's data", async () => {
+    await chooseKind([textRow, audioRow], "Transcription");
+    expect(screen.getByRole("button", { name: "Transcribe" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Make" })).toBeNull();
+  });
+
+  it("offers recording in Try only when the input declares it can be recorded", async () => {
+    await chooseKind([textRow, sampleRow], "Analyse");
+    expect(fileInput(/Choose a recording/).getAttribute("accept")).toBe("audio/*");
+    expect(screen.queryByRole("button", { name: "Or record in Try" })).toBeNull();
+  });
+
+  it("a picture beside required words is a chip above the words with an attach button, not a large drop zone", async () => {
+    await chooseKind([textRow, editRow], "Edit");
+    expect(document.querySelector('[data-slot="home-media-input"]')).toBeNull();
+    expect(document.querySelector('[data-slot="home-picked-file"]')).toBeNull();
+    fireEvent.change(fileInput(/Choose a picture/), { target: { files: [picture()] } });
+    const chip = await waitFor(() => {
+      const found = document.querySelector('[data-slot="home-picked-file"]') as HTMLElement;
+      expect(found).not.toBeNull();
+      return found;
+    });
+    expect(chip).toHaveTextContent("fox.png");
+    const box = screen.getByRole("textbox", { name: "Describe what you want" });
+    // The chip sits above the words.
+    expect(chip.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Change picture" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Remove fox.png" }));
+    expect(document.querySelector('[data-slot="home-picked-file"]')).toBeNull();
+  });
+
+  it("refuses a file of the wrong kind from the attach button", async () => {
+    await chooseKind([textRow, editRow], "Edit");
+    fireEvent.change(fileInput(/Choose a picture/), { target: { files: [new File(["x"], "notes.txt", { type: "text/plain" })] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("That is not a picture");
+  });
+
+  it("a kind no code knows still gets a file input from its declared modality alone", async () => {
+    await chooseKind([textRow, smellRow], "Smell");
+    const input = fileInput(/Choose a chemical/);
+    expect(input.getAttribute("accept")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByText("Add a chemical to start")).toBeVisible();
+  });
+
+  it("offers Make a picture of this first only when the capability needs a picture and words are typed", async () => {
+    await chooseKind([textRow, editRow], "Edit");
+    expect(screen.queryByRole("button", { name: "Make a picture of this first" })).toBeNull();
+    fireEvent.change(await screen.findByRole("textbox", { name: "Describe what you want" }), { target: { value: "a cute octopus eating ice cream" } });
+    fireEvent.click(screen.getByRole("button", { name: "Make a picture of this first" }));
+    expect(push).toHaveBeenLastCalledWith("/try/?capability=image&model=krea-2-turbo");
+    const stored = JSON.parse(window.sessionStorage.getItem("azizam.home.handoff") ?? "{}");
+    expect(stored).toMatchObject({ capability: "image", model: "krea-2-turbo", prompt: "a cute octopus eating ice cream" });
+  });
+
+  it("does not offer it once a picture is chosen", async () => {
+    await chooseKind([textRow, editRow], "Edit");
+    fireEvent.change(await screen.findByRole("textbox", { name: "Describe what you want" }), { target: { value: "night" } });
+    fireEvent.change(fileInput(/Choose a picture/), { target: { files: [picture()] } });
+    await screen.findByText("fox.png");
+    expect(screen.queryByRole("button", { name: "Make a picture of this first" })).toBeNull();
+  });
+});

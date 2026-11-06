@@ -1,0 +1,179 @@
+"""The status fallback keeps a service's row for 12 seconds, and readers that find a service cold share one probe.
+
+Capability and overview reads ask about the same few services. Before a read probes a service, it looks for a row that
+was probed less than 12 seconds ago, or for a probe already in flight for that service. The status clock is faked, so
+no test waits for the TTL.
+"""
+import asyncio
+
+import pytest
+
+import proxy
+import status_endpoint
+
+TTL_S = 12.0
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    fake = {"now": 1_000.0}
+    monkeypatch.setattr(status_endpoint, "_now", lambda: fake["now"])
+    monkeypatch.setattr(proxy.service_registry, "runtime_backends", lambda _records: {"chat": {"key": "chat"}})
+    return fake
+
+
+@pytest.fixture
+def grid(monkeypatch):
+    """A grid probe that answers every service it is asked about as up, and records each probe."""
+    asked: list[list[str]] = []
+
+    async def probe(config):
+        services = sorted(config["backends"])
+        asked.append(services)
+        return [{"service_id": key, "key": key, "live_status": "up", "status": "up", "source": "http"}
+                for key in services]
+
+    monkeypatch.setattr(status_endpoint, "_backend_grid", probe)
+    return asked
+
+
+def read():
+    return proxy._status_payload_with_service_rows({"backends": []}, {}, ["chat"])
+
+
+def service_ids(payload):
+    return [row["service_id"] for row in payload["backends"]]
+
+
+@pytest.mark.usefixtures("clock")
+def test_two_immediate_reads_make_one_probe(grid):
+    async def scenario():
+        return await read(), await read()
+
+    first, second = asyncio.run(asyncio.wait_for(scenario(), timeout=30))
+
+    assert grid == [["chat"]], "the second read should use the row the first read probed"
+    assert service_ids(first) == service_ids(second) == ["chat"]
+
+
+def test_a_read_at_exactly_the_ttl_probes_again(clock, grid):
+    async def scenario():
+        start = clock["now"]
+        await read()
+        clock["now"] = start + TTL_S - 0.001
+        await read()
+        clock["now"] = start + TTL_S
+        await read()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=30))
+
+    assert grid == [["chat"], ["chat"]], "a read 11.999 s after the probe is cached; a read at 12 s probes again"
+
+
+@pytest.mark.usefixtures("clock")
+def test_concurrent_cold_readers_share_one_probe(monkeypatch):
+    asked: list[list[str]] = []
+
+    async def scenario():
+        entered = asyncio.Event()
+        gate = asyncio.Event()
+
+        async def probe(config):
+            # The probe holds until every reader has arrived, so each one finds the service cold or in flight.
+            asked.append(sorted(config["backends"]))
+            entered.set()
+            await gate.wait()
+            return [{"service_id": "chat", "key": "chat", "live_status": "up", "status": "up", "source": "http"}]
+
+        monkeypatch.setattr(status_endpoint, "_backend_grid", probe)
+        readers = asyncio.gather(*(read() for _ in range(5)))
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        gate.set()
+        return await readers
+
+    results = asyncio.run(asyncio.wait_for(scenario(), timeout=30))
+
+    assert asked == [["chat"]], "five cold readers at once should make one probe"
+    assert all(service_ids(result) == ["chat"] for result in results)
+
+
+def test_a_failing_service_in_a_shared_probe_does_not_fail_a_reader_of_another_service(monkeypatch):
+    """Reader 1 asks for A and B, reader 2 for B only, at once. The batch probe fails because of A. Reader 2 still
+    gets B's row, and reader 1 gets B's row plus an unknown row for A, instead of an exception."""
+    proxy._SERVICE_ROW_CACHE.clear()
+    proxy._SERVICE_ROW_PROBES.clear()
+
+    async def scenario():
+        gate = asyncio.Event()
+
+        async def probe(config):
+            services = sorted(config["backends"])
+            await gate.wait()
+            if "a" in services:
+                raise RuntimeError("engine a broke")
+            return [{"service_id": key, "key": key, "status": "up", "source": "http"} for key in services]
+
+        monkeypatch.setattr(status_endpoint, "_backend_grid", probe)
+        both = asyncio.ensure_future(proxy._service_rows({"a": {"key": "a"}, "b": {"key": "b"}}))
+        await asyncio.sleep(0)
+        only_b = asyncio.ensure_future(proxy._service_rows({"b": {"key": "b"}}))
+        await asyncio.sleep(0)
+        gate.set()
+        return await both, await only_b
+
+    both, only_b = asyncio.run(asyncio.wait_for(scenario(), timeout=30))
+
+    assert [(row["key"], row["status"]) for row in only_b] == [("b", "up")]
+    assert sorted((row["key"], row["status"]) for row in both) == [("a", "unknown"), ("b", "up")]
+    assert next(row for row in both if row["key"] == "a")["last_error"] == "RuntimeError"
+
+
+def test_a_finished_fallback_probe_leaves_a_newer_probe_registered_for_its_service(monkeypatch):
+    """Reader 1's shared probe fails, and the probe it makes for "chat" on its own fails too. While that fallback probe
+    is in flight, reader 2 finds "chat" cold and starts a newer probe. When the fallback finishes, the newer probe must
+    stay registered, so reader 3 shares it and does not start a third probe."""
+    proxy._SERVICE_ROW_CACHE.clear()
+    proxy._SERVICE_ROW_PROBES.clear()
+    calls: list[list[str]] = []
+
+    async def scenario():
+        fallback_started = asyncio.Event()
+        newer_started = asyncio.Event()
+        fallback_gate = asyncio.Event()
+        newer_gate = asyncio.Event()
+
+        async def probe(config):
+            calls.append(sorted(config["backends"]))
+            if len(calls) == 1:
+                raise RuntimeError("shared probe broke")
+            if len(calls) == 2:
+                fallback_started.set()
+                await fallback_gate.wait()
+                raise RuntimeError("fallback probe broke")
+            if len(calls) == 3:
+                newer_started.set()
+                await newer_gate.wait()
+            return [{"service_id": "chat", "key": "chat", "live_status": "up", "status": "up", "source": "http"}]
+
+        monkeypatch.setattr(status_endpoint, "_backend_grid", probe)
+        services = {"chat": {"key": "chat"}}
+        reader_1 = asyncio.ensure_future(proxy._service_rows(services))
+        await asyncio.wait_for(fallback_started.wait(), timeout=5)
+        reader_2 = asyncio.ensure_future(proxy._service_rows(services))
+        await asyncio.wait_for(newer_started.wait(), timeout=5)
+        newer = proxy._SERVICE_ROW_PROBES["chat"]
+        fallback_gate.set()
+        fallback_rows = await reader_1
+        newer_still_registered = proxy._SERVICE_ROW_PROBES.get("chat") is newer
+        reader_3 = asyncio.ensure_future(proxy._service_rows(services))
+        await asyncio.sleep(0)
+        newer_gate.set()
+        return fallback_rows, newer_still_registered, await reader_2, await reader_3
+
+    fallback_rows, newer_still_registered, newer_rows, third_rows = asyncio.run(
+        asyncio.wait_for(scenario(), timeout=30))
+
+    assert [(row["key"], row["status"]) for row in fallback_rows] == [("chat", "unknown")]
+    assert newer_still_registered, "the finished fallback probe must not unregister the newer probe for its service"
+    assert [row["status"] for row in newer_rows + third_rows] == ["up", "up"]
+    assert len(calls) == 3, "reader 3 should share reader 2's probe, not start a third one"

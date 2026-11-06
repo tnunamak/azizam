@@ -1,0 +1,18 @@
+{
+  "protocol": "litellm-admin",
+  "name": "key-generate",
+  "description": "One /key/generate request with the master key and the given spec; the sidecar mints sk-minted-secret.",
+  "provenance": {"source": "hand-written", "reference": "https://docs.litellm.ai/docs/proxy/virtual_keys (POST /key/generate: key_alias, max_budget, models)"},
+  "exchanges": [
+    {
+      "id": "generate",
+      "match": {
+        "method": "POST",
+        "path": "/key/generate",
+        "headers": {"x-litellm-key": "Bearer {{master_key}}", "content-type": "application/json"},
+        "json": "{{spec}}"
+      },
+      "response": {"status": 200, "json": {"key": "sk-minted-secret", "key_name": "sk-...cret", "expires": null}}
+    }
+  ]
+}

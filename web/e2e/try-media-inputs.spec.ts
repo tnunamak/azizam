@@ -1,0 +1,99 @@
+import { expect, test } from "./fixtures/isolation";
+import type { Locator } from "@playwright/test";
+import { MESH_CAPABILITY } from "../src/app/try/mesh-mode";
+
+/**
+ * The text a person reads. An owner also sees each input's technical detail
+ * (data-slot="input-detail"), which is for owners, so it is left out here.
+ */
+async function plainText(locator: Locator) {
+  return locator.evaluate((node) => {
+    const detail = [...node.querySelectorAll<HTMLElement>('[data-slot="input-detail"]')];
+    const shown = detail.map((element) => element.style.display);
+    detail.forEach((element) => (element.style.display = "none"));
+    const text = (node as HTMLElement).innerText;
+    detail.forEach((element, index) => (element.style.display = shown[index]));
+    return text;
+  });
+}
+
+
+// Every workflow manifest that takes a picture or video, through the
+// gateway's real catalog (no mocks): each media input gets exactly one picker
+// on Try, and the form shows no made-up file path and no raw field name.
+// The 2026-10-09 sweep found Flux2 Klein 4B Edit's pictures rendered as text
+// boxes plus a second upload control reading "./source-image.bin".
+
+type CatalogInput = {
+  name: string;
+  type: string;
+  asset?: boolean;
+  media_type?: string;
+  ignored?: boolean;
+  accepted?: boolean;
+};
+type CatalogWorkflow = {
+  id: string;
+  title: string;
+  capability?: string;
+  inputs: CatalogInput[];
+};
+
+const isMedia = (input: CatalogInput) =>
+  (input.asset === true || input.type === "asset") &&
+  !input.ignored &&
+  input.accepted !== false;
+
+test("every picture and video input on Try is one picker, in plain words", async ({
+  page,
+}) => {
+  const response = await page.request.get("/me/api/workflows");
+  expect(response.ok()).toBe(true);
+  const { workflows } = (await response.json()) as {
+    workflows: CatalogWorkflow[];
+  };
+  // The Workflow tab lists every workflow except the mesh capability, which
+  // has its own Photo to 3D tab (page.tsx: `capability !== MESH_CAPABILITY`).
+  // The same rule picks the cases here, so the mesh picture input is covered by
+  // try-mesh.spec.ts instead.
+  const withMedia = workflows.filter(
+    (workflow) =>
+      workflow.capability !== MESH_CAPABILITY && workflow.inputs.some(isMedia),
+  );
+  // image.edit (5 Qwen/Flux edit and inpaint manifests, SeedVR2, Identity),
+  // face likeness, image-to-video and the video edits.
+  expect(withMedia.length).toBeGreaterThanOrEqual(13);
+
+  for (const workflow of withMedia) {
+    await test.step(workflow.id, async () => {
+      await page.goto(`/try/?workflow=${encodeURIComponent(workflow.id)}`);
+      await expect(
+        page.getByRole("combobox", { name: "Model", exact: true }),
+      ).toContainText(workflow.title);
+      const form = page.getByRole("tabpanel", { name: "Workflow" });
+      const media = workflow.inputs.filter(isMedia);
+      // The form fills in after the model list loads. Read it only once it
+      // shows a picker or the More options fold that holds the optional ones.
+      await expect(
+        form
+          .getByRole("button", { name: "Choose a file" })
+          .or(form.locator("summary").filter({ hasText: "More options" }))
+          .first(),
+      ).toBeVisible();
+      // Optional inputs wait under More options; open it to see them all.
+      const more = form.locator("summary").filter({ hasText: "More options" });
+      if (await more.count()) await more.click();
+      // One picker per media input, and no other file control.
+      await expect(
+        form.getByRole("button", { name: "Choose a file" }),
+      ).toHaveCount(media.length);
+      const text = (await plainText(form)).replace(/\s+/g, " ");
+      expect(text, workflow.id).not.toMatch(/\.\/[\w-]+\.\w+|\.bin\b/);
+      // A raw field name ("source_image") is never the label.
+      for (const input of media.filter((item) => item.name.includes("_"))) {
+        expect(text, `${workflow.id} ${input.name}`).not.toContain(input.name);
+      }
+      expect(text).not.toMatch(/Managed by the workflow|upload control below/);
+    });
+  }
+});

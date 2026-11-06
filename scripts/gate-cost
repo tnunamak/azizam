@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Median and worst cost of each gate step over the newest finished runs.
+
+Usage: scripts/gate-cost [-n N] [--receipts DIR]
+
+DIR defaults to $AZIZAM_CI_RECEIPTS or ~/.tmp/azizam-ci-receipts. A run counts once its
+run.tsv has a finished line; the N newest by started time are read. Runs from before the
+cost columns have whole seconds only. crit counts the runs whose cost.json puts the step
+on the critical path.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import statistics
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "ci"))
+import gate_cost  # noqa: E402
+
+
+def finished_runs(root: Path) -> list[tuple[str, Path]]:
+    runs = []
+    for run in root.iterdir():
+        if not (run / "run.tsv").is_file() or not (run / "steps.tsv").is_file():
+            continue
+        fields = dict(line.split("\t", 1) for line in (run / "run.tsv").read_text().splitlines() if "\t" in line)
+        if "finished" in fields:
+            runs.append((fields.get("started", ""), run))
+    return sorted(runs, reverse=True)
+
+
+def cell(values: list[float], fmt: str, worst: bool = False) -> str:
+    if not values:
+        return "-"
+    return format(max(values) if worst else statistics.median(values), fmt)
+
+
+def main() -> int:
+    default_root = os.environ.get("AZIZAM_CI_RECEIPTS") or str(Path.home() / ".tmp" / "azizam-ci-receipts")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-n", "--runs", type=int, default=10, help="newest finished runs to read (default 10)")
+    parser.add_argument("--receipts", type=Path, default=Path(default_root))
+    args = parser.parse_args()
+    if not args.receipts.is_dir():
+        print(f"no receipts directory: {args.receipts}", file=sys.stderr)
+        return 1
+    runs = finished_runs(args.receipts)[: args.runs]
+    if not runs:
+        print(f"no finished runs in {args.receipts}", file=sys.stderr)
+        return 1
+
+    walls: dict[str, list[float]] = defaultdict(list)
+    cpus: dict[str, list[float]] = defaultdict(list)
+    peaks_mb: dict[str, list[float]] = defaultdict(list)
+    seen: dict[str, int] = defaultdict(int)
+    on_path: dict[str, int] = defaultdict(int)
+    elapsed: list[float] = []
+    for _, run in runs:
+        for name, step in gate_cost.read_steps(run / "steps.tsv").items():
+            seen[name] += 1
+            if step["wall_s"] is not None:
+                walls[name].append(step["wall_s"])
+            if step["cpu_s"] is not None:
+                cpus[name].append(step["cpu_s"])
+            if step["max_rss_kb"] is not None:
+                peaks_mb[name].append(step["max_rss_kb"] / 1024)
+        if (run / "cost.json").is_file():
+            for name in json.loads((run / "cost.json").read_text())["critical_path"]["steps"]:
+                on_path[name] += 1
+        seconds = gate_cost.run_elapsed(run / "run.tsv")
+        if seconds is not None:
+            elapsed.append(seconds)
+
+    print(f"{len(runs)} finished run(s): {runs[-1][0]} .. {runs[0][0]}")
+    if elapsed:
+        print(f"elapsed: median {statistics.median(elapsed):.0f} s, worst {max(elapsed):.0f} s")
+    print(f"{'step':<22} {'runs':>4} {'wall med':>9} {'wall worst':>10} {'cpu med':>8} {'cpu worst':>9} "
+          f"{'peak med':>9} {'peak worst':>10} {'crit':>4}")
+    for name in sorted(seen, key=lambda item: (-(statistics.median(walls[item]) if walls[item] else 0.0), item)):
+        print(f"{name:<22} {seen[name]:>4} {cell(walls[name], '.2f'):>9} {cell(walls[name], '.2f', True):>10} "
+              f"{cell(cpus[name], '.2f'):>8} {cell(cpus[name], '.2f', True):>9} {cell(peaks_mb[name], '.1f'):>9} "
+              f"{cell(peaks_mb[name], '.1f', True):>10} {on_path[name]:>4}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

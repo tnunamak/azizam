@@ -1,0 +1,19 @@
+id: mistral
+display_name: Mistral AI
+logo_key: mistral
+base_url: https://api.mistral.ai/v1
+protocol: openai-chat
+litellm_provider: mistral
+auth:
+  header: Authorization
+  prefix: Bearer
+model_listing:
+  method: GET
+  path: /models
+  items_path: data
+  id_path: id
+docs_url: https://docs.mistral.ai
+key_url: https://console.mistral.ai/api-keys
+billing_dimensions:
+  - prompt_tokens
+  - completion_tokens

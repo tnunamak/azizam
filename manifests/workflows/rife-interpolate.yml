@@ -1,0 +1,46 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: video.edit.rife-interpolate
+intent: video.edit
+display_name: RIFE 2x Frame Interpolation
+purpose: Double a video's frame rate
+description: Make a video play more smoothly by adding frames. The length and sound stay the same.
+source: local
+trusted: true
+typical_seconds: 4
+inputs:
+  source_video:
+    label: a video to smooth
+    help: The video to make smoother.
+    type: asset
+    media_type: video/*
+    required: true
+  multiplier:
+    label: frame multiplier
+    help: 2 doubles the frames. 3 and 4 are less tested.
+    type: integer
+    enum: [2, 3, 4]
+    default: 2
+    description: Frame-count/fps multiplier. Only 2x is verified; higher values are supported by the RIFE VFI node but untested here.
+outputs:
+  video:
+    media_type: video/mp4
+bindings:
+  comfyui:
+    workflow: workflows/videos/rife-interpolate.json
+    map:
+      source_video:
+        - node: "1"
+          input: file
+      multiplier:
+        - node: "3"
+          input: multiplier
+        - node: "4"
+          input: b
+requires:
+  custom_nodes:
+    - "RIFE VFI"
+  models:
+    - role: other
+      path: custom_nodes/ComfyUI-Frame-Interpolation/ckpts/rife/rife49.pth

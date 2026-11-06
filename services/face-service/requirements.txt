@@ -1,0 +1,9 @@
+# uv venv ~/applications/face-service/venv --python 3.12 && uv pip install -r requirements.txt
+insightface
+onnxruntime
+opencv-python-headless
+numpy
+pillow
+fastapi
+uvicorn
+python-multipart

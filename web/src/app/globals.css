@@ -1,0 +1,214 @@
+@import "./fonts.css";
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "../styles/tokens.css";
+@import "../styles/legacy-components.css";
+@custom-variant dark (&:is(.dark *));
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-background text-foreground font-sans text-base antialiased;
+    font-feature-settings: "kern";
+    text-rendering: optimizeLegibility;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply tracking-tight text-balance;
+  }
+  button,
+  a,
+  input,
+  textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* One cursor policy for native and ARIA controls. Keep it in base, with
+     priority over utility defaults from shared primitives. This is visual
+     feedback only; existing disabled activation guards remain unchanged. */
+  :is(
+    button,
+    [role="button"],
+    a[href],
+    summary,
+    label[for],
+    [role="tab"],
+    [role="menuitem"],
+    select,
+    input[type="checkbox"],
+    input[type="radio"]
+  ) {
+    cursor: pointer !important;
+  }
+  :is(
+    button,
+    [role="button"],
+    a[href],
+    summary,
+    label[for],
+    [role="tab"],
+    [role="menuitem"],
+    select,
+    input[type="checkbox"],
+    input[type="radio"]
+  ):is(:disabled, [disabled], [aria-disabled="true"], [data-disabled]) {
+    cursor: not-allowed !important;
+  }
+  button,
+  input,
+  textarea {
+    caret-color: var(--ring);
+  }
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-foreground);
+  }
+  /* One focus style everywhere: a 2 px ring with a 2 px gap. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  a {
+    text-underline-offset: 4px;
+  }
+  /* One disclosure marker everywhere (D1.5: the browser's triangle read as
+     an unstyled default): a chevron in the text colour that turns when
+     the details open. A summary with "list-none" draws its own. */
+  summary {
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary:not(.list-none)::before {
+    content: "";
+    display: inline-block;
+    flex-shrink: 0;
+    width: 1em;
+    height: 1em;
+    @apply mr-1;
+    vertical-align: -0.15em;
+    background-color: currentColor;
+    opacity: 0.75;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    transition: rotate var(--motion-fast) ease-out;
+  }
+  details[open] > summary:not(.list-none)::before {
+    rotate: 90deg;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--input) transparent;
+  }
+}
+
+@layer components {
+  /* Shell: the deep-water chrome. See docs/design/DESIGN.md, "Shell". */
+  .shell-sidebar {
+    @apply bg-chrome text-chrome-foreground border-chrome-border fixed inset-y-0 left-0 z-30 hidden w-(--rail-width) flex-col overflow-y-auto border-r px-3 py-4 sm:flex lg:w-(--sidebar-width) lg:px-3;
+  }
+  .shell-sidebar :focus-visible {
+    outline-color: var(--chrome-accent);
+  }
+  .shell-nav-link {
+    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground rounded-control flex min-h-8 max-sm:min-h-11 items-center gap-2.5 px-2.5 text-sm transition-colors duration-(--motion-fast);
+  }
+  .shell-nav-link[aria-current="page"] {
+    @apply bg-chrome-raised text-chrome-foreground font-medium;
+  }
+  .shell-nav-link[aria-current="page"] svg {
+    @apply text-chrome-accent;
+  }
+  .shell-nav-link svg {
+    @apply size-4 shrink-0;
+  }
+  .shell-nav-label {
+    @apply hidden lg:inline;
+  }
+  .shell-group-label {
+    @apply text-subtle-foreground mb-1 hidden px-2.5 text-xs lg:block;
+  }
+  /* The owner's group: the same rows and type as the household's places,
+     set apart by space and its small label only (D1.6: two nav type sizes
+     read as incoherent). */
+  .shell-group-admin {
+    @apply lg:pt-3;
+  }
+  .shell-nav-footer {
+    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground rounded-control flex min-h-8 min-w-8 max-sm:min-h-11 max-sm:min-w-11 items-center gap-2.5 px-2.5 text-sm;
+  }
+  /* Page padding 32 beside the sidebar, 24 at 640–1023 and 20 on a phone;
+     the title 32 from the top (24 on a phone). Values in tokens.css. */
+  .shell-content {
+    @apply mx-auto w-full max-w-(--content-max) px-(--page-pad) pt-(--page-top) pb-10;
+  }
+  /* The reading column: settings, detail pages, Status and the Try form. */
+  .page-read {
+    @apply w-full max-w-(--content-read);
+  }
+  /* Sections 32 apart, always. */
+  .page-stack > * + * {
+    margin-top: var(--space-section);
+  }
+  .sheet-nav .shell-nav-link {
+    @apply text-muted-foreground hover:bg-muted hover:text-foreground min-h-8 max-sm:min-h-11;
+  }
+  .sheet-nav .shell-nav-link[aria-current="page"] {
+    @apply bg-accent text-accent-foreground;
+  }
+  .sheet-nav .shell-nav-link[aria-current="page"] svg {
+    @apply text-accent-foreground;
+  }
+  .sheet-nav .shell-group-label {
+    @apply text-muted-foreground block;
+  }
+  .mobile-tab {
+    @apply text-muted-foreground flex min-h-14 flex-col items-center justify-center gap-1 text-xs font-medium;
+  }
+  .mobile-tab[aria-current="page"] {
+    @apply text-foreground;
+  }
+  .mobile-tab[aria-current="page"] svg {
+    @apply text-link;
+  }
+  .mobile-tab svg {
+    @apply size-5.5;
+  }
+  .placeholder-content {
+    @apply border-border mt-12 flex min-h-80 items-center justify-center border-t;
+  }
+  /* Tabular figures for any number a person compares. */
+  .figures {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Cancel motion rather than accelerating infinite animations. Shorthands
+     also reset delays; include pseudo-elements and portal-mounted UI. */
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Icons at 16–20 px read heavy at lucide's default 2 px stroke next to 13–14 px
+   text; 1.75 matches the weight of the benchmark icon sets (Apple, Midjourney). */
+svg.lucide {
+  stroke-width: 1.75;
+}
+
+/* A page entering the back/forward cache, or opened during a pending sign-out, shows nothing until
+   the session check has run (session-end.ts, CHECK_CLASS). */
+html.session-check body {
+  visibility: hidden;
+}

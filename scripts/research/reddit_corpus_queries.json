@@ -1,0 +1,80 @@
+[
+  {
+    "name": "selfhosted-operator",
+    "subreddits": ["selfhosted", "homelab"],
+    "queries": [
+      "OpenAI compatible self hosted",
+      "local AI gateway",
+      "AI reverse proxy",
+      "Open WebUI",
+      "LiteLLM self hosted",
+      "LibreChat self hosted",
+      "Ollama API",
+      "give friends access API key",
+      "OIDC API keys"
+    ]
+  },
+  {
+    "name": "localllama-compat",
+    "subreddits": ["LocalLLaMA", "ollama"],
+    "queries": [
+      "OpenAI compatible API local LLM",
+      "Ollama OpenAI API",
+      "llama.cpp server OpenAI compatible",
+      "TabbyAPI OpenAI compatible",
+      "vLLM OpenAI compatible",
+      "LiteLLM local LLM",
+      "tool calling local LLM",
+      "Anthropic API local LLM",
+      "embeddings local LLM"
+    ]
+  },
+  {
+    "name": "stablediffusion-comfy",
+    "subreddits": ["StableDiffusion", "comfyui"],
+    "queries": [
+      "ComfyUI API workflow",
+      "ComfyUI remote API",
+      "ComfyUI queue API",
+      "ComfyUI workflow JSON",
+      "ComfyUI custom nodes API",
+      "ControlNet API ComfyUI",
+      "IP-Adapter API ComfyUI",
+      "inpainting mask denoise ComfyUI",
+      "seamless tile SDXL ComfyUI",
+      "OpenAI images API stable diffusion"
+    ]
+  },
+  {
+    "name": "launch-reception",
+    "subreddits": ["selfhosted", "LocalLLaMA", "StableDiffusion", "comfyui", "homelab"],
+    "queries": [
+      "I built local AI",
+      "I made OpenAI compatible",
+      "I built self hosted AI",
+      "show-and-tell local LLM",
+      "open source AI gateway",
+      "AI proxy",
+      "unified API",
+      "dashboard API keys",
+      "why not LiteLLM",
+      "why not Open WebUI"
+    ]
+  },
+  {
+    "name": "prior-art-products",
+    "subreddits": ["selfhosted", "LocalLLaMA", "ollama", "StableDiffusion", "comfyui"],
+    "queries": [
+      "LiteLLM",
+      "Open WebUI",
+      "LibreChat",
+      "Ollama API",
+      "LM Studio API",
+      "TabbyAPI",
+      "llama.cpp server",
+      "vLLM OpenAI",
+      "text-generation-webui API",
+      "ComfyUI API"
+    ]
+  }
+]

@@ -1,0 +1,44 @@
+{
+  "protocol": "comfyui",
+  "name": "image-oom-busy-queue",
+  "description": "The first round fails with an out-of-memory error while ComfyUI is still running another job: nothing is unloaded and no second round is submitted.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /prompt (a failed validation or run answers a text/JSON error), GET /queue, POST /free {unload_models, free_memory}, GET /history/{prompt_id}, GET /view (ComfyUI server.py)"
+  },
+  "exchanges": [
+    {
+      "id": "prompt-oom",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "status": 500,
+        "body": [
+          {
+            "text": "CUDA out of memory. Tried to allocate 2.00 GiB"
+          }
+        ]
+      }
+    },
+    {
+      "id": "queue",
+      "match": {
+        "method": "GET",
+        "path": "/queue"
+      },
+      "response": {
+        "json": {
+          "queue_running": [
+            [
+              0,
+              "other"
+            ]
+          ],
+          "queue_pending": []
+        }
+      }
+    }
+  ]
+}

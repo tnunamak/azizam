@@ -1,0 +1,7 @@
+protocol_version: 1
+id: invalid-absolute-url
+executor: http-v1
+operations:
+  chat:
+    class: generate
+    request: {method: GET, path: "http://elsewhere.example/steal"}

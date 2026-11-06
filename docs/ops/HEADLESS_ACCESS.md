@@ -1,0 +1,598 @@
+# Headless owner access
+
+Use an owner automation key with `/admin/api` and `/openapi.json`. App keys
+cannot administer the gateway. Browser session mutations still require the
+existing CSRF token or action header. This change describes existing access;
+it does not change permissions or make session routes accept bearer keys.
+
+## Create an automation key
+
+On the gateway host, use the existing helper with the deployment's database
+configuration. It prints a one-time secret; save its last line in a private file
+and keep its full output out of shared logs. Its default role is `owner`, which is required for the owner-only operations in the table below.
+
+```sh
+set +x
+umask 077
+./venv/bin/python proxy.py generate-admin-key headless-automation owner > owner-key-output.txt
+tail -n 1 owner-key-output.txt > owner-key.txt
+rm owner-key-output.txt
+chmod 600 owner-key.txt
+./venv/bin/python - <<'PY'
+from pathlib import Path
+key = Path("owner-key.txt").read_text().strip()
+header = Path("owner-header.txt")
+header.touch(mode=0o600)
+header.chmod(0o600)
+header.write_text("Authorization: Bearer " + key + "\n")
+PY
+AZIZAM_URL=https://gateway.example
+export AZIZAM_URL
+```
+
+Keys are not browser sessions: the confirmation prompt for risky actions
+(`reauth_required`) applies only to browser sessions, never to a key.
+
+An `admin` role key cannot use owner-only operations. Neither role is a
+read-only scope. The key's role is enforced on each request. The helper does
+not configure a browser session or start a server.
+
+An administrator, not only the owner, may mint an `admin` key with
+`POST /admin/api/admin-keys`; only an owner may mint an `owner` key. Every
+dashboard key gets a service account of its own, and the name must be new: a
+name that is already in use is refused with `409 admin_key_name_taken`, so no
+one can take over another key by naming theirs the same. A key made on the host
+with the helper above belongs to the operator and has no person behind it; the
+helper refuses a name that the dashboard already used. Every other key records
+who minted it (a person, or another key), and it works only while that minter
+still holds a role that permits it. When an administrator loses the role, their
+keys stop working at once. When an owner becomes an administrator, their `owner`
+keys work at administrator reach. If the minter cannot be found, the key has no
+authority.
+
+A role that the identity provider gave (an admin group or role claim) counts
+only while a sign-in has confirmed it within the last 8 hours
+(`admin.oidc.cookie.max_age_seconds`; a longer browser session does not extend
+it, see [Sign-in sessions](SIGN_IN_SESSIONS.md)). An administrator who is removed from the group and never signs in
+again loses the role, and with it every key they minted, when that time ends.
+Roles the owner gave by hand do not expire. A sign-in that is refused ends the
+provider's roles and all sessions of that person at once; it also ends their
+MCP connections and pauses their personal App keys (`person_signin_refused`)
+until a later sign-in succeeds. Nothing is deleted, so the keys work again then.
+
+Access plans decide what everyone may do, so only the owner may create, change
+or delete one (`403 owner_required` for an administrator). Administrators can
+still read plans.
+
+Only the owner may create an App that someone else answers for, or change that
+App's access plan or accountable person. A key or a trusted address on an App is
+added only by the person the App answers for, from their browser session. The
+owner role does not add one, and neither does a control-plane key, so an owner
+automation key cannot mint an App key (`403 not_your_app`). An administrator may
+create or change only an App that answers to themselves, so its spend stays inside
+the administrator's own access plan. An administrator without an access plan gets
+a key that authorizes nothing. A key has no person of its own, so an `admin` key
+cannot create Apps or App keys; the refusal is `403 owner_required`. See
+`docs/ops/OWNER_BINDINGS.md`.
+
+Use a private working directory. Keep tracing off (`set +x`) while handling
+credentials. The key and header files must have mode 600. The examples read
+the secret from files; they do not put it in process arguments or environment
+variables. Keep these files out of logs and version control.
+
+## Call the API with curl
+
+```sh
+curl --fail-with-body -sS "$AZIZAM_URL/admin/api/apps" \
+  -H @owner-header.txt
+
+# An owner automation key cannot mint an App key: the person the App answers for makes
+# one from a browser session (POST /me/api/apps/{app_id}/keys). See docs/ops/OWNER_BINDINGS.md.
+
+curl --fail-with-body -sS "$AZIZAM_URL/admin/api/activity/requests?limit=10" \
+  -H @owner-header.txt
+curl --fail-with-body -sS "$AZIZAM_URL/admin/api/status" \
+  -H @owner-header.txt
+```
+
+For denied `/status*` calls, request telemetry no longer touches credential usage
+or writes metrics; status pages now share the existing admin telemetry exclusion.
+
+A key made from a browser session returns its one-time secret in `api_key`. Keep
+that response out of shared logs and version control.
+Request activity returns safe receipt records with `next_cursor`. It differs from
+the administrative change audit at `/admin/api/audit`. Continue receipt pages
+with `before=<next_cursor>` until `next_cursor` is null. Registry writes need the
+current `ETag` in `If-Match`; settings that require a revision do too. Do not
+silently retry a rejected mutation with a newer revision.
+
+## Rename an app or a key
+
+Apps and keys can be renamed from the web app (Apps & keys), REST, MCP and the command line. A rename changes
+a label only: no new key is made and no key moves, so it asks for no recent confirmation (decision D36). It
+still needs a live sign-in for a browser caller, and the CSRF/action header; a key needs neither.
+
+```sh
+# An app. `name` is trimmed and must be 1 to 80 characters with no control or hidden characters.
+curl --fail-with-body -sS -X PATCH "$AZIZAM_URL/admin/api/apps/$APP_ID" \
+  -H @owner-header.txt -H 'Content-Type: application/json' --data '{"name":"Work laptop"}'
+
+# One key of that app. The key and its secret stay as they are; only `display_name` changes.
+curl --fail-with-body -sS -X PATCH "$AZIZAM_URL/admin/api/apps/$APP_ID/keys/$KEY_ID" \
+  -H @owner-header.txt -H 'Content-Type: application/json' --data '{"display_name":"Code editor"}'
+
+# The same two with Restish (the Azizam command line is generated from the OpenAPI document):
+restish azizam owner-patch-admin-api-apps-app-id "$APP_ID" 'name: Work laptop' -o json
+restish azizam owner-patch-admin-api-apps-app-id-keys-credential-id "$APP_ID" "$KEY_ID" \
+  'display_name: Code editor' -o json
+```
+
+Who may rename follows who may change the app: the owner any app, an administrator any app except one that
+answers to the owner (`403 app_outranks_you`), and a member only their own apps and keys, through
+`PATCH /me/api/apps/{app_id}` (`name`) and `PATCH /me/api/credentials/{credential_id}` (`display_name`) with
+the sign-in's cookie, CSRF token and the action header. A name that is empty, has no visible character (only zero-width or combining marks), is too long or has hidden characters
+is `400` (`app_name_required`, `app_name_too_long`, `app_name_not_allowed`; for a key `key_label_...`). A name
+another active app of the same person already has, or another active key of the same app, is `409`
+(`app_name_taken`, `key_label_taken`). The Try page's app is named `Try` and keeps that name
+(`409 app_name_reserved`; also for a name that is `Try` once folded to Unicode compatibility form and lower case). Two names are the same name when they are equal after Unicode NFKC and case folding (`Café` and `CAFÉ`, or a fullwidth `Ｃａｆé`), in a write and in an MCP lookup alike. Only active app keys can be renamed here; an admin automation key cannot. Each rename
+writes an audit event (`app.update` with `previous_name`, `credential.rename`, or `app.self_rename` and
+`credential.self_rename` for a person's own).
+
+A receipt stores the name the app had when the request arrived (`api_key_name`, read from the app at that
+moment) and is never rewritten. A later request carries the new name.
+
+An MCP client the person signed in to can rename the person's own apps and keys with the `rename_app` and
+`rename_key` tools, by current name or id, if that connection's consent included renaming (connections made before it existed must be disconnected and connected again). An app key cannot.
+
+There is no Azizam-specific command line for apps. On the gateway host, `python proxy.py generate-admin-key`
+(above) makes an owner key with no browser; use it with the Restish commands, or `curl`, as shown.
+
+## Use Restish 2.3.0
+
+Install Restish in a private tool directory to build commands from OpenAPI
+without an Azizam CLI. Its v1 `api configure` command does not work in v2.
+Use a separate config file to avoid ambient profiles. Register the trusted
+schema explicitly and store the token in a mode-600 Restish config file:
+
+```sh
+set +x
+RSH_CONFIG="$PWD/restish-owner.json"
+export RSH_CONFIG
+umask 077
+test -e "$RSH_CONFIG" || printf '{}\n' > "$RSH_CONFIG"
+chmod 600 "$RSH_CONFIG"
+# Fetch the schema using curl's private header file.
+curl --fail-with-body -sS "$AZIZAM_URL/openapi.json" \
+  -H @owner-header.txt > owner-openapi.json
+# This placeholder is public text. Python replaces it from the private key file.
+restish api connect azizam "$AZIZAM_URL" \
+  'prompt.credentials.OwnerBearer.token: configure-from-private-file' \
+  --spec "$PWD/owner-openapi.json" --replace --yes
+./venv/bin/python - <<'PY'
+import json
+import os
+from pathlib import Path
+config = Path(os.environ["RSH_CONFIG"])
+data = json.loads(config.read_text())
+profile = data["apis"]["azizam"]["profiles"]["default"]
+key = Path("owner-key.txt").read_text().strip()
+profile["credentials"]["OwnerBearer"]["auth"]["params"]["token"] = key
+profile["auth"]["params"]["token"] = key
+config.write_text(json.dumps(data, indent=2) + "\n")
+PY
+restish azizam owner-get-admin-api-apps -o json
+restish azizam owner-get-admin-api-activity-requests --limit 10 -o json
+restish azizam owner-get-admin-api-status -o json
+```
+
+Use `restish azizam <command> --help` for inferred path/query/body arguments.
+Legacy handlers that read JSON manually have an open object body schema; their
+field validation remains in the handler. Responses without typed models keep
+an unspecified schema. The owner metadata does not invent stricter contracts.
+Session-only routes stay absent from OpenAPI. HTML owner routes remain outside
+the generated command surface. `/admin/api/drain` is loopback-only; its POST
+also requires a bearer key even for an owner browser session.
+
+Reconnect after an API upgrade to refresh the cached spec. Repeat the schema fetch, connect, and private-token
+update above when reconnecting; `--replace` replaces the current profile.
+Operation IDs depend on the HTTP method and path, so renaming a Python handler does not rename a CLI
+command. Only explicitly inventoried owner operations receive owner metadata.
+
+### Check results before using them
+
+Capture stdout, stderr, and the exit code separately. Do not use
+`--rsh-ignore-status-code`. Do not treat exit 0 as proof that all records arrived
+or that a JSON body describes success.
+
+```sh
+restish azizam owner-get-admin-api-activity-requests --limit 10 \
+  -o json \
+  > receipts.json 2> receipts.stderr
+rc=$?
+test "$rc" -eq 0 || { cat receipts.stderr >&2; exit "$rc"; }
+jq -e 'type == "object" and (has("error") | not) and (.records | type == "array")' receipts.json
+jq -r '.next_cursor // empty' receipts.json
+```
+
+Restish's page cap can return partial results and exit 0. Read stderr for cap
+warnings, inspect pagination fields, and follow `next_cursor` explicitly for
+Azizam's wrapped receipt collection. Do not assume Restish merges wrapped
+objects. `--rsh-max-pages 0` removes the client's cap, but cannot remove a server
+cap or guarantee wrapped pagination. Error JSON can accompany exit 0 when a
+server returns an error envelope with HTTP 200, or when status ignoring is
+configured. Check both the exit code and `error`/expected body shape. Avoid
+verbose output with credentials; it can include request headers.
+
+## Remembered people (sign-in list)
+
+A browser can keep the names of the people who signed in on it, so the sign-in
+page can offer them as a list (D54). The browser holds one cookie,
+`__Host-azizam-device` (`azizam-device` on a plain-HTTP gateway), which names the
+device. The server keeps the rows, and the page gets a tile for each name.
+
+- `GET /auth/api/remembered`: this device's names, as `{"remember", "people"}`.
+  Each person has `tile`, `name`, `avatar` (`variant`, `initial`), `method`
+  (`password` or `sso`), `provider` and `hint`. The entry of the person this
+  browser is signed in as also has `"you": true`; no other entry has that key.
+  No email, person id, picture, role or session appears. Rate-limited to 60 reads
+  a minute per address; `AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE` sets the 60.
+- `DELETE /auth/api/remembered/{tile}`: takes one name off this device's list. It
+  does not sign anyone out or change their account. A tile from another device
+  does nothing here.
+- `POST /auth/api/login` accepts `{"tile", "password"}` in place of
+  `{"email", "password"}`, never both. A tile only names a person. The person's
+  own password still has to match, and a wrong one counts toward the same limit
+  as an email sign-in. That limit is 60 attempts per address in 15 minutes
+  (`AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW` sets the 60) and 10 per email.
+  `"remember"` is three-valued: `true` keeps the person on this device's list,
+  `false` takes that person off this device's list after a successful sign-in,
+  and omitted or `null` leaves the list alone (headless clients). A tile sign-in
+  never adds a name.
+- `GET /login?tile=…` starts provider sign-in and asks the provider to sign the
+  person in again (`prompt=login`, `max_age=0`). It sends no `login_hint` and no
+  email in any URL. The callback accepts only a fresh sign-in by the person the
+  tile named; any other sign-in is refused with `error=provider` and writes
+  nothing. `remember=1` or `remember=0` on the same request has the same meaning
+  as on the password form. A tile this device does not hold, including one
+  forgotten here, redirects (302) to `/sign-in/?error=tile_unknown` and asks the
+  provider nothing.
+- The owner sets "On shared computers" in `GET` and `PUT /admin/api/signin`, as
+  `memory`: `remember` (the default) or `nobody`. Choosing `nobody` deletes every
+  device's names at once and stops new ones. The owner's routes never show a tile
+  or a device.
+
+These routes are browser routes. They take the device cookie and no bearer key,
+and a request with an `Origin` from another site is refused. A name leaves the
+list for good when its person is removed or disabled, or when it is 90 days old
+since the last sign-in; those rows are deleted the first time they are read. A
+name whose sign-in method is off, or a provider name for a provider that is no
+longer set up, is hidden and kept until that method comes back. The list keeps
+at most 10 names per device.
+
+## Registered route inventory
+
+Captured by walking `proxy.app.routes` when the web app moved to `/`. Counts
+are per registered method/path, including trailing-slash aliases: **139
+owner-bearer**, **45 session-only**, **2 session-view**, **16 browser/public**; **202 total**.
+
+FastAPI dependency lists are empty on these routes. Auth is an imperative
+handler call or injected callback, shown below. `owner-bearer` rejects app keys
+and member sessions; browser entry points can deny members by redirecting to `/`. `session-only` requires a cookie and rejects a standalone
+owner/app bearer key. `session-view` permits an unauthenticated snapshot.
+`browser/public` covers sign-in, first-run, redirect and health contracts;
+headers alone do not turn them into owner API operations. Routes outside these
+namespaces are explicitly listed in `tests/fixtures/headless_non_control_routes.json`;
+that classification does not assert their authorization contract. There are no
+mounts. The one route that is not a `Route` is `UiRoute` (`gateway/ui_routes.py`),
+just before the catch-all: it serves the web export's registry pages, payloads and
+assets, and guards admin pages itself (`tests/test_ui_routes.py`).
+
+The tests walk every route type and recurse through mounts, preserving their
+path prefixes. An unclassified route or opaque mount fails the inventory test.
+App/member denials use HTTP and check SQLite contents, config and drain state.
+Member mutations include valid CSRF/action headers and must return a role denial.
+Owner bearer calls reach handler-level validation or a read response after all
+authorization checks. Reload and global-cap deletion stop at their first operational
+effect. These probes check bearer reachability without performing every mutation.
+Selected successful workflows are exercised separately.
+
+| Method and path | Auth class | App key | Handler / auth call | Schema |
+| --- | --- | --- | --- | --- |
+| `GET /admin/api/activity/requests` | owner-bearer | denied | `gateway.activity_api.requests`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/admin-keys` | owner-bearer | denied | `gateway.admin_api.create_admin_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to mint owner key; a key works only while the person who minted it still holds a role that permits it | owner |
+| `GET /admin/api/apps` | owner-bearer | denied | `gateway.admin_api.list_apps`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/apps` | owner-bearer | denied | `gateway.admin_api.create_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/apps/{app_id}` | owner-bearer | denied | `gateway.admin_api.disable_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PATCH /admin/api/apps/{app_id}` | owner-bearer | denied | `gateway.admin_api.update_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/apps/{app_id}/enable` | owner-bearer | denied | `gateway.admin_api.enable_app`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/apps/{app_id}/keys` | owner-bearer | denied | `gateway.admin_api.create_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin; only the App's accountable person may add a key (`not_your_app` otherwise), so a control-plane key adds none | accountable person |
+| `PATCH /admin/api/apps/{app_id}/keys/{credential_id}` | owner-bearer | denied | `gateway.admin_api.rename_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin; an administrator is refused on an App that answers to the owner (`app_outranks_you`) | owner |
+| `GET /admin/api/apps/{app_id}/trusted-addresses` | owner-bearer | denied | `gateway.admin_api.list_trusted_addresses`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/apps/{app_id}/trusted-addresses` | owner-bearer | denied | `gateway.admin_api.add_trusted_address`; AdminAuthenticator / _require_admin; owner/admin/superadmin; only the App's accountable person may trust an address (`not_your_app` otherwise) | accountable person |
+| `DELETE /admin/api/apps/{app_id}/trusted-addresses/{entry_id}` | owner-bearer | denied | `gateway.admin_api.delete_trusted_address`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/audit` | owner-bearer | denied | `gateway.admin_api.audit`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/audit-events` | owner-bearer | denied | `gateway.admin_api.audit_events`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/audit/{event_id}` | owner-bearer | denied | `gateway.admin_api.audit_event`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/categories/active` | owner-bearer | denied | `gateway.category_api.categories_active`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/categories/candidates` | owner-bearer | denied | `gateway.category_api.categories_create`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/categories/candidates/{revision}/activate` | owner-bearer | denied | `gateway.category_api.categories_activate`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/categories/history` | owner-bearer | denied | `gateway.category_api.categories_history`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/categories/plan-reach` | owner-bearer | denied | `gateway.category_api.categories_plan_reach`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/categories/preview-as` | owner-bearer | denied | `gateway.category_api.categories_preview`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/categories/revisions/{revision}` | owner-bearer | denied | `gateway.category_api.categories_revision`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/categories/revisions/{revision}/restore` | owner-bearer | denied | `gateway.category_api.categories_restore`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/categories/services` | owner-bearer | denied | `gateway.category_api.categories_services`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/config/export` | owner-bearer | denied | `proxy.admin_config_export`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/config/reload` | owner-bearer | denied | `proxy.admin_config_reload`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/credentials` | owner-bearer | denied | `gateway.admin_api.list_credentials`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/credentials/{credential_id}` | owner-bearer | denied | `gateway.admin_api.delete_credential`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/credentials/{credential_id}/revoke` | owner-bearer | denied | `gateway.admin_api.revoke_credential`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/drain` | owner-bearer | denied | `proxy.admin_drain_status`; AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only | owner |
+| `POST /admin/api/drain` | owner-bearer | denied | `proxy.admin_drain_set`; AdminAuthenticator / _require_admin; owner/admin/superadmin; loopback peer only; bearer only | owner |
+| `GET /admin/api/extensions` | owner-bearer | denied | `gateway.admin_api.list_extension_packages`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/extensions/enable` | owner-bearer | denied | `gateway.admin_api.enable_extension_package`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/extensions/validate` | owner-bearer | denied | `gateway.admin_api.validate_extension_package`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/extensions/{package_id}` | owner-bearer | denied | `gateway.admin_api.remove_extension_package`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/invites` | owner-bearer | denied | `gateway.accounts_api.invites`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/invites` | owner-bearer | denied | `gateway.accounts_api.create_invite`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `DELETE /admin/api/invites/{link_id}` | owner-bearer | denied | `gateway.accounts_api.revoke_invite`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/invites/{link_id}/link` | owner-bearer | denied | `gateway.accounts_api.copy_invite`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/operator/litellm-config` | owner-bearer | denied | `gateway.admin_api.get_litellm_config`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/operator/litellm/keys` | owner-bearer | denied | `gateway.admin_api.list_litellm_keys`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/operator/litellm/keys` | owner-bearer | denied | `gateway.admin_api.create_litellm_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/operator/litellm/keys/delete` | owner-bearer | denied | `gateway.admin_api.delete_litellm_keys`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/operator/host-commands` | owner-bearer | denied | `gateway.admin_api.get_host_commands`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/operator/host-commands` | owner-bearer | denied | `gateway.admin_api.update_host_commands`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/operator/media-job-admission` | owner-bearer | denied | `gateway.admin_api.update_media_job_admission_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/operator/overrides` | owner-bearer | denied | `gateway.admin_api.list_operator_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/operator/service-availability` | owner-bearer | denied | `gateway.admin_api.update_service_availability_overrides`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/engine-definitions` | owner-bearer | denied | `gateway.engine_admin.get_engine_definitions`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/engine-protocols` | owner-bearer | denied | `gateway.engine_protocol_admin.engine_protocols`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/engines/check` | owner-bearer | denied | `gateway.engine_admin.check_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/engines/test` | owner-bearer | denied | `gateway.engine_admin.test_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/engines/access` | owner-bearer | denied | `gateway.engine_admin.engine_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/engines/{service_id}` | owner-bearer | denied | `gateway.engine_admin.get_engine`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/engines/{service_id}/stt-measurements` | owner-bearer | denied | `gateway.stt_measurement_api.options`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `POST /admin/api/engines/{service_id}/stt-measurements` | owner-bearer | denied | `gateway.stt_measurement_api.start`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `GET /admin/api/engines/{service_id}/stt-measurements/{job_id}` | owner-bearer | denied | `gateway.stt_measurement_api.progress`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `POST /admin/api/engines/{service_id}/stt-measurements/{job_id}/cancel` | owner-bearer | denied | `gateway.stt_measurement_api.cancel`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `POST /admin/api/engines/{service_id}/stt-measurements/{job_id}/apply` | owner-bearer | denied | `gateway.stt_measurement_api.apply`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `PATCH /admin/api/engines/{service_id}/stt-settings` | owner-bearer | denied | `gateway.stt_measurement_api.configure`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `GET /admin/api/operator/service-registry` | owner-bearer | denied | `gateway.admin_api.get_service_registry`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/operator/service-registry` | owner-bearer | denied | `gateway.admin_api.update_service_registry`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/operator/services` | owner-bearer | denied | `gateway.admin_api.add_service`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/operator/services/detect-models` | owner-bearer | denied | `gateway.admin_api.detect_service_models`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/operator/services/test` | owner-bearer | denied | `gateway.admin_api.test_service_connection`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/operator/services/{service_id}` | owner-bearer | denied | `gateway.admin_api.remove_service`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PATCH /admin/api/operator/services/{service_id}` | owner-bearer | denied | `gateway.admin_api.update_service`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/operator/services/{service_id}/enabled` | owner-bearer | denied | `gateway.admin_api.set_service_enabled`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/operator/services/{service_id}/secret-entries` | owner-bearer | denied | `gateway.admin_api.change_secret_entries`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required to change a secret | owner |
+| `PUT /admin/api/operator/service-registry/excluded/{section}/{record_id}` | owner-bearer | denied | `gateway.admin_api.fix_excluded_record`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/operator/service-registry/excluded/{section}/{record_id}` | owner-bearer | denied | `gateway.admin_api.remove_excluded_record`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/overview` | owner-bearer | denied | `gateway.admin_api.overview`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/people` | owner-bearer | denied | `gateway.accounts_api.people`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `DELETE /admin/api/people/{user_id}` | owner-bearer | denied | `gateway.accounts_api.remove_person`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PATCH /admin/api/people/{user_id}` | owner-bearer | denied | `gateway.accounts_api.update_person`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/people/{user_id}/reset` | owner-bearer | denied | `gateway.accounts_api.reset_link`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/providers` | owner-bearer | denied | `gateway.provider_admin.list_providers`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/providers` | owner-bearer | denied | `gateway.provider_admin.add_provider`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/providers/-/catalog` | owner-bearer | denied | `gateway.provider_admin.list_catalog`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/providers/-/global-caps` | owner-bearer | denied | `gateway.provider_admin.clear_global_caps`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/providers/-/global-caps` | owner-bearer | denied | `gateway.provider_admin.set_global_caps`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/providers/-/test` | owner-bearer | denied | `gateway.provider_admin.test_unsaved_provider`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/providers/{provider_id}` | owner-bearer | denied | `gateway.provider_admin.remove_provider`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/providers/{provider_id}` | owner-bearer | denied | `gateway.provider_admin.get_provider`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/providers/{provider_id}/caps` | owner-bearer | denied | `gateway.provider_admin.clear_provider_caps`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/providers/{provider_id}/caps` | owner-bearer | denied | `gateway.provider_admin.set_provider_caps`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/providers/{provider_id}/key` | owner-bearer | denied | `gateway.provider_admin.delete_provider_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/providers/{provider_id}/key` | owner-bearer | denied | `gateway.provider_admin.set_provider_key`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/providers/{provider_id}/models` | owner-bearer | denied | `gateway.provider_admin.update_provider_models`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/providers/{provider_id}/reconciliation` | owner-bearer | denied | `gateway.provider_admin.list_provider_reconciliation`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/providers/{provider_id}/reconciliation/{reservation_id}` | owner-bearer | denied | `gateway.provider_admin.reconcile_provider_reservation`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/providers/{provider_id}/test` | owner-bearer | denied | `gateway.provider_admin.test_provider`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/session` | owner-bearer | denied | `gateway.admin_api.session`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/settings/defaults` | owner-bearer | denied | `gateway.settings_api.get_defaults`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/settings/defaults` | owner-bearer | denied | `gateway.settings_api.put_defaults`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/settings/effective` | owner-bearer | denied | `gateway.settings_api.get_effective`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/settings/effective/export` | owner-bearer | denied | `gateway.settings_api.export_effective`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/settings/instance` | owner-bearer | denied | `gateway.settings_api.get_instance`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/settings/instance` | owner-bearer | denied | `gateway.settings_api.put_instance`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/settings/prompt-memory` | owner-bearer | denied | `gateway.settings_api.get_prompt_memory`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/settings/prompt-memory` | owner-bearer | denied | `gateway.settings_api.put_prompt_memory`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/settings/receipts` | owner-bearer | denied | `gateway.settings_api.get_receipts`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/settings/receipts` | owner-bearer | denied | `gateway.settings_api.put_receipts`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/settings/receipts/preview` | owner-bearer | denied | `gateway.settings_api.preview_receipts`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/settings/sessions` | owner-bearer | denied | `gateway.settings_api.get_sessions`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/settings/sessions` | owner-bearer | denied | `gateway.settings_api.put_sessions`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required; browser sessions also need a recent sign-in (`reauth_required`) | owner |
+| `POST /admin/api/setup-dismiss` | session-only | denied | `gateway.home_api.dismiss_setup`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /admin/api/setup-evidence` | session-only | denied | `gateway.home_api.setup_evidence`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /admin/api/setup-progress` | owner-bearer | denied | `gateway.home_api.setup_progress`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/signin` | owner-bearer | denied | `gateway.signin_api.get_snapshot`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/signin/preview` | owner-bearer | denied | `gateway.signin_api.preview`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/discover` | owner-bearer | denied | `gateway.signin_api.discover_route`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/test` | owner-bearer | denied | `gateway.signin_api.start_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/signin/test/{test_id}/start` | owner-bearer | denied | `gateway.signin_api.begin_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/signin/test/{test_id}` | owner-bearer | denied | `gateway.signin_api.get_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `DELETE /admin/api/signin/test/{test_id}` | owner-bearer | denied | `gateway.signin_api.cancel_test`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/link-owner` | owner-bearer | denied | `gateway.signin_api.link_owner`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `PUT /admin/api/signin` | owner-bearer | denied | `gateway.signin_api.save`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/notice/dismiss` | owner-bearer | denied | `gateway.signin_api.dismiss_notice`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/signin/owner-password` | owner-bearer | denied | `gateway.signin_api.owner_password`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/status` | owner-bearer | denied | `gateway.admin_api.status_payload`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/users` | owner-bearer | denied | `gateway.admin_api.list_users`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `DELETE /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.delete_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/api/access-plans` | owner-bearer | denied | `gateway.admin_api.list_access_plans`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/access-plans/editor` | owner-bearer | denied | `gateway.admin_api.access_plan_editor`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.get_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/access-plans` | owner-bearer | denied | `gateway.admin_api.create_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `POST /admin/api/access/check` | owner-bearer | denied | `gateway.admin_api.check_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `POST /admin/api/access/preview` | owner-bearer | denied | `gateway.admin_api.preview_access`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/access-plans/{plan_id}` | owner-bearer | denied | `gateway.admin_api.update_access_plan`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
+| `GET /admin/oidc/callback` | browser/public | no owner authority | `proxy.admin_oidc_callback`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
+| `POST /auth/api/clear-browser-cache` | browser/public | no owner authority | `gateway.accounts_api.clear_browser_cache`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | new |
+| `POST /auth/api/invite` | browser/public | no owner authority | `gateway.accounts_api.inspect`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
+| `POST /auth/api/invite/accept` | browser/public | no owner authority | `gateway.accounts_api.accept`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
+| `POST /auth/api/login` | browser/public | no owner authority | `gateway.accounts_api.login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
+| `GET /auth/api/options` | browser/public | no owner authority | `gateway.accounts_api.get_options`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
+| `POST /auth/api/reauth` | browser/public | no owner authority | `gateway.accounts_api.reauth`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
+| `GET /auth/api/remembered` | browser/public | no owner authority | `gateway.accounts_api.remembered`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | new |
+| `DELETE /auth/api/remembered/{tile}` | browser/public | no owner authority | `gateway.accounts_api.forget_remembered`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | new |
+| `POST /auth/api/password-reset` | browser/public | no owner authority | `gateway.accounts_api.reset`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
+| `POST /auth/api/sign-out-everywhere` | browser/public | no owner authority | `gateway.accounts_api.sign_out_everywhere`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | existing |
+| `GET /auth/logout-confirm` | session-only | denied | `proxy.logout_confirmation`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /login` | browser/public | no owner authority | `proxy.browser_login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
+| `POST /logout` | session-only | denied | `proxy.admin_logout`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/access-request` | session-only | denied | `proxy.user_portal_request_access`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/activity` | session-view | no owner authority | `proxy.user_portal_activity`; Optional browser session; returns empty unauthenticated activity without cookie | hidden |
+| `POST /me/api/apps` | session-only | denied | `proxy.user_portal_create_app`; Browser session; mutations require CSRF/action header | hidden |
+| `DELETE /me/api/apps/{app_id}` | session-only | denied | `proxy.user_portal_delete_app`; Browser session; mutations require CSRF/action header | hidden |
+| `PATCH /me/api/apps/{app_id}` | session-only | denied | `proxy.user_portal_rename_app`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/apps/{app_id}/keys` | session-only | denied | `proxy.user_portal_mint_key`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/apps/{app_id}/trusted-addresses` | session-only | denied | `proxy.user_portal_add_trusted_address`; Browser session; mutations require CSRF/action header; only the App's accountable person | hidden |
+| `POST /me/api/credentials/{credential_id}/adopt` | session-only | denied | `proxy.user_portal_adopt_key`; Browser session; mutations require CSRF/action header; only the owner keeps a key nobody else could have made (`409 keep_not_provable` otherwise) | hidden |
+| `POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/adopt` | session-only | denied | `proxy.user_portal_adopt_trusted_address`; Browser session; mutations require CSRF/action header; only the owner keeps an address nobody else could have added (`409 keep_not_provable` otherwise) | hidden |
+| `POST /me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd` | session-only | denied | `proxy.user_portal_readd_trusted_address`; Browser session; mutations require CSRF/action header; the App's person adds an unkept address again in one step: the old entry is removed and the same address is added as theirs (`404 app_not_found` for another person's App) | hidden |
+| `POST /me/api/credentials/{credential_id}/replace` | session-only | denied | `proxy.user_portal_replace_key`; Browser session; mutations require CSRF/action header; only the App's accountable person replaces a key it cannot keep | hidden |
+| `DELETE /me/api/apps/{app_id}/trusted-addresses/{entry_id}` | session-only | denied | `proxy.user_portal_remove_trusted_address`; Browser session; mutations require CSRF/action header; only the App's accountable person | hidden |
+| `POST /me/api/connection-test` | session-only | denied | `gateway.home_api.connection_test`; Browser session; mutations require CSRF/action header | hidden |
+| `DELETE /me/api/credentials/{credential_id}` | session-only | denied | `proxy.user_portal_revoke_key`; Browser session; mutations require CSRF/action header | hidden |
+| `PATCH /me/api/credentials/{credential_id}` | session-only | denied | `proxy.user_portal_rename_key`; Browser session; mutations require CSRF/action header | hidden |
+| `PUT /me/api/credentials/{credential_id}/privacy-permission` | session-only | denied | `proxy.user_portal_key_privacy_permission`; accountable person and own App key; mutations require CSRF/action header and recent sign-in | hidden |
+| `GET /me/api/credentials/{credential_id}/access` | session-only | denied | `proxy.user_portal_credential_access`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/credentials/{credential_id}/revoke` | session-only | denied | `proxy.user_portal_revoke_key`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/home` | session-only | denied | `gateway.home_api.home`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/jobs` | session-only | denied | `gateway.me_media.list_jobs`; Browser session; own jobs only | hidden |
+| `GET /me/api/jobs/{job_id}` | session-only | denied | `gateway.me_media.job_detail`; Browser session; own jobs only | hidden |
+| `GET /me/api/make/jobs` | session-only | denied | `gateway.me_make.list_jobs`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/make/jobs` | session-only | denied | `gateway.me_make.submit`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/make/jobs/{job_id}` | session-only | denied | `gateway.me_make.get_job`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/make/jobs/{job_id}/cancel` | session-only | denied | `gateway.me_make.cancel_job`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/mcp/connections` | session-only | denied | `gateway.mcp_oauth.connections`; Browser session; own connections only | hidden |
+| `PUT /me/api/mcp/connections/{grant_id}/privacy-permission` | session-only | denied | `gateway.mcp_oauth.privacy_permission`; own connection only; mutations require CSRF/action header and recent sign-in | hidden |
+| `POST /me/api/mcp/connections/{grant_id}/revoke` | session-only | denied | `gateway.mcp_oauth.revoke_connection`; Browser session; own connections only; mutations require CSRF/action header | hidden |
+| `GET /me/api/mcp/requests/{request_id}` | session-only | denied | `gateway.mcp_oauth.consent_details`; Browser session; same-browser binding cookie | hidden |
+| `POST /me/api/mcp/requests/{request_id}` | session-only | denied | `gateway.mcp_oauth.consent_decision`; Browser session; same-browser binding cookie; mutations require CSRF/action header | hidden |
+| `GET /me/api/media` | session-only | denied | `gateway.me_media.list_media`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/media/remove-missing` | session-only | denied | `gateway.me_media.remove_missing_media`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/media/confirm-folder` | session-only | denied | `gateway.me_media.confirm_media_folder`; Browser session; mutations require CSRF/action header | hidden |
+| `DELETE /me/api/media/{asset_id}` | session-only | denied | `gateway.me_media.delete_media`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/media/{asset_id}` | session-only | denied | `gateway.me_media.media_detail`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/media/{asset_id}/download` | session-only | denied | `gateway.me_media.media_download`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/models/catalog` | session-only | denied | `gateway.models_catalog.models_catalog`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/profile/avatar` | session-only | denied | `gateway.me_avatar.get_avatar`; Browser session; mutations require CSRF/action header | hidden |
+| `PUT /me/api/profile/avatar` | session-only | denied | `gateway.me_avatar.put_avatar`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/profile/avatars` | session-only | denied | `gateway.me_avatar.list_avatars`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/profile/avatar/picture` | session-only | denied | `gateway.me_avatar.get_picture`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/profile/avatar/default` | session-only | denied | `gateway.me_avatar.post_default`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/profile/avatar/generate` | session-only | denied | `gateway.me_avatar.post_generate`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/profile/avatar/generated` | session-only | denied | `gateway.me_avatar.post_generated`; Browser session; mutations require CSRF/action header | hidden |
+| `DELETE /me/api/profile/avatar/generated` | session-only | denied | `gateway.me_avatar.delete_generated`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/profile/avatar/generator` | session-only | denied | `gateway.me_avatar.get_generator`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/prompt-memory` | session-only | denied | `gateway.me_prompt_memory.get_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
+| `PUT /me/api/prompt-memory` | session-only | denied | `gateway.me_prompt_memory.put_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/retention` | session-only | denied | `gateway.request_history_api.get_my_retention`; Browser session; mutations require CSRF/action header | hidden |
+| `PUT /me/api/retention` | session-only | denied | `gateway.request_history_api.put_my_retention`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/retention/notice-seen` | session-only | denied | `gateway.request_history_api.dismiss_request_history_notice`; Browser session; mutations require CSRF/action header | hidden |
+| `DELETE /me/api/prompt-memory/prompts` | session-only | denied | `gateway.me_prompt_memory.delete_prompt_memory`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/receipts/{request_id}` | session-only | denied | `proxy.user_portal_receipt_detail`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/session` | session-view | no owner authority | `proxy.user_portal_session`; Optional browser session; returns unauthenticated view without cookie | hidden |
+| `GET /me/api/session/end-token` | session-view | no owner authority | `proxy.user_portal_session_end_token`; Optional browser session; returns only its CSRF token and display name | hidden |
+| `GET /me/api/status` | session-only | denied | `gateway.home_api.member_status`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /me/api/try-key` | session-only | denied | `proxy.user_portal_try_key`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/usage/summary` | session-only | denied | `gateway.me_media.usage_summary`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /me/api/workflows` | session-only | denied | `gateway.workflows_catalog.workflows_catalog`; Browser session; mutations require CSRF/action header | hidden |
+| `GET /setup/api/state` | browser/public | no owner authority | `gateway.setup_api.setup_state`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
+| `GET /setup/console` | browser/public | no owner authority | `proxy.setup_console`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
+| `POST /setup/claim` | browser/public | no owner authority | `proxy.setup_claim_admin_key`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
+| `POST /setup/first-app` | session-only | denied | `proxy.setup_create_first_app`; Browser session; mutations require CSRF/action header | hidden |
+| `POST /setup/local-login` | browser/public | no owner authority | `proxy.setup_local_login`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
+| `POST /setup/local-owner` | browser/public | no owner authority | `proxy.setup_create_local_owner`; Browser redirect, sign-in, or first-run guard; no admin bearer contract | hidden |
+| `GET /admin/api/me/retention/ledger` | owner-bearer | denied | `gateway.api.current_retention_ledger`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/requests/{request_id}/retention/ledger` | owner-bearer | denied | `gateway.api.request_retention_ledger`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/settings/retention/ledger` | owner-bearer | denied | `gateway.retention_fact_api.retention_ledger`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/settings/retention/systems/{system_id}/facts` | owner-bearer | denied | `gateway.retention_fact_api.get_system_facts`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/settings/retention/systems/{system_id}/facts` | owner-bearer | denied | `gateway.retention_fact_api.put_system_facts`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `GET /admin/api/engines/{service_id}/retention/ledger` | owner-bearer | denied | `gateway.retention_fact_api.engine_ledger`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `GET /admin/api/engines/{service_id}/retention/facts` | owner-bearer | denied | `gateway.retention_fact_api.get_engine_facts`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/engines/{service_id}/retention/facts` | owner-bearer | denied | `gateway.retention_fact_api.put_engine_facts`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `GET /admin/api/providers/{provider_id}/retention/facts` | owner-bearer | denied | `gateway.retention_fact_api.get_provider_facts`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
+| `PUT /admin/api/providers/{provider_id}/retention/facts` | owner-bearer | denied | `gateway.retention_fact_api.put_provider_facts`; AdminAuthenticator / _require_admin; owner role required | owner |
+| `GET /status/raw` | owner-bearer | denied | `proxy.status_dashboard_raw`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
+| `GET /status/raw/` | owner-bearer | denied | `proxy.status_dashboard_raw`; AdminAuthenticator / _require_admin; owner/admin/superadmin | hidden |
+
+For Library reads, owners and superadmins can use `scope=everyone` or `person=all`.
+They can also use `person=self`, `person=local-network`, or a specific person ID.
+For Usage, the broader selector is `person`.
+`scope=everyone` alone does not expand Usage.
+Ordinary members cannot use `person` selectors.
+Both Jobs endpoints remain own-jobs-only for owners too.
+These routes require a browser session. An owner key does not replace that session.
+
+## Refresh the OpenAPI snapshot
+
+After a reviewed route or schema change, commit the metadata and generator first.
+Run `scripts/run-hermetic-pytest.sh --python-script scripts/generate_headless_fixtures.py`
+and save its output in a private scratch file. Read the line prefixed
+`HEADLESS_OPENAPI_JSON=`, parse the JSON after the prefix, and compare it with
+`tests/fixtures/headless_openapi.json`. Replace only the reviewed operations,
+preserve the existing key order, and use two-space indentation with one final
+newline. Verify the resulting JSON equals the captured schema. The generator verifies
+the registered-route inventory and guide before capture; it does not add routes
+or decide their authorization.
+
+## Recorded Restish fixture run
+
+Restish **2.3.0** was installed under `~/.tmp/restish`, then exercised in a
+Bubblewrap filesystem/network namespace against the registered `proxy.app`
+routes on **127.0.0.1:44061**. The fixture used fresh SQLite stores, disabled
+server lifespan, mocked health observations, and called no inference engines.
+Setup discovered **245 operations**, including **104/104 configured owner
+operations**. This is fixture evidence, not a live deployment check.
+
+The earlier commands used explicit fixture bearer headers and succeeded.
+Restish 2.3.0's private config format and 104/104 configured owner bindings were
+checked offline with the committed schema. The revised file/config examples
+have not been rerun over HTTP in this recorded run.
+These output filters kept the transcript short
+and prevented the one-time App key from entering logs:
+
+```sh
+# Append to the corresponding generated command from the guide.
+# List apps:
+-f 'body.apps[].name'
+# Mint key:
+-f 'body.credential.display_name'
+# Read receipts:
+-f 'body.records[].receipt.request_id'
+# Check status:
+-f 'body.status.current_health.state'
+```
+
+Real stdout and exit codes (status reflects the fixture's mocked observations):
+
+```text
+List apps (exit 0)
+[
+  "headless-fixture"
+]
+Mint app key (label only) (exit 0)
+"automation-client"
+Read receipts (exit 0)
+[
+  "headless-fixture-receipt"
+]
+Check status (health only) (exit 0)
+"bad"
+Invalid owner credential (exit 4)
+{
+  "error": {
+    "code": "admin_unauthenticated",
+    "message": "invalid admin credential"
+  }
+}
+```
+
+The invalid-credential case set the profile token to an invalid fixture value.
+The run did not test page-cap exhaustion, interrupted pagination, provider
+mutations, or real engine health. Generic URL commands can reuse credentials
+from a matching registered API; use a separate config for another identity.

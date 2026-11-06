@@ -1,0 +1,68 @@
+# How Azizam talks to an engine that runs a graph of nodes submitted as one JSON prompt.
+#
+# This file is data. The wire is owned by the reviewed adapter `node-graph`
+# (gateway/engine_protocol/node_graph.py): graph patching, prompt submission,
+# history polling, file reads and the push channel are not expressible in the
+# http-v1 grammar. An adapter description lists operation names only. `label`
+# is how caller-facing messages name this engine; `serves` lists the capability
+# tokens for which this adapter answers when an engine record names no protocol;
+# `binding` is the key under a workflow manifest's `bindings` that holds this
+# engine's graph.
+protocol_version: 1
+id: node-graph
+title: Node-graph prompt engine
+label: ComfyUI
+executor: adapter:node-graph
+serves: [images, videos, audio.generate]
+binding: comfyui
+retention_facts:
+  - id: graph-history
+    holds: submitted graphs, their inputs, outputs and status
+    where: the engine's in-memory history dictionary
+    how_long: until restart or clear; an oldest entry is dropped after the pre-insert count exceeds 10,000
+    default: 'on'
+    condition: null
+    reach: anyone who can reach the engine's history port in a default installation; no sign-in is required
+    control: use the engine's clear-history action or restart it; restrict access to its port; output files need separate cleanup
+    evidence_url: https://github.com/Comfy-Org/ComfyUI/blob/8f04fd6ecf4a548937971e840af2a985529fab76/server.py#L1134-L1151
+    checked: '2026-10-19'
+    confidence: documented
+  # L13 exact quote: “MAXIMUM_HISTORY_SIZE = 10000”.
+  # L14 exact quote: “@routes.post("/history")”.
+  - id: graph-history-limit
+    holds: submitted graphs, their inputs, outputs and status
+    where: the engine's in-memory history dictionary
+    how_long: an oldest entry is dropped after the pre-insert count exceeds 10,000; the ordering permits 10,001 entries
+    default: 'on'
+    condition: null
+    reach: anyone who can reach the engine's history port in a default installation; no sign-in is required
+    control: use the engine's clear-history action or restart it; restrict access to its port; output files need separate cleanup
+    evidence_url: https://github.com/Comfy-Org/ComfyUI/blob/8f04fd6ecf4a548937971e840af2a985529fab76/execution.py#L1303-L1359
+    checked: '2026-10-19'
+    confidence: documented
+  - id: graph-history-clear
+    holds: submitted graphs, their inputs, outputs and status
+    where: the engine's in-memory history dictionary
+    how_long: until history is cleared, an entry is deleted or the process restarts; output files are separate
+    default: 'on'
+    condition: null
+    reach: anyone who can reach the engine's history port in a default installation; no sign-in is required
+    control: use the engine's clear-history action or restart it; restrict access to its port; output files need separate cleanup
+    evidence_url: https://github.com/Comfy-Org/ComfyUI/blob/8f04fd6ecf4a548937971e840af2a985529fab76/server.py#L1299-L1310
+    checked: '2026-10-19'
+    confidence: documented
+notes: >-
+  Operations: submit a prompt, read its history, read the queue, read an output
+  file, upload an input image, cancel, delete a history entry, read system
+  stats and free memory. A reviewed adapter owns every request.
+operations:
+  graph.submit: {class: generate}
+  graph.history: {class: inventory}
+  graph.history_page: {class: inventory}
+  graph.queue: {class: inventory}
+  graph.view: {class: inventory}
+  graph.upload: {class: generate}
+  graph.cancel: {class: control}
+  graph.delete_history: {class: control}
+  graph.stats: {class: inventory}
+  graph.free: {class: control}

@@ -1,0 +1,59 @@
+schema_version: 1
+min_gateway_version: '0.1'
+version: 0.1.0
+id: audio.generate.yue2-song
+license: "CC BY-NC (non-commercial use only)"
+intent: audio.generate
+capability: music
+display_name: YuE2 Song
+purpose: Full songs with vocals from lyrics
+prompt_hint: Describe the music you want
+description: Make a song with vocals from musical styles and lyrics.
+source: local
+trusted: true
+typical_seconds: 30
+inputs:
+  tags:
+    label: Musical style
+    help: Describe the genre, instruments, and mood.
+    type: string
+    required: true
+  lyrics:
+    label: Lyrics
+    help: Words to sing.
+    type: string
+  duration:
+    label: Maximum length
+    help: Maximum length in seconds; the song may be shorter.
+    type: number
+    minimum: 10
+    maximum: 360
+    default: 180
+  seed:
+    label: Variation number
+    help: Use the same number to repeat a variation with the same settings.
+    type: integer
+    minimum: 0
+outputs:
+  audio:
+    media_type: audio/mpeg
+bindings:
+  comfyui:
+    workflow: workflows/audio/yue2-song.json
+    map:
+      tags:
+      - node: '2'
+        input: value
+      lyrics:
+      - node: '3'
+        input: value
+      duration:
+      - node: '5'
+        input: max_duration
+      seed:
+      - node: '30'
+        input: value
+requires:
+  models:
+  - role: checkpoint
+    path: checkpoints/yue2_3b_int8_convrot.safetensors

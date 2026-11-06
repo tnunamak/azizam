@@ -1,0 +1,4 @@
+# Optional SDK probe deps; not part of the core repo install.
+# Install into the existing venv:
+#   pip install -r tests/compat/python/requirements-openai.txt
+openai>=1.30.0

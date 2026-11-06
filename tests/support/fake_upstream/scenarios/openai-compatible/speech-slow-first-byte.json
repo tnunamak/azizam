@@ -1,0 +1,22 @@
+{
+  "protocol": "openai-compatible",
+  "name": "speech-slow-first-byte",
+  "description": "The engine takes the request and never answers.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "OpenAI-compatible POST /v1/audio/speech with chunked raw PCM (response_format=pcm) as served by speech engines; the gateway reads it in gateway/speech_stream.py via proxy._stream_tts_upstream"
+  },
+  "exchanges": [
+    {
+      "id": "speech",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/speech"
+      },
+      "response": {
+        "wait_before_headers": "forever",
+        "json": {}
+      }
+    }
+  ]
+}

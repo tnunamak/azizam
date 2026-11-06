@@ -1,0 +1,44 @@
+# A made-up async audio engine, described as data for the D0 operation-boundary proof (test fixture only).
+# The engine takes a JSON job, renders it and answers with a job id; the job is polled until it is done, then its
+# output is fetched. No gateway code names this engine: the runner tests build an http-v1 adapter from this file.
+protocol_version: 1
+id: d0-async-audio
+title: Async audio job engine (test fixture)
+executor: http-v1
+
+errors:
+  - {status: 503, code: audio_busy, advice: "The audio engine is busy."}
+
+operations:
+  audio.generate:
+    class: generate
+    job:
+      submit:
+        request:
+          method: POST
+          path: /v1/jobs
+          body:
+            encoding: json
+            base: empty
+            map:
+              - copy: {from: /body/prompt, to: /text}
+              - when:
+                  if: {path: /body/duration, present: true}
+                  then: [{copy: {from: /body/duration, to: /seconds}}]
+              - when:
+                  if: {path: /body/seed, present: true}
+                  then: [{copy: {from: /body/seed, to: /seed}}]
+        id: /ticket/id
+      poll:
+        request: {method: GET, path: "/v1/jobs/{id}"}
+        status:
+          path: /state
+          states: {queued: pending, rendering: running, done: succeeded, broken: failed}
+        error: /problem
+        assets: /outputs/*/key
+        interval_s: 0.5
+        max_wait_s: 5
+      fetch:
+        request: {method: GET, path: "/v1/jobs/{id}/outputs/{asset}"}
+      cancel:
+        request: {method: DELETE, path: "/v1/jobs/{id}"}

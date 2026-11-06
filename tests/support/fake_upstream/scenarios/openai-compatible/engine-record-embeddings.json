@@ -1,0 +1,46 @@
+{
+  "protocol": "openai-compatible",
+  "name": "engine-record-embeddings",
+  "description": "An embedding engine saved by Add engine, reached through its compiled LiteLLM entry: the request arrives with the extra headers the owner typed.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "add-engine-spec.md section 8 (no control saves a setting the gateway ignores)"
+  },
+  "exchanges": [
+    {
+      "id": "embeddings",
+      "match": {
+        "method": "POST",
+        "path": "/v1/embeddings",
+        "headers": {
+          "x-tenant": "{{tenant}}"
+        },
+        "json": {
+          "model": "{{model}}"
+        }
+      },
+      "response": {
+        "status": 200,
+        "json": {
+          "object": "list",
+          "data": [
+            {
+              "object": "embedding",
+              "index": 0,
+              "embedding": [
+                0.1,
+                0.2,
+                0.3
+              ]
+            }
+          ],
+          "model": "{{model}}",
+          "usage": {
+            "prompt_tokens": 1,
+            "total_tokens": 1
+          }
+        }
+      }
+    }
+  ]
+}

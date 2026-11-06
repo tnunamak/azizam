@@ -1,0 +1,22 @@
+{
+  "protocol": "comfyui",
+  "name": "audio-submit-slow-first-byte",
+  "description": "The audio submit is accepted and never answered.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /prompt, GET /history/{prompt_id}, GET /view (ComfyUI server.py); the gateway's audio route polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "wait_before_headers": "forever",
+        "json": {}
+      }
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "kobold": {
+    "resource": [
+      "http://127.0.0.1:5051/health",
+      {}
+    ],
+    "readiness": [
+      "http://127.0.0.1:5051/health",
+      {}
+    ]
+  },
+  "openrouter": {
+    "resource": [
+      "https://openrouter.ai/api/v1/health",
+      {}
+    ],
+    "readiness": null
+  },
+  "litellm": {
+    "resource": [
+      "http://127.0.0.1:4011/health/liveliness",
+      {}
+    ],
+    "readiness": null
+  },
+  "embeddings": {
+    "resource": [
+      "http://127.0.0.1:6061/health",
+      {}
+    ],
+    "readiness": [
+      "http://127.0.0.1:6061/health",
+      {}
+    ]
+  },
+  "speech-in": {
+    "resource": [
+      "http://127.0.0.1:6062/health",
+      {}
+    ],
+    "readiness": [
+      "http://127.0.0.1:6062/health",
+      {}
+    ]
+  },
+  "speech-out": {
+    "resource": [
+      "http://127.0.0.1:6063/health",
+      {}
+    ],
+    "readiness": [
+      "http://127.0.0.1:6063/health",
+      {}
+    ]
+  }
+}

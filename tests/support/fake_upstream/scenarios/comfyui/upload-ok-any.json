@@ -1,0 +1,27 @@
+{
+  "protocol": "comfyui",
+  "name": "upload-ok-any",
+  "description": "Any number of uploads succeed.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /upload/image (multipart, answers {name, subfolder, type}), POST /prompt, GET /history/{prompt_id}, POST /api/jobs/{id}/cancel (ComfyUI server.py); the gateway polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "upload",
+      "repeat": true,
+      "required": false,
+      "match": {
+        "method": "POST",
+        "path": "/upload/image"
+      },
+      "response": {
+        "json": {
+          "name": "uploaded.png",
+          "subfolder": "",
+          "type": "input"
+        }
+      }
+    }
+  ]
+}

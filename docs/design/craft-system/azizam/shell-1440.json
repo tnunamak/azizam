@@ -1,0 +1,673 @@
+{
+ "scope": "shell",
+ "url": "/ui/home/",
+ "tokens": {
+  "foreground": "rgb(16, 35, 42)",
+  "muted": "rgb(61, 79, 85)",
+  "pageBg": "rgb(243, 246, 246)",
+  "cardBg": "rgb(255, 255, 255)",
+  "mutedBg": "rgb(233, 238, 239)"
+ },
+ "layout": null,
+ "text": [
+  {
+   "tag": "span",
+   "text": "Azizam",
+   "role": "link",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 18.75,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 56,
+    "y": 29,
+    "w": 47.7,
+    "h": 18.8,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Go to…",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 86,
+    "w": 120,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "kbd",
+   "text": "Ctrl K",
+   "role": "button",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 178,
+    "y": 88,
+    "w": 31,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "You",
+   "role": "p",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(74, 92, 98)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 12,
+    "y": 128,
+    "w": 207,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Home",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 154,
+    "w": 38,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Library",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 188,
+    "w": 45,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Try",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 222,
+    "w": 20,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Apps & keys",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 256,
+    "w": 79,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Models",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 290,
+    "w": 47,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Workflows",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 324,
+    "w": 66,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Usage",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 358,
+    "w": 39,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "p",
+   "text": "Gateway",
+   "role": "p",
+   "fontSize": 12,
+   "fontWeight": 400,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(74, 92, 98)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "other",
+   "textTransform": "none",
+   "box": {
+    "x": 12,
+    "y": 416,
+    "w": 207,
+    "h": 16,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Status",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 442,
+    "w": 41,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Engines",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 476,
+    "w": 49,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Providers",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 510,
+    "w": 61,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "People",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 544,
+    "w": 44,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Activity",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 578,
+    "w": 46,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Settings",
+   "role": "link",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 48,
+    "y": 612,
+    "w": 51,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "1 issue",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 40,
+    "y": 818,
+    "w": 45,
+    "h": 20,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "S",
+   "role": "button",
+   "fontSize": 12,
+   "fontWeight": 600,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 24,
+    "y": 854,
+    "w": 24,
+    "h": 24,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "Sam",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 500,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 58,
+    "y": 856,
+    "w": 75,
+    "h": 20,
+    "inViewport": true
+   }
+  }
+ ],
+ "controls": [
+  {
+   "type": "button",
+   "variant": "unstyled/ghost-like",
+   "size": null,
+   "tag": "button",
+   "role": null,
+   "text": "Go to",
+   "height": 32,
+   "width": 207,
+   "borderRadius": "6px",
+   "padding": "0px 10px 0px 10px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "classes": "text-chrome-muted hover:text-chrome-foreground hover:bg-chrome-raised rounded-control mb-4 flex min-h-11 items-center justify-center gap-2.5 px-2.5 text-sm transition-colors lg:min-h-8 lg:justify-star",
+   "box": {
+    "x": 12,
+    "y": 80,
+    "w": 207,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "unstyled/ghost-like",
+   "size": null,
+   "tag": "button",
+   "role": null,
+   "text": "Gateway status: 1 issue",
+   "height": 32,
+   "width": 207,
+   "borderRadius": "6px",
+   "padding": "0px 10px 0px 10px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "classes": "shell-nav-footer",
+   "box": {
+    "x": 12,
+    "y": 812,
+    "w": 207,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "unstyled/ghost-like",
+   "size": null,
+   "tag": "button",
+   "role": null,
+   "text": "Account menu: Sam",
+   "height": 32,
+   "width": 159,
+   "borderRadius": "6px",
+   "padding": "0px 12px 0px 12px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "classes": "shell-nav-footer w-full justify-center px-2 lg:justify-start lg:px-3",
+   "box": {
+    "x": 12,
+    "y": 850,
+    "w": 159,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "unstyled/ghost-like",
+   "size": null,
+   "tag": "button",
+   "role": null,
+   "text": "Toggle theme",
+   "height": 36,
+   "width": 44,
+   "borderRadius": "6px",
+   "padding": "0px 0px 0px 0px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 14,
+   "fontWeight": 400,
+   "classes": "shell-nav-footer size-11 shrink-0 justify-center px-0 lg:size-9",
+   "box": {
+    "x": 175,
+    "y": 848,
+    "w": 44,
+    "h": 36,
+    "inViewport": true
+   }
+  }
+ ],
+ "controlGroups": [],
+ "cards": [
+  {
+   "tag": "a",
+   "slot": "tooltip-trigger",
+   "classes": "shell-nav-link",
+   "padding": "0px 10px 0px 10px",
+   "borderRadius": "6px",
+   "border": "none",
+   "boxShadow": "none",
+   "background": "rgb(225, 232, 234)",
+   "hasBorder": false,
+   "hasBg": true,
+   "hasShadow": false,
+   "box": {
+    "x": 12,
+    "y": 148,
+    "w": 207,
+    "h": 32,
+    "inViewport": true
+   },
+   "firstText": "Home"
+  }
+ ],
+ "rowLists": [
+  {
+   "kind": "sibling-group",
+   "parent": "div.flex.flex-col.gap-0.5",
+   "count": 7,
+   "visualRows": 7,
+   "perRow": 1,
+   "itemHeights": [
+    32,
+    32,
+    32,
+    32,
+    32,
+    32,
+    32
+   ],
+   "heights": [
+    32,
+    32,
+    32,
+    32,
+    32,
+    32,
+    32
+   ],
+   "gaps": [
+    2,
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 236,
+   "sample": "Home",
+   "box": {
+    "x": 12,
+    "y": 148,
+    "w": 207,
+    "h": 236,
+    "inViewport": true
+   }
+  },
+  {
+   "kind": "sibling-group",
+   "parent": "div.flex.flex-col.gap-0.5",
+   "count": 6,
+   "visualRows": 6,
+   "perRow": 1,
+   "itemHeights": [
+    32,
+    32,
+    32,
+    32,
+    32,
+    32
+   ],
+   "heights": [
+    32,
+    32,
+    32,
+    32,
+    32,
+    32
+   ],
+   "gaps": [
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "columnGaps": [],
+   "layout": "vertical",
+   "inTablist": false,
+   "spanPx": 202,
+   "sample": "Status",
+   "box": {
+    "x": 12,
+    "y": 436,
+    "w": 207,
+    "h": 202,
+    "inViewport": true
+   }
+  }
+ ],
+ "icons": {
+  "24x24": 1,
+  "16x16": 16
+ },
+ "textColors": {
+  "rgb(16, 35, 42)": 4,
+  "rgb(61, 79, 85)": 15,
+  "rgb(74, 92, 98)": 2
+ },
+ "bgColors": {
+  "rgb(238, 242, 243)": 1,
+  "rgb(225, 232, 234)": 1,
+  "rgb(217, 119, 6)": 1,
+  "rgb(95, 194, 185)": 1
+ },
+ "width": 1440
+}

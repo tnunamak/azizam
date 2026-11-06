@@ -1,0 +1,271 @@
+# People and built-in accounts
+
+Owners manage People, Invites and Access plans at `/people/`. Existing
+profiles remain the policy model and use the existing profile CRUD and
+`POST /admin/api/policy/simulate` APIs. The Home, Settings and Status pages
+are unchanged by this feature.
+
+## Account flow
+
+1. The owner creates an invitation with a stored profile, expiry and optional
+   email restriction. A pending invitation can be copied again or revoked.
+2. The invitee opens `/invite/#token=...`. They create an email/password
+   account, or sign in with the configured OIDC provider and accept using
+   their signed-in identity. Targeted OIDC invites require a verified email, and a verified email an open invitation names is let through the sign-in rules (an invitation with no email cannot admit a provider sign-in).
+3. Acceptance atomically assigns the access plan, creates a personal App and
+   API key, consumes the invitation and records an audit event. All existing
+   Apps and keys of an OIDC invitee receive the invitation's plan as well.
+4. The browser shows the new key once. After saving it, the member continues
+   to Home. Keys use the existing runtime authentication and policy paths.
+
+The key is for an app calling the gateway, not for browser sign-in. A member
+who created a built-in account signs in later with the email and password they
+entered when accepting the invitation. A member who accepted through OIDC
+signs in later through that identity provider. There is no magic-link or
+passkey sign-in in this flow.
+
+An invitation link is a bearer capability. A targeted invite restricts the
+email entered at acceptance; built-in password signup does not verify control
+of that mailbox. Targeted OIDC acceptance requires a verified provider email.
+An invite without an email lets any link holder choose an address. Links are
+single-use and expire after the chosen period (seven days by default). Share
+them privately. A redeemed link cannot be revoked; if the wrong person used
+it, remove or disable their account and revoke its App key.
+
+New passwords can be any length from 1 to 1,024 characters and use scrypt; the sign-in throttle, not a length rule, limits guessing. Existing local-owner
+PBKDF2 passwords still work. Login attempts have persistent per-email and
+per-IP limits. Browser sessions reuse the existing signed cookie and CSRF
+mechanism. No provider token is stored in a browser cookie.
+
+Invitation tokens are derived from random link IDs with a domain-separated
+HMAC of the persistent browser signing key. Only their SHA-256 hashes are
+stored in the database. This lets an authorized owner copy a pending link
+again without storing its bearer token. Changing the signing key prevents
+copying existing links; links already shared retain their original expiry
+and one-use checks. Password-reset tokens are independent random values and
+are shown only when the owner creates the reset link.
+
+## JSON interface
+
+All account responses use `Cache-Control: no-store`. Owner mutations require
+the existing `x-azizam-csrf` token from `/admin/api/session` for browser
+sessions. Bearer credentials follow existing admin authentication. Ordinary
+members and administrators cannot use the owner-only People/invitation APIs.
+
+| Endpoint | Result / request |
+| --- | --- |
+| `GET /auth/api/options` | Available built-in/OIDC methods; signed-in OIDC identity and its CSRF token when present |
+| `POST /auth/api/login` | `{email,password}`; sets browser session, returns Home destination |
+| `POST /auth/api/invite` | JSON `{token}`; returns invitation email, expiry and existing access plan |
+| `POST /auth/api/invite/accept` | `{token,email,name,password}` for built-in; omit password and send session CSRF for OIDC |
+| `POST /auth/api/password-reset` | `{token,password}`; consumes reset link and invalidates earlier sessions |
+| `GET /admin/api/people` | People, effective plan and source, grant provenance, last active, builtin/protected/role flags, profiles |
+| `PATCH /admin/api/people/{id}` | `{profile_id?,disabled?}`; updates member policy or availability |
+| `DELETE /admin/api/people/{id}` | Removes member from People and revokes access |
+| `POST /admin/api/people/{id}/reset` | `{expires_in:3600}`; generates a built-in password reset link |
+| `GET /admin/api/invites` | Invitation metadata and profiles, never raw tokens |
+| `POST /admin/api/invites` | `{profile_id,email?,expires_in}`; invitation metadata and private link |
+| `GET /admin/api/invites/{id}/link` | Recover the same pending invitation link; expired/used/revoked links fail |
+| `DELETE /admin/api/invites/{id}` | Revoke pending invitation |
+
+## Avatars
+
+Every person has an avatar, drawn from their stable person id (never the display name, so a rename keeps the
+colour). The choice is one word, stored in `user_avatars` (created with the account schema; a table of its own so
+no People list returns the picture URL): `auto` (the default), `v1` to `v8` (the eight palettes), `picture` (the
+picture the identity provider shared) or `generated` (a picture the gateway made for the person; see below).
+
+| Endpoint | Result / request |
+| --- | --- |
+| `GET /me/api/profile/avatar` | `{choice, person_id, picture_url, sign_in_picture_url, made_picture_url, generating, default_due}`. `picture_url` is the gateway path of the picture shown, or `null`. The two preview paths are for the person only, and are `null` when there is no such picture. `generating` (the person only) is `true` while their automatic picture is being made. `default_due` (the person only) is `true` while the automatic picture is still due and an image route exists for them now; the page asks for the picture only then. The session snapshot carries the same fields. None is the provider's address. A read first keeps the automatic picture if its job has finished |
+| `PUT /me/api/profile/avatar` | `{choice}` and nothing else, with the same user-action header and CSRF token as other `/me` writes. Any other word, extra key or URL is `400 invalid_avatar_choice`; `picture` with no stored picture is `409 picture_unavailable`; `generated` with no kept picture is `409 generated_unavailable` |
+| `GET /me/api/profile/avatars` | `{people: {id: {choice, picture_url}}}`: the caller's own; an owner or admin also gets everyone's (People and Library draw their marks from it). Another person's `picture_url` is shown only when that person chose `picture` or `generated` |
+| `GET /me/api/profile/avatar/picture[?person=id]` | The picture shown, as `image/png`, `image/jpeg`, `image/webp` or `image/gif`, or `404`. `?kind=generated` or `?kind=sign-in` gives one of the person's own pictures whichever avatar they show (the person only) |
+| `GET /me/api/profile/avatar/generator` | `{available}`: whether an image route exists that the person may use to make an avatar. The picker shows its make button only then. It only reads: the person's session App is made when a make job starts, not here |
+| `POST /me/api/profile/avatar/generate` | Starts one attempt: a make job for `image.generate` on that route, with a new seed. Answers `202 {job}`, or `503 generator_unavailable` |
+| `POST /me/api/profile/avatar/generated` | `{asset_id}`: keeps one of the person's own Library pictures as the avatar. Anything else, or a picture not in their Library, is `404 generated_not_found` |
+| `DELETE /me/api/profile/avatar/generated` | Removes the kept picture. The avatar returns to the sign-in picture when there is one, and to the palette when there is not. Its metadata goes whichever avatar was shown |
+| `POST /me/api/profile/avatar/default` | The automatic picture (below): called on a signed-in load only when the session's `default_due` is `true`. Answers the person's avatar view. A second call, or a call for a person who has a sign-in picture or a chosen avatar, starts nothing |
+
+The `picture` claim of the ID token is read at sign-in, only for a person who is let in. It is kept only when it is
+an `https` URL of at most 2048 characters with no credentials, and it is stored on the person (`user_avatars`),
+not in the session cookie. A claim that is present and fails these checks removes the stored URL; an absent claim
+leaves it. A generated avatar is made when the person presses Make an avatar, or once automatically (below), never at
+sign-in or in bulk. The gateway takes the first image capability the person may use from its catalog (`gateway/avatar_generation.py`), so no
+engine or model name is in code. The prompt is one fixed template with a style chosen by a random seed. It holds no
+name, address or photo, and its job asks prompt memory to forget it. The job is an ordinary make job, stamped with
+the person, so it shows in their Library. Keeping a picture copies the job's picture to the avatar cache beside the
+admin database, under one directory per person (named by a hash of the person id) with one file per template
+version. Others see that picture only when the person chose it. Removing it deletes the copy, and removing the
+person deletes it too. Schema 19 rebuilds `user_avatars` once to add the word `generated`.
+
+**The automatic picture.** A person with no sign-in picture and no chosen avatar (`auto`) gets one picture made for
+them, once. The page asks (`POST .../avatar/default`) only when the session says the picture is due: `default_due`
+is true while the person has no sign-in picture, no chosen avatar and no attempt yet, and an image route exists for
+them now. The gateway reads that without creating anything. The page asks at most once per page load, and at most
+once in five minutes in a tab, so a deferred ask is retried later and not on every navigation. Once the attempt is
+recorded, `default_due` is false and a normal load costs no extra request. One
+default starts at a time, and only when an image route exists and no other picture job is queued or running. A load
+that finds the slot taken, picture work busy, or a start refused for capacity (HTTP 429 or 503) starts nothing and
+uses no attempt, so a later load tries again. The attempt (`default_attempted_at`) is recorded once the job has
+started, with the job's id in `default_job_id`, or when the start fails for another reason, so that failure is never
+retried. A person who removes the picture is never given another. A keep, a pick or a Remove by the person records the
+attempt and forgets the job, so a default that finishes after one publishes nothing. When the job succeeds and the
+person has made no such choice, the picture is kept. It becomes the avatar if they have the automatic choice and no
+sign-in picture; otherwise they can choose it later. `default_job_id` is set until the job has stopped. Schema 20
+adds those two columns.
+
+The browser never loads the provider's address (no hot-linking, so the provider learns nothing about
+who views whom): the gateway fetches it on the server with no cookie, credential or referer, over `https` only, at
+most 1 MB and 8 seconds, through the fetcher that guards media URLs (`gateway/media_fetch.py`) in its strict
+mode: public addresses only (checked after DNS and on every redirect hop), destination port 443 only, and never
+the operator's `AZIZAM_MEDIA_FETCH_ALLOW_PRIVATE_HOSTS` exception, which is for media inputs. The header and the
+file signature must agree on one of the four image types. A good copy is kept in memory for six hours, a failure
+for five minutes, per person and URL; requests that arrive while a fetch runs wait for it (one fetch per
+picture). A failed fetch answers `404`, so the page shows the generated avatar. Every response about an avatar or
+a picture is `Cache-Control: no-store`: the server keeps the copy and the browser keeps nothing, so a sign-out, or
+another person's session in the same browser, is never answered from its cache. The picture is sent with
+`Content-Disposition: inline; filename="avatar"`, `nosniff` and a sandbox CSP. Only the person themself and an owner or admin (who already see the person in People
+and Library) can fetch a picture, and an owner or admin only when the person chose it.
+
+The sign-in switches, the identity provider connection and the sign-in rules
+are one document with one revision, read and written only through
+`/admin/api/signin` (see "Sign-in rules and the Sign-in page" in
+`docs/design/web-api-contract.md`). There is no separate route for the
+built-in or provider switch, and none for the provider connection. The choice
+lives in `operator_settings.sign_in` in admin.db and applies without restart.
+The default permits built-in sign-in and exposes OIDC when its connection is
+turned on. A stale revision returns `409 settings_conflict`; a missing
+`If-Match` returns `428 settings_revision_required`.
+
+## Revocation and ownership
+
+Changing a member's plan updates every owned App and key, including explicit
+key policy overrides. Disabling an account revokes its keys and browser
+sessions and disables its Apps. Enabling it permits fresh sign-in and new
+keys; old keys and sessions remain revoked. Owner/admin accounts are
+protected from member-management actions.
+
+Removal retains a tombstone so an old OIDC identity cannot return and recover
+access. It deletes the password verifier and revokes Apps, keys, reset links
+and sessions while preserving historical attribution. It is not physical
+personal-data erasure. Password reset invalidates earlier browser sessions,
+but does not rotate runtime API keys. A person can end all their own sessions
+with "Sign out everywhere"; see [Sign-in sessions](ops/SIGN_IN_SESSIONS.md).
+
+Receipt/job ownership is independent of profile visibility. New media jobs
+carry the authenticated App ID and key hash through job updates. Legacy
+runtime keys also receive trusted key-hash attribution, so new queued jobs
+remain accessible before assets exist. Store ownership filters run before
+list limits, and get/events/cancel/content check the same ownership rule.
+Client and admin views do not expose owner key hashes.
+
+Owner Library, request and usage views are instance views by default. They
+include personal Apps, service Apps and local-network requests that arrived
+without an API key. These no-key records are labeled `Local network · no key`;
+when the request path records a client hint, the UI can show that hint as
+supporting source detail. Historical receipt rows with `app_id = NULL` are
+interpreted the same way at read time. This is non-destructive; no receipt
+backfill is required.
+
+Prompt visibility is narrower than media visibility. Only the person who made
+an item sees its retained prompt, prompt-based title, prompt search result, or
+full workflow download. The owner's instance Library shows other members'
+media with date-and-maker titles, without their prompts. Service Apps and
+no-key LAN calls have no person to own a private media prompt, so media prompts
+are not retained for them. The separate Responses store still honours
+`store:true` for these callers. `GET/PUT /me/api/prompt-memory` manages a
+member's setting;
+shorter retention also applies to existing saved prompts. `DELETE
+/me/api/prompt-memory/prompts` removes their
+saved prompts while keeping media. Owners manage the household default, kill
+switch, and retention ceiling at `GET/PUT /admin/api/settings/prompt-memory`.
+The owner operates the server and can read its database outside Azizam; no
+Azizam screen grants the owner another member's prompt text.
+
+Members do not inherit owner instance scope. Their Home, Usage and Library
+views remain limited to their own Apps and key-attributed assets. A member
+cannot filter to `local-network` or another App source. A member never sees
+service-app receipts or no-key local-network receipts unless a future
+explicit sharing feature grants that access.
+
+Owner source filters use stable source IDs:
+
+| Source ID | Meaning |
+| --- | --- |
+| `all` or omitted | All instance receipts visible to the owner |
+| `local-network` | No-key local-network receipts (`app_id = NULL`) |
+| `app:<app_id>` | Receipts for one App, including service Apps |
+
+Library uses the same source IDs. Job-backed assets take their source from the
+job receipt, or the job's trusted App/key identity if the receipt is absent.
+Cache-only assets first use embedded provenance `request_id` to
+find a receipt; if no receipt exists, their internal owner key hashes are
+matched to historical App credentials, including revoked credentials, to
+recover the App label. If neither path can recover a source, owner views show
+the asset as `Local network · no key`.
+The hashes are never returned by the API.
+
+**Upgrade behavior:** historical records without trusted App/key attribution
+are excluded from member-scoped lists and return 404 on scoped member detail
+access. Owner instance views label historical `NULL` App receipts as
+local-network/no-key source records. Old client-supplied parent receipt IDs,
+labels and asset references cannot establish which member submitted a job.
+They are not used to manufacture member ownership. Already-issued complete
+signed asset URLs retain their existing capability semantics and expiry.
+Explicit auth-disabled gateways retain unscoped access.
+
+## Deployment and limits
+
+No new environment variable, dependency or registry entry is required.
+Account tables are created additively in the existing admin database during
+boot. New job/receipt attribution uses their existing JSON storage. Build
+and deploy the static export with the Python code; use the documented safe
+restart procedure at deployment. This lane does not restart any service.
+Sign-in and invitation responses use the saved instance name from Settings,
+with the same bootstrap defaults as discovery; name changes apply immediately.
+
+Receipts are kept forever by default. The owner can choose 1 year, 90 days or
+30 days in Settings → Receipts, with a deletion count before Save. Usage reports
+the chosen retention. See [receipt retention](ops/RECEIPT_RETENTION.md) for storage
+maintenance. Access-plan cards do not fabricate a requests/day limit
+or claim that cloud fallback permission is a paid-provider spending policy.
+Optional passkeys are deferred because no WebAuthn library is in the locked
+dependencies. Links are shared by the owner; email delivery is not added.
+
+Settings updates for instance presentation, OIDC trust and media admission
+require `If-Match` with the revision returned by their GET response. OIDC and
+instance responses include `revision`; operator overrides include
+`overrides.revisions.media_job_admission_overrides`. Missing revisions return
+428 (`settings_revision_required`), including for existing automation clients.
+Stale revisions return 409 (`settings_conflict`), preserve the current settings,
+and create no success audit event. Reload before resubmitting a draft. Revisions
+advance on every write, even if two writes occur in the same second.
+
+Disabling OIDC while the saved sign-in choice is OIDC-only is rejected. Select
+built-in or both first. Sign-in choice writes and OIDC writes validate this under
+the database write lock. The existing owner recovery flow through admin-key
+sign-in remains available and unchanged.
+
+Existing settings receive their first revision automatically during database
+initialization at startup. The idempotent `INSERT OR IGNORE` backfill uses the
+existing settings generation table and preserves existing registry generations.
+No operator script or schema column change is required.
+
+Invitation inspection uses `POST /auth/api/invite` with a JSON `token` field.
+The former GET query-token endpoint returns 405. The invitation page captures
+and clears the fragment immediately, retains it in tab session storage for
+OIDC sign-in and reloads, and clears that stored token after acceptance.
+
+Account suspension now blocks access through account state without changing
+individual app disable flags. Re-enabling an account leaves independently
+disabled apps disabled; revoked keys and sessions remain revoked. Existing app
+disable flags are preserved, including flags set before this change, because
+their original intent cannot be recovered safely.
+
+People shows the effective access plan from the same resolver used by session
+and app authorization, with its assigned, email, domain, group, role or gateway
+default source. Each active administrator grant shows its manual or OIDC-claim
+source. Grant and revoke audit events include provenance; invitation acceptance
+also records its first credential, without key material. Account actions record
+the authenticated actor kind, including owner service accounts.

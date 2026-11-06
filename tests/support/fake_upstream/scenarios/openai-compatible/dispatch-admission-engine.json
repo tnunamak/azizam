@@ -1,0 +1,73 @@
+{
+  "protocol": "openai-compatible",
+  "name": "dispatch-admission-engine",
+  "description": "The LLM substrate behind the dispatch-admission differential: any number of chat, streamed chat and embeddings calls, byte-identical to the pre-FK in-test backend.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "tests/test_dispatch_admission.py backend() before the FK migration (byte-identical bodies)"
+  },
+  "exchanges": [
+    {
+      "id": "chat-stream",
+      "repeat": true,
+      "required": false,
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "json": {
+          "stream": true
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "text/event-stream",
+          "x-backend-test": "yes"
+        },
+        "body": [
+          {
+            "text": "data: {\"id\": \"chatcmpl-abc\", \"object\": \"chat.completion.chunk\", \"model\": \"default\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"Hello\"}}]}\n\ndata: {\"id\": \"chatcmpl-abc\", \"object\": \"chat.completion.chunk\", \"model\": \"default\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "chat",
+      "repeat": true,
+      "required": false,
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions"
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json",
+          "x-backend-test": "yes"
+        },
+        "body": [
+          {
+            "text": "{\"id\":\"chatcmpl-abc\",\"object\":\"chat.completion\",\"model\":\"default\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7}}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "embeddings",
+      "repeat": true,
+      "required": false,
+      "match": {
+        "method": "POST",
+        "path": "/v1/embeddings"
+      },
+      "response": {
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "text": "{\"object\":\"list\",\"model\":\"test\",\"data\":[{\"object\":\"embedding\",\"index\":0,\"embedding\":[0.1,0.2]}],\"usage\":{\"prompt_tokens\":1,\"total_tokens\":1}}"
+          }
+        ]
+      }
+    }
+  ]
+}

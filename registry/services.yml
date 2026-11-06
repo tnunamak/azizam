@@ -1,0 +1,55 @@
+records:
+  - id: litellm
+    name: LiteLLM
+    kind: llm-substrate
+    source: builtin
+    editable: false
+    enabled: true
+    priority: 10
+    role: required
+    capabilities:
+      - llm.execution
+    config:
+      execution_substrate: litellm
+      protocol: litellm
+      base_url_env: AZIZAM_LITELLM_BASE_URL
+      default_base_url: http://127.0.0.1:4011
+      health_endpoint: /health/liveliness
+      api_key_env: AZIZAM_LITELLM_API_KEY
+      # Resolved relative to the gateway state dir (ADMIN_DB_PATH.parent, i.e.
+      # data/), so this is a bare filename — NOT "data/litellm.config.yaml",
+      # which would double the prefix to data/data/ and diverge from the path
+      # start.sh's litellm watcher reads (data/litellm.config.yaml).
+      config_path: litellm.config.yaml
+    lifecycle:
+      type: external
+      managed: false
+      service_name: litellm
+  - id: openrouter
+    name: OpenRouter
+    kind: provider
+    source: builtin
+    enabled: false
+    priority: 100
+    role: optional
+    capabilities:
+      - openai-compatible
+    config:
+      provider_id: openrouter
+      provider_type: paid-remote
+      protocol: openai-compatible
+      protocols:
+        - openai-compatible
+      base_url: https://openrouter.ai/api/v1
+      credential_origin: https://openrouter.ai:443
+      api_key_env: OPENROUTER_API_KEY
+      generation_stats:
+        path: /generation
+        id_param: id
+        cost_path:
+          - data
+          - total_cost
+    lifecycle:
+      type: external
+      managed: false
+      service_name: ""

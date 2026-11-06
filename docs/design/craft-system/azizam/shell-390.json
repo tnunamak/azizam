@@ -1,0 +1,239 @@
+{
+ "scope": "shell",
+ "url": "/ui/home/",
+ "tokens": {
+  "foreground": "rgb(16, 35, 42)",
+  "muted": "rgb(61, 79, 85)",
+  "pageBg": "rgb(243, 246, 246)",
+  "cardBg": "rgb(255, 255, 255)",
+  "mutedBg": "rgb(233, 238, 239)"
+ },
+ "layout": null,
+ "text": [
+  {
+   "tag": "span",
+   "text": "Azizam",
+   "role": "link",
+   "fontSize": 15,
+   "fontWeight": 600,
+   "lineHeight": 18.75,
+   "letterSpacing": "-0.225px",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 50,
+    "y": 18,
+    "w": 47.7,
+    "h": 18.8,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "span",
+   "text": "S",
+   "role": "button",
+   "fontSize": 14,
+   "fontWeight": 600,
+   "lineHeight": 20,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 344,
+    "y": 12,
+    "w": 32,
+    "h": 32,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Home",
+   "role": "link",
+   "fontSize": 12,
+   "fontWeight": 500,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(16, 35, 42)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "foreground",
+   "textTransform": "none",
+   "box": {
+    "x": 0,
+    "y": 788,
+    "w": 97.5,
+    "h": 56,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Library",
+   "role": "link",
+   "fontSize": 12,
+   "fontWeight": 500,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 98,
+    "y": 788,
+    "w": 97.5,
+    "h": 56,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "a",
+   "text": "Apps",
+   "role": "link",
+   "fontSize": 12,
+   "fontWeight": 500,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 195,
+    "y": 788,
+    "w": 97.5,
+    "h": 56,
+    "inViewport": true
+   }
+  },
+  {
+   "tag": "button",
+   "text": "More",
+   "role": "button",
+   "fontSize": 12,
+   "fontWeight": 500,
+   "lineHeight": 16,
+   "letterSpacing": "normal",
+   "color": "rgb(61, 79, 85)",
+   "fontFamily": "Hanken Grotesk Variable",
+   "tone": "muted",
+   "textTransform": "none",
+   "box": {
+    "x": 293,
+    "y": 788,
+    "w": 97.5,
+    "h": 56,
+    "inViewport": true
+   }
+  }
+ ],
+ "controls": [
+  {
+   "type": "button",
+   "variant": "unstyled/ghost-like",
+   "size": null,
+   "tag": "button",
+   "role": null,
+   "text": "Account menu: Sam",
+   "height": 44,
+   "width": 44,
+   "borderRadius": "6px",
+   "padding": "0px 0px 0px 0px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 15,
+   "fontWeight": 400,
+   "classes": "rounded-control flex size-11 items-center justify-center",
+   "box": {
+    "x": 338,
+    "y": 6,
+    "w": 44,
+    "h": 44,
+    "inViewport": true
+   }
+  },
+  {
+   "type": "button",
+   "variant": "unstyled/ghost-like",
+   "size": null,
+   "tag": "button",
+   "role": null,
+   "text": "More",
+   "height": 56,
+   "width": 97.5,
+   "borderRadius": "0px",
+   "padding": "0px 0px 0px 0px",
+   "borderWidth": "0px",
+   "borderColor": "rgb(215, 224, 226)",
+   "borderStyle": "solid",
+   "boxShadow": "none",
+   "background": "rgba(0, 0, 0, 0)",
+   "fontSize": 12,
+   "fontWeight": 500,
+   "classes": "mobile-tab",
+   "box": {
+    "x": 293,
+    "y": 788,
+    "w": 97.5,
+    "h": 56,
+    "inViewport": true
+   }
+  }
+ ],
+ "controlGroups": [],
+ "cards": [],
+ "rowLists": [
+  {
+   "kind": "sibling-group",
+   "parent": "nav.bg-background/95.fixed.inset-x-0.bottom-0",
+   "count": 3,
+   "visualRows": 1,
+   "perRow": 3,
+   "itemHeights": [
+    56,
+    56,
+    56
+   ],
+   "heights": [
+    56
+   ],
+   "gaps": [],
+   "columnGaps": [
+    0,
+    0
+   ],
+   "layout": "horizontal",
+   "inTablist": false,
+   "spanPx": 56,
+   "sample": "Home",
+   "box": {
+    "x": 0,
+    "y": 787,
+    "w": 390,
+    "h": 57,
+    "inViewport": true
+   }
+  }
+ ],
+ "icons": {
+  "24x24": 1,
+  "22x22": 4
+ },
+ "textColors": {
+  "rgb(16, 35, 42)": 3,
+  "rgb(61, 79, 85)": 3
+ },
+ "bgColors": {
+  "rgb(238, 242, 243)": 1,
+  "rgb(95, 194, 185)": 1,
+  "oklab(0.970866 -0.00300878 -0.000920177 / 0.95)": 1
+ },
+ "width": 390
+}

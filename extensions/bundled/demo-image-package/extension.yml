@@ -1,0 +1,14 @@
+schema_version: 1
+kind: extension_package
+id: test-demo-image-extension-package
+name: Test Demo Image Extension Package
+version: 0.1.0
+objects:
+  services:
+    - objects/service.yml
+  protocol_frontends:
+    - objects/protocol_frontend.yml
+  capabilities:
+    - objects/capability.yml
+  workflows:
+    - objects/workflow.yml

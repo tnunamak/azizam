@@ -1,0 +1,1690 @@
+{
+ "_about": "The prompt body proxy_audio_generate submitted for each parity row before the route moved onto compile_workflow (captured at d69e570b7, the _meta injection path). The route must still submit these bytes. client_id is left out: it is drawn once per process.",
+ "rows": {
+  "ace-input-padded": {
+   "prompt": {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "acestep_v1.5_xl_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "EmptyAceStep1.5LatentAudio",
+     "inputs": {
+      "batch_size": 1,
+      "seconds": 20.0
+     }
+    },
+    "15": {
+     "class_type": "ModelSamplingAuraFlow",
+     "inputs": {
+      "model": [
+       "1",
+       0
+      ],
+      "shift": 3.0
+     }
+    },
+    "2": {
+     "class_type": "DualCLIPLoader",
+     "inputs": {
+      "clip_name1": "qwen_1.7b_ace15.safetensors",
+      "clip_name2": "qwen_0.6b_ace15.safetensors",
+      "type": "ace"
+     }
+    },
+    "20": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 2.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "10",
+       0
+      ],
+      "model": [
+       "15",
+       0
+      ],
+      "negative": [
+       "6",
+       0
+      ],
+      "positive": [
+       "5",
+       0
+      ],
+      "sampler_name": "er_sde",
+      "scheduler": "linear_quadratic",
+      "seed": 3,
+      "steps": 50
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "ace_1.5_vae.safetensors"
+     }
+    },
+    "30": {
+     "class_type": "VAEDecodeAudio",
+     "inputs": {
+      "samples": [
+       "20",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "38": {
+     "class_type": "SaveAudio",
+     "inputs": {
+      "audio": [
+       "30",
+       0
+      ],
+      "filename_prefix": "ace-step-xl/music"
+     }
+    },
+    "5": {
+     "class_type": "TextEncodeAceStepAudio1.5",
+     "inputs": {
+      "bpm": 90,
+      "cfg_scale": 2.0,
+      "clip": [
+       "2",
+       0
+      ],
+      "duration": 20.0,
+      "generate_audio_codes": true,
+      "keyscale": "C major",
+      "language": "en",
+      "lyrics": "[instrumental]",
+      "min_p": 0.0,
+      "seed": 0,
+      "tags": "a slow waltz",
+      "temperature": 0.85,
+      "timesignature": "4",
+      "top_k": 0,
+      "top_p": 0.9
+     }
+    },
+    "6": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "5",
+       0
+      ]
+     }
+    }
+   }
+  },
+  "ace-lyrics-tags-prompt-fallback-with-ui": {
+   "extra_data": {
+    "extra_pnginfo": {
+     "workflow": {
+      "classes": [
+       "ConditioningZeroOut",
+       "DualCLIPLoader",
+       "EmptyAceStep1.5LatentAudio",
+       "KSampler",
+       "ModelSamplingAuraFlow",
+       "SaveAudio",
+       "TextEncodeAceStepAudio1.5",
+       "UNETLoader",
+       "VAEDecodeAudio",
+       "VAELoader"
+      ],
+      "nodes": [
+       "1",
+       "10",
+       "15",
+       "2",
+       "20",
+       "3",
+       "30",
+       "38",
+       "5",
+       "6"
+      ]
+     }
+    }
+   },
+   "prompt": {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "acestep_v1.5_xl_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "EmptyAceStep1.5LatentAudio",
+     "inputs": {
+      "batch_size": 1,
+      "seconds": 30.0
+     }
+    },
+    "15": {
+     "class_type": "ModelSamplingAuraFlow",
+     "inputs": {
+      "model": [
+       "1",
+       0
+      ],
+      "shift": 3.0
+     }
+    },
+    "2": {
+     "class_type": "DualCLIPLoader",
+     "inputs": {
+      "clip_name1": "qwen_1.7b_ace15.safetensors",
+      "clip_name2": "qwen_0.6b_ace15.safetensors",
+      "type": "ace"
+     }
+    },
+    "20": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 2.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "10",
+       0
+      ],
+      "model": [
+       "15",
+       0
+      ],
+      "negative": [
+       "6",
+       0
+      ],
+      "positive": [
+       "5",
+       0
+      ],
+      "sampler_name": "er_sde",
+      "scheduler": "linear_quadratic",
+      "seed": 5,
+      "steps": 50
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "ace_1.5_vae.safetensors"
+     }
+    },
+    "30": {
+     "class_type": "VAEDecodeAudio",
+     "inputs": {
+      "samples": [
+       "20",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "38": {
+     "class_type": "SaveAudio",
+     "inputs": {
+      "audio": [
+       "30",
+       0
+      ],
+      "filename_prefix": "ace-step-xl/music"
+     }
+    },
+    "5": {
+     "class_type": "TextEncodeAceStepAudio1.5",
+     "inputs": {
+      "bpm": 90,
+      "cfg_scale": 2.0,
+      "clip": [
+       "2",
+       0
+      ],
+      "duration": 30.0,
+      "generate_audio_codes": true,
+      "keyscale": "C major",
+      "language": "en",
+      "lyrics": "la la",
+      "min_p": 0.0,
+      "seed": 0,
+      "tags": "dream pop",
+      "temperature": 0.85,
+      "timesignature": "4",
+      "top_k": 0,
+      "top_p": 0.9
+     }
+    },
+    "6": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "5",
+       0
+      ]
+     }
+    }
+   }
+  },
+  "ace-prompt-tags-lyrics-duration-seed": {
+   "prompt": {
+    "1": {
+     "class_type": "UNETLoader",
+     "inputs": {
+      "unet_name": "acestep_v1.5_xl_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+     }
+    },
+    "10": {
+     "class_type": "EmptyAceStep1.5LatentAudio",
+     "inputs": {
+      "batch_size": 1,
+      "seconds": 12.0
+     }
+    },
+    "15": {
+     "class_type": "ModelSamplingAuraFlow",
+     "inputs": {
+      "model": [
+       "1",
+       0
+      ],
+      "shift": 3.0
+     }
+    },
+    "2": {
+     "class_type": "DualCLIPLoader",
+     "inputs": {
+      "clip_name1": "qwen_1.7b_ace15.safetensors",
+      "clip_name2": "qwen_0.6b_ace15.safetensors",
+      "type": "ace"
+     }
+    },
+    "20": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 2.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "10",
+       0
+      ],
+      "model": [
+       "15",
+       0
+      ],
+      "negative": [
+       "6",
+       0
+      ],
+      "positive": [
+       "5",
+       0
+      ],
+      "sampler_name": "er_sde",
+      "scheduler": "linear_quadratic",
+      "seed": 1234,
+      "steps": 50
+     }
+    },
+    "3": {
+     "class_type": "VAELoader",
+     "inputs": {
+      "vae_name": "ace_1.5_vae.safetensors"
+     }
+    },
+    "30": {
+     "class_type": "VAEDecodeAudio",
+     "inputs": {
+      "samples": [
+       "20",
+       0
+      ],
+      "vae": [
+       "3",
+       0
+      ]
+     }
+    },
+    "38": {
+     "class_type": "SaveAudio",
+     "inputs": {
+      "audio": [
+       "30",
+       0
+      ],
+      "filename_prefix": "ace-step-xl/music"
+     }
+    },
+    "5": {
+     "class_type": "TextEncodeAceStepAudio1.5",
+     "inputs": {
+      "bpm": 90,
+      "cfg_scale": 2.0,
+      "clip": [
+       "2",
+       0
+      ],
+      "duration": 12.0,
+      "generate_audio_codes": true,
+      "keyscale": "C major",
+      "language": "en",
+      "lyrics": "first line\nsecond line",
+      "min_p": 0.0,
+      "seed": 0,
+      "tags": "dream pop, piano",
+      "temperature": 0.85,
+      "timesignature": "4",
+      "top_k": 0,
+      "top_p": 0.9
+     }
+    },
+    "6": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "5",
+       0
+      ]
+     }
+    }
+   }
+  },
+  "sa3-duration-at-deployed-max": {
+   "prompt": {
+    "1": {
+     "class_type": "CheckpointLoaderSimple",
+     "inputs": {
+      "ckpt_name": "stable_audio_3_small_sfx.safetensors"
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "t5gemma_b_b_ul2.safetensors",
+      "device": "default",
+      "type": "stable_audio"
+     }
+    },
+    "3": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "rain on glass"
+     }
+    },
+    "4": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "5": {
+     "class_type": "EmptyLatentAudio",
+     "inputs": {
+      "batch_size": 1,
+      "seconds": 120.0
+     }
+    },
+    "6": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "5",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "4",
+       0
+      ],
+      "positive": [
+       "3",
+       0
+      ],
+      "sampler_name": "lcm",
+      "scheduler": "simple",
+      "seed": 0,
+      "steps": 8
+     }
+    },
+    "7": {
+     "class_type": "VAEDecodeAudio",
+     "inputs": {
+      "samples": [
+       "6",
+       0
+      ],
+      "vae": [
+       "1",
+       2
+      ]
+     }
+    },
+    "8": {
+     "class_type": "SaveAudio",
+     "inputs": {
+      "audio": [
+       "7",
+       0
+      ],
+      "filename_prefix": "audio/sa3-sfx"
+     }
+    }
+   }
+  },
+  "sa3-explicit-duration-explicit-seed-with-ui": {
+   "extra_data": {
+    "extra_pnginfo": {
+     "workflow": {
+      "classes": [
+       "CLIPLoader",
+       "CLIPTextEncode",
+       "CLIPTextEncode",
+       "CheckpointLoaderSimple",
+       "EmptyLatentAudio",
+       "KSampler",
+       "SaveAudio",
+       "VAEDecodeAudio"
+      ],
+      "nodes": [
+       "1",
+       "2",
+       "3",
+       "4",
+       "5",
+       "6",
+       "7",
+       "8"
+      ]
+     }
+    }
+   },
+   "prompt": {
+    "1": {
+     "class_type": "CheckpointLoaderSimple",
+     "inputs": {
+      "ckpt_name": "stable_audio_3_small_sfx.safetensors"
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "t5gemma_b_b_ul2.safetensors",
+      "device": "default",
+      "type": "stable_audio"
+     }
+    },
+    "3": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a door creaks"
+     }
+    },
+    "4": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "5": {
+     "class_type": "EmptyLatentAudio",
+     "inputs": {
+      "batch_size": 1,
+      "seconds": 5.0
+     }
+    },
+    "6": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "5",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "4",
+       0
+      ],
+      "positive": [
+       "3",
+       0
+      ],
+      "sampler_name": "lcm",
+      "scheduler": "simple",
+      "seed": 7,
+      "steps": 8
+     }
+    },
+    "7": {
+     "class_type": "VAEDecodeAudio",
+     "inputs": {
+      "samples": [
+       "6",
+       0
+      ],
+      "vae": [
+       "1",
+       2
+      ]
+     }
+    },
+    "8": {
+     "class_type": "SaveAudio",
+     "inputs": {
+      "audio": [
+       "7",
+       0
+      ],
+      "filename_prefix": "audio/sa3-sfx"
+     }
+    }
+   }
+  },
+  "sa3-omitted-duration-explicit-seed": {
+   "prompt": {
+    "1": {
+     "class_type": "CheckpointLoaderSimple",
+     "inputs": {
+      "ckpt_name": "stable_audio_3_small_sfx.safetensors"
+     }
+    },
+    "2": {
+     "class_type": "CLIPLoader",
+     "inputs": {
+      "clip_name": "t5gemma_b_b_ul2.safetensors",
+      "device": "default",
+      "type": "stable_audio"
+     }
+    },
+    "3": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": "a bell"
+     }
+    },
+    "4": {
+     "class_type": "CLIPTextEncode",
+     "inputs": {
+      "clip": [
+       "2",
+       0
+      ],
+      "text": ""
+     }
+    },
+    "5": {
+     "class_type": "EmptyLatentAudio",
+     "inputs": {
+      "batch_size": 1,
+      "seconds": 10.0
+     }
+    },
+    "6": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "5",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "4",
+       0
+      ],
+      "positive": [
+       "3",
+       0
+      ],
+      "sampler_name": "lcm",
+      "scheduler": "simple",
+      "seed": 7,
+      "steps": 8
+     }
+    },
+    "7": {
+     "class_type": "VAEDecodeAudio",
+     "inputs": {
+      "samples": [
+       "6",
+       0
+      ],
+      "vae": [
+       "1",
+       2
+      ]
+     }
+    },
+    "8": {
+     "class_type": "SaveAudio",
+     "inputs": {
+      "audio": [
+       "7",
+       0
+      ],
+      "filename_prefix": "audio/sa3-sfx"
+     }
+    }
+   }
+  },
+  "tangoflux-extension-batch-max-seed-with-ui": {
+   "extra_data": {
+    "extra_pnginfo": {
+     "workflow": {
+      "classes": [
+       "TangoFluxLoader",
+       "TangoFluxSampler",
+       "TangoFluxVAEDecodeAndPlay"
+      ],
+      "nodes": [
+       "1",
+       "2",
+       "3"
+      ]
+     }
+    }
+   },
+   "prompt": {
+    "1": {
+     "class_type": "TangoFluxLoader",
+     "inputs": {
+      "enable_teacache": false,
+      "rel_l1_thresh": 0.25
+     }
+    },
+    "2": {
+     "class_type": "TangoFluxSampler",
+     "inputs": {
+      "batch_size": 2,
+      "duration": 30.0,
+      "guidance_scale": 4,
+      "model": [
+       "1",
+       0
+      ],
+      "offload_model_to_cpu": false,
+      "prompt": "a bell",
+      "seed": 4294967295,
+      "steps": 50
+     }
+    },
+    "3": {
+     "class_type": "TangoFluxVAEDecodeAndPlay",
+     "inputs": {
+      "filename_prefix": "tangoflux",
+      "format": "wav",
+      "latents": [
+       "2",
+       0
+      ],
+      "save_output": true,
+      "tile_size": 32,
+      "vae": [
+       "1",
+       1
+      ]
+     }
+    }
+   }
+  },
+  "tangoflux-extension-steps-guidance": {
+   "prompt": {
+    "1": {
+     "class_type": "TangoFluxLoader",
+     "inputs": {
+      "enable_teacache": false,
+      "rel_l1_thresh": 0.25
+     }
+    },
+    "2": {
+     "class_type": "TangoFluxSampler",
+     "inputs": {
+      "batch_size": 1,
+      "duration": 3.0,
+      "guidance_scale": 3.5,
+      "model": [
+       "1",
+       0
+      ],
+      "offload_model_to_cpu": false,
+      "prompt": "a bell",
+      "seed": 99,
+      "steps": 20
+     }
+    },
+    "3": {
+     "class_type": "TangoFluxVAEDecodeAndPlay",
+     "inputs": {
+      "filename_prefix": "tangoflux",
+      "format": "wav",
+      "latents": [
+       "2",
+       0
+      ],
+      "save_output": true,
+      "tile_size": 32,
+      "vae": [
+       "1",
+       1
+      ]
+     }
+    }
+   }
+  },
+  "tangoflux-input-default-duration-with-ui": {
+   "extra_data": {
+    "extra_pnginfo": {
+     "workflow": {
+      "classes": [
+       "TangoFluxLoader",
+       "TangoFluxSampler",
+       "TangoFluxVAEDecodeAndPlay"
+      ],
+      "nodes": [
+       "1",
+       "2",
+       "3"
+      ]
+     }
+    }
+   },
+   "prompt": {
+    "1": {
+     "class_type": "TangoFluxLoader",
+     "inputs": {
+      "enable_teacache": false,
+      "rel_l1_thresh": 0.25
+     }
+    },
+    "2": {
+     "class_type": "TangoFluxSampler",
+     "inputs": {
+      "batch_size": 1,
+      "duration": 30.0,
+      "guidance_scale": 4,
+      "model": [
+       "1",
+       0
+      ],
+      "offload_model_to_cpu": false,
+      "prompt": "rain on a tin roof",
+      "seed": 7,
+      "steps": 50
+     }
+    },
+    "3": {
+     "class_type": "TangoFluxVAEDecodeAndPlay",
+     "inputs": {
+      "filename_prefix": "tangoflux",
+      "format": "wav",
+      "latents": [
+       "2",
+       0
+      ],
+      "save_output": true,
+      "tile_size": 32,
+      "vae": [
+       "1",
+       1
+      ]
+     }
+    }
+   }
+  },
+  "tangoflux-padded-prompt-string-duration-seed-zero": {
+   "prompt": {
+    "1": {
+     "class_type": "TangoFluxLoader",
+     "inputs": {
+      "enable_teacache": false,
+      "rel_l1_thresh": 0.25
+     }
+    },
+    "2": {
+     "class_type": "TangoFluxSampler",
+     "inputs": {
+      "batch_size": 1,
+      "duration": 7.0,
+      "guidance_scale": 4,
+      "model": [
+       "1",
+       0
+      ],
+      "offload_model_to_cpu": false,
+      "prompt": "glass shatters",
+      "seed": 0,
+      "steps": 50
+     }
+    },
+    "3": {
+     "class_type": "TangoFluxVAEDecodeAndPlay",
+     "inputs": {
+      "filename_prefix": "tangoflux",
+      "format": "wav",
+      "latents": [
+       "2",
+       0
+      ],
+      "save_output": true,
+      "tile_size": 32,
+      "vae": [
+       "1",
+       1
+      ]
+     }
+    }
+   }
+  },
+  "tangoflux-prompt-duration-seed": {
+   "prompt": {
+    "1": {
+     "class_type": "TangoFluxLoader",
+     "inputs": {
+      "enable_teacache": false,
+      "rel_l1_thresh": 0.25
+     }
+    },
+    "2": {
+     "class_type": "TangoFluxSampler",
+     "inputs": {
+      "batch_size": 1,
+      "duration": 4.0,
+      "guidance_scale": 4,
+      "model": [
+       "1",
+       0
+      ],
+      "offload_model_to_cpu": false,
+      "prompt": "a door creaks",
+      "seed": 1234,
+      "steps": 50
+     }
+    },
+    "3": {
+     "class_type": "TangoFluxVAEDecodeAndPlay",
+     "inputs": {
+      "filename_prefix": "tangoflux",
+      "format": "wav",
+      "latents": [
+       "2",
+       0
+      ],
+      "save_output": true,
+      "tile_size": 32,
+      "vae": [
+       "1",
+       1
+      ]
+     }
+    }
+   }
+  },
+  "tangoflux-tags-as-prompt-random-seed": {
+   "prompt": {
+    "1": {
+     "class_type": "TangoFluxLoader",
+     "inputs": {
+      "enable_teacache": false,
+      "rel_l1_thresh": 0.25
+     }
+    },
+    "2": {
+     "class_type": "TangoFluxSampler",
+     "inputs": {
+      "batch_size": 1,
+      "duration": 6.5,
+      "guidance_scale": 4,
+      "model": [
+       "1",
+       0
+      ],
+      "offload_model_to_cpu": false,
+      "prompt": "thunder rolling",
+      "seed": 4242,
+      "steps": 50
+     }
+    },
+    "3": {
+     "class_type": "TangoFluxVAEDecodeAndPlay",
+     "inputs": {
+      "filename_prefix": "tangoflux",
+      "format": "wav",
+      "latents": [
+       "2",
+       0
+      ],
+      "save_output": true,
+      "tile_size": 32,
+      "vae": [
+       "1",
+       1
+      ]
+     }
+    }
+   }
+  },
+  "yue-empty-tags-wins-over-prompt": {
+   "prompt": {
+    "1": {
+     "class_type": "CheckpointLoaderSimple",
+     "inputs": {
+      "ckpt_name": "yue2_3b_int8_convrot.safetensors"
+     }
+    },
+    "10": {
+     "class_type": "SaveAudioMP3",
+     "inputs": {
+      "audio": [
+       "9",
+       0
+      ],
+      "filename_prefix": "audio/yue2-song",
+      "quality": "320k"
+     }
+    },
+    "2": {
+     "class_type": "PrimitiveStringMultiline",
+     "inputs": {
+      "value": ""
+     }
+    },
+    "3": {
+     "class_type": "PrimitiveStringMultiline",
+     "inputs": {
+      "value": "[instrumental]"
+     }
+    },
+    "30": {
+     "class_type": "PrimitiveInt",
+     "inputs": {
+      "value": 1
+     }
+    },
+    "4": {
+     "class_type": "YuE2GenerateABC",
+     "inputs": {
+      "clip": [
+       "1",
+       1
+      ],
+      "lyrics": [
+       "3",
+       0
+      ],
+      "max_abc_tokens": 8192,
+      "mode": "full",
+      "penalty_window": 100,
+      "repetition_penalty": 1.005,
+      "seed": [
+       "30",
+       0
+      ],
+      "style": [
+       "2",
+       0
+      ],
+      "temperature": 0.7,
+      "top_k": 30,
+      "top_p": 0.9
+     }
+    },
+    "5": {
+     "class_type": "YuE2GenerateMusic",
+     "inputs": {
+      "abc": [
+       "4",
+       0
+      ],
+      "cfg_scale": 1.0,
+      "clip": [
+       "1",
+       1
+      ],
+      "lyrics": [
+       "3",
+       0
+      ],
+      "max_duration": 120.0,
+      "mode": "full",
+      "repetition_penalty": 1.2,
+      "seed": [
+       "30",
+       0
+      ],
+      "style": [
+       "2",
+       0
+      ],
+      "temperature": 1.0,
+      "top_k": 100,
+      "top_p": 0.95
+     }
+    },
+    "6": {
+     "class_type": "EmptyYuE2LatentAudio",
+     "inputs": {
+      "batch_size": 1,
+      "seconds": [
+       "5",
+       1
+      ]
+     }
+    },
+    "7": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "5",
+       0
+      ]
+     }
+    },
+    "8": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "7",
+       0
+      ],
+      "positive": [
+       "5",
+       0
+      ],
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "sgm_uniform",
+      "seed": [
+       "30",
+       0
+      ],
+      "steps": 8
+     }
+    },
+    "9": {
+     "class_type": "VAEDecodeAudio",
+     "inputs": {
+      "samples": [
+       "8",
+       0
+      ],
+      "vae": [
+       "1",
+       2
+      ]
+     }
+    }
+   }
+  },
+  "yue-input-default-duration-random-seed": {
+   "prompt": {
+    "1": {
+     "class_type": "CheckpointLoaderSimple",
+     "inputs": {
+      "ckpt_name": "yue2_3b_int8_convrot.safetensors"
+     }
+    },
+    "10": {
+     "class_type": "SaveAudioMP3",
+     "inputs": {
+      "audio": [
+       "9",
+       0
+      ],
+      "filename_prefix": "audio/yue2-song",
+      "quality": "320k"
+     }
+    },
+    "2": {
+     "class_type": "PrimitiveStringMultiline",
+     "inputs": {
+      "value": "a waltz"
+     }
+    },
+    "3": {
+     "class_type": "PrimitiveStringMultiline",
+     "inputs": {
+      "value": "one two"
+     }
+    },
+    "30": {
+     "class_type": "PrimitiveInt",
+     "inputs": {
+      "value": 4242
+     }
+    },
+    "4": {
+     "class_type": "YuE2GenerateABC",
+     "inputs": {
+      "clip": [
+       "1",
+       1
+      ],
+      "lyrics": [
+       "3",
+       0
+      ],
+      "max_abc_tokens": 8192,
+      "mode": "full",
+      "penalty_window": 100,
+      "repetition_penalty": 1.005,
+      "seed": [
+       "30",
+       0
+      ],
+      "style": [
+       "2",
+       0
+      ],
+      "temperature": 0.7,
+      "top_k": 30,
+      "top_p": 0.9
+     }
+    },
+    "5": {
+     "class_type": "YuE2GenerateMusic",
+     "inputs": {
+      "abc": [
+       "4",
+       0
+      ],
+      "cfg_scale": 1.0,
+      "clip": [
+       "1",
+       1
+      ],
+      "lyrics": [
+       "3",
+       0
+      ],
+      "max_duration": 120.0,
+      "mode": "full",
+      "repetition_penalty": 1.2,
+      "seed": [
+       "30",
+       0
+      ],
+      "style": [
+       "2",
+       0
+      ],
+      "temperature": 1.0,
+      "top_k": 100,
+      "top_p": 0.95
+     }
+    },
+    "6": {
+     "class_type": "EmptyYuE2LatentAudio",
+     "inputs": {
+      "batch_size": 1,
+      "seconds": [
+       "5",
+       1
+      ]
+     }
+    },
+    "7": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "5",
+       0
+      ]
+     }
+    },
+    "8": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "7",
+       0
+      ],
+      "positive": [
+       "5",
+       0
+      ],
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "sgm_uniform",
+      "seed": [
+       "30",
+       0
+      ],
+      "steps": 8
+     }
+    },
+    "9": {
+     "class_type": "VAEDecodeAudio",
+     "inputs": {
+      "samples": [
+       "8",
+       0
+      ],
+      "vae": [
+       "1",
+       2
+      ]
+     }
+    }
+   }
+  },
+  "yue-prompt-as-tags-with-ui": {
+   "extra_data": {
+    "extra_pnginfo": {
+     "workflow": {
+      "classes": [
+       "CheckpointLoaderSimple",
+       "ConditioningZeroOut",
+       "EmptyYuE2LatentAudio",
+       "KSampler",
+       "PrimitiveInt",
+       "PrimitiveStringMultiline",
+       "PrimitiveStringMultiline",
+       "SaveAudioMP3",
+       "VAEDecodeAudio",
+       "YuE2GenerateABC",
+       "YuE2GenerateMusic"
+      ],
+      "nodes": [
+       "1",
+       "10",
+       "2",
+       "3",
+       "30",
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9"
+      ]
+     }
+    }
+   },
+   "prompt": {
+    "1": {
+     "class_type": "CheckpointLoaderSimple",
+     "inputs": {
+      "ckpt_name": "yue2_3b_int8_convrot.safetensors"
+     }
+    },
+    "10": {
+     "class_type": "SaveAudioMP3",
+     "inputs": {
+      "audio": [
+       "9",
+       0
+      ],
+      "filename_prefix": "audio/yue2-song",
+      "quality": "320k"
+     }
+    },
+    "2": {
+     "class_type": "PrimitiveStringMultiline",
+     "inputs": {
+      "value": "a sad song about rain"
+     }
+    },
+    "3": {
+     "class_type": "PrimitiveStringMultiline",
+     "inputs": {
+      "value": "[instrumental]"
+     }
+    },
+    "30": {
+     "class_type": "PrimitiveInt",
+     "inputs": {
+      "value": 9
+     }
+    },
+    "4": {
+     "class_type": "YuE2GenerateABC",
+     "inputs": {
+      "clip": [
+       "1",
+       1
+      ],
+      "lyrics": [
+       "3",
+       0
+      ],
+      "max_abc_tokens": 8192,
+      "mode": "full",
+      "penalty_window": 100,
+      "repetition_penalty": 1.005,
+      "seed": [
+       "30",
+       0
+      ],
+      "style": [
+       "2",
+       0
+      ],
+      "temperature": 0.7,
+      "top_k": 30,
+      "top_p": 0.9
+     }
+    },
+    "5": {
+     "class_type": "YuE2GenerateMusic",
+     "inputs": {
+      "abc": [
+       "4",
+       0
+      ],
+      "cfg_scale": 1.0,
+      "clip": [
+       "1",
+       1
+      ],
+      "lyrics": [
+       "3",
+       0
+      ],
+      "max_duration": 120.0,
+      "mode": "full",
+      "repetition_penalty": 1.2,
+      "seed": [
+       "30",
+       0
+      ],
+      "style": [
+       "2",
+       0
+      ],
+      "temperature": 1.0,
+      "top_k": 100,
+      "top_p": 0.95
+     }
+    },
+    "6": {
+     "class_type": "EmptyYuE2LatentAudio",
+     "inputs": {
+      "batch_size": 1,
+      "seconds": [
+       "5",
+       1
+      ]
+     }
+    },
+    "7": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "5",
+       0
+      ]
+     }
+    },
+    "8": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "7",
+       0
+      ],
+      "positive": [
+       "5",
+       0
+      ],
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "sgm_uniform",
+      "seed": [
+       "30",
+       0
+      ],
+      "steps": 8
+     }
+    },
+    "9": {
+     "class_type": "VAEDecodeAudio",
+     "inputs": {
+      "samples": [
+       "8",
+       0
+      ],
+      "vae": [
+       "1",
+       2
+      ]
+     }
+    }
+   }
+  },
+  "yue-tags-lyrics-duration-seed": {
+   "prompt": {
+    "1": {
+     "class_type": "CheckpointLoaderSimple",
+     "inputs": {
+      "ckpt_name": "yue2_3b_int8_convrot.safetensors"
+     }
+    },
+    "10": {
+     "class_type": "SaveAudioMP3",
+     "inputs": {
+      "audio": [
+       "9",
+       0
+      ],
+      "filename_prefix": "audio/yue2-song",
+      "quality": "320k"
+     }
+    },
+    "2": {
+     "class_type": "PrimitiveStringMultiline",
+     "inputs": {
+      "value": "dream pop, piano"
+     }
+    },
+    "3": {
+     "class_type": "PrimitiveStringMultiline",
+     "inputs": {
+      "value": "la la"
+     }
+    },
+    "30": {
+     "class_type": "PrimitiveInt",
+     "inputs": {
+      "value": 3
+     }
+    },
+    "4": {
+     "class_type": "YuE2GenerateABC",
+     "inputs": {
+      "clip": [
+       "1",
+       1
+      ],
+      "lyrics": [
+       "3",
+       0
+      ],
+      "max_abc_tokens": 8192,
+      "mode": "full",
+      "penalty_window": 100,
+      "repetition_penalty": 1.005,
+      "seed": [
+       "30",
+       0
+      ],
+      "style": [
+       "2",
+       0
+      ],
+      "temperature": 0.7,
+      "top_k": 30,
+      "top_p": 0.9
+     }
+    },
+    "5": {
+     "class_type": "YuE2GenerateMusic",
+     "inputs": {
+      "abc": [
+       "4",
+       0
+      ],
+      "cfg_scale": 1.0,
+      "clip": [
+       "1",
+       1
+      ],
+      "lyrics": [
+       "3",
+       0
+      ],
+      "max_duration": 60.0,
+      "mode": "full",
+      "repetition_penalty": 1.2,
+      "seed": [
+       "30",
+       0
+      ],
+      "style": [
+       "2",
+       0
+      ],
+      "temperature": 1.0,
+      "top_k": 100,
+      "top_p": 0.95
+     }
+    },
+    "6": {
+     "class_type": "EmptyYuE2LatentAudio",
+     "inputs": {
+      "batch_size": 1,
+      "seconds": [
+       "5",
+       1
+      ]
+     }
+    },
+    "7": {
+     "class_type": "ConditioningZeroOut",
+     "inputs": {
+      "conditioning": [
+       "5",
+       0
+      ]
+     }
+    },
+    "8": {
+     "class_type": "KSampler",
+     "inputs": {
+      "cfg": 1.0,
+      "denoise": 1.0,
+      "latent_image": [
+       "6",
+       0
+      ],
+      "model": [
+       "1",
+       0
+      ],
+      "negative": [
+       "7",
+       0
+      ],
+      "positive": [
+       "5",
+       0
+      ],
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "sgm_uniform",
+      "seed": [
+       "30",
+       0
+      ],
+      "steps": 8
+     }
+    },
+    "9": {
+     "class_type": "VAEDecodeAudio",
+     "inputs": {
+      "samples": [
+       "8",
+       0
+      ],
+      "vae": [
+       "1",
+       2
+      ]
+     }
+    }
+   }
+  }
+ }
+}

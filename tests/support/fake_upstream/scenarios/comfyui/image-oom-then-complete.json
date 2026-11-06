@@ -1,0 +1,113 @@
+{
+  "protocol": "comfyui",
+  "name": "image-oom-then-complete",
+  "description": "The first round fails with an out-of-memory error; ComfyUI is idle, so the gateway frees models and the second round completes.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /prompt (a failed validation or run answers a text/JSON error), GET /queue, POST /free {unload_models, free_memory}, GET /history/{prompt_id}, GET /view (ComfyUI server.py)"
+  },
+  "exchanges": [
+    {
+      "id": "prompt-oom",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "status": 500,
+        "body": [
+          {
+            "text": "CUDA out of memory. Tried to allocate 2.00 GiB"
+          }
+        ]
+      }
+    },
+    {
+      "id": "queue",
+      "match": {
+        "method": "GET",
+        "path": "/queue"
+      },
+      "response": {
+        "json": {
+          "queue_running": [],
+          "queue_pending": []
+        }
+      }
+    },
+    {
+      "id": "free",
+      "match": {
+        "method": "POST",
+        "path": "/free",
+        "json": {
+          "unload_models": true,
+          "free_memory": true
+        }
+      },
+      "response": {
+        "json": {}
+      }
+    },
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "json": {
+          "prompt_id": "fk-job"
+        }
+      }
+    },
+    {
+      "id": "history",
+      "match": {
+        "method": "GET",
+        "path": "/history/fk-job"
+      },
+      "response": {
+        "json": {
+          "fk-job": {
+            "status": {
+              "completed": true
+            },
+            "outputs": {
+              "1": {
+                "images": [
+                  {
+                    "filename": "café.png",
+                    "subfolder": "",
+                    "type": "output"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "view",
+      "match": {
+        "method": "GET",
+        "path": "/view",
+        "query": {
+          "filename": "café.png",
+          "type": "output"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "image/png"
+        },
+        "body": [
+          {
+            "hex": "89504e470d0a1a0a"
+          }
+        ]
+      }
+    }
+  ]
+}

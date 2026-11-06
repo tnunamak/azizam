@@ -1,0 +1,1658 @@
+"use client";
+
+import {
+  Fragment,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AppWindow, MoreHorizontal, Plus, KeyRound } from "lucide-react";
+import { toast } from "@/lib/toast";
+import { formatAppName } from "@/lib/format";
+import {
+  accountApi,
+  type AccountApp,
+  type AccountSnapshot,
+  type CredentialAccess,
+  type ReplacedKey,
+} from "@/lib/account-api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Skeleton, SkeletonRows } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { SignInConnections } from "@/components/product/sign-in-connections";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  PageHeader,
+  EmptyState,
+  ErrorState,
+  CopyField,
+} from "@/components/product";
+import { cn } from "@/lib/cn";
+import { keyStart } from "@/lib/key-hint";
+import { keyPromptNote } from "@/lib/prompt-memory";
+import { useUnsavedSecret } from "@/lib/unsaved-work";
+import {
+  api,
+  queryKeys,
+  type AccessPlan,
+  type Credential,
+} from "@/lib/api";
+import { productApi } from "@/lib/product-api";
+import type { CatalogRow } from "@/lib/product-api-types";
+import { guideIdForAppName, suggestedModel } from "@/lib/app-guides";
+import {
+  listTrustedAddresses,
+  trustedAddressesKey,
+  type TrustedAddress,
+} from "@/lib/trusted-addresses";
+import { useViewer } from "@/components/shell/session";
+import { AppGuide } from "@/components/product/app-guide";
+import { TrustedAddressesDialog } from "./trusted-addresses";
+import { RenameAppDialog, RenameKeysDialog } from "./rename";
+import { AppKeyRows, KeylessAccessRow } from "./app-details";
+import { RequestHistorySetting } from "./request-history-setting";
+
+const accountKey = ["account", "session"];
+/** "person": the app uses its person's own plan ("Same as you"). */
+const SAME_AS_PERSON = "person";
+type Reveal = {
+  secret: string;
+  credentialId: string;
+  /** The key's masked start ("opk_n2ib…"), which the recipe names once the key is saved. */
+  start: string;
+  appId: string;
+  app: string;
+  oldIds: string[];
+  /** Whether prompts sent with the key are remembered, and for whom. */
+  note?: string | null;
+};
+/** `key` is set when the action is for one key of the app (its row's Rotate or Revoke); otherwise it covers every key. */
+type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp; key?: Credential };
+
+/** What an app may use, in one sentence: 'Access plan "Local only": Chat and Images. No paid models.' */
+function planSentence(plan: { name: string; summary: string | null } | null | undefined): string {
+  if (!plan) return "No access plan yet, so it can't use anything. Ask the owner to choose one.";
+  return plan.summary
+    ? `Access plan “${plan.name}”: ${plan.summary}`
+    : `Access plan “${plan.name}”.`;
+}
+
+/** Under an "Access plan" label: "Local only. Chat and Images. No paid models." */
+function planDescription(plan: { name: string; summary: string | null } | null | undefined): string {
+  if (!plan) return "No access plan yet, so it can't use anything. Ask the owner to choose one.";
+  return plan.summary ? `${plan.name}. ${plan.summary}` : plan.name;
+}
+
+/** "Family (yours)" or the app's own plan name (design §3.4). */
+function accessPlanSummary(app: AccountApp): string {
+  const plan = app.access_plan;
+  if (!plan) return "";
+  return plan.same_as_person ? `${plan.name} (yours)` : plan.name;
+}
+
+type GuideModelKind = "chat" | "transcribe";
+
+function credentialAllowsModel(
+  access: CredentialAccess | undefined,
+  modelId: string,
+  kind: GuideModelKind,
+): boolean {
+  return Boolean(
+    access?.capabilities.some(
+      (row) => row.model === modelId && row.capability === kind,
+    ),
+  );
+}
+
+function guideModelsForKind(
+  rows: CatalogRow[],
+  access: CredentialAccess | undefined,
+  kind: GuideModelKind,
+): CatalogRow[] {
+  return rows
+    .filter(
+      (row) =>
+        credentialAllowsModel(access, row.id, kind) &&
+        (row.capability === kind ||
+          row.capabilities.some((capability) => capability.capability === kind)),
+    )
+    // `suggestedModel` picks by the primary capability. This copy makes the
+    // verified capability explicit for multi-capability catalog rows.
+    .map((row) => ({ ...row, capability: kind }));
+}
+
+/** The plan's name, which opens a note on what the plan allows ("Chat and Images. No paid models."). */
+function AccessPlanName({ app }: { app: AccountApp }) {
+  const plan = app.access_plan;
+  if (!plan) return null;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="link" size="sm" className="h-auto px-0">
+          {accessPlanSummary(app)}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start">
+        <PopoverTitle>{plan.name}</PopoverTitle>
+        <PopoverDescription>
+          {plan.summary ?? "This plan has no description."}
+          {plan.same_as_person ? " It is your own plan." : ""}
+        </PopoverDescription>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** A separator between the parts of one line. It shows on a phone too, so "1 key · Access plan" reads as one line. */
+function Separator() {
+  return (
+    <span aria-hidden="true" className="text-muted-foreground">
+      ·
+    </span>
+  );
+}
+
+/** Why this app cannot get a key. The API sends only the boolean, so the
+ * reason comes from the fields that set it (gateway/user_runtime.py). */
+function mintBlockedReason(app: AccountApp): string {
+  if (app.disabled_at) return "This app is turned off, so it can't get keys.";
+  if (!app.access_plan)
+    return "This app has no access plan. Ask the owner to choose one.";
+  return "You can't create keys for this app. Ask the owner to update its access.";
+}
+
+/** A new key's name: the name it is given if no key of the app has it, else "Key 2", "Key 3" and so on, so no two
+ * keys of one app share a name. */
+function newKeyName(app: AccountApp, name: string): string {
+  const taken = new Set(app.credentials.map((key) => key.display_name));
+  if (!taken.has(name)) return name;
+  let number = 2;
+  while (taken.has(`Key ${number}`)) number += 1;
+  return `Key ${number}`;
+}
+
+/** Keys and addresses the cut-over would remove from this app. Each one has a remedy the gateway names: keep it,
+ * replace it, or add it again. */
+function needsCheckCount(app: AccountApp): number {
+  return (
+    app.credentials.filter((key) => key.cutover !== undefined).length +
+    (app.addresses_to_check ?? 0)
+  );
+}
+
+// A rotation whose old keys could not all be revoked. The new key is already
+// saved, so the member may finish later; the old key ids (never secrets) are
+// kept until revoked, across reloads.
+const unfinishedRotationsKey = "azizam:unfinished-key-rotations";
+type UnfinishedRotations = Record<string, string[]>;
+
+function readUnfinishedRotations(): UnfinishedRotations {
+  if (typeof window === "undefined") return {};
+  try {
+    const value: unknown = JSON.parse(
+      window.localStorage.getItem(unfinishedRotationsKey) ?? "{}",
+    );
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    // Stored text is untrusted: keep only string ids under each app.
+    const clean: UnfinishedRotations = {};
+    for (const [appId, ids] of Object.entries(value)) {
+      if (!Array.isArray(ids)) continue;
+      const strings = ids.filter((id): id is string => typeof id === "string");
+      if (strings.length) clean[appId] = strings;
+    }
+    return clean;
+  } catch {
+    return {};
+  }
+}
+
+/** Returns false when the browser refused the write (blocked or full). */
+function writeUnfinishedRotations(value: UnfinishedRotations): boolean {
+  try {
+    const entries = Object.entries(value).filter(([, ids]) => ids.length);
+    if (entries.length)
+      window.localStorage.setItem(
+        unfinishedRotationsKey,
+        JSON.stringify(Object.fromEntries(entries)),
+      );
+    else window.localStorage.removeItem(unfinishedRotationsKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function AppsContents() {
+  const searchParams = useSearchParams();
+  const requestedApp = searchParams.get("app");
+  // The command palette sends `action=create-key`; Connect sends `?app=<id>` with `create-key` or `rotate`.
+  const requestedAction = searchParams.get("action");
+  const commandConsumed = useRef(false);
+  const focusedRequest = useRef<string | null>(null);
+  const dialogReturnFocus = useRef<HTMLElement | null>(null);
+  const dialogReturnApp = useRef<string | null>(null);
+  const newAppButton = useRef<HTMLButtonElement>(null);
+  const queryClient = useQueryClient();
+  const {
+    data: accountData,
+    isPending: accountPending,
+    isError: accountError,
+    refetch: refetchAccount,
+  } = useQuery({
+    queryKey: accountKey,
+    queryFn: accountApi.session,
+  });
+  const { data: discoveryData } = useQuery({
+    queryKey: ["gateway", "discovery"],
+    queryFn: accountApi.discovery,
+  });
+  const viewer = useViewer();
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [plan, setPlan] = useState(SAME_AS_PERSON);
+  // The client picked in the new key's recipe. None until the person picks one, so no client is preselected.
+  const [guideApp, setGuideApp] = useState<string | null>(null);
+  const [accessApp, setAccessApp] = useState<AccountApp | null>(null);
+  const [accessPlan, setAccessPlan] = useState(SAME_AS_PERSON);
+  const [createdApp, setCreatedApp] = useState<AccountApp | null>(null);
+  // True only when this dialog created the app, so a key failure on an
+  // existing app does not claim the app was just created.
+  const [appIsNew, setAppIsNew] = useState(false);
+  const [mintingAppId, setMintingAppId] = useState<string | null>(null);
+  const [unfinished, setUnfinished] = useState<UnfinishedRotations>({});
+  // Latest value, so updates stay pure and the write happens outside React.
+  const unfinishedRef = useRef<UnfinishedRotations>({});
+  const [unsavedReminder, setUnsavedReminder] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reveal, setReveal] = useState<Reveal | null>(null);
+  // The key row that takes focus when a replacement's reveal closes (its keys dialog may still be open).
+  const revealFocusId = useRef<string | null>(null);
+  // The personal app's key being replaced from its row.
+  const [replacingKeyId, setReplacingKeyId] = useState<string | null>(null);
+  const [action, setAction] = useState<KeyAction | null>(null);
+  const [trustingApp, setTrustingApp] = useState<AccountApp | null>(null);
+  const [renamingApp, setRenamingApp] = useState<AccountApp | null>(null);
+  // Only the id: the keys dialog reads the live app, so a saved name shows at once.
+  const [renamingKeysOf, setRenamingKeysOf] = useState<string | null>(null);
+  // Set while a dialog was opened from the quick-check line: its first item that needs a check is brought into view.
+  const [focusCheck, setFocusCheck] = useState(false);
+  const [saved, setSaved] = useState(false);
+  // Held while the new key is on screen and unsaved, for every way a key is shown here (create, replace, rotate, mint).
+  const releaseKey = useUnsavedSecret(reveal !== null && !saved);
+  const refresh = () => queryClient.invalidateQueries({ queryKey: accountKey });
+  // Only the owner and admins may give an app a different plan.
+  const { data: plans } = useQuery({
+    queryKey: ["access-plans"],
+    queryFn: api.accessPlans.list,
+    enabled: viewer.admin && (creating || accessApp !== null),
+  });
+  // A guide fills in a real model name only when the exact key's access and the
+  // current caller-visible catalog agree for that model and capability.
+  const {
+    data: catalog,
+    isPending: catalogPending,
+    isFetching: catalogFetching,
+    isError: catalogError,
+    error: catalogErrorDetail,
+    refetch: refetchCatalog,
+  } = useQuery({
+    queryKey: ["models", "catalog"],
+    queryFn: productApi.models,
+    enabled: reveal !== null,
+    staleTime: 0,
+  });
+  const {
+    data: credentialAccess,
+    isPending: credentialAccessPending,
+    isFetching: credentialAccessFetching,
+    isError: credentialAccessError,
+    error: credentialAccessErrorDetail,
+    refetch: refetchCredentialAccess,
+  } = useQuery({
+    queryKey: queryKeys.credentialAccess(reveal?.credentialId ?? ""),
+    queryFn: () => accountApi.credentialAccess(reveal!.credentialId),
+    enabled: reveal !== null,
+    staleTime: 0,
+  });
+  // Neither query's cached data is current while it refreshes or after a
+  // failure. Clear the suggestions until both reads succeed again.
+  const currentCatalog =
+    catalogFetching || catalogError ? undefined : catalog;
+  const currentCredentialAccess =
+    credentialAccessFetching || credentialAccessError
+      ? undefined
+      : credentialAccess;
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const baseUrl =
+    discoveryData?.recipes?.openai?.canonical_base_url ?? `${origin}/openai/v1`;
+  const catalogRows = [
+    ...(currentCatalog?.aliases ?? []),
+    ...(currentCatalog?.models ?? []),
+  ];
+  const guideValues = {
+    openai_url: baseUrl,
+    anthropic_url:
+      discoveryData?.recipes?.anthropic?.canonical_base_url ?? `${origin}/anthropic`,
+    mcp_url: discoveryData?.mcp?.url ?? `${origin}/mcp`,
+    chat_model: suggestedModel(
+      guideModelsForKind(catalogRows, currentCredentialAccess, "chat"),
+      "chat",
+    ),
+    transcription_model: suggestedModel(
+      guideModelsForKind(catalogRows, currentCredentialAccess, "transcribe"),
+      "transcribe",
+    ),
+  };
+  const personPlan = accountData?.user?.access_plan ?? null;
+  const chosenPlan = (plans ?? []).find((item) => item.id === plan);
+
+  // Opens a flow once per visit: the command palette's New key (no app named), or a key or a rotation for the app
+  // a Connect link names. The app's own flow is the same one its card uses.
+  useEffect(() => {
+    if (!requestedAction || !accountData?.authenticated || commandConsumed.current)
+      return;
+    if (!requestedApp) {
+      if (requestedAction !== "create-key") return;
+      commandConsumed.current = true;
+      dialogReturnFocus.current = newAppButton.current;
+      setCreating(true);
+      return;
+    }
+    const app = accountData.apps.find((item) => item.id === requestedApp);
+    if (!app || !app.can_mint_keys) return;
+    if (requestedAction === "create-key") {
+      commandConsumed.current = true;
+      startAddKey(app);
+    } else if (requestedAction === "rotate" && app.credentials.length) {
+      commandConsumed.current = true;
+      rememberAppFocus(app.id);
+      setAction({ kind: "rotate", app });
+      setError(null);
+    }
+    // The helpers only set state and refs, and the consumed flag makes this run once per visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedAction, requestedApp, accountData]);
+
+  useEffect(() => {
+    const stored = readUnfinishedRotations();
+    unfinishedRef.current = stored;
+    setUnfinished(stored);
+  }, []);
+
+  // The in-memory record always updates; a refused write only means the
+  // reminder will not survive a reload, which the page then says.
+  function updateUnfinished(
+    change: (current: UnfinishedRotations) => UnfinishedRotations,
+  ) {
+    const next = change(unfinishedRef.current);
+    unfinishedRef.current = next;
+    setUnfinished(next);
+    setUnsavedReminder(!writeUnfinishedRotations(next));
+  }
+
+  useEffect(() => {
+    if (!requestedApp) {
+      focusedRequest.current = null;
+      return;
+    }
+    if (
+      !accountData ||
+      creating ||
+      action ||
+      reveal ||
+      dialogReturnFocus.current ||
+      focusedRequest.current === requestedApp
+    )
+      return;
+    const target = document.getElementById(`app-${requestedApp}`);
+    if (target) {
+      focusedRequest.current = requestedApp;
+      target.focus();
+    }
+  }, [requestedApp, accountData, creating, action, reveal]);
+
+  /** The quick-check line opens the App's keys when a key needs its remedy, or (for an owner) its addresses. Any
+   * other App is only reached through its row, as before. */
+  function openFirstCheck(event: MouseEvent<HTMLAnchorElement>, app: AccountApp) {
+    const keyNeedsCheck = app.credentials.some((key) => key.cutover !== undefined);
+    if (!keyNeedsCheck && !(app.addresses_to_check && accountData?.user?.role === "owner")) return;
+    event.preventDefault();
+    rememberAppFocus(app.id, event.currentTarget);
+    setFocusCheck(true);
+    if (keyNeedsCheck) setRenamingKeysOf(app.id);
+    else setTrustingApp(app);
+  }
+
+  function rememberAppFocus(appId: string, opener?: HTMLElement) {
+    dialogReturnFocus.current =
+      opener ?? document.getElementById(`app-actions-${appId}`);
+    dialogReturnApp.current = appId;
+  }
+
+  function restoreDialogFocus(event: Event) {
+    event.preventDefault();
+    // A replaced key's new row takes focus when its reveal closes, if its keys dialog is still open.
+    const replacedRow = revealFocusId.current
+      ? document.getElementById(revealFocusId.current)
+      : null;
+    revealFocusId.current = null;
+    if (replacedRow) {
+      replacedRow.focus();
+      return;
+    }
+    // A create/rotate dialog may be handing focus to the key reveal.
+    if (
+      creating ||
+      action ||
+      reveal ||
+      (!dialogReturnFocus.current && !dialogReturnApp.current)
+    )
+      return;
+    const requestedTarget =
+      requestedApp && focusedRequest.current !== requestedApp
+        ? document.getElementById(`app-${requestedApp}`)
+        : null;
+    const appTarget = dialogReturnApp.current
+      ? document.getElementById(`app-actions-${dialogReturnApp.current}`)
+      : null;
+    const target = [
+      requestedTarget,
+      dialogReturnFocus.current,
+      appTarget,
+      newAppButton.current,
+    ].find(
+      (element) =>
+        element?.isConnected &&
+        !element.matches(":disabled, [aria-disabled=true]"),
+    );
+    dialogReturnFocus.current = null;
+    dialogReturnApp.current = null;
+    if (target === requestedTarget) focusedRequest.current = requestedApp;
+    target?.focus();
+  }
+
+  function resetDraft() {
+    setName("");
+    setPlan(SAME_AS_PERSON);
+    setCreatedApp(null);
+    setAppIsNew(false);
+    setError(null);
+  }
+
+  function startNewApp(event: MouseEvent<HTMLButtonElement>) {
+    dialogReturnFocus.current = event.currentTarget;
+    dialogReturnApp.current = null;
+    resetDraft();
+    setCreating(true);
+  }
+
+  /** A key for one app, from its card: the New app dialog with the app already made, so a failed key can be retried. */
+  function startAddKey(app: AccountApp, opener?: HTMLElement) {
+    rememberAppFocus(app.id, opener);
+    resetDraft();
+    setCreatedApp(app);
+    setName(app.name);
+    setCreating(true);
+  }
+
+  function closeCreate() {
+    setCreating(false);
+    resetDraft();
+  }
+
+  async function create(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const app = createdApp ?? (await accountApi.createApp(name.trim()));
+      setCreatedApp(app);
+      if (!createdApp) {
+        setAppIsNew(true);
+        queryClient.setQueryData<AccountSnapshot>(accountKey, (current) =>
+          current
+            ? {
+                ...current,
+                apps: [
+                  ...current.apps.filter((item) => item.id !== app.id),
+                  app,
+                ],
+              }
+            : current,
+        );
+        void refresh();
+      }
+      // The plan is set before any key exists, so a key never works with
+      // more access than the owner chose.
+      if (
+        viewer.admin &&
+        plan !== SAME_AS_PERSON &&
+        !(app.access_plan && !app.access_plan.same_as_person && app.access_plan.id === plan)
+      ) {
+        await api.apps.setAccessPlan(app.id, plan);
+        const chosen = (plans ?? []).find((item) => item.id === plan);
+        setCreatedApp({
+          ...app,
+          access_plan: chosen
+            ? { id: chosen.id, name: chosen.name, summary: chosen.summary, same_as_person: false }
+            : app.access_plan,
+        });
+      }
+      const appName = formatAppName(app.name, accountData?.user?.email);
+      const key = await accountApi.mintKey(app.id, newKeyName(app, appName));
+      setGuideApp(guideIdForAppName(app.name));
+      setReveal({
+        secret: key.api_key,
+        credentialId: key.id,
+        start: keyStart(key.api_key),
+        appId: app.id,
+        app: appName,
+        oldIds: [],
+        note: keyPromptNote(key.prompt_memory),
+      });
+      setSaved(false);
+      setCreating(false);
+      setCreatedApp(null);
+      setAppIsNew(false);
+      setName("");
+      await refresh();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not create the app. Try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // The gateway's saved record goes into the list as it came back.
+  function putApp(saved: AccountApp) {
+    queryClient.setQueryData<AccountSnapshot>(accountKey, (current) =>
+      current
+        ? {
+            ...current,
+            apps: current.apps.map((item) =>
+              item.id === saved.id ? saved : item,
+            ),
+          }
+        : current,
+    );
+    void refresh();
+  }
+
+  function putKey(saved: Credential, message = "Key renamed") {
+    queryClient.setQueryData<AccountSnapshot>(accountKey, (current) =>
+      current
+        ? {
+            ...current,
+            apps: current.apps.map((item) => ({
+              ...item,
+              credentials: item.credentials.map((key) =>
+                key.id === saved.id ? saved : key,
+              ),
+            })),
+          }
+        : current,
+    );
+    toast.success(message);
+    void refresh();
+  }
+
+  /** A key was replaced: its old row goes at once and the new key is shown once in the reveal. The secret stays
+   * out of the cached list, which keeps only the new key's record. */
+  function showReplacement(app: AccountApp, replaced: ReplacedKey) {
+    const { api_key: secret, prompt_memory: prompt, ...record } = replaced.credential;
+    queryClient.setQueryData<AccountSnapshot>(accountKey, (current) =>
+      current
+        ? {
+            ...current,
+            apps: current.apps.map((item) =>
+              item.id !== app.id
+                ? item
+                : {
+                    ...item,
+                    credentials: [
+                      ...item.credentials.filter((key) => key.id !== replaced.replaced_credential_id),
+                      record,
+                    ],
+                  },
+            ),
+          }
+        : current,
+    );
+    revealFocusId.current = `rename-key-${record.id}`;
+    setGuideApp(guideIdForAppName(app.name));
+    setSaved(false);
+    setReveal({
+      secret,
+      credentialId: record.id,
+      start: keyStart(secret),
+      appId: app.id,
+      app: formatAppName(app.name, accountData?.user?.email),
+      oldIds: [],
+      note: keyPromptNote(prompt),
+    });
+    void refresh();
+  }
+
+  /** The personal app's one replacement, from its row. Its keys dialog is not open, so focus returns to the row. */
+  async function replaceFromRow(app: AccountApp, keyRecord: Credential) {
+    rememberAppFocus(app.id);
+    setBusy(true);
+    setReplacingKeyId(keyRecord.id);
+    setError(null);
+    try {
+      showReplacement(app, await accountApi.replaceKey(keyRecord.id));
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : "The key could not be replaced. Try again.",
+      );
+    } finally {
+      setReplacingKeyId(null);
+      setBusy(false);
+    }
+  }
+
+  async function changeAccess() {
+    if (!accessApp) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.apps.setAccessPlan(accessApp.id, accessPlan);
+      toast.success("Access updated");
+      setAccessApp(null);
+      await refresh();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Access could not be changed. Try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function performAction() {
+    if (!action) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const ids = action.key
+        ? [action.key.id]
+        : action.app.credentials.map((key) => key.id);
+      const appName = formatAppName(action.app.name, accountData?.user?.email);
+      if (action.kind === "rotate") {
+        const key = await accountApi.mintKey(
+          action.app.id,
+          newKeyName(action.app, `${appName} replacement`),
+        );
+        setGuideApp(guideIdForAppName(action.app.name));
+        setReveal({
+          secret: key.api_key,
+          credentialId: key.id,
+          start: keyStart(key.api_key),
+          appId: action.app.id,
+          app: appName,
+          oldIds: ids,
+          note: keyPromptNote(key.prompt_memory),
+        });
+        setSaved(false);
+      } else if (action.kind === "revoke") {
+        for (const id of ids) {
+          await accountApi.revokeKey(id);
+          setAction((current) =>
+            current
+              ? {
+                  ...current,
+                  app: {
+                    ...current.app,
+                    credentials: current.app.credentials.filter(
+                      (key) => key.id !== id,
+                    ),
+                  },
+                }
+              : null,
+          );
+        }
+        toast.success(action.key ? "Key revoked" : "App keys revoked");
+      } else {
+        await accountApi.deleteApp(action.app.id);
+        dialogReturnFocus.current = newAppButton.current;
+        dialogReturnApp.current = null;
+        toast.success("App removed");
+      }
+      setAction(null);
+      await refresh();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not update these keys. Try again.",
+      );
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveKey() {
+    if (!reveal) return;
+    releaseKey();
+    setSaved(true);
+    setReveal({ ...reveal, secret: "" });
+    setBusy(true);
+    setError(null);
+    try {
+      // Record the old key ids (never the secret) before the first revoke,
+      // so a reload or a failed revoke cannot lose them.
+      const { appId } = reveal;
+      if (reveal.oldIds.length)
+        updateUnfinished((current) => ({ ...current, [appId]: reveal.oldIds }));
+      for (const id of reveal.oldIds) {
+        await accountApi.revokeKey(id);
+        updateUnfinished((current) => ({
+          ...current,
+          [appId]: (current[appId] ?? []).filter((oldId) => oldId !== id),
+        }));
+        setReveal((current) =>
+          current
+            ? {
+                ...current,
+                oldIds: current.oldIds.filter((oldId) => oldId !== id),
+              }
+            : null,
+        );
+      }
+      toast.success(reveal.oldIds.length ? "Key rotated" : "Key saved");
+      setReveal(null);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : null);
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Close the key dialog with old keys still active; the app row keeps a
+  // notice and a "Revoke old keys" action until they are gone.
+  function finishLater() {
+    if (!reveal) return;
+    const { appId, oldIds } = reveal;
+    updateUnfinished((current) => ({ ...current, [appId]: oldIds }));
+    setReveal(null);
+    setError(null);
+  }
+
+  async function revokeUnfinished(appId: string, ids: string[]) {
+    setBusy(true);
+    try {
+      for (const id of ids) {
+        await accountApi.revokeKey(id);
+        updateUnfinished((current) => ({
+          ...current,
+          [appId]: (current[appId] ?? []).filter((oldId) => oldId !== id),
+        }));
+      }
+      toast.success("Old keys revoked");
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "Old keys could not be revoked. Try again.",
+      );
+    } finally {
+      await refresh();
+      setBusy(false);
+    }
+  }
+
+  async function mintFromMenu(app: AccountApp, appName: string) {
+    setBusy(true);
+    setMintingAppId(app.id);
+    setError(null);
+    try {
+      const key = await accountApi.mintKey(app.id, newKeyName(app, appName));
+      rememberAppFocus(app.id);
+      setSaved(false);
+      setGuideApp(guideIdForAppName(app.name));
+      setReveal({
+        secret: key.api_key,
+        credentialId: key.id,
+        start: keyStart(key.api_key),
+        appId: app.id,
+        app: appName,
+        oldIds: [],
+        note: keyPromptNote(key.prompt_memory),
+      });
+      await refresh();
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : "The key could not be created. Try again.",
+      );
+    } finally {
+      setMintingAppId(null);
+      setBusy(false);
+    }
+  }
+
+  const apps = accountData?.apps ?? [];
+  // Only an owner sees an App's keyless addresses. They are read once here, so each card can tell whether it has
+  // any (its row shows only then) and the hint goes under the first card that does.
+  const owner = accountData?.user?.role === "owner";
+  const keylessQueries = useQueries({
+    queries: owner
+      ? apps.map((app) => ({
+          queryKey: trustedAddressesKey(app.id),
+          queryFn: () => listTrustedAddresses(app.id),
+        }))
+      : [],
+  });
+  const keylessOf = (index: number): TrustedAddress[] => keylessQueries[index]?.data ?? [];
+  const firstKeylessIndex = apps.findIndex((_, index) => keylessOf(index).length > 0);
+  const keysApp = apps.find((item) => item.id === renamingKeysOf) ?? null;
+  const actionAppName = action
+    ? formatAppName(action.app.name, accountData?.user?.email)
+    : "";
+  const actionDescription = action
+    ? [
+        accessPlanSummary(action.app),
+        action.kind === "rotate" &&
+        action.app.kind === "personal" &&
+        (action.key ? [action.key] : action.app.credentials).some(
+          (key) => key.created_by === null,
+        )
+          ? "A new key saves your words and chats"
+          : null,
+        action.kind === "rotate"
+          ? action.key
+            ? "Save the replacement key first. The old key stops after you confirm."
+            : "Save the replacement key first. Old keys stop after you confirm."
+          : action.kind === "remove"
+            ? "This removes the app and its keys."
+            : action.key
+              ? "Apps using this key will stop connecting."
+              : "Apps using these keys will stop connecting.",
+      ]
+        .filter(Boolean)
+        .join(". ")
+    : "";
+  const needsCheck = apps.filter((app) => needsCheckCount(app) > 0);
+  const checkCount = needsCheck.reduce((total, app) => total + needsCheckCount(app), 0);
+  return (
+    <div className="space-y-8">
+      <PageHeader
+        title="Apps & keys"
+        subtitle="An app is anything that connects to this gateway: a chat app, a script, a phone. Each app has its own keys and plan."
+        primaryAction={
+          <Button
+            ref={newAppButton}
+            onClick={startNewApp}
+            disabled={!accountData?.authenticated}
+          >
+            <Plus aria-hidden="true" />
+            New app
+          </Button>
+        }
+      />
+      {unsavedReminder && (
+        <p role="status" className="text-destructive text-meta">
+          This browser could not save the reminder about old keys that still
+          work. It is lost if you reload, so revoke them before you leave.
+        </p>
+      )}
+      {needsCheck.length > 0 && (
+        <p className="text-meta">
+          <Link
+            href={`/apps/?app=${encodeURIComponent(needsCheck[0].id)}`}
+            className="underline"
+            onClick={(event) => openFirstCheck(event, needsCheck[0])}
+          >
+            {checkCount}{" "}
+            {checkCount === 1 ? "key or address needs" : "keys or addresses need"}{" "}
+            a quick check
+          </Link>
+        </p>
+      )}
+      {accountPending ? (
+        <div
+          role="status"
+          aria-label="Loading apps"
+          aria-busy="true"
+          className="bg-card rounded-panel border"
+        >
+          <SkeletonRows count={3} lines={2} />
+        </div>
+      ) : accountError ? (
+        <ErrorState
+          message="Your apps could not be loaded. Try again."
+          onRetry={() => void refetchAccount()}
+        />
+      ) : !accountData?.authenticated ? (
+        <EmptyState
+          title="Sign in to connect your apps"
+          description="Each app gets a key with your account's access plan."
+          action={
+            <Button asChild>
+              <a href="/login">Sign in</a>
+            </Button>
+          }
+        />
+      ) : !apps.length ? (
+        <EmptyState
+          icon={KeyRound}
+          title="Connect your first app"
+          action={<Button onClick={startNewApp}>New app</Button>}
+        />
+      ) : (
+        // Each app is one group: its header, then its keys and (for an owner) its trusted addresses, indented under
+        // its name. The groups stack with a gap, so the page reads as a list of apps, not one flat list of rows.
+        <ul aria-label="Apps" className="flex flex-col gap-3">
+          {apps.map((app, index) => {
+            const appName = formatAppName(app.name, accountData?.user?.email);
+            const activeIds = new Set(app.credentials.map((key) => key.id));
+            // Old keys from a rotation finished later, still active.
+            const oldKeys = (unfinished[app.id] ?? []).filter((id) =>
+              activeIds.has(id),
+            );
+            // A personal app's key the cut-over removes, and the person must replace: its keys cannot save the
+            // member's prompts. The header offers that replacement only when one key needs it; the keys dialog
+            // offers the same replacement for each key.
+            const replaceable =
+              app.kind === "personal"
+                ? app.credentials.filter((key) => key.cutover === "replace")
+                : [];
+            const needsNewKey = replaceable.length > 0;
+            const rowReplace =
+              needsNewKey && app.can_mint_keys && replaceable.length === 1
+                ? replaceable[0]
+                : null;
+            const blockedReason = app.can_mint_keys
+              ? null
+              : mintBlockedReason(app);
+            const minting = mintingAppId === app.id;
+            // A notice leads the meta line, so it is read first.
+            const meta: ReactNode[] = [
+              oldKeys.length
+                ? "Old keys still work"
+                : needsNewKey && app.can_mint_keys
+                  ? "Needs a new key"
+                  : null,
+              blockedReason ? "Can't create keys" : null,
+              `${app.credentials.length} ${app.credentials.length === 1 ? "key" : "keys"}`,
+              app.access_plan ? (
+                <span key="plan">
+                  Access plan: <AccessPlanName app={app} />
+                </span>
+              ) : null,
+            ].filter((part) => part !== null);
+            const metaTitle = oldKeys.length
+              ? "Your new key is saved. Some old keys still work."
+              : needsNewKey && app.can_mint_keys
+                ? "This app's key doesn't save your words and chats. Replace it to use your saved words and chats setting."
+                : (blockedReason ?? undefined);
+              const primary = (
+                      minting ? (
+                        <span
+                          role="status"
+                          className="text-muted-foreground text-meta inline-flex items-center gap-2"
+                        >
+                          <Spinner />
+                          Creating key…
+                        </span>
+                      ) : oldKeys.length ? (
+                        <Button
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => void revokeUnfinished(app.id, oldKeys)}
+                        >
+                          Revoke old keys
+                        </Button>
+                      ) : rowReplace !== null ? (
+                        <Button
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => void replaceFromRow(app, rowReplace)}
+                        >
+                          {replacingKeyId === rowReplace.id ? "Replacing…" : "Replace key"}
+                        </Button>
+                      ) : null
+              );
+            return (
+              <li
+                key={app.id}
+                id={`app-${app.id}`}
+                tabIndex={requestedApp === app.id ? -1 : undefined}
+                aria-labelledby={`app-title-${app.id}`}
+                className={cn(
+                  "bg-card rounded-panel min-w-0 overflow-hidden border",
+                  requestedApp === app.id &&
+                    "ring-ring ring-offset-background ring-2 ring-offset-2",
+                )}
+              >
+                {/* A narrower gap on a phone keeps a zero-key card's menu on the Set up row instead of wrapping it below. */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-2 px-4 py-3 sm:gap-x-3">
+                  <AppWindow
+                    aria-hidden="true"
+                    className="text-muted-foreground size-4 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1 basis-40">
+                    <h2
+                      id={`app-title-${app.id}`}
+                      className="text-[15px] leading-6 font-semibold break-words"
+                    >
+                      {appName}
+                    </h2>
+                    <p
+                      title={metaTitle}
+                      className="text-muted-foreground text-meta flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                    >
+                      {meta.map((part, index) => (
+                        <Fragment key={index}>
+                          {index > 0 ? <Separator /> : null}
+                          {part}
+                        </Fragment>
+                      ))}
+                    </p>
+                  </div>
+                  {/* On a phone a keyed app's actions drop under its name, aligned with it, so its header keeps the menu
+                      top right. A zero-key app keeps "Set up" beside the menu, which keeps its card short. */}
+                  <div
+                    className={cn(
+                      "flex shrink-0 flex-wrap items-center gap-2",
+                      app.credentials.length > 0 && "max-sm:order-last max-sm:basis-full max-sm:pl-7",
+                    )}
+                  >
+                    {primary}
+                    <Button asChild variant="outline" size="sm">
+                      <Link
+                        prefetch={false}
+                        href={`/connect/?app=${encodeURIComponent(app.id)}`}
+                        aria-label={`Set up ${appName}`}
+                      >
+                        Set up
+                      </Link>
+                    </Button>
+                  </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          id={`app-actions-${app.id}`}
+                          aria-label={`Actions for ${appName}`}
+                        >
+                          <MoreHorizontal />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onSelect={() => {
+                            rememberAppFocus(app.id);
+                            setRenamingApp(app);
+                          }}
+                        >
+                          Rename app
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!app.credentials.length}
+                          onSelect={() => {
+                            rememberAppFocus(app.id);
+                            setRenamingKeysOf(app.id);
+                          }}
+                        >
+                          Rename keys
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!app.can_mint_keys || busy}
+                          onSelect={() => void mintFromMenu(app, appName)}
+                        >
+                          {app.credentials.length
+                            ? "Create another key"
+                            : "Create key"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={
+                            !app.credentials.length || !app.can_mint_keys
+                          }
+                          onSelect={() => {
+                            rememberAppFocus(app.id);
+                            setAction({ kind: "rotate", app });
+                            setError(null);
+                          }}
+                        >
+                          Rotate keys
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          disabled={!app.credentials.length}
+                          onSelect={() => {
+                            rememberAppFocus(app.id);
+                            setAction({ kind: "revoke", app });
+                            setError(null);
+                          }}
+                        >
+                          Revoke keys
+                        </DropdownMenuItem>
+                        {owner ? (
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              rememberAppFocus(app.id);
+                              setTrustingApp(app);
+                            }}
+                          >
+                            Allow keyless access…
+                          </DropdownMenuItem>
+                        ) : null}
+                        {viewer.admin && (
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              rememberAppFocus(app.id);
+                              setError(null);
+                              setAccessPlan(
+                                !app.access_plan || app.access_plan.same_as_person
+                                  ? SAME_AS_PERSON
+                                  : app.access_plan.id,
+                              );
+                              setAccessApp(app);
+                            }}
+                          >
+                            Change access plan
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem
+                          variant="destructive"
+                          disabled={busy}
+                          onSelect={() => {
+                            rememberAppFocus(app.id);
+                            setAction({ kind: "remove", app });
+                            setError(null);
+                          }}
+                        >
+                          Remove app
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                </div>
+                <AppKeyRows
+                  app={app}
+                  appName={appName}
+                  busy={busy}
+                  blockedReason={blockedReason}
+                  onAddKey={(opener) => startAddKey(app, opener)}
+                  onRotate={(key) => {
+                    rememberAppFocus(app.id);
+                    setAction({ kind: "rotate", app, key });
+                    setError(null);
+                  }}
+                  onRevoke={(key) => {
+                    rememberAppFocus(app.id);
+                    setAction({ kind: "revoke", app, key });
+                    setError(null);
+                  }}
+                />
+                {app.kind === "service" ? (
+                  <RequestHistorySetting
+                    key={app.id}
+                    app={app}
+                    onSaved={putApp}
+                  />
+                ) : null}
+                {owner ? (
+                  <KeylessAccessRow
+                    appName={appName}
+                    addresses={keylessOf(index)}
+                    failed={keylessQueries[index]?.isError ?? false}
+                    showHint={index === firstKeylessIndex}
+                  />
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {accountData?.authenticated ? (
+        <SignInConnections
+          empty={
+            <>
+              No connections yet. ChatGPT, Claude.ai and other AI apps that
+              sign in appear here once you{" "}
+              <Link prefetch={false} href="/connect" className="underline">
+                connect one
+              </Link>
+              .
+            </>
+          }
+        />
+      ) : null}
+      <Dialog
+        open={creating}
+        onOpenChange={(open) => {
+          if (!open && !busy) closeCreate();
+        }}
+      >
+        <DialogContent
+          className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+          onCloseAutoFocus={restoreDialogFocus}
+        >
+          <DialogHeader>
+            <DialogTitle>{createdApp ? "Create key" : "New app"}</DialogTitle>
+            <DialogDescription>
+              A key can use only what its app&apos;s access plan allows. Each
+              app gets its own key, so you can turn one off without touching
+              the others.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={create} className="space-y-5">
+            <div className="space-y-2">
+              <label htmlFor="app-name" className="text-label">
+                App name
+              </label>
+              <Input
+                id="app-name"
+                autoFocus
+                required
+                maxLength={80}
+                placeholder="Open WebUI on my laptop"
+                value={name}
+                disabled={!!createdApp || busy}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <fieldset className="space-y-2">
+              <legend className="text-label">Access plan</legend>
+              {createdApp ? (
+                <p className="text-muted-foreground text-meta">
+                  {planDescription(createdApp.access_plan)}
+                </p>
+              ) : viewer.admin ? (
+                <>
+                  <Select value={plan} onValueChange={setPlan} disabled={busy}>
+                    <SelectTrigger id="app-plan" aria-label="Access plan" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={SAME_AS_PERSON}>
+                        Same as you{personPlan ? ` (${personPlan.name})` : ""}
+                      </SelectItem>
+                      {(plans ?? []).map((item: AccessPlan) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-muted-foreground text-meta">
+                    {plan === SAME_AS_PERSON
+                      ? (personPlan?.summary ?? planDescription(personPlan))
+                      : `${chosenPlan?.summary ?? planDescription(chosenPlan)} It never gets more than your own plan allows.`}
+                  </p>
+                </>
+              ) : (
+                <p className="text-muted-foreground text-meta">
+                  Same as yours: {planDescription(personPlan)} Only the owner
+                  can change an app&apos;s access plan.
+                </p>
+              )}
+            </fieldset>
+            {error && (
+              <p role="alert" className="text-destructive text-meta">
+                {appIsNew
+                  ? "Your app was created, but it isn't set up yet. Retry to finish. "
+                  : ""}
+                {error}
+              </p>
+            )}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                type="button"
+                disabled={busy}
+                onClick={closeCreate}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy || !name.trim()}>
+                {busy
+                  ? "Creating…"
+                  : createdApp
+                    ? error
+                      ? "Retry key creation"
+                      : "Create key"
+                    : "Create app and key"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={action !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) setAction(null);
+        }}
+      >
+        <DialogContent onCloseAutoFocus={restoreDialogFocus}>
+          <DialogHeader>
+            <DialogTitle>
+              {action?.kind === "remove"
+                ? "Remove"
+                : action?.kind === "rotate"
+                  ? "Rotate"
+                  : "Revoke"}{" "}
+              {action?.kind === "remove"
+                ? actionAppName
+                : action?.key
+                  ? `key ${action.key.display_name}`
+                  : `keys for ${actionAppName}`}
+              ?
+            </DialogTitle>
+            <DialogDescription>{actionDescription}</DialogDescription>
+          </DialogHeader>
+          {error && (
+            <p role="alert" className="text-destructive text-meta">
+              {error}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => setAction(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant={
+                action?.kind === "revoke" || action?.kind === "remove"
+                  ? "destructive"
+                  : "default"
+              }
+              disabled={busy}
+              onClick={() => void performAction()}
+            >
+              {busy
+                ? "Working…"
+                : action?.kind === "rotate"
+                  ? "Create replacement key"
+                  : action?.kind === "remove"
+                    ? "Remove app"
+                    : action?.key
+                      ? "Revoke key"
+                      : "Revoke keys"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <TrustedAddressesDialog
+        app={trustingApp}
+        appName={
+          trustingApp
+            ? formatAppName(trustingApp.name, accountData?.user?.email)
+            : ""
+        }
+        focusCheck={focusCheck}
+        onClose={() => {
+          setTrustingApp(null);
+          setFocusCheck(false);
+        }}
+        onChanged={() => void refresh()}
+        onCloseAutoFocus={restoreDialogFocus}
+      />
+      <RenameAppDialog
+        app={renamingApp}
+        appName={
+          renamingApp
+            ? formatAppName(renamingApp.name, accountData?.user?.email)
+            : ""
+        }
+        onSaved={(saved) => {
+          putApp(saved);
+          toast.success("App renamed");
+          setRenamingApp(null);
+        }}
+        onClose={() => setRenamingApp(null)}
+        onCloseAutoFocus={restoreDialogFocus}
+      />
+      <RenameKeysDialog
+        app={keysApp}
+        appName={
+          keysApp ? formatAppName(keysApp.name, accountData?.user?.email) : ""
+        }
+        onSaved={putKey}
+        onKept={(saved) => putKey(saved, "Key kept")}
+        onReplaced={(replaced) => {
+          if (keysApp) showReplacement(keysApp, replaced);
+        }}
+        focusCheck={focusCheck}
+        onClose={() => {
+          setRenamingKeysOf(null);
+          setFocusCheck(false);
+        }}
+        onCloseAutoFocus={restoreDialogFocus}
+      />
+      <Dialog open={reveal !== null} onOpenChange={() => {}}>
+        <DialogContent
+          showCloseButton={false}
+          onCloseAutoFocus={restoreDialogFocus}
+          className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[42rem]!"
+          onEscapeKeyDown={(event) => event.preventDefault()}
+          onPointerDownOutside={(event) => event.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle>New key for {reveal?.app}</DialogTitle>
+            <DialogDescription>
+              Copy the key now. It is shown only once.
+            </DialogDescription>
+          </DialogHeader>
+          {reveal && (
+            <div className="space-y-6">
+              {!saved && (
+                <div className="space-y-2">
+                  <CopyField label="Your key" value={reveal.secret} />
+                  {reveal.note ? (
+                    <p className="text-muted-foreground text-meta">{reveal.note}</p>
+                  ) : null}
+                  <p className="text-muted-foreground text-meta">
+                    {planSentence(
+                      apps.find((app) => app.id === reveal.appId)?.access_plan,
+                    )}
+                  </p>
+                </div>
+              )}
+              <section aria-labelledby="setup-heading" className="space-y-3 border-t pt-5">
+                <h3 id="setup-heading" className="text-body font-medium">
+                  Set up a client
+                </h3>
+                {reveal && (
+                  <p className="text-muted-foreground text-meta">
+                    Model suggestions are checked against this key&apos;s access for{" "}
+                    {reveal.app}.
+                  </p>
+                )}
+                {reveal && credentialAccessError && (
+                  <ErrorState
+                    message={`We couldn't check this key's access. Model suggestions are hidden until the check succeeds.`}
+                    error={credentialAccessErrorDetail}
+                    onRetry={() => void refetchCredentialAccess()}
+                    retrying={credentialAccessFetching}
+                  />
+                )}
+                {reveal && catalogError && (
+                  <ErrorState
+                    message="We couldn't load the model catalog. Model suggestions are hidden until it loads."
+                    error={catalogErrorDetail}
+                    onRetry={() => void refetchCatalog()}
+                    retrying={catalogFetching}
+                  />
+                )}
+                <AppGuide
+                  clientId={guideApp}
+                  onClientChange={setGuideApp}
+                  values={guideValues}
+                  owner={viewer.admin}
+                  loading={
+                    catalogPending || catalogFetching ||
+                    credentialAccessPending || credentialAccessFetching
+                  }
+                  keyHint={
+                    saved ? (
+                      <>
+                        Use key <span className="font-mono">{reveal.start}</span> (the secret you
+                        saved when you created it).
+                      </>
+                    ) : (
+                      "Paste the key from above."
+                    )
+                  }
+                />
+                <p className="text-muted-foreground text-meta">
+                  The full guide opens on{" "}
+                  <Link
+                    prefetch={false}
+                    href={`/connect/?app=${encodeURIComponent(reveal.appId)}`}
+                    target="_blank"
+                    rel="noopener"
+                    className="underline underline-offset-4"
+                  >
+                    Connect
+                  </Link>{" "}
+                  in a new tab.
+                </p>
+              </section>
+              {saved && !busy && reveal.oldIds.length > 0 && (
+                <div role="alert">
+                  <p className="text-destructive text-meta">
+                    Your new key is saved. Some old keys still work.
+                    {error ? ` ${error}` : ""}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="md" onClick={() => void saveKey()}>
+                      Retry revoking old keys
+                    </Button>
+                    <Button size="md" variant="outline" onClick={finishLater}>
+                      Finish later
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {saved && busy && (
+                <p role="status" className="text-muted-foreground text-meta">
+                  Revoking previous keys…
+                </p>
+              )}
+              {!saved && (
+                <DialogFooter className="bg-background sticky -bottom-6 -mx-6 -mb-6 border-t px-6 py-4">
+                  <Button size="md" onClick={() => void saveKey()}>
+                    I’ve saved the key
+                  </Button>
+                </DialogFooter>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={accessApp !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) setAccessApp(null);
+        }}
+      >
+        <DialogContent onCloseAutoFocus={restoreDialogFocus}>
+          <DialogHeader>
+            <DialogTitle>
+              Access plan for {accessApp ? formatAppName(accessApp.name, accountData?.user?.email) : ""}
+            </DialogTitle>
+            <DialogDescription>
+              The change applies to the app&apos;s keys at once. An app never
+              gets more than its person&apos;s own plan allows.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Select value={accessPlan} onValueChange={setAccessPlan} disabled={busy}>
+              <SelectTrigger aria-label="Access plan" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SAME_AS_PERSON}>
+                  Same as you{personPlan ? ` (${personPlan.name})` : ""}
+                </SelectItem>
+                {(plans ?? []).map((item: AccessPlan) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-muted-foreground text-meta">
+              {accessPlan === SAME_AS_PERSON
+                ? planDescription(personPlan)
+                : planDescription((plans ?? []).find((item) => item.id === accessPlan))}
+            </p>
+          </div>
+          {error && (
+            <p role="alert" className="text-destructive text-meta">
+              {error}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={busy} onClick={() => setAccessApp(null)}>
+              Cancel
+            </Button>
+            <Button disabled={busy} onClick={() => void changeAccess()}>
+              {busy ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+export default function AppsPage() {
+  return (
+    <Suspense fallback={<Skeleton className="h-24 w-full" />}>
+      <AppsContents />
+    </Suspense>
+  );
+}

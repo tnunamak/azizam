@@ -1,0 +1,600 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
+import type {
+  HouseholdPromptMemory,
+  MemberPromptMemoryResponse,
+  RetentionContract,
+} from "@/lib/prompt-memory";
+import { setRetentionContract } from "@/lib/prompt-memory";
+
+const mocks = vi.hoisted(() => ({
+  viewer: { authenticated: true, role: "member", admin: false, name: "Robin" },
+  promptMemory: vi.fn(),
+  savePromptMemory: vi.fn(),
+  deleteSavedPrompts: vi.fn(),
+  householdGet: vi.fn(),
+  householdPut: vi.fn(),
+}));
+vi.mock("@/components/shell/session", () => ({
+  useViewer: () => mocks.viewer,
+}));
+vi.mock("@/lib/use-owner-name", () => ({ useOwnerName: () => "Sam" }));
+vi.mock("@/lib/account-api", () => ({
+  accountApi: {
+    promptMemory: mocks.promptMemory,
+    savePromptMemory: mocks.savePromptMemory,
+    deleteSavedPrompts: mocks.deleteSavedPrompts,
+  },
+}));
+vi.mock("@/lib/prompt-memory", async (original) => ({
+  ...(await original<typeof import("@/lib/prompt-memory")>()),
+  householdPromptMemoryApi: {
+    get: mocks.householdGet,
+    put: mocks.householdPut,
+  },
+}));
+vi.mock("@/lib/toast", () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
+}));
+
+import AccountPage from "@/app/account/page";
+import { HouseholdPromptsSection } from "@/app/settings/household-prompts";
+
+const household: HouseholdPromptMemory = {
+  default_remember: true,
+  never_keep: false,
+  retention_cap: "never",
+};
+function member(
+  overrides: Partial<MemberPromptMemoryResponse["prompt_memory"]> = {},
+  house: Partial<HouseholdPromptMemory> = {},
+  extra: Partial<MemberPromptMemoryResponse> = {},
+): MemberPromptMemoryResponse {
+  return {
+    prompt_memory: {
+      remember: true,
+      retention: "never",
+      effective_remember: true,
+      effective_retention: "never",
+      household: { ...household, ...house },
+      ...overrides,
+    },
+    ...extra,
+  };
+}
+
+function wrap(node: ReactNode) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>{node}</QueryClientProvider>,
+  );
+}
+
+function contract(
+  choices: RetentionContract["choices"],
+  known_unoffered: RetentionContract["known_unoffered"] = [],
+): RetentionContract {
+  return {
+    choices,
+    known_unoffered,
+    defaults: {
+      default_remember: true,
+      never_keep: false,
+      retention_cap: choices[0].id,
+      remember: true,
+      retention: choices[0].id,
+    },
+  };
+}
+
+beforeEach(() => {
+  mocks.viewer = {
+    authenticated: true,
+    role: "member",
+    admin: false,
+    name: "Robin",
+  };
+  // Radix Select needs these, which jsdom lacks.
+  Element.prototype.hasPointerCapture ??= () => false;
+  Element.prototype.releasePointerCapture ??= () => {};
+  Element.prototype.scrollIntoView ??= () => {};
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
+
+describe("Your settings: prompts", () => {
+  it("shows a retained known choice that is no longer offered without making it selectable", async () => {
+    const user = userEvent.setup();
+    setRetentionContract(
+      contract(
+        [
+          { id: "never", seconds: null },
+          { id: "1_year", seconds: 31_536_000 },
+        ],
+        [{ id: "3_months", seconds: 7_776_000 }],
+      ),
+    );
+    mocks.promptMemory.mockResolvedValue(
+      member(
+        { retention: "3_months", effective_retention: "3_months" },
+        {},
+        { unoffered: { retention: "3_months" } },
+      ),
+    );
+    wrap(<AccountPage />);
+    const select = await screen.findByRole("combobox", {
+      name: "Forget them after",
+    });
+    expect(select).toHaveTextContent("3 months");
+    expect(
+      screen.getByText(
+        "Your choice, 3 months, is no longer offered but still applies.",
+      ),
+    ).toBeVisible();
+    await user.click(select);
+    expect(screen.queryByRole("option", { name: /3 months/ })).toBeNull();
+    expect(screen.getByRole("option", { name: "1 year" })).toBeVisible();
+    expect(mocks.savePromptMemory).not.toHaveBeenCalled();
+  });
+
+  it("names the gateway limit when it shortens a choice that is no longer offered", async () => {
+    setRetentionContract(
+      contract(
+        [
+          { id: "never", seconds: null },
+          { id: "1_week", seconds: 604_800 },
+        ],
+        [{ id: "3_months", seconds: 7_776_000 }],
+      ),
+    );
+    mocks.promptMemory.mockResolvedValue(
+      member(
+        { retention: "3_months", effective_retention: "1_week" },
+        { retention_cap: "1_week" },
+        { unoffered: { retention: "3_months" } },
+      ),
+    );
+    wrap(<AccountPage />);
+    expect(
+      await screen.findByText(
+        "Your choice, 3 months, is no longer offered. The gateway limit of 1 week applies instead.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("shows a deleted stored choice and its effective fallback", async () => {
+    setRetentionContract(
+      contract([
+        { id: "never", seconds: null },
+        { id: "3_months", seconds: 7_776_000 },
+      ]),
+    );
+    mocks.promptMemory.mockResolvedValue(
+      member(
+        { retention: "3_months", effective_retention: "3_months" },
+        {},
+        { unoffered: { retention: "1_year" } },
+      ),
+    );
+    wrap(<AccountPage />);
+    expect(
+      await screen.findByText(
+        "Your previous choice, 1 year, was removed. Using 3 months.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("combobox", { name: "Forget them after" }),
+    ).toHaveTextContent("3 months");
+  });
+
+  it("marks a retained household cap in a member's settings", async () => {
+    setRetentionContract(
+      contract(
+        [
+          { id: "never", seconds: null },
+          { id: "1_year", seconds: 31_536_000 },
+        ],
+        [{ id: "3_months", seconds: 7_776_000 }],
+      ),
+    );
+    mocks.promptMemory.mockResolvedValue(
+      member(
+        { retention: "3_months", effective_retention: "3_months" },
+        { retention_cap: "3_months" },
+        { unoffered: { retention_cap: "3_months" } },
+      ),
+    );
+    wrap(<AccountPage />);
+    expect(
+      await screen.findByText("Gateway limit: 3 months (no longer offered)."),
+    ).toBeVisible();
+  });
+
+  it("asks before shortening a retained known period", async () => {
+    const user = userEvent.setup();
+    setRetentionContract(
+      contract(
+        [
+          { id: "never", seconds: null },
+          { id: "3_months", seconds: 7_776_000 },
+        ],
+        [{ id: "1_year", seconds: 31_536_000 }],
+      ),
+    );
+    mocks.promptMemory.mockResolvedValue(
+      member(
+        { retention: "1_year", effective_retention: "1_year" },
+        {},
+        { unoffered: { retention: "1_year" } },
+      ),
+    );
+    wrap(<AccountPage />);
+    await user.click(
+      await screen.findByRole("combobox", { name: "Forget them after" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "3 months" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Words and chats older than 3 months are deleted now.",
+    );
+    expect(mocks.savePromptMemory).not.toHaveBeenCalled();
+  });
+
+  it("asks before turning memory off, because that deletes saved words and chats", async () => {
+    const user = userEvent.setup();
+    mocks.promptMemory.mockResolvedValue(member());
+    mocks.savePromptMemory.mockResolvedValue(
+      member({ remember: false, effective_remember: false }),
+    );
+    wrap(<AccountPage />);
+    const toggle = await screen.findByRole("switch", {
+      name: "Keep the words you used to make things",
+    });
+    expect(toggle).toBeChecked();
+    // The row says what turning it off does before anyone touches it.
+    expect(
+      screen.getByText("Turning it off deletes saved words and chats."),
+    ).toBeVisible();
+    await user.click(toggle);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      "Deletion of saved ones may continue in the background.",
+    );
+    expect(dialog).toHaveTextContent(
+      "Your pictures, audio and videos stay in Library.",
+    );
+    expect(mocks.savePromptMemory).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Turn off" }));
+    await waitFor(() =>
+      expect(mocks.savePromptMemory.mock.calls[0]?.[0]).toEqual({
+        remember: false,
+        retention: "never",
+      }),
+    );
+    expect(
+      await screen.findByRole("switch", { name: "Keep the words you used to make things" }),
+    ).not.toBeChecked();
+  });
+
+  it("deletes saved words and chats after asking, and says how many", async () => {
+    const user = userEvent.setup();
+    const { toast } = await import("@/lib/toast");
+    mocks.promptMemory.mockResolvedValue(member());
+    mocks.deleteSavedPrompts.mockResolvedValue({ deleted_prompts: 3 });
+    wrap(<AccountPage />);
+    expect(await screen.findByText("Deletes all of them now.")).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: "Delete…" }));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Delete words and chats",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.deleteSavedPrompts).toHaveBeenCalledTimes(1),
+    );
+    expect(toast.success).toHaveBeenCalledWith("Deleted words for 3 creations.");
+  });
+
+  it("shows file cleanup that is still running, honestly", async () => {
+    mocks.promptMemory.mockResolvedValue(
+      member(
+        {},
+        {},
+        {
+          prompt_purge: {
+            pending: true,
+            metadata_stripping: { status: "queued", files_pending: 4 },
+          },
+        },
+      ),
+    );
+    wrap(<AccountPage />);
+    const status = (await screen.findByText("Deletion pending")).closest(
+      "[role=status]",
+    );
+    expect(status).not.toBeNull();
+    expect(status).toHaveTextContent(
+      "Removing copies from older files in the background. 4 files left.",
+    );
+  });
+
+  it("holds members to the household's cap", async () => {
+    const user = userEvent.setup();
+    mocks.promptMemory.mockResolvedValue(
+      member(
+        { effective_retention: "3_months" },
+        { retention_cap: "3_months" },
+      ),
+    );
+    wrap(<AccountPage />);
+    expect(await screen.findByText("Up to 3 months here.")).toBeVisible();
+    const select = screen.getByRole("combobox", {
+      name: "Forget them after",
+    });
+    expect(select).toHaveTextContent("3 months");
+    await user.click(select);
+    expect(
+      await screen.findByRole("option", { name: "Never" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("option", { name: "1 year" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("says who turned prompts off for everyone, and offers nothing to change", async () => {
+    mocks.promptMemory.mockResolvedValue(
+      member({ effective_remember: false }, { never_keep: true }),
+    );
+    wrap(<AccountPage />);
+    expect(
+      await screen.findByText("Sam turned this off for everyone."),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("switch", { name: "Keep the words you used to make things" }),
+    ).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Delete…" })).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
+  });
+});
+
+describe("Settings: the household's prompt rules", () => {
+  it("shows a known retained owner cap outside the offered choices", async () => {
+    const user = userEvent.setup();
+    setRetentionContract(
+      contract(
+        [
+          { id: "never", seconds: null },
+          { id: "1_year", seconds: 31_536_000 },
+        ],
+        [{ id: "3_months", seconds: 7_776_000 }],
+      ),
+    );
+    mocks.householdGet.mockResolvedValue({
+      prompt_memory: { ...household, retention_cap: "3_months" },
+      revision: "r1",
+      unoffered: { retention_cap: "3_months" },
+    });
+    wrap(<HouseholdPromptsSection />);
+    const select = await screen.findByRole("combobox", {
+      name: "Longest time to keep them",
+    });
+    expect(select).toHaveTextContent("3 months");
+    expect(screen.getByText(/3 months \(no longer offered\)/)).toBeVisible();
+    await user.click(select);
+    expect(screen.queryByRole("option", { name: /3 months/ })).toBeNull();
+    expect(mocks.householdPut).not.toHaveBeenCalled();
+  });
+
+  it("shows a deleted owner cap and its effective fallback", async () => {
+    setRetentionContract(
+      contract([
+        { id: "never", seconds: null },
+        { id: "3_months", seconds: 7_776_000 },
+      ]),
+    );
+    mocks.householdGet.mockResolvedValue({
+      prompt_memory: { ...household, retention_cap: "3_months" },
+      revision: "r1",
+      unoffered: { retention_cap: "1_year" },
+    });
+    wrap(<HouseholdPromptsSection />);
+    expect(
+      await screen.findByText(
+        "Previous choice 1 year (no longer offered). Using 3 months.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("combobox", { name: "Longest time to keep them" }),
+    ).toHaveTextContent("3 months");
+  });
+
+  it("asks before the kill switch, then saves with the revision", async () => {
+    const user = userEvent.setup();
+    mocks.viewer = {
+      authenticated: true,
+      role: "owner",
+      admin: true,
+      name: "Sam",
+    };
+    mocks.householdGet.mockResolvedValue({
+      prompt_memory: household,
+      revision: "r1",
+    });
+    mocks.householdPut.mockResolvedValue({
+      prompt_memory: { ...household, never_keep: true },
+      revision: "r2",
+    });
+    wrap(<HouseholdPromptsSection />);
+    // The kill switch's row leads with the deletion: on a phone the rest
+    // of the line truncates.
+    expect(
+      await screen.findByText(
+        "Deletes saved words and chats and wins over everyone’s own choice.",
+      ),
+    ).toBeVisible();
+    await user.click(
+      await screen.findByRole("switch", { name: "Never keep words or chats" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      "Turning this off later can’t bring them back.",
+    );
+    expect(dialog).toHaveTextContent(
+      "engine’s own history, external output folders, backups, or downloaded copies",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Never keep words or chats" }),
+    );
+    await waitFor(() =>
+      expect(mocks.householdPut).toHaveBeenCalledWith(
+        { ...household, never_keep: true },
+        "r1",
+      ),
+    );
+    expect(
+      await screen.findByRole("switch", { name: "Never keep words or chats" }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: "Keep words and chats for new people" }),
+    ).toBeDisabled();
+  });
+
+  it("saves a longer cap at once and asks before a shorter one", async () => {
+    const user = userEvent.setup();
+    mocks.householdGet.mockResolvedValue({
+      prompt_memory: { ...household, retention_cap: "1_year" },
+      revision: "r1",
+    });
+    mocks.householdPut.mockImplementation(
+      async (value: HouseholdPromptMemory) => ({
+        prompt_memory: value,
+        revision: "r2",
+      }),
+    );
+    wrap(<HouseholdPromptsSection />);
+    const select = await screen.findByRole("combobox", {
+      name: "Longest time to keep them",
+    });
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "No limit" }));
+    await waitFor(() =>
+      expect(mocks.householdPut).toHaveBeenCalledWith(
+        { ...household, retention_cap: "never" },
+        "r1",
+      ),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(
+      screen.getByRole("combobox", { name: "Longest time to keep them" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "3 months" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Everyone’s words and chats older than 3 months are deleted now.",
+    );
+  });
+});
+
+it.each(["member", "household"])(
+  "shows %s database deletion as pending",
+  async (kind) => {
+    const purge = {
+      pending: true,
+      database_pending: true,
+      retry_scheduled: true,
+    };
+    if (kind === "member") {
+      mocks.promptMemory.mockResolvedValue(
+        member({}, {}, { prompt_purge: purge }),
+      );
+      wrap(<AccountPage />);
+    } else {
+      mocks.householdGet.mockResolvedValue({
+        prompt_memory: household,
+        revision: "r1",
+        prompt_purge: purge,
+      });
+      wrap(<HouseholdPromptsSection />);
+    }
+    expect(await screen.findByText("Deletion pending")).toBeVisible();
+    expect(
+      screen.getByText(
+        /Deleting saved words and chats hasn.t finished. Azizam keeps retrying/,
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("Saved prompts are deleted")).toBeNull();
+  },
+);
+
+it.each(["member", "household"])(
+  "keeps the %s confirmation open on failure for retry",
+  async (kind) => {
+    const user = userEvent.setup();
+    const { toast } = await import("@/lib/toast");
+    const { ApiError } = await import("@/lib/api");
+    if (kind === "member") {
+      mocks.promptMemory.mockResolvedValue(member());
+      mocks.savePromptMemory.mockRejectedValue(
+        new ApiError(
+          "prompt_erasure_unavailable",
+          "Deletion failed. Try again.",
+          503,
+        ),
+      );
+      wrap(<AccountPage />);
+      await user.click(
+        await screen.findByRole("switch", { name: "Keep the words you used to make things" }),
+      );
+    } else {
+      mocks.householdGet.mockResolvedValue({
+        prompt_memory: household,
+        revision: "r1",
+      });
+      mocks.householdPut.mockRejectedValue(
+        new ApiError(
+          "prompt_erasure_unavailable",
+          "Deletion failed. Try again.",
+          503,
+        ),
+      );
+      wrap(<HouseholdPromptsSection />);
+      await user.click(
+        await screen.findByRole("switch", { name: "Never keep words or chats" }),
+      );
+    }
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: kind === "member" ? "Turn off" : "Never keep words or chats",
+      }),
+    );
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/Try again/),
+      ),
+    );
+    expect(dialog).toBeVisible();
+    expect(screen.queryByText("Saved prompts are deleted")).toBeNull();
+  },
+);

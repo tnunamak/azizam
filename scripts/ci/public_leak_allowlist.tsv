@@ -1,0 +1,89 @@
+# Public-leak scan allowlist (scripts/ci/public_leak_scan.py).
+# One line per tracked file and rule: path<TAB>rule<TAB>reason.
+# An entry is exact; an entry that excuses nothing fails the scan.
+# Rules: lan-address, home-path, email. Private patterns have no allowlist.
+docker-compose.yml	lan-address	default Compose bridge gateway address; an operator overrides it with AZIZAM_DOCKER_GATEWAY
+docs/CONFIG.md	lan-address	documents the default Compose bridge gateway address
+gateway/app_binding_guard.py	lan-address	self-check writes synthetic trusted addresses into a scratch database
+gateway/engine_check.py	lan-address	cloud metadata address the engine check refuses to call
+gateway/trusted_addresses.py	lan-address	comment shows an IPv4-mapped address form
+registry/engine_definitions.json	lan-address	form placeholder for an engine on the LAN; frozen digests cover this file
+scripts/security/exposure_probe.py	lan-address	probe sends spoofed LAN forwarding headers to test the gateway
+tests/fixtures/ollama-api.md	home-path	verbatim copy of the public Ollama API document
+tests/support/canary.py	lan-address	synthetic engine host in test data
+tests/test_access_plans_http.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_admin_api.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_admin_cannot_act_as_owner.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_admin_owner_holes_round4.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_admin_secret_sweep_writes.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_app_binding_authority.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_app_binding_cutover.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_app_binding_preview.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_capability_routing.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_client_ip_security.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_config_keys_are_classified.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_credential_origin_migration.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_engine_check_network.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_engine_protocol_round2.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_engine_protocol_round3.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_engine_protocol_transport.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_exposure_account_security.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_gateway_drain.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_generic_service_model_kinds.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_gpu_memory_instrumentation.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_hot_reload.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_mcp_oauth.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_me_avatar.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_me_binding_adoption.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_me_trusted_addresses.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_media_fetch_security.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_migration_bindings_restore.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_model_presentation.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_native_lane_hardening.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_package_lifecycle_with_refs.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_partial_boot_round6.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_protocol_forward_auth.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_provider_pricing_origin.py	email	URL with user info, not an address; tests that credentials in a URL are refused
+tests/test_provider_routing.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_realtime_proxy.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_registry_apply_failure.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_registry_migration.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_registry_partial_operator.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_replay_transcripts.py	home-path	tests that the replay scan finds home paths
+tests/test_replay_transcripts.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_request_history_reader.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_review_ov_step2_probes.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_review_ov_step2_r3_probes.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_review_w1_r3_cases.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_safe_restart.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_secret_canary_matrix.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_secret_review_r2.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_secret_review_r2_carriers.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_secret_review_r3.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_secret_writes_check_the_session.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_service_patch_keeps_unnamed_fields.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_service_registry.py	lan-address	synthetic LAN engine or client address in test data
+tests/test_test_policy.py	home-path	tests that the test policy finds home paths
+tests/test_trusted_addresses.py	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+tests/test_workflow_requirements.py	home-path	tests that a host model path does not appear in the result
+web/e2e/sweep/rules.ts	home-path	sweep rule that detects home paths on screen
+web/src/app/apps/keep.spec.tsx	lan-address	synthetic LAN engine or client address in test data
+web/src/app/apps/trusted-addresses.tsx	lan-address	input placeholder that shows the expected address shape
+web/src/app/connect/page.spec.tsx	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+web/src/app/engines/__fixtures__/engine-fixtures.json	lan-address	synthetic engine addresses in test fixtures
+web/src/app/engines/__fixtures__/test-utils.tsx	lan-address	synthetic engine address in test fixtures
+web/src/app/engines/add-engine/add-engine-dialog.spec.tsx	lan-address	synthetic LAN engine or client address in test data
+web/src/app/engines/add-engine/add-engine-dialog.tsx	lan-address	fallback example address in a validation message
+web/src/app/engines/add-engine/add-engine-polish.spec.tsx	lan-address	synthetic LAN engine or client address in test data
+web/src/app/engines/add-engine/add-engine-steps.spec.tsx	lan-address	synthetic LAN engine or client address in test data
+web/src/app/engines/left-out-records.spec.tsx	lan-address	synthetic LAN engine or client address in test data
+web/src/app/engines/record/connection-honesty.spec.tsx	lan-address	synthetic LAN engine or client address in test data
+web/src/app/engines/record/engine-command-flow.spec.tsx	lan-address	synthetic LAN engine or client address in test data
+web/src/app/engines/record/engine-record-page.spec.tsx	lan-address	synthetic LAN engine or client address in test data
+web/src/app/engines/record/engine-record-polish.spec.tsx	lan-address	synthetic LAN engine or client address in test data
+web/src/app/engines/record/engine-sections.spec.tsx	lan-address	synthetic LAN engine or client address in test data
+web/src/app/engines/record/more-options.spec.tsx	lan-address	synthetic LAN engine or client address in test data
+web/src/lib/account-api.spec.ts	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+web/src/lib/private-address.spec.ts	lan-address	tests address checks: a LAN client, peer or engine address is treated differently from a public one
+web/src/lib/private-address.ts	lan-address	comment shows an IPv4-mapped address form
+web/tests/try-workflow-input-meta.spec.ts	lan-address	synthetic LAN engine or client address in test data

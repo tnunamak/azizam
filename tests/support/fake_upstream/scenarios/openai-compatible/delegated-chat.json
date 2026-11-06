@@ -1,0 +1,27 @@
+{
+  "protocol": "openai-compatible",
+  "name": "delegated-chat",
+  "description": "The LLM substrate answers one chat only when the caller's LiteLLM virtual key arrives as X-Litellm-Key and no Authorization header is forwarded.",
+  "provenance": {"source": "hand-written", "reference": "gateway/backends/llm_execution.py litellm_headers (delegated key header contract)"},
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "headers": {"x-litellm-key": "Bearer {{virtual_key}}", "authorization": {"$absent": true}},
+        "json": {"model": "{{model}}"}
+      },
+      "response": {
+        "json": {
+          "id": "chatcmpl-fk-delegated",
+          "object": "chat.completion",
+          "created": 1767225600,
+          "model": "{{model}}",
+          "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+          "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}
+        }
+      }
+    }
+  ]
+}

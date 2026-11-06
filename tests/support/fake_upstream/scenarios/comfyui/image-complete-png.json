@@ -1,0 +1,71 @@
+{
+  "protocol": "comfyui",
+  "name": "image-complete-png",
+  "description": "Any submitted graph completes at once with one output image whose bytes the test supplies (a PNG that carries the workflow in its text chunks, as ComfyUI writes it).",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /prompt, GET /history/{prompt_id}, GET /view (ComfyUI server.py); the gateway polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "json": {
+          "prompt_id": "fk-job"
+        }
+      }
+    },
+    {
+      "id": "history",
+      "match": {
+        "method": "GET",
+        "path": "/history/fk-job"
+      },
+      "response": {
+        "json": {
+          "fk-job": {
+            "status": {
+              "completed": true
+            },
+            "outputs": {
+              "1": {
+                "images": [
+                  {
+                    "filename": "out.png",
+                    "subfolder": "",
+                    "type": "output"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "view",
+      "match": {
+        "method": "GET",
+        "path": "/view",
+        "query": {
+          "filename": "out.png",
+          "type": "output"
+        }
+      },
+      "response": {
+        "headers": {
+          "content-type": "image/png"
+        },
+        "body": [
+          {
+            "hex": "{{png_hex}}"
+          }
+        ]
+      }
+    }
+  ]
+}

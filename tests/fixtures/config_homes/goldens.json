@@ -1,0 +1,3326 @@
+{
+ "inputs": {
+  "first_run": {
+   "aliases": [],
+   "effective_digest": "sha256:c69bd249e7180573f2ae8e4e9b35034d0c527721dda8a603fd81ef62b3b11926",
+   "models": {
+    "alias_targets": {},
+    "ids": [
+     "ace-step-1.5-xl-turbo",
+     "anima-turbo",
+     "face-likeness",
+     "fibo-2-edit-turbo",
+     "flux2-klein",
+     "flux2-klein-4b",
+     "flux2-klein-4b-edit",
+     "flux2-klein-4b-inpaint",
+     "flux2-klein-4b-seamless-tile",
+     "flux2-klein-edit",
+     "flux2-klein-snofs",
+     "image-identity",
+     "krea2-turbo",
+     "krea2-turbo-snofs",
+     "moss-image",
+     "moss-image-fast",
+     "moss-image-quality",
+     "qwen-image-2.1-edit",
+     "qwen-image-2.1-edit-multiref",
+     "qwen-image-2.1-inpaint",
+     "sa3-small-sfx",
+     "sdxl-seamless-tile",
+     "seedvr2-upscale",
+     "tangoflux",
+     "video-ltx-2.5-i2v",
+     "video-ltx-2.5-keyframes",
+     "video-ltx-2.5-keyframes-mid",
+     "video-ltx-2.5-long",
+     "video-ltx-2.5-t2v",
+     "video-minimax-h3-i2v",
+     "video-minimax-h3-keyframes",
+     "video-minimax-h3-keyframes-mid",
+     "video-minimax-h3-long",
+     "video-minimax-h3-t2v",
+     "yue2-song"
+    ],
+    "roles": []
+   },
+   "section_digests": {
+    "admin": "sha256:59e48897fbdd4b943a30138e6382013e9cc3f09257e1376f495fe4cbbe200958",
+    "backends": "sha256:c04579d7529a29adc687010e697af83e1f67bfae102a7e75575e29985f4c5690",
+    "proxy": "sha256:5050773c14fd8a3afc36d5be4f32d0e0ba9cdee34f939774270a9bac829e2a7c"
+   }
+  },
+  "live_like": {
+   "aliases": [
+    {
+     "kind": "stable",
+     "operation": "chat",
+     "requested": "default",
+     "resolution": {
+      "chain": [
+       "default",
+       "qwen3.8-flash-next-strata"
+      ],
+      "layer": "stable",
+      "operation": "chat",
+      "requested": "default",
+      "resolves_to": "qwen3.8-flash-next-strata"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "chat",
+     "requested": "fast",
+     "resolution": {
+      "chain": [
+       "fast",
+       "qwen3.8-flash-next-strata-fast"
+      ],
+      "layer": "stable",
+      "operation": "chat",
+      "requested": "fast",
+      "resolves_to": "qwen3.8-flash-next-strata-fast"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "chat",
+     "requested": "vision",
+     "resolution": {
+      "chain": [
+       "vision",
+       "default",
+       "qwen3.8-flash-next-strata"
+      ],
+      "layer": "stable",
+      "operation": "chat",
+      "requested": "vision",
+      "resolves_to": "qwen3.8-flash-next-strata"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "chat",
+     "requested": "coder",
+     "resolution": {
+      "chain": [
+       "coder"
+      ],
+      "layer": "stable",
+      "operation": "chat",
+      "requested": "coder",
+      "resolves_to": "coder"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "chat",
+     "requested": "rp",
+     "resolution": {
+      "chain": [
+       "rp"
+      ],
+      "layer": "stable",
+      "operation": "chat",
+      "requested": "rp",
+      "resolves_to": "rp"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "chat",
+     "requested": "default-fast",
+     "resolution": {
+      "chain": [
+       "default-fast",
+       "qwen3.8-flash-next-strata-fast"
+      ],
+      "layer": "stable",
+      "operation": "chat",
+      "requested": "default-fast",
+      "resolves_to": "qwen3.8-flash-next-strata-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-ossx",
+     "resolution": null
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-x-codexx",
+     "resolution": {
+      "chain": [
+       "gpt-x-codexx (matches gpt-*-codex*)",
+       "coder"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "gpt-x-codexx",
+      "resolves_to": "coder"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "codex-x",
+     "resolution": {
+      "chain": [
+       "codex-x (matches codex-*)",
+       "coder"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "codex-x",
+      "resolves_to": "coder"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-x-minix",
+     "resolution": {
+      "chain": [
+       "gpt-x-minix (matches gpt-*-mini*)",
+       "fast",
+       "qwen3.8-flash-next-strata-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "gpt-x-minix",
+      "resolves_to": "qwen3.8-flash-next-strata-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-x-nanox",
+     "resolution": {
+      "chain": [
+       "gpt-x-nanox (matches gpt-*-nano*)",
+       "fast",
+       "qwen3.8-flash-next-strata-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "gpt-x-nanox",
+      "resolves_to": "qwen3.8-flash-next-strata-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "ox-minix",
+     "resolution": {
+      "chain": [
+       "ox-minix (matches o*-mini*)",
+       "fast",
+       "qwen3.8-flash-next-strata-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "ox-minix",
+      "resolves_to": "qwen3.8-flash-next-strata-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-3.5x",
+     "resolution": {
+      "chain": [
+       "gpt-3.5x (matches gpt-3.5*)",
+       "fast",
+       "qwen3.8-flash-next-strata-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "gpt-3.5x",
+      "resolves_to": "qwen3.8-flash-next-strata-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "claude-x-haikux",
+     "resolution": {
+      "chain": [
+       "claude-x-haikux (matches claude-*-haiku*)",
+       "fast",
+       "qwen3.8-flash-next-strata-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "claude-x-haikux",
+      "resolves_to": "qwen3.8-flash-next-strata-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "claude-haikux",
+     "resolution": {
+      "chain": [
+       "claude-haikux (matches claude-haiku*)",
+       "fast",
+       "qwen3.8-flash-next-strata-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "claude-haikux",
+      "resolves_to": "qwen3.8-flash-next-strata-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "claude-x",
+     "resolution": {
+      "chain": [
+       "claude-x (matches claude-*)",
+       "default",
+       "qwen3.8-flash-next-strata"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "claude-x",
+      "resolves_to": "qwen3.8-flash-next-strata"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-x",
+     "resolution": {
+      "chain": [
+       "gpt-x (matches gpt-*)",
+       "default",
+       "qwen3.8-flash-next-strata"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "gpt-x",
+      "resolves_to": "qwen3.8-flash-next-strata"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "chatgpt-x",
+     "resolution": {
+      "chain": [
+       "chatgpt-x (matches chatgpt-*)",
+       "default",
+       "qwen3.8-flash-next-strata"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "chatgpt-x",
+      "resolves_to": "qwen3.8-flash-next-strata"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "o1x",
+     "resolution": {
+      "chain": [
+       "o1x (matches o1*)",
+       "default",
+       "qwen3.8-flash-next-strata"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "o1x",
+      "resolves_to": "qwen3.8-flash-next-strata"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "o3x",
+     "resolution": {
+      "chain": [
+       "o3x (matches o3*)",
+       "default",
+       "qwen3.8-flash-next-strata"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "o3x",
+      "resolves_to": "qwen3.8-flash-next-strata"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "o4x",
+     "resolution": {
+      "chain": [
+       "o4x (matches o4*)",
+       "default",
+       "qwen3.8-flash-next-strata"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "o4x",
+      "resolves_to": "qwen3.8-flash-next-strata"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "computer-use-x",
+     "resolution": {
+      "chain": [
+       "computer-use-x (matches computer-use-*)",
+       "default",
+       "qwen3.8-flash-next-strata"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "computer-use-x",
+      "resolves_to": "qwen3.8-flash-next-strata"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "davinci-002",
+     "resolution": {
+      "chain": [
+       "davinci-002 (matches davinci-002)",
+       "default",
+       "qwen3.8-flash-next-strata"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "davinci-002",
+      "resolves_to": "qwen3.8-flash-next-strata"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "babbage-002",
+     "resolution": {
+      "chain": [
+       "babbage-002 (matches babbage-002)",
+       "default",
+       "qwen3.8-flash-next-strata"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "babbage-002",
+      "resolves_to": "qwen3.8-flash-next-strata"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "embeddings",
+     "requested": "embed",
+     "resolution": {
+      "chain": [
+       "embed",
+       "nomic-embed-text-v1.5"
+      ],
+      "layer": "stable",
+      "operation": "embeddings",
+      "requested": "embed",
+      "resolves_to": "nomic-embed-text-v1.5"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "embeddings",
+     "requested": "text-embedding-x",
+     "resolution": {
+      "chain": [
+       "text-embedding-x (matches text-embedding-*)",
+       "embed",
+       "nomic-embed-text-v1.5"
+      ],
+      "layer": "openai",
+      "operation": "embeddings",
+      "requested": "text-embedding-x",
+      "resolves_to": "nomic-embed-text-v1.5"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "images",
+     "requested": "image",
+     "resolution": {
+      "chain": [
+       "image",
+       "krea2-turbo"
+      ],
+      "layer": "stable",
+      "operation": "images",
+      "requested": "image",
+      "resolves_to": "krea2-turbo"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "images",
+     "requested": "image-fast",
+     "resolution": {
+      "chain": [
+       "image-fast",
+       "flux2-klein-4b"
+      ],
+      "layer": "stable",
+      "operation": "images",
+      "requested": "image-fast",
+      "resolves_to": "flux2-klein-4b"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "images",
+     "requested": "image-uncensored",
+     "resolution": {
+      "chain": [
+       "image-uncensored",
+       "krea2-turbo-snofs"
+      ],
+      "layer": "stable",
+      "operation": "images",
+      "requested": "image-uncensored",
+      "resolves_to": "krea2-turbo-snofs"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "images",
+     "requested": "image-anime",
+     "resolution": {
+      "chain": [
+       "image-anime",
+       "anima-turbo"
+      ],
+      "layer": "stable",
+      "operation": "images",
+      "requested": "image-anime",
+      "resolves_to": "anima-turbo"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "images",
+     "requested": "gpt-image-x",
+     "resolution": {
+      "chain": [
+       "gpt-image-x (matches gpt-image-*)",
+       "image",
+       "krea2-turbo"
+      ],
+      "layer": "openai",
+      "operation": "images",
+      "requested": "gpt-image-x",
+      "resolves_to": "krea2-turbo"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "images",
+     "requested": "chatgpt-image-x",
+     "resolution": {
+      "chain": [
+       "chatgpt-image-x (matches chatgpt-image-*)",
+       "image",
+       "krea2-turbo"
+      ],
+      "layer": "openai",
+      "operation": "images",
+      "requested": "chatgpt-image-x",
+      "resolves_to": "krea2-turbo"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "images",
+     "requested": "dall-e-x",
+     "resolution": {
+      "chain": [
+       "dall-e-x (matches dall-e-*)",
+       "image",
+       "krea2-turbo"
+      ],
+      "layer": "openai",
+      "operation": "images",
+      "requested": "dall-e-x",
+      "resolves_to": "krea2-turbo"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "image_edits",
+     "requested": "image",
+     "resolution": {
+      "chain": [
+       "image",
+       "qwen-image-2.1-edit"
+      ],
+      "layer": "stable",
+      "operation": "image_edits",
+      "requested": "image",
+      "resolves_to": "qwen-image-2.1-edit"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "image_edits",
+     "requested": "image-fast",
+     "resolution": {
+      "chain": [
+       "image-fast",
+       "flux2-klein-4b-edit"
+      ],
+      "layer": "stable",
+      "operation": "image_edits",
+      "requested": "image-fast",
+      "resolves_to": "flux2-klein-4b-edit"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "image_edits",
+     "requested": "image-edit",
+     "resolution": {
+      "chain": [
+       "image-edit",
+       "qwen-image-2.1-edit"
+      ],
+      "layer": "stable",
+      "operation": "image_edits",
+      "requested": "image-edit",
+      "resolves_to": "qwen-image-2.1-edit"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "image_edits",
+     "requested": "image-edit-fast",
+     "resolution": {
+      "chain": [
+       "image-edit-fast",
+       "flux2-klein-4b-edit"
+      ],
+      "layer": "stable",
+      "operation": "image_edits",
+      "requested": "image-edit-fast",
+      "resolves_to": "flux2-klein-4b-edit"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "image_edits",
+     "requested": "image-identity",
+     "resolution": {
+      "chain": [
+       "image-identity"
+      ],
+      "layer": "stable",
+      "operation": "image_edits",
+      "requested": "image-identity",
+      "resolves_to": "image-identity"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "image_edits",
+     "requested": "gpt-image-x",
+     "resolution": {
+      "chain": [
+       "gpt-image-x (matches gpt-image-*)",
+       "image-edit",
+       "qwen-image-2.1-edit"
+      ],
+      "layer": "openai",
+      "operation": "image_edits",
+      "requested": "gpt-image-x",
+      "resolves_to": "qwen-image-2.1-edit"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "image_edits",
+     "requested": "chatgpt-image-x",
+     "resolution": {
+      "chain": [
+       "chatgpt-image-x (matches chatgpt-image-*)",
+       "image-edit",
+       "qwen-image-2.1-edit"
+      ],
+      "layer": "openai",
+      "operation": "image_edits",
+      "requested": "chatgpt-image-x",
+      "resolves_to": "qwen-image-2.1-edit"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "image_edits",
+     "requested": "dall-e-x",
+     "resolution": {
+      "chain": [
+       "dall-e-x (matches dall-e-*)",
+       "image-edit",
+       "qwen-image-2.1-edit"
+      ],
+      "layer": "openai",
+      "operation": "image_edits",
+      "requested": "dall-e-x",
+      "resolves_to": "qwen-image-2.1-edit"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "videos",
+     "requested": "video",
+     "resolution": {
+      "chain": [
+       "video",
+       "video-ltx-2.5-t2v"
+      ],
+      "layer": "stable",
+      "operation": "videos",
+      "requested": "video",
+      "resolves_to": "video-ltx-2.5-t2v"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "videos",
+     "requested": "video-fast",
+     "resolution": {
+      "chain": [
+       "video-fast",
+       "video-ltx-2.5-t2v"
+      ],
+      "layer": "stable",
+      "operation": "videos",
+      "requested": "video-fast",
+      "resolves_to": "video-ltx-2.5-t2v"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "videos",
+     "requested": "video-long",
+     "resolution": {
+      "chain": [
+       "video-long",
+       "video-ltx-2.5-long"
+      ],
+      "layer": "stable",
+      "operation": "videos",
+      "requested": "video-long",
+      "resolves_to": "video-ltx-2.5-long"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "videos",
+     "requested": "video-quality",
+     "resolution": {
+      "chain": [
+       "video-quality",
+       "video-minimax-h3-t2v"
+      ],
+      "layer": "stable",
+      "operation": "videos",
+      "requested": "video-quality",
+      "resolves_to": "video-minimax-h3-t2v"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "videos",
+     "requested": "character-replace",
+     "resolution": {
+      "chain": [
+       "character-replace",
+       "video-scail-2-replace"
+      ],
+      "layer": "stable",
+      "operation": "videos",
+      "requested": "character-replace",
+      "resolves_to": "video-scail-2-replace"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "videos",
+     "requested": "sora-2",
+     "resolution": {
+      "chain": [
+       "sora-2 (matches sora-2)",
+       "video",
+       "video-ltx-2.5-t2v"
+      ],
+      "layer": "openai",
+      "operation": "videos",
+      "requested": "sora-2",
+      "resolves_to": "video-ltx-2.5-t2v"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "videos",
+     "requested": "sora-2-pro",
+     "resolution": {
+      "chain": [
+       "sora-2-pro (matches sora-2-pro)",
+       "video",
+       "video-ltx-2.5-t2v"
+      ],
+      "layer": "openai",
+      "operation": "videos",
+      "requested": "sora-2-pro",
+      "resolves_to": "video-ltx-2.5-t2v"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "videos",
+     "requested": "sorax",
+     "resolution": {
+      "chain": [
+       "sorax (matches sora*)",
+       "video",
+       "video-ltx-2.5-t2v"
+      ],
+      "layer": "openai",
+      "operation": "videos",
+      "requested": "sorax",
+      "resolves_to": "video-ltx-2.5-t2v"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "speech",
+     "requested": "tts",
+     "resolution": {
+      "chain": [
+       "tts",
+       "supertonic"
+      ],
+      "engine": "supertonic",
+      "fallback_engines": [
+       "omnivoice"
+      ],
+      "layer": "stable",
+      "operation": "speech",
+      "requested": "tts",
+      "resolves_to": "supertonic",
+      "service": "tts-supertonic",
+      "upstream_model": "supertonic"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "speech",
+     "requested": "tts-fast",
+     "resolution": {
+      "chain": [
+       "tts-fast",
+       "supertonic"
+      ],
+      "engine": "supertonic",
+      "fallback_engines": [
+       "omnivoice"
+      ],
+      "layer": "stable",
+      "operation": "speech",
+      "requested": "tts-fast",
+      "resolves_to": "supertonic",
+      "service": "tts-supertonic",
+      "upstream_model": "supertonic"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "speech",
+     "requested": "tts-quality",
+     "resolution": {
+      "chain": [
+       "tts-quality",
+       "omnivoice"
+      ],
+      "engine": "omnivoice",
+      "fallback_engines": [
+       "kokoro"
+      ],
+      "layer": "stable",
+      "operation": "speech",
+      "requested": "tts-quality",
+      "resolves_to": "omnivoice",
+      "service": "tts",
+      "upstream_model": "k2-fsa/OmniVoice"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "speech",
+     "requested": "omnivoice",
+     "resolution": {
+      "chain": [
+       "omnivoice"
+      ],
+      "engine": "omnivoice",
+      "layer": "engine",
+      "operation": "speech",
+      "requested": "omnivoice",
+      "resolves_to": "omnivoice",
+      "service": "tts",
+      "upstream_model": "k2-fsa/OmniVoice"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "speech",
+     "requested": "chatterbox",
+     "resolution": {
+      "chain": [
+       "chatterbox"
+      ],
+      "engine": "chatterbox",
+      "layer": "engine",
+      "operation": "speech",
+      "requested": "chatterbox",
+      "resolves_to": "chatterbox",
+      "service": "tts-chatterbox",
+      "upstream_model": "chatterbox-turbo"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "speech",
+     "requested": "supertonic",
+     "resolution": {
+      "chain": [
+       "supertonic"
+      ],
+      "engine": "supertonic",
+      "layer": "engine",
+      "operation": "speech",
+      "requested": "supertonic",
+      "resolves_to": "supertonic",
+      "service": "tts-supertonic",
+      "upstream_model": "supertonic"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "speech",
+     "requested": "kokoro",
+     "resolution": {
+      "chain": [
+       "kokoro"
+      ],
+      "engine": "kokoro",
+      "layer": "engine",
+      "operation": "speech",
+      "requested": "kokoro",
+      "resolves_to": "kokoro",
+      "service": "tts-kokoro",
+      "upstream_model": "kokoro"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "speech",
+     "requested": "tts-1",
+     "resolution": {
+      "chain": [
+       "tts-1 (matches tts-1)",
+       "tts",
+       "supertonic"
+      ],
+      "engine": "supertonic",
+      "fallback_engines": [
+       "omnivoice"
+      ],
+      "layer": "openai",
+      "operation": "speech",
+      "requested": "tts-1",
+      "resolves_to": "supertonic",
+      "service": "tts-supertonic",
+      "upstream_model": "supertonic"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "speech",
+     "requested": "tts-1-hd",
+     "resolution": {
+      "chain": [
+       "tts-1-hd (matches tts-1-hd)",
+       "tts-quality",
+       "omnivoice"
+      ],
+      "engine": "omnivoice",
+      "fallback_engines": [
+       "kokoro"
+      ],
+      "layer": "openai",
+      "operation": "speech",
+      "requested": "tts-1-hd",
+      "resolves_to": "omnivoice",
+      "service": "tts",
+      "upstream_model": "k2-fsa/OmniVoice"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "speech",
+     "requested": "gpt-4ox-ttsx",
+     "resolution": {
+      "chain": [
+       "gpt-4ox-ttsx (matches gpt-4o*-tts*)",
+       "tts",
+       "supertonic"
+      ],
+      "engine": "supertonic",
+      "fallback_engines": [
+       "omnivoice"
+      ],
+      "layer": "openai",
+      "operation": "speech",
+      "requested": "gpt-4ox-ttsx",
+      "resolves_to": "supertonic",
+      "service": "tts-supertonic",
+      "upstream_model": "supertonic"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "transcriptions",
+     "requested": "stt",
+     "resolution": {
+      "chain": [
+       "stt",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "stable",
+      "operation": "transcriptions",
+      "requested": "stt",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "transcriptions",
+     "requested": "stt-fast",
+     "resolution": {
+      "chain": [
+       "stt-fast",
+       "nemotron-streaming"
+      ],
+      "engine": "nemotron-streaming",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "stable",
+      "operation": "transcriptions",
+      "requested": "stt-fast",
+      "resolves_to": "nemotron-streaming",
+      "service": "stt-nemotron",
+      "upstream_model": "nemotron-3.5-asr-streaming-0.6b"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "transcriptions",
+     "requested": "stt-quality",
+     "resolution": {
+      "chain": [
+       "stt-quality",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet",
+       "canary"
+      ],
+      "layer": "stable",
+      "operation": "transcriptions",
+      "requested": "stt-quality",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "transcriptions",
+     "requested": "stt-diarize",
+     "resolution": {
+      "chain": [
+       "stt-diarize",
+       "nemotron-diarize"
+      ],
+      "engine": "nemotron-diarize",
+      "layer": "stable",
+      "operation": "transcriptions",
+      "requested": "stt-diarize",
+      "resolves_to": "nemotron-diarize",
+      "service": "stt-diarize",
+      "upstream_model": "nemotron-3-diarization"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "transcriptions",
+     "requested": "parakeet",
+     "resolution": {
+      "chain": [
+       "parakeet"
+      ],
+      "engine": "parakeet",
+      "layer": "engine",
+      "operation": "transcriptions",
+      "requested": "parakeet",
+      "resolves_to": "parakeet",
+      "service": "stt",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "transcriptions",
+     "requested": "parakeet-gpu",
+     "resolution": {
+      "chain": [
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "layer": "engine",
+      "operation": "transcriptions",
+      "requested": "parakeet-gpu",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "transcriptions",
+     "requested": "nemotron-streaming",
+     "resolution": {
+      "chain": [
+       "nemotron-streaming"
+      ],
+      "engine": "nemotron-streaming",
+      "layer": "engine",
+      "operation": "transcriptions",
+      "requested": "nemotron-streaming",
+      "resolves_to": "nemotron-streaming",
+      "service": "stt-nemotron",
+      "upstream_model": "nemotron-3.5-asr-streaming-0.6b"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "transcriptions",
+     "requested": "canary",
+     "resolution": {
+      "chain": [
+       "canary"
+      ],
+      "engine": "canary",
+      "layer": "engine",
+      "operation": "transcriptions",
+      "requested": "canary",
+      "resolves_to": "canary",
+      "service": "stt-canary",
+      "upstream_model": "canary-180m-flash"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "transcriptions",
+     "requested": "nemotron-diarize",
+     "resolution": {
+      "chain": [
+       "nemotron-diarize"
+      ],
+      "engine": "nemotron-diarize",
+      "layer": "engine",
+      "operation": "transcriptions",
+      "requested": "nemotron-diarize",
+      "resolves_to": "nemotron-diarize",
+      "service": "stt-diarize",
+      "upstream_model": "nemotron-3-diarization"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "xtranscribe-diarizex",
+     "resolution": {
+      "chain": [
+       "xtranscribe-diarizex (matches *transcribe-diarize*)",
+       "stt-diarize",
+       "nemotron-diarize"
+      ],
+      "engine": "nemotron-diarize",
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "xtranscribe-diarizex",
+      "resolves_to": "nemotron-diarize",
+      "service": "stt-diarize",
+      "upstream_model": "nemotron-3-diarization"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "whisperx",
+     "resolution": {
+      "chain": [
+       "whisperx (matches whisper*)",
+       "stt",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "whisperx",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "parakeet-x",
+     "resolution": {
+      "chain": [
+       "parakeet-x (matches parakeet-*)",
+       "stt",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "parakeet-x",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "gpt-4o-mini-transcribex",
+     "resolution": {
+      "chain": [
+       "gpt-4o-mini-transcribex (matches gpt-4o-mini-transcribe*)",
+       "stt-fast",
+       "nemotron-streaming"
+      ],
+      "engine": "nemotron-streaming",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "gpt-4o-mini-transcribex",
+      "resolves_to": "nemotron-streaming",
+      "service": "stt-nemotron",
+      "upstream_model": "nemotron-3.5-asr-streaming-0.6b"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "gpt-4oxtranscribex",
+     "resolution": {
+      "chain": [
+       "gpt-4oxtranscribex (matches gpt-4o*transcribe*)",
+       "stt-quality",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet",
+       "canary"
+      ],
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "gpt-4oxtranscribex",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "xtranscribex",
+     "resolution": {
+      "chain": [
+       "xtranscribex (matches *transcribe*)",
+       "stt",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "xtranscribex",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "audio_generate",
+     "requested": "music",
+     "resolution": {
+      "chain": [
+       "music",
+       "ace-step-1.5-xl-turbo"
+      ],
+      "layer": "stable",
+      "operation": "audio_generate",
+      "requested": "music",
+      "resolves_to": "ace-step-1.5-xl-turbo"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "audio_generate",
+     "requested": "song",
+     "resolution": {
+      "chain": [
+       "song",
+       "yue2-song"
+      ],
+      "layer": "stable",
+      "operation": "audio_generate",
+      "requested": "song",
+      "resolves_to": "yue2-song"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "audio_generate",
+     "requested": "sfx",
+     "resolution": {
+      "chain": [
+       "sfx",
+       "sa3-small-sfx"
+      ],
+      "layer": "stable",
+      "operation": "audio_generate",
+      "requested": "sfx",
+      "resolves_to": "sa3-small-sfx"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "rerank",
+     "requested": "rerank",
+     "resolution": {
+      "chain": [
+       "rerank",
+       "qwen3-reranker-0.6b"
+      ],
+      "engine": "qwen3-reranker-0.6b",
+      "layer": "stable",
+      "operation": "rerank",
+      "requested": "rerank",
+      "resolves_to": "qwen3-reranker-0.6b",
+      "service": "rerank",
+      "upstream_model": "qwen3-reranker-0.6b"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "rerank",
+     "requested": "qwen3-reranker-0.6b",
+     "resolution": {
+      "chain": [
+       "qwen3-reranker-0.6b"
+      ],
+      "engine": "qwen3-reranker-0.6b",
+      "layer": "engine",
+      "operation": "rerank",
+      "requested": "qwen3-reranker-0.6b",
+      "resolves_to": "qwen3-reranker-0.6b",
+      "service": "rerank",
+      "upstream_model": "qwen3-reranker-0.6b"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "rerank",
+     "requested": "xrerankx",
+     "resolution": {
+      "chain": [
+       "xrerankx (matches *rerank*)",
+       "rerank",
+       "qwen3-reranker-0.6b"
+      ],
+      "engine": "qwen3-reranker-0.6b",
+      "layer": "openai",
+      "operation": "rerank",
+      "requested": "xrerankx",
+      "resolves_to": "qwen3-reranker-0.6b",
+      "service": "rerank",
+      "upstream_model": "qwen3-reranker-0.6b"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "decisions",
+     "requested": "decide",
+     "resolution": {
+      "chain": [
+       "decide",
+       "decider-2b"
+      ],
+      "engine": "decider-2b",
+      "layer": "stable",
+      "operation": "decisions",
+      "requested": "decide",
+      "resolves_to": "decider-2b",
+      "service": "decisions",
+      "upstream_model": "decider-2b-v11"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "decisions",
+     "requested": "decide-quality",
+     "resolution": {
+      "chain": [
+       "decide-quality",
+       "decider-4b"
+      ],
+      "engine": "decider-4b",
+      "fallback_engines": [
+       "decider-2b"
+      ],
+      "layer": "stable",
+      "operation": "decisions",
+      "requested": "decide-quality",
+      "resolves_to": "decider-4b",
+      "service": "decisions-quality",
+      "upstream_model": "decider-4b-v2.1"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "decisions",
+     "requested": "decider-2b",
+     "resolution": {
+      "chain": [
+       "decider-2b"
+      ],
+      "engine": "decider-2b",
+      "layer": "engine",
+      "operation": "decisions",
+      "requested": "decider-2b",
+      "resolves_to": "decider-2b",
+      "service": "decisions",
+      "upstream_model": "decider-2b-v11"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "decisions",
+     "requested": "decider-4b",
+     "resolution": {
+      "chain": [
+       "decider-4b"
+      ],
+      "engine": "decider-4b",
+      "layer": "engine",
+      "operation": "decisions",
+      "requested": "decider-4b",
+      "resolves_to": "decider-4b",
+      "service": "decisions-quality",
+      "upstream_model": "decider-4b-v2.1"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "decisions",
+     "requested": "jev-x",
+     "resolution": {
+      "chain": [
+       "jev-x (matches jev-*)",
+       "decide",
+       "decider-2b"
+      ],
+      "engine": "decider-2b",
+      "layer": "openai",
+      "operation": "decisions",
+      "requested": "jev-x",
+      "resolves_to": "decider-2b",
+      "service": "decisions",
+      "upstream_model": "decider-2b-v11"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "decisions",
+     "requested": "x/x",
+     "resolution": null
+    }
+   ],
+   "effective_digest": "sha256:5d369aa86a4be5c72804932df3a569e5bc640cc2efd88f8e98d3696fdcd9af1c",
+   "models": {
+    "alias_targets": {
+     "character-replace": {
+      "videos": "video-scail-2-replace"
+     },
+     "coder": {
+      "chat": "coder"
+     },
+     "decide": {
+      "decisions": "decider-2b"
+     },
+     "decide-quality": {
+      "decisions": "decider-4b"
+     },
+     "default": {
+      "chat": "qwen3.8-flash-next-strata"
+     },
+     "default-fast": {
+      "chat": "qwen3.8-flash-next-strata-fast"
+     },
+     "embed": {
+      "embeddings": "nomic-embed-text-v1.5"
+     },
+     "fast": {
+      "chat": "qwen3.8-flash-next-strata-fast"
+     },
+     "image": {
+      "image_edits": "qwen-image-2.1-edit",
+      "images": "krea2-turbo"
+     },
+     "image-anime": {
+      "images": "anima-turbo"
+     },
+     "image-edit": {
+      "image_edits": "qwen-image-2.1-edit"
+     },
+     "image-edit-fast": {
+      "image_edits": "flux2-klein-4b-edit"
+     },
+     "image-fast": {
+      "image_edits": "flux2-klein-4b-edit",
+      "images": "flux2-klein-4b"
+     },
+     "image-identity": {
+      "image_edits": "image-identity"
+     },
+     "image-uncensored": {
+      "images": "krea2-turbo-snofs"
+     },
+     "jev-latest": {
+      "decisions": "decider-2b"
+     },
+     "jev-preview": {
+      "decisions": "decider-2b"
+     },
+     "music": {
+      "audio_generate": "ace-step-1.5-xl-turbo"
+     },
+     "rerank": {
+      "rerank": "qwen3-reranker-0.6b"
+     },
+     "rp": {
+      "chat": "rp"
+     },
+     "sfx": {
+      "audio_generate": "sa3-small-sfx"
+     },
+     "song": {
+      "audio_generate": "yue2-song"
+     },
+     "stt": {
+      "transcriptions": "parakeet-gpu"
+     },
+     "stt-diarize": {
+      "transcriptions": "nemotron-diarize"
+     },
+     "stt-fast": {
+      "transcriptions": "nemotron-streaming"
+     },
+     "stt-quality": {
+      "transcriptions": "parakeet-gpu"
+     },
+     "tts": {
+      "speech": "supertonic"
+     },
+     "tts-fast": {
+      "speech": "supertonic"
+     },
+     "tts-quality": {
+      "speech": "omnivoice"
+     },
+     "video": {
+      "videos": "video-ltx-2.5-t2v"
+     },
+     "video-fast": {
+      "videos": "video-ltx-2.5-t2v"
+     },
+     "video-long": {
+      "videos": "video-ltx-2.5-long"
+     },
+     "video-quality": {
+      "videos": "video-minimax-h3-t2v"
+     },
+     "vision": {
+      "chat": "qwen3.8-flash-next-strata"
+     }
+    },
+    "ids": [
+     "ace-step-1.5-xl-turbo",
+     "anima-turbo",
+     "character-replace",
+     "coder",
+     "decide",
+     "decide-quality",
+     "default",
+     "default-fast",
+     "embed",
+     "face-likeness",
+     "fast",
+     "fibo-2-edit-turbo",
+     "flux2-klein",
+     "flux2-klein-4b",
+     "flux2-klein-4b-edit",
+     "flux2-klein-4b-inpaint",
+     "flux2-klein-4b-seamless-tile",
+     "flux2-klein-edit",
+     "flux2-klein-snofs",
+     "image",
+     "image-anime",
+     "image-edit",
+     "image-edit-fast",
+     "image-fast",
+     "image-identity",
+     "image-uncensored",
+     "jev-latest",
+     "jev-preview",
+     "krea2-turbo",
+     "krea2-turbo-snofs",
+     "moss-image",
+     "moss-image-fast",
+     "moss-image-quality",
+     "music",
+     "qwen-image-2.1-edit",
+     "qwen-image-2.1-edit-multiref",
+     "qwen-image-2.1-inpaint",
+     "rerank",
+     "rp",
+     "sa3-small-sfx",
+     "sdxl-seamless-tile",
+     "seedvr2-upscale",
+     "sfx",
+     "song",
+     "stt",
+     "stt-diarize",
+     "stt-fast",
+     "stt-quality",
+     "tangoflux",
+     "tts",
+     "tts-fast",
+     "tts-quality",
+     "video",
+     "video-fast",
+     "video-long",
+     "video-ltx-2.5-i2v",
+     "video-ltx-2.5-keyframes",
+     "video-ltx-2.5-keyframes-mid",
+     "video-ltx-2.5-long",
+     "video-ltx-2.5-t2v",
+     "video-minimax-h3-i2v",
+     "video-minimax-h3-keyframes",
+     "video-minimax-h3-keyframes-mid",
+     "video-minimax-h3-long",
+     "video-minimax-h3-t2v",
+     "video-quality",
+     "vision",
+     "yue2-song"
+    ],
+    "roles": [
+     "coder",
+     "coder-q5",
+     "coder-q8",
+     "coder-unchained",
+     "default",
+     "default-fast",
+     "rp"
+    ]
+   },
+   "section_digests": {
+    "admin": "sha256:7c8d4df65de5cfe53acc34787826894f6f157009243229e7d8117968f74ac4e2",
+    "audio": "sha256:f18242c4d9c2e855ec35fb768060f087b1af4e9fcc421bc17c6ba24268cee3f1",
+    "auth": "sha256:0942268f24f8f40bd1592c881b04e8daa46ee7500ad6bee7cafe9428e4d5292d",
+    "backends": "sha256:2c1b765307ddd66af640f8c40feaa0ba5c9e7290410fcf81445608e856a0ae69",
+    "identity": "sha256:27c592d8f453a5fe89ff65eea26cd76054f781c87aa5fae31bca38d2db39fe86",
+    "images": "sha256:7731877f200c797eba7f95d63f1fb13d4588986b9adfde85f85ed9b25ae7a473",
+    "llm": "sha256:267c3ceaf8a269d3d018c00e12ddba089cb425f4dec461172df6ac2aa3b17a31",
+    "model_aliases": "sha256:bcc97fd060fb1e8112dbd94b22ca25c2198b4741989dfb5548b08ddeebc34d89",
+    "model_compatibility": "sha256:a746bcbd7969991deb45af79cba927f2bd563268e130d4b9f1a5d4ffc9ddb582",
+    "model_routing": "sha256:366d003ebee764c3158da68e711a57e6c99b3a0315859aeb026bd73cb50f4572",
+    "models": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "proxy": "sha256:eb54786a4198a6447164af440eb0d6a953d040a51dd8fc9d037082250dc11899",
+    "reasoning": "sha256:b2cf797b0686a584b5fdd3127abacd2dda82271d39a903b0904c81a2bcaf9760",
+    "roles": "sha256:46022a52fae414c8a7513c89ef91c9574b372ffc82390276c76b3643a508b055",
+    "routing": "sha256:142a47bd43870c8a3fdc42602d516ef340b3ce34b9c32615b8925af51fa2c145",
+    "videos": "sha256:985e7f7aa4487de7d48d4dce74a5b9b79e0677df68acb30d09814f018dc355d3",
+    "voices": "sha256:d0d8ed231e06595d868a86c2fe64a83c2841fea51f47e8f0aa91f6ac0a1dac2e"
+   }
+  },
+  "tracked": {
+   "aliases": [
+    {
+     "kind": "stable",
+     "operation": "chat",
+     "requested": "default",
+     "resolution": {
+      "chain": [
+       "default"
+      ],
+      "layer": "stable",
+      "operation": "chat",
+      "requested": "default",
+      "resolves_to": "default"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "chat",
+     "requested": "fast",
+     "resolution": {
+      "chain": [
+       "fast",
+       "default-fast"
+      ],
+      "layer": "stable",
+      "operation": "chat",
+      "requested": "fast",
+      "resolves_to": "default-fast"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "chat",
+     "requested": "vision",
+     "resolution": {
+      "chain": [
+       "vision",
+       "default"
+      ],
+      "layer": "stable",
+      "operation": "chat",
+      "requested": "vision",
+      "resolves_to": "default"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "chat",
+     "requested": "coder",
+     "resolution": {
+      "chain": [
+       "coder"
+      ],
+      "layer": "stable",
+      "operation": "chat",
+      "requested": "coder",
+      "resolves_to": "coder"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "chat",
+     "requested": "rp",
+     "resolution": {
+      "chain": [
+       "rp"
+      ],
+      "layer": "stable",
+      "operation": "chat",
+      "requested": "rp",
+      "resolves_to": "rp"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-ossx",
+     "resolution": null
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-x-codexx",
+     "resolution": {
+      "chain": [
+       "gpt-x-codexx (matches gpt-*-codex*)",
+       "coder"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "gpt-x-codexx",
+      "resolves_to": "coder"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "codex-x",
+     "resolution": {
+      "chain": [
+       "codex-x (matches codex-*)",
+       "coder"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "codex-x",
+      "resolves_to": "coder"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-x-minix",
+     "resolution": {
+      "chain": [
+       "gpt-x-minix (matches gpt-*-mini*)",
+       "fast",
+       "default-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "gpt-x-minix",
+      "resolves_to": "default-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-x-nanox",
+     "resolution": {
+      "chain": [
+       "gpt-x-nanox (matches gpt-*-nano*)",
+       "fast",
+       "default-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "gpt-x-nanox",
+      "resolves_to": "default-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "ox-minix",
+     "resolution": {
+      "chain": [
+       "ox-minix (matches o*-mini*)",
+       "fast",
+       "default-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "ox-minix",
+      "resolves_to": "default-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-3.5x",
+     "resolution": {
+      "chain": [
+       "gpt-3.5x (matches gpt-3.5*)",
+       "fast",
+       "default-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "gpt-3.5x",
+      "resolves_to": "default-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "claude-x-haikux",
+     "resolution": {
+      "chain": [
+       "claude-x-haikux (matches claude-*-haiku*)",
+       "fast",
+       "default-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "claude-x-haikux",
+      "resolves_to": "default-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "claude-haikux",
+     "resolution": {
+      "chain": [
+       "claude-haikux (matches claude-haiku*)",
+       "fast",
+       "default-fast"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "claude-haikux",
+      "resolves_to": "default-fast"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "claude-x",
+     "resolution": {
+      "chain": [
+       "claude-x (matches claude-*)",
+       "default"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "claude-x",
+      "resolves_to": "default"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "gpt-x",
+     "resolution": {
+      "chain": [
+       "gpt-x (matches gpt-*)",
+       "default"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "gpt-x",
+      "resolves_to": "default"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "chatgpt-x",
+     "resolution": {
+      "chain": [
+       "chatgpt-x (matches chatgpt-*)",
+       "default"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "chatgpt-x",
+      "resolves_to": "default"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "o1x",
+     "resolution": {
+      "chain": [
+       "o1x (matches o1*)",
+       "default"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "o1x",
+      "resolves_to": "default"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "o3x",
+     "resolution": {
+      "chain": [
+       "o3x (matches o3*)",
+       "default"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "o3x",
+      "resolves_to": "default"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "o4x",
+     "resolution": {
+      "chain": [
+       "o4x (matches o4*)",
+       "default"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "o4x",
+      "resolves_to": "default"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "computer-use-x",
+     "resolution": {
+      "chain": [
+       "computer-use-x (matches computer-use-*)",
+       "default"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "computer-use-x",
+      "resolves_to": "default"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "davinci-002",
+     "resolution": {
+      "chain": [
+       "davinci-002 (matches davinci-002)",
+       "default"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "davinci-002",
+      "resolves_to": "default"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "chat",
+     "requested": "babbage-002",
+     "resolution": {
+      "chain": [
+       "babbage-002 (matches babbage-002)",
+       "default"
+      ],
+      "layer": "openai",
+      "operation": "chat",
+      "requested": "babbage-002",
+      "resolves_to": "default"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "embeddings",
+     "requested": "embed",
+     "resolution": {
+      "chain": [
+       "embed",
+       "nomic-embed-text-v1.5"
+      ],
+      "layer": "stable",
+      "operation": "embeddings",
+      "requested": "embed",
+      "resolves_to": "nomic-embed-text-v1.5"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "embeddings",
+     "requested": "text-embedding-x",
+     "resolution": {
+      "chain": [
+       "text-embedding-x (matches text-embedding-*)",
+       "embed",
+       "nomic-embed-text-v1.5"
+      ],
+      "layer": "openai",
+      "operation": "embeddings",
+      "requested": "text-embedding-x",
+      "resolves_to": "nomic-embed-text-v1.5"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "images",
+     "requested": "image",
+     "resolution": {
+      "chain": [
+       "image",
+       "krea2-turbo"
+      ],
+      "layer": "stable",
+      "operation": "images",
+      "requested": "image",
+      "resolves_to": "krea2-turbo"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "images",
+     "requested": "image-fast",
+     "resolution": {
+      "chain": [
+       "image-fast",
+       "flux2-klein-4b"
+      ],
+      "layer": "stable",
+      "operation": "images",
+      "requested": "image-fast",
+      "resolves_to": "flux2-klein-4b"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "images",
+     "requested": "image-uncensored",
+     "resolution": {
+      "chain": [
+       "image-uncensored",
+       "krea2-turbo-snofs"
+      ],
+      "layer": "stable",
+      "operation": "images",
+      "requested": "image-uncensored",
+      "resolves_to": "krea2-turbo-snofs"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "images",
+     "requested": "image-anime",
+     "resolution": {
+      "chain": [
+       "image-anime",
+       "anima-turbo"
+      ],
+      "layer": "stable",
+      "operation": "images",
+      "requested": "image-anime",
+      "resolves_to": "anima-turbo"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "images",
+     "requested": "gpt-image-x",
+     "resolution": {
+      "chain": [
+       "gpt-image-x (matches gpt-image-*)",
+       "image",
+       "krea2-turbo"
+      ],
+      "layer": "openai",
+      "operation": "images",
+      "requested": "gpt-image-x",
+      "resolves_to": "krea2-turbo"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "images",
+     "requested": "chatgpt-image-x",
+     "resolution": {
+      "chain": [
+       "chatgpt-image-x (matches chatgpt-image-*)",
+       "image",
+       "krea2-turbo"
+      ],
+      "layer": "openai",
+      "operation": "images",
+      "requested": "chatgpt-image-x",
+      "resolves_to": "krea2-turbo"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "images",
+     "requested": "dall-e-x",
+     "resolution": {
+      "chain": [
+       "dall-e-x (matches dall-e-*)",
+       "image",
+       "krea2-turbo"
+      ],
+      "layer": "openai",
+      "operation": "images",
+      "requested": "dall-e-x",
+      "resolves_to": "krea2-turbo"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "image_edits",
+     "requested": "image",
+     "resolution": {
+      "chain": [
+       "image",
+       "qwen-image-2.1-edit"
+      ],
+      "layer": "stable",
+      "operation": "image_edits",
+      "requested": "image",
+      "resolves_to": "qwen-image-2.1-edit"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "image_edits",
+     "requested": "image-fast",
+     "resolution": {
+      "chain": [
+       "image-fast",
+       "flux2-klein-4b-edit"
+      ],
+      "layer": "stable",
+      "operation": "image_edits",
+      "requested": "image-fast",
+      "resolves_to": "flux2-klein-4b-edit"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "image_edits",
+     "requested": "image-edit",
+     "resolution": {
+      "chain": [
+       "image-edit",
+       "qwen-image-2.1-edit"
+      ],
+      "layer": "stable",
+      "operation": "image_edits",
+      "requested": "image-edit",
+      "resolves_to": "qwen-image-2.1-edit"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "image_edits",
+     "requested": "image-edit-fast",
+     "resolution": {
+      "chain": [
+       "image-edit-fast",
+       "flux2-klein-4b-edit"
+      ],
+      "layer": "stable",
+      "operation": "image_edits",
+      "requested": "image-edit-fast",
+      "resolves_to": "flux2-klein-4b-edit"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "image_edits",
+     "requested": "image-identity",
+     "resolution": {
+      "chain": [
+       "image-identity"
+      ],
+      "layer": "stable",
+      "operation": "image_edits",
+      "requested": "image-identity",
+      "resolves_to": "image-identity"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "image_edits",
+     "requested": "gpt-image-x",
+     "resolution": {
+      "chain": [
+       "gpt-image-x (matches gpt-image-*)",
+       "image-edit",
+       "qwen-image-2.1-edit"
+      ],
+      "layer": "openai",
+      "operation": "image_edits",
+      "requested": "gpt-image-x",
+      "resolves_to": "qwen-image-2.1-edit"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "image_edits",
+     "requested": "chatgpt-image-x",
+     "resolution": {
+      "chain": [
+       "chatgpt-image-x (matches chatgpt-image-*)",
+       "image-edit",
+       "qwen-image-2.1-edit"
+      ],
+      "layer": "openai",
+      "operation": "image_edits",
+      "requested": "chatgpt-image-x",
+      "resolves_to": "qwen-image-2.1-edit"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "image_edits",
+     "requested": "dall-e-x",
+     "resolution": {
+      "chain": [
+       "dall-e-x (matches dall-e-*)",
+       "image-edit",
+       "qwen-image-2.1-edit"
+      ],
+      "layer": "openai",
+      "operation": "image_edits",
+      "requested": "dall-e-x",
+      "resolves_to": "qwen-image-2.1-edit"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "videos",
+     "requested": "video",
+     "resolution": {
+      "chain": [
+       "video",
+       "video-ltx-2.5-t2v"
+      ],
+      "layer": "stable",
+      "operation": "videos",
+      "requested": "video",
+      "resolves_to": "video-ltx-2.5-t2v"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "videos",
+     "requested": "video-fast",
+     "resolution": {
+      "chain": [
+       "video-fast",
+       "video-ltx-2.5-t2v"
+      ],
+      "layer": "stable",
+      "operation": "videos",
+      "requested": "video-fast",
+      "resolves_to": "video-ltx-2.5-t2v"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "videos",
+     "requested": "video-long",
+     "resolution": {
+      "chain": [
+       "video-long",
+       "video-ltx-2.5-long"
+      ],
+      "layer": "stable",
+      "operation": "videos",
+      "requested": "video-long",
+      "resolves_to": "video-ltx-2.5-long"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "videos",
+     "requested": "video-quality",
+     "resolution": {
+      "chain": [
+       "video-quality",
+       "video-minimax-h3-t2v"
+      ],
+      "layer": "stable",
+      "operation": "videos",
+      "requested": "video-quality",
+      "resolves_to": "video-minimax-h3-t2v"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "videos",
+     "requested": "character-replace",
+     "resolution": {
+      "chain": [
+       "character-replace",
+       "video-scail-2-replace"
+      ],
+      "layer": "stable",
+      "operation": "videos",
+      "requested": "character-replace",
+      "resolves_to": "video-scail-2-replace"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "videos",
+     "requested": "sora-2",
+     "resolution": {
+      "chain": [
+       "sora-2 (matches sora-2)",
+       "video",
+       "video-ltx-2.5-t2v"
+      ],
+      "layer": "openai",
+      "operation": "videos",
+      "requested": "sora-2",
+      "resolves_to": "video-ltx-2.5-t2v"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "videos",
+     "requested": "sora-2-pro",
+     "resolution": {
+      "chain": [
+       "sora-2-pro (matches sora-2-pro)",
+       "video",
+       "video-ltx-2.5-t2v"
+      ],
+      "layer": "openai",
+      "operation": "videos",
+      "requested": "sora-2-pro",
+      "resolves_to": "video-ltx-2.5-t2v"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "videos",
+     "requested": "sorax",
+     "resolution": {
+      "chain": [
+       "sorax (matches sora*)",
+       "video",
+       "video-ltx-2.5-t2v"
+      ],
+      "layer": "openai",
+      "operation": "videos",
+      "requested": "sorax",
+      "resolves_to": "video-ltx-2.5-t2v"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "speech",
+     "requested": "tts",
+     "resolution": {
+      "chain": [
+       "tts",
+       "supertonic"
+      ],
+      "engine": "supertonic",
+      "fallback_engines": [
+       "omnivoice"
+      ],
+      "layer": "stable",
+      "operation": "speech",
+      "requested": "tts",
+      "resolves_to": "supertonic",
+      "service": "tts-supertonic",
+      "upstream_model": "supertonic"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "speech",
+     "requested": "tts-fast",
+     "resolution": {
+      "chain": [
+       "tts-fast",
+       "supertonic"
+      ],
+      "engine": "supertonic",
+      "fallback_engines": [
+       "omnivoice"
+      ],
+      "layer": "stable",
+      "operation": "speech",
+      "requested": "tts-fast",
+      "resolves_to": "supertonic",
+      "service": "tts-supertonic",
+      "upstream_model": "supertonic"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "speech",
+     "requested": "tts-quality",
+     "resolution": {
+      "chain": [
+       "tts-quality",
+       "omnivoice"
+      ],
+      "engine": "omnivoice",
+      "fallback_engines": [
+       "kokoro"
+      ],
+      "layer": "stable",
+      "operation": "speech",
+      "requested": "tts-quality",
+      "resolves_to": "omnivoice",
+      "service": "tts",
+      "upstream_model": "k2-fsa/OmniVoice"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "speech",
+     "requested": "omnivoice",
+     "resolution": {
+      "chain": [
+       "omnivoice"
+      ],
+      "engine": "omnivoice",
+      "layer": "engine",
+      "operation": "speech",
+      "requested": "omnivoice",
+      "resolves_to": "omnivoice",
+      "service": "tts",
+      "upstream_model": "k2-fsa/OmniVoice"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "speech",
+     "requested": "chatterbox",
+     "resolution": {
+      "chain": [
+       "chatterbox"
+      ],
+      "engine": "chatterbox",
+      "layer": "engine",
+      "operation": "speech",
+      "requested": "chatterbox",
+      "resolves_to": "chatterbox",
+      "service": "tts-chatterbox",
+      "upstream_model": "chatterbox-turbo"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "speech",
+     "requested": "supertonic",
+     "resolution": {
+      "chain": [
+       "supertonic"
+      ],
+      "engine": "supertonic",
+      "layer": "engine",
+      "operation": "speech",
+      "requested": "supertonic",
+      "resolves_to": "supertonic",
+      "service": "tts-supertonic",
+      "upstream_model": "supertonic"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "speech",
+     "requested": "kokoro",
+     "resolution": {
+      "chain": [
+       "kokoro"
+      ],
+      "engine": "kokoro",
+      "layer": "engine",
+      "operation": "speech",
+      "requested": "kokoro",
+      "resolves_to": "kokoro",
+      "service": "tts-kokoro",
+      "upstream_model": "kokoro"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "speech",
+     "requested": "tts-1",
+     "resolution": {
+      "chain": [
+       "tts-1 (matches tts-1)",
+       "tts",
+       "supertonic"
+      ],
+      "engine": "supertonic",
+      "fallback_engines": [
+       "omnivoice"
+      ],
+      "layer": "openai",
+      "operation": "speech",
+      "requested": "tts-1",
+      "resolves_to": "supertonic",
+      "service": "tts-supertonic",
+      "upstream_model": "supertonic"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "speech",
+     "requested": "tts-1-hd",
+     "resolution": {
+      "chain": [
+       "tts-1-hd (matches tts-1-hd)",
+       "tts-quality",
+       "omnivoice"
+      ],
+      "engine": "omnivoice",
+      "fallback_engines": [
+       "kokoro"
+      ],
+      "layer": "openai",
+      "operation": "speech",
+      "requested": "tts-1-hd",
+      "resolves_to": "omnivoice",
+      "service": "tts",
+      "upstream_model": "k2-fsa/OmniVoice"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "speech",
+     "requested": "gpt-4ox-ttsx",
+     "resolution": {
+      "chain": [
+       "gpt-4ox-ttsx (matches gpt-4o*-tts*)",
+       "tts",
+       "supertonic"
+      ],
+      "engine": "supertonic",
+      "fallback_engines": [
+       "omnivoice"
+      ],
+      "layer": "openai",
+      "operation": "speech",
+      "requested": "gpt-4ox-ttsx",
+      "resolves_to": "supertonic",
+      "service": "tts-supertonic",
+      "upstream_model": "supertonic"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "transcriptions",
+     "requested": "stt",
+     "resolution": {
+      "chain": [
+       "stt",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "stable",
+      "operation": "transcriptions",
+      "requested": "stt",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "transcriptions",
+     "requested": "stt-fast",
+     "resolution": {
+      "chain": [
+       "stt-fast",
+       "nemotron-streaming"
+      ],
+      "engine": "nemotron-streaming",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "stable",
+      "operation": "transcriptions",
+      "requested": "stt-fast",
+      "resolves_to": "nemotron-streaming",
+      "service": "stt-nemotron",
+      "upstream_model": "nemotron-3.5-asr-streaming-0.6b"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "transcriptions",
+     "requested": "stt-quality",
+     "resolution": {
+      "chain": [
+       "stt-quality",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet",
+       "canary"
+      ],
+      "layer": "stable",
+      "operation": "transcriptions",
+      "requested": "stt-quality",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "transcriptions",
+     "requested": "stt-diarize",
+     "resolution": {
+      "chain": [
+       "stt-diarize",
+       "nemotron-diarize"
+      ],
+      "engine": "nemotron-diarize",
+      "layer": "stable",
+      "operation": "transcriptions",
+      "requested": "stt-diarize",
+      "resolves_to": "nemotron-diarize",
+      "service": "stt-diarize",
+      "upstream_model": "nemotron-3-diarization"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "transcriptions",
+     "requested": "parakeet",
+     "resolution": {
+      "chain": [
+       "parakeet"
+      ],
+      "engine": "parakeet",
+      "layer": "engine",
+      "operation": "transcriptions",
+      "requested": "parakeet",
+      "resolves_to": "parakeet",
+      "service": "stt",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "transcriptions",
+     "requested": "parakeet-gpu",
+     "resolution": {
+      "chain": [
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "layer": "engine",
+      "operation": "transcriptions",
+      "requested": "parakeet-gpu",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "transcriptions",
+     "requested": "nemotron-streaming",
+     "resolution": {
+      "chain": [
+       "nemotron-streaming"
+      ],
+      "engine": "nemotron-streaming",
+      "layer": "engine",
+      "operation": "transcriptions",
+      "requested": "nemotron-streaming",
+      "resolves_to": "nemotron-streaming",
+      "service": "stt-nemotron",
+      "upstream_model": "nemotron-3.5-asr-streaming-0.6b"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "transcriptions",
+     "requested": "canary",
+     "resolution": {
+      "chain": [
+       "canary"
+      ],
+      "engine": "canary",
+      "layer": "engine",
+      "operation": "transcriptions",
+      "requested": "canary",
+      "resolves_to": "canary",
+      "service": "stt-canary",
+      "upstream_model": "canary-180m-flash"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "transcriptions",
+     "requested": "nemotron-diarize",
+     "resolution": {
+      "chain": [
+       "nemotron-diarize"
+      ],
+      "engine": "nemotron-diarize",
+      "layer": "engine",
+      "operation": "transcriptions",
+      "requested": "nemotron-diarize",
+      "resolves_to": "nemotron-diarize",
+      "service": "stt-diarize",
+      "upstream_model": "nemotron-3-diarization"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "xtranscribe-diarizex",
+     "resolution": {
+      "chain": [
+       "xtranscribe-diarizex (matches *transcribe-diarize*)",
+       "stt-diarize",
+       "nemotron-diarize"
+      ],
+      "engine": "nemotron-diarize",
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "xtranscribe-diarizex",
+      "resolves_to": "nemotron-diarize",
+      "service": "stt-diarize",
+      "upstream_model": "nemotron-3-diarization"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "whisperx",
+     "resolution": {
+      "chain": [
+       "whisperx (matches whisper*)",
+       "stt",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "whisperx",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "parakeet-x",
+     "resolution": {
+      "chain": [
+       "parakeet-x (matches parakeet-*)",
+       "stt",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "parakeet-x",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "gpt-4o-mini-transcribex",
+     "resolution": {
+      "chain": [
+       "gpt-4o-mini-transcribex (matches gpt-4o-mini-transcribe*)",
+       "stt-fast",
+       "nemotron-streaming"
+      ],
+      "engine": "nemotron-streaming",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "gpt-4o-mini-transcribex",
+      "resolves_to": "nemotron-streaming",
+      "service": "stt-nemotron",
+      "upstream_model": "nemotron-3.5-asr-streaming-0.6b"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "gpt-4oxtranscribex",
+     "resolution": {
+      "chain": [
+       "gpt-4oxtranscribex (matches gpt-4o*transcribe*)",
+       "stt-quality",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet",
+       "canary"
+      ],
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "gpt-4oxtranscribex",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "transcriptions",
+     "requested": "xtranscribex",
+     "resolution": {
+      "chain": [
+       "xtranscribex (matches *transcribe*)",
+       "stt",
+       "parakeet-gpu"
+      ],
+      "engine": "parakeet-gpu",
+      "fallback_engines": [
+       "parakeet"
+      ],
+      "layer": "openai",
+      "operation": "transcriptions",
+      "requested": "xtranscribex",
+      "resolves_to": "parakeet-gpu",
+      "service": "stt-parakeet-gpu",
+      "upstream_model": "parakeet-tdt-0.6b-v3"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "audio_generate",
+     "requested": "music",
+     "resolution": {
+      "chain": [
+       "music",
+       "ace-step-1.5-xl-turbo"
+      ],
+      "layer": "stable",
+      "operation": "audio_generate",
+      "requested": "music",
+      "resolves_to": "ace-step-1.5-xl-turbo"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "audio_generate",
+     "requested": "song",
+     "resolution": {
+      "chain": [
+       "song",
+       "yue2-song"
+      ],
+      "layer": "stable",
+      "operation": "audio_generate",
+      "requested": "song",
+      "resolves_to": "yue2-song"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "audio_generate",
+     "requested": "sfx",
+     "resolution": {
+      "chain": [
+       "sfx",
+       "sa3-small-sfx"
+      ],
+      "layer": "stable",
+      "operation": "audio_generate",
+      "requested": "sfx",
+      "resolves_to": "sa3-small-sfx"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "rerank",
+     "requested": "rerank",
+     "resolution": {
+      "chain": [
+       "rerank",
+       "qwen3-reranker-0.6b"
+      ],
+      "engine": "qwen3-reranker-0.6b",
+      "layer": "stable",
+      "operation": "rerank",
+      "requested": "rerank",
+      "resolves_to": "qwen3-reranker-0.6b",
+      "service": "rerank",
+      "upstream_model": "qwen3-reranker-0.6b"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "rerank",
+     "requested": "qwen3-reranker-0.6b",
+     "resolution": {
+      "chain": [
+       "qwen3-reranker-0.6b"
+      ],
+      "engine": "qwen3-reranker-0.6b",
+      "layer": "engine",
+      "operation": "rerank",
+      "requested": "qwen3-reranker-0.6b",
+      "resolves_to": "qwen3-reranker-0.6b",
+      "service": "rerank",
+      "upstream_model": "qwen3-reranker-0.6b"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "rerank",
+     "requested": "xrerankx",
+     "resolution": {
+      "chain": [
+       "xrerankx (matches *rerank*)",
+       "rerank",
+       "qwen3-reranker-0.6b"
+      ],
+      "engine": "qwen3-reranker-0.6b",
+      "layer": "openai",
+      "operation": "rerank",
+      "requested": "xrerankx",
+      "resolves_to": "qwen3-reranker-0.6b",
+      "service": "rerank",
+      "upstream_model": "qwen3-reranker-0.6b"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "decisions",
+     "requested": "decide",
+     "resolution": {
+      "chain": [
+       "decide",
+       "decider-2b"
+      ],
+      "engine": "decider-2b",
+      "layer": "stable",
+      "operation": "decisions",
+      "requested": "decide",
+      "resolves_to": "decider-2b",
+      "service": "decisions",
+      "upstream_model": "decider-2b-v11"
+     }
+    },
+    {
+     "kind": "stable",
+     "operation": "decisions",
+     "requested": "decide-quality",
+     "resolution": {
+      "chain": [
+       "decide-quality",
+       "decider-4b"
+      ],
+      "engine": "decider-4b",
+      "fallback_engines": [
+       "decider-2b"
+      ],
+      "layer": "stable",
+      "operation": "decisions",
+      "requested": "decide-quality",
+      "resolves_to": "decider-4b",
+      "service": "decisions-quality",
+      "upstream_model": "decider-4b-v2.1"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "decisions",
+     "requested": "decider-2b",
+     "resolution": {
+      "chain": [
+       "decider-2b"
+      ],
+      "engine": "decider-2b",
+      "layer": "engine",
+      "operation": "decisions",
+      "requested": "decider-2b",
+      "resolves_to": "decider-2b",
+      "service": "decisions",
+      "upstream_model": "decider-2b-v11"
+     }
+    },
+    {
+     "kind": "engine",
+     "operation": "decisions",
+     "requested": "decider-4b",
+     "resolution": {
+      "chain": [
+       "decider-4b"
+      ],
+      "engine": "decider-4b",
+      "layer": "engine",
+      "operation": "decisions",
+      "requested": "decider-4b",
+      "resolves_to": "decider-4b",
+      "service": "decisions-quality",
+      "upstream_model": "decider-4b-v2.1"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "decisions",
+     "requested": "jev-x",
+     "resolution": {
+      "chain": [
+       "jev-x (matches jev-*)",
+       "decide",
+       "decider-2b"
+      ],
+      "engine": "decider-2b",
+      "layer": "openai",
+      "operation": "decisions",
+      "requested": "jev-x",
+      "resolves_to": "decider-2b",
+      "service": "decisions",
+      "upstream_model": "decider-2b-v11"
+     }
+    },
+    {
+     "kind": "openai",
+     "operation": "decisions",
+     "requested": "x/x",
+     "resolution": null
+    }
+   ],
+   "effective_digest": "sha256:f06217115a0a2017ecf62c761cb01580728766644439e794f27967931b9d7891",
+   "models": {
+    "alias_targets": {
+     "character-replace": {
+      "videos": "video-scail-2-replace"
+     },
+     "coder": {
+      "chat": "coder"
+     },
+     "decide": {
+      "decisions": "decider-2b"
+     },
+     "decide-quality": {
+      "decisions": "decider-4b"
+     },
+     "default": {
+      "chat": "default"
+     },
+     "embed": {
+      "embeddings": "nomic-embed-text-v1.5"
+     },
+     "fast": {
+      "chat": "default-fast"
+     },
+     "image": {
+      "image_edits": "qwen-image-2.1-edit",
+      "images": "krea2-turbo"
+     },
+     "image-anime": {
+      "images": "anima-turbo"
+     },
+     "image-edit": {
+      "image_edits": "qwen-image-2.1-edit"
+     },
+     "image-edit-fast": {
+      "image_edits": "flux2-klein-4b-edit"
+     },
+     "image-fast": {
+      "image_edits": "flux2-klein-4b-edit",
+      "images": "flux2-klein-4b"
+     },
+     "image-identity": {
+      "image_edits": "image-identity"
+     },
+     "image-uncensored": {
+      "images": "krea2-turbo-snofs"
+     },
+     "jev-latest": {
+      "decisions": "decider-2b"
+     },
+     "jev-preview": {
+      "decisions": "decider-2b"
+     },
+     "music": {
+      "audio_generate": "ace-step-1.5-xl-turbo"
+     },
+     "rerank": {
+      "rerank": "qwen3-reranker-0.6b"
+     },
+     "rp": {
+      "chat": "rp"
+     },
+     "sfx": {
+      "audio_generate": "sa3-small-sfx"
+     },
+     "song": {
+      "audio_generate": "yue2-song"
+     },
+     "stt": {
+      "transcriptions": "parakeet-gpu"
+     },
+     "stt-diarize": {
+      "transcriptions": "nemotron-diarize"
+     },
+     "stt-fast": {
+      "transcriptions": "nemotron-streaming"
+     },
+     "stt-quality": {
+      "transcriptions": "parakeet-gpu"
+     },
+     "tts": {
+      "speech": "supertonic"
+     },
+     "tts-fast": {
+      "speech": "supertonic"
+     },
+     "tts-quality": {
+      "speech": "omnivoice"
+     },
+     "video": {
+      "videos": "video-ltx-2.5-t2v"
+     },
+     "video-fast": {
+      "videos": "video-ltx-2.5-t2v"
+     },
+     "video-long": {
+      "videos": "video-ltx-2.5-long"
+     },
+     "video-quality": {
+      "videos": "video-minimax-h3-t2v"
+     },
+     "vision": {
+      "chat": "default"
+     }
+    },
+    "ids": [
+     "ace-step-1.5-xl-turbo",
+     "anima-turbo",
+     "character-replace",
+     "coder",
+     "decide",
+     "decide-quality",
+     "default",
+     "embed",
+     "face-likeness",
+     "fast",
+     "fibo-2-edit-turbo",
+     "flux2-klein",
+     "flux2-klein-4b",
+     "flux2-klein-4b-edit",
+     "flux2-klein-4b-inpaint",
+     "flux2-klein-4b-seamless-tile",
+     "flux2-klein-edit",
+     "flux2-klein-snofs",
+     "image",
+     "image-anime",
+     "image-edit",
+     "image-edit-fast",
+     "image-fast",
+     "image-identity",
+     "image-uncensored",
+     "jev-latest",
+     "jev-preview",
+     "krea2-turbo",
+     "krea2-turbo-snofs",
+     "moss-image",
+     "moss-image-fast",
+     "moss-image-quality",
+     "music",
+     "qwen-image-2.1-edit",
+     "qwen-image-2.1-edit-multiref",
+     "qwen-image-2.1-inpaint",
+     "rerank",
+     "rp",
+     "sa3-small-sfx",
+     "sdxl-seamless-tile",
+     "seedvr2-upscale",
+     "sfx",
+     "song",
+     "stt",
+     "stt-diarize",
+     "stt-fast",
+     "stt-quality",
+     "tangoflux",
+     "tts",
+     "tts-fast",
+     "tts-quality",
+     "video",
+     "video-fast",
+     "video-long",
+     "video-ltx-2.5-i2v",
+     "video-ltx-2.5-keyframes",
+     "video-ltx-2.5-keyframes-mid",
+     "video-ltx-2.5-long",
+     "video-ltx-2.5-t2v",
+     "video-minimax-h3-i2v",
+     "video-minimax-h3-keyframes",
+     "video-minimax-h3-keyframes-mid",
+     "video-minimax-h3-long",
+     "video-minimax-h3-t2v",
+     "video-quality",
+     "vision",
+     "yue2-song"
+    ],
+    "roles": [
+     "coder",
+     "coder-q5",
+     "coder-q8",
+     "coder-unchained",
+     "default",
+     "default-fast",
+     "rp"
+    ]
+   },
+   "section_digests": {
+    "admin": "sha256:7c8d4df65de5cfe53acc34787826894f6f157009243229e7d8117968f74ac4e2",
+    "audio": "sha256:f18242c4d9c2e855ec35fb768060f087b1af4e9fcc421bc17c6ba24268cee3f1",
+    "auth": "sha256:0942268f24f8f40bd1592c881b04e8daa46ee7500ad6bee7cafe9428e4d5292d",
+    "backends": "sha256:2c1b765307ddd66af640f8c40feaa0ba5c9e7290410fcf81445608e856a0ae69",
+    "identity": "sha256:27c592d8f453a5fe89ff65eea26cd76054f781c87aa5fae31bca38d2db39fe86",
+    "images": "sha256:7731877f200c797eba7f95d63f1fb13d4588986b9adfde85f85ed9b25ae7a473",
+    "llm": "sha256:267c3ceaf8a269d3d018c00e12ddba089cb425f4dec461172df6ac2aa3b17a31",
+    "model_aliases": "sha256:ba5fa0813ab6c5aaae7426b40a571b13dd8bcfb3bc28f29f1e7bffafcd21b479",
+    "model_compatibility": "sha256:a746bcbd7969991deb45af79cba927f2bd563268e130d4b9f1a5d4ffc9ddb582",
+    "model_routing": "sha256:366d003ebee764c3158da68e711a57e6c99b3a0315859aeb026bd73cb50f4572",
+    "models": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "proxy": "sha256:eb54786a4198a6447164af440eb0d6a953d040a51dd8fc9d037082250dc11899",
+    "reasoning": "sha256:b2cf797b0686a584b5fdd3127abacd2dda82271d39a903b0904c81a2bcaf9760",
+    "roles": "sha256:46022a52fae414c8a7513c89ef91c9574b372ffc82390276c76b3643a508b055",
+    "routing": "sha256:142a47bd43870c8a3fdc42602d516ef340b3ce34b9c32615b8925af51fa2c145",
+    "videos": "sha256:985e7f7aa4487de7d48d4dce74a5b9b79e0677df68acb30d09814f018dc355d3",
+    "voices": "sha256:d0d8ed231e06595d868a86c2fe64a83c2841fea51f47e8f0aa91f6ac0a1dac2e"
+   }
+  }
+ }
+}

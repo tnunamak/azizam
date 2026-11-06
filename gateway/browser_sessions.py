@@ -1,0 +1,352 @@
+"""Browser sign-ins end to end: issue, read, renew, confirm and end them.
+
+The cookie (gateway.admin_oidc) says who signed in and when it must end. The
+record in ``account_sessions`` (gateway.accounts) lets the server end it sooner:
+sign-out, sign-out everywhere, a password change, a removed or disabled
+person. The owner's policy (gateway.session_policy) says how long either may
+last. This module is the one place those three meet, so no route reads a
+session cookie on its own.
+"""
+from __future__ import annotations
+
+import sqlite3
+import time
+from dataclasses import replace
+from pathlib import Path
+from typing import Any, Mapping
+
+from fastapi import Request, Response
+
+from gateway import accounts, admin_store, session_policy
+from gateway.admin_oidc import (
+    AdminSession, CookieConfig, SessionError, decode_session_cookie,
+    encode_session_cookie, new_session_id, session_from_claims,
+)
+from gateway.session_policy import SessionPolicy
+
+
+def issue(claims: Mapping[str, Any], *, role: str, cookie: CookieConfig, path: Path,
+          register: bool = True, renewable: bool = True, authenticated_at: float | None = None,
+          now: float | None = None) -> AdminSession:
+    """A new sign-in under the owner's current policy, recorded server-side by default.
+
+    ``register=False`` is for a session with no person behind it. ``renewable=False``
+    gives it the fixed life ``cookie.max_age_seconds`` and never renews it.
+    ``authenticated_at`` is when the person last really proved who they are. Leave it out when this
+    sign-in is the proof (a password, an admin key). Pass the provider's ``auth_time`` for a provider
+    sign-in, or ``AUTH_TIME_UNKNOWN`` when the ID token had none (decision D40): the session is signed in
+    but never recent.
+    """
+    policy = session_policy.load_policy(path)
+    if renewable:
+        session = session_from_claims(
+            claims, role=role, cookie=cookie, now=now,
+            idle_seconds=policy.idle_seconds, absolute_seconds=policy.absolute_seconds,
+        )
+        if authenticated_at is not None:
+            session = replace(session, authenticated_at=min(authenticated_at, session.issued_at))
+    else:
+        session = replace(session_from_claims(claims, role=role, cookie=cookie, now=now), renewable=False)
+    if register:
+        accounts.initialize(path)
+        accounts.register_session(str(claims["sub"]), session.session_id, int(session.expires_at), path=path)
+    return session
+
+
+def issue_in(conn: sqlite3.Connection, claims: Mapping[str, Any], *, role: str, cookie: CookieConfig,
+             path: Path, authenticated_at: float | None = None, now: float | None = None) -> AdminSession:
+    """Issue and register a browser session inside the caller's transaction."""
+    current = time.time() if now is None else now
+    policy = session_policy.load_policy(path)
+    session = session_from_claims(
+        claims, role=role, cookie=cookie, now=current,
+        idle_seconds=policy.idle_seconds, absolute_seconds=policy.absolute_seconds,
+    )
+    if authenticated_at is not None:
+        session = replace(session, authenticated_at=min(authenticated_at, session.issued_at))
+    accounts.register_session_in(conn, str(claims["sub"]), session.session_id, int(session.expires_at))
+    return session
+
+
+def _check(session: AdminSession, policy: SessionPolicy, current: float, path: Path) -> str:
+    """The server-side verdict for a session whose cookie checked out, or ``SessionError``.
+
+    A retired id shown after its grace window is a copy of a cookie that was already replaced. When a later
+    id of the sign-in has been used, two holders exist: the whole sign-in is revoked (decision D35) and the
+    person has to sign in again. When none has, the response that carried the successor was lost, the person
+    is the only holder, and the verdict is ``lost`` (decision D35b): ``advance`` issues a new successor.
+    """
+    if not session_policy.is_usable(session, policy, current):
+        raise SessionError("session idle or past its lifetime")
+    verdict = accounts.session_verdict(session.subject, session.session_id, session.family_id, path=path, now=current,
+                                       note_use=True)
+    if verdict == accounts.REUSED:
+        accounts.revoke_session(session.session_id, int(_revoke_until(session)), family_id=session.family_id, path=path)
+        admin_store.record_audit(
+            "account.session.reuse_detected", actor_kind="user", actor_id=session.subject, actor_label=session.email,
+            target_kind="user", target_id=session.subject, metadata={"family": session.family_id}, path=path,
+        )
+        raise SessionError("a retired session id was shown again: the sign-in is revoked")
+    if verdict == accounts.DENIED:
+        raise SessionError("session revoked or account disabled")
+    return verdict
+
+
+def read(token: str, *, signing_key: bytes, path: Path, now: float | None = None) -> AdminSession:
+    """The session this cookie proves, or ``SessionError``.
+
+    Refuses a forged, expired, idle, past-absolute-deadline, revoked or replayed session. A retired id
+    whose successor was never used is accepted; ``advance`` (the response middleware) replaces it.
+    """
+    current = time.time() if now is None else now
+    session = decode_session_cookie(token, signing_key=signing_key, now=current)
+    _check(session, session_policy.load_policy(path), current, path)
+    return session
+
+
+def _rotate(session: AdminSession, renewed: AdminSession, *, path: Path, now: float) -> AdminSession | None:
+    """``renewed`` under a new session id, recorded server-side first; None if the old id lost the race."""
+    rotated = replace(renewed, session_id=new_session_id(), family=session.family_id)
+    if not accounts.rotate_session(
+        session.subject, session.session_id, session.family_id, rotated.session_id,
+        old_expires_at=int(session.expires_at), expires_at=int(rotated.expires_at), path=path, now=now,
+    ):
+        return None
+    return rotated
+
+
+def _reissue(session: AdminSession, renewed: AdminSession, policy: SessionPolicy, current: float, path: Path) -> AdminSession | None:
+    """``renewed`` as a new successor of a retired id whose own successor never arrived (decision D35b).
+
+    Concurrent requests with the same retired id mint one successor: ``reissue_session`` decides inside one
+    transaction, the first to commit wins, and the others are served under a fresh grace window with no cookie.
+    """
+    reissued = replace(renewed, session_id=new_session_id(), family=session.family_id)
+    if accounts.reissue_session(
+        session.subject, session.session_id, session.family_id, reissued.session_id,
+        old_expires_at=int(session.expires_at), expires_at=int(reissued.expires_at), path=path, now=current,
+    ):
+        return reissued
+    _check(session, policy, current, path)  # revoked or found to be a fork meanwhile: say so; reissued by a concurrent request: carry on
+    return None
+
+
+def advance(session: AdminSession, *, path: Path, now: float | None = None) -> AdminSession | None:
+    """Check a decoded session is still live and, once a quarter of the idle window has passed, renew it.
+
+    Renewing replaces the session id and retires the old one. A retired id whose successor was never used
+    is replaced again (``_reissue``). Returns the new session, or None when nothing is due. Raises
+    ``SessionError`` when the session has ended. The server-side record is written first: a cookie must
+    never outlive it.
+    """
+    current = time.time() if now is None else now
+    policy = session_policy.load_policy(path)
+    verdict = _check(session, policy, current, path)
+    if verdict == accounts.LOST:
+        return _reissue(session, session_policy.renewal(session, policy, current) or session, policy, current, path)
+    if verdict != accounts.LIVE:
+        return None  # a retired id in its grace window is served but never renews
+    renewed = session_policy.renewal(session, policy, current)
+    if renewed is None:
+        return None
+    rotated = _rotate(session, renewed, path=path, now=current)
+    if rotated is None:
+        _check(session, policy, current, path)  # revoked meanwhile: say so; replaced by a concurrent request: carry on
+    return rotated
+
+
+def confirm(session: AdminSession, *, path: Path, now: float | None = None,
+            authenticated_at: float | None = None) -> AdminSession:
+    """The same sign-in, under a new session id, after the person proved who they are again.
+
+    ``authenticated_at`` is when the proof happened: a provider's ``auth_time`` (``AUTH_TIME_UNKNOWN`` when the
+    provider gave none, so the sign-in is never recent). By default the proof is now, as a password is."""
+    current = time.time() if now is None else now
+    policy = session_policy.load_policy(path)
+    confirmed = session_policy.confirmed(session, policy, current)
+    if authenticated_at is not None:
+        confirmed = replace(confirmed, authenticated_at=min(authenticated_at, current))
+    if _check(session, policy, current, path) == accounts.LOST:
+        rotated = _reissue(session, confirmed, policy, current, path)
+    else:
+        rotated = _rotate(session, confirmed, path=path, now=current)
+    if rotated is None:
+        raise SessionError("session ended or replaced while confirming")
+    return rotated
+
+
+def confirm_in(conn: sqlite3.Connection, session: AdminSession, *, path: Path, now: float | None = None,
+               authenticated_at: float | None = None) -> AdminSession:
+    """Confirm and rotate a session without committing the caller's transaction."""
+    current = time.time() if now is None else now
+    policy = session_policy.load_policy(path)
+    confirmed = session_policy.confirmed(session, policy, current)
+    if authenticated_at is not None:
+        confirmed = replace(confirmed, authenticated_at=min(authenticated_at, current))
+    verdict = _check_in(conn, session, policy, current)
+    if verdict == accounts.LOST:
+        rotated = _reissue_in(conn, session, confirmed, current)
+    else:
+        rotated = _rotate_in(conn, session, confirmed, current)
+    if rotated is None:
+        raise SessionError("session ended or replaced while confirming")
+    return rotated
+
+
+def policy(path: Path) -> SessionPolicy:
+    return session_policy.load_policy(path)
+
+
+def set_cookie(response: Response, session: AdminSession, *, cookie: CookieConfig,
+               signing_key: bytes, now: float | None = None) -> None:
+    """Set the session cookie; its Max-Age is the time left, so the browser forgets it with the server."""
+    current = time.time() if now is None else now
+    response.set_cookie(
+        cookie.name,
+        encode_session_cookie(session, signing_key=signing_key),
+        max_age=max(1, int(session.expires_at - current)),
+        secure=cookie.secure,
+        httponly=cookie.http_only,
+        samesite=cookie.same_site,
+        path=cookie.path,
+        domain=cookie.domain,
+    )
+
+
+def _revoke_until(session: AdminSession) -> float:
+    """The revocation outlasts every copy that could exist.
+
+    An old cookie records no absolute deadline, and a renewed copy of it gets one from the sign-in
+    time, up to the longest lifetime an owner may set.
+    """
+    longest = session.issued_at + session_policy.BOUNDS["absolute_lifetime_days"][1] * session_policy.DAY
+    return session.latest_expiry if session.absolute_expires_at is not None else max(session.latest_expiry, longest)
+
+
+def end(session: AdminSession, *, path: Path) -> None:
+    """Sign this sign-in out, whichever of its ids a copy of the cookie holds, and end the keys bound to it."""
+    accounts.revoke_session(session.session_id, int(_revoke_until(session)), family_id=session.family_id, path=path)
+
+
+def end_incoming(request: Request, *, cookie: CookieConfig, signing_key: bytes, path: Path) -> None:
+    """Before issuing a new sign-in, end the live family the browser brought with it.
+
+    A missing or unusable cookie must not prevent sign-in. Read the request's cookie, never
+    the response's: two concurrent sign-ins may each issue a family, but both end the incoming one.
+    """
+    raw = request.cookies.get(cookie.name)
+    if not raw:
+        return
+    try:
+        session = read(raw, signing_key=signing_key, path=path)
+    except SessionError:
+        return
+    end(session, path=path)
+
+
+def end_incoming_in(conn: sqlite3.Connection, request: Request, *, cookie: CookieConfig,
+                    signing_key: bytes, path: Path) -> None:
+    """End the browser's incoming family inside the caller's sign-in transaction."""
+    raw = request.cookies.get(cookie.name)
+    if not raw:
+        return
+    try:
+        session = decode_session_cookie(raw, signing_key=signing_key)
+    except SessionError:
+        return
+    try:
+        _check_in(conn, session, session_policy.load_policy(path), time.time())
+    except SessionError:
+        return
+    accounts.revoke_family_in(
+        conn, session.family_id, int(_revoke_until(session)), session_id=session.session_id,
+    )
+
+
+def decode_incoming(request: Request, *, cookie: CookieConfig, signing_key: bytes) -> AdminSession | None:
+    """Decode the re-authentication cookie without writing session-use state."""
+    raw = request.cookies.get(cookie.name)
+    if not raw:
+        return None
+    try:
+        return decode_session_cookie(raw, signing_key=signing_key)
+    except SessionError:
+        return None
+
+
+def _check_in(conn: sqlite3.Connection, session: AdminSession, policy: SessionPolicy, current: float) -> str:
+    if not session_policy.is_usable(session, policy, current):
+        raise SessionError("session idle or past its lifetime")
+    verdict = accounts.session_verdict_in(
+        conn, session.subject, session.session_id, session.family_id, now=current, note_use=True,
+    )
+    if verdict == accounts.REUSED:
+        accounts.revoke_family_in(
+            conn, session.family_id, int(_revoke_until(session)), session_id=session.session_id,
+        )
+        admin_store._record_audit_in_transaction(
+            conn, "account.session.reuse_detected", actor_kind="user", actor_id=session.subject,
+            actor_label=session.email, target_kind="user", target_id=session.subject,
+            metadata={"family": session.family_id}, now=int(current),
+        )
+        raise SessionError("a retired session id was shown again: the sign-in is revoked")
+    if verdict == accounts.DENIED:
+        raise SessionError("session revoked or account disabled")
+    return verdict
+
+
+def _rotate_in(conn: sqlite3.Connection, session: AdminSession, renewed: AdminSession, current: float) -> AdminSession | None:
+    if accounts.session_verdict_in(
+        conn, session.subject, session.session_id, session.family_id, now=current,
+    ) != accounts.LIVE:
+        return None
+    if conn.execute("SELECT 1 FROM users WHERE id=?", (session.subject,)).fetchone() is None:
+        return None
+    rotated = replace(renewed, session_id=new_session_id(), family=session.family_id)
+    accounts._retire_and_register(
+        conn, session.subject, session.session_id, session.family_id, rotated.session_id,
+        int(session.expires_at), int(rotated.expires_at), int(current),
+    )
+    return rotated
+
+
+def _reissue_in(conn: sqlite3.Connection, session: AdminSession, renewed: AdminSession,
+                current: float) -> AdminSession | None:
+    if accounts.session_verdict_in(
+        conn, session.subject, session.session_id, session.family_id, now=current,
+    ) != accounts.LOST:
+        return None
+    if conn.execute("SELECT 1 FROM users WHERE id=?", (session.subject,)).fetchone() is None:
+        return None
+    for row in conn.execute(
+        "SELECT session_id FROM account_session_lineage WHERE family_id=? AND retired_at IS NULL",
+        (session.family_id,),
+    ).fetchall():
+        conn.execute(
+            "UPDATE account_session_lineage SET retired_at=?, superseded=1 WHERE session_id=?",
+            (int(current), row["session_id"]),
+        )
+        conn.execute("DELETE FROM account_sessions WHERE session_id=?", (row["session_id"],))
+    reissued = replace(renewed, session_id=new_session_id(), family=session.family_id)
+    accounts._retire_and_register(
+        conn, session.subject, session.session_id, session.family_id, reissued.session_id,
+        int(session.expires_at), int(reissued.expires_at), int(current),
+    )
+    return reissued
+
+
+def end_everywhere(session: AdminSession, *, path: Path) -> int:
+    """Sign the person out of every device, this one included. Returns how many sessions were registered."""
+    registered = 0
+    if admin_store.get_user(session.subject, path=path) is not None:
+        with accounts.connection(path) as conn:
+            registered = conn.execute("SELECT COUNT(*) FROM account_sessions WHERE user_id=?",
+                                      (session.subject,)).fetchone()[0]
+        accounts.revoke_person_sessions(session.subject, path=path)
+    # A session of a service account has no person behind it; end this one by id.
+    end(session, path=path)
+    admin_store.record_audit(
+        "account.sessions.revoke_all", actor_kind="user", actor_id=session.subject, actor_label=session.email,
+        target_kind="user", target_id=session.subject, metadata={"sessions": registered}, path=path,
+    )
+    return registered

@@ -1,0 +1,34 @@
+{
+  "protocol": "openai-compatible",
+  "name": "speech-stream-held",
+  "description": "Two PCM chunks, then the engine keeps the stream open until the client closes it.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "OpenAI-compatible POST /v1/audio/speech with chunked raw PCM (response_format=pcm) as served by speech engines; the gateway reads it in gateway/speech_stream.py via proxy._stream_tts_upstream"
+  },
+  "exchanges": [
+    {
+      "id": "speech",
+      "match": {
+        "method": "POST",
+        "path": "/v1/audio/speech"
+      },
+      "response": {
+        "headers": {
+          "content-type": "audio/pcm"
+        },
+        "body": [
+          {
+            "hex": "0100"
+          },
+          {
+            "hex": "0200"
+          },
+          {
+            "wait": "forever"
+          }
+        ]
+      }
+    }
+  ]
+}

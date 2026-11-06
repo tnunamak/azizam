@@ -1,0 +1,62 @@
+{
+  "request": {
+    "state": {
+      "ticket": "Help! My payouts have been failing for 3 days."
+    },
+    "model": "jev-latest",
+    "questions": {
+      "department": {
+        "type": "choice",
+        "instructions": "Which team should handle this ticket?",
+        "criteria": {
+          "billing": "Payments, invoices, payouts, or account balances.",
+          "technical": "Product bugs, integrations, or API errors.",
+          "sales": null
+        }
+      },
+      "frustration": {
+        "type": "score",
+        "instructions": "How frustrated is the customer?",
+        "criteria": [
+          "Calm",
+          "Frustrated",
+          "Very angry"
+        ]
+      }
+    }
+  },
+  "response": {
+    "model": "jev-1.13.0",
+    "answers": {
+      "department": {
+        "type": "choice",
+        "choice": "billing",
+        "probabilities": {
+          "billing": 0.88,
+          "technical": 0.12,
+          "sales": 0.0
+        },
+        "confidence": 0.81
+      },
+      "frustration": {
+        "type": "score",
+        "score": 1.05,
+        "legend": {
+          "0": "Calm",
+          "1": "Frustrated",
+          "2": "Very angry"
+        },
+        "probabilities": {
+          "0": 0.0,
+          "1": 0.95,
+          "2": 0.05
+        },
+        "confidence": 0.92
+      }
+    },
+    "usage": {
+      "input_tokens": 318,
+      "output_tokens": 34
+    }
+  }
+}

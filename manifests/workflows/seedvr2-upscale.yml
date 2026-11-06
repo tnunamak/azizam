@@ -1,0 +1,56 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.edit.seedvr2-upscale
+intent: image.edit
+display_name: SeedVR2 7B Sharp Upscale
+purpose: Upscale and restore an image
+description: Make a picture larger and sharper, with finer detail.
+source: local
+trusted: true
+typical_seconds: 3
+inputs:
+  source_image:
+    label: a picture to enlarge
+    help: The picture to make bigger and sharper.
+    type: asset
+    required: true
+  scale:
+    type: number
+    enum: [2, 4]
+    default: 2
+  color_correction_method:
+    type: string
+    enum: ["none", "lab", "wavelet", "adain"]
+    default: "none"
+    description: Optional color match back to the original (pre-upscale) image. lab is most faithful, wavelet keeps upscaled high-frequency detail, adain is fastest/roughest, none skips color transfer.
+  seed:
+    type: integer
+    minimum: 0
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/seedvr2-upscale.json
+    map:
+      source_image:
+        - node: "1"
+          input: image
+      scale:
+        - node: "2"
+          input: "resize_type.multiplier"
+      color_correction_method:
+        - node: "10"
+          input: color_correction_method
+      seed:
+        - node: "8"
+          input: seed
+requires:
+  custom_nodes:
+    - RMBG
+  models:
+    - role: diffusion_model
+      path: diffusion_models/seedvr2_7b_sharp_int8_convrot.safetensors
+    - role: vae
+      path: vae/seedvr2_ema_vae_fp16.safetensors

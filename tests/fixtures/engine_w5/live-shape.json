@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "services": {
+    "kobold": {
+      "id": "kobold",
+      "name": "kobold",
+      "kind": "provider",
+      "source": "provisioned",
+      "enabled": true,
+      "priority": 100,
+      "role": "required",
+      "capabilities": [
+        "chat"
+      ],
+      "config": {
+        "host": "127.0.0.1",
+        "port": 5051,
+        "base_path": "/v1",
+        "protocol": "openai-compatible",
+        "capabilities": [
+          "chat"
+        ],
+        "gateway_lifecycle": true,
+        "lifecycle": {
+          "driver": "systemd",
+          "driver_config": {
+            "unit": "test-engine.service"
+          }
+        },
+        "models": [
+          {
+            "model_group": "default",
+            "upstream_model": "default"
+          },
+          {
+            "model_group": "coder",
+            "upstream_model": "coder"
+          },
+          {
+            "model_group": "coder-q5",
+            "upstream_model": "coder-q5"
+          },
+          {
+            "model_group": "coder-q8",
+            "upstream_model": "coder-q8"
+          },
+          {
+            "model_group": "default-fast",
+            "upstream_model": "default-fast"
+          },
+          {
+            "model_group": "current",
+            "upstream_model": "current"
+          },
+          {
+            "model_group": "current-fast",
+            "upstream_model": "current-fast"
+          },
+          {
+            "model_group": "rp",
+            "upstream_model": "rp"
+          }
+        ]
+      },
+      "secret_refs": {},
+      "lifecycle": {
+        "type": "external",
+        "managed": false,
+        "service_name": "",
+        "driver": "systemd",
+        "driver_config": {
+          "unit": "test-engine.service"
+        }
+      },
+      "provenance": {},
+      "editable": true
+    },
+    "openrouter": {
+      "id": "openrouter",
+      "name": "openrouter",
+      "kind": "provider",
+      "source": "provisioned",
+      "enabled": true,
+      "priority": 100,
+      "role": "required",
+      "capabilities": [],
+      "config": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "base_path": "/api/v1",
+        "protocol": "openai-compatible",
+        "provider_id": "openrouter",
+        "provider_type": "paid-remote",
+        "api_key_secret_id": "test-only-stored-reference",
+        "credential_origin": "https://openrouter.ai:443"
+      },
+      "secret_refs": {},
+      "lifecycle": {
+        "type": "external",
+        "managed": false,
+        "service_name": ""
+      },
+      "provenance": {},
+      "editable": true
+    },
+    "litellm": {
+      "id": "litellm",
+      "name": "litellm",
+      "kind": "provider",
+      "source": "provisioned",
+      "enabled": true,
+      "priority": 100,
+      "role": "required",
+      "capabilities": [],
+      "config": {
+        "default_base_url": "http://127.0.0.1:4011",
+        "protocol": "litellm",
+        "api_key_env": "W5_TEST_LITELLM_KEY",
+        "credential_origin": "http://127.0.0.1:4011",
+        "health_endpoint": "/health/liveliness"
+      },
+      "secret_refs": {},
+      "lifecycle": {
+        "type": "external",
+        "managed": false,
+        "service_name": ""
+      },
+      "provenance": {},
+      "editable": false
+    },
+    "embeddings": {
+      "id": "embeddings",
+      "name": "embeddings",
+      "kind": "provider",
+      "source": "provisioned",
+      "enabled": true,
+      "priority": 100,
+      "role": "required",
+      "capabilities": [
+        "embeddings"
+      ],
+      "config": {
+        "host": "127.0.0.1",
+        "port": 6061,
+        "base_path": "/openai",
+        "timeout": 120,
+        "protocol": "openai-compatible",
+        "capabilities": [
+          "embeddings"
+        ],
+        "models": [
+          {
+            "model_group": "test-embedding",
+            "upstream_model": "test-embedding"
+          }
+        ]
+      },
+      "secret_refs": {},
+      "lifecycle": {
+        "type": "external",
+        "managed": false,
+        "service_name": ""
+      },
+      "provenance": {},
+      "editable": true
+    },
+    "speech-in": {
+      "id": "speech-in",
+      "name": "speech-in",
+      "kind": "provider",
+      "source": "provisioned",
+      "enabled": true,
+      "priority": 100,
+      "role": "required",
+      "capabilities": [
+        "stt"
+      ],
+      "config": {
+        "host": "127.0.0.1",
+        "port": 6062,
+        "base_path": "/api/v1",
+        "timeout": 300,
+        "protocol": "http",
+        "capabilities": [
+          "stt"
+        ],
+        "lifecycle": {
+          "driver": "systemd",
+          "driver_config": {
+            "unit": "test-stt.service"
+          }
+        }
+      },
+      "secret_refs": {},
+      "lifecycle": {
+        "type": "external",
+        "managed": false,
+        "service_name": "",
+        "driver": "systemd",
+        "driver_config": {
+          "unit": "test-stt.service"
+        }
+      },
+      "provenance": {},
+      "editable": true
+    },
+    "speech-out": {
+      "id": "speech-out",
+      "name": "speech-out",
+      "kind": "provider",
+      "source": "provisioned",
+      "enabled": true,
+      "priority": 100,
+      "role": "required",
+      "capabilities": [
+        "tts"
+      ],
+      "config": {
+        "host": "127.0.0.1",
+        "port": 6063,
+        "base_path": "/v1",
+        "timeout": 86400,
+        "protocol": "http",
+        "capabilities": [
+          "tts"
+        ],
+        "lifecycle": {
+          "driver": "systemd",
+          "driver_config": {
+            "unit": "test-tts.service"
+          }
+        }
+      },
+      "secret_refs": {},
+      "lifecycle": {
+        "type": "external",
+        "managed": false,
+        "service_name": "",
+        "driver": "systemd",
+        "driver_config": {
+          "unit": "test-tts.service"
+        }
+      },
+      "provenance": {},
+      "editable": true
+    }
+  }
+}

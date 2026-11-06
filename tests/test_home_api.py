@@ -1,0 +1,1064 @@
+"""Home's policy, owner privacy, setup truth, and single-dispatch contract."""
+from types import SimpleNamespace
+from dataclasses import replace
+
+import pytest
+from tests.support.app_keys import accountable_person
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
+
+from gateway import accounts, admin_store, receipt_store
+from tests.support.access import access, plan_for, service_app, store_plan  # noqa: E402
+from gateway.admin_api import AdminAuthError, AdminContext
+from gateway.admin_oidc import AdminSession
+from gateway.capabilities import Capability, capability_with_policy_view
+from gateway.home_api import create_home_router, _resolved_capabilities, _declared_local_fast
+from gateway.local_capabilities import build_alias_capabilities
+from gateway.product_contracts import HomeCapability, HomeProjection, MemberStatus, SetupEvidenceResponse, SetupProgress
+from gateway.request_source import current_gateway_ui
+from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
+from gateway.user_runtime import UserPortalError, create_user_app, get_user_receipt
+from pydantic import TypeAdapter
+from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401 - fixture
+from tests.support.gateway import register_litellm, use_admin_db
+
+
+@pytest.fixture
+def home_case(tmp_path):
+    db, receipts = tmp_path / "admin.db", tmp_path / "receipts.db"
+    admin_store.init_db(db)
+    receipt_store.init_db(receipts)
+    accounts.initialize(db)
+    user = admin_store.upsert_oidc_user("https://example.test", "one", email="one@example.test", path=db)
+    other = admin_store.upsert_oidc_user("https://example.test", "two", email="two@example.test", path=db)
+    everything = store_plan("Everything", path=db)
+    for person in (user, other):
+        accounts.change_person(person["id"], "test", path=db, plan_id=everything["id"])
+    session = AdminSession(subject=user["id"], email=user["email"], role="owner", issued_at=1, expires_at=4_000_000_000)
+    personal = admin_store.ensure_personal_app_for_user(user["id"], path=db)
+    client_app = create_user_app(session, name="Open WebUI", path=db)["app"]
+    outsider = admin_store.create_app("Other", kind="personal", owner_user_id=other["id"], access_plan="person", path=db)
+    def credential(app, key, **kwargs):
+        return admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=hash_api_key(key), prefix="masked", path=db, **kwargs, created_by=accountable_person(db, app["id"]))
+    key = "test-home-key"
+    cred = credential(client_app, key)
+    other_cred = credential(outsider, "other-key")
+    case = SimpleNamespace(db=db, receipts=receipts, user=user, session=session, personal=personal,
+                           client_app=client_app, outsider=outsider, key=key, cred=cred,
+                           other_cred=other_cred, calls=[], logged_in=True, owner=True,
+                           health={"backends": [{"key": "service", "live_status": "up"}]},
+                           fast=True, health_error=False, plan=everything, ledger=tmp_path / "provider_spend.db",
+                           capabilities_override=None, aliases_override=None,
+                           registry={"services": {"service": {"enabled": True, "config": {"gateway_lifecycle": True}}}})
+    def require_session(request):
+        if not case.logged_in:
+            raise UserPortalError("login_required", "Sign in.", status_code=401)
+        return session
+    def action(request, _session):
+        if request.headers.get("x-azizam-user-action") != "1" or request.headers.get("x-azizam-csrf") != "csrf":
+            return JSONResponse({"error": {"code": "csrf_required"}}, status_code=403)
+    def admin_auth(request):
+        if not case.logged_in:
+            raise AdminAuthError()
+        return AdminContext(subject=user["id"], roles=frozenset({"owner" if case.owner else "admin"}))
+    def capabilities(identity):
+        if case.capabilities_override is not None:
+            return case.capabilities_override(identity)
+        allowed = identity.access.complete and "chat" in identity.access.app_plan.can_use and "chat" in identity.access.person_plan.can_use
+        alias_caps = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo"}]}}) if case.fast else []
+        return [Capability(intent="chat.completions", backend="service", model="demo", policy_available=allowed),
+                *alias_caps,
+                Capability(intent="image.generate", backend="service", model="image", policy_available=False)]
+    async def status():
+        if case.health_error:
+            raise RuntimeError("health unavailable")
+        return case.health
+    app = FastAPI()
+    app.include_router(create_home_router(store=SimpleNamespace(path=db, get_service_registry=lambda: case.registry),
+                                         receipts_path=lambda: receipts, require_session=require_session,
+                                         require_action=action, csrf_token=lambda _session: "csrf",
+                                         capabilities=capabilities,
+                                         aliases=lambda: case.aliases_override or {"chat": {"stable": [{"alias": "fast", "resolves_to": "demo"}]}, "images": {"stable": [{"alias": "image", "resolves_to": "picture"}]}},
+                                         public_base_url=lambda _request: "https://gateway.example",
+                                         status_provider=status, admin_auth=admin_auth,
+                                         spend_ledger_path=lambda: case.ledger))
+    @app.post("/v1/chat/completions")
+    async def chat(request: Request):
+        case.calls.append((request.url.path, dict(request.headers), await request.json()))
+        assert request.headers["authorization"] == f"Bearer {key}"
+        assert not request.headers.get("cookie")
+        admin_store.touch_credential_last_used(cred["id"], path=db)
+        receipt_store.record({"request_id": "real-test", "app_id": client_app["id"], "source_kind": "gateway-ui" if current_gateway_ui() else "app", "status": "succeeded", "intent": "chat.completions"}, path=receipts)
+        return JSONResponse({"choices": [{"message": {"content": "Hi"}}]}, headers={"x-azizam-request-id": "real-test", "request-id": "provider-opaque-id"})
+    @app.get("/v1/models")
+    async def models(request: Request):
+        case.calls.append((request.url.path, dict(request.headers), None))
+        return {"object": "list", "data": []}
+    def give_person(plan):
+        """The plan the signed-in person (and every App that is "Same as its person") holds."""
+        accounts.change_person(user["id"], "test", path=db, plan_id=plan["id"])
+    def give_app(app_row, plan):
+        admin_store.update_app(app_row["id"], access_plan=plan["id"], path=db)
+    case.give_person, case.give_app = give_person, give_app
+    case.http = TestClient(app, raise_server_exceptions=False)
+    case.headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "csrf"}
+    yield case
+    case.http.close()
+
+
+def alias_rows(data):
+    """The person's own alias rows: Home lists aliases as capability rows now, not as a separate list."""
+    return [row for row in data["capabilities"] if "alias" in row.get("tags", [])]
+
+
+def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
+    c = home_case
+    for i in range(7):
+        receipt_store.record({"request_id": f"mine-{i}", "app_id": c.client_app["id"], "status": "succeeded"}, created_at=i + 10, path=c.receipts)
+    receipt_store.record({"request_id": "other-person", "app_id": c.outsider["id"], "status": "succeeded"}, created_at=100, path=c.receipts)
+    response = c.http.get("/me/api/home")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["receipts"]) == 5
+    assert {row["request_id"] for row in data["receipts"]} == {f"mine-{i}" for i in range(2, 7)}
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
+    assert all(row["status"] == "ready" for row in data["capabilities"])
+    assert data["api_base_url"] == "https://gateway.example/v1"
+    assert not {"aliases", "credential_aliases", "new_app_aliases", "creations"} & data.keys()
+    TypeAdapter(list[HomeCapability]).validate_python(data["capabilities"])
+    TypeAdapter(HomeProjection).validate_python(data)
+    assert c.key not in response.text and "sha256:" not in response.text
+    assert admin_store.get_credential(c.cred["id"], path=c.db)["last_used_at"] is None
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_a_home_row_carries_its_prompt_hint_and_the_words_for_the_files_it_takes(home_case):
+    c = home_case
+    # Rows are grouped by what the thing does, so the two rows below differ in product capability.
+    c.capabilities_override = lambda identity: [
+        Capability(intent="chat.completions", backend="service", model="edit", policy_available=True,
+                   input_modalities=("text", "image", "audio", "chemical"), output_modalities=("text",),
+                   prompt_hint="Describe the change you want"),
+        Capability(intent="audio.generate", backend="service", model="make", policy_available=True,
+                   input_modalities=("text",), output_modalities=("audio",)),
+    ]
+    rows = c.http.get("/me/api/home").json()["capabilities"]
+    edit = next(row for row in rows if row["prompt_hint"])
+    make = next(row for row in rows if not row["prompt_hint"])
+    assert edit["prompt_hint"] == "Describe the change you want"
+    assert edit["input_words"] == {"image": "picture", "audio": "recording", "chemical": "chemical"}
+    assert make["prompt_hint"] is None and make["input_words"] == {}
+
+
+def test_home_owner_recent_shows_only_owned_app_activity(home_case):
+    c = home_case
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
+    service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
+    service = service_app("Daisy", path=c.db)
+    receipt_store.record({"request_id": "mine", "app_id": c.client_app["id"], "status": "succeeded"}, created_at=10, path=c.receipts)
+    receipt_store.record({"request_id": "service", "app_id": service["id"], "api_key_name": "Daisy", "status": "succeeded"}, created_at=11, path=c.receipts)
+    receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, created_at=12, path=c.receipts)
+
+    data = c.http.get("/me/api/home").json()
+    projected = TypeAdapter(HomeProjection).validate_python(data)
+    assert [row["request_id"] for row in projected["receipts"]] == ["mine"]
+    assert all(row["request_id"] != "local" for row in projected["receipts"])
+    assert all(row.get("source", {}).get("app_id") != service["id"] for row in projected["receipts"])
+
+
+def test_client_activity_projection_keeps_app_id_under_source(home_case):
+    c = home_case
+    app_id = c.client_app["id"]
+    receipt_store.record(
+        {"request_id": "mine", "app_id": app_id, "status": "succeeded"},
+        path=c.receipts,
+    )
+
+    rows = receipt_store.recent(
+        limit=5, audience="client", viewer_person_id=c.user["id"],
+        app_ids=[app_id], path=c.receipts,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["source"]["app_id"] == app_id
+    assert "app_id" not in rows[0]
+
+
+def test_owner_cannot_open_instance_receipts_and_the_owner_bypass_is_gone(home_case):
+    c = home_case
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
+    service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
+    service = service_app("Daisy", path=c.db)
+    receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, created_at=11, path=c.receipts)
+    receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, created_at=12, path=c.receipts)
+
+    # Owning the App, or being the owner, does not make another person's receipt the owner's (D51).
+    # A receipt with no person is read by no person (D52).
+    for request_id in ("local", "service"):
+        with pytest.raises(UserPortalError) as owner_error:
+            get_user_receipt(c.session, request_id, path=c.db, receipts_path=c.receipts)
+        assert owner_error.value.status_code == 404
+    assert admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db) == []
+
+    member_session = AdminSession(subject=c.outsider["owner_user_id"], email="two@example.test", role="admin", issued_at=1, expires_at=4_000_000_000)
+    with pytest.raises(UserPortalError) as local_error:
+        get_user_receipt(member_session, "local", path=c.db, receipts_path=c.receipts)
+    assert local_error.value.status_code == 404
+    with pytest.raises(UserPortalError) as service_error:
+        get_user_receipt(member_session, "service", path=c.db, receipts_path=c.receipts)
+    assert service_error.value.status_code == 404
+
+
+def test_home_unknown_health_is_not_green(home_case):
+    home_case.health = {"backends": []}
+    data = home_case.http.get("/me/api/home").json()
+    assert data["status"]["state"] == "unknown"
+    assert not alias_rows(data)[0]["available"]
+    assert data["capabilities"][0]["reason_code"] == "unknown"
+
+
+@pytest.mark.parametrize("state", ["busy", "starting", "degraded"])
+def test_home_and_member_status_preserve_observed_state(home_case, state):
+    home_case.health = {"backends": [{"key": "service", "live_status": state}]}
+    data = home_case.http.get("/me/api/home").json()
+    assert data["status"]["state"] == state
+    assert alias_rows(data)[0]["status"] == state
+    assert not data["capabilities"][0]["available"]
+    member = home_case.http.get("/me/api/status").json()
+    TypeAdapter(MemberStatus).validate_python(member)
+    assert member["status"]["state"] == state
+    assert member["capabilities"][0]["status"] == state
+
+
+def test_home_health_failure_is_an_error(home_case):
+    home_case.health_error = True
+    assert home_case.http.get("/me/api/home").status_code == 500
+
+
+@pytest.mark.parametrize("path", ["/me/api/home", "/admin/api/setup-progress"])
+def test_no_session_cannot_read_home_or_setup(home_case, path):
+    home_case.logged_in = False
+    assert home_case.http.get(path).status_code == 401
+
+
+def test_connection_dispatches_once_and_returns_real_receipt(home_case):
+    c = home_case
+    response = c.http.post("/me/api/connection-test", json={"api_key": c.key, "credential_id": c.cred["id"]}, headers=c.headers)
+    data = response.json()
+    assert response.status_code == 200 and data["ok"]
+    assert len(c.calls) == 1
+    assert c.calls[0][0] == "/v1/chat/completions"
+    assert c.calls[0][2]["max_tokens"] == 1 and c.calls[0][2]["stream"] is False
+    assert data["request_id"] == "real-test"
+    assert data["latency_ms"] >= 0
+    assert receipt_store.get("real-test", path=c.receipts)["status"] == "succeeded"
+    assert c.key not in response.text
+
+
+def test_connection_without_fast_only_tests_models(home_case):
+    c = home_case
+    c.fast = False
+    data = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).json()
+    assert data["ok"] and data["model"] is None and data["request_id"] is None
+    assert [call[0] for call in c.calls] == ["/v1/models"]
+    assert "Chat was not tested" in data["reason"]
+
+
+def test_connection_remote_or_unconfirmed_fast_never_generates(home_case):
+    c = home_case
+    c.registry = {"services": {"service": {"enabled": True, "config": {"models": [{"id": "fast", "upstream_model": "paid-model"}]}}}}
+    data = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).json()
+    assert data["ok"] and data["path"] == "/v1/models"
+    assert [call[0] for call in c.calls] == ["/v1/models"]
+
+
+@pytest.mark.parametrize("payload", [{"api_key": "other-key"}, {"api_key": "missing-key"}, {"api_key": "test-home-key", "credential_id": "wrong-id"}])
+def test_connection_rejects_other_missing_and_mismatched_keys(home_case, payload):
+    assert home_case.http.post("/me/api/connection-test", json=payload, headers=home_case.headers).status_code == 404
+    assert home_case.calls == []
+
+
+def test_connection_requires_session_and_csrf(home_case):
+    c = home_case
+    assert c.http.post("/me/api/connection-test", json={"api_key": c.key}).status_code == 403
+    c.logged_in = False
+    assert c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).status_code == 401
+    assert c.calls == []
+
+
+def test_connection_rejects_revoked_and_expired_keys(home_case):
+    c = home_case
+    admin_store.revoke_credential(c.cred["id"], path=c.db)
+    assert c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).status_code == 404
+    admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("expired"), prefix="masked", expires_at=1, path=c.db, created_by=accountable_person(c.db, c.client_app["id"]))
+    assert c.http.post("/me/api/connection-test", json={"api_key": "expired"}, headers=c.headers).status_code == 404
+    assert c.calls == []
+
+
+def test_setup_internal_try_requires_separate_external_confirmation(home_case):
+    c = home_case
+    c.owner = False
+    assert c.http.get("/admin/api/setup-progress").status_code == 403
+    c.owner = True
+    data = c.http.get("/admin/api/setup-progress").json()
+    assert not data["complete"]
+    steps = {row["id"]: row for row in data["steps"]}
+    assert steps["claim_owner"]["done"] and steps["connect_service"]["done"]
+    assert not steps["connect_app"]["done"]
+    c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers)
+    progress = c.http.get("/admin/api/setup-progress").json()
+    assert not progress["complete"]
+    assert progress["evidence"]["gateway_request"]["recorded"]
+    assert not progress["evidence"]["external_client_confirmed"]["recorded"]
+    result = c.http.post("/admin/api/setup-evidence", json={"event": "external_client_confirmed", "app_id": c.client_app["id"]}, headers=c.headers)
+    assert result.status_code == 200, result.text
+    assert result.json()["source"] == "user_confirmation"
+    TypeAdapter(SetupEvidenceResponse).validate_python(result.json())
+    TypeAdapter(SetupProgress).validate_python(progress)
+    assert c.http.get("/admin/api/setup-progress").json()["complete"]
+
+
+def test_setup_legacy_receipt_without_source_is_not_observed_app_use(home_case):
+    c = home_case
+    receipt_store.record({"request_id": "legacy", "status": "succeeded", "intent": "chat.completions"}, path=c.receipts)
+    data = c.http.get("/admin/api/setup-progress").json()
+    step = next(step for step in data["steps"] if step["id"] == "connect_app")
+    assert not step["done"]
+    assert step["reason"] == "An older request may have come from another app. Confirm that your app works."
+    assert not data["evidence"]["observed_external_client"]["recorded"]
+    receipt_store.record({"request_id": "lan", "status": "succeeded", "intent": "chat.completions",
+                          "source_kind": "local-network"}, path=c.receipts)
+    data = c.http.get("/admin/api/setup-progress").json()
+    assert next(step for step in data["steps"] if step["id"] == "connect_app")["done"]
+    assert data["evidence"]["observed_external_client"]["recorded"]
+
+
+def test_setup_default_app_used_does_not_complete_app_step(home_case):
+    c = home_case
+    cred = admin_store.create_credential_hash(subject_kind="app", subject_id=c.personal["id"], hash=hash_api_key("bootstrap"), prefix="masked", path=c.db, created_by=accountable_person(c.db, c.personal["id"]))
+    admin_store.touch_credential_last_used(cred["id"], path=c.db)
+    admin_store.record_audit("app.self_create", actor_kind="user", target_kind="app", target_id=c.personal["id"], metadata={"via": "setup_local_owner"}, path=c.db)
+    steps = c.http.get("/admin/api/setup-progress").json()["steps"]
+    assert not next(step for step in steps if step["id"] == "connect_app")["done"]
+
+
+def test_setup_explicit_first_app_use_does_not_prove_external_client(home_case):
+    c = home_case
+    admin_store.disable_app(c.personal["id"], path=c.db)
+    admin_store.touch_credential_last_used(c.cred["id"], path=c.db)
+    steps = c.http.get("/admin/api/setup-progress").json()["steps"]
+    assert not next(step for step in steps if step["id"] == "connect_app")["done"]
+
+
+def test_setup_admin_created_app_use_does_not_prove_external_client(home_case):
+    c = home_case
+    named = admin_store.create_app("Cursor", kind="personal", owner_user_id=c.user["id"], access_plan="person", path=c.db)
+    admin_store.record_audit("app.create", target_kind="app", target_id=named["id"], path=c.db)
+    cred = admin_store.create_credential_hash(subject_kind="app", subject_id=named["id"], hash=hash_api_key("cursor-key"), prefix="masked", path=c.db, created_by=accountable_person(c.db, named["id"]))
+    admin_store.touch_credential_last_used(cred["id"], path=c.db)
+    steps = c.http.get("/admin/api/setup-progress").json()["steps"]
+    assert not next(step for step in steps if step["id"] == "connect_app")["done"]
+
+
+def test_setup_evidence_is_owner_csrf_scoped_and_separate(home_case):
+    c = home_case
+    payload = {"event": "settings_copied", "app_id": c.client_app["id"]}
+    assert c.http.post("/admin/api/setup-evidence", json=payload).status_code == 403
+    c.owner = False
+    assert c.http.post("/admin/api/setup-evidence", json=payload, headers=c.headers).status_code == 403
+    c.owner = True
+    assert c.http.post("/admin/api/setup-evidence", json={**payload, "app_id": c.outsider["id"]}, headers=c.headers).status_code == 404
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "not_real"}, headers=c.headers).status_code == 400
+    assert c.http.post("/admin/api/setup-evidence", json={"event": []}, headers=c.headers).status_code == 400
+    assert c.http.post("/admin/api/setup-evidence", json=payload, headers=c.headers).status_code == 200
+    progress = c.http.get("/admin/api/setup-progress").json()
+    assert progress["evidence"]["settings_copied"]["recorded"]
+    assert not progress["evidence"]["external_client_confirmed"]["recorded"]
+    assert not progress["complete"]
+    admin_store.disable_app(c.client_app["id"], path=c.db)
+    assert c.http.post("/admin/api/setup-evidence", json=payload, headers=c.headers).status_code == 404
+    c.logged_in = False
+    assert c.http.post("/admin/api/setup-evidence", json=payload, headers=c.headers).status_code == 401
+
+
+def test_setup_receipt_acknowledgement_requires_owned_receipt(home_case):
+    c = home_case
+    for request_id, app in (("mine", c.client_app), ("other", c.outsider)):
+        receipt_store.record({"request_id": request_id, "app_id": app["id"], "status": "succeeded"}, path=c.receipts)
+    for request_id in ("other", "absent"):
+        assert c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": request_id}, headers=c.headers).status_code == 404
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": "mine"}, headers=c.headers).status_code == 200
+    evidence = c.http.get("/admin/api/setup-progress").json()["evidence"]
+    assert evidence["receipt_viewed"]["recorded"]
+    assert not evidence["external_client_confirmed"]["recorded"]
+
+
+def test_setup_receipt_acknowledgement_follows_db_owner_visible_receipts(home_case):
+    c = home_case
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
+    service_account = admin_store.ensure_service_account("svc_setup_daisy", path=c.db)
+    service = service_app("Daisy", path=c.db)
+    receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, path=c.receipts)
+    receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, path=c.receipts)
+    receipt_store.record({"request_id": "foreign", "app_id": c.outsider["id"], "status": "succeeded"}, path=c.receipts)
+    receipt_store.record({"request_id": "mine", "app_id": None, "maker_person_id": c.user["id"], "status": "succeeded"}, path=c.receipts)
+
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "settings_copied", "app_id": c.outsider["id"]}, headers=c.headers).status_code == 404
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "external_client_confirmed", "app_id": c.outsider["id"]}, headers=c.headers).status_code == 404
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": "missing"}, headers=c.headers).status_code == 404
+    c.owner = False
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": "local"}, headers=c.headers).status_code == 403
+    c.owner = True
+
+    # Only a receipt the owner made can be viewed, so only it can count as evidence (D51).
+    for request_id in ("local", "service", "foreign"):
+        response = c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": request_id}, headers=c.headers)
+        assert response.status_code == 404, response.text
+    response = c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": "mine"}, headers=c.headers)
+    assert response.status_code == 200, response.text
+    evidence = c.http.get("/admin/api/setup-progress").json()["evidence"]
+    assert evidence["receipt_viewed"]["recorded"]
+    assert not evidence["external_client_confirmed"]["recorded"]
+    assert admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db) == []
+
+
+def test_setup_actual_invitation_completes_optional_step(home_case):
+    from gateway import accounts
+    c = home_case
+    accounts.initialize(c.db)
+    # Creating the invitation is the recorded milestone; accepting is separate.
+    accounts.create_link("invite", c.user["id"], plan_id=c.plan["id"], path=c.db)
+    steps = c.http.get("/admin/api/setup-progress").json()["steps"]
+    assert next(step for step in steps if step["id"] == "invite_someone")["done"]
+
+
+def test_member_status_contains_only_allowed_capabilities_and_owned_receipts(home_case):
+    c = home_case
+    c.owner = False
+    c.health = {"gpu": {"name": "secret-host"}, "backends": [
+        {"key": "service", "live_status": "up", "endpoint": "http://private:1234"}]}
+    receipt_store.record({"request_id": "mine", "app_id": c.client_app["id"], "status": "failed", "backend": "private-engine"}, path=c.receipts)
+    receipt_store.record({"request_id": "other", "app_id": c.outsider["id"], "status": "failed"}, path=c.receipts)
+    response = c.http.get("/me/api/status")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    data = response.json()
+    TypeAdapter(MemberStatus).validate_python(data)
+    assert data["scope"] == "member"
+    assert {row["capability"] for row in data["capabilities"]} == {"chat"}
+    assert [row["request_id"] for row in data["receipts"]] == ["mine"]
+    assert data["receipts"][0]["href"] == "/usage/?receipt=mine"
+    assert isinstance(data["receipts"][0]["created_at"], int)
+    for row in data["capabilities"]:
+        expected_fields = {"capability", "capability_title", "icon_key", "title", "recommended_model", "use_names", "summary", "use_name", "intent", "model", "workflow", "status", "available", "reason_code", "measured", "availability"}
+        assert set(row["availability"]) == {"evidence"}
+        if row.get("observed_at_s") is not None:
+            expected_fields.add("observed_at_s")
+        assert set(row) == expected_fields
+        assert row["capability_title"] == "Chat"
+        assert row["title"] == "Fast"
+        assert row["use_name"] == row["model"]
+    for hidden in ("backend", "private", "secret-host", c.outsider["id"], "other", "csrf_token", "credential"):
+        assert hidden not in response.text
+    c.logged_in = False
+    assert c.http.get("/me/api/status").status_code == 401
+
+
+def test_home_lists_the_persons_access_while_connection_checks_use_the_keys_access(home_case):
+    c = home_case
+    no_chat = store_plan("no-chat", path=c.db, caps=())
+    admin_store.disable_app(c.personal["id"], path=c.db)
+    admin_store.revoke_credential(c.cred["id"], path=c.db)
+    restricted = admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("restricted-key"), prefix="masked", path=c.db, created_by=accountable_person(c.db, c.client_app["id"]))
+    c.give_app(c.client_app, no_chat)
+    data = c.http.get("/me/api/home").json()
+    # Home lists what the person may use. A key's narrower access is the connection check's concern.
+    assert "credential_aliases" not in data
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
+    result = c.http.post("/me/api/connection-test", json={"api_key": "restricted-key"}, headers=c.headers).json()
+    assert result["path"] == "/v1/models" and result["model"] is None
+    assert [call[0] for call in c.calls] == ["/v1/models"]
+
+
+def test_home_and_connection_follow_the_persons_plan_for_same_as_person_apps(home_case):
+    c = home_case
+    c.give_person(store_plan("no-chat", path=c.db, caps=()))
+    data = c.http.get("/me/api/home").json()
+    assert data["capabilities"] == []
+    result = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).json()
+    assert result["path"] == "/v1/models"
+
+
+def test_person_without_a_plan_gets_nothing_on_home_and_is_told_so(home_case):
+    c = home_case
+    accounts.change_person(c.user["id"], "test", path=c.db, plan_id=None)
+    response = c.http.get("/me/api/home")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["has_access_plan"] is False
+    assert data["capabilities"] == [] and alias_rows(data) == []
+    assert c.http.get("/me/api/status").json()["capabilities"] == []
+    response = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["path"] == "/v1/models" and response.json()["model"] is None
+
+
+def test_setup_receipt_success_is_not_limited_to_last_five(home_case):
+    c = home_case
+    receipt_store.record({"request_id": "old-success", "status": "succeeded"}, created_at=1, path=c.receipts)
+    for i in range(10):
+        receipt_store.record({"request_id": f"failure-{i}", "status": "failed"}, created_at=i + 2, path=c.receipts)
+    steps = c.http.get("/admin/api/setup-progress").json()["steps"]
+    assert next(step for step in steps if step["id"] == "test_request")["done"]
+
+
+def test_real_alias_discovery_uses_concrete_policy_and_health_target():
+    profile = access(plan_for("restricted", models=["demo-chat"]))
+    identity = RuntimeIdentity(name="Test", key_hash="", access=profile)
+    aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]}})
+    concrete = Capability(intent="chat.completions", backend="local-service", model="demo-chat", health="healthy")
+    raw = [capability_with_policy_view(cap, profile, request=make_policy_request(protocol="openai.chat", intent=cap.intent, model=cap.model, backend=cap.backend)) for cap in [concrete, *aliases]]
+    assert not raw[1].policy_available  # General catalog labels alias backend as gateway.
+    fast = next(cap for cap in _resolved_capabilities(identity, lambda _identity: raw) if cap.model == "fast")
+    assert fast.policy_available and fast.backend == "local-service" and fast.health == "healthy"
+    registry = {"services": {"local-service": {"config": {"models": [{"id": "demo-chat", "local_lifecycle": True}]}}}}
+    assert _declared_local_fast(fast, registry)
+    assert not _declared_local_fast(fast, {"services": {"local-service": {"config": {}}}})
+
+
+def test_alias_ambiguous_backends_fail_closed():
+    identity = RuntimeIdentity(name="Test", key_hash="", access=access(plan_for("everything")))
+    aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]}})
+    raw = [Capability(intent="chat.completions", backend=backend, model="demo-chat", health="healthy") for backend in ("one", "two")] + aliases
+    fast = next(cap for cap in _resolved_capabilities(identity, lambda _identity: raw) if cap.model == "fast")
+    assert not fast.policy_available
+
+
+def test_alias_of_a_model_outside_the_plan_is_not_available():
+    identity = RuntimeIdentity(name="Test", key_hash="", access=access(plan_for(models=["other-chat"])))
+    aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]}})
+    raw = [Capability(intent="chat.completions", backend="forbidden-service", model="demo-chat", health="healthy"), *aliases]
+    fast = next(cap for cap in _resolved_capabilities(identity, lambda _identity: raw) if cap.model == "fast")
+    assert not fast.policy_available
+
+
+def test_declared_healthy_capability_without_measured_service_is_unknown():
+    from gateway.home_api import _availability
+    cap = Capability(intent="image.generate", backend="not-running", health="healthy")
+    state, reason_code = _availability(cap, {})
+    assert state == "unknown" and reason_code == "unknown"
+
+
+def test_alias_resolves_registry_models_when_catalog_only_has_generic_endpoint():
+    identity = RuntimeIdentity(name="Test", key_hash="", access=access(plan_for("restricted", models=["demo-chat"])))
+    aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]}})
+    raw = [Capability(intent="chat.completions", backend="capture-engine"), *aliases]
+    registry = {"services": {"capture-engine": {"enabled": True, "config": {"models": [{"id": "demo-chat", "upstream_model": "demo-chat", "local_lifecycle": True}]}}}}
+    fast = next(cap for cap in _resolved_capabilities(identity, lambda _identity: raw, registry) if cap.model == "fast")
+    assert fast.policy_available and fast.backend == "capture-engine"
+    assert _declared_local_fast(fast, registry)
+
+
+def test_connection_alias_precedence_never_uses_same_named_local_model(home_case):
+    c = home_case
+    views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "paid-model"}]}}
+    c.aliases_override = views
+    c.registry = {"services": {
+        "service": {"enabled": True, "config": {"gateway_lifecycle": True, "models": [{"id": "fast"}]}},
+        "remote": {"enabled": True, "config": {"models": [{"id": "paid-model"}]}}
+    }}
+    c.capabilities_override = lambda _identity: [
+        Capability(intent="chat.completions", backend="service", model="fast"),
+        Capability(intent="chat.completions", backend="remote", model="paid-model"),
+        *build_alias_capabilities(views),
+    ]
+    result = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).json()
+    assert result["ok"] and result["path"] == "/v1/models"
+    assert [call[0] for call in c.calls] == ["/v1/models"]
+    data = c.http.get("/me/api/home").json()
+    assert not alias_rows(data)[0]["available"]  # The healthy same-named local model is shadowed.
+
+
+def test_workflow_and_service_aliases_preserve_permissions():
+    identity = RuntimeIdentity(name="Test", key_hash="", access=access(plan_for("everything")))
+    views = {
+        "images": {"stable": [{"alias": "image", "resolves_to": "draw"}]},
+        "speech": {"stable": [{"alias": "tts", "resolves_to": "voice-option", "engine": "voice-option", "service": "voice-service"}]},
+    }
+    workflow = Capability(intent="image.generate", backend="image-service", workflow="draw")
+    raw = [workflow, *build_alias_capabilities(views)]
+    registry = {"services": {"image-service": {"enabled": True}, "voice-service": {"enabled": True}}}
+    caps = _resolved_capabilities(identity, lambda _identity: raw, registry)
+    aliases = {cap.model: cap for cap in caps if "alias" in cap.tags}
+    assert aliases["image"].policy_available and aliases["image"].backend == "image-service"
+    assert aliases["tts"].policy_available and aliases["tts"].backend == "voice-service"
+    denied = RuntimeIdentity(name="Denied", key_hash="", access=access(plan_for("deny", caps=())))
+    denied_raw = [capability_with_policy_view(cap, denied.access, request=make_policy_request(protocol="openai.audio", intent=cap.intent, model=cap.model, backend=cap.backend)) for cap in raw]
+    assert not any(cap.policy_available for cap in _resolved_capabilities(denied, lambda _identity: denied_raw, registry) if "alias" in cap.tags)
+
+
+def test_recipe_aliases_follow_the_persons_plan_on_home(home_case):
+    c = home_case
+    c.give_app(c.client_app, store_plan("no-chat", path=c.db, caps=()))
+    data = c.http.get("/me/api/home").json()
+    # An App's narrower key does not narrow what Home offers the person (Home uses the person's access).
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
+    assert "credential_aliases" not in data
+
+
+def test_home_lists_what_the_person_could_use(home_case):
+    c = home_case
+    c.give_app(c.client_app, store_plan("no-chat", path=c.db, caps=()))
+    data = c.http.get("/me/api/home").json()
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
+    assert data["capabilities"]
+
+
+def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(fake_upstreams, monkeypatch, tmp_path):
+    import proxy
+    receipt_db = tmp_path / "public-header-receipts.db"
+    receipt_store.init_db(receipt_db)
+    original_begin, original_finalize = receipt_store.begin, receipt_store.finalize
+    monkeypatch.setattr(receipt_store, "begin", lambda item, **kwargs: original_begin(item, path=receipt_db, **kwargs))
+    monkeypatch.setattr(receipt_store, "finalize", lambda item, **kwargs: original_finalize(item, path=receipt_db, **kwargs))
+
+    upstream = fake_upstreams.asgi(load_scenario("openai-compatible/spoofed-correlation", model="demo-chat"))
+    register_litellm(monkeypatch, use_admin_db(monkeypatch, tmp_path), upstream.base_url)
+
+    async def prepare(_auth_context, **kwargs):
+        return None, kwargs["body_json"]
+
+    identity = RuntimeIdentity(name="Header test", key_hash=hash_api_key("header-test"), access=access(plan_for("local")), app_id="header-app", accountable_person_id="usr_header")
+    monkeypatch.setattr(proxy, "runtime_identity_for_app_credential_hash", lambda *_args, **_kwargs: identity)
+    monkeypatch.setattr(proxy, "_prepare_litellm_local_llm_request", prepare)
+    monkeypatch.setitem(proxy.config, "model_aliases", {})
+    client = TestClient(proxy.app)
+    try:
+        response = client.post("/v1/chat/completions", headers={"authorization": "Bearer header-test"},
+                               json={"model": "demo-chat", "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 1})
+    finally:
+        client.close()
+    assert response.status_code == 200, response.text
+    request_id = response.headers["x-azizam-request-id"]
+    assert response.headers["x-azizam-receipt-id"] == request_id
+    assert request_id not in {"spoofed-upstream", "provider-opaque"} and "," not in request_id
+    assert response.headers["request-id"] == "provider-opaque"
+    receipt = receipt_store.get(request_id, path=receipt_db)
+    assert receipt["status"] == "succeeded" and receipt["app_id"] == "header-app"
+    [forwarded] = upstream.calls("chat")
+    assert forwarded.json == {"model": "demo-chat", "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 1}
+    assert forwarded.headers["x-azizam-request-id"] == request_id
+
+
+def test_chat_only_model_plan_cannot_advertise_ready_generic_image_targets(home_case):
+    c = home_case
+    c.give_person(store_plan("Chat targets", path=c.db, models=["demo-chat"]))
+    views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]},
+             "images": {"stable": [{"alias": "image", "resolves_to": "draw"}]}}
+    c.aliases_override = views
+    c.registry = {"services": {
+        "service": {"enabled": True, "config": {"models": [{"id": "demo-chat", "local_lifecycle": True}]}},
+        "art-service": {"enabled": True, "config": {}}
+    }}
+    c.health = {"backends": [{"key": service, "live_status": "up"} for service in ("service", "art-service")]}
+    def provider(identity):
+        raw = [Capability(intent="chat.completions", backend="service"),
+               Capability(intent="image.generate", backend="art-service"),
+               Capability(intent="image.generate", backend="art-service", workflow="draw"),
+               *build_alias_capabilities(views)]
+        return [capability_with_policy_view(cap, identity.access, request=make_policy_request(
+            protocol="openai.chat" if cap.intent.startswith("chat") else "openai.images",
+            intent=cap.intent, model=cap.model, workflow=cap.workflow, backend=cap.backend)) for cap in raw]
+    c.capabilities_override = provider
+    data = c.http.get("/me/api/home").json()
+    assert [row["use_name"] for row in alias_rows(data)] == ["fast"]
+    assert not any(row["capability"] == "image" for row in data["capabilities"])
+    assert any(row["capability"] == "chat" and row["available"] for row in data["capabilities"])
+
+
+def test_disabled_service_is_unavailable_even_when_probe_endpoint_answers(home_case):
+    c = home_case
+    c.registry["services"]["service"]["enabled"] = False
+    data = c.http.get("/me/api/home").json()
+    assert not any(row["available"] for row in data["capabilities"])
+    assert data["status"]["state"] == "unavailable"
+
+
+def test_generic_endpoint_requires_unshadowed_permitted_registry_model():
+    identity = RuntimeIdentity(name="Scoped", key_hash="", access=access(plan_for("fast-only", models=["fast"])))
+    views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "paid-model"}]}}
+    raw = [Capability(intent="chat.completions", backend="local"),
+           Capability(intent="chat.completions", backend="remote", model="paid-model"),
+           *build_alias_capabilities(views)]
+    registry = {"services": {"local": {"config": {"models": [{"id": "fast"}]}},
+                             "remote": {"config": {"models": [{"id": "paid-model"}]}}}}
+    caps = _resolved_capabilities(identity, lambda _identity: raw, registry)
+    assert not next(cap for cap in caps if cap.backend == "local").policy_available
+    allowed = RuntimeIdentity(name="Scoped", key_hash="", access=access(plan_for("plain-only", models=["plain"])))
+    registry["services"]["local"]["config"]["models"] = [{"id": "plain"}]
+    caps = _resolved_capabilities(allowed, lambda _identity: raw[:1], registry)
+    assert caps[0].policy_available  # A real permitted registry target is sufficient.
+
+
+@pytest.mark.parametrize("restriction", ["no_remote_grant", "allowed_canonical_grant"])
+@pytest.mark.parametrize("remote_tags", [True, False])
+def test_home_and_member_status_preserve_upstream_remote_alias_permission(home_case, monkeypatch, restriction, remote_tags):
+    import proxy
+    from gateway.capabilities import resolve_capability_targets
+    from gateway.models_catalog import registered_model_capabilities
+    c = home_case
+    c.give_person(store_plan("Remote policy", path=c.db, paid=[] if restriction == "no_remote_grant" else ["openrouter"]))
+    c.registry = {"services": {"cloud-service": {"id": "cloud-service", "enabled": True, "config": {
+        "remote_provider": True, "provider_type": "paid-remote", "provider_id": "openrouter",
+        "protocol": "openai-compatible", "base_url": "https://provider.example/v1",
+        "models": [{"model_group": "openrouter/visible", "upstream_model": "visible-upstream"}],
+    }}}}
+    c.aliases_override = {"chat": {"stable": [{"alias": "fast", "resolves_to": "openrouter/visible"}]}}
+    c.health = {"backends": [{"key": "cloud-service", "live_status": "up"}]}
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: c.registry)
+    def upstream_projection(identity):
+        raw = [*registered_model_capabilities(c.registry), *build_alias_capabilities(c.aliases_override)]
+        projected = [proxy._capability_for_access(cap, proxy.AuthContext(identity=identity))
+                     for cap in resolve_capability_targets(raw, c.registry)]
+        assert all(cap.policy_available == (restriction == "allowed_canonical_grant") for cap in projected)
+        if not remote_tags:
+            projected = [replace(cap, tags=tuple(tag for tag in cap.tags if tag != "remote")) for cap in projected]
+        return projected
+    c.capabilities_override = upstream_projection
+    for path in ("/me/api/home", "/me/api/status"):
+        response = c.http.get(path)
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert any(row.get("model") == "fast" for row in data["capabilities"]) == (restriction == "allowed_canonical_grant")
+        if path.endswith("home"):
+            expected_aliases = ["fast"] if restriction == "allowed_canonical_grant" else []
+            assert [row["use_name"] for row in alias_rows(data)] == expected_aliases
+
+
+def test_disabled_remote_model_cannot_be_resolved_by_registry_alias_fallback(home_case):
+    from gateway.capabilities import resolve_capability_targets
+    from gateway.models_catalog import registered_model_capabilities
+    c = home_case
+    c.registry = {"services": {"cloud-service": {"id": "cloud-service", "enabled": True, "config": {
+        "remote_provider": True, "provider_type": "paid-remote", "provider_id": "openrouter",
+        "protocol": "openai-compatible", "base_url": "https://provider.example/v1",
+        "models": [{"model_group": "openrouter/disabled", "upstream_model": "disabled-upstream", "enabled": False}],
+    }}}}
+    aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "openrouter/disabled"}]}})
+    concrete = registered_model_capabilities(c.registry)
+    assert concrete == []
+    resolved = resolve_capability_targets([*concrete, *aliases], c.registry)
+    assert resolved[0].backend == "gateway"
+    identity = RuntimeIdentity(name="No remote", key_hash="", access=access(plan_for("no-remote")))
+    home_caps = _resolved_capabilities(identity, lambda _: aliases, c.registry)
+    assert home_caps[0].policy_available is False
+
+
+def test_disabled_registry_model_does_not_prove_generic_endpoint_usable():
+    identity = RuntimeIdentity(name="Scoped", key_hash="", access=access(plan_for("disabled-only", models=["disabled"])))
+    registry = {"services": {"service": {"config": {"models": [{"id": "disabled", "enabled": False}]}}}}
+    caps = _resolved_capabilities(identity, lambda _: [Capability(intent="chat.completions", backend="service")], registry)
+    assert caps[0].policy_available is False
+
+
+def test_bound_remote_alias_cannot_override_denied_concrete_target():
+    identity = RuntimeIdentity(name="Scoped", key_hash="", access=access(plan_for("no-remote")))
+    raw = [Capability(intent="chat.completions", backend="cloud-service", model="provider/model",
+                      tags=("remote",), policy_available=False),
+           Capability(intent="chat.completions", backend="cloud-service", model="fast",
+                      tags=("alias", "resolves_to:provider/model"))]
+    projected = _resolved_capabilities(identity, lambda _: raw)
+    assert not next(cap for cap in projected if cap.model == "fast").policy_available
+
+
+@pytest.mark.parametrize("surface", ["home", "shared"])
+def test_chat_alias_cannot_bind_remote_model_without_matching_protocol_capability(surface):
+    from gateway.capabilities import resolve_capability_targets
+    from gateway.models_catalog import registered_model_capabilities
+    registry = {"services": {"decision-cloud": {"id": "decision-cloud", "kind": "provider", "enabled": True,
+        "capabilities": ["typesafe-systemone"], "config": {
+            "remote_provider": True, "provider_type": "paid-remote", "provider_id": "typesafe",
+            "protocol": "typesafe-systemone", "base_url": "https://provider.example/v1",
+            "models": [{"model_group": "typesafe/jev"}],
+        },
+    }}}
+    assert registered_model_capabilities(registry) == []
+    aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "typesafe/jev"}]}})
+    identity = RuntimeIdentity(name="No remote", key_hash="", access=access(plan_for("no-remote")))
+    if surface == "home":
+        home_caps = _resolved_capabilities(identity, lambda _: aliases, registry)
+        assert home_caps[0].policy_available is False
+    else:
+        resolved = resolve_capability_targets(aliases, registry)
+        assert resolved[0].backend == "gateway"
+
+
+@pytest.mark.parametrize("permission", ["no_remote_grant", "allowed_canonical_grant"])
+def test_service_selected_remote_alias_obeys_canonical_provider_permission(home_case, monkeypatch, permission):
+    import proxy
+    from gateway import service_registry
+    c = home_case
+    paid = [] if permission == "no_remote_grant" else ["openrouter"]
+    c.give_person(store_plan("Service policy", path=c.db, paid=paid))
+    c.registry = {"services": {"voice-cloud": {"id": "voice-cloud", "enabled": True, "config": {
+        "remote_provider": True, "provider_type": "paid-remote", "provider_id": "openrouter",
+        "protocol": "openai-compatible", "base_url": "https://provider.example/v1",
+        "models": [{"model_group": "voice-model"}],
+    }}}}
+    alias_config = {"speech": {"engines": {"provider-option": {"service": "voice-cloud", "model": "voice-model"}},
+                               "stable": {"voice": ["provider-option"]}}}
+    monkeypatch.setattr(proxy, "config", {"model_aliases": alias_config,
+                                         "backends": service_registry.runtime_backends(c.registry)})
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: c.registry)
+    resolution = proxy.resolve_model_for_operation("speech", "voice")
+    assert resolution.alias.service == "voice-cloud"
+    assert resolution.effective_model == "voice-model"
+    c.aliases_override = proxy._gateway_aliases_provider("speech")
+    aliases = build_alias_capabilities(c.aliases_override)
+    assert aliases[0].backend == "voice-cloud"
+    assert "engine:provider-option" in aliases[0].tags
+    assert "remote" not in aliases[0].tags
+    identity = RuntimeIdentity(name="Service policy", key_hash="", access=access(plan_for("service-policy", paid=paid)))
+    expected = permission == "allowed_canonical_grant"
+    assert proxy._capability_for_access(aliases[0], proxy.AuthContext(identity=identity)).policy_available is expected
+    c.capabilities_override = lambda caller: [proxy._capability_for_access(cap, proxy.AuthContext(identity=caller)) for cap in aliases]
+    c.health = {"backends": [{"key": "voice-cloud", "live_status": "up"}]}
+    for path in ("/me/api/home", "/me/api/status"):
+        response = c.http.get(path)
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert any(row.get("model") == "voice" for row in data["capabilities"]) is expected
+        if path.endswith("home"):
+            assert [row["use_name"] for row in alias_rows(data)] == (["voice"] if expected else [])
+
+
+# A receipt without a recorded source is not proof (see the legacy test above).
+@pytest.mark.parametrize("source,app", [("app", True), ("local-network", False)])
+def test_setup_successful_external_traffic_completes_app_step(home_case, source, app):
+    c = home_case
+    receipt_store.record({"request_id": "external", "status": "succeeded", "app_id": c.client_app["id"] if app else None,
+                          "source_kind": source}, created_at=123, path=c.receipts)
+    progress = c.http.get("/admin/api/setup-progress").json()
+    assert progress["complete"]
+    assert not progress["dismissed"]
+    assert progress["evidence"]["observed_external_client"] == {"recorded": True, "source": "receipt", "observed_at_s": 123}
+    assert not progress["evidence"]["external_client_confirmed"]["recorded"]
+    TypeAdapter(SetupProgress).validate_python(progress)
+
+
+@pytest.mark.parametrize("status,source,parent", [("failed", "app", None), ("succeeded", "gateway-ui", None), ("succeeded", "internal", None), ("succeeded", "app", "outer")])
+def test_setup_ui_failed_and_child_requests_do_not_prove_external_client(home_case, status, source, parent):
+    c = home_case
+    receipt_store.record({"request_id": "not-external", "status": status, "app_id": c.client_app["id"],
+                          "source_kind": source, "parent_request_id": parent}, path=c.receipts)
+    progress = c.http.get("/admin/api/setup-progress").json()
+    assert not next(step for step in progress["steps"] if step["id"] == "connect_app")["done"]
+    assert not progress["evidence"]["observed_external_client"]["recorded"]
+
+
+def test_setup_dismiss_is_owner_csrf_protected_persisted_and_not_completion(home_case):
+    c = home_case
+    assert c.http.post("/admin/api/setup-dismiss").status_code == 403
+    c.owner = False
+    assert c.http.post("/admin/api/setup-dismiss", headers=c.headers).status_code == 403
+    c.owner = True
+    response = c.http.post("/admin/api/setup-dismiss", headers=c.headers)
+    assert response.status_code == 200
+    assert response.json()["dismissed"]
+    for _ in range(2):
+        progress = c.http.get("/admin/api/setup-progress").json()
+        assert progress["dismissed"]
+        assert not progress["complete"]
+        assert progress["evidence"]["checklist_dismissed"]["source"] == "user_confirmation"
+    c.logged_in = False
+    assert c.http.post("/admin/api/setup-dismiss", headers=c.headers).status_code == 401
+
+
+def test_gateway_ui_receipt_still_belongs_to_its_app(home_case):
+    c = home_case
+    response = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers)
+    assert response.status_code == 200 and response.json()["ok"]
+    own = get_user_receipt(c.session, "real-test", path=c.db, receipts_path=c.receipts)
+    assert receipt_store.get("real-test", audience="internal", path=c.receipts)["app_id"] == c.client_app["id"]
+    assert own["source"]["app_id"] == c.client_app["id"]
+    assert own["source"]["kind"] == "gateway-ui"
+    member = AdminSession(subject=c.outsider["owner_user_id"], email="two@example.test", role="admin", issued_at=1, expires_at=4_000_000_000)
+    with pytest.raises(UserPortalError) as exc:
+        get_user_receipt(member, "real-test", path=c.db, receipts_path=c.receipts)
+    assert exc.value.status_code == 404
+
+
+def test_member_status_uses_friendly_audio_taxonomy_and_omits_unknown_time(home_case):
+    c = home_case
+    c.capabilities_override = lambda _identity: [Capability(intent="audio.generate", backend="service", model="sfx-alias", title="Small sound model", capability="sfx")]
+    payload = c.http.get("/me/api/status").json()
+    row = payload["capabilities"][0]
+    assert row["title"] == "Small sound model"
+    assert row["capability_title"] == "Sound effects"
+    assert row["icon_key"] == "sfx"
+    assert row["capability"] == "sfx"
+    assert row["use_name"] == "sfx-alias"
+    assert row.get("observed_at_s") is not None or "observed_at_s" not in row
+    TypeAdapter(MemberStatus).validate_python(payload)
+
+
+def test_member_ready_summary_and_help_are_consistent(home_case):
+    c = home_case
+    ready = c.http.get("/me/api/status").json()
+    assert ready["status"] == {
+        "state": "ready", "reason_code": "ready", "affected_capability_ids": [],
+        "counts": {"total": 1, "available": 1, "affected": 0},
+    }
+    assert ready["help"] == ""
+    c.capabilities_override = lambda _identity: [Capability(intent="chat.completions", backend="service", model="ready"),
+                                                Capability(intent="image.generate", backend="missing", model="unknown")]
+    partial = c.http.get("/me/api/status").json()
+    assert partial["status"]["state"] == "unknown"
+    assert partial["status"]["reason_code"] == "unknown"
+    assert partial["status"]["affected_capability_ids"] == ["image"]
+    assert partial["help"] == ""
+
+
+def test_recipe_alias_local_provenance_excludes_remote_and_unknown(home_case):
+    c = home_case
+    response = c.http.get("/me/api/home")
+    assert response.status_code == 200
+    assert alias_rows(response.json())[0]["backend_kind"] == "local"
+
+    c.registry["services"]["service"]["config"] = {}
+    response = c.http.get("/me/api/home")
+    assert alias_rows(response.json())[0].get("backend_kind") != "local"
+
+    c.registry["services"]["service"]["config"] = {
+        "gateway_lifecycle": True, "cost_class": "paid-remote",
+    }
+    response = c.http.get("/me/api/home")
+    assert alias_rows(response.json())[0].get("backend_kind") != "local"
+
+
+def test_member_status_capabilities_carry_home_evidence_source_and_check_time(home_case):
+    c = home_case
+    c.owner = False
+    c.health = {"generated_at": 1234, "backends": [
+        {"key": "service", "live_status": "down", "kind": "no_response", "endpoint": "http://private:1234", "last_error": "connect refused"}]}
+    home = {row["model"]: row["availability"]["evidence"] for row in c.http.get("/me/api/home").json()["capabilities"]}
+    payload = c.http.get("/me/api/status").json()
+    TypeAdapter(MemberStatus).validate_python(payload)
+    assert payload["capabilities"]
+    for row in payload["capabilities"]:
+        evidence = row["availability"]["evidence"]
+        assert evidence == home[row["model"]]
+        assert evidence["source"] == "status"
+        assert evidence["kind"] == "no_response"
+        assert evidence["observed_at_s"] == 1234
+        assert "last_success_at_s" not in evidence
+    assert "private" not in str(payload) and "connect refused" not in str(payload)
+
+
+def test_home_projects_recent_5xx_failures_as_unavailable_not_busy(home_case):
+    import time as _time
+    c = home_case
+    now = int(_time.time())
+    c.health = {"generated_at": now, "backends": [{"key": "service", "live_status": "degraded"}]}
+    receipt_store.record({"request_id": "fail-503", "app_id": c.client_app["id"], "backend": "service",
+                          "status": "failed", "status_code": 503}, created_at=now - 120, path=c.receipts)
+    rows = c.http.get("/me/api/home").json()["capabilities"]
+    assert rows and all(row["status"] == "unavailable" for row in rows)
+    assert all(row["availability"]["evidence"]["source"] == "request" for row in rows)
+    member = c.http.get("/me/api/status").json()["capabilities"]
+    assert member and all(row["status"] == "unavailable" and row["available"] is False for row in member)
+
+
+def test_home_and_member_status_name_the_gateway_owner(home_case):
+    c = home_case
+    c.owner = False
+    # No owner role yet, and no owner display name: null, never a placeholder.
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    nameless = admin_store.upsert_oidc_user("https://example.test", "nameless", email="nameless@example.test", path=c.db)
+    owner = admin_store.upsert_oidc_user("https://example.test", "owner", email="sam@example.test", display_name=" Sam ", path=c.db)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=nameless["id"], now=10, path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    granted = admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], now=20, path=c.db)
+    home = c.http.get("/me/api/home").json()
+    status = c.http.get("/me/api/status").json()
+    assert home["gateway"] == {"owner_name": "Sam"}
+    assert status["gateway"] == {"owner_name": "Sam"}
+    TypeAdapter(HomeProjection).validate_python(home)
+    TypeAdapter(MemberStatus).validate_python(status)
+    # Sign-in emails are identities, not a published contact.
+    assert "sam@example.test" not in str(home) and "sam@example.test" not in str(status)
+    admin_store.revoke_admin_role(granted["id"], path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+
+
+def test_home_reports_the_members_own_spend_against_their_plans_caps(home_case):
+    import sqlite3
+    import time as _time
+    from gateway.providers import ensure_ledger
+    c = home_case
+    c.owner = False
+    ledger = c.db.parent / "provider_spend.db"
+    c.ledger = ledger
+    assert c.http.get("/me/api/home").json()["plan_spend"] == []  # the plan has no caps
+    c.give_person(store_plan("Capped", path=c.db, paid=["typesafe"], usd_per_day="1", usd_per_month="8"))
+    ensure_ledger(ledger)
+    now = int(_time.time())
+    with sqlite3.connect(ledger) as conn:
+        for person_id, app_id, usd in ((c.user["id"], "any-app", "0.30"), ("someone-else", "other-app", "5.00")):
+            conn.execute("INSERT INTO provider_spend (provider, person_id, app_id, status, estimated_usd, actual_usd, cost_source, created_at) "
+                         "VALUES ('typesafe', ?, ?, 'settled', ?, ?, 'test', ?)", (person_id, app_id, usd, usd, now - 60))
+    data = c.http.get("/me/api/home").json()
+    TypeAdapter(HomeProjection).validate_python(data)
+    daily = next(entry for entry in data["plan_spend"] if entry["period"] == "daily")
+    assert daily == {"period": "daily", "window": "rolling_24h", "spent_usd": "0.300000000",
+                     "cap_usd": "1", "resets_at": now - 60 + 86400}
+    monthly = next(entry for entry in data["plan_spend"] if entry["period"] == "monthly")
+    assert monthly["cap_usd"] == "8" and monthly["window"] == "calendar_month_utc"
+    assert "5.00" not in str(data["plan_spend"])
+
+
+def test_spend_is_unknown_not_zero_while_a_charge_needs_reconciliation(home_case):
+    import sqlite3
+    import time as _time
+    from gateway.providers import ensure_ledger
+    c = home_case
+    c.ledger = c.db.parent / "provider_spend.db"
+    c.give_person(store_plan("Capped", path=c.db, paid=["typesafe"], usd_per_day="1"))
+    ensure_ledger(c.ledger)
+    with sqlite3.connect(c.ledger) as conn:
+        conn.execute("INSERT INTO provider_spend (provider, person_id, app_id, status, estimated_usd, cost_source, created_at) "
+                     "VALUES ('typesafe', ?, 'a', 'needs_reconciliation', '0.1', 'unknown', ?)", (c.user["id"], int(_time.time()) - 60))
+    [entry] = c.http.get("/me/api/home").json()["plan_spend"]
+    assert entry["spent_usd"] is None and entry["unknown_reason"] == "needs_reconciliation"
+
+
+def test_owner_name_never_publishes_an_email(home_case):
+    """Setup stores the local owner's email as its display name; OIDC falls
+    back to the email when there is no name claim. Neither may leak."""
+    c = home_case
+    c.owner = False
+    local = admin_store.claim_first_local_owner(
+        issuer="local", subject="sam@example.test", email="sam@example.test", display_name="sam@example.test",
+        verifier="fixture-verifier", granted_by="setup-local-owner", path=c.db)
+    assert local is not None
+    home = c.http.get("/me/api/home").json()
+    assert home["gateway"] == {"owner_name": None}
+    assert "sam@example.test" not in str(home["gateway"])
+    # OIDC without a name claim: proxy stores name-or-email, i.e. the email.
+    claims = {"sub": "oidc-owner", "email": "Robin@Example.test"}
+    oidc = admin_store.upsert_oidc_user("https://idp.example.test", claims["sub"], email=claims["email"],
+                                        display_name=str(claims.get("name") or claims.get("email") or ""), path=c.db)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=oidc["id"], now=10**10, path=c.db)
+    status = c.http.get("/me/api/status").json()
+    assert status["gateway"] == {"owner_name": None}
+    # Case and whitespace do not disguise an email; anything with '@' is skipped.
+    admin_store.upsert_oidc_user("https://idp.example.test", "oidc-owner", email="Robin@Example.test",
+                                 display_name="  robin@example.TEST ", path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    admin_store.upsert_oidc_user("https://idp.example.test", "oidc-owner", email="Robin@Example.test",
+                                 display_name="robin at home @family", path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    admin_store.upsert_oidc_user("https://idp.example.test", "oidc-owner", email="Robin@Example.test",
+                                 display_name="Robin", path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": "Robin"}

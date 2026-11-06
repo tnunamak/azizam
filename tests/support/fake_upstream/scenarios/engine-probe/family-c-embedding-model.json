@@ -1,0 +1,141 @@
+{
+  "protocol": "engine-probe",
+  "name": "family-c-embedding-model",
+  "description": "Family C shape with an embedding model: the model list marks it with task embedding, and the chat and embedding routes answer like a path that does not exist. The task field is the evidence.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "add-engine-spec.md section 5a (a task field is evidence); the access answer narrows a model to the work it does"
+  },
+  "exchanges": [
+    {
+      "id": "baseline-get",
+      "match": {
+        "method": "GET",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/zz-not-a-route",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "baseline-post",
+      "match": {
+        "method": "POST",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/zz-not-a-route",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "models",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "response": {
+        "status": 200,
+        "json": {
+          "object": "list",
+          "data": [
+            {
+              "id": "nomic-embed-text-v1.5",
+              "object": "model",
+              "task": "embedding"
+            }
+          ]
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "openapi",
+      "match": {
+        "method": "GET",
+        "path": "/openapi.json"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /openapi.json",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "capability-document",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models/capabilities"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/models/capabilities",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "chat",
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/chat/completions",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "embeddings",
+      "match": {
+        "method": "POST",
+        "path": "/v1/embeddings"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "error": {
+            "message": "unknown endpoint: /v1/embeddings",
+            "type": "not_found"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    }
+  ]
+}

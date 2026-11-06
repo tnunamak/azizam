@@ -1,0 +1,40 @@
+{
+  "protocol": "comfyui",
+  "name": "prompt-rate-limited",
+  "description": "ComfyUI answers the submit with 429 and Retry-After.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes /prompt, /history/{prompt_id}, /view (ComfyUI server.py); the gateway polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt",
+        "json": {
+          "prompt": {
+            "1": {
+              "class_type": "FkNode",
+              "inputs": {
+                "text": "{{text}}"
+              }
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "retry-after": "7"
+        },
+        "json": {
+          "error": {
+            "type": "rate_limited",
+            "message": "too many requests"
+          }
+        }
+      }
+    }
+  ]
+}

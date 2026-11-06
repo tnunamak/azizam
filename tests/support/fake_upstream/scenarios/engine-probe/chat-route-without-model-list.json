@@ -1,0 +1,118 @@
+{
+  "protocol": "engine-probe",
+  "name": "chat-route-without-model-list",
+  "description": "A chat server with no model list: the chat route answers an empty request with 400 \"'messages' is required\", so chat is possible, and /v1/models answers 404. Recognised, so the missing list is a warning.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "add-engine-spec.md section 5a (a validating 4xx is possible) and the models_unavailable warning"
+  },
+  "exchanges": [
+    {
+      "id": "baseline-get",
+      "match": {
+        "method": "GET",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "baseline-post",
+      "match": {
+        "method": "POST",
+        "path": "/v1/zz-not-a-route-{{token}}"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "models",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "openapi",
+      "match": {
+        "method": "GET",
+        "path": "/openapi.json"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "capability-document",
+      "match": {
+        "method": "GET",
+        "path": "/v1/models/capabilities"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "chat",
+      "match": {
+        "method": "POST",
+        "path": "/v1/chat/completions"
+      },
+      "response": {
+        "status": 400,
+        "json": {
+          "error": {
+            "message": "'messages' is required"
+          }
+        }
+      },
+      "repeat": true,
+      "required": false
+    },
+    {
+      "id": "embeddings",
+      "match": {
+        "method": "POST",
+        "path": "/v1/embeddings"
+      },
+      "response": {
+        "status": 404,
+        "json": {
+          "detail": "Not Found"
+        }
+      },
+      "repeat": true,
+      "required": false
+    }
+  ]
+}

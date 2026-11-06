@@ -1,0 +1,511 @@
+/*
+ * Azizam design tokens. The only place raw colour, type, radius, elevation
+ * and motion values live. Rationale and usage rules: docs/design/DESIGN.md.
+ *
+ * Two layers of surface:
+ *   chrome  = the deep-water shell (sidebar, phone header). Dark in BOTH themes.
+ *   content = the daylight page in light theme, the night page in dark theme.
+ */
+:root {
+  color-scheme: light;
+
+  /* Content surfaces */
+  --background: #f3f6f6;
+  --foreground: #10232a;
+  --card: #ffffff;
+  --card-foreground: #10232a;
+  --popover: #ffffff;
+  --popover-foreground: #10232a;
+  --muted: #e9eeef;
+  --muted-foreground: #3d4f55;
+  --secondary: #e9eeef;
+  --secondary-foreground: #10232a;
+  --accent: #dcf0f2;
+  --accent-foreground: #0b4a57;
+  --border: #d7e0e2;
+  --input: #7b8e93;
+  --ring: #1a8c9c;
+
+  /* Action and link */
+  --primary: #0d4552;
+  --primary-foreground: #ffffff;
+  --link: #0a6676;
+  --destructive: #b3261e;
+  --destructive-foreground: #ffffff;
+
+  /* Chrome: a quiet sidebar in the canvas family; the copper curl marks the
+     brand and the current place (DESIGN "Brand"). */
+  --chrome: #eef2f3;
+  --chrome-raised: #e1e8ea;
+  --chrome-foreground: #10232a;
+  --chrome-muted: #3d4f55;
+  --chrome-border: #d7e0e2;
+  --chrome-accent: #c4532b;
+  --media-stage: #e6ecee;
+  --media-stage-foreground: #10232a;
+  /* The duration badge on media tiles: one dark scrim over any picture. */
+  --media-badge: rgb(5 15 18 / 64%);
+  --media-badge-foreground: #ffffff;
+  --media-badge-hover: rgb(5 15 18 / 80%);
+  /* The play disc on an audio face: the dark scrim on the light face, a white disc on the dark one. */
+  --media-disc: rgb(5 15 18 / 64%);
+  --media-disc-foreground: #ffffff;
+  /* A first-visit audio card's well: Voice teal; Music amber to rose. */
+  --well-voice-from: rgb(10 102 118 / 22%);
+  --well-voice-to: rgb(10 102 118 / 8%);
+  --well-music-from: rgb(138 90 18 / 22%);
+  --well-music-to: rgb(161 68 102 / 18%);
+  --subtle-foreground: #4a5c62;
+  /* Home's composer surface, and Make: ink at rest so it is always findable, the link colour once there is
+     something to make. */
+  --composer: #ffffff;
+  --composer-edge: var(--border);
+  --composer-edge-hover: var(--input);
+  --make-rest: #10232a;
+  --make-rest-foreground: #ffffff;
+  --make: #0a6676;
+  --make-foreground: #ffffff;
+
+  /* States: always paired with an icon and a word. D1.5: each state has
+     a text colour (4.5:1 or better on page and card) and a fill for
+     strips, dots and legends (3:1 or better on the card). Degraded is a
+     clear amber, lighter than Down's red, so the two part by lightness for
+     colour-blind readers too; checks in DESIGN.md. */
+  --success: #15703f;
+  --success-tint: #e3f3ea;
+  --success-fill: #2e9e63;
+  --warning: #b45309;
+  --warning-tint: #fef4e3; /* 4.6:1 under the Degraded badge's ink */
+  --warning-fill: #d97706;
+  --danger: var(--destructive);
+  --danger-tint: #fce9e7;
+  --danger-fill: #c62828;
+  --info: #1f5fa6;
+  --info-tint: #e6effa;
+  --info-fill: #3b82d6;
+  --blocked: #6b4fb0;
+  --blocked-tint: #efe9fb;
+  --blocked-fill: #5b3a9e;
+  --neutral: #6a7c81;
+  --nocheck-fill: #c9d3d6;
+
+  /* Charts (DESIGN "Colour budget"): one series takes --chart-1; a
+     breakdown takes at most --chart-2 and --chart-3 plus Other in the
+     neutral. Each fill is 3:1 or better on the card (state_palette.py). */
+  --chart-1: var(--primary);
+  --chart-2: #2f8f9b;
+  --chart-3: #8c7a55;
+  --chart-other: var(--neutral);
+
+  /* Household people: a stable hue per person, ink text on top */
+  --person-ink: #10232a;
+  --person-1: #e58b6e;
+  --person-2: #6eaee0;
+  --person-3: #7db98a;
+  --person-4: #ae91e3;
+  --person-5: #e2b04a;
+  --person-6: #e07faa;
+  --person-7: #5fc2b9;
+
+  /* Capability marks */
+  --capability-chat: #0a6676;
+  --capability-image: #6d4fa8;
+  --capability-video: #a14466;
+  --capability-voice: #8a5a12;
+  --capability-transcribe: #2a5e9e;
+  --capability-decide: #5d55a0;
+  --capability-embed: #4a6b35;
+
+  /* Shape */
+  --radius: 6px; /* controls: buttons, inputs, menus */
+  --radius-card: 8px; /* cards, panels, dialogs and popovers */
+  --radius-badge: 4px; /* status badges and chips */
+  --radius-media: 6px; /* creation tiles */
+  --radius-composer: 18px; /* Home's composer only: the one object the page leads with */
+
+  /* Elevation: borders build structure; shadows only lift overlays */
+  --shadow-overlay: 0 16px 48px rgb(8 28 34 / 18%), 0 2px 6px rgb(8 28 34 / 8%);
+  --shadow-float: 0 6px 20px rgb(8 28 34 / 14%);
+  /* Home's composer: a hairline and a soft lift so the one place to start reads above the page (DESIGN "Composer") */
+  --shadow-composer: 0 1px 2px rgb(15 40 50 / 6%), 0 8px 24px -8px rgb(15 40 50 / 14%);
+
+  /* Motion */
+  --motion-duration: 200ms;
+  --motion-fast: 120ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layout */
+  --sidebar-width: 232px;
+  --rail-width: 72px;
+  --content-max: 1200px;
+  --overlay: rgb(6 22 27 / 45%);
+
+  /* Page geometry (DESIGN "System numbers v2"). --page-pad and --page-top
+     step down on narrower screens in the media queries below. */
+  --page-pad: 2rem;
+  --page-top: 2rem;
+  --content-read: 720px; /* settings, detail, Status and the Try form */
+  --content-home: 960px; /* Home's one column: its sections share these edges */
+  --content-composer: 760px; /* Home's composer, centred inside the column */
+  --composer-pad: 1rem; /* the composer's one inner padding: drop zone, picked-file chip and text box share it */
+  --space-section: 2rem; /* between sections, always */
+  --space-heading: 0.75rem; /* a section heading to its content */
+  --space-title: 1.5rem; /* the page header to the first section */
+  --space-stack: 1rem; /* blocks inside a card */
+
+  /* Rows and controls. Desktop controls are 32 or 40; 44 only below 640. */
+  --row-1: 2.5rem;
+  --row-1-dense: 2.25rem;
+  --row-2: 3.75rem;
+  --row-setting: 4rem;
+  --row-phone-1: 3rem;
+  --row-phone-2: 4rem;
+  --control-sm: 2rem;
+  --control-md: 2.5rem;
+  --control-touch: 2.75rem;
+
+  /* The KPI figure steps down on a phone. */
+  --figure-size: 1.5rem;
+  --figure-leading: 2rem;
+}
+
+@media (max-width: 1023.98px) {
+  :root {
+    --page-pad: 1.5rem;
+  }
+}
+
+@media (max-width: 639.98px) {
+  :root {
+    --page-pad: 1.25rem;
+    --page-top: 1.5rem;
+    --figure-size: 1.25rem;
+    --figure-leading: 1.75rem;
+  }
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #0c1f25;
+  --foreground: #e3ecee;
+  --card: #112930;
+  --card-foreground: #e3ecee;
+  --popover: #153039;
+  --popover-foreground: #e3ecee;
+  --muted: #16313a;
+  --muted-foreground: #b4c6cb;
+  --secondary: #16313a;
+  --secondary-foreground: #e3ecee;
+  --accent: #163c45;
+  --accent-foreground: #8fe0e7;
+  --border: #213e46;
+  --input: #58777f;
+  --ring: #8cc8cb;
+  --primary: #368087;
+  --primary-foreground: #ffffff;
+  --link: #8cc8cb;
+  --destructive: #ff8f85;
+  --destructive-foreground: #3a0f0c;
+  --chrome: #08171c;
+  --chrome-raised: #13292f;
+  --chrome-foreground: #e3eef0;
+  --chrome-muted: #b0c6cc;
+  --chrome-border: #1a333a;
+  --chrome-accent: #f08a5d;
+  --media-stage: #050f12;
+  --media-stage-foreground: #e3eef0;
+  --subtle-foreground: #9fb2b9;
+  --media-disc: rgb(255 255 255 / 85%);
+  --media-disc-foreground: #0c1f25;
+  /* Over the deep-water surface a pale tint turns grey and amber turns olive, so the dark wells are the
+     light theme's deeper hues at more strength, and Music is rose alone. */
+  --well-voice-from: rgb(140 200 203 / 22%);
+  --well-voice-to: rgb(140 200 203 / 10%);
+  --well-music-from: rgb(161 68 102 / 55%);
+  --well-music-to: rgb(161 68 102 / 24%);
+  /* 5% lighter than the page, with no edge (DESIGN "Composer"). */
+  --composer: color-mix(in srgb, var(--background) 95%, white);
+  --composer-edge: transparent;
+  --composer-edge-hover: transparent;
+  --make-rest: #e3ecee;
+  --make-rest-foreground: #0c1f25;
+  --make: #8cc8cb;
+  --make-foreground: #0c1f25;
+  --success: #6fd39b;
+  --success-tint: #12352a;
+  --success-fill: #4cc283;
+  --warning: #f5b544;
+  --warning-tint: #3a2e15;
+  --warning-fill: #f2a93b;
+  --danger-tint: #3f1f1e;
+  --danger-fill: #f0655a;
+  --info: #8db8f2;
+  --info-tint: #182e4a;
+  --info-fill: #6aa2ec;
+  --blocked: #c2a8f0;
+  --blocked-tint: #2a2340;
+  --blocked-fill: #d6c4ff;
+  --neutral: #8aa1a7;
+  --nocheck-fill: #3b5961;
+  --chart-1: var(--link);
+  --chart-2: #2f7f88;
+  --chart-3: #b9a274;
+  --capability-chat: #8cc8cb;
+  --capability-image: #c2a8f0;
+  --capability-video: #f0a3bf;
+  --capability-voice: #e8b65a;
+  --capability-transcribe: #8db8f2;
+  --capability-decide: #bdb4ec;
+  --capability-embed: #b7d99a;
+  --shadow-overlay: 0 16px 48px rgb(0 0 0 / 45%), 0 2px 6px rgb(0 0 0 / 30%);
+  --shadow-float: 0 6px 20px rgb(0 0 0 / 40%);
+  --shadow-composer: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px -6px rgb(0 0 0 / 45%);
+  --overlay: rgb(2 10 12 / 65%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration: 0ms;
+    --motion-fast: 0ms;
+  }
+}
+
+@theme inline {
+  --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+
+  /* Type roles (DESIGN "System numbers v2"): one utility per role, with its
+     line height and weight. New code uses these. */
+  --text-title: 1.5rem;
+  --text-title--line-height: 2rem;
+  --text-title--font-weight: 600;
+  --text-title--letter-spacing: -0.015em;
+  /* Home's greeting: below the composer in rank, so medium weight (DESIGN "Home"). */
+  --text-greeting: 1.75rem;
+  --text-greeting--line-height: 2.125rem;
+  --text-greeting--font-weight: 500;
+  --text-greeting--letter-spacing: -0.015em;
+  --text-verdict: 1.25rem;
+  --text-verdict--line-height: 1.75rem;
+  --text-verdict--font-weight: 600;
+  --text-heading: 1rem;
+  --text-heading--line-height: 1.5rem;
+  --text-heading--font-weight: 600;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.375rem;
+  --text-meta: 0.875rem;
+  --text-meta--line-height: 1.25rem;
+  --text-label: 0.8125rem;
+  --text-label--line-height: 1.125rem;
+  --text-label--font-weight: 500;
+  --text-badge: 0.75rem;
+  --text-badge--line-height: 1rem;
+  --text-badge--font-weight: 500;
+  --text-figure: var(--figure-size);
+  --text-figure--line-height: var(--figure-leading);
+  --text-figure--font-weight: 600;
+
+  /* Deprecated size scale (px): 12 · 14 · 15 · 16 · 20 · 24 · 30 · 40. Kept as
+     aliases until every surface has moved to the roles above.
+     2xs (10) is only for initials inside a 20 px person mark. */
+  --text-2xs: 0.625rem;
+  --text-2xs--line-height: 0.75rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.875rem;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-4xl: 2.5rem;
+  --text-4xl--line-height: 2.75rem;
+  --tracking-tight: -0.015em;
+  --tracking-display: -0.025em;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-link: var(--link);
+  --color-chrome: var(--chrome);
+  --color-chrome-raised: var(--chrome-raised);
+  --color-chrome-foreground: var(--chrome-foreground);
+  --color-chrome-muted: var(--chrome-muted);
+  --color-chrome-border: var(--chrome-border);
+  --color-chrome-accent: var(--chrome-accent);
+  --color-media-stage: var(--media-stage);
+  --color-media-stage-foreground: var(--media-stage-foreground);
+  --color-media-badge: var(--media-badge);
+  --color-media-badge-foreground: var(--media-badge-foreground);
+  --color-media-badge-hover: var(--media-badge-hover);
+  --color-subtle-foreground: var(--subtle-foreground);
+  --color-sidebar: var(--chrome);
+  --color-sidebar-foreground: var(--chrome-foreground);
+  --color-success: var(--success);
+  --color-success-tint: var(--success-tint);
+  --color-success-fill: var(--success-fill);
+  --color-warning: var(--warning);
+  --color-warning-tint: var(--warning-tint);
+  --color-warning-fill: var(--warning-fill);
+  --color-danger: var(--danger);
+  --color-danger-tint: var(--danger-tint);
+  --color-danger-fill: var(--danger-fill);
+  --color-info: var(--info);
+  --color-info-tint: var(--info-tint);
+  --color-info-fill: var(--info-fill);
+  --color-blocked: var(--blocked);
+  --color-blocked-tint: var(--blocked-tint);
+  --color-blocked-fill: var(--blocked-fill);
+  --color-nocheck-fill: var(--nocheck-fill);
+  --color-neutral: var(--neutral);
+  --color-person-ink: var(--person-ink);
+  --color-person-1: var(--person-1);
+  --color-person-2: var(--person-2);
+  --color-person-3: var(--person-3);
+  --color-person-4: var(--person-4);
+  --color-person-5: var(--person-5);
+  --color-person-6: var(--person-6);
+  --color-person-7: var(--person-7);
+  --color-capability-chat: var(--capability-chat);
+  --color-capability-image: var(--capability-image);
+  --color-capability-video: var(--capability-video);
+  --color-capability-voice: var(--capability-voice);
+  --color-capability-transcribe: var(--capability-transcribe);
+  --color-capability-decide: var(--capability-decide);
+  --color-capability-embed: var(--capability-embed);
+  --color-overlay: var(--overlay);
+  --color-media-disc: var(--media-disc);
+  --color-media-disc-foreground: var(--media-disc-foreground);
+  --color-well-voice-from: var(--well-voice-from);
+  --color-well-voice-to: var(--well-voice-to);
+  --color-well-music-from: var(--well-music-from);
+  --color-well-music-to: var(--well-music-to);
+  --color-composer: var(--composer);
+  --color-composer-edge: var(--composer-edge);
+  --color-composer-edge-hover: var(--composer-edge-hover);
+  --color-make-rest: var(--make-rest);
+  --color-make-rest-foreground: var(--make-rest-foreground);
+  --color-make: var(--make);
+  --color-make-foreground: var(--make-foreground);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-other: var(--chart-other);
+
+  --radius-xs: 2px; /* uptime bar segments only */
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius-card);
+  --radius-xl: var(--radius-card);
+  --radius-control: var(--radius);
+  --radius-panel: var(--radius-card);
+  --radius-badge: var(--radius-badge);
+  --radius-media: var(--radius-media);
+  --radius-composer: var(--radius-composer);
+  --shadow-lg: var(--shadow-overlay);
+  --shadow-xl: var(--shadow-overlay);
+  --shadow-overlay: var(--shadow-overlay);
+  --shadow-float: var(--shadow-float);
+  --shadow-composer: var(--shadow-composer);
+  --ease-standard: var(--motion-ease);
+
+  /* Compatibility aliases for routes not yet redesigned. Deprecated: new
+     code uses the names above. Each one resolves to a token, never a value. */
+  --color-vf-bg: var(--background);
+  --color-vf-surface: var(--card);
+  --color-vf-surface-2: var(--muted);
+  --color-vf-text: var(--foreground);
+  --color-vf-muted: var(--muted-foreground);
+  --color-vf-subtle: var(--muted-foreground);
+  --color-vf-border: var(--border);
+  --color-vf-border-strong: var(--input);
+  --color-vf-accent: var(--primary);
+  --color-vf-accent-ink: var(--primary-foreground);
+  --color-vf-ok: var(--success);
+  --color-vf-warn: var(--warning);
+  --color-vf-bad: var(--danger);
+  --color-vf-info: var(--info);
+  --text-vf-micro: var(--text-xs);
+  --text-vf-small: var(--text-sm);
+  --text-vf-body: var(--text-base);
+  --text-vf-heading: var(--text-lg);
+  --text-vf-title: var(--text-xl);
+  --text-vf-display: var(--text-3xl);
+  --radius-vf-sm: var(--radius);
+  --radius-vf-md: var(--radius);
+  --radius-vf-lg: var(--radius-card);
+}
+
+/* Legacy variable names read by legacy-components.css; all resolve to tokens. */
+:root {
+  --vf-bg: var(--background);
+  --vf-text: var(--foreground);
+  --vf-text-muted: var(--muted-foreground);
+  --vf-text-subtle: var(--muted-foreground);
+  --vf-accent: var(--primary);
+  --vf-accent-ink: var(--primary-foreground);
+  --vf-ok: var(--success);
+  --vf-warn: var(--warning);
+  --vf-bad: var(--danger);
+  --vf-info: var(--info);
+  --vf-border: var(--border);
+  --vf-border-strong: var(--input);
+  --vf-shell: var(--chrome);
+  --vf-topbar: var(--chrome);
+  --vf-panel: var(--card);
+  --vf-panel-raised: var(--popover);
+  --vf-field: var(--background);
+  --vf-code: var(--muted);
+  --vf-surface-1: var(--card);
+  --vf-surface-2: var(--muted);
+  --vf-surface-3: var(--secondary);
+  --vf-row-hover: var(--muted);
+  --vf-link-hover: var(--accent);
+  --vf-health-band: var(--muted);
+  --vf-font-sans: var(--font-sans);
+  --vf-font-mono: var(--font-mono);
+  --vf-font-serif: var(--font-sans);
+  --vf-radius-sm: var(--radius);
+  --vf-radius-md: var(--radius);
+  --vf-radius-lg: var(--radius-card);
+  --vf-radius-pill: 999px;
+  --vf-text-xs: 0.75rem;
+  --vf-text-sm: 0.875rem;
+  --vf-text-base: 0.9375rem;
+  --vf-text-md: 1.0625rem;
+  --vf-text-lg: 1.25rem;
+  --vf-type-title: 1.25rem;
+  --vf-type-title-leading: 1.3;
+  --vf-hit-target: 44px;
+  --vf-context-width: 300px;
+  --vf-shadow-panel: none;
+  --vf-shadow-row: none;
+  --vf-shadow-caustic-2: none;
+  --vf-elevation-base: none;
+  --vf-elevation-raised: var(--shadow-overlay);
+  --vf-transition-fast: var(--motion-fast) var(--motion-ease);
+  --vf-transition-base: var(--motion-duration) var(--motion-ease);
+}

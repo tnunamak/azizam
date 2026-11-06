@@ -1,0 +1,78 @@
+protocol_version: 1
+id: budget-rule-count
+executor: http-v1
+operations:
+  chat:
+    class: generate
+    request:
+      method: POST
+      path: /c
+      body:
+        encoding: json
+        base: empty
+        map:
+          - set: {to: /k0, value: 0}
+          - set: {to: /k1, value: 1}
+          - set: {to: /k2, value: 2}
+          - set: {to: /k3, value: 3}
+          - set: {to: /k4, value: 4}
+          - set: {to: /k5, value: 5}
+          - set: {to: /k6, value: 6}
+          - set: {to: /k7, value: 7}
+          - set: {to: /k8, value: 8}
+          - set: {to: /k9, value: 9}
+          - set: {to: /k10, value: 10}
+          - set: {to: /k11, value: 11}
+          - set: {to: /k12, value: 12}
+          - set: {to: /k13, value: 13}
+          - set: {to: /k14, value: 14}
+          - set: {to: /k15, value: 15}
+          - set: {to: /k16, value: 16}
+          - set: {to: /k17, value: 17}
+          - set: {to: /k18, value: 18}
+          - set: {to: /k19, value: 19}
+          - set: {to: /k20, value: 20}
+          - set: {to: /k21, value: 21}
+          - set: {to: /k22, value: 22}
+          - set: {to: /k23, value: 23}
+          - set: {to: /k24, value: 24}
+          - set: {to: /k25, value: 25}
+          - set: {to: /k26, value: 26}
+          - set: {to: /k27, value: 27}
+          - set: {to: /k28, value: 28}
+          - set: {to: /k29, value: 29}
+          - set: {to: /k30, value: 30}
+          - set: {to: /k31, value: 31}
+          - set: {to: /k32, value: 32}
+          - set: {to: /k33, value: 33}
+          - set: {to: /k34, value: 34}
+          - set: {to: /k35, value: 35}
+          - set: {to: /k36, value: 36}
+          - set: {to: /k37, value: 37}
+          - set: {to: /k38, value: 38}
+          - set: {to: /k39, value: 39}
+          - set: {to: /k40, value: 40}
+          - set: {to: /k41, value: 41}
+          - set: {to: /k42, value: 42}
+          - set: {to: /k43, value: 43}
+          - set: {to: /k44, value: 44}
+          - set: {to: /k45, value: 45}
+          - set: {to: /k46, value: 46}
+          - set: {to: /k47, value: 47}
+          - set: {to: /k48, value: 48}
+          - set: {to: /k49, value: 49}
+          - set: {to: /k50, value: 50}
+          - set: {to: /k51, value: 51}
+          - set: {to: /k52, value: 52}
+          - set: {to: /k53, value: 53}
+          - set: {to: /k54, value: 54}
+          - set: {to: /k55, value: 55}
+          - set: {to: /k56, value: 56}
+          - set: {to: /k57, value: 57}
+          - set: {to: /k58, value: 58}
+          - set: {to: /k59, value: 59}
+          - set: {to: /k60, value: 60}
+          - set: {to: /k61, value: 61}
+          - set: {to: /k62, value: 62}
+          - set: {to: /k63, value: 63}
+          - set: {to: /k64, value: 64}

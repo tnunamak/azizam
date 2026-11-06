@@ -1,0 +1,30 @@
+# A made-up molecule-smell offering (test fixture only, criterion 7 of the D0 proof). Input is a JSON vector; the
+# answer is a JSON molecule description, fetched as one raw file. It is an async job like any other http-v1 job.
+protocol_version: 1
+id: d0-smell
+title: Smell inference offering (test fixture)
+executor: http-v1
+
+operations:
+  smell.infer:
+    class: generate
+    job:
+      submit:
+        request:
+          method: POST
+          path: /v1/infer
+          body:
+            encoding: json
+            base: empty
+            map:
+              - copy: {from: /body/vector, to: /input/vector}
+        id: /job/id
+      poll:
+        request: {method: GET, path: "/v1/infer/{id}"}
+        status:
+          path: /state
+          states: {queued: pending, working: running, ready: succeeded, failed: failed}
+        interval_s: 0.5
+        max_wait_s: 5
+      fetch:
+        request: {method: GET, path: "/v1/infer/{id}/molecule"}

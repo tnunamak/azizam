@@ -1,0 +1,772 @@
+# Count ceilings enforced by scripts/ci/policy.py (docs/design/TEST_STRATEGY.md 6).
+# Units: pytest collected items (each parameter set counts; subtests do not);
+# vitest test cases; Playwright test x project over the gate configs
+# (playwright.config.ts, .live-data, .household). Retries never count.
+# Updated from measured suite/list counts on 2026-10-18 for W5 round 4. Only a slice that must add cases
+# raises a ceiling, in the same PR and with its reason; S14 lowers them.
+
+# VT (browser display-state cases moved to vitest, plus VT-FIX oracle restorations):
+# Playwright 759 -> 425 (-334: moved or collapsed, with 4 browser representatives restored:
+# multipart wire contract, signed media load failure, 1440 px long instance name,
+# post-search model grouping geometry); vitest +165 (1708 -> 1873). Counted with
+# ~/.tmp/vt-tools/counts.sh at b03f1053 + VT + VT-FIX.
+
+# Slice S13 (orphaned e2e files): +25 vitest and +24 Playwright cases that carry
+# the orphans' assertions into gated suites; node:test cases are new, from
+# probe-gates.test.mjs in the compat-node step. Measured at 0bff0431 + S13.
+[ceilings]
+# Long-audio STT: +9 collected cases = +3 planner contracts (four replace one),
+# +1 segment-only executor case, +2 late-model fallback/policy cases,
+# +3 replay-storage/deadline/pre-stream-connection-loss cases. The duplicate
+# admission-limit case is folded into test_segment_limit_and_deadline_are_deterministic;
+# its no-extraction/no-upload assertions cover both silence and forced cuts.
+# Gate speed r5: three more ci-local cases after r4 = 12702 collected.
+# Measured full-gate count before that consolidation: 12303; after: 12302 on the pre-merge base; train r69 (12664) + 9 = 12673 after the merge.
+# Measured after merging main r79 with D47: full hermetic pytest collected 14856;
+# the two review followups add one malformed-audio case and one migration case (14858).
+# Vitest ran 3046 cases, and Playwright listed 469 + 18 + 3 cases across gate configs.
+# Retention Slice 1b + Slice 2: 13 new pytest cases, then 6 first-review
+# and 6 second-review regression cases (14858 -> 14883), and
+# 2 new Vitest cases (3047 -> 3049), remeasured on this branch.
+# Retention Slice 6: 17 direct Python cases plus 25 generated route-probe
+# cases, one Vitest case, and two browser viewport cases. The full hermetic
+# suite collected 14936; Playwright lists 471 + 3 + 18 across gate configs.
+# Round 3: one shared-App route, one structural read-site scan, eight
+# store method/audience cases, and one Library usage case (+11).
+# Retention slice 4 (private temporary directory): 17 private-directory cases, 11 canary cases and 1 start.sh case (+29),
+# remeasured with --collect-only (14894 -> 14923).
+# Slice 4 review fixes: +21 cases for interrupted multipart parsing, worker cancellation,
+# lifetime ownership/exec, directory swaps, parent/ancestor permissions and relative STT escape.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14945.
+# Slice 4 round-2 followups: owner-only group membership, read-only ancestor validation,
+# legacy-spool warnings and OAuth content types; consolidate two obsolete mode cases.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14961; minus 2 after dropping the legacy spool warning: 14959.
+# STT scoring: +5 overlapping-word window/counting paths, +3 perfect recipe scores,
+# +1 Unicode/split/drop timing case, +2 interrupted-download cleanup cases,
+# +1 rights visibility case, and +4 source-rights/provenance schema cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 14975 (14959 + 16).
+# STT review followups: +11 tokenizer inputs, +2 source-rights cases,
+# +1 default/CLI case, +2 REST/MCP rights surfaces, +2 stale-scorer versions,
+# +1 filtered-overlap runner case and +1 MCP description case.
+# Full hermetic collection on 2026-10-20: 14995; full Vitest list: 3050.
+# D47 conformance: +55 cases for misleading duration metadata, bounded decode,
+# source-sample hard limits, off-grid frames, whole-file mode/envelope guards,
+# buffered voice references and direct/chunked receipt outcomes.
+# Review regressions include frame-grid round trips, fractional source samples,
+# bounded whole-file verification, missing-duration packet scans, internal attempts
+# and an exact on-grid hard maximum affected by floating-point subtraction.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 15014.
+# Private-temp hardening: 32 regression cases for explicit workspace escapes,
+# metadata staging/orphans, anonymous memfd failures and allocation ownership,
+# including rejected segment aliases with local and route-owned cleanup.
+# Remeasured with scripts/run-hermetic-pytest.sh --collect-only -q: 14991.
+# Review followups: one late-alias cross-spool chunking case and two measurement
+# scratch-symlink cases (+3). Full hermetic collection remeasured: 14994.
+# Merged retention slices 4 and 6: full hermetic collection measured 15091.
+# Vitest list and all three Playwright gate configs remeasured on the merged tree.
+# Round-3 followups: +10 deterministic write/cleanup/honesty/logging cases,
+# +4 real-auth current-ledger cases and +4 generated management probes.
+# Full hermetic collection on the merged repaired tree measured 15109.
+# Vitest lists 3050; Playwright lists 471 + 3 + 18 across the gate configs.
+# Admin sweep receipt isolation: +1 pre-existing-store teardown regression.
+# Full hermetic collection remeasured at 15110 after this repair.
+# Round-4 followups: invalid unsaved facts, three writer cancellation/error
+# cases, and a virtual-clock reload event case (+5). Full hermetic collection
+# remeasured at 15115.
+# Train r84: remeasured hermetic pytest 15241, Vitest 3051, Playwright 471 + 3 + 18 = 492 (2026-10-20).
+# D47 followups: +31 regression cases for decode reuse, guarded voice references,
+# disk accounting, integer sample limits, bounded WAV preparation, exact mono/stereo
+# codec cuts, resampled near-cap uploads, concurrency, implicit cleanup failures
+# replanning a source-sample tail hidden by resampling, and verification cleanup
+# preserving cancellation, deadline and media failures when unlink also fails.
+# Full hermetic collection on 2026-10-20 measured 15272.
+# D47 cross-vendor review: +17 cases for decode-cap/disk fallback equality,
+# two-hour stereo admission, early PCM cleanup, staged disk claims, bounded
+# metadata retries, canonical/retryable voice errors, and high-rate WAV normalization. Full hermetic
+# --collect-only on 2026-10-20 measured 15289.
+# D47 round-2 review: +4 multitrack first-audio-stream shared/fallback cases,
+# +2 lease receipt/unlink-race cases, +5 voice failure/retry-shape cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 15300.
+# D47 admission followups: +10 transcription/translation status cases,
+# +2 gate disk-classification cases and +3 voice denial/receipt cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 15315.
+# D47 round-3 followups: +2 held-gate fallback cases and +2 multipart write errno cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 15319.
+# Password boundary followups: +8 Python cases; hermetic collection measured 15327.
+# Three browser password-flow cases; full Vitest list measured 3054.
+# Library Mine default: remeasured 2026-10-20, Vitest 3051;
+# Playwright 471 + 3 + 18 = 492. Existing cases updated, no added cases.
+# Library explicit Mine scope: +5 owner lifecycle cases and +1 empty Everyone-to-Mine
+# case in each UI suite. Remeasured 2026-10-20: Vitest 3057;
+# Playwright 477 + 3 + 18 = 498 across all gate configs.
+# Plan visibility: +1 real-session catalog/key reassignment regression,
+# +3 Try plan-context cases, +2 category assignment-count cases,
+# +2 phone/desktop assignment journeys.
+# Plan visibility review followups: +4 Python holder/state cases, +3 Vitest
+# pending/count-parity/refresh cases, +2 browser refresh viewport cases.
+# Remeasured with full hermetic collection, Vitest list and all three Playwright configs.
+# Data hygiene: +68 regressions for private writers, activity retention and
+# fixture isolation, identity diagnostics, output availability and Response ownership.
+# Full hermetic collection: 15387; Vitest: 3051; Playwright: 471 + 3 + 18;
+# offline node:test: 5 compatibility + 82 Pi cases (2026-10-20).
+# Data hygiene followups: +14 orphan/symlink/identity/output cases and
+# +3 activity compaction/replay log cases. Collection before the latter: 15401.
+# Vitest list remains 3051; Playwright lists 471 + 3 + 18; offline Node runs 5 + 82.
+# Full run collected 15404; the integration fix adds one absent-history stage case.
+# Retention slice 3: +39 profile, canary, restart, refusal and pinned-shim cases.
+# Full hermetic collection measured 15358 on 2026-10-21.
+# Retention review follow-ups: +29 deterministic diagnosis, environment, read-only
+# rehearsal, worker-mode and isolated mutation cases; full collection = 15387.
+# Slice 3 round-2 follow-ups: +6 lower-case proxy cases, +3 upstream worker-default cases (15387 -> 15396).
+# MOSS Image: three data-only workflows add six catalog UI-graph/payload cases.
+# Full hermetic --collect-only -q on 2026-10-20 measured 15325.
+# Manifest-owned image reseeding: +8 batch/retry/input-name cases, +3 missing
+# binding cases, +11 byte-identical legacy graph cases and +1 generation-route case.
+# Full hermetic --collect-only -q measured 15348.
+# MOSS followups: +20 manifest-less fixed/random seed and byte/record cases,
+# +2 adaptive batch-limit cases, +1 invalid seed target, +1 identity-hash case,
+# and +1 legacy empty-round fixed-seed offset case.
+# Full hermetic --collect-only -q on 2026-10-21 measured 15373.
+# Train r86: full hermetic collection measured 15567 on 2026-10-21,
+# including six MOSS/private-output/availability integration cases.
+# Review gaps r86: +1 plan held only by a disabled app, +1 young-stage sweep case.
+# Full hermetic --collect-only -q on 2026-10-21 measured 15569.
+# Vitest list: 3068; Playwright gate lists: 481 + 3 + 18 = 502.
+# Offline node:test runs: 5 compatibility + 82 Pi = 87.
+# Owner visibility step 1, remeasured after the v4.2 corrections:
+# 58 matrix cases, 48 independent TD-oracle cells, 2 real-auth identity cases,
+# 1 HTTP differential, 6 inventory cases, 38 projection cases and 2 stored-shape
+# cases. These are 155 cases total over the 15319 baseline; origin cases are
+# included in the matrix count, not added a second time.
+# Hermetic pytest collection: 15474; Vitest list: 3051.
+# Playwright lists: 471 + 3 + 18 = 492.
+# Owner visibility round 2: +73 cases (15474 -> 15547): 3 inventory,
+# 4 identity/invariant/allocation regressions, 8 stored-receipt cases,
+# 56 independent round-2 oracle cells and 2 principal/projection benchmarks.
+# Hermetic collection before the final allocation case: 15546. The final
+# full run/collection verifies 15547; Vitest remains 3051 and Playwright 492.
+# Step 1 final low fixes: +2 cases (string principals, undispatched route) -> 15549.
+# Train r87 (r86 main + owner visibility step 1, +230 over 15319): 15567 + 230 = 15797.
+# Plan deletion review round 1: +3 (inactive session App returns to its person; disabled-person App; same-as-person blocker) -> 15572.
+# Retired eight image workflows and the Ideogram prompt tests (-30), then +2 Klein 9B parity cases; --collect-only -q on 2026-10-21: 15539.
+# Train r88: 15797 + 5 (review-gap and plan-deletion cases) - 28 (retired legacy image workflows, +2 Klein 9B parity) = 15774.
+# Train r88 test gaps: +2 plan-deletion blockers (enabled-App-only, sign-in-rule-only) -> 15776.
+# FIBO 2 Edit Turbo: one data-only workflow adds three cases (catalog UI graph, submit payload, legacy seed-binding graph bytes).
+# Full hermetic --collect-only -q on 2026-10-21 measured 15800.
+# Manifest prompt binding: +17 full-catalog graph differentials, +6 mapping/fallback
+# cases and +2 FIBO template/public-route signature checks.
+# Full hermetic --collect-only -q on 2026-10-21 measured 15825.
+# Prompt-binding followups: replace 17 graph hashes with 14 scoped manifest lint
+# cases and one synthetic rejection case.
+# Full hermetic --collect-only -q measured 15823 on 2026-10-21.
+# Train r89: full hermetic --collect-only -q measured 15804 on 2026-10-21.
+# Web is unchanged from r88; retain its Vitest ceiling (3068).
+# Account switcher A1: +15 cases for seven sign-in paths, old cookies and Try keys,
+# concurrent sign-ins, unusable cookies, failed login, and single-revocation step-up.
+# Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 15812 (2026-10-21).
+# A1 merged with r88: 15791, plus two invite proof-time regression cases.
+# Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 15793 (2026-10-21).
+# Account switcher A4 round 3: 25 lifetime, epoch, Try job, ETag and range regressions; hermetic collection measured 15844.
+# A4/r88 merge and round 4: 12 message-version, revocation, dedicated-key and
+# policy-cache regressions; full hermetic --collect-only -q measured 15835 on 2026-10-21.
+# Keyframe video workflows: +39 cases in tests/test_video_keyframes.py and +1 signature case (15797 -> 15837),
+# counted with scripts/run-hermetic-pytest.sh --collect-only -q on the two files.
+# Keyframes round 2: +2 cases for integer binding declarations and rejection before
+# asset resolution. Full hermetic collection measured 15845 (replaces the prior two-file estimate).
+# Keyframes round 3: +6 regressions; merged r88 full hermetic --collect-only -q
+# measured 15830 on 2026-10-21 (15845 - 21 from r88 + 6).
+# Media folder asked at Remove missing: +6 pytest cases (partial copy never adopted, mismatch never adopted,
+# no counting on confirmed or member reads, unrelated folder, two pinned-marker swap cases); Library spec 95 -> 98
+# cases by count. Measured 2026-10-21: pytest collect 15803, vitest list 3071.
+# Media folder round 3: +6 vitest cases (owner Confirm the media folder action); pytest unchanged. vitest list 3077.
+# Media-folder round 4: measured hermetic collection 15806 (+3 viewer-plan regressions)
+# and vitest list --json 3082 (+3 Library and +2 Settings rendered cases).
+# Media-folder round 5: measured full hermetic collection 15812 and Vitest list 3084.
+# Covers stale evidence refusal, smaller selection, lightweight reads, viewer scope,
+# required action evidence, checked-total grammar and zero-missing evidence.
+# Media-folder round 6: full hermetic collection measured 15814 (+2: listing
+# skips evidence/plan work; same-folder evidence drift refuses confirmation).
+# Full Vitest list measured 3086 (+2: filter reuse; click snapshot across refetch).
+# Train r90: merged r89, A1, A4, keyframes and media-folder fixes, plus one
+# warm asset-family memo regression for A1/A4. Hermetic --collect-only -q
+# measured 15952; npx vitest list measured 3091 (2026-10-21).
+# The merged public error-copy fixture adds one parameterized case.
+# Final hermetic --collect-only -q measured 15953 (2026-10-21).
+# Video refuses a bad character-replace selection and a full queue before uploading: +3 route cases.
+# Hermetic --collect-only -q measured 15956 (2026-10-21).
+# Sign-in session writes off-loop: three cases (claim, local login, provider callback).
+# Hermetic --collect-only -q measured 15956 on 2026-10-21.
+# Remove-missing follow-ups: +2 (an unseen job removal refuses; a 64-char
+# non-hex id is never removed). Hermetic --collect-only -q measured 15955.
+# Remove-missing round 2: order-independent job count (+1 pytest); removal
+# announcement matrix (+4 Vitest). Full collection measured 15956 / 3095.
+# Lowercase-only digest check adds one uppercase-ID regression; full collection measured 15957.
+# Train r91: r90 15953 + video validation 3 + sign-in off the loop 3 + remove-missing follow-ups 4 = 15963 measured.
+# Train r91: remove-missing copy and toast specs, 3095 measured.
+# Workflow edit transport: +8 manifest replays, +1 repeated-part contract,
+# +8 adapter-order checks and +2 real-catalog fixture checks. Full hermetic
+# --collect-only -q measured 15972 after merging r90 (2026-10-21).
+# Try adds eight repeated-part, real-catalog, filename and model-switch cases.
+# Full vitest list --json measured 3099 after merging r90 (2026-10-21).
+# Train r92: r91 15963 + multi-picture edit contract and catalog cases = 15982 measured.
+# Slice A3 (remembered people, D54): +23 cases in tests/test_remembered_people.py. --collect-only -q measured 16005.
+# A3 review round 2 (F1-F8): +16 cases in tests/test_remembered_people.py (one parametrized twice). --collect-only -q measured 16021.
+# LTX middle-guide workflow adds frame-grid, compression, audio and schema
+# coverage: 18 cases. Hermetic --collect-only -q measured 16000 (2026-10-21).
+# Keyframe frames maximum: +1 over-long refusal case = 16001 measured.
+# Train r93: r92 15982 + multi-picture follow-ups 11 + keyframe extras 19 = 16012 measured.
+# Merge of origin/main into A3: 15982 + A3 39 + r93 30 = 16051 measured (--collect-only -q, 2026-10-22).
+# A3 round 3 (review follow-ups): +5 cases in tests/test_remembered_people.py. --collect-only -q measured 16056.
+# W1 r2 (one way to end a session, review fixes): +3 pytest cases for the view id of service-account sessions,
+# the 503 for an unreadable view key, and a provider reauth keeping the view id. collect-only 16056 -> 16059.
+# W1 r3: +2 provider-path probes in test_session_rotation.py and +3 cases for the broken view key (health degraded,
+# health plainly healthy, the start-up report once) in test_session_asset_urls.py. collect-only 16059 -> 16064.
+# Owner 401 probe: +3 cases in tests/test_remembered_people.py. A member signing in on another browser leaves the owner
+# signed in, by password and by remembered tile; a sign-in that carries the owner's cookie ends that sign-in. collect-only 16064 -> 16067.
+# A3 follow-ups in tests/test_remembered_people.py: +4 cases for the "you" mark on the signed-in person's entry, +1 for a
+# forgotten single sign-on tile (the unknown-tile case changed in place), +5 for the remembered-list read cap (default,
+# gateway setting, invalid settings). collect-only 16067 -> 16077.
+# Slice A2 (fresh sign-in on every sign-in from the sign-in page, D54): +3 net in tests/test_session_lifecycle.py
+# (three missing-or-old sign-in-time cases and one any-person case; the old ordinary-login case folds into them),
+# +4 in tests/test_signin_test_flow.py (three provider-test answers and the saved answer), +2 sign-out cases in
+# tests/test_exposure_oidc_security.py. --collect-only -q measured 16065.
+# A2 review round 2 (L1 iat bound, L2 tile fresh, L3 sign-out throttle, L4 https-only sign-out, L5 claims request, F1
+# refusal link): +14 pytest cases: 5 in tests/test_session_lifecycle.py, 4 in tests/test_exposure_oidc_security.py,
+# 4 in tests/test_oidc_authorization_security.py, 1 in tests/test_remembered_people.py. --collect-only -q measured 16079.
+# Train r95 rebuilt on r98: 16077 + A2 23 = 16100.
+# Owner visibility step 2 (App-binding authority, guards, preview, /me trusted addresses): collect-only 16077 -> 16119.
+# Step 2 finished (pre-cut-over mode and its back-fill tests, accept and apply, /me keep routes, the e2e owner seed): measured with scripts/run-hermetic-pytest.sh --collect-only -q on 2026-10-23: 16174.
+# Step 2 security review fixes (keep only by the owner and only when provable, replace, the /me address removal, the
+# lifetime lock, orphaned bindings, the guard on App-key secret and expiry, the fresh-install marker, the probes as plain
+# assertions): measured with scripts/run-hermetic-pytest.sh --collect-only -q on 2026-10-23: 16219.
+# Owner visibility step 2, round 4 (the keep rule with administrator confirmation, /me misses, the address removal's
+# audit, the lifespan lock): measured with scripts/run-hermetic-pytest.sh --collect-only -q on 2026-10-23: 16245.
+# Keep UI round 3 (the one-step re-add route and its freeze entries, the keep confirmation, one keep rule for the
+# Keep UI round 3 (the one-step re-add route and its freeze entries, the keep confirmation, one keep rule for the
+# cut-over snapshot): collect-only 16245 -> 16265, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+# Owner visibility step 2, round 5 (the lifetime hold released when start-up is cancelled, one ownership-scoped key
+# lookup, and the counted administrators with their sentence): +1 lifetime, +2 lookup-shape, +1 key-count message,
+# +8 sentence cases. collect-only 16265 -> 16277, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+# Slice 5a (request history, server side): tests/test_request_history_*.py (contract, secret floor, storage and
+# upgrade, capture, forget and receipts, reader matrix, maker routes and fences, member choice): collect-only 16077 -> 16231.
+# Slice 5a review fixes: +26 cases in tests/test_review_retention_s5a_probes.py (the reviewer's probes, now on the
+# branch) and +16 in tests/test_request_history_s5a_review.py. collect-only 16231 -> 16273 (2026-10-23).
+# Slice 5a round-2 review fixes: +31 cases in tests/test_review_retention_s5a_r2_probes.py (the round-2 probes; 18 were
+# strict xfails before the fixes, and now are plain) and +18 in tests/test_request_history_s5a_r3_fixes.py. collect-only
+# 16273 -> 16322 (2026-10-23).
+# Slice 5a round-4 review fixes: +72 cases in tests/test_request_history_s5a_r4_fixes.py (the sub-delim and ambiguous
+# user-info cases, the depth limit and fullwidth names, cancelled writes and drains, and body forgets in flight).
+# collect-only 16322 -> 16394 (2026-10-23).
+# Slice 5a round-5 review fixes: +55 cases in tests/test_request_history_s5a_r5_fixes.py (12 for JSON carried in a
+# string value, 43 for format characters in a credential name). collect-only 16394 -> 16449 (2026-10-23).
+# Slice 5a round-6 review fixes: +49 cases in tests/test_request_history_s5a_r6_fixes.py (21 for where the authority
+# ends, 15 for JSON held in string literals and the record's JSON budget, 2 for a body forget that is whole before the
+# caller is known, 11 for default-ignorable characters in names).
+# collect-only 16449 -> 16498 (2026-10-23).
+# Slice 5a round-7 review fixes: +39 cases in tests/test_request_history_s5a_r7_fixes.py (the URL rule, the decoded
+# literal, the budget check before a parse), and one test split in two in tests/test_request_history_redaction.py.
+# collect-only 16498 -> 16538 (2026-10-23).
+# Slice 5a round-8 fixes: +15 cases in tests/test_request_history_s5a_r8_fixes.py (token-shaped URL path segments).
+# collect-only 16538 -> 16553 (2026-10-23).
+# Slice 5a round-9 fixes: +54 cases in tests/test_request_history_s5a_r9_fixes.py (the token rule for a scheme, prose
+# punctuation after a token segment, and percent-decoded segments). collect-only 16553 -> 16607 (2026-10-23).
+# Train r100: r99 16277 + slice 5a (16613 - 16077 = 536) = 16813.
+# Owner visibility step 3 slice 1: +36 cases in test_library_paths.py, one
+# activity-feed projection case and one client-projection shape case. Focused
+# hermetic run collected affected files; no full-suite collection was run.
+# Total: 16813 + 38 = 16851.
+# Slice 5b1 round 2 (the household switch on the choice, the list preview): +15 cases, 1 in
+# tests/test_request_history_notice.py and 14 in tests/test_request_history_preview.py. The base commit c0402b68e
+# collects 16837: slice 5b1 added cases without moving the ceiling, so this sets the measured count, not the sum.
+# Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 16852 (2026-10-23).
+# Request-history end-to-end matrix adds 140 cases; full hermetic collection measured 16953 on 2026-10-23.
+# Train r101: + tests/test_ownership_cutover_verification.py (35 cases) = 16988.
+# Owner visibility step 3 slice 1 round 2: full hermetic collection measured 16884 on 2026-10-23.
+# A clean worktree at origin/main (3ca403cc5) collects 16823 the same way, so the train r101 figure
+# (16988) above does not reproduce; the ceiling follows the measurement.
+# A4 throttle memo: +3; LTX frame-rate: +1; sign-in write failures: +25 cases.
+# Atomic sign-in failure coverage brings the collection to 16842 (2026-10-23).
+# Sign-in round 2: +16 cases: a session that ends while the person is at the provider still signs them in (+1);
+# invite and first-owner write failures at each account and session step (+13); pins for a failed provider sign-in
+# expiring its binding cookie and for concurrent password sign-ins (+2). collect-only 16842 -> 16858 (2026-10-23).
+# Request retention slice 5b server: +20 collected cases across privacy permission, delegated retention,
+# MCP tools and the expanded request-history access matrix. Hermetic collect-only: 16813 -> 16833 (2026-10-23).
+# Same-App history read regression: +1 case. Hermetic collect-only: 16834 (2026-10-23).
+# Remote embeddings options (+7 in tests/test_provider_execution_embeddings.py) and the A1111 forget (+7 in
+# tests/test_a1111_prompt_forget.py): collect-only 16813 -> 16827 (2026-10-23).
+# Train r102: collect-only measured 17071 (sign-in atomic + follow-ups, request history 5b-2, embeddings and A1111 forget).
+# Home reads engine rows (tests/test_home_engine_rows.py, 3 cases) and one health verdict per probe outcome
+# (tests/test_on_demand_health_probe.py, 9 cases): collect-only 16813 -> 16825 (2026-10-23).
+# Home engine rows, round 2: +7 cases in tests/test_home_engine_rows.py (a stale burst, a cold burst, a cancelled reader,
+# a failed refresh, and the probe deadline) and +10 in tests/test_health_connect_failures.py (refused, DNS and TLS
+# against a resident and an on-demand engine, and the cause of a failed connection). collect-only 16825 -> 16842 (2026-10-23).
+# Home's cached health evidence (+3 in tests/test_home_engine_rows.py) and the health probe deadline (+1 in
+# tests/test_on_demand_health_probe.py): collect-only 16842 -> 16846.
+# Train r103 step 1 (Home speed and status fixes): 17071 + 35 (16848 - 16813) = 17106, provisional until the final hermetic collection.
+# Walkthrough small fixes (2026-10-23): step-up no longer asks for a person's own keys, addresses or Try key. The
+# SENSITIVE_ROUTES cases drop nine; the own-account cases add ten plus one list check; one review test (a confirmed
+# key) is retired. collect-only 16988 -> 16989.
+# Train r103 step 2 (key reveal): 17106 + 1 (16989 - 16988) = 17107, provisional until the final hermetic collection.
+# Slice 5b1 round 3 (the maker on each receipt, replies kept by default, the account switch's household-off state): +12
+# cases, 9 in tests/test_receipt_maker_retention.py and one each in tests/test_request_history_contract.py,
+# tests/test_request_history_member_choice.py and tests/test_request_history_capture.py.
+# Measured with scripts/run-hermetic-pytest.sh --collect-only -q: 17039 (2026-10-23).
+# Train r103 step 3 (retention slice 5b1): 17107 + 51 (17039 - 16988) = 17158, provisional until the final hermetic collection.
+# History/Library cascade and atomic-write coverage add three pytest cases.
+# Library cascade r2 adds six regression cases; full hermetic collect-only measured 16822 (2026-10-23).
+# Library cascade r3 adds four regression cases (a distinct request after a Library delete, a late write for the deleted
+# request, another member, a staged prompt's origin): collect-only 16822 -> 16826 (2026-10-23).
+# Train r103 step 4 (Library cascade): 17158 + 13 (16826 - 16813) = 17171, provisional until the final hermetic collection.
+# Switcher chooser (W4 and W5, without A2): +1 case, the sign-in options report fresh_sign_in as false
+# (tests/test_accounts.py). Ceiling 16988 -> 16989 (2026-10-23).
+# Sign-in attempt limit (AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW): +10 cases for the default, an override, invalid values
+# and the per-email limit staying at 10 (tests/test_accounts.py, tests/test_remembered_people.py).
+# Ceiling 16989 -> 16999, remeasured with scripts/run-hermetic-pytest.sh --collect-only -q (2026-10-23).
+# Train r103 step 5 (account chooser): 17171 + 11 (16999 - 16988) = 17182, provisional until the final hermetic collection.
+# Train r103: collect-only measured 17185.
+# Status snapshot round 3: tests/test_status_snapshot.py goes from 8 to 17 cases, and the new
+# tests/test_backend_health_sampler.py adds 3: collect-only delta +12 (2026-10-23).
+# Status fallback and sampler round 4: tests/test_service_row_cache.py (new) adds 3 cases, tests/test_status_snapshot.py
+# adds 2, and tests/test_backend_health_sampler.py adds 2: collect-only 16869 -> 16876 (2026-10-23). The ceiling of
+# 16860 was already below the 16869 that 1104834e7 measures, so this sets it to the measured count.
+# Status probe ownership: +1 case in tests/test_service_row_cache.py (a finished fallback probe leaves a newer probe
+# registered). The two tests whose arrangement moved to the snapshot build keep their count.
+# collect-only 16877 -> 16878 (2026-10-23).
+# Train r104: collect-only measured 17215.
+# Try cleanup: +1 case, the ACE-Step denoise help-line check in tests/test_workflows_catalog.py; collect-only 17216.
+# ACE-Step denoise removal: that case became the check that no denoise input is offered, with the same count.
+# ACE-Step extension test: +1 case, a denoise control is refused as an unknown input (tests/test_tangoflux_audio_generate_manifest.py).
+# collect-only 17217 measured with scripts/run-hermetic-pytest.sh --collect-only -q (2026-10-24).
+# OV3 slice 1 round 3, merged with origin/main 89e514766: the stamped job maker, the stamped Library decision, the
+# activity page filled before its limit, the migration test and the tests for each. Full hermetic collection measured
+# 17280 on 2026-10-23.
+# OV3 slice 1 round 4: +10 maker-backfill cases (personal, session, service and parent-link jobs, a receipt that names
+# another job, unresolved jobs, the Library listing, the second run), +4 bounded activity-feed cases (a mostly
+# unreadable table, cursor continuity, page size, a malformed cursor) and +1 Library source-label case.
+# Full hermetic collection measured 17295 on 2026-10-24.
+# OV3 slice 1 round 5: +5 maker-backfill cases (a user-principal job, a service-account job, the next pass on a job
+# the first pass left without a person, a user job the current code stamped, a user job the current code stamped with
+# a connection) and +1 usage-count case. Full hermetic collection measured 17301 on 2026-10-24.
+# OV3 slice 1 round 6: the activity cursor tests grow to 29 cases (+25: the sealed cursor's secrecy, tamper, foreign,
+# expired and malformed refusals, the one-400 check, and the field checks), +2 for a refused cursor at the route and
+# a member's job that stays listed after its receipt is pruned, and +4 for the upsert maker stamp.
+# Full hermetic collection measured 17332 on 2026-10-24.
+# Train r105 (Try cleanup + OV3 slice 1): collect-only 17334 measured on the merged tree (2026-10-24).
+# Train r105 release-gate fix: the public-failure scope cases split into the Library refusal (+4). Collect-only 17338,
+# and the full hermetic run passed 17334 with 3 skipped and 1 xfailed (2026-10-24).
+# Train r105 video maker stamp: +2 cases, one for the stamp rule of a sync-delivered video and one for the four readers
+# of a service App's video through the gateway route. Collect-only 17340 measured at 2e07a5b20 (2026-10-24).
+# Sign-in privacy round: +1 case (tests/test_accounts.py, the invite answer names the owner by role, not by name; the
+# options case is renamed). This branch, which carries the Home branch's cases on top of main r104, collects 17242
+# (measured 2026-10-23, collect-only through scripts/run-hermetic-pytest.sh).
+# Walkthrough A16/A17 (Usage totals and local counts): +5 pytest cases in tests/test_me_media.py for recorded decision costs,
+# unreported remote receipts, served-here requests, pre-routing refusals and the cost rule. collect-only measured 17220 (2026-10-24).
+# Make dispatch receipts: +10 pytest cases in tests/test_image_handler_gaps.py (the image routes' start stamp, with and without
+# a refusal), tests/test_session_make_runtime.py (the Make job's dispatch record, refusals, remote, first dispatch) and
+# tests/test_me_media.py (Usage counts for a completed and a refused Make job). collect-only measured 17230 (2026-10-24).
+# Walkthrough A16/A17 (Usage counts a media job once): +8 pytest cases in tests/test_me_media.py for a picture made through a
+# job, two attempts, a failed picture, a refusal before dispatch, a request outside any job, a work receipt the viewer cannot
+# read, a submit receipt from last month, and audio or video jobs. collect-only measured 17238 (2026-10-24).
+# Walkthrough A16/A17 round 5 (Usage finds a media job's submit receipt by its job id): +4 pytest cases in tests/test_me_media.py
+# for a picture that still counts once after its job record is removed, an older submit receipt left unlinked, a job record
+# another app owns, and an audio job after its record is removed. collect-only measured 17242 (2026-10-24).
+# Usage review fixes (media job folding, replays and start times): +7 pytest cases in tests/test_me_media.py for a success
+# with no start time, a success stored before start times, a chat named only as a job's parent, a same-key replay of a
+# failed picture, a picture row's model, an unpriced remote attempt, and a same-key replay of a failed image job through
+# the real image route. collect-only measured 17249 (2026-10-24).
+# Train r106 (2026-10-24): full hermetic collection is 17401 on the merged tree (scripts/run-hermetic-pytest.sh --collect-only -q).
+# Usage review P2 fixes (unpriced cost from work attempts, legacy job failure): +2 pytest cases in tests/test_me_media.py for a
+# dispatch-stamped submit beside a priced remote attempt, and a legacy job that names its readable creator and has failed.
+# collect-only measured 17251 (2026-10-24).
+# Train r106 after merging A17 round 7 (+2 Usage fold cases): 17401 + 2 = 17403.
+# API reference App key (2026-10-24): +2 pytest cases in tests/test_headless_access.py, one for the App key schemes
+# and one for the unsigned reference listing every path. collect-only measured 17405 (2026-10-24).
+# API reference security (2026-10-24): +8 pytest cases in tests/test_headless_access.py, for each operation's security,
+# the mount predicate, the refusal probes, the owner note, the schemes, the public and key-layer paths, and /me.
+# collect-only measured 17413 (2026-10-24).
+# API reference audience and signed links (2026-10-24): +14 pytest cases in tests/test_headless_access.py, seven for
+# the declared-mode probes (one per mode) and seven for the request history (refused without credentials, admitted to
+# the maker's own session). collect-only measured 17427 (2026-10-24).
+# API reference bearer-only write and signed-link refusals (2026-10-24): +19 pytest cases in tests/test_headless_access.py,
+# one check that the signed operations are the probed ones, ten refusals (a missing and a wrong signature on each of the
+# five signed operations), five signed positive controls, one check that the bearer-only routes are the probed ones, the
+# drain write's session and bearer probe, and one scan of the handlers that refuse non-bearer credentials.
+# collect-only measured 17446 (2026-10-24).
+# Per-model kinds (2026-10-24): +10 cases in tests/test_registered_model_kinds.py and +1 route case in
+# tests/test_engine_admin_routes.py; collect-only measured 17414 (scripts/run-hermetic-pytest.sh --collect-only -q).
+# Refused kinds (2026-10-24): +5 cases in tests/test_registered_model_kinds.py and +2 route cases in
+# tests/test_engine_admin_routes.py; collect-only measured 17421 (scripts/run-hermetic-pytest.sh --collect-only -q).
+# Voice and kinds on every save (2026-10-24): +2 cases in tests/test_registered_model_kinds.py and +6 cases in
+# tests/test_generic_service_model_kinds.py; collect-only measured 17429 (scripts/run-hermetic-pytest.sh --collect-only -q).
+# Kinds on a whole-registry save and a package import: +6 cases in tests/test_generic_service_model_kinds.py;
+# collect-only measured 17435 (scripts/run-hermetic-pytest.sh --collect-only -q).
+# Changed-only kind check (2026-10-24): +8 cases in tests/test_generic_service_model_kinds.py and +1 in
+# tests/test_engine_admin_routes.py; collect-only measured 17444 (scripts/run-hermetic-pytest.sh --collect-only -q).
+# Generated avatars (2026-10-24): +28 cases in tests/test_avatar_generation.py. collect-only on this branch measures 17271,
+# 158 below the merged-tree figure above, so the ceiling moves by the new cases only: 17403 + 28 = 17431.
+# Generated avatars round 2 (2026-10-24): collect-only on this branch measures 17287 (17271 before round 2), so the
+# ceiling moves by that change: 17431 + 16 = 17447.
+# Generated avatars round 3 (2026-10-24): the automatic default's admission and manual-choice races. In
+# tests/test_avatar_generation.py, 14 cases are added and 2 replaced: a net of +12. The feature tip before this round
+# measured 17452 (scripts/run-hermetic-pytest.sh --collect-only -q), already 5 over round 2's ceiling, so the ceiling is
+# set to this round's measured count.
+# Generated avatars round 4 (2026-10-24): one regression case in tests/test_avatar_generation.py for a manual make that
+# starts during the automatic default's lookup. The feature tip before it measured 17464, and collect-only measures
+# 17465 with it (scripts/run-hermetic-pytest.sh --collect-only -q), so the ceiling is set to 17465.
+# Train r107 (2026-10-24): collect-only measured 17554 on the merged tree (scripts/run-hermetic-pytest.sh --collect-only -q).
+# Train r107, the read-only avatar generator and the automatic picture's cue (2026-10-24): five cases in
+# tests/test_avatar_generation.py. collect-only measures 17559 on the tree.
+# F2/F3 (2026-10-24): six regression cases for left-out service PATCHes and sign-in session Apps.
+# collect-only measures 17565 on this branch.
+# +1: a failed session App repair after sign-in leaves the person signed in (tests/test_accounts.py).
+# L1 capability labels (2026-10-24): two cross-layer checks added and one invalid member-copy check removed;
+# collect-only measured 17560 (scripts/run-hermetic-pytest.sh --collect-only -q).
+# Restored the member jargon regression: collect-only measured 17561.
+# Train r108 (F2/F3 + L1, 2026-10-24): hermetic collect-only remeasured 17568 on this tree.
+# Sign-out response hardening (2026-10-25): +3 pytest and +5 Vitest; measured at 17575 and 3581 (`vitest list --root web`).
+# Rest of train r113 (MCP image previews, GPU memory observation, alias context; 2026-10-30): the gate collected 17616.
+# Trains r114 and r115 (2026-10-30): batch_size, App request history, label roles, Klein binding, and the mesh release; the r114 gate collected 17816 with all of them.
+# A2 (fresh sign-in, provider sign-out; train r115): +23 pytest cases on top.
+# feat/mesh-capability on top of that tree (2026-10-30): +17 cases (mesh starter migration 6, mesh access plan 5, workflow OpenAPI mesh 4, mesh manifest 1, plan editor 1), -2 mesh access-plan cases replaced.
+# Mesh discovery probe cache (2026-10-30): +2 cases in tests/test_mesh_discovery.py. Train r116 = r115's 17839 + mesh's 17.
+# Mesh registry upgrade (train r116 hotfix): +6 cases in tests/test_mesh_registry_upgrade.py (upgrade adds the
+# mesh frontend and backends; step runs once; removal stays removed; PUT keeps resource_capacity; absent block).
+# Mesh in the member catalog (train r118): +3 cases in tests/test_mesh_member_catalog.py (healthy row is ready;
+# unhealthy row is listed as not available; one probe serves every view).
+# Sign-out answers at once (2026-11-01): +4 cases in tests/test_session_asset_urls.py (JSON sign-out answers carry no
+# cache clearing, 2; the cache clearing route answers and keeps the session; it refuses another site). Collected 17869.
+# Restricted items hidden from every list (2026-11-01): +3 cases in tests/test_category_visibility.py (a list
+# hides an item the plan denies; a remote model without its provider; a refusal answers as hidden).
+# Train r119: both slices together, 17865 + 4 + 3.
+# One catalog (2026-11-01): the mesh row joins the shared catalog and its probe answers as evidence; +6 cases.
+# Off, not a fault (2026-11-02): +3 cases (an unset or turned-off 3D route lists as Off; a probe that finds its
+# service off projects Off and no request reading supersedes it, 2).
+# Train r120: 17872 + 6 + 3.
+# Plan summaries name restricted categories (2026-11-02): +20 cases, 17881 + 20 = 17901: tests/test_access_plans.py (11),
+# tests/test_category_enforcement.py (4), tests/test_access_plan_migration.py (1), tests/test_admin_runtime.py (1),
+# tests/test_accounts.py (1), tests/test_user_runtime.py (2).
+# A member or an invitee is told only the restricted categories the plan reaches (2026-11-02): +2 cases,
+# tests/test_accounts.py (1), tests/test_user_runtime.py (1). 17901 + 2.
+# The owner's audience preview for a candidate (2026-11-02): +34 cases, all in tests/test_category_audience.py. 17903 + 34 = 17937.
+# Categories are labels; plans choose them (2026-11-03, train r125): 17951 measured by the r125 gate.
+# Plans can include every type of work, including ones added later (2026-11-04): +13 in tests/test_access_plans.py
+# (7 tests, and one refusal test over 6 values). 17951 + 13 = 17964.
+# Resource arbitration slice 0 (2026-11-05): +116 cases, tests/test_arbitration_slice0.py (89) and
+# tests/test_arbitration_legacy_parity.py (27). 17964 + 116 = 18080.
+# Resource arbitration slice 1 shadow ledger (2026-11-05): +27 cases, tests/test_arbitration_store.py (20)
+# and tests/test_arbitration_shadow.py (7), measured with scripts/run-hermetic-pytest.sh --collect-only -q. 18080 + 27 = 18107. Lead review: +1 (a slow store open does not turn the shadow off) = 18108.
+# Slice 1 review fixes (2026-11-05): test_arbitration_store.py and test_arbitration_shadow.py went from 28 to 46 cases (+18); full collection measured 18126.
+# Slice 1 re-review fixes (2026-11-05): +6 cases (settle fails closed on 4 non-kind values, lifecycle bound, worker restart); measured 18132.
+# Operation boundary D0 (2026-11-05): +34 cases, test_audio_graph_parity (13), test_operation_runner (15), test_smell_infer_offering (3), test_operation_runner_boundary (3). 18080 + 34 = 18114.
+# Operation boundary D0 fixes (2026-11-05): +8 cases, test_operation_runner (6) and test_node_graph_adapter (2). 18114 + 8 = 18122.
+# Merged with slice 1 on main: 18132 + 42 D0 cases, measured 18174.
+# Operation boundary D1 (2026-11-05): +20 cases, test_workflow_compile_d1 (14), test_operation_runner_boundary (2),
+# test_audio_graph_parity (4 yue2-song rows). 18174 + 20 = 18194, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+# Operation boundary D1 review fixes (2026-11-05): measured with scripts/run-hermetic-pytest.sh --collect-only -q: 18234.
+# D1 second review fixes (2026-11-05): +9 cases (huge integers, empty bounds, binding view, video compile, identifiers); measured 18243.
+# Audio route on compile_workflow (2026-11-05): +16 golden rows of the retired _meta route, -4 map-against-_meta cases,
+# +4 review r1 cases, +3 re-review seed cases; measured 18262.
+# Code-to-data S1 (2026-11-05): +3 cases, test_domain_literal_ratchet. 18262 + 3 = 18265.
+# S2.1 envelope and definition store (2026-11-05), after review fixes: +167 cases over 18265; measured 18432.
+# Config homes C0 and C1 (2026-11-05): goldens, import-time read ratchet, layer, store and reload tests.
+# Config homes second review (N1 to N7): +8 cases; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 18414.
+# Library kinds from media types (2026-11-05): +17 cases test_library_asset_kinds, +2 mesh stored-output cases; measured 18284.
+# Request history names the run, Home rows carry required inputs (2026-11-05): +3 test_mesh_request_history, +1 test_home_recent_chats; measured 18288.
+# Stored workflow outputs, origin sidecar, kind names, download names, run asset id (2026-11-05, ux fixes): collect-only measured 18304.
+# Photo to 3D as a media job (2026-11-05): new test_mesh_async_job; test_mesh_route (the disconnect cases now check that the
+# lease stays until the engine returns); mesh job content in test_runtime_route_policy; the async entry and example in
+# test_workflow_openapi. 18288 + 40 = 18328 measured (scripts/run-hermetic-pytest.sh --collect-only -q).
+# Mesh review fixes (2026-11-05): test_receipt_heartbeat (new), the drain, dribble, cancel, stop, discard, provenance and recovery
+# cases in test_mesh_async_job, the immediate-503 sync case in test_mesh_route, the restored job-route cases and the content
+# plan cases in test_runtime_route_policy. 18328 + 30 = 18358 measured, base lane's cases included (scripts/run-hermetic-pytest.sh --collect-only -q).
+# UX fixes round 2 (2026-11-05): pytest 18304 -> 18326, vitest 3767 -> 3774 (collect-only / vitest list with --root),
+# Playwright 694 -> 700 (+6: the model chip shows its whole name at 1280 and 1024 px for three workflows;
+# gate lists 679 + 3 + 18).
+# Mesh gate fix (2026-11-05): 18388 measured on this branch alone (+8 kind-file cases); the merge candidate with origin/main read 18562.
+# S2.1b, config homes C0+C1 and the 3D media job with the inputs UI, on main (2026-11-05): collect-only measured 18767 on the merge candidate.
+# Public-repo leak scan (2026-11-05): +19 cases, test_public_leak_scan; measured with
+# scripts/run-hermetic-pytest.sh --collect-only -q: 18466.
+# Leak scan follow-up (2026-11-05): +1 case (patterns unset); measured 18467.
+# Public clean on main (2026-11-05): measured on the merge candidate.
+pytest = 18787
+# Train r92: Try picture-upload specs, 3103 measured.
+# W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
+# session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
+# +7 Playwright cases in e2e/session-end.spec.ts: playwright.config.ts 481 -> 488, gate lists 509.
+# W1 r2: +15 vitest cases: the reviewer's seven (session-end.review.spec.ts), the restore, same-person, storage, toast and
+# prompt, wipe-timeout and live-region cases, and the Home request guard; 3155 measured. Playwright unchanged at 509.
+# W1 r3: +12 vitest cases: sign-out while the view key is down (2), a restored page held until a positive answer (4),
+# its unconfirmed screen (1), what each tab clears (3), and sign-in requests through the guard (2). 3167 measured, all
+# passed. Playwright unchanged at 509 (main 488 + live-data 3 + household 18).
+# W2 and W3 (the switch confirm and Switch person): +21 vitest cases: the unsaved-work lines and hook (13), the switch
+# confirm (4), and the account menu's order and confirm (4). +6 Playwright cases in e2e/switch-confirm.spec.ts:
+# playwright.config.ts 488 -> 494, gate lists 515 (494 + live-data 3 + household 18). 3188 measured, all passed.
+# A2 review round 2 (F1): +5 vitest cases in web/src/app/sign-in/page.spec.tsx. Full vitest list --json measured 3108.
+# A2 review round 2 (F1): +3 Playwright cases (signin-shell.spec.ts 2, invite-signin.spec.ts 1). Listed 484 + 3 + 18 = 505
+# across the three gate configs (base 502).
+# Train r95 rebuilt on r98: vitest 3188 + A2 5 = 3193; Playwright 515 + A2 3 = 518.
+# Keep UI on the Apps page: +8 cases in src/app/apps/keep.spec.tsx and +4 in src/lib/account-api.spec.ts (the keep
+# route and its headers, and the sign-in confirmation). Vitest list measured 3200 on 2026-10-23.
+# Keep UI round 2: keep.spec.tsx 8 -> 19 (replace, its failures and sign-in wait, add-again order and its failures),
+# account-api.spec.ts 7 -> 13 (replace and the two address calls, with the sign-in retry), page.spec.tsx 2 -> 4 (the
+# personal row's one replacement, and a keepable key gets no row button). Full run: 217 files, 3219 cases, all passed.
+# Keep UI round 3: keep.spec.tsx 19 -> 26 (the confirmation path for a key and an address, the stale 409, a failed
+# confirmed keep, and the one-step re-add), account-api.spec.ts 13 -> 17 (the confirmation body, the readd call, and
+# administratorsToConfirm). Full run: 217 files, 3230 cases, all passed (2026-10-23).
+# Owner visibility step 2, round 5: account-api.spec.ts +2 cases (administratorsSentence, hasAdministrators; the
+# administratorsToConfirm case now returns the counted shape). Full run: 217 files, 3232 cases, all passed (2026-10-23).
+# Owner visibility step 3 slice 1: replace three maker-display tests with one
+# private-copy check and reduce the owner fetch lifecycle matrix from five to four.
+# Affected-file Vitest run: 147 cases; suite budget: 3232 - 4 = 3228.
+# Walkthrough small fixes (2026-10-23): +14 cases. Library full screen +5, Apps quick-check line +3, the sign-in picture
+# as the default avatar +5 (person-avatar +4, account-avatar +1), the account-menu nav +1, reauth transport +1, account API
+# -1 (keep and replace asks became one routine case; the consent asks are new). Full run: 218 files, 3246 cases, all passed.
+# Key reveal holds (2026-10-23): +4 unsaved-work cases (the new-key line, the secret hold and its release), +3 SecretReveal
+# cases, +11 leave-guard cases (links, Back, closing the tab, release) and +2 Apps key-reveal cases. Full run: 221 files,
+# 3266 cases, all passed.
+# Slice 5b1 round 2: src/lib/request-content.spec.ts (34 cases), src/app/history/history-kinds.spec.tsx (16), the
+# History page spec rewritten for the list and the drawer, and two Home notice cases. Full run: 223 files, 3327 cases,
+# all passed (2026-10-23).
+# Slice 5b1 round 3: +1 case in src/app/account/request-history.spec.tsx (the owner's switch off for everyone).
+# vitest list measured 3328 (2026-10-23).
+# Train r103 step 3 (retention slice 5b1): 3266 + 96 (3328 - 3232) = 3362, provisional until the final vitest list.
+# Switcher chooser (W4 and W5, without A2, plus the round trip): the chooser, its status lines, the sign-out screen
+# (inert until fresh sign-in is reported), the stale-name notice, the Settings choice, and the session-end and switch
+# expectations. Full run: 223 files, 3321 cases, all passed (2026-10-23).
+# Train r103 step 5 (account chooser): 3362 + 89 (3321 - 3232) = 3451, provisional until the final vitest list.
+# Try cleanup: vitest list measured 3468. Adds the chat default, account plan and Try receipt, draft and input-detail cases;
+# the Try header and refresh cases are rewritten as account and absence checks.
+# Try review fixes (2026-10-24): +14 vitest cases. The chat default (+2 unit, +2 page: an embedding row first, and
+# no eligible chat model), receipt lookups (+2: a late answer after a later check, and leaving Try cancels a lookup),
+# the workflow draft guard (+5 in tests/try-workflow-drafts.spec.tsx), and helper text (+3). vitest list measured 3482
+# (base 3468, no case removed).
+# Try picture baseline (2026-10-24): +5 vitest cases in tests/try-workflow-drafts.spec.tsx: a successful run leaves no
+# unsent picture, a replaced or removed picture after a run is unsent, the picture comes back as it ran, and a picture
+# attached without a run is still unsent. vitest list measured 3487 (base 3482, no case removed).
+# Owner visibility step 3 slice 1 (-4): the feat side replaces three maker-display tests with one and cuts the owner
+# fetch matrix from five cases to four. Main's 3451 less 4 is 3447, measured on 2026-10-24 with `npx vitest list --json`.
+# Train r105: 3451 on main, +36 from the Try cleanup, -4 from OV3 slice 1 (Library chooser cases removed) = 3483.
+# Try default with unknown capability fields: +3 vitest cases (one unit, two page). vitest list measured 3486 (base 3483, no case removed).
+# Try default counts each option's embedding flag, not the row's: +2 vitest cases (a row that only embeds is never the
+# default; a chat option whose own capability lists an embedding output is never the default). Two existing dual-row
+# page tests now expect the chat option. vitest list measured 3488 (base 3486, no case removed).
+# Home redesign round 2 (on the rebase onto fix/home-speed-and-qd-status): +cases in web/src/app/_home (the facts line's
+# known and unknown parts, the owner's needs and quiet line, the off words in the chooser). Full run on this branch: 212
+# files, 3192 cases, all passed (2026-10-23). The ceiling stays at 3232, the figure recorded above, which is not exceeded.
+# Home visual round 3, merged with main at r103: full run 229 files, 3420 cases, all passed (2026-10-23). Measured
+# value; it replaces the provisional 3451.
+# Home visual round 4 (feat/home-visual-3): the first visit's audio discs and its one-kind case, the slim history
+# notice. Full run 229 files, 3423 cases, all passed (2026-10-23). Measured value.
+# Home visual round 5: no vitest case added or removed (one Home case renamed); full run 229 files, 3423 cases, all
+# passed (2026-10-23). The ceiling stays at the measured value.
+# Sign-in front door: +11 cases (sign-in/page.spec.tsx +5 for the owner line, the reset line and Email focus; app/page.spec.tsx
+# +4, new, for the root's three states; components/shell/sign-in-frame.spec.tsx +2, new). Full run 231 files, 3434 cases,
+# all passed (2026-10-23). Measured value.
+# Sign-in privacy round: the owner-line cases become three (none names the owner, and the reset line is one copy for
+# everyone), and one case checks the name box sits under the provider button. Full run 231 files, 3433 cases, all
+# passed (2026-10-23). Measured value.
+# Sign-in round 3: the round before added six cases after this ceiling was set (page.spec.tsx +1, chooser.spec.tsx +5).
+# This round adds none. `vitest list`: 231 files, 3439 cases (measured 2026-10-23).
+# Sign-in round 4 (2026-10-24): the round-3 commits after the 3439 measure added six more (page.spec.tsx +4,
+# chooser.spec.tsx +2), and this round adds three: page.spec.tsx +1 (focus on the password field after a refusal) and
+# components/shell/sign-in-frame.spec.tsx +2 (the footer waits while the page is busy). Full run: 231 files, 3448 cases,
+# all passed.
+# Sign-in round 5 (2026-10-24): page.spec.tsx +4 (the reset line names the instance, two cases; Sign in fills with ink once a
+# field has text; Sign in shows a spinner while it is checked) and chooser.spec.tsx +3 (the chooser's names come only from
+# this browser's remembered list; the password screen's reset line; its spinner). `vitest list`: 231 files, 3457 cases;
+# the full run passes 3455 of them (measured 2026-10-24). The ceiling takes the larger count.
+# Apps & keys model (slice 1): +1 case in src/app/apps/trusted-addresses.spec.tsx (the App's trusted-address section).
+# vitest list measured 3452 (2026-10-24).
+# Set up this app (slice 2): +3 Connect cases for ?app=<id> (set up, unknown app, plain visit) and +1 rename case
+# (the menu's Set up this app link). vitest list measured 3456 (2026-10-24).
+# Apps & keys and Connect round 2: trusted-address cases (one replaced, two added: +2), an App-grouping case (+1)
+# and a Connect disclosure case (+1). vitest list measured 3460 (2026-10-24).
+# Apps & keys and Connect round 3, Connect part: connect/page.spec.tsx goes from 18 to 20 cases (the App strip and
+# the keyless and local-address cases replace the removed tools and notes cases), +3 in lib/private-address.spec.ts
+# and +2 in lib/docs.spec.ts. vitest list measured 3467 (2026-10-24, 235 files).
+# Apps & keys and Connect round 4: connect/page.spec.tsx gains the no-preselection, More clients, generic-recipe and
+# missing-model cases; apps/page.spec.tsx gains the Key 2 and Revoke cases; lib/private-address.spec.ts gains the
+# reach cases (+13 net).
+# No Playwright case was added or removed, so the playwright ceiling stays at 569.
+# vitest list measured 3480 (2026-10-24).
+# Walkthrough A17 (Usage cost labels): +1 vitest case in src/app/usage/page.spec.tsx for the four cost states
+# on one page. `vitest list` measured 3452 on 2026-10-24. Playwright stays at 566 (545 + 3 + 18), measured the same day.
+# Walkthrough A16/A17 (Usage local counts): +5 vitest cases in src/app/usage/page.spec.tsx for local-only months, local
+# requests beside paid totals, a no-paid month with local requests, a pre-routing failure and the CSV zero rule.
+# `vitest list` measured 3457 on 2026-10-24.
+# Train r106 (2026-10-24): vitest list is 3530 cases on the merged tree (vitest list --root web).
+# Per-model kinds (2026-10-24): +4 models-block cases, +1 wizard case, +1 Try guard case; vitest list measured 3536.
+# Refused kinds (2026-10-24): +4 models-block cases, +2 wizard cases and +2 record-page cases; vitest list measured 3544.
+# Voice label (2026-10-24): +1 case in web/src/lib/terms.spec.ts; vitest list measured 3545.
+# Generated avatars (2026-10-24): +13 cases, src/components/product/person-avatar.spec.tsx (+10) and
+# src/components/shell/account-avatar.spec.tsx (+3). vitest list measured 3543 (--root web).
+# Generated avatars round 2 (2026-10-24): the picker and account specs follow the sources and the automatic picture
+# (asked once; never for a sign-in picture). vitest list measured 3547 (--root web), up 4 from 3543.
+# Train r107 (2026-10-24): vitest list is 3562 cases on the merged tree (vitest list --root web); the full run passed all 3562.
+# Train r107, the automatic picture's cue and its five-minute backoff per tab (2026-10-24): two cases in
+# src/components/shell/account-avatar.spec.tsx. The full run passed all 3564.
+# L1 capability labels (2026-10-24): +11 cases in src/lib/terms.spec.ts; the full run passed all 3575 (--root web).
+# Train r113 (2026-10-29): +1 Vitest in web/tests/e2e-case-receipts.spec.ts (CI receipt reporter, 061543d23); the r113 gate counted 3582.
+# Trains r114 and r115 (2026-10-30): App request history, the label-role guard, the mesh viewer and capability; the r114 gate counted 3645.
+# feat/mesh-capability (2026-10-30): +3 in src/app/_home/presentation.spec.ts (the 3D models summary) and +1 generated case in src/lib/terms.spec.ts (mesh label); vitest list measured 3649 (--root web).
+# Sign-out answers at once (2026-11-01): +2 in src/lib/session-end.spec.ts (the cache clearing is asked for and never
+# waited on; a sign-out the gateway did not finish asks for none).
+# Plans can include every type of work (2026-11-04): +4 in src/app/people/plans.spec.tsx. 3677 + 4 = 3681.
+# Home Enter submits and 3D models start from a picture (2026-11-04): +4 in web/src/app/_home/home-page.spec.tsx and +4 in web/src/app/try/ (page.spec.tsx, try-mesh-mode.spec.tsx). 3681 + 8 = 3689.
+# Apps key-access model suggestions (2026-11-05): src/app/apps/page.spec.tsx and src/lib/credential-access-api.spec.ts; vitest list measured 3692 (--root web).
+# Data-driven Home inputs, Library kinds, History titles, icon fallback (2026-11-05): composer, hand-off, media-kind, history and capability-meta specs; vitest list measured 3744 (--root web).
+# UX fixes (2026-11-05): library 3D provenance and tile, viewer hint, Home chip and data-driven button, History rows and wording, hand-off slots; vitest list measured 3767 (--root web).
+# Photo to 3D follows a job (2026-11-05): src/app/try/mesh-panel.spec.tsx (polling, resume from sessionStorage, Reconnecting,
+# Stop waiting, Cancel), mesh-job.spec.ts and mesh-mode.spec.ts; vitest list measured 3769 (--root web).
+# Mesh review fixes (2026-11-05): mesh-job.spec.ts and mesh-panel.spec.tsx (Azizam is not answering, Check again), plus the specs
+# the base lane added since; vitest list --json measured 3795 (--root web).
+vitest = 3802
+# Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
+# gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
+# Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
+# playwright.config.ts 496 -> 500; gate lists 521 (500 + live-data 3 + household 18), measured 2026-10-23.
+# Keep UI round 3: keep-binding.spec.ts adds the key and the address confirmations at 1440 and 390 px (+4 cases).
+# playwright.config.ts 500 -> 504; gate lists 525 (504 + live-data 3 + household 18), measured 2026-10-23.
+# Owner visibility step 3 slice 1: the Library owner fetch matrix moves from five
+# cases to four; gate total 525 - 1 = 524.
+# Walkthrough small fixes (2026-10-23): +2 in e2e/step-up.spec.ts (a stale owner's own key, at 1440 and 390 px, in the
+# global-state lane) and +4 in e2e/library-fullscreen.spec.ts (picture full screen and its fallback, at 1440 and 390 px).
+# playwright.config.ts 510, live-data 3, household 18: 531.
+# Key reveal holds (2026-10-23): +4 cases in e2e/key-reveal-leave.spec.ts (create and replace a key, at 1440 and 390 px).
+# playwright.config.ts 514, live-data 3, household 18: 535.
+# Slice 5b1 round 2: the two e2e/request-history.spec.ts journeys (1440 and 390 px) were not in the ceiling, so the
+# count moved from 504 to 506 when measured again. Round 2 adds no Playwright case. Gate lists: 506 + live-data 3 +
+# household 18 = 527 (2026-10-23).
+# Train r103 step 3 (retention slice 5b1): 535 + 2 (527 - 525) = 537, provisional until the final Playwright lists.
+# Switcher chooser (W4 and W5, without A2, plus the round trip): playwright.config.ts 504 -> 533 (+29: chooser 8,
+# chooser-states 6 and 2 in the global-state project, signin-shell 10, invite-signin 1, chooser-round-trip 2).
+# Gate lists 554 (533 + live-data 3 + household 18), measured 2026-10-23.
+# Train r103 step 5 (account chooser): 537 + 29 (554 - 525) = 566, provisional until the final Playwright lists.
+# Owner visibility step 3 slice 1 (-1): the Library owner fetch matrix moves from five cases to four. 566 less 1 is 565.
+# Measured on 2026-10-24 with `playwright test --list`: playwright.config.ts 544, live-data 3, household 18.
+# Home redesign round 2: +8 cases in e2e/home-redesign.spec.ts (five tiles fill the row at 1440 px; the facts line's
+# cost and wait; the chooser's options at 1440, 768 and 390 px in light and dark, with no overlap). Measured on this
+# branch: playwright.config.ts 521; gate lists 542 (521 + live-data 3 + household 18), 2026-10-23.
+# Home visual pass: +1 case in e2e/home-redesign.spec.ts (at 1440 px the composer's edges meet the outer tile edges
+# of Recent, so the hero and the sections share one column). Measured on this branch: playwright.config.ts 522; gate
+# lists 543 (522 + live-data 3 + household 18), 2026-10-23. Vitest on this branch: 212 files, 3196 cases; its ceiling
+# stays at 3232, the figure main records, which this branch does not exceed.
+# Home visual round 3, merged with main at r103: playwright.config.ts 563, live-data 3, household 18: 584, measured
+# 2026-10-23 (it matches 566 + 18, the Home branch's cases over the 525 base).
+# Home visual round 4 (feat/home-visual-3): the first visit's edges, ring and one-kind cases, the owner's quiet
+# panel, the phone layout, and the notice saved at 768 px. --list: playwright.config.ts 574, live-data 3,
+# household 18: 595, measured 2026-10-23.
+# Home visual round 5 (feat/home-visual-3): +7 cases in e2e/home-redesign.spec.ts: the phone chooser row, two play-disc
+# cases (light and dark), the first visit's card focus and Try, the 760 px notice, the 72 px gap and the 16 px prompt.
+# --list: playwright.config.ts 581, live-data 3, household 18: 602, measured 2026-10-23.
+# Sign-in front door: +6 cases in e2e/signin-built.spec.ts, the built sign-in captures (skipped unless SIGNIN_SHOTS_DIR is
+# set). S1-S4 and S6 in home-redesign.spec.ts were test.fixme and are real cases now, so the count does not move for them.
+# --list: playwright.config.ts 587, live-data 3, household 18: 608, measured 2026-10-23.
+# Sign-in privacy round: +1 case in e2e/home-redesign.spec.ts, the column's centring on a desktop and the 72 px start on a
+# phone. S1 to S4 and S6 gained assertions, not cases. --list: playwright.config.ts 588, live-data 3, household 18: 609,
+# measured 2026-10-23.
+# Sign-in round 3: +8 cases in e2e/signin-shell.spec.ts (the primary's type and colour, the dark edge, the remember gaps and
+# the 44 px targets, and a 40-character name, at 1440 and 390 px) and +9 in e2e/signin-built.spec.ts (the round-3 captures,
+# skipped unless SIGNIN_SHOTS_DIR is set). --list: playwright.config.ts 605, live-data 3, household 18: 626, measured
+# 2026-10-23.
+# Sign-in round 4 (2026-10-24): +12 cases in e2e/signin-shell.spec.ts (focus rings on Email, the remember checkbox and the
+# owner's link, in light and dark; the forget link beside the owner's link; the theme switch's icon; the loading column at
+# 1440 and 390 px; the footer's wait while a provider opens and while a password sign-in runs) and +4 in
+# e2e/signin-built.spec.ts (the password form while it signs in, and the focus rings on Email, the remember checkbox and
+# the owner's link). --list: playwright.config.ts 621, live-data 3, household 18: 642, measured 2026-10-24.
+# Sign-in round 5 (2026-10-24): +7 cases in e2e/signin-shell.spec.ts (the both-methods Sign in is a 48 px pill with a 3:1 edge,
+# in both themes at both widths, replacing the dark-only check: +2; a refused password's ring is red, in both themes: +2;
+# the spinner beside single sign-on, the text link's focus padding, and the footer in view at 390 px: +3) and +5 in
+# e2e/signin-built.spec.ts (single sign-on while it opens, the password step for a remembered account, the both-methods
+# Sign in while it signs in, the remember checkbox beside single sign-on, and the edge-contrast record; skipped unless
+# SIGNIN_SHOTS_DIR is set). --list: playwright.config.ts 633, live-data 3, household 18: 654, measured 2026-10-24.
+# Set up this app (slice 2): +1 case in e2e/connect.spec.ts (chromium project). Gate lists measured 2026-10-24:
+# playwright.config.ts 546 + live-data 3 + household 18 = 567.
+# Apps & keys and Connect round 2: +1 case in e2e/connect.spec.ts (Back and Forward between two Connect pages, with
+# axe on the Apps and Connect pages). Gate lists measured 2026-10-24: playwright.config.ts 547 + live-data 3 + household 18 = 568.
+# Apps & keys and Connect round 3, Apps part: +1 case in e2e/connect.spec.ts (an App's access and key, and Create key on
+# an App with none). Gate lists measured 2026-10-24: playwright.config.ts 548 + live-data 3 + household 18 = 569.
+# Train r106 (2026-10-24): playwright.config.ts 635 + live-data 3 + household 18 = 656 (playwright test --list).
+# Generated avatars (2026-10-24): e2e/avatar-generated.spec.ts adds 16 chromium cases (four states at four sizes).
+# playwright.config.ts 651 (was 635) + live-data 3 + household 18 = 672 (playwright test --list).
+# Generated avatars round 2 (2026-10-24): seven states at four sizes, 28 chromium cases (was 16).
+# playwright.config.ts 663 + live-data 3 + household 18 = 684 (playwright test --list).
+# Train r107 (2026-10-24): the gate lists on the merged tree are 663 + 3 + 18 = 684 (playwright test --list).
+# Train r108 (2026-10-24): main Playwright run 663 total (615 passed, 48 skipped), live-data 3 passed, household --list 18; total 684.
+# Train r111 (2026-10-26): +4 cases for button contrast and long remembered-person names, each checked in both themes.
+# Gate lists: playwright.config.ts 667 + live-data 3 + household 18 = 688 (playwright test --list).
+# Trains r114 and r115 (2026-10-30): Try mesh viewer and App request history cases; the r114 gate counted 694.
+playwright = 700
+
+# Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
+# node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
+# cases. The 20 showcase cases are gone with the /showcase site, so the node
+# ceiling falls by 20 (107 -> 87).
+# Train r106 (2026-10-24): node:test 5 compatibility + 82 Pi = 87, unchanged (no node test file changed on this train).
+# Train r107 (2026-10-24): node:test 5 compatibility + 82 Pi = 87, measured on the merged tree (no node test file changed).
+node = 87  # -20: tests/showcase/core.test.mjs is deleted with the /showcase site. Earlier: +3: pi store-lock tests (orphan reclaimed, live holder kept, fresh orphan degrades)
+
+# Test files that fake an HTTP upstream on their own (tests/test_fake_ratchet.py;
+# new upstream fakes belong in tests/support/fake_upstream/). It may only fall:
+# a migration lowers it in the same change. Counted with the AST scanner on
+# 0bff0431: 55 files (the earlier regex scan found 29 and missed
+# patch.object(proxy.httpx, "AsyncClient", ...) fakes). FK-NEXT: 50 -> 47 (video workflow
+# execution, speech privacy over HTTP, prompt-memory image route).
+[ratchets]
+ad_hoc_upstream_fake_files = 46
+# Sites in proxy.py and gateway/ that name a workflow, intent, modality family, engine binding or protocol
+# (tests/test_domain_literal_ratchet.py; docs/design/CODE_TO_DATA.md). 836 on 2026-11-05. A review signal, not the oracle.
+# 843 on 2026-11-05 (ux fixes): +13 in gateway/asset_types.py, the one table of kind words and asset id prefixes, keyed by IANA top-level media types (which the rule allows); -6 that me_media.py held; +2 for the speech-to-text builders declaring a recordable audio input.
+# 840 on 2026-11-05 (mesh review fixes): -3 where the mesh-only branches in generic code became data (an asset content policy row for ast, orphan receipts closed for every job, media preflight intents read from the content policies).
+# 830 on 2026-11-05 (mesh gate fix): -10 where the kind words moved from gateway/asset_types.py to registry/asset_kinds.yml.
+domain_literals = 829
+# Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
+# scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
+# a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through
+# runtime()/CONFIG_HOME, containers filled by .update, walrus and loop targets and calls handed a root are counted.
+# The corrected scan measures proxy.py before C0 at 97 as well, so C1 moved no real import-time read: DECISION_RUNTIME
+# and MESH_DEPS read the config inside a lambda, which was never an import-time read. Each section slice moves its readers to the runtime
+# snapshot and lowers its key; a key is removed when its count reaches zero.
+"import_time_config_reads.admin" = 2
+"import_time_config_reads.audio" = 5
+"import_time_config_reads.auth" = 5
+"import_time_config_reads.backends" = 23
+"import_time_config_reads.gateway" = 3
+"import_time_config_reads.identity" = 1
+"import_time_config_reads.images" = 27
+"import_time_config_reads.llm" = 1
+"import_time_config_reads.mcp" = 1
+"import_time_config_reads.model_compatibility" = 7
+"import_time_config_reads.model_routing" = 3
+"import_time_config_reads.models" = 1
+"import_time_config_reads.proxy" = 2
+"import_time_config_reads.request_body_limits" = 1
+"import_time_config_reads.roles" = 1
+"import_time_config_reads.videos" = 8
+"import_time_config_reads.whole_config" = 6
+
+# Browser hygiene (TEST_STRATEGY.md 3.4 rules 1-3, and 3.4's intercept rule):
+# occurrences in Playwright code under web/e2e and *.e2e.* / *.playwright.*
+# files under web/src. The first six were 18, 9, 4, 1, 3, 0 and are 0 since HYG-G2:
+# 16 of the 18 timers and 8 of the 9 networkidle were in manual capture scripts
+# (web/e2e/*capture*.mjs, d1-*.mjs), which now wait on observable state
+# (e2e/capture-settle.mjs); the other 2 and 1 were in the sweep; all 4 force: true
+# were fs.rm flags, not click forces; the one-shot expect and 2 of the 3 bare
+# isVisible were in specs, the third in d1-task-flows.mjs.
+# raw_fulfil counts .fulfill( in TypeScript outside web/e2e/fixtures/intercept.ts:
+# every stub goes through fulfilJson or fulfilBytes. malformed_stub counts the JSON
+# stubs that say, with a reason, they are deliberately unlike the gateway.
+# unprobed_endpoint counts the endpoints of web/e2e/fixtures/intercept-registry.ts that
+# have no structural oracle (no read probe, and no call on the oracle gateway of
+# e2e/fixtures/oracle.ts). It was 33; G2-FIN gave 32 an oracle and moved the last one
+# (POST /gateway/v1/workflows/{id}/run answers with bytes) to a component test.
+[hygiene]
+waitForTimeout = 0
+networkidle = 0
+force_true = 0
+one_shot_expect = 0
+bare_isVisible = 0
+absolute_home_path = 0
+raw_fulfil = 0
+malformed_stub = 0
+unprobed_endpoint = 0

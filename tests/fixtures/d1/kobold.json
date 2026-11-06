@@ -1,0 +1,32 @@
+{
+  "id": "kobold",
+  "kind": "provider",
+  "capabilities": [
+    "openai",
+    "chat",
+    "completions"
+  ],
+  "enabled": true,
+  "config": {
+    "model_policy_schema_version": 1,
+    "models": [
+      {
+        "id": "base",
+        "model_group": "base",
+        "upstream_model": "fixture-model"
+      },
+      {
+        "id": "fast",
+        "base_model_id": "base",
+        "policy_overlay": [
+          {
+            "kind": "default-params",
+            "set": {
+              "reasoning_effort": "none"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

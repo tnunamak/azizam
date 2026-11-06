@@ -1,0 +1,12 @@
+proxy:
+  host: 127.0.0.1
+  port: 5000
+
+admin:
+  oidc:
+    cookie:
+      # First-run uses localhost HTTP. Keep this false only for local setup.
+      # Set it back to true before exposing the gateway over HTTPS.
+      secure: false
+
+backends: {}

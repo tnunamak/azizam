@@ -1,0 +1,124 @@
+# A made-up engine API, unlike the OpenAI shape: its own paths, a nested answer, an NDJSON stream, a header key,
+# and a submit-poll-fetch render job. It is added as data only (contract section 10, item 2): this file plus
+# engine.json. No gateway code names it.
+protocol_version: 1
+id: acme
+title: Acme Inference API (test fixture)
+executor: http-v1
+
+auth:
+  inference: {kind: header, name: X-Acme-Key}
+  control: {kind: header, name: X-Acme-Admin}
+
+errors:
+  - {status: 401, code: acme_key_rejected, advice: "Acme rejected the X-Acme-Key header."}
+  - {status: 429, code: acme_quota, advice: "Acme says the quota is used up."}
+
+operations:
+  health:
+    class: inventory
+    request: {method: GET, path: /api/v3/ping}
+    response: {framing: none}
+
+  inventory:
+    class: inventory
+    request:
+      method: GET
+      path: /api/v3/catalog
+      query: [{name: kind, from: /params/kind, default: text}]
+    response:
+      framing: json
+      select: {ids: /items/*/slug}
+
+  chat:
+    class: generate
+    request:
+      method: POST
+      path: /api/v3/converse
+      body:
+        encoding: json
+        base: empty
+        map:
+          - copy: {from: /body/model, to: /engine/model}
+          - copy: {from: /body/messages, to: /input/turns}
+          - set: {to: /delivery, value: once}
+          - when:
+              if: {path: /body/stream, equals: true}
+              then: [{set: {to: /delivery, value: live}}]
+          - when:
+              if: {path: /body/temperature, present: true}
+              then:
+                - copy: {from: /body/temperature, to: /sampling/t}
+                - clamp: {path: /sampling/t, min: 0, max: 2}
+          - when:
+              if: {path: /body/max_tokens, present: true}
+              then: [{copy: {from: /body/max_tokens, to: /sampling/max_new}}]
+    response:
+      framing: json
+      map:
+        - set: {to: /object, value: chat.completion}
+        - copy: {from: /body/result/id, to: /id}
+        - copy: {from: /body/result/model, to: /model}
+        - set: {to: /choices, value: [{index: 0, message: {role: assistant, content: null}, finish_reason: null}]}
+        - copy: {from: /body/result/output/text, to: /choices/0/message/content}
+        - enum: {from: /body/result/why, to: /choices/0/finish_reason, table: {eos: stop, cap: length, filter: content_filter}, unmapped: error}
+        - copy: {from: /body/meter/in, to: /usage/prompt_tokens}
+        - copy: {from: /body/meter/out, to: /usage/completion_tokens}
+      stream:
+        when: {path: /body/stream, equals: true}
+        framing: ndjson
+        terminal: {path: /done, equals: true}
+        map:
+          - set: {to: /object, value: chat.completion.chunk}
+          - set: {to: /choices, value: [{index: 0, delta: {content: null}, finish_reason: null}]}
+          - copy: {from: /body/delta, to: /choices/0/delta/content}
+          - when:
+              if: {path: /body/done, equals: true}
+              then:
+                - enum: {from: /body/why, to: /choices/0/finish_reason, table: {eos: stop, cap: length, filter: content_filter}, unmapped: error}
+                - copy: {from: /body/meter/in, to: /usage/prompt_tokens}
+                - copy: {from: /body/meter/out, to: /usage/completion_tokens}
+
+  transcribe:
+    class: generate
+    request:
+      method: POST
+      path: /api/v3/listen
+      body:
+        encoding: multipart
+        parts:
+          - {name: audio, kind: file, from: /files/file, required: true}
+          - {name: lang, kind: field, from: /body/language}
+    response:
+      framing: json
+      map:
+        - copy: {from: /body/transcript/text, to: /text}
+
+  render:
+    class: generate
+    job:
+      submit:
+        request:
+          method: POST
+          path: /api/v3/renders
+          body:
+            encoding: json
+            base: empty
+            map:
+              - copy: {from: /body/prompt, to: /spec/text}
+              - copy: {from: /body/size, to: /spec/dims}
+              - default: {to: /spec/dims, value: "512x512"}
+        id: /ticket/id
+      poll:
+        request: {method: GET, path: "/api/v3/renders/{id}"}
+        status:
+          path: /phase
+          states: {WAITING: pending, WORKING: running, FINISHED: succeeded, ERRORED: failed, ABORTED: cancelled}
+        error: /problem/text
+        assets: /outputs/*/key
+        interval_s: 0.5
+        max_wait_s: 300
+      fetch:
+        request: {method: GET, path: "/api/v3/renders/{id}/outputs/{asset}"}
+      cancel:
+        request: {method: DELETE, path: "/api/v3/renders/{id}"}

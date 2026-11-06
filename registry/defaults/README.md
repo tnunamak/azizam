@@ -1,0 +1,45 @@
+# Release defaults for config sections
+
+This directory holds the release defaults of the config sections (design: `docs/design/CONFIG_HOMES.md`, section 3.1).
+Every file here is read-only data that ships with a release. An upgrade replaces it. The owner never edits it: an
+owner's change is a sparse override in `admin.db` (tables `config_overrides` and `config_changes`).
+
+No section ships yet. A section slice adds the first one.
+
+## A section is two files
+
+```
+registry/defaults/<section>.yml           release defaults
+registry/defaults/<section>.schema.json   closed JSON Schema, Draft 2020-12, with x-azizam-* annotations
+```
+
+The section id is the file stem. It uses lower-case words joined by `_`. Both files must exist. If one does not, or if
+the defaults break the schema, or if an annotation is wrong, the gateway stops at start with the list of broken rules
+(`gateway/config_runtime.py`, `load_sections`). A release that ships broken defaults does not boot with a guess.
+
+Adding a section needs no code for storage, export, validation of structure, the effective-source view or the drift
+report. Code is still needed for whatever reads the setting, and for an optional semantic rule.
+
+## Schema annotations
+
+| Annotation | Values | Meaning |
+|---|---|---|
+| `x-azizam-entry` | `collection` | Each member of this object is one entry. The owner may add members only if the schema allows them (`additionalProperties` or `patternProperties`). |
+| | `atomic` | This node is one entry. Its inner structure is replaced whole. Lists are always atomic. |
+| (none) | | An object recurses into its properties. A scalar or a list is an entry. |
+| `x-azizam-apply` | `live` (default), `restart` | When a change takes effect. |
+| `x-azizam-fail` | `inherit` (default), `closed` | What an invalid override does. `inherit` keeps the release value. `closed` leaves the entry absent. A `closed` entry must be optional in the schema, so that its absence is valid. |
+| `x-azizam-secret` | `true` | The entry holds only a secret reference (`sref_...`). A plain value is refused. |
+
+`apply`, `fail` and `secret` are inherited from the nearest annotated ancestor.
+
+Entries never nest. An object is closed (`additionalProperties: false`), or it is a `collection`, or it is `atomic`; the
+lint refuses any other object. A `delete` (tombstone) is allowed only on a collection member or an optional property.
+
+## Rules for the files
+
+- No absolute host path and no id that the release does not ship.
+- The unit of change is the entry. `set` replaces an entry whole; there is no deep merge, and a list is replaced, never
+  appended to.
+- A value in `<section>.yml` is a default, not a secret. A secret lives behind a secret reference.
+- Change a default in a release on purpose: owners who overrode that entry see a drift report, not a silent change.

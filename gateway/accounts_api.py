@@ -1,0 +1,484 @@
+"""JSON account and People endpoints over the gateway's browser sessions."""
+from __future__ import annotations
+
+import hmac
+from typing import Callable
+from urllib.parse import urlencode, urlsplit
+
+from fastapi import APIRouter, Request
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, model_validator
+from starlette.responses import JSONResponse, Response
+
+from gateway import accounts, admin_store, browser_sessions, operation_security, remembered_people
+from gateway.settings_api import instance_settings
+from gateway.admin_api import _require_admin
+from gateway.admin_oidc import SessionError, csrf_token_for_session, safe_browser_return_to
+from gateway.browser_cache import CLEAR_BROWSER_CACHE_PATH
+from gateway.category_enforcement import category_labels
+
+
+# How each sign-in route checks its caller (gateway/operation_security.py); the API reference states it.
+PUBLIC_OPENAPI = operation_security.openapi_extra(operation_security.PUBLIC)
+OPTIONAL_SESSION_OPENAPI = operation_security.openapi_extra(operation_security.OPTIONAL_SESSION)
+BROWSER_SESSION_OPENAPI = operation_security.openapi_extra(operation_security.BROWSER_SESSION)
+
+
+class _AccountRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def guarded(request):
+            try:
+                response = await handler(request)
+            except accounts.AccountError as exc:
+                response = JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status)
+                if exc.status == 429:
+                    response.headers["retry-after"] = "900"
+            response.headers["cache-control"] = "no-store"
+            response.headers["referrer-policy"] = "no-referrer"
+            return response
+        return guarded
+
+
+class _Body(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_max_length=1024)
+
+
+class _PasswordBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_max_length=4096)
+
+
+class Login(_Body):
+    # The email the person types, or the tile this browser shows for them: one or the other, never both.
+    email: str | None = None
+    tile: str | None = None
+    password: str
+    return_to: str | None = None
+    # The sign-in page's box. True keeps the person's name on this browser's list, False takes it off, and omitted
+    # (null) leaves the list alone, as headless clients and pages that predate the box expect.
+    remember: StrictBool | None = None
+
+    @model_validator(mode="after")
+    def email_or_tile(self):
+        if (self.email is None) == (self.tile is None):
+            raise ValueError("send either email or tile")
+        return self
+
+
+class Accept(_PasswordBody):
+    token: str
+    email: str
+    name: str
+    password: str | None = None
+
+
+
+class Reauth(_Body):
+    password: str
+
+
+class InspectInvite(_Body):
+    token: str
+
+
+class Reset(_PasswordBody):
+    token: str
+    password: str
+
+
+
+class Invite(_Body):
+    access_plan: str
+    email: str | None = None
+    expires_in: StrictInt = 604800
+
+
+class Expiry(_Body):
+    expires_in: StrictInt = 3600
+
+
+class Person(_Body):
+    # A plan id, or null for "No access plan". Omit to leave it unchanged.
+    access_plan: str | None = None
+    disabled: StrictBool | None = None
+
+
+def _plan_choice(plan_id, path, categories) -> dict | None:
+    """A plan as pickers show it: name and one-line summary (design §3.4)."""
+    from gateway.access_plans import PlanError, plan_from_document, plan_summary
+
+    record = admin_store.get_access_plan(str(plan_id), path=path) if plan_id else None
+    if record is None:
+        return None
+    try:
+        summary = plan_summary(plan_from_document(record["plan"], plan_id=str(record["id"])), categories)
+    except PlanError:
+        summary = None
+    return {"id": record["id"], "name": record["name"], "summary": summary}
+
+
+def _plan_choices(path) -> list[dict]:
+    # The category rules are read once for the whole list, not once per plan.
+    categories = category_labels()
+    return [choice for choice in (_plan_choice(row["id"], path, categories)
+                                  for row in admin_store.list_access_plans(path=path))
+            if choice is not None]
+
+
+def signin_options(path, oidc: dict) -> dict:
+    setting = admin_store.get_operator_setting("sign_in", path=path)
+    mode = setting["value"].get("mode", "both") if setting else "both"
+    result = {"mode": mode, "built_in": mode in {"built-in", "both"},
+            "oidc": mode in {"oidc", "both"} and oidc["enabled"],
+            "oidc_label": oidc.get("label") or "single sign-on",
+            # The owner's own password works whatever the switch says (see the login routes).
+            "owner_password": True,
+            # True because single sign-on from this page is always fresh (account switcher A2). The sign-in page shows
+            # its refused-sign-in screen only when this is true (web/src/app/sign-in/page.tsx).
+            "fresh_sign_in": True,
+            # No person's name in this answer: anyone on the internet can read the sign-in page's options. The page
+            # names the instance only.
+            "oidc_url": "/login?return_to=%2Finvite%2F", "instance_name": "Azizam"}
+    return result
+
+
+def create_account_router(*, path_provider: Callable, auth, session_reader, cookie_provider,
+                          signing_key_provider, oidc_provider: Callable,
+                          on_person_prompt_purge: Callable | None = None,
+                          on_person_removed: Callable[[str], None] | None = None,
+                          instance_provider: Callable | None = None,
+                          client_ip_resolver: Callable | None = None) -> APIRouter:
+    router = APIRouter(route_class=_AccountRoute, tags=["accounts"])
+
+    def client_ip(request: Request) -> str:
+        resolved = client_ip_resolver(request) if client_ip_resolver else (request.client.host if request.client else None)
+        if resolved is None:
+            raise accounts.AccountError("invalid_client_ip", "Cannot verify the sign-in client address.", 400)
+        return str(resolved)
+
+    def owner(request: Request):
+        ctx = _require_admin(auth, request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        if "owner" not in ctx.roles:
+            return JSONResponse({"error": {"code": "owner_required", "message": "Only the owner can manage people."}}, status_code=403)
+        return ctx
+
+    def options():
+        result = signin_options(path_provider(), oidc_provider())
+        instance = instance_provider() if instance_provider else instance_settings(path_provider())
+        result["instance_name"] = instance["name"]
+        return result
+
+    def same_origin(request: Request):
+        origin = request.headers.get("origin")
+        if origin and urlsplit(origin).netloc != request.url.netloc:
+            raise accounts.AccountError("origin_forbidden", "Use the sign-in page on this gateway.", 403)
+
+    def accept_and_sign_in(request, acceptance, *, authenticated_at=None):
+        """Accept the invitation and sign the person in inside one transaction; the cookie is set after it commits."""
+        path = path_provider()
+        cookie, key = cookie_provider(), signing_key_provider()
+        accounts.initialize(path)
+        with admin_store.transaction(path) as tx:
+            user, app, credential = accounts.accept_invite_in(tx.conn, acceptance)
+            names = admin_store.effective_user_roles_in(tx.conn, user["id"])
+            role = "owner" if "owner" in names else "admin" if "admin" in names else "none"
+            browser_sessions.end_incoming_in(tx.conn, request, cookie=cookie, signing_key=key, path=path)
+            session = browser_sessions.issue_in(tx.conn, {"sub": user["id"], "email": user["email"]}, role=role,
+                                                cookie=cookie, path=path, authenticated_at=authenticated_at)
+        admin_store.repair_session_app_at_signin(str(user["id"]), path=path)
+        accounts.invalidate_asset_families()
+        response = JSONResponse({"next": "/", "app": app, "credential": credential})
+        browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
+        return response
+
+    @router.get("/auth/api/options", openapi_extra=PUBLIC_OPENAPI)
+    def get_options(request: Request):
+        result = options()
+        result["oidc_url"] = "/login?" + urlencode({"return_to": safe_browser_return_to(request.query_params.get("return_to"))})
+        session = session_reader(request)
+        if session:
+            user = admin_store.get_user(session.subject, path=path_provider())
+            if user and user["issuer"] != "local":
+                result["signed_in_oidc"] = {"email": user["email"], "name": user["display_name"],
+                                            "csrf_token": csrf_token_for_session(session, signing_key=signing_key_provider())}
+        return result
+
+    def remembered_sign_in(request: Request, body: Login, token: str | None) -> dict:
+        """The person a tile names on this browser. The tile is only a name: their own password still has to match."""
+        person = remembered_people.resolve(token, body.tile, path=path_provider(), signing_key=signing_key_provider())
+        if person is None:
+            # A guess counts too, so one address cannot try tiles without limit.
+            accounts.throttle(client_ip(request), "tile:" + body.tile, path=path_provider())
+            raise accounts.AccountError("tile_unknown", "That name is no longer on this browser.", 404)
+        return accounts.authenticate_login_as(
+            person["person_id"], body.password, client_ip(request), path=path_provider(),
+        )
+
+    @router.post("/auth/api/login", openapi_extra=PUBLIC_OPENAPI)
+    def login(request: Request, body: Login):
+        try:
+            same_origin(request)
+            path, cookie = path_provider(), cookie_provider()
+            token = remembered_people.device_token(request, secure=cookie.secure)
+            if body.tile is None:
+                user = accounts.authenticate_login(body.email, body.password, client_ip(request), path=path)
+            else:
+                user = remembered_sign_in(request, body, token)
+            built_in = options()["built_in"]
+            key = signing_key_provider()
+            if not key:
+                raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
+            user_id = str(user["id"])
+            with admin_store.transaction(path) as tx:
+                conn = tx.conn
+                roles = admin_store.effective_user_roles_in(conn, user_id)
+                # The owner's own password always works. For everyone else the switch decides.
+                if not built_in and "owner" not in roles:
+                    raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
+                accounts.clear_signin_refusal_in(conn, user_id)
+                browser_sessions.end_incoming_in(
+                    conn, request, cookie=cookie, signing_key=key, path=path,
+                )
+                role = "owner" if "owner" in roles else "admin" if "admin" in roles else "none"
+                session = browser_sessions.issue_in(
+                    conn, {"sub": user_id, "email": user["email"]}, role=role,
+                    cookie=cookie, path=path,
+                )
+                accounts.record_successful_login_in(conn, user_id)
+                minted = remembered_people.keep_in(
+                    conn, token=token, person_id=user_id, method="password", issuer=None,
+                    remember=body.remember, from_tile=body.tile is not None,
+                )
+            admin_store.repair_session_app_at_signin(user_id, path=path)
+            accounts.invalidate_asset_families()
+            response = JSONResponse({"next": safe_browser_return_to(body.return_to)})
+            browser_sessions.set_cookie(response, session, cookie=cookie, signing_key=key)
+            if minted:
+                remembered_people.set_device_cookie(response, minted, secure=cookie.secure)
+            return response
+        except accounts.AccountError:
+            raise
+        except Exception:  # noqa: BLE001 - unexpected failures must not escape the sign-in boundary
+            return JSONResponse(
+                {"error": {"code": "signin_unavailable",
+                            "message": "Sign-in could not be completed. Try again."}},
+                status_code=503,
+            )
+
+    @router.get("/auth/api/remembered", openapi_extra=OPTIONAL_SESSION_OPENAPI)
+    def remembered(request: Request):
+        """The names this browser keeps: a tile, a name, an avatar and how the person signs in. Nothing else about them,
+        except that the entry of the person this browser is signed in as carries ``you``: true."""
+        same_origin(request)
+        path, cookie = path_provider(), cookie_provider()
+        accounts.throttle_remembered(client_ip(request), path=path)
+        if remembered_people.memory_mode(path) != remembered_people.REMEMBER:
+            return {"remember": False, "people": []}
+        oidc = oidc_provider()
+        opts = signin_options(path, oidc)
+
+        def offered(row) -> bool:
+            # A name is offered only while its way of signing in is on: a provider name for another provider is not.
+            # With password sign-in off, no password name is offered, the owner's included: the list must not show
+            # who the owner is. The owner still signs in with a password from the email form.
+            if row["method"] == "sso":
+                return bool(opts["oidc"]) and row["provider_issuer"] == oidc.get("issuer")
+            return bool(opts["built_in"])
+
+        session = session_reader(request)
+        people = remembered_people.listing(
+            remembered_people.device_token(request, secure=cookie.secure), path=path,
+            signing_key=signing_key_provider(), offered=offered, provider_label=opts["oidc_label"],
+            current_person_id=session.subject if session else None)
+        return {"remember": True, "people": people}
+
+    @router.delete("/auth/api/remembered/{tile}", openapi_extra=PUBLIC_OPENAPI)
+    def forget_remembered(request: Request, tile: str):
+        """Take one name off this browser's list. It does not sign anyone out or change their account."""
+        same_origin(request)
+        key = signing_key_provider()
+        if not key:
+            raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
+        cookie = cookie_provider()
+        remembered_people.forget(remembered_people.device_token(request, secure=cookie.secure), tile,
+                                 path=path_provider(), signing_key=key)
+        return {"ok": True}
+
+    @router.post("/auth/api/invite", openapi_extra=PUBLIC_OPENAPI)
+    def inspect(request: Request, body: InspectInvite):
+        same_origin(request)
+        invite = accounts.inspect_invite(body.token, path=path_provider())
+        # The summary names only the categories this plan lists, so an invitee learns no other category.
+        return {"plan": _plan_choice(invite["plan_id"], path_provider(), category_labels()), "email": invite["email"], "expires_at": invite["expires_at"],
+                "owner_name": "The gateway owner", "instance_name": options()["instance_name"]}
+
+    @router.post("/auth/api/invite/accept", openapi_extra=OPTIONAL_SESSION_OPENAPI)
+    def accept(request: Request, body: Accept):
+        same_origin(request)
+        opts, path = options(), path_provider()
+        accounts.throttle(client_ip(request), body.email, path=path)
+        oidc_user_id = None
+        authenticated_at = None
+        if body.password is None:
+            session = session_reader(request)
+            if not opts["oidc"] or not session:
+                raise accounts.AccountError("login_required", "Sign in with your identity provider first.", 401)
+            expected = csrf_token_for_session(session, signing_key=signing_key_provider())
+            if not hmac.compare_digest(expected, request.headers.get("x-azizam-csrf", "")):
+                raise accounts.AccountError("csrf_required", "Refresh this page before accepting your invitation.", 403)
+            user = admin_store.get_user(session.subject, path=path)
+            if not user or user["issuer"] == "local":
+                raise accounts.AccountError("oidc_required", "Sign in with your identity provider first.", 403)
+            invite = accounts.inspect_invite(body.token, path=path)
+            if invite["email"] and not accounts.oidc_email_verified(user["id"], path=path):
+                raise accounts.AccountError("verified_email_required", "Verify your email with your identity provider first.", 403)
+            oidc_user_id = user["id"]
+            # Accepting a plan is no new proof of identity (D40). Preserve unknown and legacy times too.
+            authenticated_at = session.last_authenticated
+        elif not opts["built_in"]:
+            raise accounts.AccountError("builtin_disabled", "Use the identity provider to accept this invitation.", 403)
+        if not signing_key_provider():
+            raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
+        acceptance = accounts.prepare_invite_acceptance(body.token, body.email, body.name, body.password,
+                                                        path=path, oidc_user_id=oidc_user_id)
+        return accept_and_sign_in(request, acceptance, authenticated_at=authenticated_at)
+
+    @router.post("/auth/api/password-reset", openapi_extra=PUBLIC_OPENAPI)
+    def reset(request: Request, body: Reset):
+        same_origin(request)
+        # Second bucket is per reset link, not one shared bucket: a shared key
+        # let anyone's failed attempts block every person's reset.
+        link = hmac.new(b"reset-link", body.token.encode(), "sha256").hexdigest()
+        accounts.throttle(client_ip(request), f"reset:{link}", path=path_provider())
+        accounts.reset_password(body.token, body.password, path=path_provider())
+        response = JSONResponse({"next": "/sign-in/"})
+        cookie = cookie_provider()
+        response.delete_cookie(cookie.name, path=cookie.path, domain=cookie.domain)
+        return response
+
+    def signed_in_with_csrf(request: Request):
+        """The caller's own session, for an action on that session; a missing or wrong CSRF token is refused."""
+        session = session_reader(request)
+        if not session:
+            raise accounts.AccountError("login_required", "Sign in first.", 401)
+        key = signing_key_provider()
+        expected = csrf_token_for_session(session, signing_key=key) if key else ""
+        if not expected or not hmac.compare_digest(expected, request.headers.get("x-azizam-csrf", "")):
+            raise accounts.AccountError("csrf_required", "Refresh this page and try again.", 403)
+        return session, key
+
+    @router.post("/auth/api/reauth", openapi_extra=BROWSER_SESSION_OPENAPI)
+    def reauth(request: Request, body: Reauth):
+        """Confirm the signed-in person's password, so risky owner actions are allowed for a while."""
+        same_origin(request)
+        session, key = signed_in_with_csrf(request)
+        path = path_provider()
+        accounts.confirm_password(session.subject, body.password, client_ip(request), path=path)
+        try:
+            refreshed = browser_sessions.confirm(session, path=path)
+        except SessionError:
+            raise accounts.AccountError("login_required", "Sign in first.", 401) from None
+        admin_store.record_audit("account.reauth", actor_kind="user", actor_id=session.subject,
+                                 actor_label=session.email, target_kind="user", target_id=session.subject, path=path)
+        response = JSONResponse({"ok": True, "authenticated_at": int(refreshed.last_authenticated)})
+        browser_sessions.set_cookie(response, refreshed, cookie=cookie_provider(), signing_key=key)
+        return response
+
+    @router.post("/auth/api/sign-out-everywhere", openapi_extra=BROWSER_SESSION_OPENAPI)
+    def sign_out_everywhere(request: Request):
+        """End every sign-in this person has, on every device, this one included."""
+        same_origin(request)
+        session, _ = signed_in_with_csrf(request)
+        browser_sessions.end_everywhere(session, path=path_provider())
+        response = JSONResponse({"next": "/sign-in/"})
+        cookie = cookie_provider()
+        response.delete_cookie(cookie.name, path=cookie.path, domain=cookie.domain)
+        return response
+
+    @router.post(CLEAR_BROWSER_CACHE_PATH, status_code=204, openapi_extra=PUBLIC_OPENAPI)
+    def clear_browser_cache(request: Request):
+        """Ask this browser to drop its cached copies of this site's files (BrowserCacheMiddleware adds the header).
+        The sign-out page calls it once the sign-out has answered: a browser holds the answer that carries the header
+        until its cache is cleared, which can take many seconds. It ends no sign-in and reads no account."""
+        same_origin(request)
+        return Response(status_code=204)
+
+    @router.get("/admin/api/people")
+    def people(request: Request):
+        ctx = owner(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        return {"people": accounts.people(path=path_provider()), "access_plans": _plan_choices(path_provider())}
+
+    @router.patch("/admin/api/people/{user_id}")
+    def update_person(request: Request, user_id: str, body: Person):
+        ctx = owner(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        fields = body.model_fields_set
+        if "access_plan" not in fields and body.disabled is None:
+            raise accounts.AccountError("empty_update", "Choose an access plan or account state.")
+        plan = {"plan_id": body.access_plan} if "access_plan" in fields else {}
+        accounts.change_person(user_id, ctx.audit_actor_id, disabled=body.disabled, path=path_provider(),
+                               actor_kind=ctx.actor_kind, actor_label=ctx.actor_label, **plan)
+        return {"ok": True}
+
+    @router.delete("/admin/api/people/{user_id}")
+    def remove_person(request: Request, user_id: str):
+        ctx = owner(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        accounts.change_person(user_id, ctx.audit_actor_id, remove=True, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
+        if on_person_removed:
+            on_person_removed(user_id)
+        result = on_person_prompt_purge(user_id) if on_person_prompt_purge else None
+        return {"ok": True, **(result or {})}
+
+    @router.post("/admin/api/people/{user_id}/reset")
+    def reset_link(request: Request, user_id: str, body: Expiry):
+        ctx = owner(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        link, token = accounts.create_link("reset", ctx.audit_actor_id, user_id=user_id, expires_in=body.expires_in, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label, session=ctx.browser_session)
+        return {"url": f"/sign-in/#reset={token}", "expires_at": link["expires_at"]}
+
+    @router.get("/admin/api/invites")
+    def invites(request: Request):
+        ctx = owner(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        return {"invites": accounts.list_invites(path=path_provider()), "access_plans": _plan_choices(path_provider()),
+                "invite_access_plan": admin_store.invite_access_plan(path=path_provider())}
+
+    @router.post("/admin/api/invites")
+    def create_invite(request: Request, body: Invite):
+        ctx = owner(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        key = signing_key_provider()
+        if not key:
+            raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
+        invite, token = accounts.create_link("invite", ctx.audit_actor_id, token_factory=lambda link_id: accounts.invite_token(link_id, key), plan_id=body.access_plan,
+                                             email=body.email, expires_in=body.expires_in, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label, session=ctx.browser_session)
+        return {"invite": invite, "url": f"/invite/#token={token}"}
+
+    @router.get("/admin/api/invites/{link_id}/link")
+    def copy_invite(request: Request, link_id: str):
+        ctx = owner(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        token = accounts.copy_invite(link_id, ctx.audit_actor_id, signing_key_provider(), path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
+        return {"url": f"/invite/#token={token}"}
+
+    @router.delete("/admin/api/invites/{link_id}")
+    def revoke_invite(request: Request, link_id: str):
+        ctx = owner(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        accounts.revoke_invite(link_id, ctx.audit_actor_id, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
+        return {"ok": True}
+
+    return router

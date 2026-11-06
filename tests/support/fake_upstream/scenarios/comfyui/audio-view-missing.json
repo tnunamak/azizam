@@ -1,0 +1,64 @@
+{
+  "protocol": "comfyui",
+  "name": "audio-view-missing",
+  "description": "The job is done with one audio output; the download answers 404.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "ComfyUI server routes POST /prompt, GET /history/{prompt_id}, GET /view (ComfyUI server.py); the gateway's audio route polls history, it does not use the websocket"
+  },
+  "exchanges": [
+    {
+      "id": "prompt",
+      "match": {
+        "method": "POST",
+        "path": "/prompt"
+      },
+      "response": {
+        "json": {
+          "prompt_id": "p1"
+        }
+      }
+    },
+    {
+      "id": "history",
+      "match": {
+        "method": "GET",
+        "path": "/history/p1"
+      },
+      "response": {
+        "json": {
+          "p1": {
+            "status": {
+              "status_str": "success"
+            },
+            "outputs": {
+              "1": {
+                "audio": [
+                  {
+                    "filename": "a.wav",
+                    "type": "output"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "view",
+      "match": {
+        "method": "GET",
+        "path": "/view"
+      },
+      "response": {
+        "status": 404,
+        "body": [
+          {
+            "text": "synthetic missing asset"
+          }
+        ]
+      }
+    }
+  ]
+}

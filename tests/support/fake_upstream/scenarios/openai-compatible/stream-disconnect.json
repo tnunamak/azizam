@@ -1,0 +1,20 @@
+{
+  "protocol": "openai-compatible",
+  "name": "stream-disconnect",
+  "description": "A streamed chat completion whose upstream drops the TCP connection after two content events, before finish_reason and [DONE].",
+  "provenance": {"source": "hand-written", "reference": "RFC 9112 section 7.1 (chunked transfer coding: a body ends only with the last chunk)"},
+  "exchanges": [
+    {
+      "id": "chat",
+      "match": {"method": "POST", "path": "/v1/chat/completions", "json": {"model": "{{model}}", "stream": true}},
+      "response": {
+        "status": 200,
+        "body": [
+          {"event": {"id": "chatcmpl-fk-drop", "object": "chat.completion.chunk", "created": 1767225600, "model": "{{model}}", "choices": [{"index": 0, "delta": {"role": "assistant", "content": "Partial"}, "finish_reason": null}]}},
+          {"event": {"id": "chatcmpl-fk-drop", "object": "chat.completion.chunk", "created": 1767225600, "model": "{{model}}", "choices": [{"index": 0, "delta": {"content": " answer"}, "finish_reason": null}]}},
+          {"disconnect": true}
+        ]
+      }
+    }
+  ]
+}

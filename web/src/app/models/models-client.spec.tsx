@@ -1,0 +1,1229 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import ModelsClient, { appSnippetsFor, modelDescription, snippetsFor } from "./models-client";
+import { ViewerContext, type Viewer } from "@/components/shell/session";
+import { accountApi } from "@/lib/account-api";
+import {
+  productApi,
+  type CatalogRow,
+  type ModelsCatalog,
+} from "@/lib/product-api";
+
+vi.mock("@/lib/product-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/product-api")>();
+  return {
+    ...actual,
+    productApi: {
+      ...actual.productApi,
+      models: vi.fn(),
+    },
+  };
+});
+
+vi.mock("@/lib/account-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/account-api")>();
+  return {
+    ...actual,
+    accountApi: { ...actual.accountApi, discovery: vi.fn() },
+  };
+});
+
+const GATEWAY = "https://gateway.example.test/openai/v1";
+
+const owner: Viewer = {
+  authenticated: true,
+  name: "Owner",
+  email: "owner@example.test",
+  role: "owner",
+  admin: true,
+};
+
+const member: Viewer = {
+  authenticated: true,
+  name: "Member",
+  email: "member@example.test",
+  role: "member",
+  admin: false,
+};
+
+function row(overrides: Partial<CatalogRow> = {}): CatalogRow {
+  return {
+    id: "chat",
+    object: "model_catalog.alias",
+    display_name: "chat",
+    name: "chat",
+    alias: true,
+    operations: ["chat"],
+    resolves_to: { chat: "demo-chat" },
+    description: "Chat through your configured model.",
+    capabilities: [
+      {
+        capability: "chat",
+        intent: "chat.completions",
+        label: "Chat",
+        input_modalities: ["text"],
+        output_modalities: ["text"],
+        streaming: true,
+        available: true,
+      },
+    ],
+    provider: null,
+    engine_label: "Household chat",
+    locality: "local",
+    cost: { kind: "free", price: null },
+    timing: { typical_seconds: null, source: null },
+    availability: {
+      available: true,
+      status: "ready",
+      reason: "Recent request succeeded.",
+      measured: true,
+      enabled: true,
+      configured: true,
+      up: true,
+      idle_startable: false,
+      evidence: { source: "request", observed_at_s: 1800000000 },
+    },
+    io: { input: ["text"], output: ["text"] },
+    examples: [],
+    recent_receipts: [],
+    use: {
+      model: "chat",
+      path: "/v1/chat/completions",
+      curl: null,
+      python: { path: "/v1/chat/completions", model: "chat" },
+      javascript: { path: "/v1/chat/completions", model: "chat" },
+    },
+    ...overrides,
+  };
+}
+
+/** An exact model, not an alias. */
+function exact(id: string, overrides: Partial<CatalogRow> = {}): CatalogRow {
+  return row({ id, alias: false, object: "model_catalog.model", ...overrides });
+}
+
+/** A row of another task, classified the way the server does. */
+function task(
+  id: string,
+  capability: string,
+  overrides: Partial<CatalogRow> = {},
+): CatalogRow {
+  return row({
+    id,
+    capability,
+    capabilities: [{ ...row().capabilities[0], capability }],
+    ...overrides,
+  });
+}
+
+function catalog(
+  aliases: CatalogRow[],
+  models: CatalogRow[] = [],
+): ModelsCatalog {
+  return {
+    schema_version: 1,
+    object: "models.catalog",
+    aliases,
+    models,
+    counts: {
+      aliases: aliases.length,
+      models: models.length,
+      capabilities: [...aliases, ...models].flatMap(
+        (entry) => entry.capabilities,
+      ).length,
+    },
+  };
+}
+
+function renderModels(snapshot: ModelsCatalog, viewer: Viewer = member) {
+  vi.mocked(productApi.models).mockResolvedValue(snapshot);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <ViewerContext.Provider value={viewer}>
+      <QueryClientProvider client={client}>
+        <ModelsClient />
+      </QueryClientProvider>
+    </ViewerContext.Provider>,
+  );
+  return client;
+}
+
+/** The button that opens a model's Details; its name is the model id. */
+const nameButton = (id: string) => screen.getByRole("button", { name: id });
+const rowOf = (id: string) => nameButton(id).closest("li") as HTMLElement;
+const copyButton = (id: string) =>
+  screen.getByRole("button", { name: `Copy model name ${id}` });
+/** The section for one task: its heading reads "<Label><count>". */
+const sectionOf = (label: string) =>
+  screen.getByRole("region", { name: new RegExp(`^${label}\\s*\\d+$`) });
+const search = () => screen.getByRole("searchbox");
+const dialog = () => within(screen.getByRole("dialog"));
+/** A Details fact: the label and its value, as text. */
+function fact(label: string): string | undefined {
+  return [...screen.getByRole("dialog").querySelectorAll("dt")]
+    .find((dt) => dt.textContent === label)
+    ?.nextElementSibling?.textContent ?? undefined;
+}
+/** True when the row shows the text anywhere (a phone line repeats facts). */
+const rowHas = (id: string, text: string) =>
+  within(rowOf(id)).queryAllByText(text).length > 0;
+
+beforeEach(() => {
+  vi.mocked(productApi.models).mockReset();
+  vi.mocked(accountApi.discovery).mockReset();
+  vi.mocked(accountApi.discovery).mockResolvedValue({
+    recipes: { openai: { canonical_base_url: GATEWAY } },
+  });
+  // jsdom lacks what Radix Select calls.
+  Element.prototype.hasPointerCapture ??= () => false;
+  Element.prototype.releasePointerCapture ??= () => {};
+  Element.prototype.scrollIntoView ??= () => {};
+});
+
+afterEach(() => {
+  cleanup();
+});
+
+describe("the list of model names", () => {
+  it("names the page with exactly one level-one heading", async () => {
+    renderModels(catalog([]));
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1, name: "Models" })).toBeVisible();
+  });
+
+  it("shows every model name under its task, with counts, and nothing to expand", async () => {
+    renderModels(
+      catalog(
+        [
+          row({ id: "fast" }),
+          row({ id: "coder" }),
+          row({ id: "rp", secondary_profile: true }),
+          row({ id: "default", recommended: true }),
+          task("draw", "image"),
+        ],
+        // "default" is listed as an alias and as a model: one row.
+        [exact("exact-chat"), exact("default")],
+      ),
+    );
+    await screen.findByRole("button", { name: "fast" });
+    expect(screen.getByRole("heading", { name: "Models", level: 1 })).toBeVisible();
+    expect(screen.getByText("Names your apps put in the model field.")).toBeVisible();
+    // The header band names the columns; each task is its own section.
+    const list = screen.getByRole("region", { name: "Model names by task" });
+    for (const label of ["Model name", "Price", "Status"]) {
+      expect(within(list).getByText(label)).toBeInTheDocument();
+    }
+    expect(
+      within(list).getAllByRole("heading", { level: 2 }).map((h) => h.textContent),
+    ).toEqual(["Chat5", "Images1"]);
+    expect(within(sectionOf("Chat")).getByText(/Answers, writing and code/)).toBeVisible();
+    // Aliases first, recommended first, secondary profiles after, then exact.
+    const order = (label: string) =>
+      [...sectionOf(label).querySelectorAll("li")].map((li) => li.dataset.model);
+    expect(order("Chat")).toEqual(["default", "fast", "coder", "rp", "exact-chat"]);
+    expect(order("Images")).toEqual(["draw"]);
+    expect(screen.getAllByRole("button", { name: "default" })).toHaveLength(1);
+    expect(within(rowOf("default")).getByText("Recommended")).toBeVisible();
+    // Nothing is hidden behind a control.
+    expect(screen.queryByText(/\d+ more/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /All models|more/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^(Chat|Images)$/ })).toBeNull();
+    expect(screen.getByText(/^6 model names/)).toBeVisible();
+  });
+
+  it("sorts rows into the server's task, not the one the legacy intent suggests", async () => {
+    const audio = task("operator-audio", "audio");
+    audio.capabilities = [
+      { ...audio.capabilities[0], intent: "speech.synthesis", label: "Audio" },
+    ];
+    renderModels(
+      catalog([
+        row({ id: "chat" }),
+        // The first serving capability is a chat endpoint; the type decides.
+        task("draw", "image"),
+        task("pick", "decide"),
+        task("embed", "embed"),
+        task("transcribe", "transcribe"),
+        task("voice", "speech"),
+        audio,
+        task("future", "future-task"),
+      ]),
+    );
+    await screen.findByRole("button", { name: "chat" });
+    const headings = screen
+      .getAllByRole("heading", { level: 2 })
+      .map((h) => h.textContent);
+    expect(headings).toEqual([
+      // "future-task" has no section of its own, so it stays under Chat.
+      "Chat2",
+      "Images1",
+      "Voice1",
+      "Audio1",
+      "Transcription1",
+      "Choose an option1",
+      "Turn text into numbers1",
+    ]);
+    expect(within(sectionOf("Chat")).getByRole("button", { name: "future" })).toBeVisible();
+    expect(within(sectionOf("Audio")).getByRole("button", { name: "operator-audio" })).toBeVisible();
+    expect(document.body.textContent).not.toMatch(/Make a picture/);
+  });
+
+  it("shows a description once per task, not on rows that share it", async () => {
+    const custom = 'The alias resolves to upstream/backend-v1; see https://example.test/backend and copy "alias".';
+    expect(modelDescription(custom)).toBe(custom);
+    expect(modelDescription(null)).toBeNull();
+    renderModels(
+      catalog([
+        row({ id: "alpha", description: "Shared by two rows." }),
+        row({ id: "beta", description: "Shared by two rows." }),
+        row({ id: "gamma", description: "Speech synthesis when a backend is configured." }),
+        task("draw", "image", { description: "The only image name." }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "alpha" });
+    expect(screen.queryByText("Shared by two rows.")).toBeNull();
+    // On one line of facts a sentence drops its full stop.
+    expect(rowHas("gamma", "Read text aloud when a speech engine or provider is connected")).toBe(true);
+    // A task's only name needs no description beside the task's own sentence.
+    expect(screen.queryByText("The only image name.")).toBeNull();
+    // Details still carries the description.
+    fireEvent.click(nameButton("alpha"));
+    expect(dialog().getByText("Shared by two rows.")).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.change(search(), { target: { value: "speech engine or provider" } });
+    expect(nameButton("gamma")).toBeVisible();
+    fireEvent.click(nameButton("gamma"));
+    expect(dialog().getByText("Read text aloud when a speech engine or provider is connected.")).toBeVisible();
+    expect(dialog().queryByText(/backend/)).toBeNull();
+  });
+
+  it("adds a model's own name or provider to the second line only when it adds something", async () => {
+    renderModels(
+      catalog([
+        row({ id: "default", description: "D1." }),
+        // Repeats the id once punctuation is ignored.
+        row({ id: "coder-q5", title: "Coder Q5", description: "D2." }),
+        row({ id: "words", title: "Conversation", capability_title: "Conversation", description: "D3." }),
+        row({ id: "opaque-4", title: "Lantern", description: "D4.", tags: ["tool-use", "reasoning", "vision"] }),
+        row({ id: "recommended-only", recommended_model: "Qwen 3", description: "D5." }),
+        row({
+          id: "remote-one",
+          title: "Firefly",
+          locality: "remote",
+          provider: "provider-internal-id",
+          engine_label: "provider-a",
+          description: "D6.",
+        }),
+        task("tts", "speech", { title: "Voice", description: "D7." }),
+        task("tts-two", "speech", { title: "Supertonic", description: "D8." }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "default" });
+    const second = (id: string) =>
+      rowOf(id).querySelector<HTMLElement>("p[title]")?.title;
+    expect(second("default")).toBe("D1");
+    expect(second("coder-q5")).toBe("D2");
+    expect(second("words")).toBe("D3");
+    // The chat tags end the line, in words.
+    expect(second("opaque-4")).toBe("Lantern · D4 · Uses tools, Thinks through questions, Understands images");
+    expect(second("recommended-only")).toBe("Qwen 3 · D5");
+    // A remote row names its provider (the label, not the internal id).
+    expect(second("remote-one")).toBe("Firefly · via provider-a · D6");
+    expect(second("tts")).toBe("D7");
+    expect(second("tts-two")).toBe("Supertonic · D8");
+    // A local row never shows its engine or service id.
+    expect(rowOf("default")).not.toHaveTextContent(/Household chat|via /);
+    expect(document.body.textContent).not.toContain("provider-internal-id");
+  });
+
+  it("folds a phone row's facts into one line", async () => {
+    renderModels(
+      catalog([
+        row({ id: "home" }),
+        row({
+          id: "paid-busy",
+          locality: "remote",
+          engine_label: "Example provider",
+          cost: { kind: "paid", price: "$1 per request" },
+          availability: { ...row().availability, status: "busy" },
+        }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "home" });
+    const phone = (id: string) =>
+      rowOf(id).querySelector<HTMLElement>(".sm\\:hidden")?.textContent;
+    expect(phone("paid-busy")).toBe("Busy · via Example provider · $1 per request");
+    // The usual local price and a ready state are left out of a phone line,
+    // which falls back to the price when nothing else is left to say.
+    expect(phone("home")).toBe("Local · no charge");
+  });
+});
+
+describe("price and status", () => {
+  const cases: [string, Partial<CatalogRow>, string][] = [
+    ["a local row with an unknown cost", { cost: { kind: "unknown", price: null } }, "Local · no charge"],
+    ["a local free row", {}, "Local · no charge"],
+    ["a remote free row", { locality: "remote" }, "No provider charge"],
+    ["a remote paid row", { locality: "remote", cost: { kind: "paid", price: "$0.04 per image" } }, "$0.04 per image"],
+    ["a remote paid row with no price", { locality: "remote", cost: { kind: "paid", price: null } }, "Paid · price not recorded"],
+    ["a remote row with an unknown cost", { locality: "remote", cost: { kind: "unknown", price: null } }, "Cost not recorded"],
+  ];
+
+  it.each(cases)("never leaves the price blank: %s", async (_name, overrides, label) => {
+    renderModels(catalog([row({ id: "priced", ...overrides })]));
+    await screen.findByRole("button", { name: "priced" });
+    expect(rowHas("priced", label)).toBe(true);
+    fireEvent.click(nameButton("priced"));
+    expect(fact("Price")).toBe(label);
+  });
+
+  it("filters by the Price select, offering only the price kinds the catalog has", async () => {
+    const user = userEvent.setup();
+    renderModels(
+      catalog([
+        row({ id: "home" }),
+        row({ id: "paid", locality: "remote", cost: { kind: "paid", price: "$1" } }),
+        row({ id: "mystery", locality: "remote", cost: { kind: "unknown", price: null } }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "home" });
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Any price (3)", "No provider charge (1)", "Paid (1)", "Cost not recorded (1)"]);
+    await user.click(screen.getByRole("option", { name: /^Paid \(\d+\)$/ }));
+    expect(screen.getByRole("button", { name: "paid" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "home" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "mystery" })).toBeNull();
+    expect(screen.getByText(/^1 of 3 model names/)).toBeVisible();
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    await user.click(screen.getByRole("option", { name: /^Cost not recorded \(\d+\)$/ }));
+    expect(screen.getByRole("button", { name: "mystery" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "paid" })).toBeNull();
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    await user.click(screen.getByRole("option", { name: /^Any price \(\d+\)$/ }));
+    expect(screen.getAllByRole("listitem", { hidden: false }).length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText(/^3 model names/)).toBeVisible();
+  });
+
+  it("counts a local row as paid when its own cost says paid, and hides the Price select with one kind", async () => {
+    const user = userEvent.setup();
+    renderModels(
+      catalog([
+        row({ id: "local-paid", cost: { kind: "paid", price: "$9" } }),
+        row({ id: "home" }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "home" });
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    await user.click(screen.getByRole("option", { name: /^Paid \(\d+\)$/ }));
+    expect(screen.getByRole("button", { name: "local-paid" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "home" })).toBeNull();
+    cleanup();
+    renderModels(catalog([row({ id: "one" }), row({ id: "two" })]));
+    await screen.findByRole("button", { name: "one" });
+    expect(screen.queryByRole("combobox", { name: "Price" })).toBeNull();
+  });
+
+  const states: [string, Partial<CatalogRow["availability"]>, string][] = [
+    ["ready", { status: "ready" }, "Ready"],
+    ["idle_startable", { status: "idle_startable" as never }, "Ready to start"],
+    ["idle", { status: "idle" }, "Ready to start"],
+    ["starting", { status: "starting", available: false }, "Starting"],
+    ["busy", { status: "busy", available: false }, "Busy"],
+    ["degraded", { status: "degraded" }, "Degraded"],
+    ["unavailable", { status: "unavailable", available: false }, "Unavailable"],
+    ["not checked", { status: "unknown", measured: false, available: false }, "Not checked yet"],
+    ["failed check", { status: "unknown", measured: true }, "Couldn't check"],
+  ];
+
+  it.each(states)("shows the quiet status for %s", async (_name, availability, label) => {
+    renderModels(catalog([row({ availability: { ...row().availability, ...availability } })]));
+    await screen.findByRole("button", { name: "chat" });
+    expect(rowHas("chat", label)).toBe(true);
+    // The reason sentence stays out of the row.
+    expect(screen.queryByText("Recent request succeeded.")).toBeNull();
+    expect(screen.queryByText("Unknown", { exact: true })).toBeNull();
+  });
+});
+
+describe("task filter", () => {
+  it("narrows the list to one task, offering only the tasks the catalog has", async () => {
+    const user = userEvent.setup();
+    renderModels(
+      catalog([row({ id: "alpha" }), task("draw", "image"), task("vec", "embed")]),
+    );
+    await screen.findByRole("button", { name: "alpha" });
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "All tasks (3)",
+      "Chat (1)",
+      "Images (1)",
+      "Turn text into numbers (1)",
+    ]);
+    await user.click(screen.getByRole("option", { name: "Turn text into numbers (1)" }));
+    expect(screen.getByRole("button", { name: "vec" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "alpha" })).toBeNull();
+    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(1);
+    expect(screen.getByText(/^1 of 3 model names/)).toBeVisible();
+    cleanup();
+    renderModels(catalog([row({ id: "one" }), row({ id: "two" })]));
+    await screen.findByRole("button", { name: "one" });
+    expect(screen.queryByRole("combobox", { name: "Task" })).toBeNull();
+  });
+});
+
+describe("search", () => {
+  it("finds a name by its id, title, description, use name, provider or target", async () => {
+    const user = userEvent.setup();
+    renderModels(
+      catalog([
+        row({ id: "default" }),
+        row({
+          id: "opaque-17",
+          title: "Lantern",
+          description: "Offers gentle explanations.",
+          use_names: ["opaque-17", "glow-name"],
+          locality: "remote",
+          engine_label: "Acme Cloud",
+          resolves_to: { chat: "hidden-target" },
+        }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "default" });
+    expect(search()).toHaveAttribute("placeholder", "Search models, tasks or providers");
+    for (const query of ["LANTERN", "gentle explanations", "glow-name", "acme cloud", "opaque-17", "hidden-target"]) {
+      await user.clear(search());
+      await user.type(search(), query);
+      expect(screen.getByRole("button", { name: "opaque-17" })).toBeVisible();
+      expect(screen.queryByRole("button", { name: "default" })).toBeNull();
+    }
+    expect(screen.getByText(/^1 of 2 model names/)).toBeVisible();
+  });
+
+  it("matches the task name and never a local row's engine label", async () => {
+    renderModels(catalog([row({ id: "alpha" }), task("draw", "image")]));
+    await screen.findByRole("button", { name: "alpha" });
+    fireEvent.change(search(), { target: { value: "images" } });
+    expect(screen.getByRole("button", { name: "draw" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "alpha" })).toBeNull();
+    fireEvent.change(search(), { target: { value: "household chat" } });
+    expect(screen.getByText("No models match")).toBeVisible();
+  });
+
+  it("explains an empty result and clears the search and the price", async () => {
+    const user = userEvent.setup();
+    renderModels(
+      catalog([
+        row({ id: "home" }),
+        row({ id: "paid", locality: "remote", cost: { kind: "paid", price: "$1" } }),
+      ]),
+    );
+    await screen.findByRole("button", { name: "home" });
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    await user.click(screen.getByRole("option", { name: /^Paid \(\d+\)$/ }));
+    fireEvent.change(search(), { target: { value: "unmatched" } });
+    expect(screen.getByText("No models match")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Model names by task" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(search()).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Price" })).toHaveTextContent("Any price");
+    expect(screen.getByRole("button", { name: "home" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "paid" })).toBeVisible();
+  });
+});
+
+describe("copying", () => {
+  it("copies a model name, whatever its status", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const down = { ...row().availability, available: false, status: "unavailable" as const };
+    renderModels(
+      catalog([row({ id: "up" }), row({ id: "down", availability: down })], [exact("exact", { availability: down })]),
+    );
+    await screen.findByRole("button", { name: "up" });
+    for (const id of ["up", "down", "exact"]) {
+      fireEvent.click(copyButton(id));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(id));
+    }
+    expect(await screen.findByText("exact copied")).toBeInTheDocument();
+  });
+
+  it("announces a refused clipboard and exposes the full name to copy by hand", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("Permission denied"));
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    Object.defineProperty(document, "execCommand", { configurable: true, value: () => false });
+    const id = "provider/a-long-model-name-that-needs-manual-copy";
+    renderModels(catalog([row({ id })]));
+    fireEvent.click(await screen.findByRole("button", { name: `Copy model name ${id}` }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Copy failed. Select the model name and copy it yourself.",
+    );
+    expect(screen.getByRole("textbox", { name: "Model name for manual copy" })).toHaveValue(id);
+    expect(writeText).toHaveBeenCalledWith(id);
+    const panel = screen.getByRole("alert").parentElement!;
+    expect(panel.parentElement).toBe(rowOf(id));
+    expect(panel).not.toHaveClass("absolute");
+    expect(panel).toHaveClass("w-full", "min-w-0");
+    expect(rowOf(id)).toHaveClass("flex-wrap");
+  });
+
+  it("shows the gateway address from discovery, or this origin, and copies it", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderModels(catalog([row()]));
+    expect(await screen.findByText(GATEWAY)).toBeVisible();
+    expect(screen.getByText("Gateway address")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Copy gateway address" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(GATEWAY));
+    cleanup();
+    vi.mocked(accountApi.discovery).mockRejectedValue(new Error("offline"));
+    renderModels(catalog([row()]));
+    expect(await screen.findByText(`${window.location.origin}/openai/v1`)).toBeVisible();
+  });
+});
+
+describe("Details mutation regressions", () => {
+  it("shows distinct Points to targets once without aliasing Same model as", async () => {
+    renderModels(catalog([row({ id: "route", resolves_to: { chat: "target-a", image: "target-a", audio: "target-b" }, same_model_as: ["sibling"] })], [exact("target-a"), exact("target-b")]));
+    fireEvent.click(await screen.findByRole("button", { name: "route" }));
+    expect(fact("Points to")).toBe("target-a, target-b");
+    expect(fact("Same model as")).toBe("sibling");
+  });
+
+  it("shows Same model as for an exact model without inventing Points to", async () => {
+    renderModels(catalog([], [exact("concrete", { resolves_to: { chat: "internal" }, same_model_as: ["nickname-a", "nickname-b"] })]));
+    fireEvent.click(await screen.findByRole("button", { name: "concrete" }));
+    expect(fact("Same model as")).toBe("nickname-a, nickname-b");
+    expect(fact("Points to")).toBeUndefined();
+  });
+
+  it("copies the selected name after closing Details, never its display title or target", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderModels(catalog([row({ id: "provider/name+v2", display_name: "Pretty title", resolves_to: { chat: "different-target" } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "provider/name+v2" }));
+    expect(dialog().getByRole("heading", { name: "provider/name+v2" })).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.click(copyButton("provider/name+v2"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledExactlyOnceWith("provider/name+v2"));
+    expect(await screen.findByText("provider/name+v2 copied")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps the local no-provider-charge price in Details for unrecorded costs", async () => {
+    renderModels(catalog([row({ id: "local-price", locality: "local", cost: { kind: "unknown", price: null } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "local-price" }));
+    expect(fact("Price")).toBe("Local · no charge");
+  });
+
+  it("keeps the paid numeric price in Details even on local equipment", async () => {
+    renderModels(catalog([row({ id: "paid-price", locality: "local", cost: { kind: "paid", price: 0.25 } })]));
+    fireEvent.click(await screen.findByRole("button", { name: "paid-price" }));
+    expect(fact("Price")).toBe("Paid · 0.25");
+  });
+
+  it("opens a category-hidden model by deep link without changing the category", async () => {
+    const previousUrl = window.location.href;
+    try {
+      window.history.replaceState(null, "", "?capability=image&model=hidden-chat");
+      renderModels(catalog([row({ id: "hidden-chat", same_model_as: ["draw"] }), task("draw", "image")]));
+      expect(await screen.findByRole("heading", { name: "hidden-chat" })).toBeVisible();
+      expect(fact("Task")).toBe("Chat");
+      expect(fact("Same model as")).toBe("draw");
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("Images");
+      expect(screen.queryByRole("button", { name: "hidden-chat" })).toBeNull();
+      expect(nameButton("draw")).toBeVisible();
+      expect(screen.getByText("1 of 2 model names.")).toBeVisible();
+    } finally {
+      window.history.replaceState(null, "", previousUrl);
+    }
+  });
+});
+
+
+describe("Use it from an app", () => {
+  it("uses the current origin, public name and placeholder in every language without examples", () => {
+    const entry = row({
+      id: "provider/public-model",
+      name: "private-name",
+      display_name: "Pretty title",
+      resolves_to: { chat: "private-target" },
+      examples: [],
+    });
+    const snippets = appSnippetsFor(entry, "https://current.example:8443");
+    expect(snippets.map(({ language }) => language)).toEqual(["curl", "Python", "JavaScript"]);
+    for (const { code } of snippets) {
+      expect(code).toContain("https://current.example:8443/openai/v1");
+      expect(code).toContain("provider/public-model");
+      expect(code).toContain("YOUR_KEY");
+      expect(code).not.toMatch(/private-name|private-target|Pretty title|AZIZAM_API_KEY/);
+    }
+  });
+
+  it("never copies catalog-supplied example credentials into app configuration", () => {
+    const entry = row({
+      examples: [{ kind: "chat.completions", body: { model: "internal", api_key: "fixture-secret-not-a-key" } }],
+    });
+    for (const { code } of appSnippetsFor(entry, "https://current.example")) {
+      expect(code).not.toMatch(/fixture-secret|internal/);
+      expect(code).toContain("YOUR_KEY");
+    }
+  });
+
+  it("quotes model identifiers for shell, Python and JavaScript", () => {
+    const id = "vendor/model's \"quoted\"\\name";
+    const snippets = appSnippetsFor(row({ id }), "http://localhost:3000/");
+    expect(snippets[0].code).toContain(id.replaceAll("'", "'\"'\"'"));
+    expect(snippets[1].code).toContain(`model = ${JSON.stringify(id)}`);
+    expect(snippets[2].code).toContain(`const model = ${JSON.stringify(id)};`);
+    expect(snippets[0].code).not.toContain("//openai");
+  });
+
+  it("copies each selected tab using the browser origin rather than discovery", async () => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const entry = row({ id: "app-model" });
+    renderModels(catalog([entry]));
+    await user.click(await screen.findByRole("button", { name: "app-model" }));
+    const section = within(dialog().getByRole("heading", { name: "Use it from an app" }).closest("section")!);
+    for (const snippet of appSnippetsFor(entry, window.location.origin)) {
+      await user.click(section.getByRole("tab", { name: snippet.language }));
+      await user.click(section.getByRole("button", { name: `Copy ${snippet.language} code` }));
+      expect(write).toHaveBeenLastCalledWith(snippet.code);
+      expect(snippet.code).not.toContain("gateway.example.test");
+    }
+  });
+
+  it("copies the configured Next base path with the browser origin in every language", async () => {
+    vi.stubEnv("__NEXT_ROUTER_BASEPATH", "/gateway/team");
+    const previousUrl = window.location.href;
+    window.history.replaceState(null, "", "/gateway/team/models/?source=catalog");
+    try {
+      const user = userEvent.setup();
+      const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+      renderModels(catalog([row({ id: "app-model" })]));
+      await user.click(await screen.findByRole("button", { name: "app-model" }));
+      const section = within(dialog().getByRole("heading", { name: "Use it from an app" }).closest("section")!);
+      for (const language of ["curl", "Python", "JavaScript"]) {
+        await user.click(section.getByRole("tab", { name: language }));
+        await user.click(section.getByRole("button", { name: `Copy ${language} code` }));
+        const copied = write.mock.lastCall?.[0];
+        expect(copied).toContain(`${window.location.origin}/gateway/team/openai/v1`);
+        expect(copied).toContain("app-model");
+        expect(copied).toContain("YOUR_KEY");
+        expect(copied).not.toMatch(/gateway\.example\.test|\/models\/|source=catalog/);
+      }
+    } finally {
+      cleanup();
+      vi.unstubAllEnvs();
+      window.history.replaceState(null, "", previousUrl);
+    }
+  });
+
+  it("copies the new public name after closing and opening another model", async () => {
+    const user = userEvent.setup();
+    const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    renderModels(catalog([row({ id: "first-model" }), row({ id: "second-model" })]));
+    await user.click(await screen.findByRole("button", { name: "first-model" }));
+    await user.click(dialog().getByRole("tab", { name: "Python" }));
+    await user.keyboard("{Escape}");
+    await user.click(nameButton("second-model"));
+    await user.click(dialog().getByRole("button", { name: "Copy curl code" }));
+    expect(write).toHaveBeenLastCalledWith(appSnippetsFor(row({ id: "second-model" }), window.location.origin)[0].code);
+    expect(write.mock.lastCall?.[0]).not.toContain("first-model");
+  });
+});
+describe("Details", () => {
+  it("lists the facts a person needs, and omits the ones the catalog does not report", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "rich",
+          title: "Lantern",
+          description: "Offers gentle explanations.",
+          use_names: ["rich", "also-rich"],
+          same_model_as: ["also-rich"],
+          locality: "remote",
+          engine_label: "Acme Cloud",
+          cost: { kind: "paid", price: "$2 per 1M tokens" },
+          timing: { typical_seconds: 0.151, source: "receipts" },
+          tags: ["tool-use", "vision"],
+          io: { input: ["text", "image"], output: ["text"] },
+          examples: [{ kind: "chat.completions", body: { model: "rich", messages: [] } }],
+          recent_receipts: [{ request_id: "req 1", status: "succeeded", latency_ms: 820 }],
+        }),
+        row({ id: "bare", io: { input: [], output: [] } }),
+      ]),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "rich" }));
+    expect(dialog().getByRole("heading", { name: "rich" })).toBeVisible();
+    expect(dialog().getByText("Lantern. Offers gentle explanations.")).toBeVisible();
+    expect(fact("Task")).toBe("Chat");
+    expect(fact("Same model as")).toBe("also-rich");
+    expect(fact("Runs on")).toBe("Acme Cloud");
+    expect(fact("Price")).toBe("$2 per 1M tokens");
+    expect(fact("Time per request")).toBe("About 151 ms, measured");
+    expect(fact("Can also")).toBe("Uses tools, Understands images");
+    expect(fact("What you send and receive")).toBe("text, image to text");
+    expect(dialog().getByText("Example for app setup")).toBeVisible();
+    expect(dialog().getByText(/curl 'http/)).toBeInTheDocument();
+    expect(dialog().getByText("Recent activity")).toBeVisible();
+    expect(dialog().getByRole("link", { name: "View request details" })).toHaveAttribute(
+      "href",
+      "/usage/?receipt=req%201",
+    );
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.click(nameButton("bare"));
+    expect(fact("Runs on")).toBe("On your equipment");
+    for (const label of ["Points to", "Same model as", "Time per request", "Can also", "What you send and receive"]) {
+      expect(fact(label)).toBeUndefined();
+    }
+    expect(dialog().getByText("No recent requests were reported. Use this model in an app, then check Usage for results.")).toBeVisible();
+  });
+
+  it("says what a name points at and which other names reach the same model", async () => {
+    renderModels(
+      catalog(
+        [
+          row({ id: "decide", resolves_to: { decisions: "decider-2b" }, same_model_as: ["decider-2b", "jev-latest"] }),
+          row({ id: "jev-latest", resolves_to: { decisions: "decider-2b" }, same_model_as: ["decide", "decider-2b"] }),
+        ],
+        [exact("decider-2b", { same_model_as: ["decide", "jev-latest"] })],
+      ),
+    );
+    // Every name is its own row, the alias and the model it points at alike.
+    await screen.findByRole("button", { name: "decide" });
+    for (const id of ["decide", "jev-latest", "decider-2b"]) expect(nameButton(id)).toBeVisible();
+    fireEvent.click(nameButton("jev-latest"));
+    expect(fact("Points to")).toBe("decider-2b");
+    expect(fact("Same model as")).toBe("decide, decider-2b");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    fireEvent.click(nameButton("decider-2b"));
+    expect(fact("Points to")).toBeUndefined(); // an exact model points at nothing
+    expect(fact("Same model as")).toBe("decide, jev-latest");
+  });
+
+  it("lists each visible Points to target once and omits hidden targets", async () => {
+    renderModels(catalog([
+      row({
+        id: "multi-name",
+        resolves_to: { chat: "visible-a", completion: "visible-a", image: "visible-b", private: "hidden-target" },
+        same_model_as: ["visible-a", "visible-b"],
+      }),
+    ], [exact("visible-a"), exact("visible-b")]));
+    fireEvent.click(await screen.findByRole("button", { name: "multi-name" }));
+    expect(fact("Points to")).toBe("visible-a, visible-b");
+    expect(fact("Same model as")).toBe("visible-a, visible-b");
+    expect(dialog().queryByText(/hidden-target/)).toBeNull();
+  });
+
+  it("keeps catalog relationships when search hides the related rows", async () => {
+    renderModels(catalog([
+      row({ id: "nickname", resolves_to: { chat: "exact-name" }, same_model_as: ["other-name", "exact-name"] }),
+      row({ id: "other-name", resolves_to: { chat: "exact-name" } }),
+    ], [exact("exact-name")]));
+    await screen.findByRole("button", { name: "nickname" });
+    fireEvent.change(search(), { target: { value: "nickname" } });
+    expect(screen.queryByRole("button", { name: "exact-name" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "other-name" })).toBeNull();
+    fireEvent.click(nameButton("nickname"));
+    expect(fact("Points to")).toBe("exact-name");
+    expect(fact("Same model as")).toBe("other-name, exact-name");
+  });
+
+  it("shows a member only targets that are names they can use; the owner sees them all", async () => {
+    const hidden = row({ id: "fast", resolves_to: { chat: "internal-slot" } });
+    renderModels(catalog([hidden]), member);
+    fireEvent.click(await screen.findByRole("button", { name: "fast" }));
+    expect(fact("Points to")).toBeUndefined();
+    cleanup();
+    renderModels(catalog([hidden]), owner);
+    fireEvent.click(await screen.findByRole("button", { name: "fast" }));
+    expect(fact("Points to")).toBe("internal-slot");
+  });
+
+  it.each([
+    [{ typical_seconds: 8, source: "configured" }, "About 8.0 s, typical"],
+    [{ typical_seconds: 12, source: null }, "About 12 s"],
+    [{ typical_seconds: -1, source: "receipts" }, undefined],
+    [{ typical_seconds: null, source: null }, undefined],
+  ] as const)("reports time per request for %j", async (timing, expected) => {
+    renderModels(catalog([row({ timing })]));
+    fireEvent.click(await screen.findByRole("button", { name: "chat" }));
+    expect(fact("Time per request")).toBe(expected);
+    expect(screen.queryByText(/Not measured yet|-1000 ms/)).toBeNull();
+  });
+
+  it.each([member, owner])("keeps technical details for the owner only ($role)", async (viewer) => {
+    renderModels(
+      catalog([
+        row({
+          provider: "svc-internal-id",
+          resolves_to: { "chat.completions": "private-target" },
+          technical_description: "Private engine configuration.",
+        }),
+      ]),
+      viewer,
+    );
+    await screen.findByRole("button", { name: "chat" });
+    // Never on a row, for anyone.
+    expect(screen.queryByText(/private-target|Private engine configuration|svc-internal-id/)).toBeNull();
+    fireEvent.click(nameButton("chat"));
+    const sheet = dialog();
+    expect(sheet.getByText("Chat through your configured model.")).toBeVisible();
+    for (const value of ["Technical details", "Engine or provider", "Sends requests to", "How this model runs", "chat.completions: private-target", "Private engine configuration."]) {
+      if (viewer.admin) expect(sheet.getByText(value)).toBeVisible();
+      else expect(sheet.queryByText(value)).toBeNull();
+    }
+    if (viewer.admin) expect(fact("Engine or provider")).toBe("Household chat");
+    expect(screen.queryByText(/svc-internal-id/)).toBeNull();
+  });
+
+  it("says when the engine or provider is not specified", async () => {
+    renderModels(
+      catalog([row({ engine_label: null, provider: null, technical_description: "Notes." })]),
+      owner,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "chat" }));
+    expect(fact("Engine or provider")).toBe("Engine or provider not specified");
+  });
+
+  const unconfigured = { available: false, status: "unavailable" as const, configured: false };
+  const disabled = { available: false, status: "unavailable" as const, enabled: false };
+  const actions: [string, Viewer, "local" | "remote", Partial<CatalogRow["availability"]>, string | null, string][] = [
+    ["owner, local engine not connected", owner, "local", unconfigured, "Connect an engine", "/engines/"],
+    ["owner, provider not connected", owner, "remote", unconfigured, "Connect a provider", "/providers/"],
+    ["owner, local engine disabled", owner, "local", disabled, "Review engine", "/engines/"],
+    ["owner, provider disabled", owner, "remote", disabled, "Review provider", "/providers/"],
+    ["owner, unavailable but configured", owner, "local", { available: false, status: "unavailable" }, "Check status", "/status/"],
+    ["member, not connected", member, "local", unconfigured, "Check status", "/status/"],
+    ["member, not checked yet", member, "local", { status: "unknown", measured: false, available: false }, "Check status", "/status/"],
+    ["anyone, ready", owner, "local", {}, null, ""],
+    ["anyone, busy", member, "local", { status: "busy", available: false }, null, ""],
+  ];
+
+  it.each(actions)("offers the right action: %s", async (_name, viewer, locality, availability, label, href) => {
+    renderModels(
+      catalog([row({ locality, availability: { ...row().availability, ...availability } })]),
+      viewer,
+    );
+    await screen.findByRole("button", { name: "chat" });
+    // The action is in Details, not on the row.
+    expect(within(rowOf("chat")).queryByRole("link")).toBeNull();
+    fireEvent.click(nameButton("chat"));
+    const links = dialog().queryAllByRole("link").filter((link) => !/receipt/i.test(link.textContent ?? ""));
+    if (label === null) {
+      expect(links).toHaveLength(0);
+    } else {
+      expect(links).toHaveLength(1);
+      expect(links[0]).toHaveTextContent(label);
+      expect(links[0]).toHaveAttribute("href", href);
+    }
+  });
+
+  it("refreshes the open Details by id when the catalog reloads", async () => {
+    const original = row({
+      id: "refresh-model",
+      title: "Original title",
+      description: "Original purpose.",
+      locality: "remote",
+      engine_label: "Original engine",
+      cost: { kind: "paid", price: "$1" },
+    });
+    const client = renderModels(catalog([original]), owner);
+    fireEvent.click(await screen.findByRole("button", { name: "refresh-model" }));
+    expect(dialog().getByText("Original title. Original purpose.")).toBeVisible();
+    vi.mocked(productApi.models).mockResolvedValue(
+      catalog([
+        {
+          ...original,
+          title: "Updated title",
+          description: "Updated purpose.",
+          engine_label: "Updated engine",
+          resolves_to: { chat: "updated-target" },
+          cost: { kind: "paid", price: "$2" },
+          availability: { ...original.availability, available: false, status: "unavailable" },
+        },
+      ]),
+    );
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["models", "catalog"] });
+    });
+    await waitFor(() => {
+      expect(dialog().getByText("Updated title. Updated purpose.")).toBeVisible();
+      expect(fact("Price")).toBe("$2");
+      expect(fact("Engine or provider")).toBe("Updated engine");
+      expect(fact("Sends requests to")).toBe("chat: updated-target");
+      expect(dialog().getByText("Unavailable")).toBeVisible();
+    });
+    expect(dialog().queryByText(/Original/)).toBeNull();
+  });
+
+  it("closes a removed model with a note, lets the person dismiss it, and does not reopen it", async () => {
+    const client = renderModels(catalog([row({ id: "removed-model" })]));
+    fireEvent.click(await screen.findByRole("button", { name: "removed-model" }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+    vi.mocked(productApi.models).mockResolvedValue(catalog([row({ id: "other" })]));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["models", "catalog"] });
+    });
+    expect(await screen.findByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
+    // The model comes back: the note goes and Details stays closed.
+    fireEvent.click(nameButton("other"));
+    expect(dialog().getByRole("heading", { name: "other" })).toBeVisible();
+    vi.mocked(productApi.models).mockResolvedValue(catalog([]));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["models", "catalog"] });
+    });
+    expect(await screen.findByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeVisible();
+    vi.mocked(productApi.models).mockResolvedValue(catalog([row({ id: "other" })]));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["models", "catalog"] });
+    });
+    await screen.findByRole("button", { name: "other" });
+    expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("deep links", () => {
+  let previousUrl: string;
+  beforeEach(() => {
+    previousUrl = window.location.href;
+  });
+  afterEach(() => {
+    window.history.replaceState(null, "", previousUrl);
+  });
+
+  it("opens Details for ?model= and filters to the task in ?capability=", async () => {
+    const id = "provider/model+v2";
+    window.history.replaceState(null, "", `?capability=image&model=${encodeURIComponent(id)}`);
+    renderModels(catalog([row(), task("draw", "image")], [exact(id, { capability: "image" })]));
+    expect(await screen.findByRole("heading", { name: id })).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("Images");
+    expect(screen.getByRole("button", { name: "draw" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "chat" })).toBeNull();
+    expect(search()).toHaveValue("");
+    expect(screen.getByText(/^2 of 3 model names/)).toBeVisible();
+    // Clear filters shows every task again.
+    fireEvent.change(search(), { target: { value: "unmatched" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("All tasks");
+    expect(screen.getByRole("button", { name: "chat" })).toBeVisible();
+  });
+
+  it.each(["?model=unknown&capability=unknown", "?capability=video"])(
+    "ignores an unknown model or a task with no models (%s)",
+    async (query) => {
+      window.history.replaceState(null, "", query);
+      renderModels(catalog([row(), task("draw", "image")]));
+      await screen.findByRole("button", { name: "chat" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByText("This model is no longer listed. Choose another model, or review setup if the list is empty.")).toBeNull();
+      expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("All tasks");
+      expect(screen.getByRole("button", { name: "draw" })).toBeVisible();
+    },
+  );
+});
+
+describe("loading, errors and an empty catalog", () => {
+  const client = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  it("announces loading, then shows the models", async () => {
+    let release!: (value: ModelsCatalog) => void;
+    vi.mocked(productApi.models).mockReturnValue(
+      new Promise<ModelsCatalog>((resolve) => {
+        release = resolve;
+      }),
+    );
+    render(
+      <ViewerContext.Provider value={member}>
+        <QueryClientProvider client={client()}>
+          <ModelsClient />
+        </QueryClientProvider>
+      </ViewerContext.Provider>,
+    );
+    expect(screen.getByRole("status", { name: "Loading models" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByText("No models are available yet")).toBeNull();
+    await act(async () => release(catalog([row()])));
+    expect(await screen.findByRole("button", { name: "chat" })).toBeVisible();
+    expect(screen.queryByRole("status", { name: "Loading models" })).toBeNull();
+  });
+
+  it("retries a failed load from the error state", async () => {
+    vi.mocked(productApi.models)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue(catalog([row()]));
+    render(
+      <ViewerContext.Provider value={member}>
+        <QueryClientProvider client={client()}>
+          <ModelsClient />
+        </QueryClientProvider>
+      </ViewerContext.Provider>,
+    );
+    expect(await screen.findByText("We couldn't load the models. Try again.")).toBeVisible();
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    expect(await screen.findByRole("button", { name: "chat" })).toBeVisible();
+    expect(screen.queryByText("We couldn't load the models. Try again.")).toBeNull();
+  });
+
+  it.each([
+    [owner, "Connect an engine", "/engines", "Connect an engine to run models on your equipment, or connect an online provider."],
+    [member, "Review setup", "/", "Ask the owner to connect an engine or online provider and give you access to a model."],
+  ])("points an empty catalog at the next step for $role", async (viewer, label, href, description) => {
+    renderModels(catalog([]), viewer);
+    expect(await screen.findByText("No models are available yet")).toBeVisible();
+    expect(screen.getByText(description)).toBeVisible();
+    expect(screen.getByRole("link", { name: label })).toHaveAttribute("href", href);
+    expect(screen.queryByRole("searchbox")).toBeNull();
+  });
+});
+
+describe("multipart example parity", () => {
+  it.each(["/v1/audio/transcriptions", "/v1/images/edits"])("keeps all declared body options in every %s snippet", (path) => {
+    const example = row({ use: { ...row().use, path }, examples: [{ kind: "example", body: { model: "custom", language: "fr", temperature: 0, stream: false, options: { quality: "high" }, prompt: "@literal input" } }] });
+    const snippets = snippetsFor(example, "https://example.test");
+    expect(snippets).toHaveLength(3);
+    for (const snippet of snippets) for (const name of ["model", "custom", "language", "fr", "temperature", "stream", "options", "quality", "prompt", "@literal input"]) expect(snippet.code).toContain(name);
+    expect(snippets[0].code).toContain("--form-string 'temperature=0'");
+    expect(snippets[0].code).toContain("--form-string 'stream=false'");
+    expect(snippets[0].code).toContain("--form-string 'prompt=@literal input'");
+    expect(snippets[0].code).toContain(path.endsWith("edits") ? "-F image=@sample.png" : "-F file=@sample.wav");
+  });
+});
+
+it("offers a full gateway address in flow when clipboard access fails", async () => {
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
+  Object.defineProperty(document, "execCommand", { configurable: true, value: () => false });
+  renderModels(catalog([row()]));
+  await screen.findByText(GATEWAY);
+  fireEvent.click(screen.getByRole("button", { name: "Copy gateway address" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("Could not copy. Select the address below and copy it yourself.");
+  const input = screen.getByRole("textbox", { name: "Gateway address for manual copy" }) as HTMLInputElement;
+  expect(input).toBeVisible();
+  expect(input).toHaveValue(GATEWAY);
+  expect(input).toHaveAttribute("readonly");
+  fireEvent.focus(input);
+  expect(input.selectionStart).toBe(0);
+  expect(input.selectionEnd).toBe(GATEWAY.length);
+  expect(alert.parentElement).not.toHaveClass("absolute");
+});
+
+it("announces persistent result counts for search, task, price and zero matches", async () => {
+  const user = userEvent.setup();
+  renderModels(catalog([row({ id: "home" }), task("draw", "image"), row({ id: "paid", locality: "remote", cost: { kind: "paid", price: "$1" } })]));
+  await screen.findByRole("button", { name: "home" });
+  const count = screen.getByText("3 model names.");
+  expect(count).toHaveAttribute("role", "status");
+  expect(count).toHaveAttribute("aria-live", "polite");
+  expect(count).toHaveAttribute("aria-atomic", "true");
+  expect(count).not.toHaveTextContent("How to connect");
+  fireEvent.change(search(), { target: { value: "home" } });
+  expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
+  fireEvent.change(search(), { target: { value: "" } });
+  await user.click(screen.getByRole("combobox", { name: "Task" }));
+  await user.click(screen.getByRole("option", { name: "Images (1)" }));
+  expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
+  await user.click(screen.getByRole("combobox", { name: "Task" }));
+  await user.click(screen.getByRole("option", { name: "All tasks (3)" }));
+  await user.click(screen.getByRole("combobox", { name: "Price" }));
+  await user.click(screen.getByRole("option", { name: "Paid (1)" }));
+  expect(count).toHaveTextContent(/^1 of 3 model names\.$/);
+  fireEvent.change(search(), { target: { value: "nothing-matches" } });
+  expect(count).toHaveTextContent("No models match. 0 of 3 model names.");
+  expect(screen.getAllByRole("status")).toContain(count);
+});
+
+it("wraps an unbroken 100-character model title in its detail sheet", async () => {
+  const id = "x".repeat(100);
+  const user = userEvent.setup();
+  renderModels(catalog([row({ id })]));
+  await user.click(await screen.findByRole("button", { name: id }));
+  expect(dialog().getByRole("heading", { name: id })).toHaveClass("min-w-0", "[overflow-wrap:anywhere]");
+});
+
+describe("filter option counts", () => {
+  function countedCatalog() {
+    return catalog([
+      row({ id: "local", cost: { kind: "unknown", price: null } }),
+      row({ id: "remote-free", locality: "remote" }),
+      task("draw", "image", { locality: "remote", cost: { kind: "paid", price: "$1" } }),
+      task("vec", "embed", { locality: "remote", cost: { kind: "unknown", price: null } }),
+    ], [exact("local"), exact("draw")]);
+  }
+
+  const optionNames = () => screen.getAllByRole("option").map((option) => option.textContent);
+
+  it("counts deduplicated names with the same task and cost rules as the list", async () => {
+    const user = userEvent.setup();
+    renderModels(countedCatalog());
+    await screen.findByRole("button", { name: "local" });
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    expect(optionNames()).toEqual(["All tasks (4)", "Chat (2)", "Images (1)", "Turn text into numbers (1)"]);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    expect(optionNames()).toEqual(["Any price (4)", "No provider charge (2)", "Paid (1)", "Cost not recorded (1)"]);
+    expect(screen.getByRole("option", { name: "No provider charge (2)" })).toBeVisible();
+  });
+
+  it("updates each facet for search and the other selection while retaining zero-count alternatives", async () => {
+    const user = userEvent.setup();
+    renderModels(countedCatalog());
+    await screen.findByRole("button", { name: "local" });
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    await user.click(screen.getByRole("option", { name: "Images (1)" }));
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    expect(optionNames()).toEqual(["Any price (1)", "No provider charge (0)", "Paid (1)", "Cost not recorded (0)"]);
+    await user.click(screen.getByRole("option", { name: "Paid (1)" }));
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    expect(optionNames()).toEqual(["All tasks (1)", "Chat (0)", "Images (1)", "Turn text into numbers (0)"]);
+    await user.keyboard("{Escape}");
+    fireEvent.change(search(), { target: { value: "  unmatched  " } });
+    await user.click(screen.getByRole("combobox", { name: "Task" }));
+    expect(optionNames()).toEqual(["All tasks (0)", "Chat (0)", "Images (0)", "Turn text into numbers (0)"]);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Price" }));
+    expect(optionNames()).toEqual(["Any price (0)", "No provider charge (0)", "Paid (0)", "Cost not recorded (0)"]);
+  });
+
+  it("recovers repeatedly from empty filters with and without a search by clearing every selection", async () => {
+    const user = userEvent.setup();
+    renderModels(countedCatalog());
+    await screen.findByRole("button", { name: "local" });
+    for (const query of ["", "unmatched"]) {
+      await user.click(screen.getByRole("combobox", { name: "Task" }));
+      await user.click(screen.getByRole("option", { name: "Images (1)" }));
+      await user.click(screen.getByRole("combobox", { name: "Price" }));
+      await user.click(screen.getByRole("option", { name: "No provider charge (0)" }));
+      fireEvent.change(search(), { target: { value: query } });
+      expect(screen.getByText("No models match")).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(search()).toHaveValue("");
+      expect(screen.getByRole("combobox", { name: "Task" })).toHaveTextContent("All tasks (4)");
+      expect(screen.getByRole("combobox", { name: "Price" })).toHaveTextContent("Any price (4)");
+      expect(screen.getByText("4 model names.")).toBeVisible();
+      for (const id of ["local", "remote-free", "draw", "vec"]) expect(nameButton(id)).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    }
+  });
+});

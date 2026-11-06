@@ -1,0 +1,12 @@
+schema_version: 1
+kind: extension_package
+id: test-demo-code-extension-package
+name: Test Demo Code Extension Package
+version: 0.1.0
+objects:
+  adapters:
+    - objects/adapter.yml
+    - objects/sidecar-adapter.yml
+  translators:
+    - objects/translator.yml
+    - objects/metadata-translator.yml

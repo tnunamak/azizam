@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+caller_dir="$PWD"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -n "${1:-}" && "$1" != /* ]]; then
+  set -- "$(realpath -m -- "$caller_dir/$1")" "${@:2}"
+fi
+web_dir="$(cd -- "$script_dir/../../web" && pwd)"
+cd "$web_dir"
+npm run build
+exec node e2e/household-capture.mjs "$@"

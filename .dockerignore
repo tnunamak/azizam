@@ -1,0 +1,51 @@
+# Version control
+.git/
+
+# Operator-local config and secrets -- never bake into the image
+proxy_config.yml
+proxy_api_keys.yml
+.env
+.env.*
+*.local
+
+# Claude Code / worktree tooling
+.claude/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Runtime state — mounted as a volume at runtime
+data/
+
+# Caches and temp
+.cache/
+cache/
+tmp/
+*.log
+logs/
+
+# Dev/test artifacts
+tests/*
+!tests/requirements-hermetic.lock
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Product UI is built in its own stage; never copy local test state.
+web/node_modules/
+web/.next/
+web/out/
+web/test-results/
+web/playwright-report/
+.ui-e2e-state/
+LANE_REPORT.md

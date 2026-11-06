@@ -1,0 +1,1142 @@
+"""Generated-media provenance and the ``metadata`` delivery control.
+
+Covers: the access plans' bound, the per-request lowering, the provenance record
+(and that it never holds secrets), lossless stripping at delivery for every
+media type, and that the stored copy stays full.
+"""
+
+from __future__ import annotations
+
+import base64
+import copy
+import hashlib
+import io
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, patch
+from urllib.parse import parse_qs, urlparse
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+import proxy  # noqa: E402
+from tests.support.audio_workflow import audio_manifest  # noqa: E402
+from tests.support.access import plan_for, access, access_context, auth_identity  # noqa: E402
+from gateway import admin_store, asset_types, media_delivery, media_jobs, media_metadata, prompt_memory, provenance, receipt_store  # noqa: E402
+
+from gateway.engine_protocol import node_info  # noqa: E402
+_REAL_OBJECT_INFO_LOOKUP = node_info.lookup  # tests/conftest.py stubs the module attribute
+from gateway.extensions import validate_extension_inputs  # noqa: E402
+from gateway.access_plans import PlanError, plan_from_document, plan_to_document  # noqa: E402
+
+NS = "com.azizam.workflow"
+FFMPEG = shutil.which("ffmpeg") is not None
+
+PROMPT_JSON = json.dumps({"3": {"class_type": "KSampler", "inputs": {"seed": 7}}})
+WORKFLOW_JSON = json.dumps({"nodes": [{"id": 3, "type": "KSampler"}], "version": 0.4})
+SECRET_KEY = "sk-live-0123456789abcdefSECRET"
+
+
+def _patch_route_stores(case: unittest.TestCase, root: Path) -> None:
+    media_db = root / "media_jobs.db"
+    receipts_db = root / "receipts.db"
+    cache_dir = root / "asset-cache"
+    media_jobs.init_db(media_db)
+    receipt_store.init_db(receipts_db)
+    for target, value in (
+        (media_jobs, media_db),
+        (receipt_store, receipts_db),
+    ):
+        patcher = patch.object(target, "DB_PATH", value)
+        patcher.start()
+        case.addCleanup(patcher.stop)
+    for name, value in (
+        ("IMAGE_CACHE_DIR", cache_dir),
+        ("_image_url_signing_secret", b"test-secret"),
+    ):
+        patcher = patch.object(proxy, name, value)
+        patcher.start()
+        case.addCleanup(patcher.stop)
+
+
+def comfy_png(color=(10, 20, 30, 255), size=(8, 6)) -> bytes:
+    """A PNG shaped like ComfyUI output: prompt and workflow text chunks."""
+    from PIL import Image, PngImagePlugin
+
+    info = PngImagePlugin.PngInfo()
+    info.add_text("prompt", PROMPT_JSON)
+    info.add_text("workflow", WORKFLOW_JSON)
+    out = io.BytesIO()
+    Image.new("RGBA", size, color).save(out, format="PNG", pnginfo=info)
+    return out.getvalue()
+
+
+def pixels(content: bytes) -> list[tuple[int, ...]]:
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(content)).convert("RGBA")
+    return list(image.tobytes())
+
+
+def idat(content: bytes) -> bytes:
+    out, pos = b"", 8
+    while pos < len(content):
+        length = int.from_bytes(content[pos : pos + 4], "big")
+        if content[pos + 4 : pos + 8] == b"IDAT":
+            out += content[pos + 8 : pos + 8 + length]
+        pos += 12 + length
+    return out
+
+
+# Callers whose plans keep (FULL_AUTH) or strip (NONE_AUTH) media metadata.
+FULL_AUTH = proxy.AuthContext(identity=auth_identity(
+    name="f", key_hash="sha256:f", access=access(plan_for("keep", metadata="full"))))
+NONE_AUTH = proxy.AuthContext(identity=auth_identity(
+    name="n", key_hash="sha256:n", access=access(plan_for("strip", metadata="none"))))
+
+
+class StubRequest:
+    headers: dict[str, str] = {}
+    url = SimpleNamespace(scheme="http", netloc="gateway.test")
+
+
+class PlanBoundTests(unittest.TestCase):
+    def test_plans_strip_metadata_unless_they_keep_it(self) -> None:
+        self.assertEqual(plan_for("local").media_metadata, "none")
+        self.assertEqual(plan_for("owner", metadata="full").media_metadata, "full")
+
+    def test_bad_plan_value_is_rejected(self) -> None:
+        document = plan_to_document(plan_for("p"))
+        for bad in ("maybe", 1, {"default": "full"}):
+            with self.assertRaises(PlanError):
+                plan_from_document({**document, "media_metadata": bad}, plan_id="p")
+
+    def test_runtime_bound_by_identity(self) -> None:
+        owner = proxy.AuthContext(identity=auth_identity(
+            name="o", key_hash="sha256:o", access=access(plan_for("owner", metadata="full"))))
+        plain = proxy.AuthContext(identity=auth_identity(name="p", key_hash="sha256:p", access=access(plan_for("plain"))))
+        mixed = proxy.AuthContext(identity=auth_identity(
+            name="m", key_hash="sha256:m",
+            access=access(plan_for("owner", metadata="full"), plan_for("app", metadata="none"))))
+        self.assertEqual(proxy._media_metadata_bound(owner), "full")
+        self.assertEqual(proxy._media_metadata_bound(plain), "none")
+        self.assertEqual(proxy._media_metadata_bound(mixed), "none")
+        self.assertEqual(proxy._media_metadata_bound(proxy.NO_AUTH_CONTEXT), "none")
+
+
+class ControlParsingTests(unittest.TestCase):
+    def test_modes(self) -> None:
+        self.assertEqual(provenance.parse_metadata_mode("full"), "full")
+        self.assertEqual(provenance.parse_metadata_mode(" NONE "), "none")
+        for bad in ("", "strip", None, True, 1, ["none"]):
+            with self.assertRaises(provenance.MetadataModeError):
+                provenance.parse_metadata_mode(bad)
+
+    def test_request_may_lower_the_plan_bound_but_never_raise_it(self) -> None:
+        resolve = provenance.resolve_metadata_mode
+        self.assertEqual(resolve("none", "full"), "none")
+        self.assertEqual(resolve("full", "none"), "none")  # the bound wins (design N5)
+        self.assertEqual(resolve(None, "full"), "full")
+        self.assertEqual(resolve(None, None), "none")
+
+    def test_read_from_body(self) -> None:
+        body = {"extensions": {NS: {"metadata": "none", "seed": 1}}}
+        self.assertEqual(provenance.requested_metadata_mode(body), "none")
+        self.assertIsNone(provenance.requested_metadata_mode({"prompt": "x"}))
+        self.assertIsNone(provenance.requested_metadata_mode({"extensions": {NS: {"seed": 1}}}))
+        with self.assertRaises(provenance.MetadataModeError):
+            provenance.requested_metadata_mode({"extensions": {NS: {"metadata": "x"}}})
+        with self.assertRaises(provenance.MetadataModeError):
+            provenance.requested_metadata_mode({"extensions": "none"})
+
+    def test_workflow_validation_accepts_control_without_binding_it(self) -> None:
+        specs = {"seed": {"type": "integer"}}
+        result = validate_extension_inputs(
+            specs, {"metadata": "none", "seed": 3}, namespace=NS
+        )
+        self.assertTrue(result.ok)
+        self.assertEqual(result.accepted, {"seed": 3})
+        self.assertEqual(result.gateway_controls, {"metadata": "none"})
+        bad = validate_extension_inputs(specs, {"metadata": "nope"}, namespace=NS)
+        self.assertIn("metadata", bad.rejected)
+
+    def test_other_namespaces_do_not_get_the_control(self) -> None:
+        result = validate_extension_inputs(
+            {}, {"metadata": "none"}, namespace="com.azizam.chat"
+        )
+        self.assertIn("metadata", result.rejected)
+
+    def test_query_forms(self) -> None:
+        media_delivery.begin(plan_bound="full")
+        self.assertEqual(
+            media_delivery.note_query([("extensions[com.azizam.workflow][metadata]", "none")]),
+            "none",
+        )
+        self.assertEqual(media_delivery.current_mode(), "none")
+        media_delivery.begin(plan_bound="full")
+        self.assertEqual(media_delivery.note_query([("metadata", "none")]), "none")
+        media_delivery.begin(plan_bound="none")
+        self.assertIsNone(media_delivery.note_query([("other", "x")]))
+        self.assertEqual(media_delivery.current_mode(), "none")
+        with self.assertRaises(provenance.MetadataModeError):
+            media_delivery.note_query([("metadata", "x")])
+
+    def test_ranged_delivery_response_supports_browser_audio_seek(self) -> None:
+        content = b"0123456789abcdef"
+        request = SimpleNamespace(headers={"range": "bytes=4-9"})
+        response = media_delivery.ranged_delivery_response(
+            request,  # type: ignore[arg-type]
+            content,
+            media_type="audio/wav",
+        )
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response.headers["accept-ranges"], "bytes")
+        self.assertEqual(response.headers["content-range"], "bytes 4-9/16")
+        self.assertEqual(response.body, b"456789")
+
+        bad = media_delivery.ranged_delivery_response(
+            SimpleNamespace(headers={"range": "bytes=99-100"}),  # type: ignore[arg-type]
+            content,
+            media_type="audio/wav",
+        )
+        self.assertEqual(bad.status_code, 416)
+        self.assertEqual(bad.headers["content-range"], "bytes */16")
+
+
+def test_provenance_builder_sanitizes_before_any_serializer():
+    parameters = {
+        "api_key": SECRET_KEY,
+        "nested": {"token": "nested-sensitive", "ok": "fine"},
+        "note": "use " + SECRET_KEY,
+        "raw": b"private-media",
+        "size": "512x512",
+    }
+    original = copy.deepcopy(parameters)
+    record = provenance.build_provenance_record(
+        kind="image", created_at=0, request_id="req-isolated", parameters=parameters,
+    )
+    assert record["parameters"] == {
+        "api_key": "[redacted]",
+        "nested": {"token": "[redacted]", "ok": "fine"},
+        "note": "[redacted]",
+        "raw": "[media omitted]",
+        "size": "512x512",
+    }
+    assert SECRET_KEY not in json.dumps(record)
+    assert parameters == original
+
+
+def test_provenance_serializer_sanitizes_untrusted_record_independently():
+    raw = {"parameters": {
+        "api_key": SECRET_KEY,
+        "nested": [{"token": "nested-sensitive", "ok": "fine"}],
+        "raw": b"private-media",
+        "size": "512x512",
+    }}
+    original = copy.deepcopy(raw)
+    encoded = provenance.provenance_json(raw)
+    assert json.loads(encoded) == {"parameters": {
+        "api_key": "[redacted]",
+        "nested": [{"token": "[redacted]", "ok": "fine"}],
+        "raw": "[media omitted]",
+        "size": "512x512",
+    }}
+    assert raw == original
+
+
+class ProvenanceRecordTests(unittest.TestCase):
+    def test_record_fields_from_receipt(self) -> None:
+        from gateway.receipts import RouteReceipt
+
+        receipt = RouteReceipt(
+            protocol="openai.images", intent="image.generate", path="/v1/images/generations",
+            requested_model="gpt-image-1", resolved_model="krea2-turbo",
+            resolved_workflow="image.generate.krea2-turbo", backend="comfyui",
+            api_key_name="owners-key", app_profile="owner-local",
+        )
+        receipt.attach_manifest(manifest_id="image.generate.krea2-turbo", manifest_version="3", manifest_hash="abc123")
+        record = provenance.build_provenance_record(
+            receipt=receipt, kind="image", seed=42, parameters={"size": "512x512"}, index=0,
+        )
+        self.assertEqual(record["schema"], "azizam.provenance/1")
+        self.assertEqual(record["requested_model"], "gpt-image-1")
+        self.assertEqual(record["model_alias"], "gpt-image-1")
+        self.assertEqual(record["resolved_model"], "krea2-turbo")
+        self.assertEqual(record["workflow_id"], "image.generate.krea2-turbo")
+        self.assertEqual(record["workflow_version"], "3")
+        self.assertEqual(record["workflow_hash"], "abc123")
+        self.assertEqual(record["seed"], 42)
+        self.assertEqual(record["parameters"], {"size": "512x512"})
+        self.assertEqual(record["request_id"], receipt.request_id)
+        self.assertEqual(record["receipt"], f"/gateway/v1/receipts/{receipt.request_id}")
+        self.assertRegex(record["created_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        # nothing from the receipt beyond the allow-list
+        text = json.dumps(record)
+        for leaked in ("owners-key", "owner-local", "api_key_name", "app_profile"):
+            self.assertNotIn(leaked, text)
+
+    def test_no_secrets_or_media_in_record(self) -> None:
+        hostile = {
+            "api_key": SECRET_KEY,
+            "Authorization": f"Bearer {SECRET_KEY}",
+            "nested": {"token": "abc", "ok": "fine"},
+            "note": f"use {SECRET_KEY} here",
+            "header": "Bearer abcdef123456",
+            "url": "http://x/v1/assets/a/content?expires=1&sig=deadbeef",
+            "image": "data:image/png;base64," + "QUJD" * 400,
+            "blob": "QUJD" * 400,
+            "raw": b"\x89PNG....",
+            "size": "512x512",
+            "steps": 8,
+        }
+        record = provenance.build_provenance_record(
+            kind="image", seed=1, parameters=hostile, request_id="req_1",
+        )
+        text = provenance.provenance_json(record)
+        for leaked in (SECRET_KEY, "abcdef123456", "deadbeef", "QUJDQUJD", "PNG...."):
+            self.assertNotIn(leaked, text)
+        self.assertEqual(record["parameters"]["size"], "512x512")
+        self.assertEqual(record["parameters"]["steps"], 8)
+        self.assertEqual(record["parameters"]["nested"]["ok"], "fine")
+
+    def test_long_values_are_truncated(self) -> None:
+        record = provenance.build_provenance_record(kind="image", parameters={"p": "x " * 5000})
+        self.assertLessEqual(len(record["parameters"]["p"]), 2003)
+
+
+class PngDeliveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.record = provenance.build_provenance_record(
+            kind="image", requested_model="m", resolved_model="r", seed=9, request_id="req_9"
+        )
+
+    def test_stored_copy_full_delivery_none(self) -> None:
+        raw = comfy_png()
+        stored = media_delivery.attach_provenance(raw, ".png", self.record)
+        chunks = media_metadata.png_text_chunks(stored)
+        self.assertEqual(set(chunks), {"prompt", "workflow", provenance.PROVENANCE_KEY})
+        self.assertEqual(json.loads(chunks["workflow"])["version"], 0.4)
+        self.assertEqual(json.loads(chunks[provenance.PROVENANCE_KEY])["seed"], 9)
+        # full: byte-identical to the stored copy
+        self.assertEqual(media_delivery.deliver_bytes(stored, ".png", "full"), stored)
+        # none: no text at all, same pixels, same compressed pixel data
+        stripped = media_delivery.deliver_bytes(stored, ".png", "none")
+        self.assertEqual(media_metadata.png_text_chunks(stripped), {})
+        self.assertNotIn(b"KSampler", stripped)
+        self.assertNotIn(b"azizam", stripped)
+        self.assertEqual(pixels(stripped), pixels(raw))
+        self.assertEqual(idat(stripped), idat(raw))
+        # the input bytes were not modified
+        self.assertEqual(media_metadata.png_text_chunks(stored).keys(), chunks.keys())
+
+    def test_embed_failure_keeps_full_copy(self) -> None:
+        self.assertEqual(media_delivery.attach_provenance(b"not a png", ".png", self.record), b"not a png")
+
+
+class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cache_dir = Path(self.tmp.name)
+        for target, value in (
+            ("IMAGE_CACHE_DIR", self.cache_dir),
+            ("_image_url_signing_secret", b"test-secret"),
+        ):
+            patcher = patch.object(proxy, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _payload(self, *, mode_default: str, requested: str | None, fmt: str = "png", response_format: str = "b64_json", n: int = 1):
+        ctx = media_delivery.begin(plan_bound=mode_default)
+        ctx.requested_mode = requested
+        ctx.seeds.extend([11, 22][:n])
+        response = proxy._build_image_response_payload(
+            StubRequest(), [comfy_png((i * 40, 20, 30, 255)) for i in range(n)], response_format, {},
+            auth_context=FULL_AUTH, output_format=fmt, size="8x6", quality="high",
+        )
+        self.assertEqual(response.status_code, 200)
+        return json.loads(response.body)
+
+    def _stored(self, item: dict[str, Any]) -> bytes:
+        return proxy.asset_cache_path(item["asset_id"]).read_bytes()
+
+    def test_a_made_picture_keeps_the_workflow_and_what_it_was_made_from(self) -> None:
+        media_delivery.begin(plan_bound="none")
+        given = asset_types.OutputInput(comfy_png((1, 2, 3, 255)), "garden-gnome.png", "image/png")
+        response = proxy._build_image_response_payload(
+            StubRequest(), [comfy_png((9, 9, 9, 255))], "b64_json", {}, auth_context=FULL_AUTH,
+            workflow_name="Edit a picture", made_from=(given,),
+        )
+        made_id = json.loads(response.body)["data"][0]["asset_id"]
+        origin = proxy._read_asset_metadata(made_id)["origin"]
+        self.assertEqual(origin["workflow_name"], "Edit a picture")
+        [source] = origin["sources"]
+        self.assertEqual(source["name"], "garden-gnome")
+        kept = proxy.asset_cache_path(source["asset_id"]).read_bytes()
+        self.assertTrue(kept.startswith(b"\x89PNG"))
+        self.assertNotIn(b"tEXtprompt", kept)  # the run's prompt belongs to the result, not to its input
+
+    def test_a_picture_made_from_nothing_names_no_source(self) -> None:
+        media_delivery.begin(plan_bound="none")
+        response = proxy._build_image_response_payload(
+            StubRequest(), [comfy_png((9, 9, 9, 255))], "b64_json", {}, auth_context=FULL_AUTH,
+        )
+        made_id = json.loads(response.body)["data"][0]["asset_id"]
+        self.assertEqual(proxy._read_asset_metadata(made_id).get("origin", {}).get("sources", []), [])
+
+    def test_png_full_and_none_b64(self) -> None:
+        full = self._payload(mode_default="full", requested=None)
+        none = self._payload(mode_default="none", requested=None)
+        full_bytes = base64.b64decode(full["data"][0]["b64_json"])
+        none_bytes = base64.b64decode(none["data"][0]["b64_json"])
+        self.assertEqual(set(media_metadata.png_text_chunks(full_bytes)), {"prompt", "workflow", "azizam_provenance"})
+        self.assertEqual(media_metadata.png_text_chunks(none_bytes), {})
+        self.assertEqual(pixels(full_bytes), pixels(none_bytes))
+        record = json.loads(media_metadata.png_text_chunks(full_bytes)["azizam_provenance"])
+        self.assertEqual(record["seed"], 11)
+        self.assertEqual(record["parameters"]["size"], "8x6")
+        # The stored cache copy is clean; prompt/workflow metadata is restored
+        # only from a maker-scoped prompt record.
+        self.assertEqual(media_metadata.png_text_chunks(self._stored(none["data"][0])), {})
+
+    def test_request_lowers_the_plan_bound_but_never_raises_it(self) -> None:
+        down = self._payload(mode_default="full", requested="none")
+        up = self._payload(mode_default="none", requested="full")
+        self.assertEqual(media_metadata.png_text_chunks(base64.b64decode(down["data"][0]["b64_json"])), {})
+        self.assertEqual(media_metadata.png_text_chunks(base64.b64decode(up["data"][0]["b64_json"])), {})
+
+    def test_signed_url_defaults_to_clean_media_even_for_full_profile(self) -> None:
+        none = self._payload(mode_default="none", requested=None, response_format="url")
+        full = self._payload(mode_default="none", requested="full", response_format="url")
+        for payload, expected in ((none, "none"), (full, "none")):
+            for key in ("url", "asset_url"):
+                query = parse_qs(urlparse(payload["data"][0][key]).query)
+                self.assertEqual(query["md"], [expected])
+        client = self._client()
+        got_none = client.get(self._relative(none["data"][0]["url"]))
+        got_full = client.get(self._relative(full["data"][0]["asset_url"]))
+        self.assertEqual(got_none.status_code, 200)
+        self.assertEqual(media_metadata.png_text_chunks(got_none.content), {})
+        self.assertEqual(got_full.status_code, 200)
+        self.assertEqual(media_metadata.png_text_chunks(got_full.content), {})
+
+    def test_signed_url_cannot_be_flipped_to_full(self) -> None:
+        none = self._payload(mode_default="none", requested=None, response_format="url")
+        url = self._relative(none["data"][0]["url"]).replace("md=none", "md=full")
+        self.assertEqual(self._client().get(url).status_code, 403)
+        self.assertEqual(self._client().get(self._relative(none["data"][0]["url"]).replace("md=none", "md=bogus")).status_code, 403)
+
+    def test_legacy_url_without_md_is_stripped(self) -> None:
+        none = self._payload(mode_default="none", requested="full", response_format="url")
+        asset_id = none["data"][0]["asset_id"]
+        import time
+
+        expires = int(time.time()) + 600
+        sig = proxy._sign_asset_token(asset_id, expires)  # the pre-control signing scheme
+        got = self._client().get(f"/v1/assets/{asset_id}/content?expires={expires}&sig={sig}")
+        self.assertEqual(got.status_code, 200)
+        self.assertEqual(media_metadata.png_text_chunks(got.content), {})
+
+    def test_jpeg_and_webp_carry_exif_when_stored_and_none_when_delivered(self) -> None:
+        from PIL import Image
+
+        for fmt, suffix in (("jpeg", ".jpg"), ("webp", ".webp")):
+            with self.subTest(fmt=fmt):
+                payload = self._payload(mode_default="none", requested=None, fmt=fmt)
+                item = payload["data"][0]
+                stored = self._stored(item)
+                exif = Image.open(io.BytesIO(stored)).getexif()
+                self.assertEqual(len(exif), 0)
+                delivered = base64.b64decode(item["b64_json"])
+                self.assertEqual(len(Image.open(io.BytesIO(delivered)).getexif()), 0)
+                self.assertNotIn(b"KSampler", delivered)
+                self.assertEqual(
+                    list(Image.open(io.BytesIO(delivered)).convert("RGB").tobytes()),
+                    list(Image.open(io.BytesIO(stored)).convert("RGB").tobytes()),
+                )
+                full = self._payload(mode_default="full", requested=None, fmt=fmt)
+                self.assertEqual(len(Image.open(io.BytesIO(self._stored(full["data"][0]))).getexif()), 0)
+
+    def _client(self):
+        from fastapi.testclient import TestClient
+
+        return TestClient(proxy.app)
+
+    @staticmethod
+    def _relative(url: str) -> str:
+        parsed = urlparse(url)
+        return f"{parsed.path}?{parsed.query}"
+
+
+class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
+    """The generations route end to end, with ComfyUI faked."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        _patch_route_stores(self, Path(self.tmp.name))
+        for target, value in (
+            ("COMFY_ENABLED", True),
+        ):
+            patcher = patch.object(proxy, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def _generate(self, extensions: dict[str, Any] | None, auth_context) -> tuple[Any, dict[str, Any]]:
+        body = {"prompt": "a cat", "model": "krea2-turbo", "size": "8x6", "response_format": "b64_json"}
+        if extensions is not None:
+            body["extensions"] = extensions
+
+        class Req(StubRequest):
+            async def json(self_inner):
+                return body
+
+        async def fake_round(*_a, **_k):
+            return None, [comfy_png()]
+
+        receipt = proxy.start_image_route_receipt("/v1/images/generations", auth_context)
+        with patch.object(proxy, "_graph_run_round", fake_round), patch.object(
+            proxy, "get_vram_estimate", lambda *_a, **_k: 1024), patch.object(
+            proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**10)
+        ), patch.object(proxy, "_service_availability_response", lambda *_a, **_k: None), patch.object(
+            proxy.httpx, "AsyncClient", lambda *a, **k: _NullClient()
+        ), patch.object(
+            proxy, "configured_downstream_headers", lambda *_a: {}
+        ):
+            response = await proxy.proxy_graph_image_request(Req(), auth_context, receipt=receipt)  # type: ignore[arg-type]
+        return response, json.loads(response.body)
+
+    async def test_plan_bound_and_request_override(self) -> None:
+        none_profile = NONE_AUTH
+        full_profile = proxy.AuthContext(identity=auth_identity(
+            name="f", key_hash="sha256:f",
+            access=access(plan_for("owner", metadata="full")),
+        ))
+        cases = [
+            (none_profile, None, False),
+            # A request can lower the plans' bound, never raise it.
+            (none_profile, {NS: {"metadata": "full"}}, False),
+            (full_profile, None, True),
+            (full_profile, {NS: {"metadata": "none"}}, False),
+        ]
+        for auth, extensions, expect_full in cases:
+            with self.subTest(profile=auth.identity.name if auth.identity else "no-auth", ext=extensions):
+                response, payload = await self._generate(extensions, auth)
+                self.assertEqual(response.status_code, 200, response.body)
+                png = base64.b64decode(payload["data"][0]["b64_json"])
+                chunks = media_metadata.png_text_chunks(png)
+                if expect_full:
+                    self.assertEqual(set(chunks), {"prompt", "workflow", "azizam_provenance"})
+                    record = json.loads(chunks["azizam_provenance"])
+                    self.assertEqual(record["requested_model"], "krea2-turbo")
+                    self.assertEqual(record["parameters"]["size"], "8x6")
+                else:
+                    self.assertEqual(chunks, {})
+
+    async def test_bad_control_value_is_a_400(self) -> None:
+        response, payload = await self._generate({NS: {"metadata": "partial"}}, FULL_AUTH)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(payload["error"]["param"], f"extensions.{NS}.metadata")
+
+
+class _NullClient:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_a):
+        return None
+
+
+@unittest.skipUnless(FFMPEG, "ffmpeg is required")
+class AvDeliveryTests(unittest.TestCase):
+    def _make(self, suffix: str, *, audio: bool) -> bytes:
+        workdir = Path(tempfile.mkdtemp())
+        try:
+            target = workdir / f"in{suffix}"
+            if audio:
+                src = ["-f", "lavfi", "-i", "sine=frequency=440:duration=0.5"]
+            else:
+                src = ["-f", "lavfi", "-i", "testsrc=size=64x48:rate=10:duration=0.5", "-pix_fmt", "yuv420p"]
+            cmd = ["ffmpeg", "-v", "error", "-y", *src,
+                   "-metadata", f"prompt={PROMPT_JSON}", "-metadata", f"workflow={WORKFLOW_JSON}", str(target)]
+            if suffix == ".mp4":
+                cmd[-1:-1] = ["-movflags", "+use_metadata_tags"]
+            subprocess.run(cmd, check=True)
+            return target.read_bytes()
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def _stream_md5(self, content: bytes, suffix: str) -> str:
+        workdir = Path(tempfile.mkdtemp())
+        try:
+            path = workdir / f"x{suffix}"
+            path.write_bytes(content)
+            out = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0", "-c", "copy", "-f", "md5", "-"],
+                                 check=True, capture_output=True, text=True).stdout
+            return out.strip()
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_full_then_none(self) -> None:
+        record = provenance.build_provenance_record(kind="av", seed=5, request_id="req_av")
+        for suffix, audio in ((".mp4", False), (".webm", False), (".flac", True), (".mp3", True), (".wav", True)):
+            with self.subTest(suffix=suffix):
+                try:
+                    raw = self._make(suffix, audio=audio)
+                except subprocess.CalledProcessError:
+                    self.skipTest(f"ffmpeg cannot build {suffix}")
+                stored = media_delivery.attach_provenance(raw, suffix, record)
+                tags = media_metadata.read_media_tags(stored, suffix)
+                blob = json.dumps(tags)
+                self.assertIn("azizam", blob)
+                if suffix != ".wav":  # wav has no free-form tag fields
+                    self.assertIn("KSampler", blob)
+                self.assertEqual(media_delivery.deliver_bytes(stored, suffix, "full"), stored)
+                stripped = media_delivery.deliver_bytes(stored, suffix, "none")
+                left = json.dumps(media_metadata.read_media_tags(stripped, suffix))
+                for needle in ("KSampler", "azizam", "prompt", "workflow"):
+                    self.assertNotIn(needle, left)
+                for needle in (b"KSampler", b"azizam_provenance"):
+                    self.assertNotIn(needle, stripped)
+                self.assertEqual(self._stream_md5(stripped, suffix), self._stream_md5(raw, suffix))
+
+    def test_strip_failure_is_an_error_not_a_leak(self) -> None:
+        with patch.object(media_metadata, "_run", side_effect=OSError("no ffmpeg")):
+            with self.assertRaises(Exception):
+                media_delivery.deliver_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\0" * 64, ".mp4", "none")
+
+
+class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
+    """GET /v1/videos/{id}/content: query control, submit-time choice, the plans' bound."""
+
+    async def _fetch(self, *, query: str, record_mode: str | None, auth) -> bytes:
+        if not FFMPEG:
+            self.skipTest("ffmpeg is required")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        _patch_route_stores(self, Path(tmp.name))
+        admin_db = Path(tmp.name) / "admin.db"
+        admin_store.init_db(admin_db)
+        maker = admin_store.upsert_oidc_user("test", "video-maker", path=admin_db)
+        admin_path = patch.object(proxy.ADMIN_STORE, "path", admin_db)
+        admin_path.start()
+        self.addCleanup(admin_path.stop)
+        auth = proxy.AuthContext(identity=replace(auth.identity, person_id=maker["id"]))
+        raw = AvDeliveryTests()._make(".mp4", audio=False)
+        prompt_id = "pid-1"
+        record = {
+            "owner_key_hash": proxy._asset_owner_key(auth), "deleted_at": None,
+            "person_id": maker["id"],
+            "metadata_mode": record_mode,
+            "provenance": provenance.build_provenance_record(kind="video", seed=3, request_id="video_x"),
+        }
+        prompt_memory.put(f"video_{prompt_id}", maker["id"], "video test prompt", kept_until=None, admin_path=admin_db)
+
+        class View:
+            status_code = 200
+            content = raw
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_a):
+                return None
+
+            async def get(self, *_a, **_k):
+                return View()
+
+        class Req(StubRequest):
+            query_params = __import__("starlette.datastructures", fromlist=["QueryParams"]).QueryParams(query)
+
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy, "_prompt_id_from_video_id", lambda _v: prompt_id
+        ), patch.dict(proxy._video_job_records, {prompt_id: record}, clear=False), patch.object(
+            proxy, "_graph_history", AsyncMock(return_value={"outputs": {}})
+        ), patch.object(proxy, "_job_status_from_history", lambda _j: ("succeeded", None)), patch.object(
+            proxy, "_first_video_output", lambda _j: {"filename": "v.mp4", "type": "output", "subfolder": ""}
+        ), patch.object(proxy.httpx, "AsyncClient", lambda *a, **k: Client()), patch.object(
+            proxy, "configured_downstream_headers", lambda *_a: {}
+        ), patch.object(proxy, "authenticate_request", lambda *_a: auth), patch.object(
+            proxy, "_enforce_runtime_route_policy", lambda *_a, **_k: None
+        ):
+            response = await proxy.videos_content("video_x", Req())  # type: ignore[arg-type]
+        self.assertEqual(response.status_code, 200, response.body)
+        return response.body
+
+    def _has_metadata(self, content: bytes) -> bool:
+        return "KSampler" in json.dumps(media_metadata.read_media_tags(content, ".mp4"))
+
+    async def test_precedence(self) -> None:
+        none_auth = NONE_AUTH
+        full_auth = proxy.AuthContext(identity=auth_identity(
+            name="f", key_hash="sha256:f",
+            access=access(plan_for("owner", metadata="full")),
+        ))
+        # profile default
+        self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode=None, auth=none_auth)))
+        self.assertTrue(self._has_metadata(await self._fetch(query="", record_mode=None, auth=full_auth)))
+        # the choice made at submit time lowers the bound, never raises it
+        self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode="full", auth=none_auth)))
+        self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode="none", auth=full_auth)))
+        # the GET's own control beats the submit-time choice, within the bound
+        q = "extensions[com.azizam.workflow][metadata]=full"
+        self.assertTrue(self._has_metadata(await self._fetch(query=q, record_mode="none", auth=full_auth)))
+        self.assertFalse(self._has_metadata(await self._fetch(query=q, record_mode="none", auth=none_auth)))
+        q = "metadata=none"
+        self.assertFalse(self._has_metadata(await self._fetch(query=q, record_mode="full", auth=full_auth)))
+        # full delivery carries the provenance record
+        blob = json.dumps(media_metadata.read_media_tags(
+            await self._fetch(query="", record_mode=None, auth=full_auth), ".mp4"))
+        self.assertIn("azizam_provenance", blob)
+
+
+@unittest.skipUnless(FFMPEG, "ffmpeg is required")
+class SpeechRouteTests(unittest.TestCase):
+    """POST /v1/audio/speech (buffered): the control strips tags and never reaches the engine."""
+
+    sent: list[dict[str, Any]] = []
+
+    def setUp(self) -> None:
+        from fastapi.testclient import TestClient
+
+        workdir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, workdir, True)
+        _patch_route_stores(self, workdir)
+        wav = workdir / "t.wav"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=0.3",
+                        "-metadata", "comment=engine-generated-note", "-metadata", "software=engine-1.0", str(wav)], check=True)
+        self.wav = wav.read_bytes()
+        outer = self
+        outer.sent = []
+
+        class Fake:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_a):
+                return None
+
+            async def post(self, url, headers=None, content=None, json=None, **_k):  # noqa: A002
+                outer.sent.append(__import__("json").loads(content) if content is not None else json)
+                return proxy.httpx.Response(200, content=outer.wav, headers={"content-type": "audio/wav"})
+
+        self.client = TestClient(proxy.app)
+        self.auth = FULL_AUTH
+        for patcher in (
+            patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
+            patch.object(proxy.httpx, "AsyncClient", Fake),
+            patch.object(proxy, "_service_availability_response", return_value=None),
+            patch.object(proxy, "_ensure_speech_service_ready", AsyncMock(return_value=None)),
+            patch.object(proxy, "authenticate_request", lambda *_a: self.auth),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _speak(self, **extra: Any):
+        return self.client.post("/v1/audio/speech", json={"model": "tts-1", "voice": "alloy", "input": "hi",
+                                                          "response_format": "wav", **extra})
+
+    def _tags(self, content: bytes) -> str:
+        return json.dumps(media_metadata.read_media_tags(content, ".wav"))
+
+    def test_full_keeps_engine_bytes_and_none_strips(self) -> None:
+        full = self._speak(extensions={NS: {"metadata": "full"}})
+        self.assertEqual(full.status_code, 200, full.text)
+        self.assertEqual(full.content, self.wav)
+        none = self._speak(extensions={NS: {"metadata": "none"}})
+        self.assertEqual(none.status_code, 200, none.text)
+        self.assertNotIn("engine-generated-note", self._tags(none.content))
+        self.assertIn("engine-generated-note", self._tags(self.wav))
+        self.assertEqual(self.sent[-1].get("extensions"), None)  # engines never see the envelope
+
+    def test_plan_bound_decides_without_a_control(self) -> None:
+        self.auth = NONE_AUTH
+        self.assertNotIn("engine-generated-note", self._tags(self._speak().content))
+        self.auth = FULL_AUTH
+        self.assertEqual(self._speak().content, self.wav)
+
+    def test_bad_value_is_a_400(self) -> None:
+        response = self._speak(extensions={NS: {"metadata": "sometimes"}})
+        self.assertEqual(response.status_code, 400)
+
+
+@unittest.skipUnless(FFMPEG, "ffmpeg is required")
+class AudioGenerateRouteTests(unittest.TestCase):
+    """POST /v1/audio/generate with a faked ComfyUI that returns a tagged FLAC."""
+
+    def setUp(self) -> None:
+        from fastapi.testclient import TestClient
+
+        self.workdir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.workdir, True)
+        _patch_route_stores(self, self.workdir)
+        graph = self.workdir / "fx.json"
+        graph.write_text(json.dumps({"1": {"class_type": "TextNode", "inputs": {"text": "", "seed": 0}}}))
+        flac = self.workdir / "a.flac"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=0.3",
+                        "-metadata", f"prompt={PROMPT_JSON}", "-metadata", f"workflow={WORKFLOW_JSON}", str(flac)], check=True)
+        self.flac = flac.read_bytes()
+        outer = self
+
+        class Fake:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_a):
+                return None
+
+            async def post(self, url, **_k):
+                return proxy.httpx.Response(200, json={"prompt_id": "pid-a"})
+
+            async def get(self, url, **_k):
+                if "/history/" in str(url):
+                    return proxy.httpx.Response(200, json={"pid-a": {
+                        "status": {"status_str": "success"},
+                        "outputs": {"9": {"audio": [{"filename": "a.flac", "type": "output"}]}}}})
+                return proxy.httpx.Response(200, content=outer.flac, headers={"content-type": "audio/flac"})
+
+        self.auth = FULL_AUTH
+        self.client = TestClient(proxy.app)
+        for patcher in (
+            patch.object(proxy, "COMFY_ENABLED", True),
+            patch.object(proxy, "AUDIO_WORKFLOWS_CFG", {"fx": {"file": str(graph)}}),
+            patch.object(proxy, "_load_audio_workflow_manifest",
+                         lambda name: audio_manifest(name, {"prompt": [("1", "text")], "seed": [("1", "seed")]},
+                                                      workflow=str(graph))),
+            patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
+            patch.object(proxy, "_service_availability_response", return_value=None),
+            patch.object(proxy, "configured_downstream_headers", lambda *_a: {}),
+            patch.object(proxy.httpx, "AsyncClient", Fake),
+            patch.object(proxy.asyncio, "sleep", AsyncMock(return_value=None)),
+            patch.object(proxy, "authenticate_request", lambda *_a: self.auth),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _generate(self, **extra: Any):
+        return self.client.post("/v1/audio/generate", json={"model": "fx", "prompt": "rain", "duration": 2, **extra})
+
+    def _tags(self, content: bytes) -> str:
+        return json.dumps(media_metadata.read_media_tags(content, ".flac"))
+
+    def test_full_adds_provenance_and_none_strips_everything(self) -> None:
+        full = self._generate(extensions={NS: {"metadata": "full"}})
+        self.assertEqual(full.status_code, 200, full.text)
+        blob = self._tags(full.content)
+        for needle in ("KSampler", "azizam_provenance", "audio.generate.fx"):
+            self.assertIn(needle, blob)
+        none = self._generate(extensions={NS: {"metadata": "none"}})
+        self.assertEqual(none.status_code, 200, none.text)
+        left = self._tags(none.content)
+        for needle in ("KSampler", "azizam", "prompt", "workflow"):
+            self.assertNotIn(needle, left)
+        md5 = lambda c: hashlib.md5(AvDeliveryTests()._stream_md5(c, ".flac").encode()).hexdigest()  # noqa: E731
+        self.assertEqual(md5(none.content), md5(self.flac))
+
+    def test_store_full_keeps_metadata_for_media_jobs(self) -> None:
+        self.auth = NONE_AUTH
+        import asyncio
+
+        class Req(StubRequest):
+            async def json(self_inner):
+                return {"model": "fx", "prompt": "rain", "duration": 2}
+
+        stored = asyncio.run(proxy.proxy_audio_generate(Req(), self.auth, store_full=True))  # type: ignore[arg-type]
+        self.assertEqual(stored.status_code, 200)
+        self.assertIn("azizam_provenance", self._tags(stored.body))
+        delivered = self._generate()  # same profile, delivery path
+        self.assertNotIn("azizam", self._tags(delivered.content))
+
+    def test_provenance_has_no_secrets(self) -> None:
+        full = self._generate(extensions={NS: {"metadata": "full"}})
+        self.assertNotIn(SECRET_KEY, self._tags(full.content))
+
+
+class MediaJobUrlTests(unittest.TestCase):
+    def test_job_asset_urls_carry_the_delivery_mode(self) -> None:
+        asset_id = "vid_" + "a" * 64
+        job = {"assets": [{"asset_id": asset_id, "media_type": "video/mp4"}]}
+        with patch.object(proxy, "_image_url_signing_secret", b"test-secret"):
+            media_delivery.begin(plan_bound="none")
+            item = proxy._media_job_asset_items(job, StubRequest(), kind="vid")[0]  # type: ignore[arg-type]
+            self.assertEqual(parse_qs(urlparse(item["content_url"]).query)["md"], ["none"])
+            ctx = media_delivery.begin(plan_bound="none")
+            ctx.requested_mode = "full"
+            item = proxy._media_job_asset_items(job, StubRequest(), kind="vid")[0]  # type: ignore[arg-type]
+            self.assertEqual(parse_qs(urlparse(item["content_url"]).query)["md"], ["none"])
+
+
+@unittest.skipUnless(FFMPEG, "ffmpeg is required")
+@pytest.mark.usefixtures("isolated_receipts")
+class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
+    """POST /gateway/v1/workflows/{id}/run returns the rendered video."""
+
+    FIELD = f"extensions[{NS}][metadata]"
+
+    async def _run(self, extra: dict[str, str], auth=FULL_AUTH) -> Any:
+        raw = AvDeliveryTests()._make(".mp4", audio=False)
+
+        class Upload:
+            filename = "sample.mp4"
+            content_type = "video/mp4"
+
+            async def read(self):
+                return b"input-video-bytes"
+
+        fields: dict[str, Any] = {"source_video": Upload(), "multiplier": "2", **extra}
+
+        class Form:
+            def keys(self):
+                return tuple(fields)
+
+            def get(self, name, default=None):
+                return fields.get(name, default)
+
+        class Req:
+            async def form(self):
+                return Form()
+
+        class Resp:
+            def __init__(self, status, payload=None, content=b""):
+                self.status_code, self._p, self.content, self.text = status, payload or {}, content, ""
+
+            def json(self):
+                return self._p
+
+        class Client:
+            def __init__(self, **_k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_a):
+                return False
+
+            async def post(self, url, **kw):
+                if url.endswith("/upload/image"):
+                    return Resp(200, {"name": "sample.mp4"})
+                return Resp(200, {"prompt_id": "p1"})
+
+            async def get(self, url, **kw):
+                if "/history/" in url:
+                    return Resp(200, {"p1": {"status": {"completed": True},
+                                              "outputs": {"6": {"videos": [{"filename": "r.mp4", "type": "output"}]}}}})
+                return Resp(200, content=raw)
+
+        with patch.object(proxy.httpx, "AsyncClient", Client), patch.object(proxy.asyncio, "sleep", return_value=None):
+            return await proxy._execute_video_manifest_workflow(Req(), "rife-interpolate", auth), raw  # type: ignore[arg-type]
+
+    def _blob(self, content: bytes) -> str:
+        return json.dumps(media_metadata.read_media_tags(content, ".mp4"))
+
+    async def test_default_is_full_with_provenance_and_none_strips(self) -> None:
+        response, _raw = await self._run({})
+        self.assertEqual(response.status_code, 200, response.body)
+        blob = self._blob(response.body)
+        self.assertIn("KSampler", blob)
+        self.assertIn("azizam_provenance", blob)
+        self.assertIn("rife-interpolate", blob)
+        none_auth = NONE_AUTH
+        stripped, raw = await self._run({}, none_auth)
+        self.assertNotIn("KSampler", self._blob(stripped.body))
+        explicit, raw = await self._run({self.FIELD: "none"})
+        self.assertEqual(explicit.status_code, 200, explicit.body)
+        left = self._blob(explicit.body)
+        for needle in ("KSampler", "azizam", "prompt", "workflow"):
+            self.assertNotIn(needle, left)
+        self.assertEqual(AvDeliveryTests()._stream_md5(explicit.body, ".mp4"), AvDeliveryTests()._stream_md5(raw, ".mp4"))
+        up, _ = await self._run({self.FIELD: "full"}, none_auth)
+        self.assertEqual(up.status_code, 200, up.body)
+        self.assertNotIn("azizam_provenance", self._blob(up.body))  # a request cannot raise the bound
+        self.assertNotIn("vividfish_provenance", self._blob(up.body))
+
+    async def test_bad_value_is_a_400(self) -> None:
+        response, _ = await self._run({self.FIELD: "maybe"})
+        self.assertEqual(response.status_code, 400)
+
+    async def test_retired_metadata_control_is_an_unknown_multipart_field(self) -> None:
+        retired_field = "extensions[com.vividfish.workflow][metadata]"
+        for fields in ({retired_field: "maybe"},
+                       {retired_field: "full", self.FIELD: "none"},
+                       {retired_field: "none", self.FIELD: "full"}):
+            with self.subTest(fields=fields):
+                response, _ = await self._run(fields)
+                self.assertEqual(response.status_code, 400, response.body)
+                self.assertIn(b"unknown workflow input", response.body)
+
+
+class MetadataOnlyExtensionTests(unittest.TestCase):
+    def test_metadata_alone_is_not_a_workflow_extension(self) -> None:
+        present = proxy._workflow_extensions_present
+        self.assertFalse(present({"extensions": {NS: {"metadata": "none"}}}))
+        self.assertTrue(present({"extensions": {NS: {"metadata": "none", "seed": 1}}}))
+        self.assertTrue(present({"extensions": {NS: {}}}))
+        self.assertFalse(present({"prompt": "x"}))
+
+
+class ObjectInfoLookupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        node_info._CACHE.clear()
+        node_info._FAILED_AT.clear()
+        self.addCleanup(node_info._CACHE.clear)
+        self.addCleanup(node_info._FAILED_AT.clear)
+
+    def _client(self, calls: list[str], *, status: int = 200, raises: bool = False):
+        class Client:
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return None
+
+            def get(self, url):
+                calls.append(url)
+                if raises:
+                    raise OSError("down")
+                import httpx
+
+                return httpx.Response(status, json={"KSampler": {"output": ["LATENT"]}})
+
+        return Client
+
+    def test_success_is_cached(self) -> None:
+        calls: list[str] = []
+        with patch.object(node_info.httpx, "Client", self._client(calls)):
+            first = _REAL_OBJECT_INFO_LOOKUP("http://h", "KSampler")
+            second = _REAL_OBJECT_INFO_LOOKUP("http://h", "KSampler")
+        self.assertEqual(first, {"output": ["LATENT"]})
+        self.assertEqual(second, first)
+        self.assertEqual(calls, ["http://h/object_info/KSampler"])
+
+    def test_failure_is_retried_after_the_ttl_not_forever(self) -> None:
+        calls: list[str] = []
+        with patch.object(node_info.httpx, "Client", self._client(calls, raises=True)):
+            self.assertIsNone(_REAL_OBJECT_INFO_LOOKUP("http://h", "KSampler"))
+            self.assertIsNone(_REAL_OBJECT_INFO_LOOKUP("http://h", "KSampler"))
+            self.assertEqual(len(calls), 1)  # inside the TTL: no second attempt
+            node_info._FAILED_AT[("http://h", "KSampler")] -= node_info.FAILURE_TTL + 1
+        with patch.object(node_info.httpx, "Client", self._client(calls)):
+            self.assertEqual(_REAL_OBJECT_INFO_LOOKUP("http://h", "KSampler"), {"output": ["LATENT"]})
+        self.assertEqual(len(calls), 2)
+
+
+class UiGraphSubmitTests(unittest.TestCase):
+    """The submit step embeds a workflow derived from the graph actually sent."""
+
+    OBJECT_INFO = {
+        "CLIPTextEncode": {
+            "input": {"required": {"text": ["STRING", {"multiline": True}], "clip": ["CLIP", {}]}},
+            "input_order": {"required": ["text", "clip"]},
+            "output": ["CONDITIONING"], "output_name": ["CONDITIONING"],
+        },
+        "CheckpointLoaderSimple": {
+            "input": {"required": {"ckpt_name": [["a.safetensors"], {}]}},
+            "input_order": {"required": ["ckpt_name"]},
+            "output": ["MODEL", "CLIP", "VAE"], "output_name": ["MODEL", "CLIP", "VAE"],
+        },
+    }
+
+    def test_payload_carries_derived_workflow_not_the_stale_twin(self) -> None:
+        graph = {
+            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "a.safetensors"}},
+            "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "THIS REQUEST", "clip": ["1", 1]}},
+            "__ui_workflow__": {"nodes": [], "stale": True},
+        }
+        with patch.object(proxy, "_graph_node_info", lambda ct: self.OBJECT_INFO.get(ct)):
+            payload = proxy._build_graph_submit_payload(graph)
+        ui = payload["extra_data"]["extra_pnginfo"]["workflow"]
+        self.assertNotIn("stale", ui)
+        self.assertEqual(sorted(n["id"] for n in ui["nodes"]), [1, 2])
+        text_node = next(n for n in ui["nodes"] if n["id"] == 2)
+        self.assertIn("THIS REQUEST", text_node["widgets_values"])
+        self.assertEqual(len(ui["links"]), 1)
+        self.assertNotIn("__ui_workflow__", payload["prompt"])
+
+    def test_falls_back_to_twin_when_comfyui_is_unreachable(self) -> None:
+        graph = {
+            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "a"}},
+            "__ui_workflow__": {"nodes": [], "twin": True},
+        }
+        with patch.object(proxy, "_graph_node_info", lambda ct: None):
+            payload = proxy._build_graph_submit_payload(graph)
+        self.assertTrue(payload["extra_data"]["extra_pnginfo"]["workflow"]["twin"])
+
+
+def test_provenance_builder_sanitizes_before_any_serializer():
+    parameters = {
+        "api_key": SECRET_KEY,
+        "nested": {"token": "nested-sensitive", "ok": "fine"},
+        "note": "use " + SECRET_KEY,
+        "raw": b"private-media",
+        "size": "512x512",
+    }
+    original = copy.deepcopy(parameters)
+    record = provenance.build_provenance_record(
+        kind="image",
+        created_at=0,
+        request_id="req-isolated",
+        parameters=parameters,
+    )
+    assert record["parameters"] == {
+        "api_key": "[redacted]",
+        "nested": {"token": "[redacted]", "ok": "fine"},
+        "note": "[redacted]",
+        "raw": "[media omitted]",
+        "size": "512x512",
+    }
+    assert SECRET_KEY not in json.dumps(record)
+    assert parameters == original
+
+def test_provenance_serializer_sanitizes_untrusted_record_independently():
+    raw = {
+        "parameters": {
+            "api_key": SECRET_KEY,
+            "nested": [{"token": "nested-sensitive", "ok": "fine"}],
+            "raw": b"private-media",
+            "size": "512x512",
+        },
+    }
+    original = copy.deepcopy(raw)
+    encoded = provenance.provenance_json(raw)
+    assert json.loads(encoded) == {
+        "parameters": {
+            "api_key": "[redacted]",
+            "nested": [{"token": "[redacted]", "ok": "fine"}],
+            "raw": "[media omitted]",
+            "size": "512x512",
+        },
+    }
+    assert raw == original
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+def test_an_upload_is_named_by_its_type_then_its_suffix_then_as_a_picture():
+    named = lambda name, sent: proxy._upload_as_output_input(SimpleNamespace(filename=name, content_type=sent), b"x")
+    assert named("a.png", "image/png; charset=x").media_type == "image/png"
+    assert named("voice.wav", "application/octet-stream").media_type == asset_types.media_type_for_suffix(".wav")
+    assert named("blob", "").media_type == "image/png"
+    assert named(None, None).name == "input"

@@ -1,0 +1,32 @@
+# Operator data for scripts/record-upstream and the live lanes (TEST_STRATEGY 1.4, 4.7).
+# Copy to a path OUTSIDE the repo (or to the ignored tests/live/canaries.toml) and edit.
+# Never commit hosts, keys or LAN addresses. Every limit is required and finite;
+# a row without them fails `scripts/record-upstream --check`.
+schema_version = 1
+
+[[services]]
+id = "example-local"                  # the name passed to --service
+protocol = "openai-compatible"        # a wire protocol of the fake upstream (protocols.json)
+capabilities = ["text", "stream"]     # request-set features this service may record
+target_kind = "direct-local-engine"   # the engine itself, never the gateway on 5000/15000
+base_url = "http://127.0.0.1:18081"   # literal loopback, explicit port
+owner = "replace-with-owner"
+review_by = 2026-12-31                # at most 90 days ahead; refresh before use
+engine_header = "server"              # response headers that REPORT the engine and version;
+version_header = "x-engine-version"   # optional, otherwise provenance says UNVERIFIED
+
+[[services.models]]                   # the recorder picks the smallest model with the feature
+id = "operator-smallest-model"
+size_bytes = 1
+features = ["text", "stream"]
+
+[services.limits]                     # all required
+max_requests = 2                      # live requests per recording session
+max_submits = 2                       # job submissions (0 for a plain chat protocol)
+max_polls = 0
+poll_interval_s = 0
+max_retries = 0                       # must be 0
+max_downloads = 0
+max_cancels = 0
+wall_s = 20                           # whole session
+max_response_bytes = 131072           # per response

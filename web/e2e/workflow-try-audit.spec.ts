@@ -1,0 +1,203 @@
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures/isolation";
+import AxeBuilder from "@axe-core/playwright";
+import { fulfilJson } from "./fixtures/intercept";
+
+/** A person who has not written a prompt takes the tab's example first. Written words are never replaced. */
+async function takeExampleIfEmpty(page: import("@playwright/test").Page) {
+  const example = page.getByRole("button", { name: "Try an example" });
+  if (!(await example.count())) return;
+  const box = page.getByRole("textbox", { name: /^(Prompt|Question)$/ });
+  if ((await box.count()) && (await box.inputValue()) === "") await example.click();
+}
+
+
+
+// Try mints one key per sign-in and revokes the session's older Try keys
+// (gateway/user_runtime.py ensure_try_session_key). Cases that open Try share the
+// lane's sign-in, so the cases of this file stay in one worker, one after another.
+test.describe.configure({ mode: "default" });
+
+const emptyModelsCatalog = {
+  schema_version: 1,
+  object: "models.catalog",
+  aliases: [],
+  models: [],
+  counts: { aliases: 0, models: 0, capabilities: 0 },
+};
+
+const workflowCatalog = {
+  schema_version: 1,
+  object: "workflow.catalog",
+  discovery_url: "/gateway/v1/workflows",
+  workflows: [
+    {
+      id: "image.generate.poster",
+      short_id: "poster",
+      title: "Poster image",
+      description: "Image workflow served through the OpenAI image route.",
+      engine_binding: "comfyui",
+      native_route: "/v1/images/generations",
+      inputs: [
+        { name: "prompt", type: "string", required: true, accepted: true },
+        {
+          name: "style",
+          type: "string",
+          enum: ["studio", "flatlay"],
+          default: "studio",
+          required: true,
+          accepted: true,
+        },
+        {
+          name: "steps",
+          type: "integer",
+          default: 8,
+          minimum: 1,
+          maximum: 12,
+          required: true,
+          accepted: true,
+        },
+      ],
+      example_request: {
+        method: "POST",
+        path: "/v1/images/generations",
+        content_type: "application/json",
+        body: {
+          model: "poster",
+          prompt: "A teal poster.",
+          style: "studio",
+          steps: 8,
+        },
+        form: {},
+        files: {},
+      },
+    },
+  ],
+};
+
+async function routeCatalogs(page: Page, workflows = workflowCatalog) {
+  await page.route("**/me/api/models/catalog", (route) =>
+    fulfilJson(route, emptyModelsCatalog),
+  );
+  await page.route("**/me/api/workflows", (route) =>
+    fulfilJson(route, workflows),
+  );
+}
+
+async function prepareWorkflowTry(page: Page, workflows = workflowCatalog) {
+  await routeCatalogs(page, workflows);
+  await page.goto("/try/?workflow=image.generate.poster");
+  if (!workflows.workflows.length)
+    await expect(page.getByText(/No workflows are available/)).toBeVisible();
+  // Tabs above 640 px; the Task select on a phone.
+  if ((page.viewportSize()?.width ?? 0) >= 640)
+    await expect(
+      page.getByRole("tab", { name: "Workflow", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+  else
+    await expect(
+      page.getByRole("combobox", { name: "Task", exact: true }),
+    ).toHaveValue("workflow");
+}
+
+// Browser-only: layout, horizontal overflow, axe and both themes' colour tokens,
+// across the guided, result, error and empty states. What each state says and
+// the request it sends are tested in tests/try-workflow-run.spec.tsx. One
+// representative per theme, each at one width; the Run in the middle mints a
+// real temporary Try key.
+for (const [theme, width] of [
+  ["light", 1440],
+  ["dark", 390],
+] as const) {
+  test(`workflow Try guided states fit and pass axe at ${width}px in ${theme}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+    await page.addInitScript((value) => {
+      localStorage.setItem("theme", value);
+    }, theme);
+
+    await prepareWorkflowTry(page);
+    await expect(
+      page.getByRole("heading", { name: "Try", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("textbox", { name: /^prompt Required$/i }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("combobox", { name: /^style Required$/i }),
+    ).toContainText("studio");
+    await checkState(page, `workflow-try-guided-${theme}-${width}.png`);
+
+    await page.route("**/v1/images/generations", (route) =>
+      fulfilJson(route, {
+          data: [
+            {
+              url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+              media_type: "image/png",
+            },
+          ],
+        }),
+    );
+    await page
+      .getByRole("textbox", { name: /^prompt Required$/i })
+      .fill("A teal poster.");
+    await takeExampleIfEmpty(page);
+    await page.getByRole("button", { name: "Run", exact: true }).click();
+    await expect(page.getByAltText("Generated result")).toBeVisible();
+    await expect(page.getByText("Key details")).toBeVisible();
+    await checkState(page, `workflow-try-result-${theme}-${width}.png`);
+    await page.unroute("**/v1/images/generations");
+    await page.route("**/v1/images/generations", (route) =>
+      fulfilJson(route, { error: { message: "This key cannot use poster." } }, { status: 403 }),
+    );
+    await takeExampleIfEmpty(page);
+    await page.getByRole("button", { name: "Run", exact: true }).click();
+    await expect(page.getByText("This key cannot use poster.", { exact: true })).toBeVisible();
+    await checkState(page, `workflow-try-error-${theme}-${width}.png`);
+    await page.unroute("**/v1/images/generations");
+
+    await prepareWorkflowTry(page, { ...workflowCatalog, workflows: [] });
+    await expect(
+      page.getByText("Your result appears here", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("combobox", { name: "Model", exact: true }),
+      // Try offers only catalog choices; it no longer invents one.
+    ).toContainText("No options available");
+    await expect(
+      page.getByRole("button", { name: "Run", exact: true }),
+    ).toBeDisabled();
+    await checkState(page, `workflow-try-empty-${theme}-${width}.png`);
+  });
+}
+
+async function checkState(page: Page, file: string) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    )
+    .toBe(true);
+  await page.screenshot({
+    path: `test-results/screens/${file}`,
+    fullPage: true,
+  });
+  const violations = (await new AxeBuilder({ page }).analyze()).violations
+    .filter((violation) =>
+      ["serious", "critical"].includes(violation.impact ?? ""),
+    )
+    .map((violation) => ({
+      id: violation.id,
+      nodes: violation.nodes.map((node) => ({
+        target: node.target,
+        summary: node.failureSummary,
+      })),
+    }));
+  if (violations.length) {
+    console.log(JSON.stringify(violations, null, 2));
+  }
+  expect(violations).toEqual([]);
+}

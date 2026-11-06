@@ -1,0 +1,42 @@
+{
+  "protocol": "http-load-unload",
+  "name": "load-rate-limited",
+  "description": "The model server answers the load with 429 and Retry-After.",
+  "provenance": {
+    "source": "hand-written",
+    "reference": "TabbyAPI model management routes POST /v1/model/load (streamed JSON lines), POST /v1/model/unload, GET /v1/model; the gateway's http-load-unload lifecycle driver reads them (gateway/lifecycle_drivers.py)"
+  },
+  "exchanges": [
+    {
+      "id": "unload",
+      "match": {
+        "method": "POST",
+        "path": "/v1/model/unload"
+      },
+      "response": {
+        "status": 204
+      }
+    },
+    {
+      "id": "load",
+      "match": {
+        "method": "POST",
+        "path": "/v1/model/load",
+        "json": {
+          "model_name": "wanted"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "retry-after": "5"
+        },
+        "json": {
+          "error": {
+            "message": "busy"
+          }
+        }
+      }
+    }
+  ]
+}

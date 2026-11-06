@@ -1,0 +1,18 @@
+{
+  "id": "acme-local",
+  "name": "Acme Local",
+  "enabled": true,
+  "provenance": {"source": "imported", "package": null},
+  "connection": {
+    "transport": "http",
+    "address": "http://acme.test:9100",
+    "protocol": "acme",
+    "credentials": {"inference": {"secret_ref": "ACME_KEY", "header": "X-Acme-Key", "scheme": ""}, "control": null},
+    "headers": [],
+    "timeouts": {"connect_s": 2, "first_byte_s": 10, "total_s": 30}
+  },
+  "offerings": [
+    {"id": "acme-1", "kind": "model", "upstream": "acme-1", "tasks": [{"task": "chat", "evidence": "declared"}]},
+    {"id": "acme-render", "kind": "workflow", "upstream": "render", "tasks": [{"task": "image", "evidence": "declared"}]}
+  ]
+}

@@ -1,0 +1,149 @@
+{
+  "_meta": {
+    "name": "sdxl-seamless-tile",
+    "description": "SDXL base txt2img workflow with WAS seamless texture postprocessing for game-ready tile assets",
+    "prompt_node": "6",
+    "size_node": "27",
+    "seed_node": "31",
+    "batch_size_node": "27",
+    "background_removal": {
+      "save_node": "9",
+      "plain_image": [
+        "8",
+        0
+      ],
+      "transparent_image": [
+        "90",
+        0
+      ],
+      "rmbg_node": "90"
+    }
+  },
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "seamless hand-painted stone floor texture, game asset, tileable, no visible border"
+    }
+  },
+  "33": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "text, logo, watermark, frame, border, visible seam, perspective, horizon, character, object cut off"
+    }
+  },
+  "27": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    }
+  },
+  "31": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "seed": 0,
+      "steps": 28,
+      "cfg": 7.0,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "33",
+        0
+      ],
+      "latent_image": [
+        "27",
+        0
+      ],
+      "denoise": 1.0
+    }
+  },
+  "7": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "31",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    }
+  },
+  "45": {
+    "class_type": "Image Seamless Texture",
+    "inputs": {
+      "images": [
+        "7",
+        0
+      ],
+      "blending": 0.4,
+      "tiled": "false",
+      "tiles": 2
+    }
+  },
+  "8": {
+    "class_type": "ImageScale",
+    "inputs": {
+      "image": [
+        "45",
+        0
+      ],
+      "upscale_method": "lanczos",
+      "width": 1024,
+      "height": 1024,
+      "crop": "disabled"
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "8",
+        0
+      ],
+      "filename_prefix": "api_sdxl_seamless_tile"
+    }
+  },
+  "90": {
+    "class_type": "RMBG",
+    "inputs": {
+      "image": [
+        "8",
+        0
+      ],
+      "model": "RMBG-2.0",
+      "sensitivity": 1.0,
+      "process_res": 1024,
+      "mask_blur": 2,
+      "mask_offset": 0,
+      "invert_output": false,
+      "refine_foreground": true,
+      "background": "Alpha",
+      "background_color": "#00000000"
+    }
+  }
+}
