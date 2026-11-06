@@ -28,7 +28,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qsl, urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from gateway.secret_store import credential_origin_from_url
 
@@ -261,6 +261,12 @@ def validate_connection(block: Any) -> None:
         return
     if not isinstance(block, Mapping):
         raise ValueError("connection must be a mapping")
+    control = block.get("control_address")
+    if control is not None:
+        parts = urlsplit(control) if isinstance(control, str) else None
+        if (parts is None or parts.scheme not in ("http", "https") or not parts.hostname
+                or parts.username is not None or parts.password is not None or parts.query or parts.fragment):
+            raise ValueError("connection.control_address must be an http(s) URL with a host and no user, query or fragment")
     credentials = block.get("credentials")
     if credentials is None:
         return

@@ -10,8 +10,8 @@ import secrets
 import time
 from typing import Any, Mapping
 
-from gateway.engine_contract_view import connection_config, observations_config, offerings_config
-from gateway.engine_credentials import CredentialUnavailable, credential_headers
+from gateway.engine_contract_view import address_for_class, connection_config, observations_config, offerings_config
+from gateway.engine_credentials import CredentialOriginMismatch, CredentialUnavailable, credential_headers
 from gateway.engine_control import EngineControlRuntime
 from gateway.engine_observations import Observation, UNKNOWN
 from gateway.engine_protocol import description
@@ -92,30 +92,45 @@ class Runtime:
         self._egress = egress
         connection = connection_config(target.service)
         self.connection = connection_from_record({**connection, 'credentials': {}}, lambda ref: None)
+        # ``class: control`` operations go to the record's control address when it declares one (engine_contract_view).
+        control = address_for_class(connection, 'control')
+        self._control_connection = (self.connection if control == self.connection.address else
+                                    connection_from_record({**connection, 'address': control, 'credentials': {}},
+                                                           lambda ref: None))
         self.adapter = AdapterRegistry({target.description.id: target.description}, assets=assets,
                                        transport=transport).adapter_for(target.description.id)
 
-    def connection_for(self, op: str, *, operation=None, probe: bool = False):
-        """Resolve only this operation's class; missing probe credentials may be omitted."""
+    def connection_for(self, op: str, *, operation=None, probe: bool = False, engine_address: bool = False):
+        """Resolve only this operation's class; missing probe credentials may be omitted.
+
+        A control operation goes to the control address unless ``engine_address`` keeps it on the engine's own address
+        (a documented HTTP observation). A credential is sent only to the origin it is approved for; a probe to
+        another origin goes without it."""
         operation = operation or self.target.description.operations[op]
         cls = 'control' if operation.op_class == 'control' else 'inference'
+        base = self._control_connection if cls == 'control' and not engine_address else self.connection
         spec = (connection_config(self.target.service).get('credentials') or {}).get(cls) or {}
         if not spec.get('secret_ref'):
-            return self.connection
+            return base
         try:
-            values = credential_headers(self.target.service, cls)
+            values = credential_headers(self.target.service, cls, address=base.address)
             if not values:
                 raise CredentialUnavailable('engine credential reference is unavailable')
         except CredentialUnavailable:
             if probe or operation.op_class == 'inventory':
-                return self.connection
+                return base
             raise ProtocolError('The credential required by this operation is unavailable.',
                                 code='engine_credential_unavailable') from None
+        except CredentialOriginMismatch:
+            if probe:
+                return base  # never sent across origins; the probe goes without it
+            raise ProtocolError('The credential of this operation is not approved for the address it would go to.',
+                                code='engine_credential_origin_mismatch') from None
         value = next(iter(values.values()))
         scheme = spec.get('scheme') or ''
         if scheme:
             value = value[len(scheme)+1:]
-        return replace(self.connection, credentials={cls: Credential(value, header=spec.get('header'), scheme=spec.get('scheme'))})
+        return replace(base, credentials={cls: Credential(value, header=spec.get('header'), scheme=spec.get('scheme'))})
 
     def poll_timing(self, op: str) -> tuple[float, float]:
         """The (interval_s, max_wait_s) the description declares for a job operation."""
@@ -183,7 +198,8 @@ class Runtime:
                 }, source='engine observation', budgets=self.target.description.budgets)
                 adapter = AdapterRegistry({'observation': observation}).adapter_for('observation')
                 seconds = max(0.01, min(float(http.get('timeout_s', 2)), 30))
-                connection = self.connection_for('observe', operation=observation.operations['observe'], probe=True)
+                connection = self.connection_for('observe', operation=observation.operations['observe'], probe=True,
+                                                 engine_address=True)
                 connection = replace(connection, timeouts=replace(connection.timeouts, total_s=seconds,
                                        first_byte_s=min(seconds, connection.timeouts.first_byte_s)))
                 op = 'observe'

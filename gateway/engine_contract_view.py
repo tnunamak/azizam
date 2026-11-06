@@ -72,3 +72,16 @@ def connection_config(service: Mapping[str, Any]) -> Mapping[str, Any]:
         config = service.get("config")
         connection = config.get("connection") if isinstance(config, Mapping) else None
     return connection if isinstance(connection, Mapping) else {}
+
+
+def address_for_class(connection: Mapping[str, Any], op_class: str) -> str:
+    """The address an operation of ``op_class`` is sent to.
+
+    ``class: control`` operations go to ``connection.control_address`` when the record declares one (a separate
+    management listener, for example an operator adapter beside an engine it does not own). Every other class, and
+    every observation probe, goes to ``connection.address``.
+    """
+    control = connection.get("control_address")
+    if op_class == "control" and isinstance(control, str) and control.strip():
+        return control.strip()
+    return str(connection.get("address") or "")

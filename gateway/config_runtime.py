@@ -261,7 +261,8 @@ class ConfigHome:
         found = config_legacy_import.import_at_boot(self, raw_config, path=path, registry=registry, log=log)
         self._unimported = dict(found.blocked)
         for section_id in found.done:
-            block = raw_config.get(section_id)
+            # Keys the section does not own (x-azizam-startup-only) are read from the file, so they are not ignored.
+            block = layers.owned_part(self.sections[section_id], raw_config.get(section_id))
             if section_id in self._warned_ignored or not isinstance(block, Mapping) or not block:
                 continue
             effective = self.build_candidate(self._stored_rows(path), registry)[section_id].effective
