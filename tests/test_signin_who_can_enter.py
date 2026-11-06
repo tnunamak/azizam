@@ -16,6 +16,7 @@ from dataclasses import replace
 from fastapi.testclient import TestClient
 import pytest
 
+from tests.support.instance_settings import set_instance
 from gateway import accounts, admin_runtime, admin_store, gateway_lifetime
 from tests.support.app_keys import issue_app_credential
 from gateway.admin_oidc import CookieConfig, OIDCConfig
@@ -122,7 +123,7 @@ def gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "config", proxy.config)
     for name in proxy._derive_backend_constants(proxy.config):
         monkeypatch.setattr(proxy, name, getattr(proxy, name))
-    admin_store.put_operator_setting("instance_presentation", {"base_url": "https://ai.example"}, path=path)
+    set_instance(path, {"base_url": "https://ai.example"})
     clients = []
     gw = Gateway(proxy, path, monkeypatch, live_shaped_config())
     gw.set_rules([TRUSTED])

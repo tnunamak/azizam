@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi.testclient import TestClient
 import pytest
 
+from tests.support.instance_settings import set_instance
 import proxy
 from gateway import admin_store
 from gateway.admin_oidc import (
@@ -222,11 +223,7 @@ def test_setup_local_owner_refuses_forwarded_public_client_from_trusted_lan_prox
 def test_setup_local_owner_refuses_cross_origin_lan_post_without_side_effects(
     isolated_admin: Path,
 ) -> None:
-    admin_store.put_operator_setting(
-        "instance_presentation",
-        {"base_url": "https://gateway.family.example"},
-        path=isolated_admin,
-    )
+    set_instance(isolated_admin, {"base_url": "https://gateway.family.example"})
     client = TestClient(
         proxy.app,
         base_url="https://gateway.family.example",
@@ -252,11 +249,7 @@ def test_setup_local_owner_refuses_cross_origin_lan_post_without_side_effects(
 def test_setup_local_owner_refuses_lan_dns_rebinding_host_before_writes(
     isolated_admin: Path,
 ) -> None:
-    admin_store.put_operator_setting(
-        "instance_presentation",
-        {"base_url": "https://gateway.family.example"},
-        path=isolated_admin,
-    )
+    set_instance(isolated_admin, {"base_url": "https://gateway.family.example"})
     client = TestClient(
         proxy.app,
         base_url="https://evil.example",

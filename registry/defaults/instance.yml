@@ -1,0 +1,5 @@
+# Release defaults of the instance presentation: what this gateway calls itself and where it is reached.
+# The owner overrides these in the settings screen (docs/design/CONFIG_HOMES.md, section 3.3).
+name: Azizam
+base_url: ""
+theme_default: system

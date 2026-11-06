@@ -432,7 +432,7 @@ from gateway.runtime_auth import (
 )
 from gateway.protocols import anthropic as anthropic_protocol
 from gateway.protocols import ollama as ollama_protocol
-from gateway import config_runtime, provider_execution, providers
+from gateway import config_fold, config_runtime, provider_execution, providers
 from gateway.provider_admin import create_provider_admin_router, provider_ledger_spending_snapshot
 from gateway.providers import provider_lookup
 
@@ -588,6 +588,21 @@ def _log_left_out(left_out: Mapping[str, str]) -> None:
         print(f"[proxy] ERROR: {label} left out of the running config: {reason}", flush=True)
 
 
+def _import_folded_settings(raw_config: Mapping[str, Any]) -> None:
+    """Import the old stores of instance, media admission and service availability as override rows, once per section.
+
+    Runs at boot, before the first layer is built. A failure is logged and boot goes on: the sections then serve the
+    release defaults, and the next boot tries the import again (a section's step is recorded only with its rows).
+    """
+    try:
+        for record in config_fold.migrate(ADMIN_DB_PATH, raw_config):
+            left_out = f", left out: {', '.join(record['dropped'])}" if record["dropped"] else ""
+            print(f"[proxy] config import {record['section']}: {record['rows']} override row(s){left_out}", flush=True)
+    except Exception as error:  # noqa: BLE001
+        print(f"[proxy] WARNING: the one-time import of the old owner settings failed ({type(error).__name__}); "
+              f"they serve the release defaults until the next boot", flush=True)
+
+
 def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """The config to boot with, and the problem to report (None when the registry applied whole).
 
@@ -597,6 +612,7 @@ def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[
     here and reported on the Overview. The LiteLLM config file is left as it is: a partial registry must
     not overwrite what the running LiteLLM reloads.
     """
+    _import_folded_settings(raw_config)
     try:
         return _load_effective_runtime_config(raw_config, boot=True), None
     except Exception as error:  # noqa: BLE001 - boot continues, degraded and loud
@@ -1147,9 +1163,6 @@ IMAGE_VARIATIONS_DENOISE = float(IMAGE_VARIATIONS_CFG.get("denoise", 0.75))
 IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW = str(
     IMAGE_EDITS_CFG.get("multiref_default_workflow", "qwen-image-2.1-edit-multiref")
 )
-GATEWAY_CFG = config.get("gateway", {}) or {}
-RESOURCE_ADMISSION_CFG = GATEWAY_CFG.get("resource_admission", {}) or {}
-MEDIA_JOB_ADMISSION_CFG = RESOURCE_ADMISSION_CFG.get("media_jobs", {}) or {}
 IMAGE_MEDIA_JOB_PAYLOAD_DIR = Path(IMAGE_MEDIA_JOBS_CFG.get(
     "payload_dir",
     str(Path(__file__).parent / "data" / "image_media_jobs"),
@@ -2273,6 +2286,8 @@ host_commands.bind_admin_db(ADMIN_DB_PATH)
 # calls reload_runtime_config() so the new backend hosts take effect
 # immediately without a process restart.
 ADMIN_STORE.on_service_registry_changed = reload_runtime_config
+# The same for the owner settings that live in the config layer (media admission, service availability).
+ADMIN_STORE.on_config_changed = reload_runtime_config
 ADMIN_STORE.oidc_config_validator = lambda candidate: _validate_admin_oidc_db_candidate(candidate)
 ADMIN_AUTH = AdminAuthenticator(
     ADMIN_STORE,
@@ -10545,7 +10560,7 @@ async def _resolve_gateway_media_url(
     public_urls = [
         str(get_env("AZIZAM_PUBLIC_URL") or ""),
         str((config.get("proxy") or {}).get("public_url") or ""),
-        str(instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()).get("base_url") or ""),
+        str(instance_settings(ADMIN_DB_PATH).get("base_url") or ""),
     ]
     hosts = {urlsplit(base).hostname for base in public_urls if base}
     if request is not None:
@@ -15467,7 +15482,7 @@ def _mcp_allowed_origins(_request: Request) -> list[str]:
     """Browser origins allowed to call /mcp: the configured list plus the
     saved public address. A request's own Host header is not evidence."""
     listed = [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])]
-    pinned = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["base_url"]
+    pinned = instance_settings(ADMIN_DB_PATH)["base_url"]
     return [*listed, pinned] if pinned else listed
 
 
@@ -16839,29 +16854,17 @@ app.include_router(
 )
 
 
-def _instance_presentation_defaults() -> dict[str, str]:
-    brand = admin_cfg.get("brand") or {}
-    proxy_cfg = config.get("proxy") or {}
-    brand = brand if isinstance(brand, Mapping) else {}
-    proxy_cfg = proxy_cfg if isinstance(proxy_cfg, Mapping) else {}
-    return {
-        "name": str(get_env("AZIZAM_BRAND") or brand.get("product") or "Azizam"),
-        "base_url": str(get_env("AZIZAM_PUBLIC_URL") or proxy_cfg.get("public_url") or ""),
-        "theme_default": "system",
-    }
-
-
 app.include_router(create_settings_router(
     auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH, config_provider=lambda: {
         **config, "oidc": _admin_oidc_config_snapshot() or {},
         "service_registry": ADMIN_STORE.get_service_registry(),
     },
-    instance_defaults=_instance_presentation_defaults,
     overrides_provider=ADMIN_STORE.operator_overrides,
     prompt_memory_path=media_jobs.DB_PATH,
     receipts_path=receipt_store.DB_PATH, fact_store_path=media_jobs.DB_PATH,
     on_prompt_memory_kill=lambda: _purge_prompt_memory_on_kill(),
     purge_status_provider=lambda: _prompt_purge_status("*"),
+    on_config_changed=lambda: reload_runtime_config(),
 ))
 # Owner API over the config sections (docs/design/CONFIG_HOMES.md, 7). The dependencies are looked up per request, so
 # the layer, the registry and the reload are the ones running now.
@@ -16990,7 +16993,7 @@ app.include_router(create_account_router(
     signing_key_provider=_browser_admin_session_signing_key,
     oidc_provider=lambda: {"enabled": (cfg := _resolved_admin_oidc_config()[0]).enabled, "label": cfg.display_name,
                            "issuer": cfg.issuer},
-    instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
+    instance_provider=lambda: instance_settings(ADMIN_DB_PATH),
     client_ip_resolver=resolve_real_client_ip,
     on_person_prompt_purge=lambda person_id: _purge_person_prompt_memory(person_id),
     # A removed person's MCP connections end; re-adding them does not revive any.
@@ -17003,7 +17006,7 @@ SIGNIN_API = create_signin_api(
     store=ADMIN_STORE,
     oidc_config_provider=lambda: _resolved_admin_oidc_config()[0],
     states=lambda: ADMIN_OIDC_STATES,
-    public_base_provider=lambda request: instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
+    public_base_provider=lambda request: instance_settings(ADMIN_STORE.path)["base_url"],
     signing_key_provider=_browser_admin_session_signing_key,
     end_provider_access=_end_provider_access_in,
 )
@@ -18132,21 +18135,8 @@ def _operator_media_job_admission_overrides() -> dict[str, Any]:
 
 
 def _effective_media_job_admission_cfg() -> dict[str, Any]:
-    cfg = dict(MEDIA_JOB_ADMISSION_CFG) if isinstance(MEDIA_JOB_ADMISSION_CFG, Mapping) else {}
-    overrides = _operator_media_job_admission_overrides()
-    for key in (
-        "disabled_intents",
-        "disabled_resource_classes",
-        "reserved_tokens",
-        "max_queue_depth",
-        "max_app_concurrency",
-        "retry_after_seconds",
-        "queue_retry_after_seconds",
-        "scan_limit",
-    ):
-        if key in overrides:
-            cfg[key] = overrides[key]
-    return cfg
+    """The media admission settings in force: section ``resource_admission`` (release defaults, then the owner's rows)."""
+    return _operator_media_job_admission_overrides()
 
 
 async def _start_browser_login(request: Request, *, default_return_to: str) -> Response:
@@ -18177,7 +18167,7 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         accounts.throttle_oidc(str(client_ip), path=ADMIN_STORE.path)
         cfg = oidc_config_for_public_base(
             await _admin_oidc_config_with_discovery(),
-            instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
+            instance_settings(ADMIN_STORE.path)["base_url"],
         )
         return_to = _safe_admin_return_to(
             request.query_params.get("return_to"),
@@ -18680,7 +18670,7 @@ def _complete_setup_local_login(
 def _origin_header_allowed_for_request(request: Request) -> bool:
     # A same-origin attacker hostname can rebind to a private address. Setup
     # accepts literal host addresses, localhost, or the configured public host.
-    public_base = instance_settings(ADMIN_STORE.path, _instance_presentation_defaults()).get("base_url")
+    public_base = instance_settings(ADMIN_STORE.path).get("base_url")
     try:
         public = urlsplit(public_base) if public_base else None
         host = request.url.hostname
@@ -19049,7 +19039,7 @@ async def provider_sign_out(request: Request):
         accounts.throttle_oidc(str(client_ip), path=ADMIN_STORE.path)
         cfg = oidc_config_for_public_base(
             _effective_admin_oidc_config(),
-            instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
+            instance_settings(ADMIN_STORE.path)["base_url"],
         )
         address = await _provider_sign_out_address(cfg) if cfg.enabled else ""
     except accounts.AccountError as exc:
@@ -19864,7 +19854,7 @@ def _public_base_url(request: Request) -> str | None:
     ``None`` if no candidate is available so the discovery helper can
     emit relative links rather than fabricate an origin.
     """
-    pinned = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["base_url"]
+    pinned = instance_settings(ADMIN_DB_PATH)["base_url"]
     if pinned:
         return pinned
     host = (
@@ -19896,7 +19886,7 @@ def _brand_settings() -> tuple[str, tuple[str, str] | None]:
     """
     brand_cfg = admin_cfg.get("brand") if isinstance(admin_cfg, Mapping) else {}
     brand_cfg = brand_cfg if isinstance(brand_cfg, Mapping) else {}
-    product = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
+    product = instance_settings(ADMIN_DB_PATH)["name"]
     raw_wordmark = (
         get_env("AZIZAM_WORDMARK")
         or brand_cfg.get("wordmark")
@@ -19921,9 +19911,9 @@ async def well_known_azizam(request: Request):
         mcp_tools=mcp_server.TOOLS,
         mcp_sign_in=MCP_OAUTH_ENABLED and MCP_OAUTH.available(request),
     )
-    metadata["service"]["name"] = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
+    metadata["service"]["name"] = instance_settings(ADMIN_DB_PATH)["name"]
     metadata["presentation"] = {
-        "theme_default": instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["theme_default"],
+        "theme_default": instance_settings(ADMIN_DB_PATH)["theme_default"],
     }
     return metadata
 
@@ -23419,7 +23409,7 @@ def _media_job_queue_depth(
     *,
     admission_cfg: Mapping[str, Any] | None = None,
 ) -> int | None:
-    cfg = admission_cfg if isinstance(admission_cfg, Mapping) else MEDIA_JOB_ADMISSION_CFG
+    cfg = admission_cfg if isinstance(admission_cfg, Mapping) else _effective_media_job_admission_cfg()
     configured_scan_limit = _optional_int_config(cfg, "scan_limit") or 1000
     scan_limit = max(configured_scan_limit, max_queue_depth or 0)
     depth = 0

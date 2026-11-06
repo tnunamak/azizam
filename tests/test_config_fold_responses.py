@@ -1,7 +1,8 @@
 """Slice C6 goldens: the responses of the three folded owner settings did not change (docs/design/CONFIG_HOMES.md, 10.1).
 
 ``tests/fixtures/config_homes/c6_responses.json`` was captured from the code before the settings moved into the config
-layer. The only difference C6 allows is the conflict status of a stale write, 409 to 412 (RFC 9110).
+layer. The only difference C6 allows is the conflict status of a stale write, 409 to 412 (RFC 9110): those two cells of the fixture
+were edited by hand from 409 to 412, and nothing else in it was touched.
 """
 from __future__ import annotations
 

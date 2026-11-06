@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.support.instance_settings import set_instance
 from gateway import admin_store, avatars, media_fetch
 from gateway.admin_oidc import CookieConfig, OIDCConfig
 
@@ -38,7 +39,7 @@ def gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "ADMIN_OIDC_CONFIG", _config())
     monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", _config().signing_key)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", _config().cookie)
-    admin_store.put_operator_setting("instance_presentation", {"base_url": "https://gateway.family.example"}, path=path)
+    set_instance(path, {"base_url": "https://gateway.family.example"})
     monkeypatch.setattr(proxy, "ADMIN_OIDC_STATES", {})
     client = TestClient(proxy.app, base_url="https://gateway.family.example", client=("127.0.0.1", 50000))
     try:

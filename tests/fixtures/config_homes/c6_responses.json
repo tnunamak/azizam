@@ -220,7 +220,7 @@
    },
    "method": "PUT",
    "path": "/admin/api/settings/instance",
-   "status": 409,
+   "status": 412,
    "step": "instance: stale write"
   },
   {
@@ -394,7 +394,7 @@
    },
    "method": "PUT",
    "path": "/admin/api/operator/media-job-admission",
-   "status": 409,
+   "status": 412,
    "step": "media: stale write"
   },
   {

@@ -838,7 +838,7 @@ class FakeAdminStore:
         }
 
     def update_service_availability_overrides(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext, expected_revision: str | None = None
     ) -> dict[str, Any]:
         self.service_availability = dict(data)
         self.audit.append(

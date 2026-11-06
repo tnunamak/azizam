@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import logging
+from tests.support.instance_settings import set_instance
 from tests.support.app_keys import accountable_person
 import sqlite3
 import threading
@@ -1055,9 +1056,9 @@ def test_public_signin_options_and_invite_inspection_use_saved_instance_name_liv
 
     assert_public_name("Azizam")
     for name in ("Our team's gateway", "Renamed gateway"):
-        admin_store.put_operator_setting("instance_presentation", {
+        set_instance(path, {
             "name": name, "base_url": "https://gateway.example.test", "theme_default": "dark",
-        }, path=path)
+        })
         assert_public_name(name)
 
 

@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 from fastapi.testclient import TestClient
 import pytest
 
+from tests.support.instance_settings import set_instance
 import proxy
 from gateway import admin_store
 from gateway.admin_oidc import CookieConfig, OIDCConfig
@@ -46,11 +47,7 @@ def oidc_gateway(monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(proxy.ADMIN_AUTH, "store", proxy.ADMIN_STORE)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", cfg.signing_key)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", cfg.cookie)
-    admin_store.put_operator_setting(
-        "instance_presentation",
-        {"base_url": BASE_URL},
-        path=path,
-    )
+    set_instance(path, {"base_url": BASE_URL})
     monkeypatch.setattr(proxy, "ADMIN_OIDC_STATES", {})
     seed_rules(path, domains=["example.test"])
     yield path
@@ -402,7 +399,7 @@ def test_oidc_login_explicit_default_https_port_matches_host_without_port(
     monkeypatch.setattr(proxy, "ADMIN_OIDC_CONFIG", cfg)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", cfg.signing_key)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", cfg.cookie)
-    admin_store.put_operator_setting("instance_presentation", {"base_url": ""}, path=oidc_gateway)
+    set_instance(oidc_gateway, {"base_url": ""})
     client = TestClient(
         proxy.app,
         base_url="http://gateway.example",

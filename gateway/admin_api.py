@@ -225,12 +225,13 @@ class AdminStore(Protocol):
     def setting_revision(self, key: str) -> str: ...
 
     def update_service_availability_overrides(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_revision: str | None = None,
     ) -> dict[str, Any]: ...
 
     def update_media_job_admission_overrides(
         self, *, data: Mapping[str, Any], actor: AdminContext,
-        expected_revision: str | None = None,
+        expected_revision: str,
     ) -> dict[str, Any]: ...
 
     def get_service_registry(self) -> dict[str, Any]: ...
@@ -2485,12 +2486,18 @@ def create_admin_router(
                     merged.pop(service_id, None)
                 else:
                     merged[service_id] = override
+            # A precondition is optional here: a caller that sends If-Match names the revision of the
+            # `service_availability` config section it read, and a section that moved since refuses the write.
+            sent = request.headers.get("if-match")
             record = store.update_service_availability_overrides(
                 data=merged,
                 actor=ctx,
+                expected_revision=sent.strip().strip('"') if sent and sent.strip() else None,
             )
         except _RouteError as exc:
             return exc.as_response()
+        except admin_store.ConfigRevisionMismatch:
+            return settings_conflict(412)
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -3179,8 +3186,8 @@ def create_admin_router(
             raise _RouteError(428, "settings_revision_required", "Reload settings and supply the current revision in If-Match.")
         return revision.strip('"')
 
-    def settings_conflict() -> JSONResponse:
-        return _RouteError(409, "settings_conflict", "Settings changed elsewhere; reload to see the latest").as_response()
+    def settings_conflict(status_code: int = 409) -> JSONResponse:
+        return _RouteError(status_code, "settings_conflict", "Settings changed elsewhere; reload to see the latest").as_response()
 
     @router.get("/operator/host-commands")
     def get_host_commands(request: Request) -> JSONResponse:
@@ -3254,8 +3261,8 @@ def create_admin_router(
             )
         except _RouteError as exc:
             return exc.as_response()
-        except admin_store.SettingsConflictError:
-            return settings_conflict()
+        except admin_store.ConfigRevisionMismatch:
+            return settings_conflict(412)
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,

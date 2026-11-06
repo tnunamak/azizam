@@ -4841,6 +4841,39 @@ def read_config_state(*, path: Path = DB_PATH) -> dict[str, Any]:
     return {"rows": rows, "revisions": revisions}
 
 
+def read_config_section(section: str, *, path: Path = DB_PATH) -> dict[str, Any]:
+    """One section's override rows and its revision from one read snapshot: ``{"rows": [...], "revision": "<n>"}``.
+
+    A section never written has no rows and revision ``"0"``. Raises when the store cannot be read.
+    """
+    with _conn(path) as conn:
+        started = not conn.in_transaction
+        if started:
+            conn.execute("BEGIN")
+        try:
+            return {"rows": list_config_overrides_in(conn, section), "revision": config_revision_in(conn, section)}
+        finally:
+            if started:
+                conn.rollback()
+
+
+def migration_step_done(name: str, *, path: Path = DB_PATH) -> bool:
+    with _conn(path) as conn:
+        return conn.execute("SELECT 1 FROM schema_migration_steps WHERE name=?", (name,)).fetchone() is not None
+
+
+def mark_migration_step(name: str, *, path: Path = DB_PATH) -> None:
+    """Record a one-time import that had nothing to write, so it is not tried again."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (name,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
 def _config_state(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """The part of a row a revert restores."""
     if row is None:
@@ -4879,15 +4912,32 @@ def _commit_config_plan(
     validate: ConfigValidator | None,
     migration_step: str | None,
     now: int,
+    audit: Mapping[str, Any] | None = None,
+    always: bool = False,
 ) -> dict[str, Any]:
-    """Write a planned set of entry changes in the caller's open transaction: one change, one audit fact."""
+    """Write a planned set of entry changes in the caller's open transaction: one change, one audit fact.
+
+    ``audit`` (``action``, ``target_kind``, ``target_id``, ``metadata``) names the audit fact in place of the generic
+    ``config.change`` one: a route that had its own audit action before its setting moved here keeps it. ``always``
+    makes a save that changes no row still count: the revision advances and the audit fact is written (a save of the
+    same value was a new generation before, and a client holding the old revision must reload).
+    """
     touched = sorted(set(touched))
     changed = {(section, pointer): pair for (section, pointer), pair in plan.items() if pair[0] != pair[1]}
     revisions = {section: config_revision_in(conn, section) for section in touched}
     if migration_step is not None:
         conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (migration_step,))
-    if not changed:
+    if not changed and not (always and audit is not None):
         return {"change_id": None, "revisions": revisions, "entry_count": 0}
+    if not changed:
+        for section in touched:
+            _advance_setting_revision(conn, CONFIG_REVISION_PREFIX + section)
+        _record_audit_in_transaction(
+            conn, audit["action"], actor_kind=actor_kind, actor_id=actor_id, actor_label=actor_label,
+            target_kind=audit.get("target_kind"), target_id=audit.get("target_id"), metadata=audit.get("metadata"), now=now,
+        )
+        return {"change_id": None, "revisions": {section: config_revision_in(conn, section) for section in touched},
+                "entry_count": 0}
     rows_after: dict[str, list[dict[str, Any]]] = {}
     for section in touched:
         current = {row["pointer"]: row for row in list_config_overrides_in(conn, section)}
@@ -4916,12 +4966,18 @@ def _commit_config_plan(
         (change_id, now, kind, actor_kind, actor_id, actor_label.strip()[:256] if isinstance(actor_label, str) else None,
          note, json.dumps(items, ensure_ascii=False, sort_keys=True)),
     )
-    _record_audit_in_transaction(
-        conn, "config.change", actor_kind=actor_kind, actor_id=actor_id, actor_label=actor_label,
-        target_kind="config_change", target_id=change_id,
-        metadata={"kind": kind, "sections": sorted({section for section, _pointer in changed}), "entry_count": len(items)},
-        now=now,
-    )
+    if audit is not None:
+        _record_audit_in_transaction(
+            conn, audit["action"], actor_kind=actor_kind, actor_id=actor_id, actor_label=actor_label,
+            target_kind=audit.get("target_kind"), target_id=audit.get("target_id"), metadata=audit.get("metadata"), now=now,
+        )
+    else:
+        _record_audit_in_transaction(
+            conn, "config.change", actor_kind=actor_kind, actor_id=actor_id, actor_label=actor_label,
+            target_kind="config_change", target_id=change_id,
+            metadata={"kind": kind, "sections": sorted({section for section, _pointer in changed}), "entry_count": len(items)},
+            now=now,
+        )
     return {
         "change_id": change_id, "entry_count": len(items),
         "revisions": {section: config_revision_in(conn, section) for section in touched},
@@ -4954,6 +5010,9 @@ def apply_config_change(
     validate: ConfigValidator | None,
     session: session_guard.BrowserSession | None = None,
     migration_step: str | None = None,
+    sections: Sequence[str] = (),
+    audit: Mapping[str, Any] | None = None,
+    always: bool = False,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
@@ -4969,8 +5028,12 @@ def apply_config_change(
 
     ``migration_step`` names a one-time import whose result this is: it is recorded in the same transaction, and a
     step already recorded makes the call a no-op (``{"skipped": True}``), so two boots cannot both import (F21).
+
+    ``audit`` and ``always`` are for a route whose setting lived elsewhere before and keeps its own audit action and its
+    revision rule (see ``_commit_config_plan``). ``sections`` names sections the change touches even when it has no
+    item for them: with ``always`` and ``audit``, a save that changes nothing still advances their revision.
     """
-    if not items:
+    if not items and not (always and audit is not None and sections):
         raise ValueError("a change needs at least one item")
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
@@ -4982,7 +5045,7 @@ def apply_config_change(
             ).fetchone():
                 conn.rollback()
                 return {"change_id": None, "skipped": True, "entry_count": 0, "revisions": {}}
-            touched = sorted({item.section for item in items})
+            touched = sorted({item.section for item in items} | set(sections))
             _check_config_revisions(conn, touched, if_match)
             plan: dict[tuple[str, str], tuple[dict[str, Any] | None, dict[str, Any] | None]] = {}
             for section in touched:
@@ -5006,7 +5069,7 @@ def apply_config_change(
             result = _commit_config_plan(
                 conn, plan, touched, if_match=if_match, kind=kind, note=note, updated_by=updated_by,
                 actor_kind=actor_kind, actor_id=actor_id, actor_label=actor_label, validate=validate,
-                migration_step=migration_step, now=ts,
+                migration_step=migration_step, now=ts, audit=audit, always=always,
             )
             conn.commit()
         except Exception:
