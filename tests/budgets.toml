@@ -494,6 +494,7 @@
 # T1.1 domain leases ported onto the public root (2026-11-05): collect-only measured 18980 (main 18787 + T1.1 cases + 1 async egress case).
 # Public hygiene follow-ups (2026-11-05): +1 case, the egress projection pair test; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 18989.
 # T1.2 transition operations (2026-11-05): test_transition_store, test_transition_executor, test_transition_admin and test_transition_runtime over the T1.1 base (18988); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19148.
+# T1.3 snapshot lifecycle, checkpoint and restore steps (2026-11-05): +169 cases (test_transition_snapshot_store.py, test_transition_snapshot_steps.py); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19157.
 pytest = PLACEHOLDER
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
