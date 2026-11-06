@@ -775,16 +775,19 @@ domain_literals = 826
 # C7 (roles, models, llm, reasoning, model_routing): llm and roles reach zero; model_routing
 # falls 3 -> 1 (SWITCH_TIMEOUT and UPSTREAM_READ_TIMEOUT moved; GGUF_DIR stays in the startup file until C10). models
 # keeps its one count: its startup list cannot be a section root yet (CONFIG_HOMES C7, not done).
+# C8c (model_compatibility, identity): both keys reach zero (7 and 1 constants moved). TTS_BACKEND_MODEL, STT_BACKEND_MODEL
+# and EMBEDDINGS_MODEL also became per-call readers of model_compatibility.defaults; they were counted under "backends"
+# (first of their sections alphabetically), so that key falls 23 -> 20.
 "import_time_config_reads.admin" = 2
 "import_time_config_reads.audio" = 4
 "import_time_config_reads.auth" = 5
-"import_time_config_reads.backends" = 23
+"import_time_config_reads.backends" = 20
 "import_time_config_reads.gateway" = 0
-"import_time_config_reads.identity" = 1
+"import_time_config_reads.identity" = 0
 "import_time_config_reads.images" = 27
 "import_time_config_reads.llm" = 0
 "import_time_config_reads.mcp" = 1
-"import_time_config_reads.model_compatibility" = 7
+"import_time_config_reads.model_compatibility" = 0
 "import_time_config_reads.model_routing" = 1
 "import_time_config_reads.models" = 1
 "import_time_config_reads.proxy" = 2
