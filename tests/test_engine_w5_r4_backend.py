@@ -142,10 +142,11 @@ def test_declared_connection_projects_credentials_and_hides_unknown_nested_field
         'address': 'http://user:INLINE-CREDENTIAL@127.0.0.1:8080?private=INLINE-QUERY',
         'neutral_extension': 'NESTED-CONNECTION-CANARY',
         'credentials': {'inference': {'secret_ref': 'opaque-private-reference', 'header': 'Authorization', 'scheme': 'Bearer',
-                                      'origin': 'http://127.0.0.1:8080', 'neutral': 'NESTED-CREDENTIAL-CANARY'}},
+                                      'origin': 'http://127.0.0.1:8080'}},
     })
+    # An unnamed key inside a credential is refused at the store (native_lane.validate_connection), so none is planted.
     shown = engine_admin.engine_view(load_engine_catalog(), saved, db_path=tmp_path / 'admin.db')
-    for canary in ('INLINE-CREDENTIAL', 'INLINE-QUERY', 'NESTED-CONNECTION-CANARY', 'opaque-private-reference', 'NESTED-CREDENTIAL-CANARY'):
+    for canary in ('INLINE-CREDENTIAL', 'INLINE-QUERY', 'NESTED-CONNECTION-CANARY', 'opaque-private-reference'):
         assert canary not in str(shown)
     connection = shown['record']['config']['connection']
     assert connection['dispatch'] == 'protocol' and connection['credentials']['inference']['secret_ref'] == {'configured': False}

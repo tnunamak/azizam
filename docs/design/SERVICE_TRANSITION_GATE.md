@@ -324,7 +324,8 @@ bodies are arguments, and how to read "cached" is data in the case manifest.
 
 ```
 scripts/transition-proof --base-url http://192.0.2.10:5000 --domain <domain> --model <alias> \
-    --cases cases/manifest.json --owner-key-file <path> --out result.json [--wake-mode post|request] [--dry-run]
+    --cases cases/manifest.json --owner-key-file <path> [--chat-key-file <path>] --out result.json \
+    [--wake-mode post|request] [--dry-run]
 ```
 
 For each case it runs: seed request (reply text, timing, usage), `park` (with an idempotency key) and a poll of the
@@ -339,6 +340,8 @@ body's `model` with `--model` and always sends `stream: false`. It reads the key
 replaces it with `[redacted]` in error text (before the text is cut to length) and in the result file. The key file
 holds one RFC 6750 bearer token (letters, digits and `. _ ~ + / -`, with optional `=` at the end); any other key is
 refused (exit `2`) before anything is sent.
+
+`--chat-key-file` is optional. The gateway takes an owner key on the transition and gate routes and an App key on `/v1/chat/completions`, and it refuses each key on the other's routes, so a live proof needs both. With the option, the chat requests send the key in that file and every other request sends the owner key. Without it, every request sends the owner key. The chat key file is checked like the owner key file (also in `--dry-run`; an error says "the chat key file" and never shows the key), and both keys are replaced with `[redacted]` in the result.
 The idempotency key of each transition is `proof-{run-id}-{case label}-{kind}`, so every case parks and wakes for real.
 A repeat `--run-id` repeats those keys, and the gateway then returns the earlier, finished operations (D2, G4). The
 harness requires a new transition to answer `running`; any other state fails the park or wake step with "the key
@@ -421,7 +424,8 @@ bodies are arguments, and how to read "cached" is data in the case manifest.
 
 ```
 scripts/transition-proof --base-url http://192.0.2.10:5000 --domain <domain> --model <alias> \
-    --cases cases/manifest.json --owner-key-file <path> --out result.json [--wake-mode post|request] [--dry-run]
+    --cases cases/manifest.json --owner-key-file <path> [--chat-key-file <path>] --out result.json \
+    [--wake-mode post|request] [--dry-run]
 ```
 
 For each case it runs: seed request (reply text, timing, usage), `park` (with an idempotency key) and a poll of the
@@ -430,6 +434,8 @@ question), then the assertions. `--wake-mode post` (default) posts `wake` and po
 follow-up and lets the gateway wake the domain; the follow-up time then includes the wake. The harness replaces each
 body's `model` with `--model` and always sends `stream: false`. It reads the key from the file, never prints it, and
 replaces it with `[redacted]` in the result if a gateway echoes it.
+
+`--chat-key-file` is optional. The gateway takes an owner key on the transition and gate routes and an App key on `/v1/chat/completions`, and it refuses each key on the other's routes, so a live proof needs both. With the option, the chat requests send the key in that file and every other request sends the owner key. Without it, every request sends the owner key. The chat key file is checked like the owner key file (also in `--dry-run`; an error says "the chat key file" and never shows the key), and both keys are replaced with `[redacted]` in the result.
 
 The manifest keeps the operator's frozen-case format and adds `cache_check` (top level, or per case to override):
 

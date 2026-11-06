@@ -187,6 +187,8 @@ class ContentGate:
         self.unseen_database = False
         self.retry_seconds = 30
         self.next_check_at = 0.0
+        # The process generation the last failed check read, or None when it could not read one.
+        self.failed_generation: tuple[Any, ...] | None = None
         # Set while the start-up check runs; a request that finds no verdict waits for it.
         self.warm_settled: asyncio.Event | None = None
         # The verified managed generation that has accepted a connection.
@@ -257,10 +259,17 @@ class ContentGate:
                 return self.problem
         async with self.lock:
             previous = self.problem
+            generation = None
             try:
-                # Unavailable process evidence also backs off; no content is admitted.
+                # Unavailable process evidence also backs off; no content is admitted. A new process
+                # generation ends the backoff: a child restarted after a config edit is checked at once.
                 if not force and self.checked is None and time.monotonic() < self.next_check_at:
-                    return self.problem
+                    try:
+                        current = self.generation(base_url)
+                    except Exception:
+                        current = None
+                    if current is None or current == self.failed_generation:
+                        return self.problem
                 generation = self.generation(base_url)
                 if not force and generation == self.checked and time.monotonic() < self.next_check_at:
                     return self.problem
@@ -274,6 +283,7 @@ class ContentGate:
                 self.checked, self.checked_at, self.problem = generation, time.monotonic(), problem
             except Exception:
                 self.checked = None
+                self.failed_generation = generation
                 self.problem = "profile_check_unavailable"
                 self.checked_at = time.monotonic()
             if self.problem not in PROBLEM_FIXES and self.problem is not None:

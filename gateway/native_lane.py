@@ -255,6 +255,10 @@ class Credential:
             return False
 
 
+# The settings a connection credential may hold (gateway/projection_types.py EngineCredential names the same ones).
+CREDENTIAL_FIELDS = frozenset({"secret_ref", "secret_env", "origin", "header", "scheme"})
+
+
 def validate_connection(block: Any) -> None:
     """Raise ValueError when a record's ``connection`` block holds a credential that cannot be read."""
     if block is None:
@@ -279,6 +283,10 @@ def validate_connection(block: Any) -> None:
             continue
         if not isinstance(credential, Mapping):
             raise ValueError(f"connection.credentials.{name} credential must be a mapping or null")
+        unknown = sorted(str(key) for key in credential if key not in CREDENTIAL_FIELDS)
+        if unknown:
+            # An unnamed key could hold a raw secret that no store externalizes; refuse it, never keep it.
+            raise ValueError(f"connection.credentials.{name} credential holds keys it cannot take: {', '.join(unknown)}")
         if not (credential.get("secret_env") or credential.get("secret_ref")):
             raise ValueError(f"connection.credentials.{name} credential names no secret_env or secret_ref")
         header = credential.get("header")

@@ -50,6 +50,19 @@ def _body_text(body: Mapping[str, Any], key: str, *, required: bool = False) -> 
     return value.strip()
 
 
+def _effective_policy(wired: TransitionRuntime, domain: str) -> dict[str, Any]:
+    """What the gateway will apply to ``domain``, computed from the stored records: the owner reads this to confirm a
+    record edit (``residency.transition`` is hidden in the record views). No address, key or engine reply."""
+    held = wired.policy(domain)
+    try:
+        snapshots = wired.adapter(domain).supports_checkpoint
+    except NoProfile:
+        snapshots = False
+    return {"enabled": held.enabled, "profile": held.profile, "services": list(held.services),
+            "admission_wait_s": held.admission_wait_s, "retry_after_s": held.retry_after_s,
+            "checkpoint_policy": wired.settings(domain)["checkpoint_policy"], "checkpoint_and_restore": snapshots}
+
+
 def register_transition_routes(router: APIRouter, *, runtime: Callable[[], TransitionRuntime], guard: Callable[[Request], Any],
                                read_json: Callable[[Request], Any]) -> None:
     """Mount the transition routes. ``runtime`` is read per request (the gateway builds it once)."""
@@ -131,7 +144,8 @@ def register_transition_routes(router: APIRouter, *, runtime: Callable[[], Trans
         gates = store.gates  # type: ignore[attr-defined]
         active, last = wired.leases(domain)
         return _answer({"gate": gates.state(domain), "op_id": current.op_id if current is not None else None,
-                        "parked": gates.parked(domain), "active_leases": active, "last_lease_at": last})
+                        "parked": gates.parked(domain), "active_leases": active, "last_lease_at": last,
+                        "policy": _effective_policy(wired, domain)})
 
     @router.post("/engines/domains/{domain}/transitions/{op_id}/resolve")
     async def resolve_transition(domain: str, op_id: str, request: Request) -> JSONResponse:

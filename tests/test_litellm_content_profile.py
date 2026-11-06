@@ -271,6 +271,52 @@ def test_restart_during_check_cannot_reuse_approval(monkeypatch):
     assert gate.checked is None
 
 
+def _restartable_gate(monkeypatch, database_problem):
+    """A managed gate whose child the test replaces: None is the gap after the old child dies, before the new proof."""
+    monkeypatch.setenv('AZIZAM_MANAGE_LITELLM', 'true')
+    gate = content.ContentGate()
+    monkeypatch.setattr(content, 'gate', gate)
+    child = [('old-child',)]
+    def generation(_):
+        if child[0] is None:
+            raise FileNotFoundError('the old child is gone and the new one has no proof yet')
+        return child[0]
+    monkeypatch.setattr(gate, 'generation', generation)
+    calls = []
+    async def check(_):
+        calls.append(child[0])
+        return await database_problem()
+    monkeypatch.setattr(content, 'database_problem', check)
+    return gate, child, calls
+
+
+def test_restarted_child_is_checked_at_once_not_after_the_backoff(monkeypatch):
+    async def verified(): return None
+    _gate, child, calls = _restartable_gate(monkeypatch, verified)
+    base = 'http://127.0.0.1:4011'
+    async def run():
+        assert await content.execution_refusal(base) is None
+        child[0] = None  # a config edit: the watcher stopped the old child
+        refusal = await content.execution_refusal(base)
+        assert json.loads(refusal.body)['error']['code'] == 'litellm_content_unverified'
+        child[0] = ('new-child',)  # the new child wrote its proof
+        assert await content.execution_refusal(base) is None, 'the new child waited out the backoff'
+    asyncio.run(run())
+    assert calls == [('old-child',), ('new-child',)]
+
+
+def test_backoff_still_holds_while_the_same_child_cannot_be_checked(monkeypatch):
+    async def unreadable(): raise RuntimeError('database unreachable')
+    _gate, _child, calls = _restartable_gate(monkeypatch, unreadable)
+    base = 'http://127.0.0.1:4011'
+    async def run():
+        for _ in range(3):
+            refusal = await content.execution_refusal(base)
+            assert json.loads(refusal.body)['error']['code'] == 'litellm_content_unverified'
+    asyncio.run(run())
+    assert calls == [('old-child',)], 'a request during the backoff checked the same child again'
+
+
 def test_hourly_recheck_catches_new_callbacks(monkeypatch):
     monkeypatch.setenv('AZIZAM_MANAGE_LITELLM', 'true')
     gate = content.ContentGate()
