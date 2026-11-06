@@ -1470,6 +1470,18 @@ def check_service_shape(service_id: str, raw: Mapping[str, Any]) -> None:
             raise ValueError(f"{where}: an engine needs config.address (or a host); connection.address alone is "
                              "not enough")
         raise ValueError(f"{where}: an engine needs a host or an address")
+    # Routing dials the address the config resolves to (engine_connection.inference_base_url), never connection.address.
+    # A connection address that names another host would be edited and shown while requests went to the old one, so the
+    # two must name one endpoint: the same scheme, host and port. The path may differ, because the engine form stores the
+    # address and dials it with the record's own path added. An address routing cannot resolve here (one read from the
+    # environment) is not compared. The message names the field, never either address.
+    dialed = origin_of(service_base_url(config) or str(config.get("address") or ""))
+    if dialed:
+        for block in (raw.get("connection"), config.get("connection")):
+            address = str(block.get("address") or "").strip() if isinstance(block, Mapping) else ""
+            if address and origin_of(address) not in ("", dialed):
+                raise ValueError(f"{where}: connection.address names another host than the one this service is "
+                                 "dialed at (config.base_url, config.address or host and port); give one address")
 
 
 def _migration_refusal_text(service_id: str, raw: Mapping[str, Any]) -> str:
