@@ -493,7 +493,8 @@
 # T1.1 round 5 (2026-11-05): +8 cases over round 4 (18980): probe-path prefix, egress map before snapshot, projection failure, non-mapping config, mesh health and observer probes; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 18988.
 # T1.1 domain leases ported onto the public root (2026-11-05): collect-only measured 18980 (main 18787 + T1.1 cases + 1 async egress case).
 # Compile from the pin (S2.2): +28 cases over main (26 in test_compile_from_pin, 1 golden replay with the flag on, 1 required-envelope case in test_job_envelope_wiring); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19016.
-pytest = 19016
+# S2.2 delta review: +1 case (an owner-added workflow whose model becomes an alias for its graph file's workflow); measured with --collect-only -q: 19017.
+pytest = 19017
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -724,7 +725,8 @@ ad_hoc_upstream_fake_files = 46
 # 843 on 2026-11-05 (ux fixes): +13 in gateway/asset_types.py, the one table of kind words and asset id prefixes, keyed by IANA top-level media types (which the rule allows); -6 that me_media.py held; +2 for the speech-to-text builders declaring a recordable audio input.
 # 840 on 2026-11-05 (mesh review fixes): -3 where the mesh-only branches in generic code became data (an asset content policy row for ast, orphan receipts closed for every job, media preflight intents read from the content policies).
 # 830 on 2026-11-05 (mesh gate fix): -10 where the kind words moved from gateway/asset_types.py to registry/asset_kinds.yml.
-domain_literals = 829
+# 826 on 2026-11-06 (S2.2 pinned-workflow check): the audio route names its resolved workflow once instead of five times.
+domain_literals = 826
 # Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
 # scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
 # a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through
