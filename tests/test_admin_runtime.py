@@ -590,16 +590,10 @@ class AdminRuntimeTests(unittest.TestCase):
         self.assertIn("operator.media_job_admission.update", actions)
 
     def test_service_registry_persists_and_is_audited(self) -> None:
-        self.assertEqual(
-            self.store.get_service_registry(),
-            {
-                "schema_version": 2,  # Engine record v2 is the fresh-registry contract.
-                "services": {},
-                "protocol_frontends": {},
-                "workflows": {},
-                "capabilities": {},
-            },
-        )
+        fresh = self.store.get_service_registry()
+        self.assertEqual(fresh["schema_version"], 2)  # Engine record v2 is the fresh-registry contract.
+        # A store with no registry inherits the release records: the managed LiteLLM row and OpenRouter.
+        self.assertEqual(sorted(fresh["services"]), ["litellm", "openrouter"])
 
         admin_key, _, _ = create_admin_service_account_key(
             "owner-cli", path=self.db
