@@ -121,7 +121,8 @@ def test_stored_after_the_step_holds_patches_tombstones_and_owner_records_only(o
     service_registry.ensure_service_registry(path=db, actor="test")
     stored = admin_store.get_operator_setting("service_registry", path=db)["value"]
 
-    assert set(stored["services"]["litellm"]) == {"name", "enabled", "config"}  # a patch: the release supplies the rest
+    # A patch: the release supplies the rest. Its identity keys let the code before the layer rebuild the row (rollback).
+    assert set(stored["services"]["litellm"]) == {"name", "enabled", "config", "id", "source", "kind"}
     assert stored["tombstones"]["services"] == ["openrouter"]
     assert {"ui-chat", "ui-voice", "ui-notes", "kobold"} <= set(stored["services"])  # owner records, whole
     assert set(stored["protocol_frontends"]) == {"acme"}  # builtin frontends inherit; none is stored

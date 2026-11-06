@@ -284,10 +284,24 @@ def field_names(entry: Any, release_record: Any = None) -> list[str]:
 # -- export ---------------------------------------------------------------------------------------------------------
 
 
-def owner_layer(stored: Mapping[str, Any]) -> dict[str, Any]:
-    """The owner data of a stored document: what the export file holds (docs/design/CONFIG_HOMES.md, 6.1)."""
+def owner_layer(stored: Mapping[str, Any], release: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """The owner data of a stored document: what the export file holds (docs/design/CONFIG_HOMES.md, 6.1).
+
+    With the release given, a patch of a release record leaves out the identity keys it only repeats (``IDENTITY_KEYS``);
+    an import stamps them again."""
+    def exported(name: str) -> dict[str, Any]:
+        base, out = _collection(release or {}, name), {}
+        for record_id, entry in _collection(stored, name).items():
+            entry = copy.deepcopy(entry)
+            if record_id in base and isinstance(entry, dict) and REPLACE_KEY not in entry:
+                for key in IDENTITY_KEYS:
+                    if entry.get(key) == base[record_id].get(key):
+                        entry.pop(key, None)
+            out[record_id] = entry
+        return out
+
     return {
-        "records": {name: copy.deepcopy(dict(_collection(stored, name))) for name in COLLECTIONS if _collection(stored, name)},
+        "records": {name: exported(name) for name in COLLECTIONS if _collection(stored, name)},
         "tombstones": {name: sorted(tombstones_of(stored, name)) for name in COLLECTIONS if tombstones_of(stored, name)},
     }
 

@@ -70,7 +70,8 @@ def test_unlayer_stores_what_differs_and_layer_gives_the_document_back():
 
     stored = layers.unlayer(effective, RELEASE)
 
-    assert stored["services"]["engine"] == {"name": "My engine", "config": {"timeout": 5}}
+    # A patch also names its record (id), so the code before the layer reads it as the release record it copies.
+    assert stored["services"]["engine"] == {"id": "engine", "name": "My engine", "config": {"timeout": 5}}
     assert stored["services"]["mine"] == {"id": "mine", "name": "Mine"}
     assert stored["tombstones"] == {"services": ["provider"]}
     assert "api" not in stored["protocol_frontends"], "an unchanged record is inherited, not stored"
@@ -84,7 +85,7 @@ def test_a_field_the_owner_removed_is_a_null_in_the_patch_and_a_value_that_is_nu
 
     stored = layers.unlayer(effective, RELEASE)
 
-    assert stored["services"]["engine"] == {"note": None}
+    assert stored["services"]["engine"] == {"id": "engine", "note": None}
     assert set(stored["services"]["provider"]) == {layers.REPLACE_KEY}
     assert layers.layer(stored, RELEASE) == effective
 
@@ -157,3 +158,15 @@ def test_an_unlayer_that_is_given_an_undeletable_record_leaves_it_inherited():
 
     assert stored["tombstones"] == {}
     assert "engine" in layers.layer(stored, RELEASE)["services"]
+
+
+def test_a_patch_of_a_release_record_repeats_its_identity_keys_and_the_export_and_the_field_list_leave_them_out():
+    effective = layers.layer(layers.empty_stored(2), RELEASE)
+    effective["services"]["engine"]["name"] = "My engine"
+    effective["services"]["engine"]["source"] = "builtin"  # equal to nothing in this release record: a real change below
+    stored = layers.unlayer(effective, RELEASE)
+
+    assert stored["services"]["engine"]["id"] == "engine"
+    assert layers.owner_layer(stored, RELEASE)["records"]["services"]["engine"] == {"name": "My engine", "source": "builtin"}
+    assert layers.field_names(stored["services"]["engine"], RELEASE["services"]["engine"]) == ["name", "source"]
+    assert layers.layer(layers.from_owner_layer(layers.owner_layer(stored, RELEASE), 2), RELEASE)["services"]["engine"]["name"] == "My engine"

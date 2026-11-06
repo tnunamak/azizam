@@ -47,7 +47,7 @@ def export_part(path: Path) -> dict[str, Any]:
     stored, _generation = stored_now(path)
     if not layers.is_layered(stored):  # an install that has not started on this release: nothing is owner data yet
         stored = layers.empty_stored(service_registry.SERVICE_REGISTRY_SCHEMA_VERSION)
-    return layers.owner_layer(stored)
+    return layers.owner_layer(stored, service_registry.release_registry())
 
 
 def secrets_in(part: Mapping[str, Any]) -> list[dict[str, str]]:

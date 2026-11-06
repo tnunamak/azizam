@@ -139,8 +139,10 @@ def test_replace_drops_the_owner_records_the_file_does_not_name_and_merge_keeps_
 
 def test_a_record_that_holds_a_secret_value_is_refused_and_nothing_is_written(tmp_path):
     target = _gateway(tmp_path, "b.db")
-    leaky = {"records": {"services": {"leaky": {**_record("leaky"), "config": {
-        "base_url": "https://api.example.test/v1", "api_key": SENTINEL}}}}, "tombstones": {}}
+    leaky = {"records": {"services": {"leaky": {
+        "id": "leaky", "name": "leaky", "source": "ui", "kind": "provider", "enabled": True, "capabilities": ["openai-compatible"],
+        "config": {"provider_type": "paid-remote", "protocol": "openai-compatible", "base_url": "https://api.example.test/v1",
+                   "api_key": SENTINEL}}}}, "tombstones": {}}
     document = {**export_of(target), "registry": leaky}
     generation = _generation(target)
 
@@ -164,7 +166,7 @@ def test_the_registry_and_the_sections_commit_together_or_not_at_all(tmp_path):
     _owner_changes(source)
     source.patch(setting("/timeout", 60))
     document = export_of(source)
-    document["sections"][SECTION]["entries"][0]["value"] = "not a valid value for this entry"  # breaks the schema
+    document["sections"][SECTION][0]["value"] = "not a valid value for this entry"  # breaks the schema
     generation = _generation(target)
 
     refused = target.client.post(f"{API}/import", json=_body(document, target), headers=OWNER)
