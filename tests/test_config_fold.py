@@ -234,7 +234,7 @@ def test_a_value_a_section_refuses_is_left_out_and_named_and_the_rest_is_kept(db
     legacy(db, "instance_presentation", {"name": "Fine", "theme_default": "sepia", "unknown": "x"})
     report = config_fold.migrate(db, {}, environ={})
     instance = next(item for item in report if item["section"] == "instance")
-    assert instance["dropped"] == ["/theme_default"]
+    assert sorted(instance["dropped"]) == ["/theme_default", "/unknown"]
     assert config_fold.instance(db) == {"name": "Fine", "base_url": "", "theme_default": "system"}
 
 
@@ -310,7 +310,8 @@ def test_a_folded_save_is_a_config_change_the_owner_api_can_list_and_the_layer_s
     client = _app(db)
     client.put("/admin/api/operator/media-job-admission", json={"max_queue_depth": 3}, headers={"If-Match": "0"})
     (change,) = admin_store.list_config_changes(path=db)
-    assert change["kind"] == "edit" and change["items"][0]["pointer"] == "/media_jobs/max_queue_depth"
+    assert change["kind"] == "edit"
+    assert "/media_jobs/max_queue_depth" in {item["pointer"] for item in change["items"]}
     home = config_runtime.ConfigHome()
     layer = home.layer({}, path=db)
     assert layer.config["resource_admission"]["media_jobs"]["max_queue_depth"] == 3

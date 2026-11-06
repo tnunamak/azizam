@@ -278,20 +278,29 @@ def _without(target: Mapping[str, Any], entry: str) -> dict[str, Any]:
 def _fit(section: layers.Section, target: Mapping[str, Any]) -> tuple[list[layers.Override], list[str]]:
     """Overrides that make the section equal ``target``, leaving out each entry the section refuses.
 
-    An entry the closed schema does not take (a stale key, a value out of range) is dropped and named, so one bad
-    key does not cost the owner every other value. A fault the section cannot place on one entry drops them all.
+    An entry the closed schema does not take (a value out of range, a key it does not know) is dropped and named, so
+    one bad key does not cost the owner every other value. A fault the section cannot place on one entry (it has no
+    pointer, or dropping the entry changes nothing) leaves the whole import empty: the step is then recorded with
+    no rows, and the log line says what was left out.
     """
     dropped: list[str] = []
     for _round in range(50):
         overrides, blocked = layers.overrides_for_target(section, target, None)
         if not blocked:
             return overrides, dropped
-        entries = {section.index.entry_containing(problem.pointer) for problem in blocked}
-        if None in entries or not entries:
+        places = {
+            section.index.entry_containing(problem.pointer) or problem.pointer
+            for problem in blocked if problem.pointer not in (None, "", "/")
+        }
+        if len(places) != len(blocked) and any(problem.pointer in (None, "", "/") for problem in blocked):
             return [], [*dropped, "/"]
-        for entry in sorted(e for e in entries if e is not None):
-            target = _without(target, entry)
-            dropped.append(entry)
+        smaller = target
+        for place in sorted(places):
+            smaller = _without(smaller, place)
+        if smaller == target:
+            return [], [*dropped, "/"]
+        dropped.extend(sorted(places))
+        target = smaller
     return [], [*dropped, "/"]
 
 
