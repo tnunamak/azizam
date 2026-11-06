@@ -167,3 +167,27 @@ def test_a_reload_that_cannot_read_the_registry_keeps_the_workflows_it_serves(li
         proxy.reload_runtime_config()
 
     assert _served_name() == OWNER_NAME
+
+
+def test_the_pre_deploy_report_lists_ids_and_field_names_and_never_a_value(live, capsys):
+    from scripts import workflow_override_report
+
+    registry = _with_workflow(
+        service_registry.normalize_service_registry({}), _owner_manifest(description="sentinel-value-must-never-print"))
+    write_service_registry_for_test(registry, path=live)
+
+    status = workflow_override_report.main([str(live)])
+
+    out = capsys.readouterr().out
+    assert status == 1  # a stored workflow with a bundled id changes what is served once C5 is live
+    assert BUNDLED_ID in out and "description" in out and "display_name" in out
+    assert "sentinel-value-must-never-print" not in out and OWNER_NAME not in out
+
+
+def test_the_pre_deploy_report_is_clean_when_no_stored_workflow_has_a_bundled_id(live, capsys):
+    from scripts import workflow_override_report
+
+    write_service_registry_for_test(service_registry.normalize_service_registry({}), path=live)
+
+    assert workflow_override_report.main([str(live)]) == 0
+    assert "with a bundled id: 0" in capsys.readouterr().out
