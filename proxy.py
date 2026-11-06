@@ -30734,11 +30734,12 @@ async def _forward_litellm_proxy_request(
     if engine_reply_timeout is not None:
         # The router gives up at the engine's own reply time; wait a little longer for its answer.
         read_timeout = max(read_timeout, engine_reply_timeout + 5.0)
-    from gateway.litellm_content import execution_refusal
+    from gateway.litellm_content import execution_refusal, wait_while_starting
 
     refusal = await execution_refusal(runtime.base_url)
     if refusal is not None:
         return refusal
+    await wait_while_starting(runtime.base_url)
     execution_request = LlmExecutionRequest(
         method=request.method,
         url=litellm_url(

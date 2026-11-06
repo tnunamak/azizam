@@ -1464,6 +1464,11 @@ def check_service_shape(service_id: str, raw: Mapping[str, Any]) -> None:
     if protocol is not None and not (isinstance(protocol, str) and _PROTOCOL_NAME.fullmatch(protocol)):
         raise ValueError(f"{where}: protocol must be a plain name such as 'openai-compatible'")
     if str(raw.get("kind") or "") == "engine" and not any(str(config.get(key) or "").strip() for key in _ADDRESS_KEYS):
+        connections = (raw.get("connection"), config.get("connection"))
+        if any(isinstance(block, Mapping) and str(block.get("address") or "").strip() for block in connections):
+            # Routing reads the address from the config; connection.address alone does not route yet.
+            raise ValueError(f"{where}: an engine needs config.address (or a host); connection.address alone is "
+                             "not enough")
         raise ValueError(f"{where}: an engine needs a host or an address")
 
 
@@ -1491,6 +1496,26 @@ SERVICE_RECORD_FIELDS = (
 )
 
 
+def _fold_top_level_connection(service_id: str, raw: Mapping[str, Any], config: dict[str, Any]) -> None:
+    """Store a top-level ``connection`` block (the engine contract's shape) as ``config.connection``.
+
+    The stored record keeps one connection block, in its config. A record that gives both, and they differ, is
+    refused rather than one of them being dropped.
+    """
+    top = raw.get("connection")
+    if top is None:
+        return
+    if not isinstance(top, Mapping):
+        raise ValueError(f"service {service_id!r}: connection must be a mapping")
+    nested = config.get("connection")
+    if nested is not None and not isinstance(nested, Mapping):
+        raise ValueError(f"service {service_id!r}: config.connection must be a mapping")
+    if nested is not None and nested != top:
+        raise ValueError(f"service {service_id!r}: connection is given at the top level and in config, and they "
+                         "differ; give one")
+    config["connection"] = copy.deepcopy(dict(top))
+
+
 def normalize_service_record(
     service_id: str, raw: Mapping[str, Any], *, schema_version: int | None = None, check_secrets: bool = True,
 ) -> dict[str, Any]:
@@ -1507,6 +1532,7 @@ def normalize_service_record(
     if not isinstance(config, Mapping):
         config = {}
     config = copy.deepcopy(dict(config))
+    _fold_top_level_connection(service_id, raw, config)
     raw_models = config.get("models")
     if isinstance(raw_models, list):
         normalized_models: list[Any] = []
