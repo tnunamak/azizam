@@ -242,7 +242,7 @@ URL = "https://clips.caller-example.test/private/fox-secret.mp4"
 def _routes_open(**extra: Any):
     """The checks every media route makes before it reads a body, switched open."""
     return patch.multiple(
-        proxy, COMFY_ENABLED=True, IMAGE_MEDIA_JOB_MAX_ATTEMPTS=1,
+        proxy, COMFY_ENABLED=True, _image_media_job_max_attempts=lambda: 1,
         _dispatch_admission_response=lambda *a, **kw: None,
         _service_availability_response=lambda *a, **kw: None, **extra)
 
