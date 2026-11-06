@@ -8,7 +8,7 @@ import { formatDuration, readAsDataUri, sizeWords, typeWords, type MediaTypes } 
 import { limitLabel } from "@/lib/library-file";
 import { LibraryPicker } from "./library-picker";
 import { PickedSummary, useObjectUrl } from "./picked-summary";
-import { LIBRARY_SOURCE, useMediaPick, useTakeFocus } from "./use-media-pick";
+import { LIBRARY_SOURCE, isStrayClickAfterPick, useMediaPick, useTakeFocus } from "./use-media-pick";
 
 function previewSource(value: string): string | null {
   // A Library asset id is not an address: its download route answers with a
@@ -138,6 +138,7 @@ export function MediaInput({
           replaceRef={replaceButton}
           onReplace={pick.replaceChosen}
           onRemove={clear}
+          ignoreRemoveClick={isStrayClickAfterPick}
         />
       ) : (
         <div className="space-y-2">

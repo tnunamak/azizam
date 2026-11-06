@@ -5,6 +5,7 @@ import { Check, ImageIcon, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FOCUS_RING } from "./focus-ring";
+import { noteLibraryTileClick } from "./use-media-pick";
 import { cn } from "@/lib/cn";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -66,11 +67,12 @@ export function LibraryPicker({
   const [unshown, setUnshown] = useState<Set<string>>(new Set());
   // The tiles have scrolled under the header: it shows an edge so they do not run into it.
   const [scrolled, setScrolled] = useState(false);
-  // More of the list lies below the fold: on a phone the sheet's bottom edge shows it.
+  // More of the list lies below the fold: the dialog's bottom edge shows it, as its header's edge shows tiles above.
   const [moreBelow, setMoreBelow] = useState(false);
   const [query, setQuery] = useState("");
   const content = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const searchField = useRef<HTMLInputElement>(null);
   const [attempt, setAttempt] = useState(0);
   const [previousOpen, setPreviousOpen] = useState(open);
   // Each reload or reopen is a new list; a "Show more" answer for an older
@@ -161,7 +163,7 @@ export function LibraryPicker({
     }
   }, [open, state]);
 
-  // The phone sheet's bottom edge shows while more of the list lies below. Measured after the list changes, on a
+  // The bottom edge shows while more of the list lies below. Measured after the list changes, on a
   // scroll and when the window is resized.
   function measureBelow() {
     const body = bodyRef.current;
@@ -202,13 +204,16 @@ export function LibraryPicker({
   }
 
   const noMatch = state === "ready" && assets.length > 0 && shown.length === 0;
-  // The row or tile of the item the screen already holds: a check badge and `aria-current`.
+  // The row or tile of the item the screen already holds: a check badge and `aria-current`, and for a tile a dark
+  // teal border all round it, the way a photo app marks a selected photo.
   const isCurrent = (asset: LibraryAsset) => currentId != null && asset.asset_id === currentId;
   const currentMark = (
     <span
       data-slot="library-current-mark"
       aria-hidden="true"
-      className="bg-primary text-primary-foreground flex size-5 shrink-0 items-center justify-center rounded-full"
+      // The white ring keeps the dark disc apart from a dark picture under it; the disc stands out from a light one
+      // on its own.
+      className="bg-primary text-primary-foreground flex size-5 shrink-0 items-center justify-center rounded-full ring-2 ring-white"
     >
       <Check className="size-3.5" />
     </span>
@@ -225,9 +230,10 @@ export function LibraryPicker({
           event.preventDefault();
           content.current?.focus();
         }}
-        // From sm up a centred dialog. Under 640 px a bottom sheet that takes the screen's height, so the list has
-        // room and the header stays put above it.
-        className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-[720px]! max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:h-[calc(100dvh-1rem)] max-sm:max-h-none max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-b-none"
+        // From sm up a dialog whose top edge is fixed at 12 % of the window, so the search field does not move under
+        // the person as the results shrink (a centred dialog re-centres with every change of height). Under 640 px a
+        // bottom sheet that takes the screen's height, so the list has room and the header stays put above it.
+        className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:top-[12vh] sm:max-h-[80vh] sm:max-w-[720px]! sm:translate-y-0 max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:h-[calc(100dvh-1rem)] max-sm:max-h-none max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-b-none"
       >
         {/* The header and its close button stay put; the tiles scroll under them. */}
         <div
@@ -263,6 +269,7 @@ export function LibraryPicker({
                 className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
               />
               <Input
+                ref={searchField}
                 type="search"
                 size="sm"
                 value={query}
@@ -271,8 +278,29 @@ export function LibraryPicker({
                 aria-label={`Search your ${noun}s`}
                 autoComplete="off"
                 spellCheck={false}
-                className="pl-9"
+                // The shared focus ring, not the field's lighter teal edge; the browser's own clear button (a blue x)
+                // is hidden for ours.
+                className={cn(
+                  "focus-visible:border-input! pr-11 pl-9 [&::-webkit-search-cancel-button]:appearance-none",
+                  FOCUS_RING,
+                )}
               />
+              {query && (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={() => {
+                    setQuery("");
+                    searchField.current?.focus();
+                  }}
+                  className={cn(
+                    "text-muted-foreground hover:bg-border hover:text-foreground absolute top-1/2 right-0 flex size-10 -translate-y-1/2 cursor-pointer items-center justify-center rounded-md transition-colors max-sm:size-11 [&_svg]:pointer-events-none",
+                    FOCUS_RING,
+                  )}
+                >
+                  <X aria-hidden="true" className="size-4" />
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -284,7 +312,7 @@ export function LibraryPicker({
             setScrolled(event.currentTarget.scrollTop > 0);
             measureBelow();
           }}
-          className="-m-1 flex min-h-0 flex-col gap-4 overflow-y-auto p-1 transition-shadow max-sm:data-[more-below]:shadow-[inset_0_-10px_8px_-8px_rgb(0_0_0/0.22)]"
+          className="-m-1 flex min-h-0 flex-col gap-4 overflow-y-auto p-1 transition-shadow data-[more-below]:shadow-[inset_0_-10px_8px_-8px_rgb(0_0_0/0.22)]"
         >
           {state === "loading" && (
             layout === "grid" ? (
@@ -337,7 +365,10 @@ export function LibraryPicker({
                       title={title}
                       aria-label={title}
                       aria-current={isCurrent(asset) ? "true" : undefined}
-                      onClick={() => onPick(asset)}
+                      onClick={(event) => {
+                        noteLibraryTileClick(event);
+                        onPick(asset);
+                      }}
                       className={cn(
                         "hover:bg-border rounded-media flex min-h-14 w-full cursor-pointer items-center gap-3 p-2 text-left transition-colors",
                         FOCUS_RING,
@@ -380,10 +411,18 @@ export function LibraryPicker({
                       title={title}
                       aria-label={title}
                       aria-current={isCurrent(asset) ? "true" : undefined}
-                      onClick={() => onPick(asset)}
+                      onClick={(event) => {
+                        noteLibraryTileClick(event);
+                        onPick(asset);
+                      }}
                       className={cn("rounded-media group flex w-full cursor-pointer flex-col gap-1 text-left", FOCUS_RING)}
                     >
-                      <span className="rounded-media bg-muted/40 group-hover:border-foreground/40 relative flex aspect-square w-full items-center justify-center overflow-hidden border transition-colors">
+                      <span
+                        className={cn(
+                          "rounded-media bg-muted/40 relative flex aspect-square w-full items-center justify-center overflow-hidden border transition-colors",
+                          isCurrent(asset) ? "border-primary border-2" : "group-hover:border-foreground/40",
+                        )}
+                      >
                         {isCurrent(asset) && <span className="absolute top-1 right-1 z-10">{currentMark}</span>}
                         {!src ? (
                           <span className="text-muted-foreground flex flex-col items-center gap-1 p-1 text-xs">
@@ -409,11 +448,12 @@ export function LibraryPicker({
                           />
                         )}
                       </span>
-                      <span title={title} className="text-meta line-clamp-2 font-medium break-words">
+                      {/* Inner padding, so the label's first letter is well clear of the focus ring around the tile. */}
+                      <span title={title} className="text-meta line-clamp-2 px-1.5 font-medium break-words">
                         {title}
                       </span>
                       {length && (
-                        <span className="text-muted-foreground text-meta -mt-1 block">{length}</span>
+                        <span className="text-muted-foreground text-meta -mt-1 block px-1.5">{length}</span>
                       )}
                     </button>
                   </li>

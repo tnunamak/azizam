@@ -5,7 +5,7 @@ import { Library, Paperclip, Upload, X } from "lucide-react";
 import { LibraryPicker } from "@/components/media-input/library-picker";
 import { FOCUS_RING } from "@/components/media-input/focus-ring";
 import { PickedSummary, useObjectUrl } from "@/components/media-input/picked-summary";
-import { LIBRARY_SOURCE, useMediaPick, useTakeFocus } from "@/components/media-input/use-media-pick";
+import { LIBRARY_SOURCE, isStrayClickAfterPick, useMediaPick, useTakeFocus } from "@/components/media-input/use-media-pick";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -193,6 +193,7 @@ export function HomeMediaInput({
           retryLabel={`Retry preview of ${file.name}`}
           replaceRef={replaceButton}
           onReplace={disabled ? undefined : pick.replaceChosen}
+          ignoreRemoveClick={isStrayClickAfterPick}
           onRemove={() => {
             pick.clear();
             onFile(null);
@@ -260,7 +261,9 @@ export function PickedFileChip({
         <span className="min-w-0 truncate font-medium">{name}</span>
         <button
           type="button"
-          onClick={onRemove}
+          onClick={(event) => {
+            if (!isStrayClickAfterPick(event)) onRemove();
+          }}
           aria-label={`Remove ${name}`}
           className={cn(
             "text-muted-foreground hover:bg-border hover:text-foreground inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full max-sm:size-11",

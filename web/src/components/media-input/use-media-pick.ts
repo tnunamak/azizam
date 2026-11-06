@@ -41,6 +41,37 @@ export function useTakeFocus(
   });
 }
 
+/** How long after a tile was clicked a click on the same spot is taken for the tail of a double-click. */
+const STRAY_CLICK_MS = 400;
+/** How near, in CSS pixels, a click is to the tile's click to count as the same spot. */
+const SAME_SPOT_PX = 8;
+let lastTileClick: { at: number; x: number; y: number } | null = null;
+
+/**
+ * A choice from the Library closes its dialog, and the picked row, with its remove control, takes its place. A
+ * double-click on a tile sends a second click to the same spot, and it can land on the remove control that is now
+ * under the pointer and throw the choice away. The dialog notes where a tile was clicked with a mouse or touch (a key
+ * press on a tile has no position and notes nothing).
+ */
+export function noteLibraryTileClick(event: { detail: number; clientX: number; clientY: number }) {
+  lastTileClick = event.detail > 0 ? { at: performance.now(), x: event.clientX, y: event.clientY } : null;
+}
+
+/**
+ * True for a mouse or touch click on the same spot as the tile click that made the choice, in the moment after it:
+ * the tail of a double-click, which is no choice of the person's. A key press (`detail` 0) is never ignored, and a
+ * click elsewhere or later is the person's own. The note is on the module, not a screen, because the control that is
+ * hit may belong to another input than the picker.
+ */
+export function isStrayClickAfterPick(event: { detail: number; clientX: number; clientY: number }): boolean {
+  if (event.detail === 0 || !lastTileClick) return false;
+  return (
+    performance.now() - lastTileClick.at < STRAY_CLICK_MS &&
+    Math.abs(event.clientX - lastTileClick.x) <= SAME_SPOT_PX &&
+    Math.abs(event.clientY - lastTileClick.y) <= SAME_SPOT_PX
+  );
+}
+
 export interface MediaPickOptions<Prepared = undefined> {
   /**
    * What the input takes: full types ("image/png") or families ("image/*"). Omit it for any file; an input that
@@ -257,7 +288,7 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
       const title = libraryTitle(pick, noun);
       const handed = await handOver(picked, operation, { title, seconds: pick.duration_s });
       if (!handed) return;
-      setSource({
+        setSource({
         label: LIBRARY_SOURCE,
         file: picked,
         committed: handed.committed,

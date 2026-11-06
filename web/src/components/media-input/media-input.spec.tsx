@@ -853,13 +853,21 @@ test("the summary keeps its controls in a group beside the text, and its targets
   })) as HTMLElement;
   const replace = screen.getByRole("button", { name: "Replace A teal fish" });
   const remove = screen.getByRole("button", { name: "Remove A teal fish" });
-  // The thumbnail is top-aligned with the name on a phone, centred from sm up.
-  expect(summary.className).toContain("items-start");
-  expect(summary.className).toContain("sm:items-center");
+  // The row answers to its own width, not the window's: under 28 rem the controls drop under the facts, in the
+  // name's column; from 28 rem up they are a group on the right. The name's column takes all the free width.
+  const grid = summary.firstElementChild as HTMLElement;
+  expect(summary.className).toContain("@container");
+  expect(grid.className).toContain("grid-cols-[4rem_minmax(0,1fr)]");
+  expect(grid.className).toContain("@md:grid-cols-[4rem_minmax(0,1fr)_auto]");
+  const text = summary.querySelector("p")!;
+  expect(text.className).toContain("min-w-0");
+  expect(text.className).not.toMatch(/(^|\s)(w-|basis-)/);
   // Replace and remove sit together in one group that is a sibling of the text, never inside it.
   expect(replace.parentElement).toBe(remove.parentElement);
-  expect(replace.parentElement!.parentElement).toBe(summary);
-  expect(summary.querySelector("p")!.contains(replace)).toBe(false);
+  expect(replace.parentElement!.parentElement).toBe(grid);
+  expect(text.contains(replace)).toBe(false);
+  expect(replace.parentElement!.className).toContain("col-start-2 row-start-2");
+  expect(replace.parentElement!.className).toContain("@md:col-start-3 @md:row-start-1");
   expect(remove.className).toContain("size-10");
   expect(remove.className).toContain("max-sm:size-11");
   expect(replace.className).toContain("min-h-10");
@@ -1001,7 +1009,9 @@ test("under 640 px the picker is a full-height bottom sheet, and its bottom edge
   const body = document.querySelector<HTMLElement>('[data-slot="library-picker-body"]')!;
   expect(body.contains(header)).toBe(false);
   expect(body.className).toContain("overflow-y-auto");
-  expect(body.className).toContain("max-sm:data-[more-below]:shadow-");
+  // The bottom edge is on the desktop dialog as well as the phone sheet.
+  expect(body.className).toContain("data-[more-below]:shadow-");
+  expect(body.className).not.toContain("max-sm:data-[more-below]");
   // More list below the fold: the edge shows; scrolled to the end: it goes.
   const metrics = { scrollHeight: 900, clientHeight: 400, scrollTop: 0 };
   for (const key of ["scrollHeight", "clientHeight", "scrollTop"] as const) {
@@ -1012,4 +1022,124 @@ test("under 640 px the picker is a full-height bottom sheet, and its bottom edge
   metrics.scrollTop = 500;
   fireEvent.scroll(body);
   expect(body.hasAttribute("data-more-below")).toBe(false);
+});
+
+// ---- Round 6 ----
+
+test("the current pick's tile has a white-ringed check and a dark teal border; the other tiles have neither", async () => {
+  vi.stubGlobal("fetch", vi.fn(stubbedLibrary(FIVE_ITEMS).impl));
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  fireEvent.click(await screen.findByRole("button", { name: "A blue whale" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Replace A blue whale" }));
+  const current = await screen.findByRole("button", { name: "A blue whale" });
+  const mark = current.querySelector('[data-slot="library-current-mark"]') as HTMLElement;
+  // The ring is what keeps the disc apart from a dark picture; it is 2 px and white.
+  expect(mark.className).toContain("ring-2");
+  expect(mark.className).toContain("ring-white");
+  const frame = current.querySelector("img")!.parentElement!;
+  expect(frame.className).toContain("border-primary");
+  expect(frame.className).toContain("border-2");
+  const other = screen.getByRole("button", { name: "A red kite" }).querySelector("img")!.parentElement!;
+  expect(other.className).not.toContain("border-primary");
+});
+
+test("a tile's label has inner padding, so its first letter clears the focus ring", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  const label = (await screen.findByRole("button", { name: "A teal fish" })).querySelector("span.line-clamp-2")!;
+  expect(label.className).toContain("px-1.5");
+});
+
+/** A mouse click on the "A teal fish" tile at a spot, the way a person's pointer does it (a double-click has detail 2). */
+async function mouseClickTile(at: { clientX: number; clientY: number }) {
+  fireEvent.click(await screen.findByRole("button", { name: "Choose from Library" }));
+  fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }), { detail: 2, ...at });
+}
+
+test("the second click of a double-click on a tile does not remove the pick that has taken its place", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  const onFile = vi.fn();
+  render(<FileHarness onFile={onFile} />);
+  await mouseClickTile({ clientX: 300, clientY: 400 });
+  const remove = await screen.findByRole("button", { name: "Remove A teal fish" });
+  // The same spot, as a double-click's second click is, a moment later.
+  fireEvent.click(remove, { detail: 2, clientX: 302, clientY: 399 });
+  expect(screen.getByRole("button", { name: "Remove A teal fish" })).toBeTruthy();
+  expect(onFile).not.toHaveBeenCalledWith(null);
+});
+
+test("a click on Remove somewhere else, or after the moment has passed, is the person's own", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  const onFile = vi.fn();
+  render(<FileHarness onFile={onFile} />);
+  await mouseClickTile({ clientX: 300, clientY: 400 });
+  // Elsewhere on the screen: not the tail of that double-click.
+  fireEvent.click(await screen.findByRole("button", { name: "Remove A teal fish" }), { detail: 1, clientX: 700, clientY: 90 });
+  await waitFor(() => expect(onFile).toHaveBeenLastCalledWith(null));
+  // The same spot, once the moment has passed.
+  await mouseClickTile({ clientX: 300, clientY: 400 });
+  const now = performance.now();
+  const clock = vi.spyOn(performance, "now").mockReturnValue(now + 1000);
+  try {
+    fireEvent.click(await screen.findByRole("button", { name: "Remove A teal fish" }), { detail: 1, clientX: 300, clientY: 400 });
+  } finally {
+    clock.mockRestore();
+  }
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Remove A teal fish" })).toBeNull());
+});
+
+test("Replace is never ignored, and a key press on Remove right after a pick removes it, even where the pointer was", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  const onFile = vi.fn();
+  render(<FileHarness onFile={onFile} />);
+  await mouseClickTile({ clientX: 300, clientY: 400 });
+  // Replace on the same spot, at once: it reopens the Library.
+  fireEvent.click(await screen.findByRole("button", { name: "Replace A teal fish" }), { detail: 1, clientX: 300, clientY: 400 });
+  expect(await screen.findByRole("dialog")).toBeTruthy();
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  // Enter or Space on a focused button is a click with no detail, and has no position: it is a choice.
+  fireEvent.click(screen.getByRole("button", { name: "Replace A teal fish" }));
+  fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }), { detail: 2, clientX: 300, clientY: 400 });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  fireEvent.click(await screen.findByRole("button", { name: "Remove A teal fish" }), { detail: 0 });
+  await waitFor(() => expect(onFile).toHaveBeenLastCalledWith(null));
+});
+
+test("the search field has the shared focus ring, hides the browser's clear button and has its own", async () => {
+  vi.stubGlobal("fetch", vi.fn(stubbedLibrary(FIVE_ITEMS).impl));
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  await screen.findByRole("button", { name: "A teal fish" });
+  const search = screen.getByRole("searchbox", { name: "Search your pictures" });
+  expect(search.className).toContain("focus-visible:ring-focus-ring");
+  expect(search.className).toContain("focus-visible:ring-2");
+  // No second, lighter teal edge beside the ring.
+  expect(search.className).toContain("focus-visible:border-input!");
+  expect(search.className).toContain("[&::-webkit-search-cancel-button]:appearance-none");
+  // Nothing typed, nothing to clear.
+  expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+  fireEvent.change(search, { target: { value: "kite" } });
+  const clear = screen.getByRole("button", { name: "Clear search" });
+  expect(clear.className).toContain("size-10");
+  expect(clear.className).toContain("max-sm:size-11");
+  expect(clear.className).toContain("focus-visible:ring-focus-ring");
+  fireEvent.click(clear);
+  expect((search as HTMLInputElement).value).toBe("");
+  expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+  expect(document.activeElement).toBe(search);
+  expect(screen.getByRole("button", { name: "A teal fish" })).toBeTruthy();
+});
+
+test("the desktop dialog's top edge is fixed, not centred, so the search field does not move as results shrink", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  await screen.findByRole("button", { name: "A teal fish" });
+  const dialog = screen.getByRole("dialog");
+  expect(dialog.className).toContain("sm:top-[12vh]");
+  expect(dialog.className).toContain("sm:translate-y-0");
+  expect(dialog.className).toContain("sm:max-h-[80vh]");
 });

@@ -854,6 +854,28 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Attach a picture" }));
   });
 
+  it("removing a chip that came from the Library puts focus on the attach button, and the Library opens clean again", async () => {
+    await chooseKind([textRow, editRow], "Edit");
+    withLibrary([PICTURE_ITEM]);
+    const attach = screen.getByRole("button", { name: "Attach a picture" });
+    Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", { configurable: true, value: () => false });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => {} });
+    attach.focus();
+    fireEvent.keyDown(attach, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Choose from Library" }));
+    fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
+    await waitFor(() => expect(document.querySelector('[data-slot="home-picked-file"]')).toHaveTextContent("A teal fish"));
+    fireEvent.click(screen.getByRole("button", { name: "Remove A teal fish" }));
+    expect(document.querySelector('[data-slot="home-picked-file"]')).toBeNull();
+    // The attach button is the way to choose again, and it holds focus (it is not left on the removed chip's place).
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Attach a picture" }));
+    // Nothing of the removed pick is marked when the Library opens again.
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Choose from Library" }));
+    await screen.findByRole("button", { name: "A teal fish" });
+    expect(document.querySelectorAll('[aria-current="true"]')).toHaveLength(0);
+  });
+
   it("the chip's Remove is a 40 px target (44 on a phone)", async () => {
     await chooseKind([textRow, editRow], "Edit");
     fireEvent.change(fileInput(/Choose a picture/), { target: { files: [picture()] } });

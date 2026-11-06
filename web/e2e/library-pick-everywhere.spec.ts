@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { deflateSync } from "node:zlib";
 import type { Locator, Page, Route } from "@playwright/test";
 import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
 import { expect, test } from "./fixtures/isolation";
@@ -199,6 +200,9 @@ async function pickedSummary(
   await expect(replace).toBeVisible();
   await expect(replace).toHaveText("Replace");
   const phone = (page.viewportSize()?.width ?? 1440) < 640;
+  // The title column takes the free width. On a phone the controls sit under the facts, so the column is most of the
+  // row (it was a quarter of it, with the controls beside it and the title cut to two words).
+  if (phone) await expect.poll(async () => (await titleShare(summary)).share).toBeGreaterThanOrEqual(0.6);
   // Both controls are at least 40 x 40 CSS px at every width (44 on a phone), and they do not overlap.
   const minimum = phone ? 44 : 40;
   const boxes = [(await replace.boundingBox())!, (await remove.boundingBox())!];
@@ -219,6 +223,51 @@ async function pickedSummary(
       summary.evaluate((el) => Array.from(el.querySelectorAll("img")).every((img) => img.complete && img.naturalWidth > 0)),
     )
     .toBe(true);
+}
+
+/** How much of the picked row the title column takes, and whether the title shows whole (at most two lines, none cut). */
+async function titleShare(summary: Locator) {
+  const row = (await summary.boundingBox())!;
+  const text = (await summary.locator("p").boundingBox())!;
+  const title = await summary.locator("p > span").first().evaluate((el) => ({
+    lines: Math.round(el.clientHeight / parseFloat(getComputedStyle(el).lineHeight)),
+    cut: el.scrollHeight > el.clientHeight + 1,
+  }));
+  return { share: text.width / row.width, row, text, ...title };
+}
+
+/** A solid-colour PNG, for a tile whose picture is as light or as dark as a picture gets. */
+function solidPng(size: number, [red, green, blue]: [number, number, number]) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (bytes: Buffer) => {
+    let c = 0xffffffff;
+    for (const byte of bytes) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(data.length);
+    const sum = Buffer.alloc(4);
+    sum.writeUInt32BE(crc(body));
+    return Buffer.concat([length, body, sum]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: size }, () => [red, green, blue]).flat())]);
+  const pixels = deflateSync(Buffer.concat(Array.from({ length: size }, () => row)));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", pixels),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 /** The Transcription page with a model that takes audio, and the Library stubbed. */
@@ -585,22 +634,25 @@ for (const view of VIEWPORTS) {
       expect(frame.y + frame.height).toBeCloseTo(view.height, 0);
     } else {
       expect(frame.height).toBeLessThanOrEqual(view.height * 0.85 + 1);
+      // The top edge is anchored at 12 % of the window, not centred.
+      expect(Math.abs(frame.y - view.height * 0.12)).toBeLessThanOrEqual(1);
+      expect(frame.y + frame.height).toBeLessThanOrEqual(view.height);
     }
     const body = dialog.locator('[data-slot="library-picker-body"]');
     expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight + 100)).toBe(true);
-    // On a phone the sheet's bottom edge shows while more of the list lies below, and goes at the end.
-    if (view.width < 640) {
-      await expect(body).toHaveAttribute("data-more-below", "true");
-      expect(await body.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none");
-    } else {
-      expect(await body.evaluate((el) => getComputedStyle(el).boxShadow)).toBe("none");
-    }
+    // The bottom edge shows while more of the list lies below, on the desktop dialog as on the phone sheet, and goes
+    // at the end.
+    await expect(body).toHaveAttribute("data-more-below", "true");
+    expect(await body.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none");
+    if (view.width >= 640) await shot(page, "library-bottom-shadow-1440");
     const close = dialog.getByRole("button", { name: "Close" });
     const before = (await close.boundingBox())!;
     await body.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
     await expect.poll(() => body.evaluate((el) => Math.round(el.scrollTop + el.clientHeight) >= el.scrollHeight - 1)).toBe(true);
     await expect(close).toBeInViewport({ ratio: 1 });
     await expect(body).not.toHaveAttribute("data-more-below");
+    // (the edge fades out over the shadow's 150 ms transition)
+    await expect.poll(() => body.evaluate((el) => getComputedStyle(el).boxShadow)).toBe("none");
     await expect(header).toHaveAttribute("data-scrolled", "true");
     await expect.poll(edge).not.toBe("rgba(0, 0, 0, 0)");
     expect(await header.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none");
@@ -694,6 +746,16 @@ test("Photo to 3D: a keyboard open rings the first picture in the dark teal of R
   expect(contrast(ring.ringColour, surface)).toBeGreaterThanOrEqual(3);
   // The gap is the dialog's own colour, so the ring does not bleed into the tile.
   expect(ring.gapColour).toBe(surface);
+  // The tile's label starts well inside the ring: the ring's inner edge is 2 px outside the tile, and the first letter
+  // is at least 6 px inside it, so 8 px apart.
+  const labelGap = await tile.evaluate((el) => {
+    const text = el.querySelector("span.line-clamp-2")!.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 1);
+    return range.getBoundingClientRect().left - (el.getBoundingClientRect().left - 2);
+  });
+  expect(labelGap).toBeGreaterThanOrEqual(8);
   await shot(page, "photo-to-3d-keyboard-focus-1440");
   // Tab on to a second tile and back: the ring follows focus, one at a time.
   await page.keyboard.press("Tab");
@@ -761,16 +823,72 @@ for (const view of VIEWPORTS) {
     // Keyboard-reachable: Shift+Tab from the first picture lands in the search field.
     await page.keyboard.press("Shift+Tab");
     await expect(search).toBeFocused();
+    // The field's ring is the shared one (2 px, the dark teal of Run, a 2 px gap), and its edge does not also turn to
+    // the lighter teal: one focus indicator, not two.
+    const ring = parseRing(await search.evaluate((el) => getComputedStyle(el).boxShadow));
+    expect(ring.ringWidth).toBe(2);
+    expect(ring.gapWidth).toBe(2);
+    expect(channels(ring.ringColour)).toEqual([13, 69, 82]);
+    const surface = await dialog.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(contrast(ring.ringColour, surface)).toBeGreaterThanOrEqual(3);
+    const focusedEdge = await search.evaluate((el) => getComputedStyle(el).borderTopColor);
+    await search.evaluate((el) => (el as HTMLInputElement).blur());
+    expect(await search.evaluate((el) => getComputedStyle(el).borderTopColor)).toBe(focusedEdge);
+    await search.focus();
+    await expect(dialog.getByRole("button", { name: "Clear search" })).toHaveCount(0);
+    // The dialog's top edge does not move as the results shrink and grow back.
+    const top = (await dialog.boundingBox())!;
     await search.fill("reef");
     await expect(dialog.locator("ul button")).toHaveCount(1);
+    expect((await dialog.boundingBox())!.y).toBe(top.y);
+    if (view.width >= 1024) expect(Math.abs(top.y - view.height * 0.12)).toBeLessThanOrEqual(1);
+    // Our own clear button, in the palette, a 40 px target (44 on a phone), takes the place of the browser's blue one.
+    const clear = dialog.getByRole("button", { name: "Clear search" });
+    await expect(clear).toBeVisible();
+    const clearBox = (await clear.boundingBox())!;
+    const minimum = view.width < 640 ? 44 : 40;
+    expect(clearBox.width).toBeGreaterThanOrEqual(minimum);
+    expect(clearBox.height).toBeGreaterThanOrEqual(minimum);
+    // The browser's own clear button is switched off by a rule for its pseudo-element (getComputedStyle does not report
+    // a pseudo-element of a form control, so the rule itself is read).
+    const switchedOff = await page.evaluate(() => {
+      const found: string[] = [];
+      const walk = (rules: CSSRuleList) => {
+        for (const rule of Array.from(rules)) {
+          const styled = rule as CSSStyleRule;
+          if (styled.selectorText?.includes("::-webkit-search-cancel-button") && styled.style.getPropertyValue("appearance") === "none") {
+            found.push(styled.selectorText);
+          }
+          if ("cssRules" in rule) walk((rule as CSSGroupingRule).cssRules);
+        }
+      };
+      for (const sheet of Array.from(document.styleSheets)) {
+        try {
+          walk(sheet.cssRules);
+        } catch {
+          // A sheet from another origin is not readable.
+        }
+      }
+      return found;
+    });
+    expect(switchedOff.length).toBeGreaterThan(0);
+    expect(await search.evaluate((el) => (el as HTMLInputElement).matches("[class*='webkit-search-cancel-button']"))).toBe(true);
+    expect(await clear.evaluate((el) => getComputedStyle(el).color)).toBe(await dialog.getByRole("button", { name: "Close" }).evaluate((el) => getComputedStyle(el).color));
+    await shot(page, `library-search-focus-${view.name}`);
     await expect(dialog.getByRole("button", { name: "Sunset over a reef", exact: true })).toBeVisible();
     await shot(page, `library-search-results-${view.name}`);
     await search.fill("zebra");
     await expect(dialog.locator("ul button")).toHaveCount(0);
     await expect(dialog.getByRole("status")).toHaveText("No pictures match “zebra”.");
+    expect((await dialog.boundingBox())!.y).toBe(top.y);
     await shot(page, `library-search-empty-${view.name}`);
-    await search.fill("");
+    // Clear search empties the field, brings every picture back and keeps focus in the field.
+    await dialog.getByRole("button", { name: "Clear search" }).click();
+    await expect(search).toHaveValue("");
+    await expect(search).toBeFocused();
+    await expect(dialog.getByRole("button", { name: "Clear search" })).toHaveCount(0);
     await expect(dialog.locator("ul button")).toHaveCount(PICTURES.length);
+    expect((await dialog.boundingBox())!.y).toBe(top.y);
   });
 }
 
@@ -801,24 +919,240 @@ test("Transcription: focus goes to Replace after a pick and to Choose a file aft
   await expect(page.getByRole("button", { name: "Choose a file" })).toBeFocused();
 });
 
-test("A Library item picked on a phone is a row: the thumbnail on the name's line, Replace and Remove on the right", async ({ page }) => {
-  await openTranscribe(page, { width: 390, height: 844 });
+for (const width of [360, 390]) {
+  test(`A Library item picked on a ${width}px phone: the title has the row's width and Replace and Remove sit under the facts`, async ({ page }) => {
+    await openTranscribe(page, { width, height: 844 });
+    await page.getByRole("button", { name: "Choose from Library" }).click();
+    await libraryOpen(page);
+    await page.getByRole("dialog").getByRole("button", { name: LONG_MEMO, exact: true }).click();
+    await libraryClosed(page);
+    const summary = page.locator('[data-slot="picked-summary"]');
+    const thumb = (await summary.locator("> div > div").first().boundingBox())!;
+    const { text, row, share, lines, cut } = await titleShare(summary);
+    const name = (await summary.locator("p > span").first().boundingBox())!;
+    const replace = (await summary.getByRole("button", { name: `Replace ${LONG_MEMO}` }).boundingBox())!;
+    const remove = (await summary.getByRole("button", { name: `Remove ${LONG_MEMO}` }).boundingBox())!;
+    // The thumbnail and the name start on the same line.
+    expect(Math.abs(thumb.y - name.y)).toBeLessThanOrEqual(4);
+    // The title column is most of the row, not a third of it, so three memos that start alike can be told apart.
+    expect(share).toBeGreaterThanOrEqual(0.6);
+    expect(text.width).toBeGreaterThanOrEqual(row.width - thumb.width - 12 - 1);
+    // The title shows all of its words, over two lines, none cut by an ellipsis.
+    expect(cut).toBe(false);
+    expect(lines).toBe(2);
+    // The controls are a group under the facts, in the title's column, side by side; Replace's label lines up with the
+    // title's left edge (the button has 12 px of padding inside it).
+    expect(replace.y).toBeGreaterThanOrEqual(text.y + text.height - 1);
+    expect(Math.abs(replace.x + 12 - text.x)).toBeLessThanOrEqual(2);
+    expect(remove.x).toBeGreaterThan(replace.x);
+    expect(Math.abs(replace.y - remove.y)).toBeLessThanOrEqual(2);
+    expect(remove.x + remove.width).toBeLessThanOrEqual(row.x + row.width + 1);
+    // "From your Library" is one line, not wrapped.
+    const source = await summary.getByText("From your Library").evaluate((el) => el.getBoundingClientRect().height);
+    expect(source).toBeLessThan(24);
+    await shot(page, `transcribe-picked-long-${width}`);
+  });
+}
+
+test("Transcription: at 1440px the controls sit on the right of the title, and it has the rest of the row", async ({ page }) => {
+  await openTranscribe(page, { width: 1440, height: 900 });
   await page.getByRole("button", { name: "Choose from Library" }).click();
   await libraryOpen(page);
   await page.getByRole("dialog").getByRole("button", { name: LONG_MEMO, exact: true }).click();
   await libraryClosed(page);
   const summary = page.locator('[data-slot="picked-summary"]');
-  const thumb = (await summary.locator("> div").first().boundingBox())!;
-  const text = (await summary.locator("p").boundingBox())!;
-  const name = (await summary.locator("p > span").first().boundingBox())!;
+  const { text, row } = await titleShare(summary);
   const replace = (await summary.getByRole("button", { name: `Replace ${LONG_MEMO}` }).boundingBox())!;
   const remove = (await summary.getByRole("button", { name: `Remove ${LONG_MEMO}` }).boundingBox())!;
-  // The thumbnail and the name start on the same line.
-  expect(Math.abs(thumb.y - name.y)).toBeLessThanOrEqual(4);
-  // The controls are a group to the right of the text, on its row, not a line under it.
+  // The group is beside the text, on its row; the text runs up to it.
   expect(replace.x).toBeGreaterThanOrEqual(text.x + text.width - 1);
-  expect(remove.x).toBeGreaterThan(replace.x);
   expect(replace.y).toBeLessThan(text.y + text.height);
+  expect(remove.x + remove.width).toBeLessThanOrEqual(row.x + row.width + 1);
   expect(Math.abs(replace.y - remove.y)).toBeLessThanOrEqual(2);
-  await shot(page, "transcribe-picked-long-390");
+});
+
+// ---- Round 6 ----
+
+
+/**
+ * Reads pixels off a screenshot of the page: each point (in CSS pixels) becomes the "rgb(r, g, b)" drawn there, so the
+ * contrast is measured on what a person sees, not on what the styles say.
+ */
+async function pixelsAt(page: Page, points: { x: number; y: number }[]) {
+  const shotPng = await page.screenshot();
+  const viewport = page.viewportSize()!;
+  return page.evaluate(
+    async ({ base64, points: wanted, width }) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${base64}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      const scale = image.naturalWidth / width;
+      return wanted.map(({ x, y }) => Array.from(context.getImageData(Math.round(x * scale), Math.round(y * scale), 1, 1).data.slice(0, 3)));
+    },
+    { base64: shotPng.toString("base64"), points, width: viewport.width },
+  );
+}
+
+test("Photo to 3D: the current-pick badge reads against a light and a dark picture, and its tile has a dark teal border", async ({ page }) => {
+  const light: Item = { id: `img_${"a".repeat(64)}`, kind: "image", type: "image/png", prompt: "Pale beach", bytes: solidPng(64, [250, 250, 245]) };
+  const dark: Item = { id: `img_${"b".repeat(64)}`, kind: "image", type: "image/png", prompt: "Night sea", bytes: solidPng(64, [10, 12, 20]) };
+  await openPhoto(page, { width: 1440, height: 900 }, [light, dark]);
+  await page.getByRole("button", { name: "Choose from Library" }).click();
+  await libraryOpen(page);
+  // Each pass takes a picture and reopens the Library over it (Replace), which leaves the dialog open for the next.
+  for (const [item, tone] of [
+    [dark, "dark"],
+    [light, "light"],
+  ] as const) {
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: item.prompt, exact: true }).click();
+    await libraryClosed(page);
+    await page.getByRole("button", { name: `Replace ${item.prompt}` }).click();
+    // Replace opens on the current picture (it takes focus), not on the first.
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: item.prompt, exact: true })).toBeFocused();
+    await expect.poll(() => dialog.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
+    await expect.poll(() => dialog.evaluate((el) => Array.from(el.querySelectorAll("img")).every((img) => img.complete && img.naturalWidth > 0))).toBe(true);
+    const tile = dialog.getByRole("button", { name: item.prompt, exact: true });
+    const mark = tile.locator('[data-slot="library-current-mark"]');
+    await expect(mark).toBeVisible();
+    // The selected tile itself is marked: a 2 px dark teal border all round it, in Run's colour.
+    const frame = tile.locator("span").first();
+    const edge = await frame.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { width: style.borderTopWidth, colour: style.borderTopColor };
+    });
+    expect(edge.width).toBe("2px");
+    expect(channels(edge.colour)).toEqual([13, 69, 82]);
+    const surface = await dialog.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(contrast(edge.colour, surface)).toBeGreaterThanOrEqual(3);
+    // The badge's pixels: the disc (above the check mark), the ring just outside it, and the picture beside the ring.
+    const box = (await mark.boundingBox())!;
+    const middle = box.y + box.height / 2;
+    const [disc, ring, picture] = (
+      await pixelsAt(page, [
+        { x: box.x + box.width / 2, y: box.y + 2 },
+        { x: box.x - 1, y: middle },
+        { x: box.x - 3.5, y: middle },
+      ])
+    ).map((pixel) => `rgb(${pixel.join(", ")})`);
+    expect(contrast(disc, ring), `${tone} tile: disc against its ring`).toBeGreaterThanOrEqual(3);
+    // Against the picture the badge shows as its ring on a dark one, and as its disc on a light one.
+    expect(Math.max(contrast(ring, picture), contrast(disc, picture)), `${tone} tile: badge against the picture`).toBeGreaterThanOrEqual(3);
+    if (tone === "dark") expect(contrast(ring, picture)).toBeGreaterThanOrEqual(3);
+    if (tone === "light") expect(contrast(disc, picture)).toBeGreaterThanOrEqual(3);
+    // The disc is the dark teal, the ring is white.
+    expect(channels(disc)).toEqual([13, 69, 82]);
+    expect(channels(ring)).toEqual([255, 255, 255]);
+    await shot(page, `current-badge-${tone}-1440`);
+  }
+});
+
+for (const target of [
+  { name: "a picture tile", width: 1440, height: 900 },
+  { name: "a picture tile on a phone", width: 390, height: 844 },
+] as const) {
+  test(`A double-click on ${target.name} picks it once, and the pick survives the second click`, async ({ page }) => {
+    await openPhoto(page, target);
+    await page.getByRole("button", { name: "Choose from Library" }).click();
+    await libraryOpen(page);
+    await page.getByRole("dialog").getByRole("button", { name: "A teal fish", exact: true }).dblclick();
+    await libraryClosed(page);
+    const summary = page.locator('[data-slot="picked-summary"]');
+    await expect(summary).toHaveCount(1);
+    // Past the dialog's exit and the guard's window, the pick is still held: nothing took it away.
+    await page.waitForTimeout(900);
+    await expect(summary).toHaveCount(1);
+    await expect(summary.locator("p > span").first()).toHaveText("A teal fish");
+    await expect(page.getByRole("button", { name: "Choose a file" })).toHaveCount(0);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await shot(page, `double-click-after-${target.width}`);
+  });
+}
+
+test("A double-click on a clip row picks it once and the pick survives (Transcription)", async ({ page }) => {
+  await openTranscribe(page, { width: 1440, height: 900 });
+  await page.getByRole("button", { name: "Choose from Library" }).click();
+  await libraryOpen(page);
+  await page.getByRole("dialog").getByRole("button", { name: "A short spoken note", exact: true }).dblclick();
+  await libraryClosed(page);
+  await page.waitForTimeout(900);
+  await expect(page.locator('[data-slot="picked-summary"]')).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Remove A short spoken note" })).toBeVisible();
+});
+
+test("A click on Remove on the very spot of the tile click, at once, is the tail of a double-click and is ignored; a click elsewhere removes it", async ({ page }) => {
+  await openTranscribe(page, { width: 1440, height: 900 });
+  await page.getByRole("button", { name: "Choose from Library" }).click();
+  await libraryOpen(page);
+  const tile = page.getByRole("dialog").getByRole("button", { name: "A short spoken note", exact: true });
+  const box = (await tile.boundingBox())!;
+  const spot = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+  // The second click of a double-click: a mouse click (detail 2) at the tile's spot, delivered the instant the Remove
+  // control exists, which is inside the window however slow the machine.
+  const stray = page.evaluate(async ({ x, y }) => {
+    const find = () => document.querySelector<HTMLElement>('button[aria-label="Remove A short spoken note"]');
+    while (!find()) await new Promise((resolve) => requestAnimationFrame(resolve));
+    find()!.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2, clientX: x, clientY: y }));
+    return true;
+  }, spot);
+  await page.mouse.click(spot.x, spot.y);
+  expect(await stray).toBe(true);
+  await libraryClosed(page);
+  const summary = page.locator('[data-slot="picked-summary"]');
+  await expect(summary).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Choose a file" })).toHaveCount(0);
+  // A click on Remove from where the pointer really is now (not the tile's spot) is the person's own, with no wait.
+  await page.getByRole("button", { name: "Remove A short spoken note" }).click();
+  await expect(summary).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Choose a file" })).toBeFocused();
+});
+
+test("A key press on Remove right after a pick removes it", async ({ page }) => {
+  await openTranscribe(page, { width: 1440, height: 900 });
+  await page.getByRole("button", { name: "Choose from Library" }).click();
+  await libraryOpen(page);
+  await page.getByRole("dialog").getByRole("button", { name: "A short spoken note", exact: true }).click();
+  await libraryClosed(page);
+  const replace = page.getByRole("button", { name: "Replace A short spoken note" });
+  await expect(replace).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Remove A short spoken note" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator('[data-slot="picked-summary"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Choose a file" })).toBeFocused();
+});
+
+test("The desktop dialog's top edge stays where it is while a search shrinks the list, and its bottom moves instead", async ({ page }) => {
+  await openPhoto(page, { width: 1440, height: 900 }, MANY_PICTURES);
+  await page.getByRole("button", { name: "Choose from Library" }).click();
+  await libraryOpen(page);
+  const dialog = page.getByRole("dialog");
+  const search = dialog.getByRole("searchbox", { name: "Search your pictures" });
+  const full = (await dialog.boundingBox())!;
+  const searchTop = (await search.boundingBox())!.y;
+  expect(Math.abs(full.y - 108)).toBeLessThanOrEqual(1);
+  const tops: number[] = [];
+  for (const [text, tiles] of [
+    ["reef", 11],
+    ["Sunset over a reef 2", 1],
+    ["zebra", 0],
+    ["", MANY_PICTURES.length],
+  ] as const) {
+    await search.fill(text);
+    await expect(dialog.locator("ul button")).toHaveCount(tiles);
+    const box = (await dialog.boundingBox())!;
+    tops.push(box.y);
+    // The search field itself does not move either.
+    expect((await search.boundingBox())!.y).toBe(searchTop);
+    if (text === "zebra") expect(box.height).toBeLessThan(full.height - 200);
+    if (text === "") expect(box.height).toBeCloseTo(full.height, -1);
+  }
+  expect(new Set(tops.map(Math.round)).size).toBe(1);
+  expect(Math.round(tops[0])).toBe(Math.round(full.y));
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type Ref } from "react";
+import { useEffect, useState, type MouseEvent, type Ref } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
@@ -25,9 +25,13 @@ export function useObjectUrl(file: File | null | undefined): string | null {
  * big it is, and Replace and remove controls in a group on the right. The sites differ only in the words, never in
  * the layout.
  *
- * On a phone the thumbnail is top-aligned with the name and the controls stay in their group on the right, so they
- * are never a line of the text; the source sits on its own line over the facts ("PNG · 19 KB"), so no separator is
- * stranded at the end of a line. From `sm` up the source and facts share one line, "From your Library · PNG · 19 KB".
+ * The name gets all the free width. Where the row is wide (a container of 28 rem or more) the Replace and remove
+ * controls sit in a group on its right. Where it is narrow they would take half of it and cut the name to two words,
+ * so they move under the facts, in the name's column, and the name keeps the full width for up to two lines.
+ *
+ * On a phone the thumbnail is top-aligned with the name, and the source sits on its own line over the facts
+ * ("PNG · 19 KB"), so no separator is stranded at the end of a line. From `sm` up the source and facts share one
+ * line, "From your Library · PNG · 19 KB".
  */
 export function PickedSummary({
   name,
@@ -41,6 +45,7 @@ export function PickedSummary({
   replaceRef,
   onReplace,
   onRemove,
+  ignoreRemoveClick,
   className,
 }: {
   name: string;
@@ -59,6 +64,8 @@ export function PickedSummary({
   /** Takes another in one step: opens the way the first was chosen. Leave it out where there is no other to take. */
   onReplace?: () => void;
   onRemove: () => void;
+  /** True for a click that is no choice of the person's (the tail of a double-click on a Library tile): the remove control does nothing. Replace is never ignored. */
+  ignoreRemoveClick?: (event: MouseEvent<HTMLElement>) => boolean;
   className?: string;
 }) {
   // A new preview link starts clean: a failed one is not carried over to the next file.
@@ -73,95 +80,99 @@ export function PickedSummary({
   const Icon = kindIcon(kind ?? "file");
   const tail = facts.filter((part): part is string => Boolean(part)).join(" · ");
   return (
-    <div data-slot="picked-summary" className={cn("flex items-start gap-3 sm:items-center", className)}>
-      <div
-        className={cn(
-          "bg-muted/40 rounded-media flex size-16 shrink-0 items-center justify-center overflow-hidden border",
-          invalid ? "border-destructive" : "border-input",
-        )}
-      >
-        {drawable && !failed ? (
-          kind === "video" ? (
-            <video
-              key={attempt}
-              src={previewUrl}
-              muted
-              preload="metadata"
-              className="size-full object-cover"
-              aria-label={previewAlt}
-              onError={() => setFailure((current) => ({ ...current, failed: true }))}
-            />
+    <div data-slot="picked-summary" className={cn("@container", className)}>
+      <div className="grid grid-cols-[4rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1 @md:grid-cols-[4rem_minmax(0,1fr)_auto] @md:items-center @md:gap-y-0">
+        <div
+          className={cn(
+            "bg-muted/40 rounded-media row-span-2 flex size-16 shrink-0 items-center justify-center overflow-hidden border @md:row-span-1",
+            invalid ? "border-destructive" : "border-input",
+          )}
+        >
+          {drawable && !failed ? (
+            kind === "video" ? (
+              <video
+                key={attempt}
+                src={previewUrl}
+                muted
+                preload="metadata"
+                className="size-full object-cover"
+                aria-label={previewAlt}
+                onError={() => setFailure((current) => ({ ...current, failed: true }))}
+              />
+            ) : (
+              // A local or signed address of the person's own picture: next/image has nothing to optimise.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={attempt}
+                src={previewUrl}
+                alt={previewAlt}
+                className="size-full object-cover"
+                onError={() => setFailure((current) => ({ ...current, failed: true }))}
+              />
+            )
           ) : (
-            // A local or signed address of the person's own picture: next/image has nothing to optimise.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={attempt}
-              src={previewUrl}
-              alt={previewAlt}
-              className="size-full object-cover"
-              onError={() => setFailure((current) => ({ ...current, failed: true }))}
-            />
-          )
-        ) : (
-          <Icon aria-hidden="true" className="text-muted-foreground size-6" />
-        )}
-      </div>
-      <p className="min-w-0 flex-1">
-        <span className="line-clamp-2 font-medium break-words" title={name}>
-          {name}
-        </span>
-        {(source || tail) && (
-          <span className="text-muted-foreground text-meta block">
-            {source && <span className="max-sm:block">{source}</span>}
-            {source && tail ? <span className="max-sm:hidden"> · </span> : null}
-            {tail && <span className="whitespace-nowrap">{tail}</span>}
+            <Icon aria-hidden="true" className="text-muted-foreground size-6" />
+          )}
+        </div>
+        <p className="min-w-0">
+          <span className="line-clamp-2 font-medium break-words" title={name}>
+            {name}
           </span>
-        )}
-        {drawable && failed && (
-          <span role="status" className="text-muted-foreground text-meta block">
-            Preview unavailable
-          </span>
-        )}
-      </p>
-      <div className="flex shrink-0 items-start gap-1 sm:items-center">
-        {drawable && failed && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className={cn("max-sm:h-11", FOCUS_RING)}
-            aria-label={retryLabel}
-            onClick={() => setFailure((current) => ({ ...current, failed: false, attempt: current.attempt + 1 }))}
-          >
-            Retry
-          </Button>
-        )}
-        {onReplace && (
+          {(source || tail) && (
+            <span className="text-muted-foreground text-meta block">
+              {source && <span className="max-sm:block">{source}</span>}
+              {source && tail ? <span className="max-sm:hidden"> · </span> : null}
+              {tail && <span className="whitespace-nowrap">{tail}</span>}
+            </span>
+          )}
+          {drawable && failed && (
+            <span role="status" className="text-muted-foreground text-meta block">
+              Preview unavailable
+            </span>
+          )}
+        </p>
+        <div className="col-start-2 row-start-2 -ml-3 flex flex-wrap items-center gap-1 @md:col-start-3 @md:row-start-1 @md:ml-0 @md:shrink-0">
+          {drawable && failed && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={cn("max-sm:h-11", FOCUS_RING)}
+              aria-label={retryLabel}
+              onClick={() => setFailure((current) => ({ ...current, failed: false, attempt: current.attempt + 1 }))}
+            >
+              Retry
+            </Button>
+          )}
+          {onReplace && (
+            <button
+              ref={replaceRef}
+              type="button"
+              onClick={onReplace}
+              aria-label={`Replace ${name}`}
+              className={cn(
+                "text-muted-foreground hover:bg-muted hover:text-foreground text-meta inline-flex min-h-10 shrink-0 cursor-pointer items-center justify-center rounded-md px-3 font-medium max-sm:min-h-11",
+                FOCUS_RING,
+              )}
+            >
+              Replace
+            </button>
+          )}
           <button
-            ref={replaceRef}
             type="button"
-            onClick={onReplace}
-            aria-label={`Replace ${name}`}
+            onClick={(event) => {
+              if (!ignoreRemoveClick?.(event)) onRemove();
+            }}
+            aria-label={`Remove ${name}`}
+            title={`Remove ${name}`}
             className={cn(
-              "text-muted-foreground hover:bg-muted hover:text-foreground text-meta inline-flex min-h-10 shrink-0 cursor-pointer items-center justify-center rounded-md px-3 font-medium max-sm:min-h-11",
+              "text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full max-sm:size-11",
               FOCUS_RING,
             )}
           >
-            Replace
+            <X aria-hidden="true" className="size-4" />
           </button>
-        )}
-        <button
-          type="button"
-          onClick={onRemove}
-          aria-label={`Remove ${name}`}
-          title={`Remove ${name}`}
-          className={cn(
-            "text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full max-sm:size-11",
-            FOCUS_RING,
-          )}
-        >
-          <X aria-hidden="true" className="size-4" />
-        </button>
+        </div>
       </div>
     </div>
   );
