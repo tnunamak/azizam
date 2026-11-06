@@ -762,7 +762,7 @@ def _is_chat_capable_native_backend(backend_id: str, backend_cfg: Mapping) -> bo
 
 
 def _is_inner_hop_backend(backend_id: str, backend_cfg: Mapping) -> bool:
-    """Return True if this backend belongs in INNER_HOP_BACKEND_HOSTS: some capability it declares has an inner-hop
+    """Return True if this backend belongs in inner_hop_backend_hosts(): some capability it declares has an inner-hop
     endpoint (``capability_ids.INNER_HOP_ENDPOINTS``, the one table the hop and the registry share)."""
     return _native_backend_listed(backend_id, backend_cfg, lambda caps: bool(inner_hop_endpoints_for(caps)))
 
