@@ -765,8 +765,7 @@ def test_the_real_send_of_the_inner_hop_passes_the_send_time_check_only_under_it
         return httpx.Response(200, json={"id": "x", "object": "chat.completion", "choices": [], "data": []})
 
     HostRouter(monkeypatch).add_transport("127.0.0.1:59999", HandlerTransport(engine))
-    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
-    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    monkeypatch.setattr(engine_egress, "_live", engine_egress._live)
     engine_egress.publish(proxy.config["backends"])
     assert engine_egress.mapped_destinations()["127.0.0.1:59999"], "the enabled domains' address is mapped"
 

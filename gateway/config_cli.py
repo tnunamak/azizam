@@ -1,7 +1,7 @@
 """Command line for the config sections: ``python proxy.py config get|set|delete|reset|export|import|drift|problems``.
 
 Design 7: the command line calls the HTTP API and nothing else. It never opens admin.db, so every write reaches the
-running gateway, which commits it and reloads. It reads only the standard library, so it also runs where the gateway's
+running gateway, which commits it and reloads. It reads only the standard library (and gateway.log_scrub, which needs none), so it also runs where the gateway's
 dependencies are not installed. Needs the gateway's address (``--url`` or ``AZIZAM_URL``) and an owner key (the file
 named by ``--key-file``, else ``AZIZAM_ADMIN_KEY``; a key file keeps the secret out of the process list).
 
@@ -24,6 +24,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Sequence
+
+from gateway import log_scrub
 
 # (method, url, headers, body) -> (status, parsed JSON or text)
 Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, Any]]
@@ -96,6 +98,14 @@ def _change(client: Client, op: str, section: str, pointer: str, args: argparse.
     _show(client.call("PATCH", f"{API}/changes" + ("?dry_run=1" if args.dry_run else ""), body))
 
 
+def _read_document(file: str) -> Any:
+    """The JSON document in a local file. The text of a read or parse error names only this file, never the gateway."""
+    try:
+        return json.loads(Path(file).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise CliError(f"cannot read {file}: {error}") from error
+
+
 def run(args: argparse.Namespace, client: Client) -> None:
     if args.command == "get":
         if not args.section:
@@ -120,10 +130,7 @@ def run(args: argparse.Namespace, client: Client) -> None:
         else:
             _show(document)
     elif args.command == "import":
-        try:
-            document = json.loads(Path(args.file).read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise CliError(f"cannot read {args.file}: {error}") from error
+        document = _read_document(args.file)
         body = {"document": document, "mode": args.mode, "note": args.note}
         shown = client.call("POST", f"{API}/import?dry_run=1", body)
         _show(shown)
@@ -172,6 +179,7 @@ def main(argv: Sequence[str] | None = None, *, transport: Transport = urllib_tra
     args = parser.parse_args(argv)
     url = args.url or default_url
     key = Path(args.key_file).read_text(encoding="utf-8").strip() if args.key_file else os.environ.get("AZIZAM_ADMIN_KEY", "")
+    log_scrub.remember(key, "config_cli:admin_key")  # the key is in every request header, so no line may repeat it
     if not url or not key:
         parser.error("needs the gateway's address (--url or AZIZAM_URL) and an owner key (--key-file or AZIZAM_ADMIN_KEY)")
     try:

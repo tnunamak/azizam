@@ -41,8 +41,7 @@ def _record(port: int, *, enabled: bool = True, domain: str | None = None, **ext
 @pytest.fixture
 def published(monkeypatch):
     """The map as the registry publishes it: one enabled domain at ENGINE, one engine outside any enabled domain."""
-    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
-    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    monkeypatch.setattr(engine_egress, "_live", engine_egress._live)
     engine_egress.publish({
         "engine": _record(59123, domain="dom", health_endpoint="/healthz",
                           observations={"loaded": {"http": {"path": "/api/ps"}}},
@@ -181,8 +180,7 @@ def test_a_probe_mark_covers_only_the_paths_the_record_declares(published) -> No
 
 def test_a_probe_mark_covers_the_declared_path_under_the_records_own_url_prefix(monkeypatch) -> None:
     """A record whose URL is ``http://h:port/v1`` is read at ``/v1/health``: its own prefix plus a declared path."""
-    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
-    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    monkeypatch.setattr(engine_egress, "_live", engine_egress._live)
     engine_egress.publish({"engine": {"enabled": True, "base_url": f"{ENGINE}/v1/", "health_endpoint": "/healthz",
                                       "residency": {"domain": "dom", "transition": dict(ENABLED)}}})
     token = transition_gate._EGRESS_LEASES.set(())
@@ -246,8 +244,7 @@ def test_the_protocol_transport_refuses_an_unleased_send_to_an_enabled_domain(pu
 
 
 def test_the_map_has_every_destination_of_an_enabled_domain_and_none_of_another(monkeypatch) -> None:
-    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
-    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    monkeypatch.setattr(engine_egress, "_live", engine_egress._live)
     engine_egress.publish({
         "a": _record(8001, domain="shared"),
         "b": {"enabled": True, "config": {"base_url": "https://b.example:8443/v1"}, "residency": {"domain": "shared"}},
@@ -263,8 +260,7 @@ def test_the_map_has_every_destination_of_an_enabled_domain_and_none_of_another(
 
 
 def test_a_destination_shared_by_two_enabled_domains_is_satisfied_by_either_lease(monkeypatch) -> None:
-    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
-    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    monkeypatch.setattr(engine_egress, "_live", engine_egress._live)
     engine_egress.publish({"a": _record(8010, domain="one"), "b": _record(8010, domain="two")})
     assert engine_egress.mapped_destinations()["127.0.0.1:8010"] == ("one", "two")
     token = transition_gate._EGRESS_LEASES.set((_lease("two"),))
@@ -275,8 +271,7 @@ def test_a_destination_shared_by_two_enabled_domains_is_satisfied_by_either_leas
 
 
 def test_a_publish_replaces_the_map(monkeypatch) -> None:
-    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
-    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    monkeypatch.setattr(engine_egress, "_live", engine_egress._live)
     engine_egress.publish({"a": _record(8020)})
     engine_egress.publish({"b": _record(8021)})
     assert set(engine_egress.mapped_destinations()) == {"127.0.0.1:8021"}
@@ -312,8 +307,7 @@ def _candidate_with_an_enabled_domain() -> dict:
 def test_a_reload_publishes_the_map_before_the_snapshot(monkeypatch) -> None:
     """A request that binds the new snapshot must find its domain in the map: at the snapshot's publish the new map is live.
     Failed before the fix: the map was swapped after the snapshot, so a new config met the old map."""
-    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
-    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    monkeypatch.setattr(engine_egress, "_live", engine_egress._live)
     seen: list = []
 
     class Home:
@@ -333,8 +327,7 @@ def test_a_reload_publishes_the_map_before_the_snapshot(monkeypatch) -> None:
 
 def test_a_reload_whose_projection_raises_publishes_nothing(monkeypatch) -> None:
     """The projection is built before anything goes live: when it raises, the old config and the old map stay."""
-    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
-    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    monkeypatch.setattr(engine_egress, "_live", engine_egress._live)
     engine_egress.publish({"old": _record(59131, domain="old-dom")})
     old_map, old_config, old_snapshot = engine_egress.mapped_destinations(), proxy.config, proxy.CONFIG_HOME.holder.current()
 
@@ -347,6 +340,58 @@ def test_a_reload_whose_projection_raises_publishes_nothing(monkeypatch) -> None
     assert engine_egress.mapped_destinations() is old_map
     assert proxy.config is old_config
     assert proxy.CONFIG_HOME.holder.current() is old_snapshot
+
+
+def test_a_reader_never_sees_the_destinations_of_one_projection_with_the_probe_paths_of_another() -> None:
+    """``install`` swaps one reference, so a check on another thread sees one whole projection.
+
+    Projection one maps the address to domain ``dom-one`` and declares ``/probe-one``; projection two maps it to
+    ``dom-two`` and declares ``/probe-two``. In either whole projection, a marked GET of ``/probe-one`` is allowed or
+    refused for ``dom-two``, and a marked GET of ``/probe-two`` is allowed or refused for ``dom-one``. A refusal for
+    ``dom-one`` on ``/probe-one`` (or for ``dom-two`` on ``/probe-two``) can come only from a pair of one projection's
+    destinations with the other's probe paths.
+    Failed when ``install`` assigned the destinations and the probe paths one after the other."""
+    import sys
+    import threading
+
+    key = "127.0.0.1:59140"
+    one = engine_egress.project({"one": _record(59140, domain="dom-one", health_endpoint="/probe-one")})
+    two = engine_egress.project({"two": _record(59140, domain="dom-two", health_endpoint="/probe-two")})
+    assert one.destinations[key] == ("dom-one",) and "/probe-one" in one.probe_paths[key]
+    assert two.destinations[key] == ("dom-two",) and "/probe-two" in two.probe_paths[key]
+    engine_egress.install(one)
+    stop = threading.Event()
+
+    def install_in_a_loop() -> None:
+        while not stop.is_set():
+            engine_egress.install(two)
+            engine_egress.install(one)
+
+    def refused_for(path: str) -> str | None:
+        request = httpx.Request("GET", f"http://127.0.0.1:59140{path}", extensions=engine_egress.probe())
+        try:
+            engine_egress.check_request(request)
+        except TransitionUnavailable as exc:
+            return exc.domain
+        return None
+
+    mixed: list[tuple[str, str | None]] = []
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    installer = threading.Thread(target=install_in_a_loop, daemon=True)
+    installer.start()
+    try:
+        for _ in range(20000):
+            if (domain := refused_for("/probe-one")) == "dom-one":
+                mixed.append(("/probe-one", domain))
+            if (domain := refused_for("/probe-two")) == "dom-two":
+                mixed.append(("/probe-two", domain))
+    finally:
+        stop.set()
+        installer.join(timeout=10)
+        sys.setswitchinterval(interval)
+    assert not installer.is_alive()
+    assert mixed == []
 
 
 def test_a_service_whose_config_is_not_a_mapping_is_projected_without_error() -> None:

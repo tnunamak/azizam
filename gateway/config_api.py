@@ -169,8 +169,9 @@ def create_config_router(
     def db() -> Path:
         return Path(admin_path() if callable(admin_path) else admin_path)
 
-    def guard(request: Request) -> AdminContext | JSONResponse:
-        ctx = _require_admin(auth, request)
+    async def guard(request: Request) -> AdminContext | JSONResponse:
+        """The admin check, run off the event loop: it reads the session, the roles and the user from sqlite."""
+        ctx = await asyncio.to_thread(_require_admin, auth, request)
         if isinstance(ctx, JSONResponse):
             return ctx
         if "owner" not in ctx.roles:
@@ -353,7 +354,7 @@ def create_config_router(
 
     @router.get("")
     async def list_sections(request: Request):
-        ctx = guard(request)
+        ctx = await guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
 
@@ -371,7 +372,7 @@ def create_config_router(
 
     @router.get("/sections/{section_id}")
     async def get_section(section_id: str, request: Request):
-        ctx = guard(request)
+        ctx = await guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
 
@@ -398,7 +399,7 @@ def create_config_router(
 
     @router.get("/changes")
     async def list_changes(request: Request):
-        ctx = guard(request)
+        ctx = await guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         raw_limit = request.query_params.get("limit", "50")
@@ -414,7 +415,7 @@ def create_config_router(
 
     @router.get("/drift")
     async def get_drift(request: Request):
-        ctx = guard(request)
+        ctx = await guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
 
@@ -430,7 +431,7 @@ def create_config_router(
 
     @router.get("/problems")
     async def get_problems(request: Request):
-        ctx = guard(request)
+        ctx = await guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         return _ok(home().view())
@@ -439,7 +440,7 @@ def create_config_router(
 
     @router.patch("/changes")
     async def patch_changes(request: Request):
-        ctx = guard(request)
+        ctx = await guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         body = await read_body(request)
@@ -460,7 +461,7 @@ def create_config_router(
 
     @router.delete("/sections/{section_id}/entries")
     async def reset_entry(section_id: str, request: Request):
-        ctx = guard(request)
+        ctx = await guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         if section_id not in home().sections:
@@ -477,7 +478,7 @@ def create_config_router(
 
     @router.post("/changes/{change_id}/revert")
     async def revert_change(change_id: str, request: Request):
-        ctx = guard(request)
+        ctx = await guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         body = await read_body(request)
@@ -537,7 +538,7 @@ def create_config_router(
 
     @router.post("/import")
     async def import_config(request: Request):
-        ctx = guard(request)
+        ctx = await guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         body = await read_body(request)
@@ -574,7 +575,7 @@ def create_config_router(
 
     @router.post("/sections/{section_id}/legacy-import")
     async def legacy_import(section_id: str, request: Request):
-        ctx = guard(request)
+        ctx = await guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
         body = await read_body(request)
