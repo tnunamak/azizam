@@ -142,6 +142,25 @@ def test_the_startup_only_annotation_is_checked():
         layers.Section.create("nested", {}, nested)
 
 
+def test_a_block_with_only_startup_only_keys_gives_no_ignored_warning(tmp_path):
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    startup = {"model_routing": {"gguf_dir": "/models"}}
+    lines: list[str] = []
+    for _boot in range(2):
+        proxy.CONFIG_HOME.layer(copy.deepcopy(startup), path=db, registry=None, legacy_import=True, log=lines.append)
+    assert not [line for line in lines if "model_routing block is ignored" in line], lines
+
+
+def test_every_startup_only_name_is_a_key_of_the_tracked_startup_block():
+    """A misspelt name would strip nothing and block the import at the first boot; catch it here instead."""
+    tracked = raw_config("tracked")
+    for section_id, section in proxy.CONFIG_HOME.sections.items():
+        names = section.schema.get(layers.STARTUP_ONLY_KEY) or []
+        block = tracked.get(section_id) or {}
+        assert all(name in block for name in names), (section_id, names)
+
+
 def test_gguf_dir_is_still_read_from_the_startup_file():
     assert proxy.GGUF_DIR == raw_config("tracked")["model_routing"]["gguf_dir"]
 
