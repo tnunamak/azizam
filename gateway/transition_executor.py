@@ -808,6 +808,9 @@ class Executor:
             finished = await asyncio.wait_for(self.wait(began.operation.op_id), wait_s)
         except asyncio.TimeoutError:
             raise TransitionUnavailable(domain, reason="wake_in_progress", retry_after_s=retry) from None
+        except Exception as exc:  # noqa: BLE001 - the read of the finished record failed: a refusal, never a 500
+            print(f"[transition-gate] wake of {domain!r} not readable: {type(exc).__name__}: {exc}", flush=True)
+            raise TransitionUnavailable(domain, reason="wake_unavailable", retry_after_s=retry) from None
         if finished.state != "succeeded":
             raise TransitionUnavailable(domain, reason=f"wake_{finished.state}", retry_after_s=retry)
         return finished

@@ -1033,7 +1033,7 @@ def test_a_resume_with_the_target_still_resident_opens_as_before(tmp_path: Path,
     run(scenario)
 
 
-@pytest.mark.parametrize("failure", ["no_offering", "store_error"])
+@pytest.mark.parametrize("failure", ["no_offering", "store_error", "read_after_begin"])
 def test_a_wake_that_cannot_start_is_a_503_never_a_raw_error(tmp_path: Path, failure: str) -> None:
     async def scenario() -> None:
         h = Harness(tmp_path)
@@ -1045,7 +1045,13 @@ def test_a_wake_that_cannot_start_is_a_503_never_a_raw_error(tmp_path: Path, fai
             def broken(**kwargs: Any) -> Any:
                 raise sqlite3.OperationalError("database is locked")
 
-            h.store.begin = broken  # type: ignore[method-assign]
+            def unreadable(op_id: str) -> Any:
+                raise sqlite3.OperationalError("disk I/O error")
+
+            if failure == "store_error":
+                h.store.begin = broken  # type: ignore[method-assign]
+            else:
+                h.store.get = unreadable  # type: ignore[method-assign]  # the wake begins; reading its record fails
         with pytest.raises(TransitionUnavailable) as refused:
             await h.executor.ensure_awake(DOMAIN, wait_s=1.0)
         assert (refused.value.status_code, refused.value.reason) == (503, "wake_unavailable")
