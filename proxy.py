@@ -113,6 +113,7 @@ from gateway import video_subject, thumbnails, output_availability
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway import definition_store, job_envelope, pinned_definitions
+from gateway import media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
 from gateway import exclusive_pool, mesh_api, mesh_manifest
@@ -10788,6 +10789,50 @@ async def _fetch_media_url(
     return await media_fetch.safe_fetch_media(
         url, internal_resolver=lambda value: _resolve_gateway_media_url(value, auth_context, request)
     )
+
+
+_media_input_ledgers: dict[Path, media_input_leases.MediaInputLedger] = {}
+
+
+def _media_input_resolver(*, fetch: Any = None) -> media_inputs.MediaInputResolver:
+    """The media input resolver over this gateway's asset store, jobs database and access plans (S2.6, D7)."""
+    from gateway.ownership import stored_owner_key
+    path = Path(media_jobs.DB_PATH)
+    ledger = _media_input_ledgers.get(path)
+    if ledger is None:
+        ledger = _media_input_ledgers[path] = media_input_leases.MediaInputLedger(path)
+    assets = media_input_assets.CacheAssetPort(
+        parse=_parse_asset_id, path_for=asset_cache_path, may_read=_asset_access_allowed,
+        deliver=lambda cached: media_delivery.deliver_bytes(cached.read_bytes(), cached.suffix, "none"),
+        owner_key=lambda auth: stored_owner_key(_asset_owner_key(auth), path=ADMIN_STORE.path),
+        strip=lambda data, suffix: media_metadata.strip_metadata(data, suffix, workdir=media_delivery.DEFAULT_WORKDIR),
+        store=lambda *args, **options: store_asset_bytes(*args, **options),
+        read_metadata=_read_asset_metadata, write_metadata=_write_asset_metadata,
+        metadata_path=_asset_metadata_path, lock=prompt_metadata_migration.CACHE_MUTATION_LOCK,
+    )
+    return media_inputs.MediaInputResolver(
+        assets=assets, ledger=ledger, max_bytes=media_fetch.max_bytes(), fetch=fetch,
+        may_send_remote=lambda provider_id, auth: evaluate(
+            _access_for_auth_context(auth), make_policy_request(remote_provider=provider_id)).allowed,
+    )
+
+
+def _media_input_destination(service_id: str) -> media_inputs.Destination:
+    """Where a media input would go: a service the registry knows, local or a remote provider."""
+    provider = provider_lookup(ADMIN_STORE.get_service_registry(), service_id)
+    if provider is None:
+        return media_inputs.Destination(service_id, known=False)
+    remote = service_registry.is_remote_provider_config(provider.config)
+    return media_inputs.Destination(service_id, remote=remote, provider_id=provider.id if remote else None)
+
+
+def _collect_media_input_leftovers() -> None:
+    """Remove media inputs that no job or request holds: markers of a crashed ingest, and the files they made."""
+    try:
+        _media_input_resolver().sweep()
+    except sqlite3.OperationalError as exc:
+        if "locked" not in str(exc) and "busy" not in str(exc):
+            raise
 
 
 def _resolve_cached_image_asset(
@@ -21780,6 +21825,31 @@ def _image_extension_error_response(
     )
 
 
+_IMAGE_ASSET_REFUSALS = {
+    media_inputs.INVALID: "asset_id must reference a cached image asset",
+    media_inputs.UNSUPPORTED: "asset_id must reference a cached image asset",
+}
+
+
+def _resolve_image_extension_asset(
+    asset_id: str, auth_context: AuthContext | None, holder: media_inputs.Holder,
+) -> tuple[bytes, str, str]:
+    """An image extension input named by asset id, through the media input resolver: the caller's read access, the
+    measured type, the disclosure check for the engine, and a lease. Returns (bytes, filename, media type)."""
+    parsed = _parse_asset_id(asset_id)
+    if parsed is None or parsed[0] != "img":
+        raise _InputReferenceError("asset_id must reference a cached image asset")
+    try:
+        resolved = _media_input_resolver().resolve_asset(
+            auth_context, asset_id, holder=holder, destination=_media_input_destination(_GRAPH_BACKEND_ID),
+            accepts=("image/*",),
+        )
+    except media_inputs.MediaInputError as exc:
+        raise _InputReferenceError(_IMAGE_ASSET_REFUSALS.get(exc.code, exc.message)) from exc
+    path = asset_cache_path(asset_id)
+    return resolved.data, f"{asset_id}{(path.suffix if path else '') or '.png'}", resolved.ref.media_type
+
+
 async def _upload_image_workflow_extension_assets(
     *,
     form: Any,
@@ -21824,6 +21894,7 @@ async def _upload_image_workflow_extension_assets(
         return updated, allow_error
     next_block = dict(block)
     uploaded_any = False
+    holder = media_inputs.Holder("request", getattr(receipt, "request_id", None) or f"req_{uuid.uuid4().hex}")
     for input_name, value in block.items():
         field_name = _extension_asset_multipart_field(value)
         asset_id = _extension_asset_id(value)
@@ -21849,17 +21920,14 @@ async def _upload_image_workflow_extension_assets(
 
         if asset_id is not None:
             try:
-                content, filename = _resolve_cached_image_asset(
-                    asset_id,
-                    auth_context,
-                )
+                content, filename, content_type = await asyncio.to_thread(
+                    _resolve_image_extension_asset, asset_id, auth_context, holder)
             except _InputReferenceError as exc:
                 return updated, _image_extension_error_response(
                     receipt,
                     str(exc),
                     param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
                 )
-            content_type = asset_media_type(asset_id, asset_cache_path(asset_id))
         else:
             upload = form.get(field_name)
             read = getattr(upload, "read", None)
@@ -21884,6 +21952,8 @@ async def _upload_image_workflow_extension_assets(
         uploaded_filename, upload_error = await _upload_graph_image_bytes(
             client, headers, content, filename=filename, media_type=content_type,
         )
+        if asset_id is not None:
+            await asyncio.to_thread(_media_input_resolver().release, holder)  # the engine has the bytes, or the run is over
         if upload_error is not None:
             return updated, upload_error
 
@@ -22485,6 +22555,7 @@ def _maintain_prompt_memory() -> None:
         operations.append(lambda person_id=user["id"]: _maintain_person_prompt_memory(person_id))
     operations.append(_drain_prompt_purges)
     operations.append(_collect_definition_garbage)
+    operations.append(_collect_media_input_leftovers)
     for operation in operations:
         try:
             operation()

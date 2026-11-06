@@ -27,7 +27,7 @@ see the workstream note for suggested integration points.
 
 from __future__ import annotations
 
-from gateway import request_connections, request_source
+from gateway import media_input_leases, request_connections, request_source
 from gateway.compat import get_env
 from gateway.sqlite_startup import connect, store_startup
 
@@ -455,6 +455,7 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 
 def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
+    conn.executescript(media_input_leases.DDL)  # leases and ingest markers (gateway/media_input_leases.py)
     row = conn.execute("SELECT version FROM media_jobs_schema_version LIMIT 1").fetchone()
     previous_version = int(row[0]) if row is not None else None
     if row is None:
@@ -929,6 +930,9 @@ def _write_job(conn: sqlite3.Connection, job: MediaJob, *, new_attempt: bool = F
             job.maker_connection_id,
         ),
     )
+    if job.status in TERMINAL_STATUSES:
+        # The job ended: its media input leases end with it, in this same transaction.
+        media_input_leases.release_job_in(conn, job.job_id)
     conn.execute("DELETE FROM media_job_asset_origins WHERE job_id=?", (job.job_id,))
     if job.creating_receipt_id:
         conn.executemany(
@@ -979,6 +983,8 @@ def _release_envelopes_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> N
     """
     from gateway import definition_store  # imports this module, so it cannot be imported at the top
 
+    for job_id in job_ids:
+        media_input_leases.release_job_in(conn, job_id)  # a job row deleted: its input leases end with it
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_envelope'").fetchone() is None:
         return
     for job_id in job_ids:
@@ -1147,6 +1153,7 @@ def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = 
             "ON CONFLICT(owner_key) DO UPDATE SET cutoff_at=MAX(cutoff_at,excluded.cutoff_at)",
             [(key, int(before)) for key in owner_keys],
         )
+        media_input_leases.release_owners_in(conn, owner_keys)  # erasure: the owners' media input leases end
         conn.commit()
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_jobs'").fetchone() is None:
             return 0
