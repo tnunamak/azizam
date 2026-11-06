@@ -620,7 +620,8 @@ pytest = 18787
 # Stop waiting, Cancel), mesh-job.spec.ts and mesh-mode.spec.ts; vitest list measured 3769 (--root web).
 # Mesh review fixes (2026-11-05): mesh-job.spec.ts and mesh-panel.spec.tsx (Azizam is not answering, Check again), plus the specs
 # the base lane added since; vitest list --json measured 3795 (--root web).
-vitest = 3802
+# Library pick everywhere (2026-11-06): +111 vitest cases (shared media input, picker, hook, focus-ring contrast); measured with npx vitest list on the merge candidate: 3913.
+vitest = 3913
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -696,7 +697,8 @@ vitest = 3802
 # Train r111 (2026-10-26): +4 cases for button contrast and long remembered-person names, each checked in both themes.
 # Gate lists: playwright.config.ts 667 + live-data 3 + household 18 = 688 (playwright test --list).
 # Trains r114 and r115 (2026-10-30): Try mesh viewer and App request history cases; the r114 gate counted 694.
-playwright = 700
+# Library pick everywhere (2026-11-06): +35 Playwright cases (library-pick-everywhere.spec.ts across its projects); playwright test --list rose 679 -> 714.
+playwright = 735
 
 # Slice ORPH (zero orphans): +98 node:test cases that now run in the gate's
 # node job: 78 Pi unit cases (6 files, integrations/pi) and 20 showcase core
