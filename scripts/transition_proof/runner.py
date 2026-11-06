@@ -8,6 +8,7 @@ fails stops the case, and the steps after it are recorded as skipped. The harnes
 from __future__ import annotations
 
 import copy
+import email.utils
 import time
 import uuid
 from typing import Any, Callable, Optional
@@ -25,8 +26,10 @@ KNOWN_STATES = ("running", "succeeded", "aborted", *HOLDING)
 
 class Proof:
     def __init__(self, client: httpx.Client, *, domain: str, model: str, wake_mode: str, run_id: str,
-                 poll_interval_s: float, poll_timeout_s: float, sleep: Callable[[float], None] = time.sleep) -> None:
+                 poll_interval_s: float, poll_timeout_s: float, secret: Optional[str] = None,
+                 sleep: Callable[[float], None] = time.sleep) -> None:
         self.client = client
+        self.secret = secret
         self.domain = domain
         self.model = model
         self.wake_mode = wake_mode
@@ -37,21 +40,28 @@ class Proof:
 
     # -- HTTP ---------------------------------------------------------------------------------------------
 
+    def _clip(self, text: str) -> str:
+        """Redact the key, then cut: a cut taken first could leave the front half of the key in the text."""
+        if self.secret:
+            text = text.replace(self.secret, "[redacted]")
+        return text[:300]
+
     def _call(self, method: str, path: str, body: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         """One request. Never raises: a transport error is a record with ``http_status`` None."""
         started = time.monotonic()
-        record: dict[str, Any] = {"http_status": None, "json": None, "error": None}
+        record: dict[str, Any] = {"http_status": None, "json": None, "error": None, "retry_after": None}
         try:
             response = self.client.request(method, path, json=body)
             record["http_status"] = response.status_code
+            record["retry_after"] = response.headers.get("retry-after")
             try:
                 record["json"] = response.json()
             except ValueError:
-                record["error"] = response.text[:300]
+                record["error"] = self._clip(response.text)
             if response.status_code >= 400 and record["error"] is None:
-                record["error"] = response.text[:300]
+                record["error"] = self._clip(response.text)
         except httpx.HTTPError as error:
-            record["error"] = f"{type(error).__name__}: {error}"[:300]
+            record["error"] = self._clip(f"{type(error).__name__}: {error}")
         record["seconds"] = round(time.monotonic() - started, 4)
         return record
 
@@ -60,8 +70,25 @@ class Proof:
         data = reply["json"]
         return data.get("gate") if reply["http_status"] == 200 and isinstance(data, dict) else None
 
-    def _chat(self, body: dict[str, Any], config: Any) -> dict[str, Any]:
-        reply = self._call("POST", "/v1/chat/completions", {**body, "model": self.model, "stream": False})
+    def _chat(self, body: dict[str, Any], config: Any, *, retry_503: bool = False) -> dict[str, Any]:
+        """One chat request. With ``retry_503`` a 503 is not final: wait for its Retry-After and send again, until
+        ``poll_timeout_s`` has passed since the first send. Each wait is recorded in ``retries``."""
+        request = {**body, "model": self.model, "stream": False}
+        started = time.monotonic()
+        retries: list[dict[str, Any]] = []
+        while True:
+            reply = self._call("POST", "/v1/chat/completions", request)
+            remaining = self.poll_timeout_s - (time.monotonic() - started)
+            if not retry_503 or reply["http_status"] != 503 or remaining <= 0:
+                break
+            # Never shorter than one poll interval: "Retry-After: 0" must not turn the loop into a spin.
+            wait = min(max(_retry_after_s(reply["retry_after"], self.poll_interval_s), self.poll_interval_s), remaining)
+            retries.append({"http_status": 503, "retry_after": reply["retry_after"], "waited_s": round(wait, 4)})
+            self.sleep(wait)
+        if retry_503:
+            reply["retries"] = retries
+            reply["seconds"] = round(time.monotonic() - started, 4)
+        reply.pop("retry_after", None)
         data = reply.pop("json")
         ok = reply["http_status"] == 200 and isinstance(data, dict) and bool(read_path(data, "choices.0"))
         reply["ok"] = ok
@@ -75,8 +102,10 @@ class Proof:
 
     # -- transitions --------------------------------------------------------------------------------------
 
-    def _transition(self, kind: str) -> dict[str, Any]:
-        key = f"proof-{self.run_id}-{kind}"
+    def _transition(self, kind: str, label: str) -> dict[str, Any]:
+        # One key per case and kind: a repeated key returns the first operation (D2, G4), so a key shared by two
+        # cases would hand the second case the first one's finished park and the second would never park.
+        key = f"proof-{self.run_id}-{label}-{kind}"
         step: dict[str, Any] = {"name": kind, "idempotency_key": key, "op_id": None, "states": [], "ok": False}
         started = time.monotonic()
         reply = self._call("POST", f"{ADMIN_DOMAINS}/{self.domain}/transitions",
@@ -92,11 +121,18 @@ class Proof:
             }.get(reply["http_status"], reply["error"] or f"unexpected status {reply['http_status']}")
             step["seconds"] = round(time.monotonic() - started, 4)
             return step
+        if data.get("state") != "running":
+            # A new transition starts running. Any other state is the answer for a key that was used before (D2,
+            # G4): that operation is finished, so this run would read "succeeded" without parking anything.
+            step["error"] = (f"the key returned an operation from an earlier run (op {step['op_id']}, state "
+                             f"{data.get('state')!r}); a proof needs a fresh run id")
+            step["seconds"] = round(time.monotonic() - started, 4)
+            return step
         deadline = time.monotonic() + self.poll_timeout_s
         while True:
             poll = self._call("GET", f"{ADMIN_DOMAINS}/{self.domain}/transitions/{step['op_id']}")
             body = poll["json"] if isinstance(poll["json"], dict) else {}
-            operation = body.get("operation") if isinstance(body.get("operation"), dict) else {}
+            operation = body.get("operation") if isinstance(body.get("operation"), dict) else {}  # {"operation": {...}}
             state = operation.get("state")
             if poll["http_status"] != 200 or state not in KNOWN_STATES:
                 step["error"] = poll["error"] or f"the operation read gave status {poll['http_status']}, state {state!r}"
@@ -147,13 +183,13 @@ class Proof:
             skip_rest("park", "wake", "followup", "cold_baseline")
             record["status"] = "failed"
             return record
-        denominator = _count(seed["prompt_tokens"])
+        denominator = _positive(seed["prompt_tokens"])  # a count of 0 or less is unknown, not a size
         source = "seed_reply"
         if denominator is None and case.estimated_prompt_tokens:
             denominator, source = case.estimated_prompt_tokens, "manifest_count_estimate"
 
         observe("before_park")
-        park = self._transition("park")
+        park = self._transition("park", case.label)
         steps.append(park)
         observe("after_park")
         if not assertion("park_succeeded", park["ok"], op_id=park["op_id"], final_state=park.get("final_state"),
@@ -163,7 +199,7 @@ class Proof:
             return record
 
         if self.wake_mode == "post":
-            wake = self._transition("wake")
+            wake = self._transition("wake", case.label)
             steps.append(wake)
             gate = observe("after_wake")
             ok = assertion("wake_succeeded", wake["ok"], op_id=wake["op_id"], final_state=wake.get("final_state"),
@@ -177,7 +213,7 @@ class Proof:
             steps.append({"name": "wake", "mode": "request", "ok": True,
                           "note": "the follow-up request triggers the wake"})
 
-        follow = {"name": "followup", **self._chat(follow_body, check)}
+        follow = {"name": "followup", **self._chat(follow_body, check, retry_503=self.wake_mode == "request")}
         steps.append(follow)
         gate = observe("after_followup")
         ok = assertion("followup_replied", follow["ok"], http_status=follow["http_status"], error=follow["error"])
@@ -193,11 +229,16 @@ class Proof:
                            value=follow["cached_tokens"])
         passed = assertion("seed_prompt_tokens_known", denominator is not None, path=check.prompt_tokens_path,
                            source=source if denominator is not None else None) and passed
-        if cached is not None and denominator:
+        if cached is not None and denominator is not None:
             fraction = round(cached / denominator, 4)
+            estimate_note = ({"note": "the fraction rests on the manifest's count estimate, not on a count the "
+                                      "gateway reported"} if source == "manifest_count_estimate" else {})
             passed = assertion("cached_prefix_kept", fraction >= check.min_cached_fraction, cached_tokens=cached,
                                seed_prompt_tokens=denominator, denominator_source=source, fraction=fraction,
-                               min_cached_fraction=check.min_cached_fraction) and passed
+                               min_cached_fraction=check.min_cached_fraction, **estimate_note) and passed
+        else:  # no fraction, no proof: a missing count never counts as a kept prefix
+            passed = assertion("cached_prefix_kept", False, cached_tokens=cached, seed_prompt_tokens=denominator,
+                               reason="the cached fraction cannot be computed") and passed
 
         if check.max_timing_ratio is None:
             skip_rest("cold_baseline")
@@ -205,6 +246,7 @@ class Proof:
             cold = {"name": "cold_baseline", **self._chat(_bust_cache(follow_body, self.run_id, case.label), check)}
             steps.append(cold)
             if assertion("cold_baseline_replied", cold["ok"], http_status=cold["http_status"], error=cold["error"]):
+                passed = _assert_cold(assertion, cold, check) and passed
                 ratio = round(follow["seconds"] / cold["seconds"], 4) if cold["seconds"] > 0 else None
                 passed = assertion("followup_faster_than_cold", ratio is not None and ratio <= check.max_timing_ratio,
                                    followup_seconds=follow["seconds"], cold_seconds=cold["seconds"], ratio=ratio,
@@ -215,6 +257,21 @@ class Proof:
         return record
 
 
+def _assert_cold(assertion: Callable[..., bool], cold: dict[str, Any], check: Any) -> bool:
+    """A cold baseline that reports a large cached count was not cold, so its time proves nothing. A reply that
+    reports no cached count is not judged here: the engine may not report one for an uncached prompt."""
+    cached = _count(cold["cached_tokens"])
+    if cached is None:
+        return True
+    prompt = _positive(cold["prompt_tokens"])
+    if prompt is None:
+        return assertion("cold_baseline_is_cold", False, cached_tokens=cached, cold_prompt_tokens=None,
+                         reason="the cold reply reports a cached count but no prompt count")
+    limit = (1 - check.min_cached_fraction) * prompt
+    return assertion("cold_baseline_is_cold", cached <= limit, cached_tokens=cached, cold_prompt_tokens=prompt,
+                     max_cached_tokens=round(limit, 2))
+
+
 def _text(content: Any) -> str:
     if isinstance(content, list):
         return "".join(part.get("text", "") for part in content if isinstance(part, dict))
@@ -223,6 +280,26 @@ def _text(content: Any) -> str:
 
 def _count(value: Any) -> Optional[int]:
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _positive(value: Any) -> Optional[int]:
+    count = _count(value)
+    return count if count else None
+
+
+def _retry_after_s(header: Optional[str], default: float) -> float:
+    """Seconds to wait for a Retry-After value (delay seconds or an HTTP date); the default when it is absent."""
+    if header:
+        try:
+            return max(0.0, float(header))
+        except ValueError:
+            pass
+        try:
+            when = email.utils.parsedate_to_datetime(header)
+            return max(0.0, when.timestamp() - time.time())
+        except (TypeError, ValueError):
+            pass
+    return default
 
 
 def _bust_cache(body: dict[str, Any], run_id: str, label: str) -> dict[str, Any]:

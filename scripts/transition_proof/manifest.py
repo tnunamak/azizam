@@ -104,7 +104,26 @@ def _body(label: str, raw: bytes, file: str) -> dict[str, Any]:
     return body
 
 
+def _object(value: Any, where: str) -> dict[str, Any]:
+    """An optional object: absent or null is empty; anything but an object is an input error."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise InputError(f"{where} must be an object, not {type(value).__name__}")
+    return value
+
+
 def load_cases(manifest_path: Path) -> list[Case]:
+    """Every failure to load is an InputError, so a bad manifest is exit 2 and never a traceback."""
+    try:
+        return _load_cases(manifest_path)
+    except InputError:
+        raise
+    except (ValueError, TypeError, KeyError, AttributeError, RecursionError, OSError) as error:
+        raise InputError(f"the manifest {manifest_path} could not be loaded ({type(error).__name__})") from None
+
+
+def _load_cases(manifest_path: Path) -> list[Case]:
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except OSError as error:
@@ -114,7 +133,7 @@ def load_cases(manifest_path: Path) -> list[Case]:
     entries = manifest.get("cases") if isinstance(manifest, dict) else None
     if not isinstance(entries, list) or not entries:
         raise InputError("the manifest needs a non-empty cases list")
-    shared = manifest.get("cache_check") or {}
+    shared = _object(manifest.get("cache_check"), "the manifest's cache_check")
     cases: list[Case] = []
     for index, entry in enumerate(entries):
         label = entry.get("label") if isinstance(entry, dict) else None
@@ -136,10 +155,14 @@ def load_cases(manifest_path: Path) -> list[Case]:
         actual = hashlib.sha256(raw).hexdigest()
         if actual != expected:
             raise InputError(f"case {label!r}: {file} sha256 is {actual}, the manifest says {expected}")
-        estimate = _number((entry.get("count_estimate") or {}).get("input_tokens"))
+        override = _object(entry.get("cache_check"), f"case {label!r} cache_check")
+        counted = _object(entry.get("count_estimate"), f"case {label!r} count_estimate")
+        if counted.get("input_tokens") is not None and (_number(counted["input_tokens"]) or 0) <= 0:
+            raise InputError(f"case {label!r}: count_estimate.input_tokens must be a positive number")
+        estimate = _number(counted.get("input_tokens"))
         cases.append(Case(
             label=label, file=file, sha256=expected, body=_body(label, raw, file), followup=followup,
             estimated_prompt_tokens=int(estimate) if estimate else None,
-            cache=_cache_check(label, {**shared, **(entry.get("cache_check") or {})}),
+            cache=_cache_check(label, {**shared, **override}),
         ))
     return cases
