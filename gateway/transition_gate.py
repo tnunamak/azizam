@@ -116,6 +116,46 @@ class TransitionPolicy:
     # starts, stops or swaps its process (another owner runs it); a request only
     # leases and forwards.
     pass_through: bool = False
+    # Seconds a refused caller is told to wait (Retry-After). The shortest one a member declares (decision G8).
+    retry_after_s: float = float(GATE_RETRY_AFTER_S)
+    # The reviewed transition profile that runs this domain's release and load (T1.2). None: no gateway-run effect.
+    profile: Optional[str] = None
+
+    @property
+    def lease_only(self) -> bool:
+        """A request here only leases and forwards: another owner runs the process (pass-through), or the
+        transition executor does (a profile). It never starts, stops or swaps the process itself."""
+        return self.pass_through or self.profile is not None
+
+
+def declared_profile(service: Mapping[str, Any]) -> Optional[str]:
+    """The reviewed transition profile id this service names, else None."""
+    profile = _declared_transition(service).get("profile")
+    return profile.strip() if transition_enabled(service) and isinstance(profile, str) and profile.strip() else None
+
+
+# Keys an owner may not set in a service's residency block: the reviewed profile holds them (D3 "Attestation is
+# not owner data"). A config that carries one is refused at load.
+PROFILE_ONLY_KEYS = frozenset({"attested", "failure_semantics", "idle_evidence", "operations", "verify", "residual",
+                               "servable_check", "placement_keys", "fresh_within_s"})
+
+
+def forbidden_profile_keys(service: Mapping[str, Any]) -> tuple[str, ...]:
+    """The profile-only keys found anywhere under this service's residency block (sorted, without repeats)."""
+    found: set[str] = set()
+
+    def walk(value: Any) -> None:
+        if isinstance(value, Mapping):
+            for key, inner in value.items():
+                if key in PROFILE_ONLY_KEYS:
+                    found.add(str(key))
+                walk(inner)
+        elif isinstance(value, (list, tuple)):
+            for inner in value:
+                walk(inner)
+
+    walk(_residency(service))
+    return tuple(sorted(found))
 
 
 def policy_for(name: str, services: Mapping[str, Any]) -> TransitionPolicy:
@@ -129,6 +169,8 @@ def policy_for(name: str, services: Mapping[str, Any]) -> TransitionPolicy:
     pass_through = isinstance(service, Mapping) and declares_pass_through(service)
     members: list[str] = []
     waits: list[float] = []
+    retries: list[float] = []
+    profiles: list[str] = []
     for service_id, record in services.items():
         if not isinstance(record, Mapping) or domain_of(str(service_id), record) != domain:
             continue
@@ -136,10 +178,15 @@ def policy_for(name: str, services: Mapping[str, Any]) -> TransitionPolicy:
         if transition_enabled(record):
             declared = _declared_transition(record)
             waits.append(_positive(declared.get("admission_wait_s"), DEFAULT_ADMISSION_WAIT_S))
+            retries.append(_positive(declared.get("retry_after_s"), float(GATE_RETRY_AFTER_S)))
+            profile = declared_profile(record)
+            if profile:
+                profiles.append(profile)
     if not waits:
         return TransitionPolicy(domain=domain, services=tuple(sorted(members)))
     return TransitionPolicy(domain=domain, enabled=True, admission_wait_s=min(waits),
-                            services=tuple(sorted(members)), pass_through=pass_through)
+                            services=tuple(sorted(members)), pass_through=pass_through,
+                            retry_after_s=min(retries), profile=sorted(profiles)[0] if profiles else None)
 
 
 class TransitionUnavailable(HTTPException):
@@ -190,7 +237,7 @@ def require_supported(policy: TransitionPolicy, service: Optional[str] = None) -
     (step T1.2). The registry refuses such a domain; this is the runtime guard for
     any record that reaches the config another way.
     """
-    if policy.enabled and not policy.pass_through:
+    if policy.enabled and not policy.pass_through and policy.profile is None:
         raise TransitionUnavailable(policy.domain, reason="activation_not_supported", service=service)
 
 
@@ -232,13 +279,16 @@ def offering_effect(offering: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
-def domain_violations(services: Mapping[str, Any], *, paths: Callable[[str, Mapping[str, Any]], ServicePaths]
-                      ) -> dict[str, str]:
+def domain_violations(services: Mapping[str, Any], *, paths: Callable[[str, Mapping[str, Any]], ServicePaths],
+                      profile_known: Optional[Callable[[str], bool]] = None) -> dict[str, str]:
     """``{service_id: error}`` for each service that an enabled domain cannot hold in step T1.1.
 
     In a domain that any member enables, a member is allowed only when:
 
-    - it declares ``transition: {enabled: true, activation: pass_through}`` itself;
+    - it declares ``transition: {enabled: true, activation: pass_through}`` itself, or names a reviewed
+      ``transition.profile`` (the transition executor then runs the domain's release and load);
+    - it sets none of the profile-only keys (``attested``, ``failure_semantics``, ...) and, when
+      ``profile_known`` is given, names a profile it knows;
     - it declares no gateway-owned lifecycle (another owner runs the process);
     - every path to it is a leased hop, and there is at least one: ``paths(id, record)`` lists them.
     """
@@ -252,10 +302,20 @@ def domain_violations(services: Mapping[str, Any], *, paths: Callable[[str, Mapp
         if domain not in enabled_domains:
             continue
         head = f"service {service_id!r} is in residency domain {domain!r}, which enables residency.transition"
-        if not declares_pass_through(record):
+        forbidden = forbidden_profile_keys(record)
+        if forbidden:
+            errors[str(service_id)] = (
+                f"{head}; its residency block sets {', '.join(forbidden)}. Those belong to a reviewed transition "
+                "profile, not to the service config: name the profile with residency.transition.profile")
+            continue
+        profile = declared_profile(record)
+        if profile is not None and profile_known is not None and not profile_known(profile):
+            errors[str(service_id)] = f"{head}; it names the transition profile {profile!r}, which is not a reviewed profile"
+            continue
+        if not (declares_pass_through(record) or profile is not None):
             errors[str(service_id)] = (
                 f"{head}; every service of that domain must declare residency.transition "
-                "{enabled: true, activation: pass_through} (gateway-run activation is not supported yet)")
+                "{enabled: true, activation: pass_through} or name a reviewed residency.transition.profile")
             continue
         owned = gateway_owned_lifecycle(record)
         if owned is not None:
@@ -298,16 +358,19 @@ def domain_violations(services: Mapping[str, Any], *, paths: Callable[[str, Mapp
 _RESTRICTING_OVERRIDES = frozenset({"disabled", "maintenance", "draining"})
 
 
-def admit(policy: TransitionPolicy, gate_state: str, overrides: Mapping[str, Any]) -> None:
+def admit(policy: TransitionPolicy, gate_state: str, overrides: Mapping[str, Any], *, parked: bool = False) -> None:
     """Raise ``TransitionUnavailable`` unless an enabled domain may mint a lease now.
 
     Call under the domain lock, with the gate state and the manual availability
     overrides read in that hold. A domain that is not enabled is always admitted.
+    A parked domain (its last finished operation is a park) serves only after a wake.
     """
     if not policy.enabled:
         return
     if gate_state != "open":
-        raise TransitionUnavailable(policy.domain, reason=f"gate_{gate_state}")
+        raise TransitionUnavailable(policy.domain, reason=f"gate_{gate_state}", retry_after_s=policy.retry_after_s)
+    if parked:
+        raise TransitionUnavailable(policy.domain, reason="parked", retry_after_s=policy.retry_after_s)
     for service_id in policy.services:
         override = _mapping(overrides.get(service_id))
         state = str(override.get("state") or "available").strip().lower()
@@ -343,6 +406,36 @@ CREATE TABLE IF NOT EXISTS transition_gate (
 )
 """
 
+# The operation record (D2). ``OperationStore`` (gateway/transition_store.py) is its only writer; the DDL sits
+# here so that opening the gate table also creates it, and ``load`` can read which domains are parked.
+OPERATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS transition_op (
+    op_id           TEXT PRIMARY KEY,
+    domain          TEXT NOT NULL,
+    kind            TEXT NOT NULL CHECK (kind IN ('select', 'park', 'wake')),
+    idempotency_key TEXT NOT NULL,
+    request_hash    TEXT NOT NULL,
+    target          TEXT,
+    incarnation     TEXT,
+    config_revision INTEGER NOT NULL,
+    state           TEXT NOT NULL CHECK (state IN ('running', 'succeeded', 'aborted', 'failed_closed', 'reconciling')),
+    step            TEXT,
+    step_intent     TEXT,
+    step_outcome    TEXT,
+    evidence_ref    TEXT,
+    snapshot_handle TEXT,
+    compensates     TEXT,
+    stock           TEXT,
+    created         REAL NOT NULL,
+    updated         REAL NOT NULL,
+    seq             INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS transition_op_key ON transition_op (domain, idempotency_key);
+CREATE UNIQUE INDEX IF NOT EXISTS transition_op_one_unfinished ON transition_op (domain)
+    WHERE state IN ('running', 'reconciling');
+CREATE INDEX IF NOT EXISTS transition_op_domain_seq ON transition_op (domain, seq)
+"""
+
 
 class GateStore:
     """Durable gate state per domain, with an in-process read cache.
@@ -359,6 +452,7 @@ class GateStore:
         self.path = Path(path)
         self._lock = threading.Lock()
         self._cache: dict[str, str] = {}
+        self._parked: dict[str, str] = {}
         self._readable = False
         self._retry_s = retry_s
         self._clock = clock
@@ -376,18 +470,58 @@ class GateStore:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self._connect() as connection:
                 connection.execute(_SCHEMA)
+                connection.executescript(OPERATION_SCHEMA)
                 rows = connection.execute("SELECT domain, state FROM transition_gate").fetchall()
+                # A domain is parked when its latest finished operation is a successful park (decision G5).
+                last = connection.execute(
+                    "SELECT domain, kind, op_id FROM transition_op WHERE state = 'succeeded' AND seq = "
+                    "(SELECT MAX(seq) FROM transition_op AS later WHERE later.domain = transition_op.domain "
+                    "AND later.state = 'succeeded')").fetchall()
         except (OSError, sqlite3.Error) as exc:
             print(f"[transition-gate] gate table unreadable, enabled domains fail closed: {exc}", flush=True)
             with self._lock:
                 self._readable = False
                 self._cache = {}
+                self._parked = {}
             return
         with self._lock:
             # A state this build does not know fails closed.
             self._cache = {str(domain): (state if state in GATE_STATES else "failed_closed")
                            for domain, state in rows}
+            self._parked = {str(domain): str(op_id) for domain, kind, op_id in last if kind == "park"}
             self._readable = True
+
+    def note_write(self, domain: str, state: str, parked_by: Optional[str] = None, *, clears_park: bool = False) -> None:
+        """Refresh the cache after a committed gate write in this process (T1.2). Call after the commit.
+
+        ``parked_by`` marks the domain parked by that operation; ``clears_park`` marks it not parked. A cache
+        that was never read is loaded first, so a write never hides what the table holds.
+        """
+        with self._lock:
+            readable = self._readable
+        if not readable:
+            self.load()
+        with self._lock:
+            if self._readable:
+                self._cache[domain] = state if state in GATE_STATES else "failed_closed"
+                if parked_by is not None:
+                    self._parked[domain] = parked_by
+                elif clears_park:
+                    self._parked.pop(domain, None)
+
+    def force(self, domain: str, state: str) -> None:
+        """Hold ``domain`` in memory when the table cannot be written (the durable state is then older)."""
+        with self._lock:
+            self._cache[domain] = state
+
+    def readable(self) -> bool:
+        with self._lock:
+            return self._readable
+
+    def parked(self, domain: str) -> Optional[str]:
+        """The op_id of the park that parked ``domain``, else None. Memory only."""
+        with self._lock:
+            return self._parked.get(domain)
 
     def refresh_if_due(self) -> None:
         """Retry the load when the table is unreadable and ``retry_s`` has passed. Blocking: not for the event loop."""

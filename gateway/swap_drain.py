@@ -155,6 +155,7 @@ class SwapDrain:
         key_for: Callable[[str], str] | None = None,
         admit: Callable[[str], None] | None = None,
         on_mint: Callable[[ServingLease], None] | None = None,
+        wall_clock: Callable[[], float] = time.time,
     ) -> None:
         """``key_for`` maps a backend to the key its leases count under (its
         residency domain; default the backend itself). ``admit`` runs before a
@@ -162,6 +163,8 @@ class SwapDrain:
         ``on_mint`` runs in the minting task right after a lease exists, so the
         caller can record which task holds it (the egress check reads that)."""
         self._clock = clock
+        self._wall_clock = wall_clock
+        self._last_mint: dict[str, float] = {}
         self._key_for = key_for or (lambda backend: backend)
         self._admit = admit
         self._on_mint = on_mint
@@ -170,23 +173,32 @@ class SwapDrain:
 
     # -- forwarding side ----------------------------------------------------
 
-    def lease(self, backend: str, *, on_release: Callable[[], None] | None = None) -> ServingLease:
+    def lease(self, backend: str, *, on_release: Callable[[], None] | None = None, admit: bool = True) -> ServingLease:
         """Count one request in flight on whatever ``backend`` has loaded.
 
         Call under the swap lock, in the same hold in which the caller made
-        its target ready or read the loaded model.
+        its target ready or read the loaded model. ``admit=False`` skips the
+        admit hook: only the transition executor passes it, to mint the
+        triggering request's lease while its own operation still holds the
+        gate closed (step 7 of the transition order).
         """
-        if self._admit is not None:
+        if admit and self._admit is not None:
             self._admit(backend)
         key = self._key_for(backend)
         lease = ServingLease(self, backend, self._clock(), on_release, key=key)
         self._leases.setdefault(key, set()).add(lease)
+        self._last_mint[key] = self._wall_clock()
         if self._on_mint is not None:
             self._on_mint(lease)
         return lease
 
     def in_flight(self, backend: str) -> int:
         return len(self._leases.get(self._key_for(backend), ()))
+
+    def last_lease_at(self, backend: str) -> Optional[float]:
+        """Wall-clock time (epoch seconds) of the last lease minted for ``backend``'s key since this process started,
+        else None. Read-only; the gateway does not log lease mint or release."""
+        return self._last_mint.get(self._key_for(backend))
 
     def snapshot(self) -> dict[str, dict[str, float]]:
         """Read-only diagnostics: in-flight count and oldest lease age per busy backend.

@@ -1776,6 +1776,7 @@ def create_admin_router(
     stt_measurements: Any = None,
     frontend_status: Callable[[], list[dict[str, Any]]] | None = None,
     registry_problem: Callable[[], Mapping[str, Any] | None] | None = None,
+    transitions: Callable[[], Any] | None = None,
     prefix: str = "/admin/api",
 ) -> APIRouter:
     """Build an admin-plane router.
@@ -1811,6 +1812,9 @@ def create_admin_router(
     # Create and edit with a definition run through the services routes below.
     engine_service = engine_admin.EngineService(store, fetch=engine_fetch, hop_timeout=engine_hop_timeout)
     engine_admin.register_engine_routes(router, service=engine_service, guard=_guard, read_json=_read_json_body)
+    if transitions is not None:
+        from gateway.transition_admin import register_transition_routes
+        register_transition_routes(router, runtime=transitions, guard=_guard, read_json=_read_json_body)
     from gateway.retention_fact_api import register_routes as register_retention_fact_routes
     register_retention_fact_routes(router, store=store, guard=_guard, read_json=_read_json_body)
     from gateway.engine_protocol_admin import register_engine_protocol_routes

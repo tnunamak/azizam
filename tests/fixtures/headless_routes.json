@@ -417,6 +417,38 @@
   },
   {
     "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.transition_admin.start_transition",
+    "method": "POST",
+    "path": "/admin/api/engines/domains/{domain}/transitions",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.transition_admin.get_transition",
+    "method": "GET",
+    "path": "/admin/api/engines/domains/{domain}/transitions/{op_id}",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.transition_admin.get_gate",
+    "method": "GET",
+    "path": "/admin/api/engines/domains/{domain}/gate",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
+    "gate": "AdminAuthenticator / _require_admin; owner role required",
+    "handler": "gateway.transition_admin.resolve_transition",
+    "method": "POST",
+    "path": "/admin/api/engines/domains/{domain}/transitions/{op_id}/resolve",
+    "schema": true
+  },
+  {
+    "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.engine_admin.check_engine",
     "method": "POST",
