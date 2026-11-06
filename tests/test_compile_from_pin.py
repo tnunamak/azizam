@@ -223,8 +223,8 @@ def test_only_a_literal_true_for_the_route_turns_the_flag_on(config):
     assert pinned_definitions.compile_from_pin_enabled(config, CAPABILITY) is False
 
 
-def test_the_shipped_default_for_audio():
-    assert proxy.config["workflow_execution"]["compile_from_pin"][CAPABILITY] is False
+def test_audio_jobs_compile_from_their_pin_by_default():
+    assert pinned_definitions.compile_from_pin_enabled(proxy.runtime().config, CAPABILITY) is True
 
 
 # ---------------------------------------------------------------------------------------------- the reader

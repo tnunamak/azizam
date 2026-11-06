@@ -1192,7 +1192,7 @@ videos:
 # (docs/design/CODE_TO_DATA_S2.md, D2). Keyed by the route's capability. Read on every job.
 workflow_execution:
   compile_from_pin:
-    audio.generate: false
+    audio.generate: true
 audio:
   default_workflow: ace-step-1.5-xl-turbo
   workflows_dir: ./workflows/audio
