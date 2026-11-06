@@ -80,7 +80,7 @@
     {
       "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "source_sha256": "fdd85e691de8fa49476391cc6349ddcd5efe88141be40236281ea33fac23e097",
+      "source_sha256": "cfcbae7dbc90488382362a27e4f42ac9c3cc7e68d5963df43bc7cdf5fc5fff1d",
       "call": "append_event",
       "event": "'completed'",
       "access": "content:job:read"
@@ -136,7 +136,7 @@
     {
       "path": "proxy.py",
       "function": "_submit_audio_media_job",
-      "source_sha256": "f75a2c54dc43dcdc80adc8ff842c52a31530c0ec95a5ff427c5f0e5455169c5a",
+      "source_sha256": "f4d07947130ff12e4e1459a0d14687e72803af8cb979daca6d2bb1a7b331f00c",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -176,7 +176,7 @@
     {
       "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "source_sha256": "fdd85e691de8fa49476391cc6349ddcd5efe88141be40236281ea33fac23e097",
+      "source_sha256": "cfcbae7dbc90488382362a27e4f42ac9c3cc7e68d5963df43bc7cdf5fc5fff1d",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -2100,6 +2100,66 @@
       "handler": "proxy.admin_config_reload",
       "method": "POST",
       "path": "/admin/api/config/reload",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.list_sections",
+      "method": "GET",
+      "path": "/admin/api/config",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.get_section",
+      "method": "GET",
+      "path": "/admin/api/config/sections/{section_id}",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.list_changes",
+      "method": "GET",
+      "path": "/admin/api/config/changes",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.get_drift",
+      "method": "GET",
+      "path": "/admin/api/config/drift",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.get_problems",
+      "method": "GET",
+      "path": "/admin/api/config/problems",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.patch_changes",
+      "method": "PATCH",
+      "path": "/admin/api/config/changes",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.reset_entry",
+      "method": "DELETE",
+      "path": "/admin/api/config/sections/{section_id}/entries",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.revert_change",
+      "method": "POST",
+      "path": "/admin/api/config/changes/{change_id}/revert",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.import_config",
+      "method": "POST",
+      "path": "/admin/api/config/import",
+      "access": "operational"
+    },
+    {
+      "handler": "gateway.config_api.create_config_router.<locals>.legacy_import",
+      "method": "POST",
+      "path": "/admin/api/config/sections/{section_id}/legacy-import",
       "access": "operational"
     },
     {

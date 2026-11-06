@@ -112,7 +112,7 @@ from gateway import asset_types, media_delivery, media_fetch, media_metadata, pr
 from gateway import video_subject, thumbnails, output_availability
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
-from gateway import definition_store, job_envelope
+from gateway import definition_store, job_envelope, pinned_definitions
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
 from gateway import exclusive_pool, mesh_api, mesh_manifest
@@ -171,6 +171,7 @@ from gateway.admin_api import (
     registry_not_applied_response,
 )
 from gateway.settings_api import create_settings_router, instance_settings, prompt_memory_settings
+from gateway import config_api
 from gateway.activity_api import create_activity_router
 from gateway import category_presets
 from gateway.category_api import create_category_router
@@ -2938,6 +2939,11 @@ def handle_cli_command() -> bool:
             print("Usage: python3 proxy.py refresh-openai-models", file=sys.stderr)
             sys.exit(2)
         sys.exit(asyncio.run(refresh_openai_model_aliases()))
+
+    if sys.argv[1] == "config":
+        from gateway import config_cli
+
+        sys.exit(config_cli.main(sys.argv[2:], default_url=f"http://127.0.0.1:{PROXY_PORT}"))
 
     if sys.argv[1] == "generate-admin-key":
         if len(sys.argv) == 3 and sys.argv[2] in {"-h", "--help", "help"}:
@@ -6014,6 +6020,30 @@ def _video_job_envelope(workflow_name: str) -> job_envelope.JobEnvelope | None:
     )
 
 
+# The manifest fields a job pins as its contract: the header a compile validates (``validate_manifest``) and the
+# input and output schemas. Everything else in a manifest is for listings and the UI, and a run does not read it.
+_PINNED_MANIFEST_FIELDS = ("schema_version", "id", "intent", "inputs", "outputs")
+
+
+def _compile_from_pin(capability: str) -> bool:
+    """Whether jobs of the route ``capability`` compile from their pinned definitions (CODE_TO_DATA_S2 D2 "Use"),
+    read from the published config on each call."""
+    return pinned_definitions.compile_from_pin_enabled(runtime().config, capability)
+
+
+_DEFINITION_UNAVAILABLE = "A definition this job was accepted with is no longer available; please submit it again."
+_DEFINITION_UNAVAILABLE_INFO = {"error_code": "definition_unavailable", "error_category": "internal", "retryable": False}
+
+
+def _pin_not_recorded_response() -> Response:
+    """The 503 for a job that could not pin its definitions, which a route that compiles from the pin cannot run without."""
+    return Response(
+        content=json.dumps({"error": {"message": "Could not pin the workflow definition", "type": "api_error"}}),
+        status_code=503,
+        media_type="application/json",
+    )
+
+
 def _manifest_job_envelope(manifest: Mapping[str, Any] | None, capability: str) -> job_envelope.JobEnvelope | None:
     """``_graph_job_envelope`` for a job whose workflow has a manifest: its inputs and outputs, and its graph binding."""
     if not isinstance(manifest, Mapping):
@@ -6025,7 +6055,7 @@ def _manifest_job_envelope(manifest: Mapping[str, Any] | None, capability: str) 
     source_id = str(manifest.get("id") or "")
     return _graph_job_envelope(
         capability, source_id=source_id,
-        contract={"inputs": manifest.get("inputs"), "outputs": manifest.get("outputs")},
+        contract={key: manifest[key] for key in _PINNED_MANIFEST_FIELDS if key in manifest},
         binding=binding, artifact=binding.get("workflow"), record=GATEWAY_WORKFLOW_REGISTRY.get(source_id),
     )
 
@@ -16833,6 +16863,13 @@ app.include_router(create_settings_router(
     on_prompt_memory_kill=lambda: _purge_prompt_memory_on_kill(),
     purge_status_provider=lambda: _prompt_purge_status("*"),
 ))
+# Owner API over the config sections (docs/design/CONFIG_HOMES.md, 7). The dependencies are looked up per request, so
+# the layer, the registry and the reload are the ones running now.
+app.include_router(config_api.create_config_router(
+    auth=ADMIN_AUTH, admin_path=lambda: ADMIN_DB_PATH, home=lambda: CONFIG_HOME,
+    registry=ADMIN_STORE.get_service_registry, reload=lambda: reload_runtime_config(),
+    startup_block=lambda section: _bootstrap_config.get(section) if isinstance(_bootstrap_config.get(section), Mapping) else None,
+))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
 # Owner-defined categories and plans (design v3). Active rules tighten the
 # runtime decision in runtime_auth.evaluate_and_apply (category_enforcement).
@@ -19665,6 +19702,11 @@ async def admin_config_export(request: Request):
             media_type="application/json",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if request.query_params.get("format") == "v1":  # the config sections' export; C4 makes it the only one
+        document = await asyncio.to_thread(
+            config_api.build_export, CONFIG_HOME, ADMIN_DB_PATH, version=str((runtime().config.get("proxy") or {}).get("version") or "1"),
+            effective=request.query_params.get("view") == "effective", registry=ADMIN_STORE.get_service_registry())
+        return JSONResponse(document, headers={"Cache-Control": "no-store"})
     try:
         yaml_text = await asyncio.to_thread(_build_config_export_yaml)
         return Response(
@@ -23731,6 +23773,17 @@ async def _run_audio_media_job(job_id: str) -> None:
             _mark_audio_media_job_failed(job_id, message, error_info=error_info)
             return
 
+        # The route compiles from what the job pinned at accept, or the job fails: never from the live file.
+        pinned_args: dict[str, Any] = {}
+        if _compile_from_pin(_AUDIO_GRAPH_CAPABILITY):
+            try:
+                pinned_args["pinned"] = await asyncio.to_thread(_load_audio_pin, job_id)
+                pinned_args["pinned_workflow"] = job.get("workflow")
+            except definition_store.DefinitionUnavailable as exc:
+                _MEDIA_JOB_LOG.warning("job %s: %s", job_id, log_scrub.describe_error(exc))
+                _mark_audio_media_job_failed(job_id, _DEFINITION_UNAVAILABLE, error_info=_DEFINITION_UNAVAILABLE_INFO)
+                return
+
         try:
             media_jobs.update_status(
                 job_id,
@@ -23757,7 +23810,8 @@ async def _run_audio_media_job(job_id: str) -> None:
                     request_id=str(job["request_id"]), job_id=job_id, route_path="/gateway/v1/media/jobs",
                 )
                 try:
-                    response = await proxy_audio_generate(request_shim, auth_context, store_full=True, receipt=receipt)
+                    response = await proxy_audio_generate(
+                        request_shim, auth_context, store_full=True, receipt=receipt, **pinned_args)
                 except BaseException as error:
                     await run_receipt_write(media_ingestion.finish_receipt, receipt, status_code=499 if isinstance(error, asyncio.CancelledError) else 500)
                     raise
@@ -23776,6 +23830,12 @@ async def _run_audio_media_job(job_id: str) -> None:
 
         status_code = int(getattr(response, "status_code", 0) or 0)
         if not 200 <= status_code < 300:
+            error = _image_response_json(response).get("error")
+            if client_errors.error_fields(error)["code"] == _DEFINITION_UNAVAILABLE_INFO["error_code"]:
+                # The route found the job's pin unusable or no longer the workflow its model names.
+                _mark_audio_media_job_failed(job_id, _DEFINITION_UNAVAILABLE, http_status=status_code,
+                                             error_info=_DEFINITION_UNAVAILABLE_INFO)
+                return
             message, error_info = _media_job_failure(response)
             _mark_audio_media_job_failed(job_id, message, http_status=status_code, error_info=error_info)
             return
@@ -23951,6 +24011,11 @@ async def _submit_audio_media_job(
     metadata = dict(job.metadata or {})
     metadata["mode"] = "async_audio_generation"
     job.metadata = metadata
+    envelope = _manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY)
+    compiles_from_pin = _compile_from_pin(_AUDIO_GRAPH_CAPABILITY)
+    if envelope is None and compiles_from_pin:
+        # A route that compiles from the pin must not accept a job that pinned nothing: it could never run.
+        return _pin_not_recorded_response()
 
     try:
         _persist_audio_media_job_payload(
@@ -23961,11 +24026,18 @@ async def _submit_audio_media_job(
         )
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
-        created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH,
-                                    envelope=_manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY))
+        created = media_jobs.create(
+            job, input_data=body, path=media_jobs.DB_PATH, envelope=envelope,
+            require_envelope=compiles_from_pin,
+        )
     except EphemeralMediaPayloadCapacityError:
         _delete_audio_media_job_payload(job.job_id)
         return _ephemeral_media_payload_busy_response()
+    except media_jobs.EnvelopeNotRecorded as exc:
+        # The pin was built but could not be written (the store or the grammar refused it): the job was not stored.
+        _delete_audio_media_job_payload(job.job_id)
+        _MEDIA_JOB_LOG.warning("audio job %s: the pin was not recorded: %s", job.job_id, log_scrub.describe_error(exc))
+        return _pin_not_recorded_response()
     except Exception as exc:  # noqa: BLE001
         _delete_audio_media_job_payload(job.job_id)
         return Response(
@@ -25764,6 +25836,24 @@ def _load_audio_workflow_file(workflow_cfg: dict):
     return workflow
 
 
+def _pinned_graph(pinned: pinned_definitions.PinnedDefinitions) -> dict[str, Any]:
+    """The graph a job pinned, checked as ``_load_audio_workflow_file`` checks a file. Raises ``DefinitionUnavailable``."""
+    workflow = pinned.graph()
+    errors = validate_workflow_graph(workflow)
+    if errors:
+        raise definition_store.DefinitionUnavailable(f"the pinned graph is invalid: {'; '.join(errors)}")
+    return workflow
+
+
+def _load_audio_pin(job_id: str) -> pinned_definitions.PinnedDefinitions:
+    """The job's pin, with its manifest and graph checked now, so a job that cannot run fails as ``definition_unavailable``
+    before it starts. Raises ``DefinitionUnavailable``."""
+    pinned = pinned_definitions.load(job_id, media_jobs.DB_PATH)
+    pinned.manifest(_GRAPH_BINDING)
+    _pinned_graph(pinned)
+    return pinned
+
+
 _AUDIO_SUFFIX_BY_CONTENT_TYPE = {
     "audio/flac": ".flac",
     "audio/x-flac": ".flac",
@@ -25818,20 +25908,23 @@ def _peak_normalize_audio(data: bytes, content_type: str, target_db: float = -1.
         return data
 
 
+def _manifest_names_audio_workflow(manifest: Mapping[str, Any], workflow_name: str) -> bool:
+    """Whether ``workflow_name`` (what ``audio.workflows`` and the aliases resolve a model to) names this manifest: its
+    id, the tail of its id after a dot, or the stem of its graph artifact."""
+    manifest_id = str(manifest.get("id") or "")
+    if manifest_id == workflow_name or manifest_id.endswith(f".{workflow_name}"):
+        return True
+    bindings = manifest.get("bindings")
+    graph_binding = bindings.get(_GRAPH_BINDING) if isinstance(bindings, Mapping) else None
+    artifact = graph_binding.get("workflow") if isinstance(graph_binding, Mapping) else None
+    return isinstance(artifact, str) and Path(artifact).stem == workflow_name
+
+
 def _load_audio_workflow_manifest(workflow_name: str) -> dict[str, Any] | None:
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         if not record.intent.startswith(("audio.", "music.", "sfx.")):
             continue
-        if record.id == workflow_name or record.id.endswith(f".{workflow_name}"):
-            return copy.deepcopy(dict(record.manifest))
-        bindings = record.manifest.get("bindings")
-        if not isinstance(bindings, Mapping):
-            continue
-        graph_binding = bindings.get(_GRAPH_BINDING)
-        if not isinstance(graph_binding, Mapping):
-            continue
-        artifact = graph_binding.get("workflow")
-        if isinstance(artifact, str) and Path(artifact).stem == workflow_name:
+        if _manifest_names_audio_workflow(record.manifest, workflow_name):
             return copy.deepcopy(dict(record.manifest))
     return None
 
@@ -25852,11 +25945,17 @@ def _audio_extension_error_response(message: str, *, param: str = "extensions") 
     )
 
 
-async def proxy_audio_generate(request: Request, auth_context, *, store_full: bool = False, receipt: RouteReceipt | None = None):
+async def proxy_audio_generate(
+    request: Request, auth_context, *, store_full: bool = False, receipt: RouteReceipt | None = None,
+    pinned: pinned_definitions.PinnedDefinitions | None = None, pinned_workflow: str | None = None,
+):
     """POST /v1/audio/generate — submit audio generation via ComfyUI.
 
     ``store_full`` is for the media-job executor, which stores the bytes: they
     keep full metadata and the delivery mode is applied when the asset is served.
+    ``pinned`` is what the job pinned at accept. With it the manifest and the graph come from the pin, never from the
+    registry or the workflow file; without it (the synchronous route) they are read live. ``pinned_workflow`` is the
+    workflow the job row recorded at submit (``audio.generate.<name>``): the model must still resolve to it.
     """
     admission = _dispatch_admission_response(
         'audio.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
@@ -25909,7 +26008,24 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                 code="model_not_found",
             )
         )
-    manifest = _load_audio_workflow_manifest(workflow_name)
+    workflow_id = f"audio.generate.{workflow_name}"
+    if pinned is not None:
+        try:
+            manifest = pinned.manifest(_GRAPH_BINDING)
+            pinned_graph = _pinned_graph(pinned)
+            if pinned_workflow != workflow_id:
+                raise definition_store.DefinitionUnavailable(
+                    f"job {pinned.envelope.source_id}: the model now resolves to workflow {workflow_name}, not the one it pinned")
+        except definition_store.DefinitionUnavailable as exc:
+            _MEDIA_JOB_LOG.warning("pinned audio definitions unusable: %s", log_scrub.describe_error(exc))
+            return Response(
+                content=json.dumps({"error": {"message": "Workflow definition unavailable", "type": "api_error",
+                                              "code": "definition_unavailable"}}),
+                status_code=500,
+                media_type="application/json",
+            )
+    else:
+        manifest = _load_audio_workflow_manifest(workflow_name)
     if manifest is None:
         return Response(
             content=json.dumps({"error": {"message": f"Workflow manifest missing for {workflow_name}", "type": "api_error"}}),
@@ -25939,7 +26055,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     seed_val = inputs.get("seed")
     # The template is the one the manifest's binding names, so the map and the graph it writes come from one place.
     graph_binding = (manifest.get("bindings") or {}).get(_GRAPH_BINDING) or {}
-    workflow = _load_audio_workflow_file({"file": graph_binding.get("workflow")})
+    workflow = pinned_graph if pinned is not None else _load_audio_workflow_file({"file": graph_binding.get("workflow")})
     if not workflow:
         return Response(
             content=json.dumps({"error": {"message": f"Workflow file missing for {workflow_name}", "type": "api_error"}}),
@@ -25953,7 +26069,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
             protocol="openai.audio",
             intent=INTENT_AUDIO_GENERATE,
             model=str(model) if model is not None else None,
-            workflow=f"audio.generate.{workflow_name}",
+            workflow=workflow_id,
             backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
@@ -25968,7 +26084,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
         requested=str(model) if model is not None else None,
         resolved=str(workflow_name),
         manifest=manifest,
-        extra_ids=(f"audio.generate.{workflow_name}",),
+        extra_ids=(workflow_id,),
     )
     if target_decision is not None and target_decision.denied:
         return _policy_denied_response(target_decision)
@@ -26046,7 +26162,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                                 from gateway import media_ingestion
                                 receipt.requested_model = str(model)
                                 receipt.resolved_model = workflow_name
-                                receipt.resolved_workflow = f"audio.generate.{workflow_name}"
+                                receipt.resolved_workflow = workflow_id
                                 await asyncio.to_thread(media_ingestion.store_audio_response, audio_bytes, content_type, receipt, store_asset=store_asset_bytes)
                             try:
                                 if not store_full and media_delivery.current_mode() == provenance.METADATA_NONE:
@@ -26062,7 +26178,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                                             kind="audio",
                                             requested_model=str(model),
                                             resolved_model=workflow_name,
-                                            workflow_id=f"audio.generate.{workflow_name}",
+                                            workflow_id=workflow_id,
                                             backend=_GRAPH_BACKEND_ID,
                                             seed=seed_val,
                                             parameters={

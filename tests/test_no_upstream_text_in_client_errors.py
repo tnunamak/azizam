@@ -179,6 +179,7 @@ def test_the_production_helpers_that_return_a_response_body_are_known():
 ERROR_TEXT_FIELDS = {"message", "code", "type", "param", "detail", "reason", "msg", "error_description"}
 
 ALLOWED_READS: dict[str, str] = {
+    "gateway/config_cli.py::call": "the operator's own command line reads the error of the gateway's own config API (built by config_api._error from fixed sentences and the text of local store or config-layer errors, never an engine's words) to print it to the owner who holds the key; it never reaches an API caller, and the command line must stay standard-library only",
     "gateway/client_errors.py::rewrite_stream_errors": "the helper itself: it reads the fields it replaces",
     "gateway/decisions_api.py::_systemone_body_for_client": "the local decision service is dialed with no credential (decision_routing posts no headers but a deadline), so it has none to echo",
     "gateway/mcp_server.py::_normalize_job": "the payload is the gateway's own media job answer, whose error sentence is fixed copy (proxy._media_job_failure)",

@@ -415,9 +415,19 @@ class ConfigHome:
         with self._lock:
             self._last_commit = (change_id, tuple(entries))
 
-    def note_reload_failed(self, error_text: str, *, path: Path | None = None) -> dict[str, Any]:
-        """Record that a reload failed after a commit: the old snapshot serves, and the view says what differs."""
-        change_id, entries = self._last_commit or (None, ())
+    def note_reload_failed(
+        self, error_text: str, *, path: Path | None = None, change_id: str | None = None,
+        entries: Sequence[tuple[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        """Record that a reload failed after a commit: the old snapshot serves, and the view says what differs.
+
+        A caller that knows its own change passes ``change_id`` and ``entries``: a second writer's commit, or a
+        publish that cleared the shared last-commit note, then cannot change which change the record names. Without
+        them the record falls back to the last commit noted (the reload path, which has no change of its own).
+        """
+        if entries is None and change_id is None:
+            change_id, entries = self._last_commit or (None, ())
+        entries = entries or ()
         serving = self.holder.current()
         stored: dict[tuple[str, str], Mapping[str, Any]] = {}
         if entries and path is not None:

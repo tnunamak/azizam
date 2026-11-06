@@ -331,7 +331,11 @@ def test_successful_audio_worker_preserves_forget_and_releases_payload(
     tagged = b"RIFF" + struct.pack("<I", len(riff_body)) + riff_body
     seen = []
 
-    async def fake_generate(request, auth_context, *, store_full=False, receipt=None):
+    async def fake_generate(request, auth_context, *, store_full=False, receipt=None, pinned=None,
+                            pinned_workflow=None):
+        # The worker runs the job from the pin the submit recorded, and names the workflow the row recorded.
+        assert pinned is not None
+        assert pinned_workflow == "audio.generate.tangoflux"
         body = await request.json()
         seen.append(body)
         assert body["prompt"] == sentinel

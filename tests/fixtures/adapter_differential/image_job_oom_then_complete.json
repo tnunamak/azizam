@@ -342,12 +342,12 @@
       {
         "body": {
           "kind": "binary",
-          "len": 687,
-          "magic": "7b22696e70757473",
-          "sha256": "be90c1fd851b3abaddd1563b52163ba05caec6e32f2c6ba9ccb5c23eed3109ed"
+          "len": 766,
+          "magic": "7b226964223a2269",
+          "sha256": "0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2"
         },
         "created": "<time>",
-        "sha": "sha256:be90c1fd851b3abaddd1563b52163ba05caec6e32f2c6ba9ccb5c23eed3109ed"
+        "sha": "sha256:0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2"
       },
       {
         "body": {
@@ -372,12 +372,12 @@
     ],
     "definition_ref": [
       {
-        "blob_sha": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e",
+        "blob_sha": "sha256:0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2",
         "holder_kind": "job",
         "job_id": "<job:1>"
       },
       {
-        "blob_sha": "sha256:be90c1fd851b3abaddd1563b52163ba05caec6e32f2c6ba9ccb5c23eed3109ed",
+        "blob_sha": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e",
         "holder_kind": "job",
         "job_id": "<job:1>"
       },
@@ -393,7 +393,7 @@
         "envelope_json": {
           "definitions": {
             "binding": "sha256:f060099eb5ae498cad3b1ffb5de8ed91142e07a116b59fd022a6fa1c315a1bd7",
-            "contract": "sha256:be90c1fd851b3abaddd1563b52163ba05caec6e32f2c6ba9ccb5c23eed3109ed",
+            "contract": "sha256:0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2",
             "protocol": {
               "id": "node-graph",
               "revision": "unrevisioned"
@@ -412,7 +412,7 @@
           "source": {
             "id": "image.generate.krea2-turbo",
             "kind": "workflow",
-            "revision": "sha256:0b0bb19b7aeef0b2d3aa29ae1abf76070a25abe6f44b2d0ed450f027be09dc02"
+            "revision": "sha256:9878ad8af94b27594a1d60fbedc15d6e7959babfe8f0ff3f9fad713e15e45596"
           },
           "upstream": {
             "origin_digest": "sha256:1e234fab60fcadd9d9362e437c5366d789d810a656c59ce14ecf27b6b48859d2",
