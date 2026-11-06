@@ -67,6 +67,10 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
 
   const fileInput = useRef<HTMLInputElement>(null);
   const active = useRef<{ controller: AbortController } | null>(null);
+  const onPendingChange = useRef(options.onPendingChange);
+  useEffect(() => {
+    onPendingChange.current = options.onPendingChange;
+  });
   // Always the latest handlers: a pick that settles after a re-render must call the current screen's.
   const handlers = useRef(options);
   useEffect(() => {
@@ -76,6 +80,7 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     () => () => {
       active.current?.controller.abort();
       active.current = null;
+      onPendingChange.current?.(false);
     },
     [],
   );
@@ -86,13 +91,12 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
   // A read or download is under way: the choice is not in the form yet.
   const [pending, setPending] = useState(false);
   const [blockedSubmit, setBlockedSubmit] = useState(false);
-  const onPendingChange = useRef(options.onPendingChange);
-  useEffect(() => {
-    onPendingChange.current = options.onPendingChange;
-  });
-  useEffect(() => {
-    onPendingChange.current?.(pending);
-  }, [pending]);
+  // The one place `pending` changes, so the screen is told in the same step. A screen that holds Run while a
+  // choice arrives (Home's Make) needs the pending state of an input that sits outside any form.
+  function setPendingState(next: boolean) {
+    setPending(next);
+    onPendingChange.current?.(next);
+  }
 
   // Run must not go out while the choice is still arriving: it would send the form without it. The page owns Run,
   // so the pending input stops the form.
@@ -112,12 +116,12 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     active.current?.controller.abort();
     const next = { controller: new AbortController() };
     active.current = next;
-    setPending(false);
+    setPendingState(false);
     return next;
   }
 
   function startPending() {
-    setPending(true);
+    setPendingState(true);
     setBlockedSubmit(false);
   }
 
@@ -153,10 +157,10 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     try {
       if (!(await handOver(file, operation))) return;
       setSource({ label: file.name, file });
-      setPending(false);
+      setPendingState(false);
     } catch {
       if (active.current !== operation) return;
-      setPending(false);
+      setPendingState(false);
       setError(`Could not read that ${noun}. Try another file.`);
     }
   }
@@ -180,10 +184,10 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
       if (active.current !== operation) return;
       if (!(await handOver(picked, operation))) return;
       setSource({ label: LIBRARY_SOURCE, file: picked });
-      setPending(false);
+      setPendingState(false);
     } catch (failure) {
       if (active.current !== operation) return;
-      setPending(false);
+      setPendingState(false);
       setError(
         failure instanceof TooBigError
           ? failure.message
