@@ -152,6 +152,8 @@ from gateway import stt_chunking, stt_measurement
 from gateway.lifecycle_drivers import SwapRecoveryFailed
 from gateway.swap_drain import ServingLease, SwapDeferred, SwapDrain, SwapDrainSettings
 from gateway.transition_runtime import TransitionRuntime
+from gateway.transition_snapshot_steps import snapshot_steps
+from gateway.transition_snapshots import DEFAULT_SNAPSHOT_BUDGET, LazySnapshotStore, PrivateSnapshotDir, SqliteSnapshotStore
 from gateway.transition_gate import (
     GateStore, TransitionPolicy, TransitionUnavailable, acquire_bounded, admit as _transition_admit, policy_for,
     offering_effect, record_minted_lease, require_egress_lease, require_supported,
@@ -1614,10 +1616,21 @@ async def _transition_protocol_invoke(service_id: str, op: str, body: Mapping[st
     return reply
 
 
+def _open_transition_snapshots() -> SqliteSnapshotStore:
+    """The snapshot ledger (own tables in ``transition.db``) and its private directory, beside the gate store."""
+    home = ADMIN_DB_PATH.parent
+    return SqliteSnapshotStore(home / "transition.db", PrivateSnapshotDir(home / "transition-snapshots"),
+                               DEFAULT_SNAPSHOT_BUDGET)
+
+
 def _new_transition_runtime() -> TransitionRuntime:
+    # The store opens on first use (the startup hook), not here: building the runtime at import reads no path. The
+    # checkpoint and restore steps apply only to an adapter that supports a checkpoint; the generic adapter does not.
+    snaps = LazySnapshotStore(_open_transition_snapshots)
     return TransitionRuntime(gates=lambda: _transition_gates(), services=lambda: config.get("backends") or {},
                              lock_for=swap_lock_for, drain=lambda: _swap_drain,
-                             protocol_invoke=_transition_protocol_invoke)
+                             protocol_invoke=_transition_protocol_invoke,
+                             extra_steps=snapshot_steps(snaps), snapshots=snaps, startup=[snaps.startup_reconcile])
 
 
 TRANSITION_RUNTIME = _new_transition_runtime()

@@ -173,6 +173,9 @@ def compatible(saved: Mapping[str, str], current: Mapping[str, str], ignore: Col
 
 CrashHook = Callable[[str], None]
 
+DEFAULT_SNAPSHOT_BUDGET = SnapshotBudget(max_bytes=20 * 1024**3, max_count=2)
+"""The bound the gateway applies to each domain's snapshot files until an owner setting declares another (D5 "Retention")."""
+
 
 class SqliteSnapshotStore:
     """The ledger. Every method is blocking and uses its own connection; call it off the event loop."""
@@ -501,3 +504,31 @@ class SqliteSnapshotStore:
             finally:
                 connection.close()
         return None if row is None else row["handle"]
+
+
+class LazySnapshotStore:
+    """A snapshot store that opens its directory and ledger on first use.
+
+    The gateway builds its transition runtime when ``proxy`` is imported, and an import reads no path. The runtime keeps
+    this object; the first call, normally the startup hook ``startup_reconcile`` the lifespan runs before any
+    admission, calls ``open_store`` once. Every other method is the real store's, by name.
+    """
+
+    def __init__(self, open_store: Callable[[], SqliteSnapshotStore]) -> None:
+        self._open_store = open_store
+        self._store: Optional[SqliteSnapshotStore] = None
+        self._lock = threading.Lock()
+
+    def opened(self) -> SqliteSnapshotStore:
+        with self._lock:
+            if self._store is None:
+                self._store = self._open_store()
+            return self._store
+
+    def startup_reconcile(self) -> None:
+        self.opened().startup_reconcile()
+
+    def __getattr__(self, name: str):  # only names not defined above reach here
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self.opened(), name)

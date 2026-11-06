@@ -212,3 +212,31 @@ def test_an_owner_cannot_set_the_profile_blocks_the_snapshot_steps_trust(wired) 
     for key in ("servable_check", "placement_keys", "failure_semantics"):
         record = {"residency": {"domain": "dom", "transition": {"enabled": True, "profile": PROFILE, key: "x"}}}
         assert forbidden_profile_keys(record) == (key,)
+
+
+def test_the_gateways_runtime_carries_the_snapshot_steps_and_opens_the_ledger_only_at_startup(wired, monkeypatch, tmp_path) -> None:
+    """Building the runtime reads no path. The startup hook opens the ledger beside ``transition.db``. A domain whose
+    adapter has no checkpoint (the generic adapter) never reaches the checkpoint or restore step, so a park and a wake
+    send exactly the operations they sent before the snapshot steps were wired."""
+    _, engine, _ = wired
+    monkeypatch.setattr(proxy, "ADMIN_DB_PATH", tmp_path / "admin.db")
+    runtime = proxy._new_transition_runtime()
+    monkeypatch.setattr(runtime, "_protocol_invoke", engine)
+    assert not (tmp_path / "transition-snapshots").exists(), "no directory is made when the runtime is built"
+    assert runtime._startup and runtime._snapshots.__class__.__name__ == "LazySnapshotStore"
+
+    async def scenario() -> None:
+        await runtime.reconcile_startup()
+        assert (tmp_path / "transition-snapshots").is_dir()
+        steps = runtime.executor()._steps
+        assert {"checkpoint", "restore"} <= set(steps)
+        assert runtime._snapshots.opened().path == tmp_path / "transition.db"
+        for kind, key in (("park", "park-1"), ("wake", "wake-1")):
+            executor = runtime.executor()
+            began = await executor.submit(domain="dom", kind=kind, idempotency_key=key, target="alpha" if kind == "wake" else None)
+            assert (await executor.wait(began.operation.op_id)).state == "succeeded"
+        ops = [call[0] for call in engine.calls]
+        assert "transition.checkpoint" not in ops and "transition.restore" not in ops
+        assert runtime._snapshots.rows("dom") == (), "the generic adapter wrote no snapshot"
+
+    asyncio.run(scenario())
