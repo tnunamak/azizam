@@ -78,7 +78,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
             (media_jobs, "DB_PATH", self.jobs),
             (proxy.receipt_store, "DB_PATH", self.receipts_db),
             (proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", root / "payloads"),
-            (proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 1),
+            (proxy, "_image_media_job_max_attempts", lambda: 1),
             (proxy, "COMFY_ENABLED", True),
             (proxy, "_image_url_signing_secret", b"test-secret"),
             (proxy.receipt_store, "record", capture),
@@ -320,7 +320,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
                                                           "code": "vram_exhausted"}}),
                             status_code=503, media_type="application/json", headers={"Retry-After": "0"})
 
-        with patch.object(proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 3), \
+        with patch.object(proxy, "_image_media_job_max_attempts", lambda: 3), \
                 patch.object(proxy, "_generate_images_with_adaptive_batching", busy_then_downgraded):
             await proxy._run_image_media_job(job_id)
 
@@ -341,7 +341,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
                                                           "code": "vram_exhausted"}}),
                             status_code=503, media_type="application/json", headers={"Retry-After": "0"})
 
-        with patch.object(proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 3), \
+        with patch.object(proxy, "_image_media_job_max_attempts", lambda: 3), \
                 patch.object(proxy, "_generate_images_with_adaptive_batching", busy_then_revoked):
             await proxy._run_image_media_job(job_id)
 

@@ -1167,7 +1167,9 @@ def _graph(client: Any, capability: str = "images", *, probe: bool = False):
     return _graph_adapter(capability).attach(_graph_connection(probe=probe), client)
 
 # Image cache + adaptive-batching config (Fix 1 + Fix 2: honest `n`, real URLs).
-images_cfg = config.get("images", {}) or {}
+# The storage roots and the URL signing secret are startup settings: the images section does not carry them
+# (CONFIG_HOMES C8a, x-azizam-startup-only), so they are read from the startup file until C10.
+images_cfg = _bootstrap_config.get("images", {}) or {}
 IMAGE_CACHE_DIR = Path(images_cfg.get(
     "cache_dir",
     str(Path(__file__).parent / "cache" / "images"),
@@ -1176,50 +1178,108 @@ VRAM_ESTIMATES_FILE = Path(images_cfg.get(
     "vram_estimates_file",
     str(Path(__file__).parent / "cache" / "vram_estimates.json"),
 ))
-IMAGE_SIGNED_URL_TTL = int(images_cfg.get("signed_url_ttl", 3600))
 IMAGE_SIGNED_URL_SECRET_CFG = str(images_cfg.get("signed_url_secret", "") or "")
-IMAGE_VRAM_RESERVE_BYTES = int(images_cfg.get("vram_reserve_bytes", 1 * 1024 * 1024 * 1024))
-IMAGE_FREE_VRAM_ON_EXHAUSTION = bool_from_config(images_cfg.get("free_vram_on_exhaustion"), True)
-IMAGE_MAX_BATCH_SIZE = int(images_cfg.get("max_batch_size", 4))
-IMAGE_BACKGROUND_REMOVAL_CFG = images_cfg.get("background_removal", {}) or {}
-IMAGE_BACKGROUND_REMOVAL_ENABLED = bool_from_config(IMAGE_BACKGROUND_REMOVAL_CFG.get("enabled"), True)
-IMAGE_BACKGROUND_REMOVAL_TIMEOUT = float(IMAGE_BACKGROUND_REMOVAL_CFG.get("decision_timeout", 45))
-IMAGE_MEDIA_JOBS_CFG = images_cfg.get("media_jobs", {}) or {}
-IMAGE_VARIATIONS_CFG = images_cfg.get("variations", {}) or {}
-IMAGE_EDITS_CFG = images_cfg.get("edits", {}) or {}
-# Routes /v1/images/variations through an edit-capable workflow with a fixed
-# generic prompt (variations has no prompt of its own). The packaged default
-# mirrors the configured image-edit model.
-IMAGE_VARIATIONS_DEFAULT_WORKFLOW = str(
-    IMAGE_VARIATIONS_CFG.get("default_workflow", "qwen-image-2.1-edit")
-)
-# Partial-denoise strength applied only when the resolved workflow's manifest
-# declares a `denoise` input -- otherwise the workflow's own default stands.
-IMAGE_VARIATIONS_DENOISE = float(IMAGE_VARIATIONS_CFG.get("denoise", 0.75))
-IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW = str(
-    IMAGE_EDITS_CFG.get("multiref_default_workflow", "qwen-image-2.1-edit-multiref")
-)
-IMAGE_MEDIA_JOB_PAYLOAD_DIR = Path(IMAGE_MEDIA_JOBS_CFG.get(
+IMAGE_MEDIA_JOB_PAYLOAD_DIR = Path((images_cfg.get("media_jobs") or {}).get(
     "payload_dir",
     str(Path(__file__).parent / "data" / "image_media_jobs"),
 ))
-IMAGE_MEDIA_JOB_MAX_ATTEMPTS = int(IMAGE_MEDIA_JOBS_CFG.get("max_attempts", 3))
-IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS = float(IMAGE_MEDIA_JOBS_CFG.get("retry_base_seconds", 5))
-IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS = float(IMAGE_MEDIA_JOBS_CFG.get("retry_max_seconds", 30))
-IMAGE_MEDIA_JOB_CONCURRENCY = max(1, int(IMAGE_MEDIA_JOBS_CFG.get("concurrency", 1)))
-IMAGE_MEDIA_JOB_RESUME_ON_START = bool_from_config(
-    os.environ.get("IMAGE_MEDIA_JOB_RESUME_ON_START", IMAGE_MEDIA_JOBS_CFG.get("resume_on_start")),
-    True,
-)
+
+
+def _images_section() -> Mapping[str, Any]:
+    """The images section of the snapshot this call reads (CONFIG_HOMES C8a)."""
+    section = runtime().config.get("images")
+    return section if isinstance(section, Mapping) else {}
+
+
+def _images_group(name: str) -> Mapping[str, Any]:
+    group = _images_section().get(name)
+    return group if isinstance(group, Mapping) else {}
+
+
+def image_signed_url_ttl() -> int:
+    """images.signed_url_ttl: seconds a signed image URL stays valid."""
+    return max(1, int(_images_section().get("signed_url_ttl", 3600)))
+
+
+def _image_vram_reserve_bytes() -> int:
+    return int(_images_section().get("vram_reserve_bytes", 1 * 1024 * 1024 * 1024))
+
+
+def _image_free_vram_on_exhaustion() -> bool:
+    return bool_from_config(_images_section().get("free_vram_on_exhaustion"), True)
+
+
+def _image_max_batch_size() -> int:
+    return int(_images_section().get("max_batch_size", 4))
+
+
+def _image_background_removal_enabled() -> bool:
+    return bool_from_config(_images_group("background_removal").get("enabled"), True)
+
+
+def _image_background_removal_timeout() -> float:
+    return float(_images_group("background_removal").get("decision_timeout", 45))
+
+
+# Routes /v1/images/variations through an edit-capable workflow with a fixed
+# generic prompt (variations has no prompt of its own). The packaged default
+# mirrors the configured image-edit model.
+def _image_variations_default_workflow() -> str:
+    return str(_images_group("variations").get("default_workflow", "qwen-image-2.1-edit"))
+
+
+# Partial-denoise strength applied only when the resolved workflow's manifest
+# declares a `denoise` input -- otherwise the workflow's own default stands.
+def _image_variations_denoise() -> float:
+    return float(_images_group("variations").get("denoise", 0.75))
+
+
+def _image_multiref_edit_default_workflow() -> str:
+    return str(_images_group("edits").get("multiref_default_workflow", "qwen-image-2.1-edit-multiref"))
+
+
+def _image_media_jobs_group() -> Mapping[str, Any]:
+    return _images_group("media_jobs")
+
+
+def _image_media_job_max_attempts() -> int:
+    return int(_image_media_jobs_group().get("max_attempts", 3))
+
+
+def _image_media_job_retry_base_seconds() -> float:
+    return float(_image_media_jobs_group().get("retry_base_seconds", 5))
+
+
+def _image_media_job_retry_max_seconds() -> float:
+    return float(_image_media_jobs_group().get("retry_max_seconds", 30))
+
+
+def _image_media_job_resume_on_start() -> bool:
+    """images.media_jobs.resume_on_start (applies at restart: the snapshot keeps the value that runs). An
+    IMAGE_MEDIA_JOB_RESUME_ON_START in the environment still wins until C10 removes that override."""
+    return bool_from_config(
+        os.environ.get("IMAGE_MEDIA_JOB_RESUME_ON_START", _image_media_jobs_group().get("resume_on_start")), True,
+    )
+
+
+# The job concurrency is the size of two semaphores built here, so it applies at restart (CONFIG_HOMES class R): it is
+# the one images value that is still read at import, with the semaphores it sizes.
+IMAGE_MEDIA_JOB_CONCURRENCY = max(1, int(((runtime().config.get("images") or {}).get("media_jobs") or {}).get("concurrency", 1)))
 _image_media_job_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
 _image_media_job_tasks: set[asyncio.Task] = set()
+
+
 # Session make jobs (/me/api/make/jobs) share the image job concurrency.
-_SESSION_MAKE_CFG = IMAGE_MEDIA_JOBS_CFG.get("make", {}) or {}
-SESSION_MAKE_LIMITS = me_make.MakeLimits(
-    max_prompt_chars=max(1, int(_SESSION_MAKE_CFG.get("max_prompt_chars", 32_000))),
-    per_person=max(1, int(_SESSION_MAKE_CFG.get("max_outstanding_per_person", 3))),
-    household=max(1, int(_SESSION_MAKE_CFG.get("max_outstanding", 12))),
-)
+def _session_make_limits() -> me_make.MakeLimits:
+    make = _image_media_jobs_group().get("make")
+    make = make if isinstance(make, Mapping) else {}
+    return me_make.MakeLimits(
+        max_prompt_chars=max(1, int(make.get("max_prompt_chars", 32_000))),
+        per_person=max(1, int(make.get("max_outstanding_per_person", 3))),
+        household=max(1, int(make.get("max_outstanding", 12))),
+    )
+
+
 _image_media_job_scheduled: set[str] = set()
 
 # Video config (parallel to images). Maps `model:` aliases -> ComfyUI workflow JSON.
@@ -4339,13 +4399,15 @@ _VOICE_STORES: dict[tuple[str, custom_voices.VoiceLimits], custom_voices.VoiceSt
 
 
 def _voice_settings() -> Mapping[str, Any]:
-    section = config.get("voices")
+    """The voices section of the snapshot this call reads (CONFIG_HOMES C8a)."""
+    section = runtime().config.get("voices")
     return section if isinstance(section, Mapping) else {}
 
 
 def _voice_store() -> custom_voices.VoiceStore:
     settings = _voice_settings()
-    root = Path(str(settings.get("dir") or "data/voices"))
+    # The store directory is a startup setting: the voices section does not carry it (x-azizam-startup-only, until C10).
+    root = Path(str((_bootstrap_config.get("voices") or {}).get("dir") or "data/voices"))
     if not root.is_absolute():
         root = CONFIG_PATH.parent / root
     mode = str(settings.get("consent_mode") or "optional")
@@ -6973,11 +7035,11 @@ def compute_max_batch(free_vram: Optional[int], per_image: Optional[int]) -> int
         return 1
     if not isinstance(free_vram, int) or free_vram <= 0:
         return 1
-    budget = max(0, free_vram - IMAGE_VRAM_RESERVE_BYTES)
+    budget = max(0, free_vram - _image_vram_reserve_bytes())
     if budget < per_image:
         return 0  # caller surfaces 503 with Retry-After
     cap = max(1, budget // per_image)
-    return min(int(cap), max(1, IMAGE_MAX_BATCH_SIZE))
+    return min(int(cap), max(1, _image_max_batch_size()))
 
 
 def apply_batch_size(workflow: dict, meta: dict, batch_size: int) -> bool:
@@ -7192,7 +7254,7 @@ async def decide_image_background_removal(
     """
     if force_bypass:
         return _background_removal_fallback("forced_bypass", "edit mask supplied")
-    if not IMAGE_BACKGROUND_REMOVAL_ENABLED:
+    if not _image_background_removal_enabled():
         return _background_removal_fallback("disabled")
     prompt = str(prompt or "").strip()
     if not prompt:
@@ -7247,7 +7309,7 @@ async def decide_image_background_removal(
             return _background_removal_fallback("llm_unavailable", f"residency domain not admitting ({refused.reason})")
     try:
         _require_egress_lease(service)
-        async with engine_egress.async_client(timeout=httpx.Timeout(IMAGE_BACKGROUND_REMOVAL_TIMEOUT, connect=5)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(_image_background_removal_timeout(), connect=5)) as client:
             resp = await client.post(f"{target_host}/v1/chat/completions", headers=headers, json=payload)
         if resp.status_code != 200:
             return _background_removal_fallback("llm_error", log_scrub.describe_response(resp, "the chat engine refused the request"))
@@ -7792,7 +7854,7 @@ def _gateway_asset_metadata_payload(
         "updated_at": updated_at_value,
         "content_url": build_signed_asset_url(request, asset_id),
         "content_route": f"/v1/assets/{asset_id}/content",
-        "expires_in": IMAGE_SIGNED_URL_TTL,
+        "expires_in": image_signed_url_ttl(),
         "owner_scoped": bool(metadata.get("owner_key_hashes")),
     }
 
@@ -7820,13 +7882,14 @@ def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str |
     if mode == thumbnails.THUMB_MODE:
         # The expiry steps once per TTL, so the URL is the same all window long
         # and the browser can keep the preview between visits.
-        expires = (int(time.time()) // IMAGE_SIGNED_URL_TTL + 2) * IMAGE_SIGNED_URL_TTL
+        ttl = image_signed_url_ttl()
+        expires = (int(time.time()) // ttl + 2) * ttl
         if session:
             expires = min(expires, int(session.expires_at), int(session.latest_expiry))
         sig = (_sign_asset_token(asset_id, expires, mode, family, subject, timing) if session
                else _sign_asset_token(asset_id, expires, mode))
         return f"{proto}://{host}/v1/assets/{asset_id}/thumbnail?expires={expires}&sig={sig}{binding}"
-    expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
+    expires = int(time.time()) + image_signed_url_ttl()
     if session:
         expires = min(expires, int(session.expires_at), int(session.latest_expiry))
     sig = (_sign_asset_token(asset_id, expires, mode, family, subject, timing) if session
@@ -8387,12 +8450,12 @@ async def _generate_images_with_adaptive_batching(
         #   - Subsequent rounds (or any round when we have an estimate):
         #     compute cap from free_now / estimate. If we have no estimate but
         #     are past round 1, assume the cost is small (model already
-        #     resident) and trust IMAGE_MAX_BATCH_SIZE as the ceiling.
+        #     resident) and trust images.max_batch_size as the ceiling.
         if rounds_run == 1 and estimate is None:
             batch_target = 1
         elif estimate is not None:
             cap = compute_max_batch(free_now, estimate)
-            if cap == 0 and IMAGE_FREE_VRAM_ON_EXHAUSTION and not models_freed:
+            if cap == 0 and _image_free_vram_on_exhaustion() and not models_freed:
                 models_freed = await _free_graph_models_if_idle(client)
                 if models_freed:
                     free_now = await graph_free_vram_bytes(client)
@@ -8410,7 +8473,7 @@ async def _generate_images_with_adaptive_batching(
             # and can produce images. Trust the configured ceiling — any
             # OOM here is data we'll capture on the next request via the
             # measurement code below.
-            batch_target = min(IMAGE_MAX_BATCH_SIZE, images_remaining)
+            batch_target = min(_image_max_batch_size(), images_remaining)
 
         if isinstance(batch_limit, int) and not isinstance(batch_limit, bool):
             batch_target = min(batch_target, max(1, batch_limit))
@@ -8453,7 +8516,7 @@ async def _generate_images_with_adaptive_batching(
             vram_probe=probe,
             request=request,
         )
-        if err is not None and not models_freed and IMAGE_FREE_VRAM_ON_EXHAUSTION:
+        if err is not None and not models_freed and _image_free_vram_on_exhaustion():
             try:
                 body = json.loads(err.body.decode("utf-8")) if getattr(err, "body", None) else {}
                 error_text = str(((body.get("error") or {}).get("message") or "")).lower()
@@ -9823,9 +9886,9 @@ async def proxy_graph_image_variations_request(
         except ModelCompatibilityError as e:
             _record_image_input(receipt, "model", rejected_reason="model_incompatible")
             return model_compatibility_error(e)
-        model = IMAGE_VARIATIONS_DEFAULT_WORKFLOW if model_resolution.is_openai_alias else requested_model
+        model = _image_variations_default_workflow() if model_resolution.is_openai_alias else requested_model
     else:
-        model = IMAGE_VARIATIONS_DEFAULT_WORKFLOW
+        model = _image_variations_default_workflow()
     if not (model.endswith("-edit") or model.endswith("-inpaint")):
         model = f"{model}-edit"
     if receipt is not None:
@@ -9842,7 +9905,7 @@ async def proxy_graph_image_variations_request(
         # manifest actually declares it -- an unsupported extension input
         # would otherwise be rejected with a 400 by the edit route itself.
         overlay["extensions"] = json.dumps({
-            WORKFLOW_EXTENSION_NAMESPACE: {"denoise": IMAGE_VARIATIONS_DENOISE}
+            WORKFLOW_EXTENSION_NAMESPACE: {"denoise": _image_variations_denoise()}
         })
 
     overlay_request = _OverlayFormRequest(request, form, overlay)
@@ -15203,7 +15266,7 @@ app.include_router(
         capabilities_provider=_gateway_capabilities_provider,
         receipt_store_path=receipt_store.DB_PATH,
         resource_lister=_gateway_resource_lister,
-        asset_url_ttl_s=IMAGE_SIGNED_URL_TTL,
+        asset_url_ttl_s=image_signed_url_ttl,
         asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
@@ -15236,7 +15299,10 @@ class _SessionMakeRuntime:
     job semaphore, so at most the configured concurrency run at once.
     """
 
-    limits = SESSION_MAKE_LIMITS
+    @property
+    def limits(self) -> me_make.MakeLimits:
+        """images.media_jobs.make, read per call from the snapshot (CONFIG_HOMES C8a)."""
+        return _session_make_limits()
 
     def __init__(self) -> None:
         self._gates: dict[str, _MakePublishGate] = {}
@@ -21421,7 +21487,7 @@ def _prefer_inpaint_workflow_for_mask(model: str) -> str:
 def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> str:
     """Resolve edit defaults while keeping explicit workflow selections intact."""
     selected = model
-    if selected == IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW:
+    if selected == _image_multiref_edit_default_workflow():
         if has_mask:
             return _prefer_inpaint_workflow_for_mask(image_edit_default_model())
         return selected
@@ -21438,7 +21504,7 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
         return _prefer_inpaint_workflow_for_mask(selected)
 
     if image_count > 1 and selected == image_edit_default_model():
-        return IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW
+        return _image_multiref_edit_default_workflow()
     return selected
 
 
@@ -22911,15 +22977,17 @@ def _retry_after_seconds(response: Response) -> float | None:
         return None
     if value < 0:
         return None
-    return min(value, IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS)
+    return min(value, _image_media_job_retry_max_seconds())
 
 
 def _image_media_job_retry_decision(
     response: Response,
     *,
     attempt: int,
-    max_attempts: int = IMAGE_MEDIA_JOB_MAX_ATTEMPTS,
+    max_attempts: int | None = None,
 ) -> tuple[str, float] | None:
+    if max_attempts is None:
+        max_attempts = _image_media_job_max_attempts()
     if attempt >= max_attempts:
         return None
     status_code = int(getattr(response, "status_code", 0) or 0)
@@ -22944,8 +23012,8 @@ def _image_media_job_retry_decision(
     retry_after = _retry_after_seconds(response)
     if retry_after is not None:
         return reason, retry_after
-    backoff = IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1))
-    return reason, min(backoff, IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS)
+    backoff = _image_media_job_retry_base_seconds() * (2 ** max(0, attempt - 1))
+    return reason, min(backoff, _image_media_job_retry_max_seconds())
 
 
 def _assets_from_image_response(response: Response) -> list[dict[str, Any]]:
@@ -23174,7 +23242,7 @@ def _recover_media_jobs() -> None:
     _resume_pending_audio_media_jobs()
     _resume_pending_video_media_jobs()
     me_make.resume_jobs(runtime=_SESSION_MAKE_RUNTIME, jobs_path=media_jobs.DB_PATH,
-                        enabled=IMAGE_MEDIA_JOB_RESUME_ON_START)
+                        enabled=_image_media_job_resume_on_start())
     supported = {"async_image_generation", "async_audio_generation", "async_video_generation", me_make.JOB_MODE}
     for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
         mode = (job.get("metadata") or {}).get("mode")
@@ -23287,7 +23355,7 @@ async def _run_image_media_job(job_id: str) -> None:
         except ValueError:
             return
 
-        max_attempts = max(1, IMAGE_MEDIA_JOB_MAX_ATTEMPTS)
+        max_attempts = max(1, _image_media_job_max_attempts())
         for attempt in range(1, max_attempts + 1):
             current = media_jobs.get(job_id, path=media_jobs.DB_PATH) or {}
             if (current.get("metadata") or {}).get("cancel_requested_at"):
@@ -23354,8 +23422,8 @@ async def _run_image_media_job(job_id: str) -> None:
                 )
                 if attempt < max_attempts:
                     delay = min(
-                        IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1)),
-                        IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS,
+                        _image_media_job_retry_base_seconds() * (2 ** max(0, attempt - 1)),
+                        _image_media_job_retry_max_seconds(),
                     )
                     media_jobs.append_event(
                         job_id,
@@ -23512,7 +23580,7 @@ def _resume_pending_image_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
+        if not _image_media_job_resume_on_start() or (not opted_in(service) and not COMFY_ENABLED):
             _mark_image_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -24114,7 +24182,7 @@ def _resume_pending_audio_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
+        if not _image_media_job_resume_on_start() or (not opted_in(service) and not COMFY_ENABLED):
             _mark_audio_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -24741,7 +24809,7 @@ def _resume_pending_video_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
+        if not _image_media_job_resume_on_start() or (not opted_in(service) and not COMFY_ENABLED):
             _mark_video_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -25778,7 +25846,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
             )
 
         job, error = await submit_and_collect()
-        if error is not None and IMAGE_FREE_VRAM_ON_EXHAUSTION:
+        if error is not None and _image_free_vram_on_exhaustion():
             if refusal["out_of_memory"]:
                 if await _free_graph_models_if_idle(client):
                     refusal["out_of_memory"] = False

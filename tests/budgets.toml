@@ -531,7 +531,9 @@
 # feat/config-homes-c8c (2026-11-06): C8c model_compatibility and identity sections, +17 cases (tests/test_config_c8c_sections.py); measured 19838.
 # C8c review fix: the status page reads the generated model list where the gateway does (+1); measured 19839.
 # Train 11 (2026-11-06): engine address guard (+4), C8c model_compatibility and identity sections (+18); measured 19848.
-pytest = 19848
+# feat/config-homes-c8a (2026-11-06): +25 (tests/test_config_c8a_sections.py, images and voices sections); measured 19846.
+# Train 12 (2026-11-06): C8a images and voices sections (+25), job refusal reasons, C8b; measured TBD.
+pytest = 0
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -788,13 +790,17 @@ domain_literals = 826
 # C8c (model_compatibility, identity): both keys reach zero (7 and 1 constants moved). TTS_BACKEND_MODEL, STT_BACKEND_MODEL
 # and EMBEDDINGS_MODEL also became per-call readers of model_compatibility.defaults; they were counted under "backends"
 # (first of their sections alphabetically), so that key falls 23 -> 20.
+# C8a (images, voices): images falls 27 -> 7 (20 names moved: 9 plain settings, 4 media-job settings, 5 holders, the make limits and
+# its runtime attribute). Seven remain on purpose: IMAGE_CACHE_DIR, VRAM_ESTIMATES_FILE, IMAGE_MEDIA_JOB_PAYLOAD_DIR and
+# IMAGE_SIGNED_URL_SECRET_CFG are startup settings (class S, C10); IMAGE_MEDIA_JOB_CONCURRENCY and the two semaphores it
+# sizes are class R (read once at start: the semaphores cannot resize). voices had no import-time read.
 "import_time_config_reads.admin" = 2
 "import_time_config_reads.audio" = 4
 "import_time_config_reads.auth" = 5
 "import_time_config_reads.backends" = 20
 "import_time_config_reads.gateway" = 0
 "import_time_config_reads.identity" = 0
-"import_time_config_reads.images" = 27
+"import_time_config_reads.images" = 7
 "import_time_config_reads.llm" = 0
 "import_time_config_reads.mcp" = 1
 "import_time_config_reads.model_compatibility" = 0

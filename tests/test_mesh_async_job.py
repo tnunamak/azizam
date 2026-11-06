@@ -711,7 +711,7 @@ def test_startup_recovery_fails_a_job_a_dead_gateway_left_and_closes_its_receipt
                                      status=media_jobs.STATUS_RUNNING, metadata={"mode": mesh_api.JOB_MODE})
     for job in (mesh_job, other_kind, already_closed, no_request):
         media_jobs.create(job, path=jobs)
-    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_RESUME_ON_START", True)
+    monkeypatch.setattr(proxy, "_image_media_job_resume_on_start", lambda: True)
 
     proxy._recover_media_jobs()
 

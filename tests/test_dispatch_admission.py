@@ -65,7 +65,7 @@ def dispatch_env(fake_upstreams, monkeypatch, tmp_path):
     monkeypatch.setattr(proxy, 'PROXY_PORT', 19999)
     monkeypatch.setattr(proxy, 'COMFY_ENABLED', True)
     monkeypatch.setattr(proxy, 'TTS_ENABLED', True)
-    monkeypatch.setattr(proxy, 'IMAGE_BACKGROUND_REMOVAL_ENABLED', False)
+    monkeypatch.setattr(proxy, "_image_background_removal_enabled", lambda: False)
     monkeypatch.setattr(proxy, 'IMAGE_CACHE_DIR', tmp_path / 'images')
     for module in (receipt_store, media_jobs):
         db = tmp_path / (module.__name__ + '.db')

@@ -330,7 +330,7 @@ def create_gateway_router(
     receipt_store_path: str | Path | None = None,
     receipt_viewer_resolver: ReceiptViewerResolver | None = None,
     resource_lister: ResourceLister | None = None,
-    asset_url_ttl_s: int | None = None,
+    asset_url_ttl_s: int | Callable[[], int] | None = None,
     asset_path_resolver: output_availability.AssetPathResolver | None = None,
     media_job_creator: MediaJobCreator | None = None,
     media_job_getter: MediaJobGetter | None = None,
@@ -399,6 +399,10 @@ def create_gateway_router(
     )
 
     router = APIRouter(prefix=prefix, tags=["gateway-discovery"])
+
+    def _asset_url_ttl() -> int | None:
+        """The signed-URL lifetime a media job row reports: a number, or a callable read per request."""
+        return asset_url_ttl_s() if callable(asset_url_ttl_s) else asset_url_ttl_s
 
     def scoped_record(
         getter: ReceiptGetter | None,
@@ -740,7 +744,7 @@ def create_gateway_router(
             content={
                 "schema_version": 1,
                 "audience": audience,
-                "asset_url_ttl_s": asset_url_ttl_s,
+                "asset_url_ttl_s": _asset_url_ttl(),
                 "jobs": rows,
             },
         )
@@ -762,7 +766,7 @@ def create_gateway_router(
             )
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={**row, "asset_url_ttl_s": asset_url_ttl_s},
+            content={**row, "asset_url_ttl_s": _asset_url_ttl()},
         )
 
     @router.get("/media/jobs/{job_id}/events")

@@ -185,7 +185,7 @@ class ImageMediaJobHelpersTests(unittest.TestCase):
 
         self.assertEqual(
             proxy._image_media_job_retry_decision(vram, attempt=1, max_attempts=3),
-            ("vram_exhausted", proxy.IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS),
+            ("vram_exhausted", proxy._image_media_job_retry_max_seconds()),
         )
         self.assertEqual(
             proxy._image_media_job_retry_decision(tile, attempt=1, max_attempts=3)[0],
@@ -211,9 +211,9 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.patches = [
             patch.object(media_jobs, "DB_PATH", self.db),
             patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", self.payload_dir),
-            patch.object(proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 3),
-            patch.object(proxy, "IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS", 0),
-            patch.object(proxy, "IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS", 0),
+            patch.object(proxy, "_image_media_job_max_attempts", lambda: 3),
+            patch.object(proxy, "_image_media_job_retry_base_seconds", lambda: 0),
+            patch.object(proxy, "_image_media_job_retry_max_seconds", lambda: 0),
             patch.object(proxy, "_image_url_signing_secret", b"test-secret"),
             patch.object(proxy, "finish_image_route_receipt", lambda *_a, **_kw: None),
             # The worker rebuilds the submitting App from its key, as in production.
