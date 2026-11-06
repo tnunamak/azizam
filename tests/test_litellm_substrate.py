@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from gateway import litellm_substrate, service_registry
+
 
 def test_duplicate_paid_deployments_cannot_disagree_with_gateway_lookup() -> None:
     service = {"kind": "provider", "capabilities": ["openai"], "config": {
@@ -736,31 +738,84 @@ def test_lifecycle_backed_models_route_through_gateway_internal_target() -> None
     }
 
 
-def test_lifecycle_backed_service_can_override_gateway_internal_target() -> None:
-    compiled = compile_litellm_substrate_config(
-        {
-            "local": {
-                "id": "local",
-                "name": "Local mutable engine",
-                "capabilities": ["openai"],
-                "config": {
-                    "protocol": "openai-compatible",
-                    "gateway_lifecycle": True,
-                    "gateway_lifecycle_base_url": "http://gateway.internal/v1",
-                    "gateway_lifecycle_api_key_ref": "os.environ/CUSTOM_INTERNAL_KEY",
-                    "credential_origin": "http://gateway.internal",
-                    "models": {"default": "loaded-model.gguf"},
-                },
-            }
-        }
-    )
+def _lifecycle_service(**config) -> dict:
+    return {"local": {
+        "id": "local", "name": "Local mutable engine", "capabilities": ["openai"],
+        "config": {"protocol": "openai-compatible", "gateway_lifecycle": True,
+                   "models": {"default": "loaded-model.gguf"}, **config},
+    }}
 
-    assert compiled is not None
+
+def test_lifecycle_backed_service_can_override_gateway_internal_target_to_its_own_listener(monkeypatch) -> None:
+    monkeypatch.setattr(litellm_substrate, "_own_listen_port", 5123)
+    compiled = compile_litellm_substrate_config(_lifecycle_service(
+        gateway_lifecycle_base_url="http://127.0.0.1:5123/v1",
+        gateway_lifecycle_api_key_ref="os.environ/CUSTOM_INTERNAL_KEY"))
+
     entry = compiled["model_list"][0]
-    assert entry["litellm_params"]["api_base"] == "http://gateway.internal/v1"
+    assert entry["litellm_params"]["api_base"] == "http://127.0.0.1:5123/v1"
     assert entry["litellm_params"]["api_key"] == "os.environ/CUSTOM_INTERNAL_KEY"
-    assert entry["model_info"]["gateway_lifecycle"] is True
     assert entry["model_info"]["gateway_backend"] == "local"
+
+
+@pytest.mark.parametrize("base", [
+    "http://gateway.internal/v1", "http://127.0.0.1:5000/internal/litellm/local",
+    "https://127.0.0.1:5123/v1", "http://192.0.2.5:5123/v1",
+])
+def test_an_explicit_lifecycle_base_that_is_not_this_gateways_own_listener_is_refused(monkeypatch, base) -> None:
+    """A gateway on another port must never send its internal key, or loop its hop, to :5000 or any other host.
+    The registry refuses the record by name; the compile leaves out only that record (it used to raise, which
+    stopped the compile for every model)."""
+    monkeypatch.setattr(litellm_substrate, "_own_listen_port", 5123)
+    bad = {**_lifecycle_service(gateway_lifecycle_base_url=base)["local"], "kind": "local", "enabled": True}
+    with pytest.raises(ValueError, match="not this gateway's own listener"):
+        service_registry._read_registry({"schema_version": 1, "services": {"local": bad}}, strict=True)
+    kept, excluded = service_registry.read_registry({"schema_version": 1, "services": {"local": bad}})
+    assert not kept["services"] and [item.name for item in excluded] == ["local"]
+    assert "not this gateway's own listener" in excluded[0].error
+
+
+@pytest.mark.parametrize("base", ["http://gateway.internal/v1", "http://192.0.2.5:5123/v1"])
+def test_one_foreign_lifecycle_base_does_not_stop_the_compile_for_other_records(monkeypatch, caplog, base) -> None:
+    """Failed before the fix: the ValueError aborted the compile, ``litellm_known_model_names`` and the sidecar."""
+    monkeypatch.setattr(litellm_substrate, "_own_listen_port", 5123)
+    bad = _lifecycle_service(gateway_lifecycle_base_url=base)["local"]
+    good = {"id": "good", "name": "Good", "capabilities": ["openai"],
+            "config": {"protocol": "openai-compatible", "gateway_lifecycle": True, "models": {"default": "other.gguf"}}}
+    compiled = compile_litellm_substrate_config({"local": bad, "good": good})
+    assert {entry["model_info"]["gateway_backend"] for entry in compiled["model_list"]
+            if entry["model_info"].get("gateway_backend")} == {"good"}
+    assert "local is left out" in caplog.text and "not this gateway's own listener" in caplog.text
+    names = litellm_substrate.litellm_known_model_names({"services": {"local": bad, "good": good}})
+    assert names
+
+
+def test_a_foreign_lifecycle_base_on_a_record_that_never_reads_it_is_not_refused(monkeypatch) -> None:
+    """The field is read only by a record that goes through the gateway lifecycle hop."""
+    monkeypatch.setattr(litellm_substrate, "_own_listen_port", 5123)
+    direct = _lifecycle_service(gateway_lifecycle_base_url="http://192.0.2.5:5123/v1")["local"]
+    direct["config"].pop("gateway_lifecycle")
+    assert litellm_substrate.foreign_lifecycle_base_error(direct) is None
+
+
+def test_the_default_hop_and_current_routes_follow_this_gateways_listener(monkeypatch) -> None:
+    """A test gateway on :5123 compiles api_base values on :5123 for the lifecycle hop and the current route, never :5000."""
+    monkeypatch.setattr(litellm_substrate, "_own_listen_port", 5123)
+    service = _lifecycle_service()["local"]
+    compiled = compile_litellm_substrate_config({"local": service})
+    bases = {entry["litellm_params"]["api_base"] for entry in compiled["model_list"]}
+    assert bases and all(base.startswith("http://127.0.0.1:5123/") for base in bases), bases
+    assert not any(":5000" in base for base in bases)
+    assert {entry["litellm_params"]["api_key"] for entry in compiled["model_list"]} == {
+        "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"}
+
+
+def test_the_listener_port_is_read_from_the_environment_when_nothing_set_it(monkeypatch) -> None:
+    monkeypatch.setattr(litellm_substrate, "_own_listen_port", None)
+    monkeypatch.setenv("AZIZAM_PORT", "5444")
+    assert litellm_substrate.own_listen_port() == 5444
+    monkeypatch.setenv("AZIZAM_PORT", "not-a-port")
+    assert litellm_substrate.own_listen_port() == 5000
 
 
 def test_litellm_known_model_names_returns_model_name_set() -> None:

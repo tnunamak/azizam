@@ -789,8 +789,8 @@ class RealSocketCancellationTests(unittest.TestCase):
 
             with patch.dict(
                 os.environ, {"AZIZAM_INTERNAL_LITELLM_KEY": internal_key}, clear=False
-            ), patch.dict(
-                proxy.LLM_BACKEND_HOSTS, {backend_name: backend_url}, clear=False
+            ), patch.object(
+                proxy, "inner_hop_backend_hosts", return_value={backend_name: backend_url}
             ), patch.object(
                 proxy, "_service_availability_response", return_value=None
             ), patch.object(
@@ -967,8 +967,8 @@ async def _boot_composed_harness() -> None:
     env_patch.start()
     auth_patch = authenticated()
     auth_patch.start()
-    backend_hosts_patch = patch.dict(
-        proxy.LLM_BACKEND_HOSTS, {_COMPOSED_BACKEND_NAME: backend_url}, clear=False
+    backend_hosts_patch = patch.object(
+        proxy, "inner_hop_backend_hosts", return_value={_COMPOSED_BACKEND_NAME: backend_url}
     )
     backend_hosts_patch.start()
     availability_patch = patch.object(

@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 from gateway import lifecycle_drivers as ld  # noqa: E402
 from gateway.swap_drain import SwapDrain  # noqa: E402
+from tests.support.config_snapshot import pin_inner_hop_hosts  # noqa: E402
 from tests.fake_systemd_engine import (  # noqa: E402
     MODEL,
     FakeEngine,
@@ -60,6 +61,7 @@ def engine(tmp_path, monkeypatch) -> FakeEngine:
     monkeypatch.setattr(proxy, "_service_swap_locks", {})
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *_a, **_k: None)
     monkeypatch.setitem(proxy.LLM_BACKEND_HOSTS, BACKEND, "http://127.0.0.1:59999")
+    pin_inner_hop_hosts(monkeypatch, {BACKEND: "http://127.0.0.1:59999"})
     monkeypatch.setenv("AZIZAM_INTERNAL_LITELLM_KEY", INTERNAL_KEY)
     return fake
 

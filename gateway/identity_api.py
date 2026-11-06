@@ -26,6 +26,7 @@ from gateway import likeness, request_forms
 from gateway.identity_scene import IdentityDeps, IdentityError, PersonSpec, SceneRequest
 from gateway.likeness import LikenessError
 from gateway.extensions import ExtensionError, multipart_extensions
+from gateway import engine_egress
 
 LIKENESS_PATH = "/gateway/v1/faces/likeness"
 IDENTITY_PATH = "/gateway/v1/images/identity"
@@ -41,7 +42,7 @@ class FaceServiceClient:
         self.timeout = timeout
 
     async def analyze(self, image: bytes, model: str) -> list[dict[str, Any]]:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(self.timeout, connect=10)) as client:
             response = await client.post(
                 f"{self.base_url}/v1/faces/analyze",
                 files={"image": ("image", image, "application/octet-stream")},

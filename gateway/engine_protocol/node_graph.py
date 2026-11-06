@@ -54,6 +54,7 @@ from gateway.engine_protocol.types import (
     AssetRef, CanonicalRequest, Connection, Health, Inventory, JobEvent, JobRef, JobState, JobStatus, Reply, StreamReply,
 )
 from gateway.manifests import bind_backend_request, validate_inputs
+from gateway import engine_egress
 
 ADAPTER_ID = "node-graph"
 OPERATIONS = (
@@ -414,7 +415,7 @@ class NodeGraphAdapter:
         """One client for several requests. ``client_kwargs`` go to ``httpx.AsyncClient`` as given (timeout, verify)."""
         if "timeout" not in client_kwargs:
             client_kwargs["timeout"] = httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)
-        async with httpx.AsyncClient(**client_kwargs) as client:
+        async with engine_egress.async_client(**client_kwargs) as client:
             yield GraphSession(conn, client)
 
     def attach(self, conn: Connection, client: Any) -> GraphSession:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -30,6 +31,7 @@ from tests.test_mesh_route import (
     _call,
     _multipart_body,
     _others,
+    _Upstream,
     _pool_held,
     _until,
 )
@@ -156,6 +158,24 @@ def test_submit_answers_202_with_the_job_while_the_engine_is_still_running(harne
         assert harness.stored == []
         harness.let_engine_return()
         await harness.idle()
+
+    run(scenario())
+
+
+def test_a_refused_egress_answers_the_refusal_and_makes_no_job(harness: AsyncHarness) -> None:
+    from fastapi.responses import JSONResponse
+
+    harness.route.egress_refusal = lambda service_id: JSONResponse(
+        {"error": {"code": "transition_unsupported"}}, status_code=503)
+
+    async def scenario() -> None:
+        response = await harness.submit()
+        assert response.status_code == 503 and response.json()["error"]["code"] == "transition_unsupported"
+        assert harness.all_jobs() == [], "a refused send leaves no job behind"
+        assert harness.engine.events == [], "nothing reaches the engine"
+        assert harness.route.egress_asked == ["trellis"]
+        assert harness.receipts == [{"request_id": "req-test", "outcome": ("failed", "not_admitting"), "exc": None}]
+        assert not _pool_held(harness.route)
 
     run(scenario())
 
@@ -752,6 +772,106 @@ def test_a_closed_receipt_cannot_be_handed_off() -> None:
             owner.handoff()
 
     asyncio.run(scenario())
+
+
+# --- the lease check in the client: health and observer reads are probes --------------------------------------------
+
+SERVICE_DOMAIN, OBSERVER_DOMAIN = "mesh-dom", "observer-dom"
+
+
+class _Closing:
+    """The real egress client factory over the harness's fake transport; it notes each client and whether it was closed."""
+
+    def __init__(self, harness: AsyncHarness) -> None:
+        from gateway import engine_egress
+
+        self.clients: list[httpx.AsyncClient] = []
+        self.seen: list[tuple[str, str]] = []
+        route_handler = harness.route.handler
+
+        def handler(request: httpx.Request) -> Any:
+            self.seen.append((request.method, request.url.path))
+            return route_handler(request)
+
+        self.factory = lambda: self.clients.append(
+            engine_egress.async_client(transport=_Upstream(handler))) or self.clients[-1]
+
+
+def _enforce_leases(harness: AsyncHarness, monkeypatch) -> _Closing:
+    """Mark the service and its observer as two transition-enabled domains, project the map, and use the real client."""
+    import dataclasses
+
+    from fastapi.responses import JSONResponse
+
+    from gateway import engine_egress, transition_gate
+
+    for service_id, domain in (("trellis", SERVICE_DOMAIN), ("vram-observer", OBSERVER_DOMAIN)):
+        harness.route.services[service_id]["residency"] = {"domain": domain, "transition": {"enabled": True, "activation": "pass_through"}}
+    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
+    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    engine_egress.publish(harness.route.services)
+
+    def refusal(service_id: str) -> Any:
+        try:
+            transition_gate.require_egress_lease(transition_gate.policy_for(service_id, harness.route.services), service_id)
+        except transition_gate.TransitionUnavailable:
+            return JSONResponse({"error": {"code": "transition_unsupported"}}, status_code=503)
+        return None
+
+    harness.route.egress_refusal = refusal
+    closing = _Closing(harness)
+    deps = dataclasses.replace(harness.route.deps(), client_factory=closing.factory)
+    harness.app = FastAPI()
+    mesh_api.register_mesh_routes(harness.app, deps)
+    return closing
+
+
+def test_an_unleased_send_to_an_enabled_domain_is_refused_after_a_probed_health_read(harness: AsyncHarness, monkeypatch) -> None:
+    """With the lease check in the client, the health read is a probe: it goes out, the send is then refused with the
+    gateway's refusal, no job exists and the client is closed. Failed before the fix: the unmarked health read raised
+    the gate's refusal inside ``_healthy``, which escaped as a bare 503 and left the client open."""
+    from gateway import transition_gate
+
+    closing = _enforce_leases(harness, monkeypatch)
+
+    async def scenario() -> None:
+        token = transition_gate._EGRESS_LEASES.set(())
+        try:
+            response = await harness.submit()
+        finally:
+            transition_gate._EGRESS_LEASES.reset(token)
+        assert response.status_code == 503 and response.json()["error"]["code"] == "transition_unsupported"
+        assert closing.seen == [("GET", "/health")], "the health read went out; nothing else did"
+        assert harness.all_jobs() == [], "a refused send leaves no job behind"
+        assert harness.engine.events == []
+        assert harness.route.egress_asked == ["trellis"]
+        assert [client.is_closed for client in closing.clients] == [True]
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("prefer", [True, False], ids=["async", "sync"])
+def test_the_observer_read_in_another_enabled_domain_needs_no_lease(harness: AsyncHarness, monkeypatch, prefer: bool) -> None:
+    """The service's lease is held; the observer is in its own enabled domain, with none held. Its read is a probe of
+    the path the service's ``resource_capacity.observer`` names, so it goes out, and the run reaches the engine."""
+    from gateway import transition_gate
+
+    harness.hold_engine = False
+    closing = _enforce_leases(harness, monkeypatch)
+
+    async def scenario() -> None:
+        token = transition_gate._EGRESS_LEASES.set((SimpleNamespace(key=SERVICE_DOMAIN, released=False),))
+        try:
+            response = await harness.submit(prefer=prefer)
+            assert response.status_code == (202 if prefer else 200), response.text
+            await harness.idle()
+        finally:
+            transition_gate._EGRESS_LEASES.reset(token)
+        assert ("GET", "/facts") in closing.seen, "the observer read went out"
+        assert ("POST", "/generate") in closing.seen, "and the run reached the engine"
+        assert all(client.is_closed for client in closing.clients)
+
+    run(scenario())
 
 
 # --- discovery: a client built from the catalog asks for the job ----------------------------------------------------

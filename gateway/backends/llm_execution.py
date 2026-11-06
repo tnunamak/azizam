@@ -24,6 +24,7 @@ import httpx
 from gateway.backends.cancellation import CancellationToken
 from gateway.outbound_request import backend_query_string
 from gateway.service_registry import is_litellm_service_record
+from gateway import engine_egress
 
 LITELLM_BODY_EXECUTION_PATHS = frozenset(
     {
@@ -383,7 +384,7 @@ async def send_llm_execution_request(
     always runs regardless of how the signalled branch exits).
     """
     request = sanitize_litellm_execution_request(request)
-    client = httpx.AsyncClient(
+    client = engine_egress.async_client(
         timeout=httpx.Timeout(
             connect=10.0,
             read=request.read_timeout,

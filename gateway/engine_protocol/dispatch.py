@@ -86,8 +86,10 @@ def resolve(registry: Mapping[str, Any], model: Any, op: str) -> Target | None:
 
 
 class Runtime:
-    def __init__(self, target: Target, *, assets: AssetStore | None = None, transport=None):
+    def __init__(self, target: Target, *, assets: AssetStore | None = None, transport=None, egress=None):
         self.target = target
+        # ``egress`` is called before any request leaves the gateway for the engine (never for a readiness probe).
+        self._egress = egress
         connection = connection_config(target.service)
         self.connection = connection_from_record({**connection, 'credentials': {}}, lambda ref: None)
         self.adapter = AdapterRegistry({target.description.id: target.description}, assets=assets,
@@ -127,7 +129,13 @@ class Runtime:
                                 params={'model': self.target.upstream, 'offering': self.target.offering['id'],
                                         'request_id': 'req_' + secrets.token_hex(12), 'created': int(time.time())})
 
+    def require_egress(self) -> None:
+        """Refuse to send when the caller supplied an egress check that fails."""
+        if self._egress is not None:
+            self._egress()
+
     async def invoke(self, op: str, body: Mapping[str, Any]):
+        self.require_egress()
         return await self.adapter.invoke(self.connection_for(op), op, self.request(op, body))
 
     async def lease(self, *, drain, lock_for, may_switch: bool = True):
@@ -146,6 +154,7 @@ class Runtime:
             checker = EngineControlRuntime(service, drain=drain, lock_for=lock_for)
             checked, identities = checker._check_paths(args, frozenset())
             checker._recheck_paths(identities)
+            self.require_egress()
             reply = await self.adapter.invoke(self.connection_for(name), name, CanonicalRequest(name, body=checked))
             if isinstance(reply, StreamReply):
                 await reply.aclose()

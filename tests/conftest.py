@@ -214,15 +214,26 @@ def _config_snapshot_of_one_test() -> Iterator[None]:
     """``proxy.runtime()`` reads only the published snapshot (gateway/config_runtime.py ``runtime_for``). A test that
     reloads publishes a snapshot, and one that swaps ``proxy.config`` publishes none; neither may leave its config in the
     holder for the next test. A test that needs ``runtime()`` to see a config it swapped publishes it through
-    ``tests/support/config_snapshot.py``."""
+    ``tests/support/config_snapshot.py``.
+
+    The module's ``config`` and the send-time egress map are put back with the holder: a reload swaps all three, and
+    a test that restores the old config's contents into the new mapping (tests/test_hot_reload.py) leaves ``config``
+    a different object from the restored snapshot's, which a later test on the same worker sees."""
     import sys
 
     module = sys.modules.get("proxy")
     holder = module.CONFIG_HOME.holder if module is not None else None
     saved = holder.current() if holder is not None else None
+    saved_config = module.config if module is not None else None
+    egress = sys.modules.get("gateway.engine_egress")
+    saved_egress = (egress._destinations, egress._probe_paths) if egress is not None else None
     yield
     if holder is not None and saved is not None:
         holder.publish(saved)
+    if module is not None:
+        module.config = saved_config
+    if egress is not None and saved_egress is not None:
+        egress._destinations, egress._probe_paths = saved_egress
 
 
 @pytest.fixture(scope="session")

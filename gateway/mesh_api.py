@@ -40,6 +40,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from starlette.datastructures import UploadFile
 
+from gateway import engine_egress
 from gateway.exclusive_pool import (
     MIB,
     ExclusivePoolLeaseManager,
@@ -148,6 +149,9 @@ class MeshApiDeps:
     register_job_counter: Callable[[str, Callable[[], int]], None] | None = None
     # discard_output(asset_id): remove a stored model from the Library (one a canceled job must not keep). None keeps it.
     discard_output: Callable[[str], object] | None = None
+    # egress_refusal(service_id) -> a Response that refuses the send, or None; called just before the request is sent to the
+    # engine (never for the health read). The gateway uses it to keep an unleased path out of a transition-enabled domain.
+    egress_refusal: Callable[[str], Response | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -352,7 +356,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
     async def _healthy(client: httpx.AsyncClient, base: str, config: Mapping[str, Any]) -> bool:
         health_url = base + str(config.get("health_endpoint") or "/health")
         try:
-            healthy = await client.get(health_url, timeout=_HEALTH_TIMEOUT_SECONDS)
+            healthy = await client.get(health_url, timeout=_HEALTH_TIMEOUT_SECONDS, extensions=engine_egress.probe())
         except httpx.HTTPError:
             return False
         return 200 <= healthy.status_code < 300
@@ -372,6 +376,11 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
                 owner.report(status="failed", reason="unhealthy")
                 return _unavailable(request_id)
 
+            if deps.egress_refusal is not None:
+                refusal = deps.egress_refusal(manifest.service_id)
+                if refusal is not None:
+                    owner.report(status="failed", reason="not_admitting")
+                    return refusal
             work = asyncio.ensure_future(_lease_and_post(client, request_id, base, config, spec, observer, fields,
                                                          image))
             watcher = asyncio.ensure_future(_watch_disconnect(request))
@@ -417,7 +426,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
             if observer_problem is not None:
                 raise PoolObserverError(observer_problem)
             try:
-                response = await client.get(observer_url, timeout=spec.timeout_seconds)
+                response = await client.get(observer_url, timeout=spec.timeout_seconds, extensions=engine_egress.probe())
             except httpx.HTTPError as error:
                 raise PoolObserverError("observer did not answer") from error
             if response.status_code != 200:
@@ -496,10 +505,22 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
             owner.report(status="failed", reason="service_unavailable")
             return _unavailable(request_id)
         client = deps.client_factory()
-        if not await _healthy(client, base, config):
+        try:
+            healthy = await _healthy(client, base, config)
+        except BaseException:  # a refusal the gateway's error handler formats still leaves no open client
+            await client.aclose()
+            raise
+        if not healthy:
             await client.aclose()
             owner.report(status="failed", reason="unhealthy")
             return _unavailable(request_id)
+        # The same send-time check as the sync route, before the job exists: a refused send leaves no job behind.
+        if deps.egress_refusal is not None:
+            refusal = deps.egress_refusal(manifest.service_id)
+            if refusal is not None:
+                await client.aclose()
+                owner.report(status="failed", reason="not_admitting")
+                return refusal
         path = jobs.path()
         job = media_jobs.MediaJob(
             intent=MESH_INTENT, workflow=manifest.id, backend=manifest.service_id, request_id=request_id,
@@ -795,13 +816,13 @@ async def _probe_pool(deps: MeshApiDeps, spec: ExclusivePoolSpec, service: Mappi
     async with deps.client_factory() as client:
         health_url = base + str(config.get("health_endpoint") or "/health")
         try:
-            health = await client.get(health_url, timeout=_HEALTH_TIMEOUT_SECONDS)
+            health = await client.get(health_url, timeout=_HEALTH_TIMEOUT_SECONDS, extensions=engine_egress.probe())
         except Exception:  # noqa: BLE001 - any failure to ask is one bounded reason, never the raw error
             return "service health did not answer"
         if not 200 <= health.status_code < 300:
             return "service health did not answer with 2xx"
         try:
-            observed = await client.get(observer_url, timeout=spec.timeout_seconds)
+            observed = await client.get(observer_url, timeout=spec.timeout_seconds, extensions=engine_egress.probe())
         except Exception:  # noqa: BLE001
             return "observer did not answer"
         if observed.status_code != 200:

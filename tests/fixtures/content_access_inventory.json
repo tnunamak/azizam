@@ -2455,6 +2455,24 @@
       "access": "own-account"
     },
     {
+      "handler": "proxy.internal_litellm_local_completions",
+      "method": "POST",
+      "path": "/internal/litellm/local/{backend}/v1/completions",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.internal_litellm_local_embeddings",
+      "method": "POST",
+      "path": "/internal/litellm/local/{backend}/v1/embeddings",
+      "access": "own-account"
+    },
+    {
+      "handler": "proxy.internal_litellm_local_not_served",
+      "method": "POST",
+      "path": "/internal/litellm/local/{rest:path}",
+      "access": "own-account"
+    },
+    {
       "handler": "proxy.list_models",
       "method": "GET",
       "path": "/openai/v1/models",

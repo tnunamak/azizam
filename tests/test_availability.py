@@ -718,7 +718,7 @@ def test_status_probe_connect_failure_marks_no_response_kind():
     import status_endpoint
 
     class Client:
-        async def get(self, url):
+        async def get(self, url, **_kw):
             raise httpx.ConnectError("refused")
 
     row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://127.0.0.1:9/health", "required", None))
@@ -748,7 +748,7 @@ def test_status_probe_200_ready_false_is_not_up():
         def json(self):
             return {"ready": False}
     class Client:
-        async def get(self, url):
+        async def get(self, url, **_kw):
             return Response()
 
     row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/health", "required", None))
@@ -766,7 +766,7 @@ def test_status_probe_200_starting_is_starting_not_up():
         def json(self):
             return {"status": "starting"}
     class Client:
-        async def get(self, url):
+        async def get(self, url, **_kw):
             return Response()
 
     row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/health", "required", None))
@@ -783,7 +783,7 @@ def test_status_probe_200_unrecognized_json_is_unknown_not_up():
         def json(self):
             return {"object": "list", "data": []}
     class Client:
-        async def get(self, url):
+        async def get(self, url, **_kw):
             return Response()
 
     row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/v1/models", "required", None))
@@ -800,7 +800,7 @@ def test_status_probe_404_missing_health_route_is_weak_no_response():
         def json(self):
             return {"error": "not found"}
     class Client:
-        async def get(self, url):
+        async def get(self, url, **_kw):
             return Response()
 
     row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/health-not-implemented", "required", None))
@@ -935,7 +935,7 @@ def test_declared_health_success_path_does_not_mask_readiness(payload, expected)
         def json(self):
             return payload
     class Client:
-        async def get(self, url):
+        async def get(self, url, **_kw):
             return Response()
     row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://fixture/stats", "required", None,
                                              service={"health_success_path": "system"}))
@@ -963,7 +963,7 @@ def test_openai_model_list_health_probe_requires_a_usable_model(payload, expecte
             return payload
 
     class Client:
-        async def get(self, url):
+        async def get(self, url, **_kw):
             return Response()
 
     row = asyncio.run(status_endpoint._probe(

@@ -186,6 +186,7 @@ ALLOWED_READS: dict[str, str] = {
     "gateway/mcp_server.py::dispatch": "the code of the gateway's own JSON-RPC reply",
     "gateway/resource_admission_http.py::admission_protocol_body": "the body is the gateway's own projected admission refusal",
     "gateway/workflow_call.py::error_from": "the reply is the gateway's own route answer, built by gateway.client_errors",
+    "proxy.py::_readiness_refusal": "reads the code of the gateway's own readiness refusal (a gate or lifecycle answer) to pass it on; no engine text",
     "proxy.py::_speech_fallback_reason": "reads the code to decide a fallback; nothing is sent on",
     "proxy.py::_stt_resource_limit_response": "the body is the gateway's own refusal; the message is replaced by the gateway's projected reason",
     "proxy.py::_generate_images_with_adaptive_batching": "the text is lowercased to decide whether to retry; it is not sent on",
@@ -320,11 +321,16 @@ ALLOWED_CONTENT_TYPES: dict[str, str] = {
 }
 ALLOWED_RETRY_AFTER: dict[str, str] = {
     "gateway/engine_admin.py::slot": "the gateway's own rate limit, in seconds",
+    "gateway/engine_admin.py::test": "the gateway's own gate retry delay (GATE_RETRY_AFTER_S)",
     "gateway/engine_switch.py::__init__": "the gateway's own wait, in seconds",
     "gateway/me_make.py::_error": "an integer the gateway chose (PublicFailure.retry_after)",
     "gateway/resource_admission_http.py::admission_http_response": "an integer the admission decision computed",
+    "gateway/voices_api.py::error_response": "an integer from a gate refusal (TransitionUnavailable.retry_after_s via _readiness_refusal)",
+    "gateway/transition_gate.py::__init__": "an integer the transition gate computed (TransitionUnavailable)",
     "proxy.py::_swap_deferred_response": "an integer the swap controller computed",
+    "proxy.py::_handle_rerank": "an integer the transition gate computed (TransitionUnavailable.retry_after_s)",
     "proxy.py::_service_availability_response": "an integer from the owner's service override",
+    "proxy.py::_transition_unavailable_response": "an integer the transition gate computed (TransitionUnavailable.retry_after_s)",
 }
 
 

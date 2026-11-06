@@ -72,6 +72,8 @@ HEAD /ollama/api/blobs/{digest} 403                            # not exercised: 
 POST /internal/litellm/current/v1/chat/completions 401         # not exercised: was: HTTP status in DENIED
 POST /internal/litellm/current/v1/completions 401              # not exercised: was: HTTP status in DENIED
 POST /internal/litellm/local/{backend}/v1/chat/completions 401 # not exercised: was: HTTP status in DENIED
+POST /internal/litellm/local/{backend}/v1/completions 401 # not exercised: was: HTTP status in DENIED
+POST /internal/litellm/local/{backend}/v1/embeddings 401 # not exercised: was: HTTP status in DENIED
 GET /gateway/v1/providers/{provider} 404                       # not exercised: was: HTTP status in DENIED
 DELETE /gateway/v1/providers/{provider}/{native_path:path} 404 # not exercised: was: HTTP status in DENIED
 GET /gateway/v1/providers/{provider}/{native_path:path} 404    # not exercised: was: HTTP status in DENIED
@@ -171,6 +173,8 @@ DELETE /openai/v1/responses/{response_id} 404                  # not exercised: 
 POST /internal/litellm/current/v1/chat/completions 401         # not exercised: was: HTTP status in DENIED
 POST /internal/litellm/current/v1/completions 401              # not exercised: was: HTTP status in DENIED
 POST /internal/litellm/local/{backend}/v1/chat/completions 401 # not exercised: was: HTTP status in DENIED
+POST /internal/litellm/local/{backend}/v1/completions 401 # not exercised: was: HTTP status in DENIED
+POST /internal/litellm/local/{backend}/v1/embeddings 401 # not exercised: was: HTTP status in DENIED
 GET /gateway/v1/providers/{provider} 404                       # not exercised: was: HTTP status in DENIED
 DELETE /gateway/v1/providers/{provider}/{native_path:path} 404 # not exercised: was: HTTP status in DENIED
 GET /gateway/v1/providers/{provider}/{native_path:path} 404    # not exercised: was: HTTP status in DENIED

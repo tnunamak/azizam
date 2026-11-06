@@ -15,6 +15,7 @@ from gateway import client_errors, runtime_secrets
 from gateway.capabilities import Capability
 from gateway.decisions_api import DecisionDispatchResult, DecisionModel, DecisionsError
 from gateway.stable_aliases import AliasResolution, AliasUnavailableError, pattern_names, resolve_alias
+from gateway import engine_egress
 
 
 ROUTING_TIMEOUT_SECONDS = 15.0
@@ -40,12 +41,14 @@ class DecisionRuntime:
 
     def __init__(self, config: Callable[[], Mapping[str, Any]], authorize: Callable,
                  ensure_ready: Callable, catalog_authorize: Callable | None = None,
-                 admit: Callable | None = None):
+                 admit: Callable | None = None, egress_refusal: Callable | None = None):
         self.config = config
         self.authorize = authorize
         self.catalog_authorize = catalog_authorize or authorize
         self.ensure_ready = ensure_ready
         self.admit = admit
+        # Called with a service id just before a request is sent to it; a Response refuses the send (never a probe).
+        self.egress_refusal = egress_refusal
         self.observed: dict[str, tuple[float, str | None]] = {}
 
     def available(self, _name: str, spec: Mapping[str, Any]) -> bool:
@@ -79,8 +82,8 @@ class DecisionRuntime:
             base = f"http://{service['host']}:{service['port']}"
             # ... and only where the address it makes has the origin they were stored for (decision D39).
             target = runtime_secrets.url(service, "health_endpoint", base=base, join=lambda head, tail: f"{head}{tail}") or f"{base}/health"
-            with httpx.Client(timeout=0.3, trust_env=False) as client:
-                response = client.get(target)
+            with engine_egress.client(timeout=0.3, trust_env=False) as client:
+                response = client.get(target, extensions=engine_egress.probe())
             if response.status_code == 200:
                 candidate = response.json().get("engine")
                 if candidate in {"gpu", "cpu"}:
@@ -243,10 +246,17 @@ class DecisionRuntime:
                         json.loads(refusal.body), status_code=refusal.status_code,
                         headers=dict(refusal.headers), backend=service_id,
                     )
+            if self.egress_refusal is not None:
+                refusal = self.egress_refusal(service_id)
+                if refusal is not None:
+                    return DecisionDispatchResult(
+                        json.loads(refusal.body), status_code=refusal.status_code,
+                        headers=dict(refusal.headers), backend=service_id,
+                    )
             spec = section.get(engine_id, {})
             forwarded = {**body, "model": spec.get("model") or resolved.upstream_model}
             try:
-                async with httpx.AsyncClient(timeout=max(0.001, min(float(service.get("timeout") or 15), deadline - time.monotonic())), trust_env=False) as client:
+                async with engine_egress.async_client(timeout=max(0.001, min(float(service.get("timeout") or 15), deadline - time.monotonic())), trust_env=False) as client:
                     remaining_ms = max(0, (deadline - time.monotonic()) * 1000)
                     response = await client.post(
                         f"http://{service['host']}:{service['port']}/v1/systemone", json=forwarded,

@@ -100,13 +100,19 @@ class ServingLease:
     """One request in flight on one backend. ``release`` is idempotent."""
 
     def __init__(self, drain: "SwapDrain", backend: str, started_at: float,
-                 on_release: Callable[[], None] | None = None) -> None:
+                 on_release: Callable[[], None] | None = None, *, key: str | None = None) -> None:
         self._drain = drain
         self.backend = backend
+        # The count this lease belongs to: the backend's residency domain.
+        self.key = key or backend
         self.started_at = started_at
         self.handed_off = False
         self._released = False
         self._on_release = on_release
+
+    @property
+    def released(self) -> bool:
+        return self._released
 
     def release(self) -> None:
         if self._released:
@@ -142,8 +148,23 @@ class ServingLease:
 class SwapDrain:
     """Serving leases per backend, and the bounded wait a swap does on them."""
 
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        key_for: Callable[[str], str] | None = None,
+        admit: Callable[[str], None] | None = None,
+        on_mint: Callable[[ServingLease], None] | None = None,
+    ) -> None:
+        """``key_for`` maps a backend to the key its leases count under (its
+        residency domain; default the backend itself). ``admit`` runs before a
+        lease is minted, under the swap lock, and raises to refuse it.
+        ``on_mint`` runs in the minting task right after a lease exists, so the
+        caller can record which task holds it (the egress check reads that)."""
         self._clock = clock
+        self._key_for = key_for or (lambda backend: backend)
+        self._admit = admit
+        self._on_mint = on_mint
         self._leases: dict[str, set[ServingLease]] = {}
         self._waiters: dict[str, set[asyncio.Event]] = {}
 
@@ -155,12 +176,17 @@ class SwapDrain:
         Call under the swap lock, in the same hold in which the caller made
         its target ready or read the loaded model.
         """
-        lease = ServingLease(self, backend, self._clock(), on_release)
-        self._leases.setdefault(backend, set()).add(lease)
+        if self._admit is not None:
+            self._admit(backend)
+        key = self._key_for(backend)
+        lease = ServingLease(self, backend, self._clock(), on_release, key=key)
+        self._leases.setdefault(key, set()).add(lease)
+        if self._on_mint is not None:
+            self._on_mint(lease)
         return lease
 
     def in_flight(self, backend: str) -> int:
-        return len(self._leases.get(backend, ()))
+        return len(self._leases.get(self._key_for(backend), ()))
 
     def snapshot(self) -> dict[str, dict[str, float]]:
         """Read-only diagnostics: in-flight count and oldest lease age per busy backend.
@@ -186,6 +212,7 @@ class SwapDrain:
         Raises ``SwapDeferred`` after ``settings.timeout_s``.
         """
         start = self._clock()
+        backend = self._key_for(backend)
         leases = self._leases.setdefault(backend, set())
         if leases:
             print(
@@ -219,6 +246,6 @@ class SwapDrain:
     # -- internals ----------------------------------------------------------
 
     def _release(self, lease: ServingLease) -> None:
-        self._leases.get(lease.backend, set()).discard(lease)
-        for changed in list(self._waiters.get(lease.backend, ())):
+        self._leases.get(lease.key, set()).discard(lease)
+        for changed in list(self._waiters.get(lease.key, ())):
             changed.set()

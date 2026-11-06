@@ -42,6 +42,7 @@ from gateway.engine_protocol.httpx_wire import failure, reply_from
 from gateway.engine_protocol.types import (
     AssetRef, CanonicalRequest, Connection, Health, Inventory, JobEvent, JobRef, JobStatus, Reply, StreamReply,
 )
+from gateway import engine_egress
 
 SPEECH_PATH = "/v1/audio/speech"
 VOICE_CHECK_PATH = "/v1/audio/voice-check"
@@ -83,7 +84,7 @@ class InlineTtsAdapter:
     @staticmethod
     async def _posted_json(url: str, payload: Any, conn: Connection) -> Reply:
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)) as client:
+            async with engine_egress.async_client(timeout=httpx.Timeout(conn.timeouts.first_byte_s, connect=conn.timeouts.connect_s)) as client:
                 resp = await client.post(url, json=payload)
         except httpx.HTTPError as error:
             raise failure(error) from error
@@ -92,7 +93,7 @@ class InlineTtsAdapter:
     @staticmethod
     async def _buffered(url: str, headers: Any, body: bytes, timeout: httpx.Timeout) -> Reply:
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with engine_egress.async_client(timeout=timeout) as client:
                 resp = await client.post(url, headers=headers, content=body)
         except Exception as error:  # noqa: BLE001 - every failure surfaces typed, with the original text
             raise _failure(error) from error
@@ -100,7 +101,7 @@ class InlineTtsAdapter:
 
     @staticmethod
     async def _streamed(url: str, headers: Any, body: bytes, timeout: httpx.Timeout) -> Reply | StreamReply:
-        client = httpx.AsyncClient(timeout=timeout)
+        client = engine_egress.async_client(timeout=timeout)
         upstream: httpx.Response | None = None
         handed_over = False
         try:

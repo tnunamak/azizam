@@ -14,6 +14,7 @@ import pytest
 
 from gateway import admin_store, service_registry
 from gateway import trusted_addresses
+from gateway import litellm_substrate
 from gateway.litellm_substrate import compile_litellm_substrate_config
 from tests.test_signin_who_can_enter import (  # noqa: F401  (gateway is a fixture)
     csrf_for,
@@ -192,11 +193,23 @@ def test_an_administrator_cannot_attach_any_credential_reference_to_a_service(ga
 
 
 def test_an_administrator_cannot_set_the_internal_key_base_of_a_service(gateway):
+    """A base that is this gateway's own listener is the owner's to set; any other base is refused for everyone."""
+    _, _, _, admin = owner_and_admin(gateway)
+    own = litellm_substrate.gateway_lifecycle_base_url()
+    refused = admin.post("/admin/api/operator/services", headers={**csrf_for(admin), "If-Match": _etag(admin)},
+                         json=_service_body(name="Evil", gateway_lifecycle=True, gateway_lifecycle_base_url=own))
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["error"]["code"] == "owner_required"
+    assert "evil" not in _services(gateway)
+
+
+def test_a_foreign_internal_key_base_is_refused_at_the_registry_with_its_reason(gateway):
     _, _, _, admin = owner_and_admin(gateway)
     refused = admin.post("/admin/api/operator/services", headers={**csrf_for(admin), "If-Match": _etag(admin)},
                          json=_service_body(name="Evil", gateway_lifecycle=True,
                                             gateway_lifecycle_base_url="https://attacker.example/v1"))
-    assert refused.status_code == 403, refused.text
+    assert refused.status_code == 400, refused.text
+    assert "not this gateway's own listener" in refused.json()["error"]["message"]
     assert "evil" not in _services(gateway)
 
 

@@ -37,6 +37,7 @@ import httpx
 from gateway import transforms
 from gateway.capability_ids import offered_model_kinds
 from gateway.engine_definitions import EngineCatalog
+from gateway import engine_egress
 
 DEFAULT_CAP_BYTES = 64 * 1024
 TEST_CAP_BYTES = 4 * 1024 * 1024
@@ -370,10 +371,13 @@ def make_http_fetch(*, resolve: Resolve | None = None, gateway_ports: Ports = GA
                 # Ask for the answer uncompressed, whatever the header rows say.
                 sent = {k: v for k, v in headers.items() if k.lower() != "accept-encoding"}
                 sent["accept-encoding"] = "identity"
-                async with httpx.AsyncClient(
+                async with engine_egress.async_client(
                     transport=checked_transport(destination), follow_redirects=False, trust_env=False,
                     timeout=httpx.Timeout(timeout_s),
-                ) as client, client.stream(method, url, headers=sent, content=content) as response:
+                ) as client, client.stream(
+                    method, url, headers=sent, content=content,
+                    extensions=engine_egress.probe() if method.upper() == "GET" else None,
+                ) as response:
                     answer.status = response.status_code
                     answer.headers = {k.lower(): v for k, v in response.headers.items()}
                     if 300 <= response.status_code < 400:

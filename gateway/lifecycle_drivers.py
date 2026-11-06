@@ -56,6 +56,7 @@ HttpLoadUnloadDriver  (http-load-unload)
 from __future__ import annotations
 
 from gateway.compat import get_env
+from gateway import engine_egress
 from gateway import log_scrub, off_loop_spawn, runtime_secrets
 
 import asyncio
@@ -496,8 +497,8 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
     interval = 0.5
     while True:
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, **_get_kwargs(headers, timeout=min(interval * 2, 5.0)))
+            async with engine_egress.async_client() as client:
+                resp = await client.get(url, **_get_kwargs(headers, timeout=min(interval * 2, 5.0), extensions=engine_egress.probe()))
                 if resp.status_code == 200:
                     return True
         except Exception:
@@ -1446,8 +1447,8 @@ class SystemdDriver:
                 if request is None:
                     raise ValueError("no usable health request")
                 url, headers = request
-                async with httpx.AsyncClient(timeout=httpx.Timeout(3)) as client:
-                    resp = await client.get(url, **_get_kwargs(headers))
+                async with engine_egress.async_client(timeout=httpx.Timeout(3)) as client:
+                    resp = await client.get(url, **_get_kwargs(headers, extensions=engine_egress.probe()))
                     if resp.status_code == 200:
                         return time.time() - start
             except Exception:
@@ -1635,7 +1636,7 @@ class HttpLoadUnloadDriver:
             import asyncio as _aio
 
             async def _do_unload() -> None:
-                async with httpx.AsyncClient() as client:
+                async with engine_egress.async_client() as client:
                     await client.post(
                         f"{base_url}{unload_url}",
                         headers={admin_header: admin_key},
@@ -1744,7 +1745,7 @@ class HttpLoadUnloadDriver:
         # Step 2: unload current model if one is loaded.
         if current:
             try:
-                async with httpx.AsyncClient() as client:
+                async with engine_egress.async_client() as client:
                     resp = await client.post(
                         f"{base_url}{unload_url}",
                         headers={admin_header: admin_key},
@@ -1774,7 +1775,7 @@ class HttpLoadUnloadDriver:
 
         # Step 4: POST load endpoint, stream the response.
         try:
-            async with httpx.AsyncClient() as client:
+            async with engine_egress.async_client() as client:
                 resp = await client.post(
                     f"{base_url}{load_url}",
                     headers={admin_header: admin_key, "Content-Type": "application/json"},
@@ -1917,11 +1918,11 @@ class HttpLoadUnloadDriver:
         """GET verify_endpoint and return the loaded model id, or None."""
         import httpx
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5)) as client:
+            async with engine_egress.async_client(timeout=httpx.Timeout(5)) as client:
                 headers = {}
                 if api_key:
                     headers["x-api-key"] = api_key
-                resp = await client.get(f"{base_url}{verify_ep}", headers=headers)
+                resp = await client.get(f"{base_url}{verify_ep}", headers=headers, extensions=engine_egress.probe())
                 if resp.status_code == 200:
                     model_id = resp.json().get("id")
                     return model_id or None

@@ -82,6 +82,9 @@ def _saved_state(value) -> JobState | None:
 
 
 async def run(runtime, op, body, *, job_id, follow_events: bool = False):
+    require_egress = getattr(runtime, 'require_egress', None)
+    if require_egress is not None:
+        require_egress()
     adapter, conn = runtime.adapter, runtime.connection_for(op)
     interval_s, max_wait_s = runtime.poll_timing(op)
     current = media_jobs.get(job_id, audience='internal', path=media_jobs.DB_PATH)

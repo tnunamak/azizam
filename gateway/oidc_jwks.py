@@ -11,6 +11,7 @@ from typing import Callable
 from authlib.jose import JsonWebKey, jwt
 from authlib.jose.errors import JoseError
 import httpx
+from gateway import engine_egress
 
 
 @dataclass
@@ -34,7 +35,7 @@ class JWKSCache:
         self._locks.clear()
 
     async def _fetch(self, uri: str) -> dict:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with engine_egress.async_client(timeout=10) as client:
             response = await client.get(uri)
             response.raise_for_status()
             keys = response.json()

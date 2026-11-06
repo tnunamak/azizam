@@ -444,6 +444,10 @@ NOT_CREDENTIAL_TABLES = {
     # shared. It holds no secret and moves none; the URL is only ever fetched by the SSRF-guarded fetcher
     # (decision D36 asks about credentials and where they are sent, so no step-up and no require_live here).
     "signin_seen_values", "user_avatars", "user_identity_claims", "users", "video_job_records",
+    # transition_gate: one row per engine domain, its gate state (open, closed, failed_closed, reconciling) and the
+    # operation that set it (gateway/transition_gate.py). It holds no secret and names no person. A closed or failed
+    # gate refuses engine transitions; nothing in it grants access to data or makes a key. T1.1 only reads it.
+    "transition_gate",
 }
 
 

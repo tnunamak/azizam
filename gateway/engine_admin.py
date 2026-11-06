@@ -58,6 +58,7 @@ from gateway.engine_check import (
 )
 from gateway.engine_definitions import EngineCatalog, EngineDefinitionError, load_engine_catalog
 from gateway.engine_connection import inference_base_url
+from gateway.transition_gate import GATE_RETRY_AFTER_S, policy_for
 from gateway.litellm_substrate import CREDENTIAL_HEADER_RE, SECRET_PLACEHOLDER, header_problem, routed_models
 
 # Record keys this module writes. Every other config key is the owner's and is
@@ -1077,6 +1078,13 @@ class EngineService:
                 raise _owner_only("Only the owner can change service settings.")
         capability = str(body.get("capability") or "")
         model = str(body.get("model") or "").strip() or None
+        if record is not None and policy_for(str(service_id), registry.get("services") or {}).enabled:
+            # The test sends a real inference request to the engine. In an enabled residency domain no request
+            # bytes go out without a serving lease; this path takes none, so it sends nothing.
+            raise EngineRouteError(
+                status.HTTP_503_SERVICE_UNAVAILABLE, "transition_unsupported",
+                "This engine's residency domain enables transitions, and the test request is not leased for it yet. "
+                "Nothing was sent.", headers={"Retry-After": str(GATE_RETRY_AFTER_S)})
         result = await run_real_test(catalog, definition, clean, capability, key=key, fetch=self.fetch, model=model,
                                      viewer_role="owner" if _is_owner(ctx) else "admin")
         result = projection.scrub_value(result)

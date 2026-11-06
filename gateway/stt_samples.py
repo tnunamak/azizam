@@ -33,6 +33,7 @@ import yaml
 
 from gateway import private_io
 from gateway.stt_measure import normalize as norm_token
+from gateway import engine_egress
 
 DEFAULT_MANIFEST = Path(__file__).resolve().parent.parent / "registry" / "stt_samples.yml"
 DEFAULT_MAX_BYTES = 512 * 1024 * 1024
@@ -438,7 +439,7 @@ def load_manifest(path: Path | str = DEFAULT_MANIFEST) -> list[SampleSpec]:
 
 
 def _default_client() -> httpx.Client:
-    return httpx.Client(timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=False,
+    return engine_egress.client(timeout=httpx.Timeout(30.0, read=120.0), follow_redirects=False,
                         headers={"User-Agent": "azizam-stt-samples/1"})
 
 

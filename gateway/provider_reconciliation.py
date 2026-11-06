@@ -16,6 +16,7 @@ import httpx
 
 from gateway import admin_store
 from gateway.providers import Cost, ProviderRef, USD_QUANTUM, resolve_provider_api_key
+from gateway import engine_egress
 
 DEFAULT_STATS_TIMEOUT = httpx.Timeout(10.0)
 
@@ -48,7 +49,7 @@ async def lookup_generation_cost(
         return _unknown_cost(provider)
 
     close_client = client is None
-    active_client = client or httpx.AsyncClient(
+    active_client = client or engine_egress.async_client(
         timeout=DEFAULT_STATS_TIMEOUT,
         follow_redirects=False,
         trust_env=False,

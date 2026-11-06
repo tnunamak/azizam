@@ -95,6 +95,19 @@ class RealtimeRouteCase(unittest.TestCase):
         self.client = TestClient(proxy.app)
 
 
+class GateRefusalTests(RealtimeRouteCase):
+    def test_a_gate_refusal_from_the_readiness_check_keeps_its_code(self) -> None:
+        refusal = proxy._transition_unavailable_response(
+            proxy.TransitionUnavailable("gpu1", reason="path_not_leased"))
+        self.ensure.side_effect = None
+        self.ensure.return_value = refusal
+        with self.client.websocket_connect("/v1/realtime") as ws:
+            first = ws.receive()
+            event = json.loads(first["text"])
+            self.assertEqual(event["error"]["code"], "transition_unsupported")
+        self.connect.assert_not_called()
+
+
 class RelayTests(RealtimeRouteCase):
     def _upstream_error_then_close(self, ws) -> dict:
         first = ws.receive()
