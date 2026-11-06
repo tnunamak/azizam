@@ -235,3 +235,21 @@ def test_no_code_path_reads_the_startup_files_backends_to_build_a_registry():
     hits = sorted(f"{path.name}: {name}" for path, text in sources.items() for name in forbidden if name in text)
     assert hits == []
 
+
+
+@pytest.mark.parametrize("damaged", ["{not json", "[1, 2]", "\"text\""])
+def test_a_stored_registry_that_does_not_parse_is_never_overwritten_at_start(old_install, damaged):
+    # A damaged value read as an empty document would migrate to an empty owner layer and replace the owner's whole
+    # registry on the first start. The start leaves it as stored, for a restore or an import, and serves the release.
+    db, _document = old_install
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE operator_settings SET value_json = ? WHERE key = 'service_registry'", (damaged,))
+    before = admin_store.get_service_registry_json_with_generation(path=db)
+
+    served = service_registry.ensure_service_registry(path=db, actor="test")
+
+    after = admin_store.get_service_registry_json_with_generation(path=db)
+    assert after["value_json"] == damaged
+    assert after["operator_settings_generation"] == before["operator_settings_generation"]
+    assert not admin_store.migration_step_recorded(STEP, path=db)
+    assert "litellm" in served["services"]
