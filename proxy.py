@@ -13628,7 +13628,8 @@ async def _serve(app: FastAPI):
 
     from gateway.litellm_content import gate as content_gate
 
-    await content_gate.check(_litellm_runtime_config().base_url)
+    # LiteLLM starts beside the gateway; verify it in the background so start-up does not wait for it.
+    content_warm_task = content_gate.start_warming(_litellm_runtime_config().base_url)
     receipts_maintenance_stop = asyncio.Event()
     receipts_maintenance_task = await _start_receipts_maintenance(receipts_maintenance_stop)
 
@@ -13719,6 +13720,13 @@ async def _serve(app: FastAPI):
             pass
         except Exception:
             pass
+    content_warm_task.cancel()
+    try:
+        await content_warm_task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        pass
     drift_stop.set()
     drift_task.cancel()
     try:

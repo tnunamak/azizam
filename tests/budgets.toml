@@ -507,6 +507,8 @@
 # Batched service-health history (2026-11-05): +38 cases, test_status_service_history_batch (oracle, grouped helpers, statement counts); collect-only measured 19026.
 # Config homes C2 merged onto the public-hygiene main (2026-11-06): main's 18989 + the 107 config cases; scripts/run-hermetic-pytest.sh --collect-only -q measured 19096.
 # S2.2 merged with main (2026-11-06): main 18989 + 29 S2.2 cases; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19018.
+# LiteLLM content check warm-up (2026-11-06): +6 cases in test_litellm_content_profile (database work off the loop, waiting request admitted or refused, proof polling, timeout, failed window); collect-only measured 19033.
+# Warm-up review round (2026-11-06): +2 cases, a request in the gap between warm-up checks waits, and a database read failure is retried; 19035.
 pytest = 1
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and

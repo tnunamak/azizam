@@ -102,9 +102,10 @@ SELECT
 '''
 
 
-async def database_problem(database_url: str) -> str | None:
-    if not database_url:
-        return None
+CHECK_TIMEOUT_SECONDS = 10
+
+
+async def _database_check(database_url: str) -> str | None:
     from prisma import Prisma
 
     client = Prisma(datasource={"url": database_url})
@@ -122,6 +123,24 @@ async def database_problem(database_url: str) -> str | None:
         return None
     finally:
         await client.disconnect()
+
+
+def _run_database_check(database_url: str) -> str | None:
+    return asyncio.run(asyncio.wait_for(_database_check(database_url), timeout=CHECK_TIMEOUT_SECONDS))
+
+
+async def database_problem(database_url: str) -> str | None:
+    """Check the database in a worker thread with its own event loop.
+
+    The first Prisma import takes seconds, and ``Prisma.connect`` starts the
+    query-engine process with a blocking ``Popen``. Both would stall every
+    request on the gateway loop. The client is async-only, so a short-lived
+    loop in a worker thread keeps the import, the spawn and the queries off
+    the gateway loop without changing the check itself.
+    """
+    if not database_url:
+        return None
+    return await asyncio.to_thread(_run_database_check, database_url)
 
 
 async def compose_database_unseen(base_url: str) -> bool:
@@ -164,6 +183,32 @@ class ContentGate:
         self.unseen_database = False
         self.retry_seconds = 30
         self.next_check_at = 0.0
+        # Set while the start-up check runs; a request that finds no verdict waits for it.
+        self.warm_settled: asyncio.Event | None = None
+
+    def start_warming(self, base_url: str, *, window_seconds: float = 120, poll_seconds: float = 2) -> asyncio.Task:
+        """Run the first check in the background, so a request after start finds a verdict.
+
+        The launcher starts LiteLLM beside the gateway, so its process proof may not exist yet.
+        The task keeps checking until it reaches a definite verdict or the window ends. The gateway calls it
+        once per start; a second call while the first still runs is an error.
+        """
+        if self.warm_settled is not None and not self.warm_settled.is_set():
+            raise RuntimeError("the content gate is already warming")
+        settled = self.warm_settled = asyncio.Event()
+        return asyncio.create_task(self._warm(base_url, settled, window_seconds, poll_seconds), name="litellm-content-warm")
+
+    async def _warm(self, base_url: str, settled: asyncio.Event, window_seconds: float, poll_seconds: float) -> None:
+        end = time.monotonic() + window_seconds
+        try:
+            # Retry only an unknown: missing process proof or a database that could not be read yet.
+            while await self.check(base_url, force=True) in {"not_checked", "profile_check_unavailable",
+                                                             "database_check_unavailable"}:
+                if time.monotonic() >= end:
+                    return
+                await asyncio.sleep(poll_seconds)
+        finally:
+            settled.set()
 
     def mode(self, base_url: str) -> str:
         endpoint = urlsplit(base_url)
@@ -197,6 +242,13 @@ class ContentGate:
     async def check(self, base_url: str, *, force: bool = False) -> str | None:
         if self.mode(base_url) == "unmanaged":
             return None
+        settled = self.warm_settled
+        if not force and self.checked is None and settled is not None and not settled.is_set():
+            # No verdict yet and the start-up check is running: wait for it, bounded. Still unknown means refused.
+            try:
+                await asyncio.wait_for(settled.wait(), timeout=CHECK_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                return self.problem
         async with self.lock:
             previous = self.problem
             try:
@@ -210,7 +262,7 @@ class ContentGate:
                 database_url = os.environ.get("DATABASE_URL", "")
                 if self.mode(base_url) == "compose" and not database_url:
                     self.unseen_database = await compose_database_unseen(base_url)
-                problem = await asyncio.wait_for(database_problem(database_url), timeout=10)
+                problem = await asyncio.wait_for(database_problem(database_url), timeout=CHECK_TIMEOUT_SECONDS)
                 if generation != self.generation(base_url):
                     raise ValueError("process restarted during check")
                 self.checked, self.checked_at, self.problem = generation, time.monotonic(), problem

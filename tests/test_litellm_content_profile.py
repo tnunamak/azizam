@@ -393,3 +393,186 @@ def test_accounting_facts_disclose_legacy_rows_and_daily_identifiers():
     assert '/blob/main/' in fact['evidence_url']
     for term in ('User-Agent', 'model', 'endpoint', 'per-day request_id', 'client-supplied user'):
         assert term in fact['holds']
+
+
+def test_database_check_runs_import_spawn_and_queries_off_the_gateway_loop(monkeypatch):
+    """The first check imports Prisma and starts its query engine; neither may run on the gateway loop."""
+    import importlib.abc
+    import importlib.machinery
+    import subprocess
+    import threading
+    from tests.test_event_loop_guard import _loop_thread_work
+
+    seen = {}
+    def note(kind):
+        seen[kind] = threading.get_ident()
+
+    class Client:
+        def __init__(self, **kwargs): note('construct')
+        async def connect(self):
+            note('connect')
+            subprocess.Popen([sys.executable, '-c', 'pass']).wait()  # stands in for the query-engine spawn
+        async def disconnect(self): pass
+        def tx(self): return self
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def execute_raw(self, query): pass
+        async def query_raw(self, query): return [{'config_unsafe': False, 'key_unsafe': False, 'team_unsafe': False}]
+
+    class FakePrismaFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+        def find_spec(self, name, path=None, target=None):
+            if name != 'prisma':
+                return None
+            note('import')
+            return importlib.machinery.ModuleSpec(name, self)
+        def create_module(self, spec): return SimpleNamespace(Prisma=Client, __spec__=spec)
+        def exec_module(self, module): pass
+
+    monkeypatch.delitem(sys.modules, 'prisma', raising=False)
+    monkeypatch.setattr(sys, 'meta_path', [FakePrismaFinder(), *sys.meta_path])
+    loop_calls = []
+    async def run():
+        seen['loop'] = threading.get_ident()
+        with _loop_thread_work(loop_calls):
+            return await content.database_problem('offline-test-only')
+    try:
+        assert asyncio.run(run()) is None
+    finally:
+        sys.modules.pop('prisma', None)
+    assert {'import', 'construct', 'connect'} <= set(seen)
+    assert all(seen[kind] != seen['loop'] for kind in ('import', 'construct', 'connect'))
+    assert not loop_calls, 'the content check ran blocking work on the gateway loop:\n' + '\n'.join(loop_calls)
+
+
+def _warming_gate(monkeypatch, verdict):
+    """A managed gate whose database check waits on an event, so a test holds the check in progress."""
+    monkeypatch.setenv('AZIZAM_MANAGE_LITELLM', 'true')
+    gate = content.ContentGate()
+    monkeypatch.setattr(gate, 'generation', lambda _: ('same-process',))
+    calls = []
+    async def check(_):
+        calls.append(1)
+        await verdict['release'].wait()
+        return verdict['problem']
+    monkeypatch.setattr(content, 'database_problem', check)
+    monkeypatch.setattr(content, 'gate', gate)
+    return gate, calls
+
+
+@pytest.mark.parametrize(('problem', 'refused'), [(None, False), ('database_key_unsafe', True)])
+def test_request_during_the_first_check_waits_for_its_verdict(monkeypatch, problem, refused):
+    base = 'http://127.0.0.1:4011'
+    async def run():
+        verdict = {'release': asyncio.Event(), 'problem': problem}
+        gate, calls = _warming_gate(monkeypatch, verdict)
+        warm = gate.start_warming(base, poll_seconds=0.01)
+        request = asyncio.create_task(content.execution_refusal(base))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not request.done(), 'the request was refused while the first check was still running'
+        verdict['release'].set()
+        refusal = await asyncio.wait_for(request, 5)
+        await warm
+        assert len(calls) == 1
+        assert (refusal is not None) is refused
+        if refused:
+            assert refusal.status_code == 503
+            assert json.loads(refusal.body)['error']['code'] == 'litellm_content_unverified'
+        return gate
+    asyncio.run(run())
+
+
+def test_warming_waits_for_the_process_proof_and_later_requests_find_the_verdict(monkeypatch):
+    base = 'http://127.0.0.1:4011'
+    async def run():
+        verdict = {'release': asyncio.Event(), 'problem': None}
+        verdict['release'].set()
+        gate, calls = _warming_gate(monkeypatch, verdict)
+        ready = [False]
+        def generation(_):
+            if not ready[0]:
+                raise FileNotFoundError('no process proof yet')
+            return ('same-process',)
+        monkeypatch.setattr(gate, 'generation', generation)
+        warm = gate.start_warming(base, poll_seconds=0.01)
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+        assert not warm.done() and calls == []
+        ready[0] = True
+        await asyncio.wait_for(warm, 5)
+        assert calls == [1]
+        assert await content.execution_refusal(base) is None
+        assert calls == [1]
+    asyncio.run(run())
+
+
+def test_request_while_warming_sleeps_between_checks_waits_for_the_next_check(monkeypatch):
+    """The first check found no process proof and set its backoff; a request in the gap waits for the next check."""
+    base = 'http://127.0.0.1:4011'
+    async def run():
+        verdict = {'release': asyncio.Event(), 'problem': None}
+        verdict['release'].set()
+        gate, calls = _warming_gate(monkeypatch, verdict)
+        ready = [False]
+        def generation(_):
+            if not ready[0]:
+                raise FileNotFoundError('no process proof yet')
+            return ('same-process',)
+        monkeypatch.setattr(gate, 'generation', generation)
+        warm = gate.start_warming(base, poll_seconds=0.2)
+        await asyncio.sleep(0.05)
+        assert gate.problem == 'profile_check_unavailable' and not warm.done(), 'warming sleeps between checks'
+        request = asyncio.create_task(content.execution_refusal(base))
+        await asyncio.sleep(0.05)
+        assert not request.done(), 'the request was refused on the backoff instead of waiting for warming'
+        ready[0] = True
+        assert await asyncio.wait_for(request, 5) is None
+        await asyncio.wait_for(warm, 5)
+        assert calls == [1]
+    asyncio.run(run())
+
+
+def test_warming_retries_a_database_that_could_not_be_read_yet(monkeypatch):
+    base = 'http://127.0.0.1:4011'
+    async def run():
+        verdict = {'release': asyncio.Event(), 'problem': 'database_check_unavailable'}
+        verdict['release'].set()
+        gate, calls = _warming_gate(monkeypatch, verdict)
+        warm = gate.start_warming(base, poll_seconds=0.01)
+        while len(calls) < 2:
+            await asyncio.sleep(0.01)
+        verdict['problem'] = None
+        await asyncio.wait_for(warm, 5)
+        assert gate.problem is None
+        with pytest.raises(RuntimeError):
+            gate.warm_settled = asyncio.Event()
+            gate.start_warming(base)
+    asyncio.run(run())
+
+
+def test_request_is_refused_when_the_first_check_does_not_finish_in_time(monkeypatch):
+    base = 'http://127.0.0.1:4011'
+    monkeypatch.setattr(content, 'CHECK_TIMEOUT_SECONDS', 0.05)
+    async def run():
+        verdict = {'release': asyncio.Event(), 'problem': None}
+        gate, _ = _warming_gate(monkeypatch, verdict)
+        warm = gate.start_warming(base, poll_seconds=0.01)
+        refusal = await content.execution_refusal(base)
+        assert refusal is not None and refusal.status_code == 503
+        warm.cancel()
+        await asyncio.gather(warm, return_exceptions=True)
+        assert gate.warm_settled.is_set()
+    asyncio.run(run())
+
+
+def test_failed_first_check_window_ends_refused(monkeypatch):
+    base = 'http://127.0.0.1:4011'
+    async def run():
+        verdict = {'release': asyncio.Event(), 'problem': None}
+        gate, calls = _warming_gate(monkeypatch, verdict)
+        monkeypatch.setattr(gate, 'generation', lambda _: (_ for _ in ()).throw(OSError('private')))
+        await gate.start_warming(base, window_seconds=0.05, poll_seconds=0.01)
+        assert calls == []
+        refusal = await content.execution_refusal(base)
+        assert refusal is not None and 'profile_check_unavailable' in refusal.body.decode()
+    asyncio.run(run())
