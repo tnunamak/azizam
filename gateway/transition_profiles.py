@@ -88,25 +88,30 @@ def parse_profile(raw: Any, *, source: str) -> Profile:
         raise ProfileError(f"{source}: operation 'reset' needs 'restore'")
     if "checkpoint" in names and "compatibility" not in names:
         raise ProfileError(f"{source}: operation 'compatibility' is required when 'checkpoint' is declared")
-    checkpoint_block = declared.get("checkpoint")
-    if isinstance(checkpoint_block, Mapping) and checkpoint_block and "checkpoint" not in names:
+    for key in ("checkpoint", "restore"):
+        if key in declared and not isinstance(declared[key], Mapping):
+            raise ProfileError(f"{source}: {key} is a mapping")
+    if "checkpoint" in declared and "checkpoint" not in names:
         raise ProfileError(f"{source}: checkpoint needs the 'checkpoint' operation")
-    restore_block = declared.get("restore")
-    if isinstance(restore_block, Mapping) and restore_block:
-        if "restore" not in names:
-            raise ProfileError(f"{source}: restore needs the 'restore' operation")
-        reset_block = restore_block.get("reset")
-        if isinstance(reset_block, Mapping) and reset_block and "reset" not in names:
+    restore_block = declared.get("restore", {})
+    if "restore" in declared and "restore" not in names:
+        raise ProfileError(f"{source}: restore needs the 'restore' operation")
+    reset_block = restore_block.get("reset")
+    if "reset" in restore_block:
+        if not isinstance(reset_block, Mapping):
+            raise ProfileError(f"{source}: restore.reset is a mapping")
+        if "reset" not in names:
             raise ProfileError(f"{source}: restore.reset needs the 'reset' operation")
-    servable = raw.get("servable_check")
-    if isinstance(servable, str) and servable and servable not in observed:
-        raise ProfileError(f"{source}: servable_check names an unknown observation {servable!r}")
-    if isinstance(restore_block, Mapping):
-        reset_block = restore_block.get("reset")
-        if isinstance(reset_block, Mapping):
-            verify = reset_block.get("verify")
-            if isinstance(verify, str) and verify and verify not in observed:
-                raise ProfileError(f"{source}: restore.reset.verify names an unknown observation {verify!r}")
+    named = {}
+    if "servable_check" in raw:
+        named["servable_check"] = raw["servable_check"]
+    if isinstance(reset_block, Mapping) and "verify" in reset_block:
+        named["restore.reset.verify"] = reset_block["verify"]
+    for field, value in named.items():
+        if not isinstance(value, str) or not value.strip():
+            raise ProfileError(f"{source}: {field} names an observation")
+        if value.strip() not in observed:
+            raise ProfileError(f"{source}: {field} names an unknown observation {value!r}")
     return Profile(id=profile_id.strip(), title=str(raw.get("title") or profile_id), operations=names, attested=attested,
                    declared=declared, observations=observed)
 

@@ -160,6 +160,25 @@ def test_restore_reset_verify_must_name_an_observation() -> None:
                       source="bad.yml")
 
 
+@pytest.mark.parametrize("bad", [123, "", "  ", ["clean"]])
+def test_a_named_observation_that_is_not_a_name_is_refused(bad: Any) -> None:
+    with pytest.raises(ProfileError, match="servable_check"):
+        parse_profile(raw_profile(servable_check=bad, observations={"clean": "transition.clean"}), source="bad.yml")
+    with pytest.raises(ProfileError, match="restore.reset.verify"):
+        snapshot_profile(restore={"failure_semantics": "unknown", "query": True,
+                                  "reset": {"failure_semantics": "unknown", "query": True, "verify": bad}})
+
+
+@pytest.mark.parametrize("bad", ["no_change", ["no_change"], True])
+def test_a_reviewed_block_that_is_not_a_mapping_is_refused(bad: Any) -> None:
+    with pytest.raises(ProfileError, match="checkpoint is a mapping"):
+        snapshot_profile(checkpoint=bad)
+    with pytest.raises(ProfileError, match="restore is a mapping"):
+        snapshot_profile(restore=bad)
+    with pytest.raises(ProfileError, match="restore.reset is a mapping"):
+        snapshot_profile(restore={"failure_semantics": "unknown", "query": True, "reset": bad})
+
+
 def test_observations_need_non_empty_names_on_both_sides() -> None:
     with pytest.raises(ProfileError):
         parse_profile(raw_profile(observations={"clean": ""}), source="bad.yml")
@@ -244,6 +263,19 @@ def test_checkpoint_success_is_never_attested(tmp_path: Path) -> None:
     invoke = FakeInvoke({"transition.checkpoint": Reply(200, {"outcome": "success", "bytes": 1})})
     adapter = adapter_for(snapshot_profile(), invoke, tmp_path)
     assert run(adapter.checkpoint("dom", intent())).attested is False
+
+
+def test_a_refused_snapshot_path_sends_nothing_and_changes_nothing(tmp_path: Path) -> None:
+    def refuse(domain: str, handle: str) -> Path:
+        raise ValueError("refused")
+    invoke = FakeInvoke({"transition.checkpoint": Reply(200, {"outcome": "success", "bytes": 1}),
+                         "transition.restore": Reply(200, {"outcome": "success"})})
+    adapter = DeclaredOperationAdapter(snapshot_profile(), invoke, snapshot_path=refuse)
+    checkpoint = run(adapter.checkpoint("dom", intent()))
+    restore = run(adapter.restore("dom", "ckpt-a", intent("restore")))
+    assert (checkpoint.outcome, checkpoint.evidence_ref) == ("no_change", "snapshot_path_error")
+    assert (restore.outcome, restore.evidence_ref) == ("no_change", "snapshot_path_error")
+    assert invoke.calls == [], "nothing is sent when the store refuses the path"
 
 
 def test_undeclared_operations_are_unsupported(tmp_path: Path) -> None:

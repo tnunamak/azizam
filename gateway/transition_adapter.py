@@ -137,12 +137,22 @@ class DeclaredOperationAdapter:
     async def query(self, domain: str, intent: StepIntent) -> EffectResult:
         return await self._effect(domain, "query", self._body(intent, step=intent.step), attests=intent.step == "release")
 
+    def _path(self, domain: str, handle: str) -> Optional[Path]:
+        """The snapshot store's path for ``handle``, or None when the store refuses it."""
+        assert self._snapshot_path is not None
+        try:
+            return self._snapshot_path(domain, handle)
+        except Exception:  # noqa: BLE001 - a refused or unreadable snapshot directory
+            return None
+
     async def checkpoint(self, domain: str, intent: StepIntent) -> EffectResult:
         """Mint the handle, send it with the path, and read the byte count from the reply or the file."""
         if "checkpoint" not in self._profile.operations or self._snapshot_path is None:
             return EffectResult(outcome="unknown", evidence_ref="checkpoint_unsupported")
         handle = f"ckpt-{uuid.uuid4().hex}"
-        path = self._snapshot_path(domain, handle)
+        path = self._path(domain, handle)
+        if path is None:  # nothing was sent, so the engine is unchanged
+            return EffectResult(outcome="no_change", evidence_ref="snapshot_path_error")
         try:
             selected = await self._selected(domain, "checkpoint",
                                             self._body(intent, handle=handle, path=str(path)))
@@ -166,7 +176,9 @@ class DeclaredOperationAdapter:
     async def restore(self, domain: str, handle: str, intent: StepIntent) -> EffectResult:
         if "restore" not in self._profile.operations or self._snapshot_path is None:
             return EffectResult(outcome="unknown", evidence_ref="restore_unsupported")
-        path = self._snapshot_path(domain, handle)
+        path = self._path(domain, handle)
+        if path is None:  # nothing was sent: the target stays as loaded, so it serves cold
+            return EffectResult(outcome="no_change", evidence_ref="snapshot_path_error")
         return await self._effect(domain, "restore", self._body(intent, handle=handle, path=str(path)), attests=False)
 
     async def reset(self, domain: str, intent: StepIntent) -> EffectResult:
