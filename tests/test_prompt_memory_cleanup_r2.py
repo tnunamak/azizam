@@ -44,6 +44,12 @@ def hh(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "payloads")
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOADS", {})
     monkeypatch.setattr(proxy, "_EPHEMERAL_MEDIA_JOB_PAYLOAD_SIZES", {})
+    # Process-wide state that another test on the same worker may leave behind: a startup deadline repair that failed
+    # (the owner status then reports "pending" whatever the queue holds), a drain held by a background thread (a
+    # second drain returns at once), and the wake of a maintenance loop that is still running.
+    monkeypatch.setattr(proxy, "_PROMPT_DEADLINE_REPAIR_PENDING", False)
+    monkeypatch.setattr(proxy, "_PROMPT_PURGE_DRAIN_LOCK", threading.Lock())
+    monkeypatch.setattr(proxy, "_PROMPT_PURGE_WAKE", None)
     robin = admin_store.upsert_oidc_user("issuer", "robin", email="robin@example.test", path=admin)
     app = admin_store.create_app("Try", kind="personal", owner_user_id=robin["id"], access_plan="person", path=admin)
     (tmp_path / "cache").mkdir()
