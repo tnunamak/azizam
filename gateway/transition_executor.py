@@ -49,11 +49,25 @@ DEFAULTS: dict[str, float] = {
     "restore_deadline_s": 300.0,
     "query_deadline_s": 30.0,
     "probe_deadline_s": 5.0,
-    "fresh_within_s": 2.0,
     "idle_poll_s": 0.5,
     "lock_wait_s": 30.0,
     "retry_after_s": 30.0,
 }
+
+
+DEFAULT_FRESH_WITHIN_S = 2.0
+"""How old evidence may be when the reviewed profile does not say. It is not an owner setting."""
+
+
+def fresh_within(policy: Mapping[str, object]) -> float:
+    """``fresh_within_s`` of the reviewed profile, ``policy["profile"]`` only. The snapshot steps read the same key the
+    same way, so the two lanes never judge one observation by two ages. A value in the owner's settings is never read."""
+    profile = policy.get("profile")
+    try:
+        value = float(profile.get("fresh_within_s")) if isinstance(profile, Mapping) else DEFAULT_FRESH_WITHIN_S  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_FRESH_WITHIN_S
+    return value if value > 0 else DEFAULT_FRESH_WITHIN_S
 
 
 def setting(policy: Mapping[str, object], key: str) -> float:
@@ -203,7 +217,7 @@ class ReleaseStep(_EffectStep):
 
     async def _verify(self, ctx: StepContext, intent: StepIntent, result: EffectResult) -> EffectResult:
         evidence = await asyncio.wait_for(ctx.adapter.resident(ctx.operation.domain), setting(ctx.policy, "probe_deadline_s"))
-        seen = evidence_state(evidence, now=self._clock(), fresh_within_s=setting(ctx.policy, "fresh_within_s"),
+        seen = evidence_state(evidence, now=self._clock(), fresh_within_s=fresh_within(ctx.policy),
                               incarnation=intent.expected_incarnation)
         if seen is False:
             return result
@@ -229,7 +243,7 @@ class LoadStep(_EffectStep):
 
     async def _verify(self, ctx: StepContext, intent: StepIntent, result: EffectResult) -> EffectResult:
         evidence = await asyncio.wait_for(ctx.adapter.resident(ctx.operation.domain), setting(ctx.policy, "probe_deadline_s"))
-        seen = evidence_state(evidence, now=self._clock(), fresh_within_s=setting(ctx.policy, "fresh_within_s"),
+        seen = evidence_state(evidence, now=self._clock(), fresh_within_s=fresh_within(ctx.policy),
                               incarnation=None)
         if seen is None:
             return EffectResult(outcome="unknown", evidence_ref="load_unverified", correlation_id=result.correlation_id)
@@ -280,7 +294,7 @@ class DrainStep:
         except SwapDeferred:
             return False
         probe = setting(ctx.policy, "probe_deadline_s")
-        fresh = setting(ctx.policy, "fresh_within_s")
+        fresh = fresh_within(ctx.policy)
         while True:
             if await self._nothing_resident(ctx, probe, fresh):
                 return True

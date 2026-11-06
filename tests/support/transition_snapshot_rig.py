@@ -29,6 +29,8 @@ class Engine:
     files: PrivateSnapshotDir
     offering: Optional[str] = "model-a"
     resident: bool = True
+    ready: bool = True
+    """Readiness of the resident offering; the load step of the executor needs it (design D4 row 5)."""
     compat: dict = field(default_factory=lambda: {"artifact": "a1", "tokenizer": "t1", "engine": "e1", "cache_format": "c1", "defaults": "d1", "placement": "gpu0"})
     observations: dict = field(default_factory=dict)
     restored: Optional[str] = None
@@ -87,7 +89,8 @@ class _Base:
     async def resident(self, domain: str) -> Evidence:
         self.engine.calls.append("resident")
         value = self.engine.observations.get("resident", self.engine.resident)
-        return Evidence(value=value, observed_at=time.time(), detail={"offering": self.engine.offering})
+        return Evidence(value=value, observed_at=time.time(),
+                        detail={"offering": self.engine.offering, "ready": value is True and self.engine.ready})
 
     async def observe(self, domain: str, name: str) -> Evidence:
         self.engine.calls.append(f"observe:{name}")

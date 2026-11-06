@@ -281,9 +281,9 @@ def sim_idle(sim: EngineSim) -> bool:
 ADAPTERS = {"direct": DirectAdapter, "ledger": LedgerAdapter}
 
 DOMAIN = "dom-a"
-FAST: dict[str, float] = {
+FAST: dict[str, Any] = {
     "drain_deadline_s": 0.4, "release_deadline_s": 0.3, "load_deadline_s": 0.3, "query_deadline_s": 0.3,
-    "probe_deadline_s": 0.2, "fresh_within_s": 2.0, "idle_poll_s": 0.01, "lock_wait_s": 1.0, "retry_after_s": 7.0,
+    "probe_deadline_s": 0.2, "profile": {"fresh_within_s": 2.0}, "idle_poll_s": 0.01, "lock_wait_s": 1.0, "retry_after_s": 7.0,
 }
 
 
