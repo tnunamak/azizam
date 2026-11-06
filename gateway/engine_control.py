@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlsplit
 
 
 from gateway import engine_egress
-from gateway.engine_contract_view import connection_config, observations_config, residency_config
+from gateway.engine_contract_view import address_for_class, connection_config, observations_config, residency_config
 from gateway.engine_credentials import credential_headers
 from gateway.engine_observations import ObservationReader
 from gateway.engine_residency import ResidencyController
@@ -50,7 +50,7 @@ class EngineControlRuntime:
         method = operation.get("method", "POST")
         path = operation.get("path")
         connection = connection_config(self.service)
-        address = connection.get("address") if isinstance(connection, Mapping) else None
+        address = address_for_class(connection, "control") or None
         if method not in {"GET", "POST", "PUT", "DELETE"} or not isinstance(path, str) or not path.startswith("/"):
             raise ValueError("control operation needs an HTTP method and absolute path")
         if not isinstance(address, str) or urlsplit(address).scheme not in {"http", "https"}:
@@ -61,7 +61,7 @@ class EngineControlRuntime:
         if (target.scheme, target.netloc) != (origin.scheme, origin.netloc):
             raise ValueError("control operation cannot cross origins")
         body, checked = self._check_paths(args, self._declared_path_arguments(operation))
-        headers = credential_headers(self.service, "control")
+        headers = credential_headers(self.service, "control", address=address)
         timeout_s = max(0.01, min(float(operation.get("timeout_s", 10)), 30))
         self._recheck_paths(checked)
         async with asyncio.timeout(timeout_s):

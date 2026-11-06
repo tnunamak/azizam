@@ -1681,6 +1681,10 @@ def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:
         if (not isinstance(address, str) or _unsafe_address(address)
                 or model_locality({"base_url": address}, None) != "local"):
             raise ValueError(reason)
+        control = connection.get("control_address")
+        if control is not None and (not isinstance(control, str) or _unsafe_address(control)
+                                    or model_locality({"base_url": control}, None) != "local"):
+            raise ValueError(reason)
 
 
 def validate_provider_secret_refs(
@@ -2006,6 +2010,7 @@ def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[Any, ...]:
     addresses = (
         service_base_url(config), native_host_url(config),
         str(config.get("address") or "").strip(), str(connection.get("address") or "").strip(),
+        str(connection.get("control_address") or "").strip(),
     )
     return (
         tuple(origin_of(address) or address for address in addresses),

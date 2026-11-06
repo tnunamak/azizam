@@ -118,6 +118,7 @@ def _destination_prefixes(record: Mapping[str, Any]) -> dict[str, set[str]]:
         connection = scope.get("connection")
         if isinstance(connection, Mapping):
             urls.append(connection.get("address"))
+            urls.append(connection.get("control_address"))
         for url in urls:
             key = _key_of_url(url)
             if key:
