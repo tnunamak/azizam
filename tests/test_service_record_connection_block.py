@@ -41,3 +41,16 @@ def test_a_registry_write_keeps_a_top_level_connection() -> None:
     registry, stored = service_registry.upsert_service_in_registry(
         {"services": {}}, service_id="fixture", raw=record(connection=CONNECTION))
     assert registry["services"]["fixture"]["config"]["connection"]["control_address"] == "http://127.0.0.1:7002"
+
+
+def test_a_malformed_config_connection_is_named_as_such() -> None:
+    raw = record(connection=CONNECTION)
+    raw["config"]["connection"] = "http://127.0.0.1:7001"
+    with pytest.raises(ValueError, match="config.connection must be a mapping"):
+        service_registry.normalize_service_record("fixture", raw)
+
+
+def test_an_engine_with_only_a_connection_address_is_refused_with_a_clear_reason() -> None:
+    raw = {"id": "fixture", "kind": "engine", "config": {}, "connection": CONNECTION}
+    with pytest.raises(ValueError, match="connection.address alone is not enough"):
+        service_registry.normalize_service_record("fixture", raw)

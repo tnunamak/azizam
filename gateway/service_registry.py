@@ -1464,6 +1464,11 @@ def check_service_shape(service_id: str, raw: Mapping[str, Any]) -> None:
     if protocol is not None and not (isinstance(protocol, str) and _PROTOCOL_NAME.fullmatch(protocol)):
         raise ValueError(f"{where}: protocol must be a plain name such as 'openai-compatible'")
     if str(raw.get("kind") or "") == "engine" and not any(str(config.get(key) or "").strip() for key in _ADDRESS_KEYS):
+        connections = (raw.get("connection"), config.get("connection"))
+        if any(isinstance(block, Mapping) and str(block.get("address") or "").strip() for block in connections):
+            # Routing reads the address from the config; connection.address alone does not route yet.
+            raise ValueError(f"{where}: an engine needs config.address (or a host); connection.address alone is "
+                             "not enough")
         raise ValueError(f"{where}: an engine needs a host or an address")
 
 
@@ -1503,6 +1508,8 @@ def _fold_top_level_connection(service_id: str, raw: Mapping[str, Any], config: 
     if not isinstance(top, Mapping):
         raise ValueError(f"service {service_id!r}: connection must be a mapping")
     nested = config.get("connection")
+    if nested is not None and not isinstance(nested, Mapping):
+        raise ValueError(f"service {service_id!r}: config.connection must be a mapping")
     if nested is not None and nested != top:
         raise ValueError(f"service {service_id!r}: connection is given at the top level and in config, and they "
                          "differ; give one")
