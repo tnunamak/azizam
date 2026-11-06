@@ -26,7 +26,7 @@ from gateway.transition_runtime import TransitionRuntime
 from scripts.transition_proof.runner import Proof
 from tests.support.fake_upstream.loopback import LoopbackServer
 from tests.test_transition_admin import FakeEngine, services
-from tests.test_transition_proof import STANDARD, assertions, steps, write_cases
+from tests.test_transition_proof import NO_RATIO, STANDARD, assertions, steps, write_cases
 from tests.support.fake_upstream.transition_gateway import KEY
 import subprocess
 import sys
@@ -155,12 +155,12 @@ def test_the_harness_passes_against_the_real_routes_in_post_mode(real: RealRoute
 
 
 def test_request_mode_wakes_through_the_real_executor(real: RealRoutesGateway, tmp_path: Path) -> None:
-    process, result = proof(real, tmp_path, "--wake-mode", "request")
+    process, result = proof(real, tmp_path, "--wake-mode", "request", manifest=write_cases(tmp_path, NO_RATIO))
     assert process.returncode == 0, process.stdout + process.stderr
     posted = [e for e in real.log if e["method"] == "POST" and e["path"].endswith("/transitions")]
     assert len(posted) == 1, "only the park is posted; the follow-up woke the domain"
     store = real.runtime.executor().store
-    assert store.by_idempotency_key(DOMAIN, "proof-t-park").kind == "park"
+    assert store.by_idempotency_key(DOMAIN, "proof-t-small-park").kind == "park"
     assert store.by_idempotency_key(DOMAIN, "wake-auto").kind == "wake"
 
 
