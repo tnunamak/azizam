@@ -95,7 +95,7 @@ def test_the_step_leaves_the_route_table_mounts_models_and_aliases_where_they_we
     before = _observables(_boot(tmp_path / "before.db", stored_registry=before_registry), before_registry)
 
     after_registry = service_registry.ensure_service_registry(path=db, actor="test")  # the step runs here
-    after = _observables(_boot(tmp_path / "after.db"), after_registry)
+    after = _observables(_boot(db), after_registry)
 
     for name in before:
         assert after[name] == before[name], f"{name} moved"

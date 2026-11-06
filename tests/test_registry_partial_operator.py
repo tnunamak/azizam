@@ -10,6 +10,7 @@ the gateway boots, and go through the app: no registry problem is faked.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 
 import pytest
@@ -43,8 +44,10 @@ def _stored(db) -> dict:
 
 def _running_partial(live, monkeypatch, services: dict, **sections):
     """Store the registry as a hand edit left it, boot on it, and return an owner client of that gateway."""
+    # The managed LiteLLM row cannot be removed, so it is stored switched off: these requests go straight to the engines.
+    litellm = {**copy.deepcopy(service_registry.release_registry()["services"]["litellm"]), "enabled": False}
     write_service_registry_for_test(
-        {"schema_version": 1, "services": services, "protocol_frontends": sections.get("protocol_frontends", {}),
+        {"schema_version": 1, "services": {**services, "litellm": litellm}, "protocol_frontends": sections.get("protocol_frontends", {}),
          "workflows": {}, "capabilities": {}},
         path=live,
     )
