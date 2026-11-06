@@ -129,7 +129,7 @@ def _adapter_submission(model: str, body: dict[str, Any], *, with_ui: bool, fake
 
     fake_upstreams.router.add_transport(HOST, HandlerTransport(answer))
     name = _workflow_name(model)
-    cfg = proxy.AUDIO_WORKFLOWS_CFG[name]
+    cfg = proxy._audio_workflow_table()[name]
     manifest = _manifest(name)
     assert manifest["bindings"][proxy._GRAPH_BINDING]["workflow"] == cfg["file"], "manifest and config name different graphs"
     doc = description.load_registry(description.REGISTRY_DIR)["node-graph"]
@@ -205,7 +205,7 @@ def test_portable_graph_matches_the_graph_the_route_submits(model, body, with_ui
 def test_refused_requests_name_the_same_field_as_the_route(model, body, param, fake_upstreams):
     """The route edge and the route refuse the same requests, for the same field, and nothing reaches the engine."""
     name = _workflow_name(model)
-    effective = _effective_for_test(_manifest(name), _limits(proxy.AUDIO_WORKFLOWS_CFG[name]))
+    effective = _effective_for_test(_manifest(name), _limits(proxy._audio_workflow_table()[name]))
     with pytest.raises(audio_graph.InvalidAudioRequest) as refused:
         audio_graph.manifest_inputs(dict(body, model=model), manifest=effective)
     assert refused.value.param == param

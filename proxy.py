@@ -1282,23 +1282,51 @@ def _session_make_limits() -> me_make.MakeLimits:
 
 _image_media_job_scheduled: set[str] = set()
 
-# Video config (parallel to images). Maps `model:` aliases -> ComfyUI workflow JSON.
-videos_cfg = config.get("videos", {})
-VIDEO_DEFAULT_WORKFLOW = videos_cfg.get("default_workflow", "video-ltx-13b-q8")
-VIDEO_WORKFLOWS = videos_cfg.get("workflows", {}) or {}
-# Workflow id that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
-# Unset means both routes return a clear 501 (video_remix_not_configured). The
-# routes submit as `video-remix`, so that alias must point at the same workflow.
-VIDEO_REMIX_WORKFLOW = videos_cfg.get("remix_workflow") or None
-# Long video (extensions, `shots`, `seconds` past a model's native length).
-# `extend_workflow` names the chain workflow POST /v1/videos/extensions runs;
-# unset returns 501. `max_total_seconds` caps the stitched length: each added
-# segment loses some fidelity, so a hard cap beats silent degradation.
-VIDEO_EXTEND_WORKFLOW = videos_cfg.get("extend_workflow") or None
-VIDEO_MAX_TOTAL_SECONDS = float(videos_cfg.get("max_total_seconds", 40))
-# Escape hatch for videos made before records were persisted (see _video_job_blocked).
-VIDEO_ALLOW_UNTRACKED_IDS = bool(videos_cfg.get("allow_untracked_ids", False))
-VIDEO_CHAIN_SEGMENT_SECONDS = float(videos_cfg.get("chain_segment_seconds", 8))
+# Video config (parallel to images): the `videos` section (CONFIG_HOMES C8b), read from the snapshot on every call.
+# `workflows` maps `model:` ids to ComfyUI workflow JSON.
+def _videos() -> Mapping[str, Any]:
+    """The `videos` section of the snapshot this call reads. A snapshot without it gives an empty mapping."""
+    section = runtime().config.get("videos")
+    return section if isinstance(section, Mapping) else {}
+
+
+def _video_default_workflow() -> str:
+    return _videos().get("default_workflow", "video-ltx-13b-q8")
+
+
+def _video_workflow_table() -> Mapping[str, Any]:
+    return _videos().get("workflows") or {}
+
+
+def _video_remix_workflow() -> str | None:
+    """Workflow id that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
+    Unset means both routes return a clear 501 (video_remix_not_configured). The
+    routes submit as `video-remix`, so that alias must point at the same workflow."""
+    return _videos().get("remix_workflow") or None
+
+
+def _video_extend_workflow() -> str | None:
+    """Long video (extensions, `shots`, `seconds` past a model's native length).
+    `extend_workflow` names the chain workflow POST /v1/videos/extensions runs;
+    unset returns 501."""
+    return _videos().get("extend_workflow") or None
+
+
+def _video_max_total_seconds() -> float:
+    """`max_total_seconds` caps the stitched length: each added segment loses some
+    fidelity, so a hard cap beats silent degradation."""
+    return float(_videos().get("max_total_seconds", 40))
+
+
+def _video_allow_untracked_ids() -> bool:
+    """Escape hatch for videos made before records were persisted (see _video_job_blocked)."""
+    return bool(_videos().get("allow_untracked_ids", False))
+
+
+def _video_chain_segment_seconds() -> float:
+    return float(_videos().get("chain_segment_seconds", 8))
+
+
 _OPENAI_VIDEO_STATUS_BY_INTERNAL = {
     "queued": "queued",
     "running": "in_progress",
@@ -3421,7 +3449,7 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
     if operation == "image_edits":
         return image_edit_default_model()
     if operation == "videos":
-        return VIDEO_DEFAULT_WORKFLOW
+        return _video_default_workflow()
     if operation == "embeddings":
         return embeddings_model() if EMBEDDINGS_ENABLED else ""
     return requested_model
@@ -10049,7 +10077,7 @@ def _video_job_blocked(prompt_id: str, auth_context: AuthContext | None) -> bool
     """
     if prompt_id in _video_job_records:
         return not _video_job_visible(prompt_id, auth_context)
-    if VIDEO_ALLOW_UNTRACKED_IDS:
+    if _video_allow_untracked_ids():
         return False
     return _asset_owner_key(auth_context) is not None
 
@@ -10591,16 +10619,17 @@ def _resolve_video_workflow(model: str) -> tuple[Optional[str], Optional[dict]]:
     """
     candidate = (model or "").strip()
     if not candidate:
-        candidate = VIDEO_DEFAULT_WORKFLOW
+        candidate = _video_default_workflow()
 
+    workflows = _video_workflow_table()
     # 1) direct workflow name
-    if candidate in VIDEO_WORKFLOWS:
-        return candidate, VIDEO_WORKFLOWS[candidate]
+    if candidate in workflows:
+        return candidate, workflows[candidate]
 
     # 2) alias
     alias_target = VIDEO_ALIASES.get(candidate.lower())
-    if alias_target and alias_target in VIDEO_WORKFLOWS:
-        return alias_target, VIDEO_WORKFLOWS[alias_target]
+    if alias_target and alias_target in workflows:
+        return alias_target, workflows[alias_target]
 
     return None, None
 
@@ -11576,7 +11605,7 @@ async def proxy_graph_video_create(
     if raw_prompt is not None and not isinstance(raw_prompt, str):
         return _gateway_input_error("prompt must be a string", param="prompt")
     prompt = (raw_prompt or "").strip()
-    requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    requested_model = body.get("model") or _video_default_workflow()
     public_model = str(requested_model)
     size_from_body = body.get("size")
     seconds = body.get("seconds")
@@ -11612,7 +11641,7 @@ async def proxy_graph_video_create(
     # is selected when the request carries input_reference.
     i2v_workflow_name = workflow_cfg.get("i2v_workflow")
     if input_reference and i2v_workflow_name:
-        i2v_cfg = VIDEO_WORKFLOWS.get(i2v_workflow_name)
+        i2v_cfg = _video_workflow_table().get(i2v_workflow_name)
         if i2v_cfg:
             workflow_name, workflow_cfg = i2v_workflow_name, i2v_cfg
     if workflow_cfg.get("requires_input_reference") and not input_reference:
@@ -12196,8 +12225,9 @@ def _chain_workflow_for(requested_model: Any) -> tuple[str | None, dict | None]:
     if video_extend.engine_for(cfg.get("builder")):
         return name, cfg
     target = cfg.get("chain_workflow")
-    if target and target in VIDEO_WORKFLOWS and video_extend.engine_for(VIDEO_WORKFLOWS[target].get("builder")):
-        return str(target), VIDEO_WORKFLOWS[target]
+    workflows = _video_workflow_table()
+    if target and target in workflows and video_extend.engine_for(workflows[target].get("builder")):
+        return str(target), workflows[target]
     return None, None
 
 
@@ -12354,7 +12384,7 @@ async def _submit_video_chain(
     except video_controls.VideoControlError as exc:
         return _json_error(400, str(exc), param=exc.param, code="invalid_video_control")
     audio_disabled = chain_controls.get(video_controls.AUDIO_CONTROL) is False
-    workflow_cfg = VIDEO_WORKFLOWS.get(workflow_name) or {}
+    workflow_cfg = _video_workflow_table().get(workflow_name) or {}
     engine = video_extend.engine_for(workflow_cfg.get("builder"))
     try:
         options = _parse_chain_options(body, engine)
@@ -12413,18 +12443,18 @@ async def _submit_video_chain(
     try:
         segments = engine.plan_segments(
             shots, fps=fps, has_source=extending,
-            max_segment_seconds=float(workflow_cfg.get("chain_segment_seconds", VIDEO_CHAIN_SEGMENT_SECONDS)),
+            max_segment_seconds=float(workflow_cfg.get("chain_segment_seconds", _video_chain_segment_seconds())),
             state_ledger=options.get("state_ledger"))
     except video_extend.PlanError as exc:
         return _json_error(400, str(exc), code=exc.code, param=exc.param)
     source_frames = probe.frames if probe is not None else 0
     total_seconds = video_extend.total_seconds(segments, fps, source_frames)
-    if total_seconds > VIDEO_MAX_TOTAL_SECONDS + 0.05:
+    if total_seconds > _video_max_total_seconds() + 0.05:
         return _json_error(
             400,
             f"total video length would be {total_seconds:.1f} s"
             + (f" ({source_frames / fps:.1f} s source + {total_seconds - source_frames / fps:.1f} s new)" if extending else "")
-            + f", over the {VIDEO_MAX_TOTAL_SECONDS:g} s limit (videos.max_total_seconds). "
+            + f", over the {_video_max_total_seconds():g} s limit (videos.max_total_seconds). "
             "Quality drops with each added segment; finish this video or start a new one.",
             code="video_total_length_exceeded", param="seconds")
 
@@ -12547,7 +12577,7 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
     service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
         return service_response
-    if not VIDEO_EXTEND_WORKFLOW:
+    if not _video_extend_workflow():
         return _json_error(
             501, "Video extension is not configured on this gateway. Set videos.extend_workflow "
             "in proxy_config.yml to enable it.", code="video_extend_not_configured")
@@ -12584,7 +12614,7 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
         if source_id else None)
     requested = body.get("model")
     if not requested:
-        requested = source_model if source_model and _chain_workflow_for(source_model)[1] else VIDEO_EXTEND_WORKFLOW
+        requested = source_model if source_model and _chain_workflow_for(source_model)[1] else _video_extend_workflow()
     workflow_name, cfg = _chain_workflow_for(requested)
     if not cfg:
         return _json_error(400, f"model {requested!r} cannot extend videos; use video-long, ltx-2.5-long or minimax-h3",
@@ -13300,7 +13330,7 @@ async def _submit_video_remix(
     remixed_from_video_id: str | None,
 ) -> Response:
     """Create a remix job: the standard video create pipeline with `source_video` bound."""
-    if not VIDEO_REMIX_WORKFLOW:
+    if not _video_remix_workflow():
         return _json_error(
             501,
             "Video remix is not configured on this gateway. Set "
@@ -13372,7 +13402,7 @@ async def proxy_graph_video_remix(
     async with _video_progress_lock:
         if _video_job_blocked(prompt_id, auth_context):
             return _json_error(404, "video_id not found", kind="not_found")
-    if not VIDEO_REMIX_WORKFLOW:
+    if not _video_remix_workflow():
         return _json_error(
             501,
             "Video remix is not configured on this gateway. Set "
@@ -24206,16 +24236,16 @@ async def _submit_audio_media_job(
         return policy_response
 
     request_id = f"audjob_{uuid.uuid4().hex}"
-    workflow_name, _workflow_cfg = _resolve_audio_workflow(str(body.get("model", AUDIO_DEFAULT_WORKFLOW)))
+    workflow_name, _workflow_cfg = _resolve_audio_workflow(str(body.get("model", _audio_default_workflow())))
     if not workflow_name:
-        requested_model = str(body.get("model", AUDIO_DEFAULT_WORKFLOW))
+        requested_model = str(body.get("model", _audio_default_workflow()))
         return model_compatibility_error(
             ModelCompatibilityError(
                 f"Model '{requested_model}' is not available for audio generation.",
                 code="model_not_found",
             )
         )
-    requested_model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
+    requested_model = body.get("model", _audio_default_workflow())
     manifest = _load_audio_workflow_manifest(workflow_name)
     policy_decision = evaluate_and_apply(
         auth_context.identity,
@@ -24377,7 +24407,7 @@ def _validate_video_media_job_body(body: Mapping[str, Any]) -> tuple[str | None,
             media_type="application/json",
         )
 
-    requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    requested_model = body.get("model") or _video_default_workflow()
     try:
         model_resolution = resolve_model_for_operation("videos", requested_model)
     except ModelCompatibilityError as exc:
@@ -24846,7 +24876,7 @@ def _video_media_job_step_auth(
     if auth_context is None:
         return _MEDIA_JOB_CALLER_GONE, dict(_MEDIA_JOB_CALLER_GONE_INFO)
     body = payload.get("body") if isinstance(payload.get("body"), Mapping) else {}
-    requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    requested_model = body.get("model") or _video_default_workflow()
     workflow_name = str(job.get("workflow") or "")
     decision = _video_job_policy_decision(auth_context, requested_model, workflow_name)
     if decision.denied:
@@ -24881,7 +24911,7 @@ async def _submit_video_media_job(
     if error_response is not None:
         return error_response
     assert workflow_name is not None
-    requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
+    requested_model = body.get("model") or _video_default_workflow()
     policy_decision = _video_job_policy_decision(auth_context, requested_model, workflow_name)
     if policy_decision.denied:
         return _policy_denied_response(policy_decision)
@@ -26037,25 +26067,41 @@ async def videos_extend(request: Request):
 # Audio Generation via ComfyUI (ACE-Step + TangoFlux)
 # =============================================================================
 
-_audio_cfg = config.get("audio", {}) or {}
-AUDIO_DEFAULT_WORKFLOW = _audio_cfg.get("default_workflow", "ace-step-1.5-xl-turbo")
-_AUDIO_WORKFLOWS_DIR_CFG = _audio_cfg.get("workflows_dir", "./workflows/audio")
+# The workflow directory is a storage root: it stays in the startup file (CONFIG_HOMES C10). The rest of the `audio`
+# section (CONFIG_HOMES C8b) is read from the snapshot on every call.
+# The config section the audio settings live in, named once for the startup read below and the snapshot read in _audio().
+_AUDIO_SECTION = "audio"
+_AUDIO_WORKFLOWS_DIR_CFG = (_bootstrap_config.get(_AUDIO_SECTION) or {}).get("workflows_dir", "./workflows/audio")
 AUDIO_WORKFLOWS_DIR = Path(_AUDIO_WORKFLOWS_DIR_CFG)
 if not AUDIO_WORKFLOWS_DIR.is_absolute():
     AUDIO_WORKFLOWS_DIR = (Path(__file__).parent / _AUDIO_WORKFLOWS_DIR_CFG).resolve()
-AUDIO_WORKFLOWS_CFG = (_audio_cfg.get("workflows", {}) or {})
+
+
+def _audio() -> Mapping[str, Any]:
+    """The `audio` section of the snapshot this call reads. A snapshot without it gives an empty mapping."""
+    section = runtime().config.get(_AUDIO_SECTION)
+    return section if isinstance(section, Mapping) else {}
+
+
+def _audio_default_workflow() -> str:
+    return _audio().get("default_workflow", "ace-step-1.5-xl-turbo")
+
+
+def _audio_workflow_table() -> Mapping[str, Any]:
+    return _audio().get("workflows") or {}
 
 
 def _resolve_audio_workflow(model: str) -> tuple:
     """Map model to (name, cfg). Returns (None, None) if not found."""
     candidate = (model or "").strip()
     if not candidate:
-        candidate = AUDIO_DEFAULT_WORKFLOW
-    if candidate in AUDIO_WORKFLOWS_CFG:
-        return candidate, AUDIO_WORKFLOWS_CFG[candidate]
+        candidate = _audio_default_workflow()
+    workflows = _audio_workflow_table()
+    if candidate in workflows:
+        return candidate, workflows[candidate]
     alias_target = AUDIO_ALIASES.get(candidate.lower())
-    if alias_target and alias_target in AUDIO_WORKFLOWS_CFG:
-        return alias_target, AUDIO_WORKFLOWS_CFG[alias_target]
+    if alias_target and alias_target in workflows:
+        return alias_target, workflows[alias_target]
     return None, None
 
 
@@ -26242,7 +26288,7 @@ async def proxy_audio_generate(
     except audio_graph.InvalidAudioRequest as error:
         return _gateway_input_refusal(openai_error_response(str(error), param=error.param), str(error))
 
-    model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
+    model = body.get("model", _audio_default_workflow())
     audio_type = body.get("type", "music")
 
     workflow_name, workflow_cfg = _resolve_audio_workflow(model)
@@ -26508,7 +26554,7 @@ async def audio_generate(request: Request):
 def _audio_models_for_caller(auth_context: AuthContext) -> list[dict[str, Any]]:
     """Audio workflows this caller may see; runs category reads, so call it off the loop."""
     models = []
-    for name, cfg in AUDIO_WORKFLOWS_CFG.items():
+    for name, cfg in _audio_workflow_table().items():
         if not discovery_allows(auth_context.identity, make_policy_request(
             protocol="openai.audio", intent=INTENT_AUDIO_GENERATE,
             model=name, workflow=f"audio.generate.{name}",

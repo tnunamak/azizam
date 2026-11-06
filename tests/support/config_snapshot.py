@@ -61,3 +61,12 @@ class section_published:
 
     def __exit__(self, *_exc: Any) -> None:
         self.stop()
+
+
+class section_key_published(section_published):
+    """``section_published`` of the current section with one key replaced, for a test that patched one module global
+    of a section (``patch.object(proxy, "VIDEO_MAX_TOTAL_SECONDS", 120.0)``): the other keys stay as they are."""
+
+    def __init__(self, section: str, key: str, value: Any) -> None:
+        current = proxy.config.get(section)
+        super().__init__(section, {**(current if isinstance(current, Mapping) else {}), key: value})
