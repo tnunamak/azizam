@@ -307,6 +307,17 @@ def test_the_legacy_collection_is_on_unless_the_trusted_config_says_false(config
     assert sel.legacy_collection_enabled(config) is expected
 
 
+
+def test_a_legacy_flag_that_is_not_a_boolean_is_named_in_a_warning_once(caplog: pytest.LogCaptureFixture, monkeypatch):
+    monkeypatch.setattr(sel, "_WARNED_FLAGS", set())
+    typo = {"workflow_execution": {"legacy_output_collection": "false"}}
+    with caplog.at_level("WARNING", logger=sel.__name__):
+        assert sel.legacy_collection_enabled(typo) is True
+        assert sel.legacy_collection_enabled(typo) is True
+        assert sel.legacy_collection_enabled({"workflow_execution": {"legacy_output_collection": False}}) is False
+    warned = [r.getMessage() for r in caplog.records if r.name == sel.__name__]
+    assert len(warned) == 1 and "'false'" in warned[0] and "stays on" in warned[0]
+
 # --------------------------------------------------------------------------------------------- the fetch gate (D6)
 
 def limits(**changes: int) -> Any:

@@ -530,7 +530,8 @@
 # feat/code-to-data-s2-3 (2026-11-06): result bundle staging, publication, receipts, scan, JSON store, limits and audio route (+71); measured 19897.
 # S2.3 review fixes: a stale worker cannot stage files or publish after erasure (+2); measured 19899.
 # feat/code-to-data-s2-4 (2026-11-06): output selectors, adapter descriptor, bundled-selector proof and audio route selection (+261); measured 20160.
-pytest = 20160
+# S2.4 review fix: a non-boolean legacy flag is named in a warning once (+1); measured 20161.
+pytest = 20161
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

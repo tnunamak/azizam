@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import weakref
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass
@@ -372,7 +373,16 @@ def legacy_collection_enabled(config: Mapping[str, Any]) -> bool:
     """Whether a binding with no selectors may still be read by the adapter's legacy collection. On unless the trusted
     runtime config says ``workflow_execution.legacy_output_collection: false``."""
     section = config.get(CONFIG_SECTION) if isinstance(config, Mapping) else None
-    return not (isinstance(section, Mapping) and section.get(LEGACY_FLAG) is False)
+    value = section.get(LEGACY_FLAG) if isinstance(section, Mapping) else None
+    if value is not None and not isinstance(value, bool) and repr(value) not in _WARNED_FLAGS:
+        # A value that is not true or false (a quoted "false", a 0) does not turn the collection off. Say so once.
+        _WARNED_FLAGS.add(repr(value))
+        logging.getLogger(__name__).warning(
+            "%s.%s is %r, not true or false: the legacy output collection stays on", CONFIG_SECTION, LEGACY_FLAG, value)
+    return value is not False
+
+
+_WARNED_FLAGS: set[str] = set()
 
 
 # ------------------------------------------------------------------------------------------------- the fetch gate
