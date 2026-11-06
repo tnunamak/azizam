@@ -191,3 +191,39 @@ def test_the_pre_deploy_report_is_clean_when_no_stored_workflow_has_a_bundled_id
 
     assert workflow_override_report.main([str(live)]) == 0
     assert "with a bundled id: 0" in capsys.readouterr().out
+
+
+def _store_left_out_workflow(db) -> None:
+    """Store a workflow under the bundled id that the registry leaves out: its manifest does not validate."""
+    registry = admin_store.get_service_registry_with_generation(path=db)["value"]
+    registry["workflows"] = {**(registry.get("workflows") or {}),
+                             BUNDLED_ID: {"manifest": {**_owner_manifest(), "inputs": "not a list"}}}
+    write_service_registry_for_test(registry, path=db)
+
+
+def _repair(client, db, record):
+    return client.put(f"/admin/api/operator/service-registry/excluded/workflows/{BUNDLED_ID}", json={"record": record},
+                      headers={"If-Match": f'"os-{_generation(db)}"'})
+
+
+def test_repairing_a_left_out_workflow_under_a_bundled_id_without_overrides_is_a_409(live, client):
+    _store_left_out_workflow(live)
+    excluded = client.get("/admin/api/operator/service-registry").json()["excluded"]
+    assert any(item["id"] == BUNDLED_ID for item in excluded), excluded
+    before = admin_store.get_service_registry_with_generation(path=live)
+
+    refused = _repair(client, live, {"manifest": _owner_manifest()})
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["code"] == "id_is_bundled"
+    assert admin_store.get_service_registry_with_generation(path=live) == before
+    assert _served_name() != OWNER_NAME
+
+
+def test_repairing_a_left_out_workflow_under_a_bundled_id_with_overrides_serves_it(live, client):
+    _store_left_out_workflow(live)
+
+    repaired = _repair(client, live, {"manifest": _owner_manifest(), "overrides": BUNDLED_ID})
+
+    assert repaired.status_code == 200, repaired.text
+    assert _served_name() == OWNER_NAME

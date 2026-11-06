@@ -2659,6 +2659,9 @@ def create_admin_router(
             return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
+        except service_registry.BundledWorkflowId as exc:
+            return egress.error_with_projection(
+                status.HTTP_409_CONFLICT, "id_is_bundled", str(exc), {"bundled_workflow": exc.bundled})
         except ValueError as exc:
             return _excluded_error(exc)
         return _registry_response(record)
