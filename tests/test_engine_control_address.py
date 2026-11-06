@@ -140,3 +140,21 @@ def test_moving_the_control_address_counts_as_moving_a_key():
     before = {"services": {"fixture": {"config": {"connection": record()["connection"]}}}}
     moved = {"services": {"fixture": {"config": {"connection": record(control="http://127.0.0.1:7003")["connection"]}}}}
     assert service_registry.credential_binding_changes(before, moved)
+
+
+@pytest.mark.parametrize("where", ["top", "config"])
+def test_a_record_write_checks_the_control_address_of_either_connection_block(where):
+    connection = dict(record()["connection"], control_address="http://user:pw@127.0.0.1:7002")
+    service = ({"id": "fixture", "connection": connection} if where == "top"
+               else {"id": "fixture", "config": {"connection": connection}})
+    with pytest.raises(ValueError, match="control_address"):
+        service_registry.validate_record_connections(service)
+    service_registry.validate_record_connections({"id": "fixture", "connection": record()["connection"],
+                                                  "config": {"connection": record()["connection"]}})
+
+
+def test_a_record_with_a_malformed_top_level_control_address_is_not_stored():
+    connection = dict(record()["connection"], control_address="http://127.0.0.1:7002/?token=x")
+    with pytest.raises(ValueError, match="control_address"):
+        service_registry.upsert_service_in_registry({"services": {}}, service_id="fixture",
+                                                    raw={"id": "fixture", "connection": connection})

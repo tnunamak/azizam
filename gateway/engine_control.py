@@ -55,6 +55,8 @@ class EngineControlRuntime:
             raise ValueError("control operation needs an HTTP method and absolute path")
         if not isinstance(address, str) or urlsplit(address).scheme not in {"http", "https"}:
             raise ValueError("control operation needs an HTTP connection")
+        if urlsplit(address).username is not None or urlsplit(address).password is not None:
+            raise ValueError("control operation address cannot carry a user")
         url = urljoin(address.rstrip("/") + "/", path.lstrip("/"))
         origin = urlsplit(address)
         target = urlsplit(url)
