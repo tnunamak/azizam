@@ -185,7 +185,9 @@ class LimitedAssetStore:
 
     It wraps any store with the engine protocol's ``save(chunks, content_type=, max_bytes=, name=)`` and ``read``. One
     instance serves one run: it counts the assets and the bytes of that run. Over a limit it raises ``ResultRefused``
-    and the inner store saves nothing for that asset.
+    while the inner store is still reading. Whether the inner store keeps a partial file then is the inner store's
+    behaviour, not this wrapper's: the caller must not record the asset, and an unrecorded file is the inner store's to
+    clean up.
     """
 
     def __init__(self, inner: Any, limits: ResultLimits) -> None:
@@ -312,6 +314,8 @@ def stage_assets_in(
             raise ResultRefused("bad_asset", "an asset entry needs asset_ref, media_type and size_bytes")
         clean.append({"asset_ref": ref, "media_type": media_type, "size_bytes": size})
     check_assets(limits, [item["size_bytes"] for item in clean])
+    if _erased(conn, _job_row(conn, job_id)):
+        raise ResultRefused("erased", "the job's results were erased")
     _drop_stage(conn, job_id, attempt, name)
     ref = _stage_ref(job_id, attempt, name)
     conn.execute(
@@ -366,6 +370,8 @@ def publish_in(
     unpublished attempts of the job are marked ``aborted``. Returns the bundle reference.
     """
     published_at = _now() if now is None else now
+    if _erased(conn, _job_row(conn, job_id)):
+        raise ResultRefused("erased", "the job's results were erased")
     if conn.execute("SELECT 1 FROM result_bundle WHERE job_id = ?", (job_id,)).fetchone() is not None:
         raise ResultRefused("published", "the job already published its results")
     rows = conn.execute(
@@ -528,7 +534,10 @@ def startup_scan(
     """The scan of D4, once at startup, before any job is resumed.
 
     It deletes the stage rows and JSON values of every attempt that is not published and not in ``running`` (a set of
-    ``(job_id, attempt)``; a freshly started process has none). Then it links the receipt of every published bundle that
+    ``(job_id, attempt)``; a freshly started process has none). Deleting without a running set is safe only because one
+    gateway process owns the jobs database: the process holds ``.owner.lock`` in its private directory for its whole
+    life (gateway/private_tmp.py), so no other process can be mid-run while this one starts. Run it before this process
+    starts any job. Then it links the receipt of every published bundle that
     has none. A bundle older than ``LINK_WINDOW_S`` with no receipt to link is given up, so the scan does not retry it
     forever. Returns the counts ``{"stage_rows", "linked", "gave_up"}``.
     """

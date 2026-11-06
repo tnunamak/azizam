@@ -355,6 +355,27 @@ def test_a_stale_worker_cannot_stage_a_value_after_erasure(db: Path):
     assert rows(db, "SELECT COUNT(*) FROM result_json") == [(0,)]
 
 
+def test_a_stale_worker_cannot_stage_files_after_erasure(db: Path):
+    job_id = make_job(db)
+    media_jobs.erase_prompt_derivatives({"*"}, before=2**31, path=db)
+    with pytest.raises(ResultRefused) as refused:
+        stage_assets(db, job_id, "files", [10])
+    assert refused.value.code == "erased"
+    assert rows(db, "SELECT COUNT(*) FROM result_stage") == [(0,)]
+
+
+def test_a_stale_worker_cannot_publish_after_erasure(db: Path):
+    job_id = make_job(db)
+    stage_assets(db, job_id, "files", [10])
+    media_jobs.erase_prompt_derivatives({"*"}, before=2**31, path=db)
+    with pytest.raises(ResultRefused) as refused:
+        with media_jobs.connection(db) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            result_bundle.publish_in(conn, job_id, 1, limits=LIMITS)
+    assert refused.value.code == "erased"
+    assert rows(db, "SELECT COUNT(*) FROM result_bundle") == [(0,)]
+
+
 def test_complete_job_stages_publishes_and_links(db: Path, receipts: Path):
     job_id = make_job(db, envelope=make_envelope())
     receipt_for(receipts, job_id)
