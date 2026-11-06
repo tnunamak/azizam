@@ -578,13 +578,31 @@ def project_policy(policy: Policy, value: Any, *, configured: Callable[[str], bo
     return Projection(None if tree is OMITTED else tree, walk.dropped, walk.shape_errors, walk.entries, walk.hidden)
 
 
+def _stored_item(item: Any, stored_items: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """The stored list item ``item`` was read from, so its hidden settings can be put back; None when there is none.
+
+    Never by position: an item with an ``id`` matches the one stored item with that id; any other item matches the one
+    stored item that holds every setting the item shows, unchanged. No match, or two, keeps nothing.
+    """
+    if not isinstance(item, Mapping):
+        return None
+    shown = {key: value for key, value in item.items() if key != HIDDEN_KEY}
+    if isinstance(shown.get("id"), (str, int)) and not isinstance(shown.get("id"), bool):
+        found = [stored for stored in stored_items if stored.get("id") == shown["id"]]
+    elif shown:
+        found = [stored for stored in stored_items if all(key in stored and stored[key] == value for key, value in shown.items())]
+    else:
+        return None  # an item that shows nothing matches nothing
+    return found[0] if len(found) == 1 else None
+
+
 def retain_hidden(policy: Policy, incoming: Any, stored: Any) -> None:
     """Put back, into ``incoming``, every setting of ``stored`` that ``policy`` hides and ``incoming`` leaves out.
 
     A read never shows a hidden setting (decision D34), so a write built from a read does not carry it; the
     store keeps it unchanged. A hidden setting the write does name is the write's own and replaces the stored
-    one. The count a read shows (``HIDDEN_KEY``) is dropped from the write. Walks the typed objects and maps;
-    a list is never matched by position (its items only lose the count).
+    one. The count a read shows (``HIDDEN_KEY``) is dropped from the write. Walks the typed objects, maps and lists; a
+    list item is matched to its stored item by id or by its shown settings, never by position (``_stored_item``).
     """
     stored_map = stored if isinstance(stored, Mapping) else {}
     if isinstance(policy, Alt):
@@ -592,8 +610,9 @@ def retain_hidden(policy: Policy, incoming: Any, stored: Any) -> None:
             if isinstance(option, (Obj, Dict, Seq)):
                 retain_hidden(option, incoming, stored)
     elif isinstance(policy, Seq):
+        stored_items = [item for item in stored if isinstance(item, Mapping)] if isinstance(stored, list) else []
         for item in incoming if isinstance(incoming, list) else ():
-            retain_hidden(policy.item, item, None)
+            retain_hidden(policy.item, item, _stored_item(item, stored_items))
     elif isinstance(policy, Dict):
         for key, item in (incoming.items() if isinstance(incoming, dict) else ()):
             retain_hidden(policy.value, item, stored_map.get(key))
