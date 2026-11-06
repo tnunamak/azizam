@@ -11,7 +11,11 @@ tell apart is an attribute the test sets before the run:
 - ``echo_auth``: an error body repeats the Authorization header, to prove the harness redacts it;
   ``echo_pad`` puts that many characters before the header text, so a test can place the key across a cut;
 - ``prompt_tokens_reported``: replace the usage prompt count (a seed that reports 0);
-- ``retry_503``: the next N chat requests after the first transition began answer 503 with ``Retry-After: 1``.
+- ``retry_503``: the next N chat requests after the first transition began answer 503 with ``Retry-After`` set
+  to ``retry_after`` (default ``"1"``);
+- ``cold_cached_reported``: a request whose first message starts with the cold-baseline marker reports this cached
+  count (a cold baseline that was not cold);
+- ``content``: replace the reply's message content (a list of parts, say).
 
 The transition store follows the design (D2, G4, G9): a repeated key with the same kind returns the same operation in
 any state, the same key with another kind is a 409, and only a running or reconciling operation blocks a new one.
@@ -43,7 +47,8 @@ class FakeTransitionGateway:
         self.park, self.wake, self.cache = "succeed", "succeed", "kept"
         self.slow_when_cached, self.usage_shape, self.echo_auth = False, "standard", False
         self.polls_to_finish = 2
-        self.echo_pad, self.prompt_tokens_reported, self.retry_503 = 0, None, 0
+        self.echo_pad, self.prompt_tokens_reported, self.retry_503, self.retry_after = 0, None, 0, "1"
+        self.cold_cached_reported, self.content = None, "answer"
         self.cold_delay_s, self.warm_delay_s = 0.25, 0.01
         self.requests: list[dict[str, Any]] = []
         self.gate, self.parked = "open", False
@@ -147,7 +152,7 @@ class FakeTransitionGateway:
     async def _chat(self, body: dict[str, Any]) -> tuple[int, Any]:
         if self.ops and self.retry_503 > 0:
             self.retry_503 -= 1
-            return 503, {"error": "the domain is waking"}, {"Retry-After": "1"}
+            return 503, {"error": "the domain is waking"}, {"Retry-After": self.retry_after}
         if self.parked:
             op_status, op = self._begin({"kind": "wake", "idempotency_key": f"wake-auto-{len(self.ops)}"})
             if op_status == 202 and self.wake != "hang":
@@ -159,6 +164,8 @@ class FakeTransitionGateway:
         self._cached.append(messages)
         await asyncio.sleep(self.warm_delay_s if cached and not self.slow_when_cached else self.cold_delay_s)
         prompt = _tokens(messages)
+        if self.cold_cached_reported is not None and str(messages[0]["content"]).startswith("[cold-baseline"):
+            cached = self.cold_cached_reported
         reported = prompt if self.prompt_tokens_reported is None else self.prompt_tokens_reported
         usage: dict[str, Any] = {"completion_tokens": 3}
         extra: dict[str, Any] = {}
@@ -166,4 +173,4 @@ class FakeTransitionGateway:
             usage.update(prompt_tokens=reported, prompt_tokens_details={"cached_tokens": cached})
         else:
             extra["timings"] = {"prompt_n": reported, "cache_n": cached}
-        return 200, {"choices": [{"message": {"role": "assistant", "content": "answer"}}], "usage": usage, **extra}
+        return 200, {"choices": [{"message": {"role": "assistant", "content": self.content}}], "usage": usage, **extra}

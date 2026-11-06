@@ -79,7 +79,8 @@ class Proof:
             remaining = self.poll_timeout_s - (time.monotonic() - started)
             if not retry_503 or reply["http_status"] != 503 or remaining <= 0:
                 break
-            wait = min(_retry_after_s(reply["retry_after"], self.poll_interval_s), remaining)
+            # Never shorter than one poll interval: "Retry-After: 0" must not turn the loop into a spin.
+            wait = min(max(_retry_after_s(reply["retry_after"], self.poll_interval_s), self.poll_interval_s), remaining)
             retries.append({"http_status": 503, "retry_after": reply["retry_after"], "waited_s": round(wait, 4)})
             self.sleep(wait)
         if retry_503:
@@ -116,6 +117,13 @@ class Proof:
                 404: "unknown domain, or a domain without transition enabled",
                 409: f"another operation holds the domain (op {step['op_id']}, state {data.get('state')})",
             }.get(reply["http_status"], reply["error"] or f"unexpected status {reply['http_status']}")
+            step["seconds"] = round(time.monotonic() - started, 4)
+            return step
+        if data.get("state") != "running":
+            # A new transition starts running. Any other state is the answer for a key that was used before (D2,
+            # G4): that operation is finished, so this run would read "succeeded" without parking anything.
+            step["error"] = (f"the key returned an operation from an earlier run (op {step['op_id']}, state "
+                             f"{data.get('state')!r}); a proof needs a fresh run id")
             step["seconds"] = round(time.monotonic() - started, 4)
             return step
         deadline = time.monotonic() + self.poll_timeout_s
@@ -220,9 +228,11 @@ class Proof:
                            source=source if denominator is not None else None) and passed
         if cached is not None and denominator is not None:
             fraction = round(cached / denominator, 4)
+            estimate_note = ({"note": "the fraction rests on the manifest's count estimate, not on a count the "
+                                      "gateway reported"} if source == "manifest_count_estimate" else {})
             passed = assertion("cached_prefix_kept", fraction >= check.min_cached_fraction, cached_tokens=cached,
                                seed_prompt_tokens=denominator, denominator_source=source, fraction=fraction,
-                               min_cached_fraction=check.min_cached_fraction) and passed
+                               min_cached_fraction=check.min_cached_fraction, **estimate_note) and passed
         else:  # no fraction, no proof: a missing count never counts as a kept prefix
             passed = assertion("cached_prefix_kept", False, cached_tokens=cached, seed_prompt_tokens=denominator,
                                reason="the cached fraction cannot be computed") and passed
@@ -233,6 +243,7 @@ class Proof:
             cold = {"name": "cold_baseline", **self._chat(_bust_cache(follow_body, self.run_id, case.label), check)}
             steps.append(cold)
             if assertion("cold_baseline_replied", cold["ok"], http_status=cold["http_status"], error=cold["error"]):
+                passed = _assert_cold(assertion, cold, check) and passed
                 ratio = round(follow["seconds"] / cold["seconds"], 4) if cold["seconds"] > 0 else None
                 passed = assertion("followup_faster_than_cold", ratio is not None and ratio <= check.max_timing_ratio,
                                    followup_seconds=follow["seconds"], cold_seconds=cold["seconds"], ratio=ratio,
@@ -241,6 +252,21 @@ class Proof:
                 passed = False
         record["status"] = "passed" if passed else "failed"
         return record
+
+
+def _assert_cold(assertion: Callable[..., bool], cold: dict[str, Any], check: Any) -> bool:
+    """A cold baseline that reports a large cached count was not cold, so its time proves nothing. A reply that
+    reports no cached count is not judged here: the engine may not report one for an uncached prompt."""
+    cached = _count(cold["cached_tokens"])
+    if cached is None:
+        return True
+    prompt = _positive(cold["prompt_tokens"])
+    if prompt is None:
+        return assertion("cold_baseline_is_cold", False, cached_tokens=cached, cold_prompt_tokens=None,
+                         reason="the cold reply reports a cached count but no prompt count")
+    limit = (1 - check.min_cached_fraction) * prompt
+    return assertion("cold_baseline_is_cold", cached <= limit, cached_tokens=cached, cold_prompt_tokens=prompt,
+                     max_cached_tokens=round(limit, 2))
 
 
 def _text(content: Any) -> str:

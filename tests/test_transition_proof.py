@@ -24,6 +24,7 @@ from tests.support.fake_upstream.transition_gateway import DOMAIN, KEY, FakeTran
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "transition-proof"
 STANDARD = {"cached_tokens_path": "usage.prompt_tokens_details.cached_tokens", "prompt_tokens_path": "usage.prompt_tokens",
             "min_cached_fraction": 0.8, "max_timing_ratio": 0.5}
+NO_RATIO = {**STANDARD, "max_timing_ratio": None}
 ALTERNATE = {"cached_tokens_path": "timings.cache_n", "prompt_tokens_path": "timings.prompt_n",
              "min_cached_fraction": 0.8}
 
@@ -84,7 +85,8 @@ def test_kept_prefix_passes_with_every_step_recorded(gateway: FakeTransitionGate
     assert assertions(result) == {
         "seed_replied": True, "park_succeeded": True, "wake_succeeded": True, "gate_open_after_wake": True,
         "followup_replied": True, "cached_tokens_reported": True, "seed_prompt_tokens_known": True,
-        "cached_prefix_kept": True, "cold_baseline_replied": True, "followup_faster_than_cold": True}
+        "cached_prefix_kept": True, "cold_baseline_replied": True, "cold_baseline_is_cold": True,
+        "followup_faster_than_cold": True}
     park, wake, followup = steps(result)["park"], steps(result)["wake"], steps(result)["followup"]
     assert (park["op_id"], park["idempotency_key"], park["states"]) == ("op-1", "proof-t-small-park", ["running", "succeeded"])
     assert (wake["op_id"], wake["idempotency_key"]) == ("op-2", "proof-t-small-wake")
@@ -101,7 +103,7 @@ def test_kept_prefix_passes_with_every_step_recorded(gateway: FakeTransitionGate
 
 
 def test_request_mode_lets_the_followup_trigger_the_wake(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
-    process, result = run(gateway, tmp_path, "--wake-mode", "request")
+    process, result = run(gateway, tmp_path, "--wake-mode", "request", manifest=write_cases(tmp_path, NO_RATIO))
     assert process.returncode == 0, process.stdout + process.stderr
     posted = [r["body"]["kind"] for r in gateway.requests if r["method"] == "POST" and r["path"].endswith("/transitions")]
     assert posted == ["park"]  # the harness never posts the wake in this mode
@@ -187,7 +189,7 @@ def test_every_case_runs_its_own_park_wake_cycle(gateway: FakeTransitionGateway,
     process, result = run(gateway, tmp_path, manifest=write_cases(tmp_path, labels=("a", "b")))
     assert process.returncode == 0, process.stdout
     assert [c["status"] for c in result["cases"]] == ["passed", "passed"]
-    assert result["assertions_total"] == 20
+    assert result["assertions_total"] == 22
 
 
 def test_a_body_that_changed_is_refused_before_anything_is_sent(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
@@ -325,6 +327,7 @@ def test_a_seed_that_reports_zero_prompt_tokens_cannot_pass_with_the_cache_lost(
     detail = next(a for a in result["cases"][0]["assertions"] if a["name"] == "cached_prefix_kept")
     assert process.returncode == 1 and detail["denominator_source"] == "manifest_count_estimate"
     assert detail["passed"] is False and detail["seed_prompt_tokens"] == 1000
+    assert "estimate" in detail["note"]  # the result says the fraction rests on an estimate
 
 
 def test_a_missing_cached_count_fails_the_prefix_assertion_itself(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
@@ -422,7 +425,8 @@ def test_a_503_in_request_mode_waits_for_retry_after_and_resends(gateway: FakeTr
 
 def test_a_503_that_outlasts_the_deadline_is_a_failed_followup(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
     gateway.retry_503 = 100
-    process, result = run(gateway, tmp_path, "--wake-mode", "request", "--poll-timeout-s", "1.5")
+    process, result = run(gateway, tmp_path, "--wake-mode", "request", "--poll-timeout-s", "1.5",
+                          manifest=write_cases(tmp_path, NO_RATIO))
     assert process.returncode == 1
     follow = steps(result)["followup"]
     assert follow["http_status"] == 503 and len(follow["retries"]) >= 1 and assertions(result)["followup_replied"] is False
@@ -482,7 +486,8 @@ def test_the_key_appears_in_no_output_channel_on_any_failure_path(
         gateway: FakeTransitionGateway, tmp_path: Path, name: str) -> None:
     setup, extra, code = FAILURE_PATHS[name]
     setup(gateway)
-    process, _ = run(gateway, tmp_path, *extra)
+    manifest = write_cases(tmp_path, NO_RATIO) if "--wake-mode" in extra else None  # a ratio is refused in request mode
+    process, _ = run(gateway, tmp_path, *extra, manifest=manifest)
     assert process.returncode == code, process.stdout + process.stderr
     channels = process.stdout + process.stderr + (tmp_path / "result.json").read_text()
     for piece in (KEY, KEY[:8], KEY[-8:], KEY[10:20]):
@@ -499,3 +504,82 @@ def test_the_key_appears_in_no_output_channel_when_the_key_file_is_refused(
     channels = process.stdout + process.stderr + (tmp_path / "result.json").read_text()
     for piece in content.split():
         assert piece not in channels
+
+
+# -- second review ------------------------------------------------------------------------------------------
+
+
+def test_reusing_a_run_id_after_the_cache_is_lost_fails_instead_of_passing_without_a_park(
+        gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    process, _ = run(gateway, tmp_path, run_id="same")
+    assert process.returncode == 0, process.stdout
+    gateway.cache = "lost"  # a real park now would drop the prefix, but the repeated keys never park again
+    process, result = run(gateway, tmp_path, run_id="same")
+    assert process.returncode == 1 and result["status"] == "failed"
+    park = steps(result)["park"]
+    assert "earlier run" in park["error"] and park["http_status"] == 202 and park["states"] == []
+    assert assertions(result)["park_succeeded"] is False and "followup_replied" not in assertions(result)
+    assert len(gateway.ops) == 2  # no new operation: the second run parked nothing
+
+
+def test_an_unexpected_exception_replaces_an_old_passed_result_and_exits_1(
+        gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    out = tmp_path / "result.json"
+    out.write_text(json.dumps({"status": "passed", "exit_code": 0}))
+    gateway.content = [{"text": 5}]  # a reply the runner cannot read as text
+    process, result = run(gateway, tmp_path)
+    assert process.returncode == 1 and "Traceback" not in process.stderr
+    assert result["status"] == "failed" and result["exit_code"] == 1 and result["error"] == "unexpected TypeError"
+    assert KEY not in process.stdout + process.stderr + out.read_text()
+
+
+def test_retry_after_zero_waits_one_poll_interval_and_does_not_spin(
+        gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    gateway.retry_503, gateway.retry_after = 1000, "0"
+    process, result = run(gateway, tmp_path, "--wake-mode", "request", "--poll-timeout-s", "1",
+                          "--poll-interval-s", "0.2", manifest=write_cases(tmp_path, NO_RATIO))
+    assert process.returncode == 1
+    sent = [r for r in gateway.requests if r["path"] == "/v1/chat/completions"]
+    assert len(sent) <= 1 + 8  # the seed, then about one resend per 0.2 s for 1 s (a spin sends hundreds)
+    assert all(r["waited_s"] >= 0.19 for r in steps(result)["followup"]["retries"])
+
+
+def test_a_cold_baseline_that_reports_a_large_cached_count_fails_the_assertion(
+        gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    gateway.cold_cached_reported = 1000  # of about 1300 prompt tokens; at most 20% may be cached
+    process, result = run(gateway, tmp_path)
+    assert process.returncode == 1
+    assert {name for name, passed in assertions(result).items() if not passed} == {"cold_baseline_is_cold"}
+    detail = next(a for a in result["cases"][0]["assertions"] if a["name"] == "cold_baseline_is_cold")
+    assert detail["cached_tokens"] == 1000 and detail["cold_prompt_tokens"] > 1000 and detail["max_cached_tokens"] < 1000
+
+
+@pytest.mark.parametrize("key", ['abc"def-ghijklmn', "abc\\def-ghijklmn", "abc;def-ghijklmn", "abc=def-ghijklmn",
+                                 "abc def", "=abc", "abc\u00e9"])
+def test_a_key_outside_the_bearer_token_characters_is_refused_before_anything_is_sent(
+        gateway: FakeTransitionGateway, tmp_path: Path, key: str) -> None:
+    key_file = tmp_path / "odd.key"
+    key_file.write_text(key, encoding="utf-8")
+    process, result = run(gateway, tmp_path, key_file=key_file)
+    assert process.returncode == 2 and gateway.requests == [] and result["status"] == "invalid_input"
+    assert "RFC 6750" in process.stderr
+    for piece in ("abc", "def", "ghij"):
+        assert piece not in process.stdout + process.stderr + (tmp_path / "result.json").read_text()
+
+
+@pytest.mark.parametrize("key", ["abc.DEF_123~+/-", "abcdef==", "A1b2c3"])
+def test_the_bearer_token_characters_are_accepted(gateway: FakeTransitionGateway, tmp_path: Path, key: str) -> None:
+    key_file = tmp_path / "ok.key"
+    key_file.write_text(key)
+    process, _ = run(gateway, tmp_path, "--dry-run", key_file=key_file)
+    assert process.returncode == 0, process.stderr
+
+
+@pytest.mark.parametrize("extra", [(), ("--dry-run",)])
+def test_a_timing_ratio_in_request_mode_is_refused_and_nothing_is_sent(
+        gateway: FakeTransitionGateway, tmp_path: Path, extra: tuple[str, ...]) -> None:
+    process, result = run(gateway, tmp_path, "--wake-mode", "request", *extra)  # the default manifest sets a ratio
+    assert process.returncode == 2 and gateway.requests == [] and result["status"] == "invalid_input"
+    assert "max_timing_ratio" in process.stderr and "wake" in process.stderr
+    process, _ = run(gateway, tmp_path, "--wake-mode", "post", *extra)  # the same manifest is fine in post mode
+    assert process.returncode == 0, process.stderr

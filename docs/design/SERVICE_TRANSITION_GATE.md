@@ -307,16 +307,22 @@ scripts/transition-proof --base-url http://192.0.2.10:5000 --domain <domain> --m
 For each case it runs: seed request (reply text, timing, usage), `park` (with an idempotency key) and a poll of the
 operation until it finishes or holds, then the wake, then the follow-up (the seed's messages plus the follow-up
 question), then the assertions. `--wake-mode post` (default) posts `wake` and polls it. `--wake-mode request` sends the
-follow-up and lets the gateway wake the domain; the follow-up time then includes the wake. In that mode a `503` is not
+follow-up and lets the gateway wake the domain; the follow-up time then includes the wake, so `max_timing_ratio` is refused in that mode (exit `2`, nothing sent). In
+that mode a `503` is not
 final: the harness waits for its `Retry-After` (the poll interval when the header is absent) and sends the follow-up
-again, until `--poll-timeout-s` has passed since the first send. Each wait is listed in the step's `retries`, and the
+again, until `--poll-timeout-s` has passed since the first send; the wait is never shorter than one poll interval. Each wait is listed in the step's `retries`, and the
 follow-up time includes them. The harness replaces each
 body's `model` with `--model` and always sends `stream: false`. It reads the key from the file, never prints it, and
 replaces it with `[redacted]` in error text (before the text is cut to length) and in the result file. The key file
-holds one token of printable ASCII; a key with an inner space or line break is refused (exit `2`) before anything is sent.
+holds one RFC 6750 bearer token (letters, digits and `. _ ~ + / -`, with optional `=` at the end); any other key is
+refused (exit `2`) before anything is sent.
 The idempotency key of each transition is `proof-{run-id}-{case label}-{kind}`, so every case parks and wakes for real.
-A repeat `--run-id` repeats those keys, and the gateway then returns the earlier operations (D2, G4): reuse a run id
-only to resume a run on purpose.
+A repeat `--run-id` repeats those keys, and the gateway then returns the earlier, finished operations (D2, G4). The
+harness requires a new transition to answer `running`; any other state fails the park or wake step with "the key
+returned an operation from an earlier run". A proof is one fresh sequence: use a new run id every time.
+Before the first request the harness replaces the `--out` file with a `"status": "running"` result, so an old
+`passed` file never outlives a run that dies. An unexpected error ends the run with exit `1`; the result records only
+the error type.
 
 The manifest keeps the operator's frozen-case format and adds `cache_check` (top level, or per case to override):
 
@@ -331,15 +337,18 @@ The manifest keeps the operator's frozen-case format and adds `cache_check` (top
 Paths are dotted (`choices.0.message.content`). The cached count in the follow-up reply must be at least
 `min_cached_fraction` of the seed's prompt tokens (read from the seed reply; `count_estimate` is the fallback, and a
 seed count of 0 or less counts as missing). When no fraction can be computed, `cached_prefix_kept` fails: a missing
-count is never proof. `cache_check` and `count_estimate` must be objects.
+count is never proof. When `count_estimate` is the denominator, the assertion's `denominator_source` says so and its
+`note` states that the fraction rests on an estimate. `cache_check` and `count_estimate` must be objects.
 `max_timing_ratio` is optional: the harness then sends the follow-up once more with a unique first line, so no prefix
-can match, and requires the follow-up time to be at most that fraction of this cold time.
+can match, and requires the follow-up time to be at most that fraction of this cold time. When the cold reply
+reports a cached count, `cold_baseline_is_cold` requires it to be at most `(1 - min_cached_fraction)` times the cold
+reply's prompt tokens; a baseline that was not cold proves nothing.
 
 The result JSON lists every step (op ids, idempotency keys, states seen, timings, usage), the gate state before and
 after park and after wake, and one pass or fail per assertion. Exit codes: `0` all assertions passed; `1` a step or
 assertion failed (the first failing case stops the run, and the later cases are `not_run`); `2` an input is wrong and
-nothing was sent (a manifest that does not load or validate, a body whose sha256 differs, a missing, empty or
-multi-token key file). The harness never resolves a
+nothing was sent (a manifest that does not load or validate, a body whose sha256 differs, `max_timing_ratio` with
+`--wake-mode request`, a missing, empty or non-bearer-token key file). The harness never resolves a
 held gate: a `failed_closed` or `reconciling` operation is reported and left to the owner. `--dry-run` validates the
 manifest, the bodies and their sha256, and sends nothing.
 

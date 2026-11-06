@@ -1,5 +1,6 @@
 """Argument handling, the result file and the exit code. Exit 0: every assertion passed. 1: a step or assertion
-failed. 2: an input is wrong and nothing was sent (a manifest, a body, a sha256 or the key file)."""
+failed, or an unexpected error stopped the run. 2: an input is wrong and nothing was sent (a manifest, a body, a
+sha256, the key file, or a timing ratio in request mode)."""
 
 from __future__ import annotations
 
@@ -19,7 +20,9 @@ from .manifest import InputError, load_cases
 from .runner import Proof
 
 SCHEMA = "transition-proof/1"
-_TOKEN = re.compile(r"^[\x21-\x7e]+$")
+# RFC 6750 bearer token (token68). A key outside this set (a quote or a backslash, for one) could come back
+# JSON-escaped in a gateway reply, and the escaped text would no longer match the key for redaction.
+_TOKEN = re.compile(r"^[A-Za-z0-9._~+/-]+=*$")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -54,7 +57,8 @@ def _read_key(path: Optional[Path]) -> str:
     if not _TOKEN.match(key):
         # An inner line break or space would go into the Authorization header, and the HTTP library quotes a
         # refused header value in its error. Never send such a key, and never name any part of it.
-        raise InputError("the owner key file must hold one token: printable ASCII, no spaces or line breaks")
+        raise InputError("the owner key file must hold one bearer token (RFC 6750): letters, digits and "
+                         "the characters . _ ~ + / -, with optional = at the end")
     return key
 
 
@@ -83,6 +87,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     key: Optional[str] = None
     try:
         cases = load_cases(args.cases)
+        if args.wake_mode == "request" and any(c.cache.max_timing_ratio is not None for c in cases):
+            raise InputError("max_timing_ratio cannot be used with --wake-mode request: the follow-up time includes "
+                             "the wake, so its ratio to the cold time is not meaningful")
         if args.dry_run:
             if args.owner_key_file is not None:
                 _read_key(args.owner_key_file)
@@ -97,19 +104,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"transition-proof: {error}", file=sys.stderr)
         return _finish(args.out, result, key, 2)
 
+    # Overwrite any earlier result first: if this run dies before its own result is written, the file must not
+    # keep an old "passed".
+    _write(args.out, {**result, "status": "running"}, key)
     timeout = httpx.Timeout(args.request_timeout_s, connect=10.0)
-    with httpx.Client(base_url=args.base_url.rstrip("/"), headers={"Authorization": f"Bearer {key}"},
-                      timeout=timeout) as client:
-        proof = Proof(client, domain=args.domain, model=args.model, wake_mode=args.wake_mode, run_id=run_id,
-                      poll_interval_s=args.poll_interval_s, poll_timeout_s=args.poll_timeout_s, secret=key)
-        for case in cases:
-            record = proof.run_case(case)
-            result["cases"].append(record)
-            if record["status"] != "passed":
-                # A held gate or a lost reply makes the next case meaningless; report the rest as not run.
-                result["cases"].extend({"label": later.label, "status": "not_run"}
-                                       for later in cases[len(result["cases"]):])
-                break
+    try:
+        with httpx.Client(base_url=args.base_url.rstrip("/"), headers={"Authorization": f"Bearer {key}"},
+                          timeout=timeout) as client:
+            proof = Proof(client, domain=args.domain, model=args.model, wake_mode=args.wake_mode, run_id=run_id,
+                          poll_interval_s=args.poll_interval_s, poll_timeout_s=args.poll_timeout_s, secret=key)
+            for case in cases:
+                record = proof.run_case(case)
+                result["cases"].append(record)
+                if record["status"] != "passed":
+                    # A held gate or a lost reply makes the next case meaningless; report the rest as not run.
+                    result["cases"].extend({"label": later.label, "status": "not_run"}
+                                           for later in cases[len(result["cases"]):])
+                    break
+    except Exception as error:  # noqa: BLE001 - only the type is kept: a message or traceback could carry data
+        result.update(status="failed", error=f"unexpected {type(error).__name__}")
+        print(f"transition-proof: unexpected {type(error).__name__}", file=sys.stderr)
+        return _finish(args.out, result, key, 1)
     assertions = [a for c in result["cases"] for a in c.get("assertions", [])]
     failed = [a for a in assertions if not a["passed"]]
     result["assertions_total"], result["assertions_failed"] = len(assertions), len(failed)
