@@ -127,7 +127,10 @@ class TransitionRuntime:
                 raise NoProfile(domain)
             return await self._protocol_invoke(service_id, op, body)
 
-        return DeclaredOperationAdapter(profile, invoke)
+        snapshot_path = None
+        if self._snapshots is not None:
+            snapshot_path = lambda domain, handle: self._snapshots.files.path_for(domain, handle)  # noqa: E731
+        return DeclaredOperationAdapter(profile, invoke, snapshot_path=snapshot_path)
 
     def executor(self) -> Executor:
         gates = self._gates()

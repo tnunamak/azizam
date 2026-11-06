@@ -1,0 +1,61 @@
+# A reviewed transition profile (design D3): how the transition executor drives a residency domain,
+# with the snapshot operations.
+#
+# This file is reviewed data, not owner config: an owner names this profile with
+# residency.transition.profile and cannot set `attested` or the operations here (the gateway refuses a config
+# that does). Nothing in it names an engine. The operations are the names the engine's own protocol description
+# declares (registry/protocols/*.yml); the executor calls them through the http-v1 invoke path.
+#
+# What each declared operation must select from its response (response.select):
+#   idle          idle (boolean), incarnation (optional text)
+#   resident      resident (boolean), offering (text, when something is resident), ready (boolean), incarnation (optional)
+#   release       outcome, evidence_ref (optional), incarnation (optional)
+#   load          outcome, evidence_ref (optional), incarnation (optional)
+#   query         outcome, evidence_ref (optional), incarnation (optional)
+#   checkpoint    outcome, bytes (non-negative integer), evidence_ref (optional), incarnation (optional)
+#   restore       outcome, evidence_ref (optional), incarnation (optional)
+#   reset         outcome, evidence_ref (optional), incarnation (optional)
+#   compatibility any scalar fields (each read as text); a missing or empty answer reads as unknown
+# Observations (profile `observations`, not listed here) select `value` (boolean) and incarnation (optional).
+# `outcome` is one of: success, no_change, partial, failed, unknown. Anything else reads as unknown.
+#
+# What the request body carries (effect_key, expected_incarnation, and for the snapshot operations):
+#   checkpoint    handle (minted by the adapter, never the engine), path (where the snapshot is written)
+#   restore       handle, path (the snapshot is read only from this path)
+#   reset         effect_key and expected_incarnation only
+#   compatibility no body: the call carries no arguments
+#
+# What each declared operation promises:
+# - A checkpoint that fails leaves the engine unchanged (that is what failure_semantics no_change attests).
+# - The engine writes the snapshot only at `path`, and only when the checkpoint succeeds.
+# - Restore reads only `path`, and only the snapshot the handle names.
+profile_version: 1
+id: declared-snapshot-ops-v1
+title: Operations declared in the engine's protocol description, with snapshot operations
+operations:
+  idle: transition.idle
+  resident: transition.resident
+  release: transition.release
+  load: transition.load
+  query: transition.query
+  checkpoint: transition.checkpoint
+  restore: transition.restore
+  reset: transition.reset
+  compatibility: transition.compatibility
+# A release whose outcome is "success" counts as stock released (D3 "Release"). The executor still checks
+# fresh, incarnation-matched evidence that nothing is resident before it believes the result.
+attested: true
+# A checkpoint that fails leaves the engine unchanged, so a failed checkpoint is a known no-change and the
+# park goes on cold; the executor still asks `query` when the profile says so.
+checkpoint:
+  failure_semantics: no_change
+  query: true
+# A restore that fails leaves the engine in an unknown state, so the executor runs the declared reset and
+# serves cold only when the reset verifies a clean target.
+restore:
+  failure_semantics: unknown
+  query: true
+  reset:
+    failure_semantics: unknown
+    query: true
+placement_keys: []

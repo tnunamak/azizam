@@ -232,6 +232,27 @@ The private admission evidence gains `service_id`. That ships as its own small c
   non-empty one. No live record declares one, so live behaviour does not change.
 - **Gate store.** `data/transition.db`, table `transition_gate`. T1.1 only reads it.
 
+
+## Revision 3.2 notes (from building T1.3, 2026-11-06)
+
+- **Checkpoint, restore and reset are data now.** The profile declares `checkpoint`, `restore`, `reset` and
+  `compatibility` operations, and an optional `observations` map of observation name to protocol operation. The
+  adapter drives them the same way it drives release and load: no engine name anywhere.
+- **Checkpoint and restore come together.** A profile that declares one declares both. `reset` needs `restore`.
+  `compatibility` is required when `checkpoint` is declared. A reviewed `checkpoint` block needs the `checkpoint`
+  operation, a reviewed `restore` block needs `restore`, and a `restore.reset` block needs `reset`.
+- **Named observations.** `servable_check` and `restore.reset.verify` name a key of `observations`, never an
+  operation directly. An unknown observation name observes nothing.
+- **The adapter mints the handle.** A checkpoint handle is unique per call and matches the snapshot handle pattern.
+  The engine writes the snapshot only at the path the adapter passes, and reads only that path on restore. A
+  checkpoint that fails leaves the engine unchanged; that is what `failure_semantics: no_change` attests.
+- **Bytes come from the reply or the file.** A checkpoint success reports its byte count, or the adapter takes the
+  size of the file at the path. With neither, the outcome is unknown and no snapshot is published.
+- **Compatibility is a map of strings.** Unknown means cold: an empty compatibility map never matches a published
+  snapshot. A success is never attested for checkpoint, restore or reset.
+- **The new profile.** `declared-snapshot-ops-v1` declares all nine operations and the reviewed checkpoint, restore
+  and reset blocks. `declared-ops-v1` is unchanged.
+
 ## Build order (each step ships alone)
 
 Every step is opt-in by `transition.enabled`. Each step's tests include a legacy-path suite: a service that is not
