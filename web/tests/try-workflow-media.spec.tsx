@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Profiler, useState } from "react";
 import TryPage from "@/app/try/page";
 import { WorkflowInputs } from "@/app/try/workflow-inputs";
-import { MediaInput } from "@/app/try/workflow-media-input";
+import { MediaInput } from "@/components/media-input/media-input";
 import catalog from "./fixtures/workflows-ltx-i2v.json";
 
 

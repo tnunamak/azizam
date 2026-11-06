@@ -196,7 +196,8 @@ describe("Keep request history in Try", () => {
       renderTry();
       await userEvent.click(await screen.findByRole("switch", { name: "Keep request history" }));
       if (tab === "transcribe") {
-        const input = await screen.findByLabelText("Audio file");
+        await screen.findByRole("button", { name: "Choose a file" });
+        const input = document.querySelector<HTMLInputElement>("input[data-media-file-input]")!;
         await userEvent.upload(input, new File(["sound"], "clip.m4a", { type: "audio/mp4" }));
       }
       await pressRun();

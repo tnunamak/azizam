@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  assetIdFromPasted,
   inputHint,
   inputLabel,
   inputPlaceholder,
@@ -22,7 +23,7 @@ import {
   missingMessage,
   type OutputKind,
 } from "./workflow-input-meta";
-import { MediaInput } from "./workflow-media-input";
+import { MediaInput } from "@/components/media-input/media-input";
 import { isMediaInput, mediaKindOf } from "@/lib/workflow-media-input";
 
 export type WorkflowInput = {
@@ -390,29 +391,17 @@ function WorkflowInputControl({
       <div role="group" aria-labelledby={`${id}-label`} className={wrapper}>
         {header}
         {hintLine}
-        {kind ? (
-          <MediaInput
-            id={id}
-            label={text}
-            kind={kind}
-            file={file}
-            invalid={Boolean(problem)}
-            describedBy={describedBy}
-            onFileChange={onFileChange}
-          />
-        ) : (
-          <Input
-            id={id}
-            type="file"
-            aria-labelledby={`${id}-label`}
-            aria-required={input.required || undefined}
-            aria-invalid={Boolean(problem) || undefined}
-            aria-describedby={describedBy}
-            onChange={(event) =>
-              onFileChange(event.currentTarget.files?.[0] ?? null)
-            }
-          />
-        )}
+        <MediaInput
+          id={id}
+          label={text}
+          // A file input the catalog does not type takes any file, and has
+          // no Library to offer.
+          kind={kind}
+          file={file}
+          invalid={Boolean(problem)}
+          describedBy={describedBy}
+          onFileChange={onFileChange}
+        />
         {problemLine}
       </div>
     );
@@ -429,6 +418,7 @@ function WorkflowInputControl({
           // A media input the catalog does not type is a picture: the
           // only kind Try's workflows take without saying so.
           kind={mediaKindOf(input) ?? "image"}
+          normalizeReference={assetIdFromPasted}
           value={typeof value === "string" ? value : undefined}
           invalid={Boolean(problem)}
           describedBy={describedBy}

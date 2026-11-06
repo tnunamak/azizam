@@ -4,7 +4,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { MediaInput } from "./workflow-media-input";
+import { MediaInput } from "./media-input";
 
 const ID = `img_${"a".repeat(64)}`;
 const SIGNED = "http://gateway.test/v1/assets/signed-picture";

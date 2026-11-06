@@ -683,7 +683,7 @@ describe("the composer follows the chosen capability's declared inputs", () => {
   it("refuses a file of the wrong kind from the attach button", async () => {
     await chooseKind([textRow, editRow], "Edit");
     fireEvent.change(fileInput(/Choose a picture/), { target: { files: [new File(["x"], "notes.txt", { type: "text/plain" })] } });
-    expect(await screen.findByRole("alert")).toHaveTextContent("That is not a picture");
+    expect(await screen.findByRole("alert")).toHaveTextContent("That file is not a picture");
   });
 
   it("a kind no code knows still gets a file input from its declared modality alone", async () => {

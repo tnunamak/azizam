@@ -1,7 +1,15 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type DragEvent } from "react";
-import { AudioLines, FileIcon, ImageIcon, Paperclip, Upload, Video, X } from "lucide-react";
+import { useEffect, useId, useState, type DragEvent } from "react";
+import { AudioLines, FileIcon, ImageIcon, Library, Paperclip, Upload, Video, X } from "lucide-react";
+import { LibraryPicker } from "@/components/media-input/library-picker";
+import { LIBRARY_SOURCE, useMediaPick } from "@/components/media-input/use-media-pick";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/cn";
 import type { MediaInput } from "./home-model";
 import { fitsMediaInput, mediaPhrase } from "./home-model";
@@ -32,48 +40,94 @@ function usePreview(file: File | null, input: MediaInput): string | null {
   return preview && preview.file === file ? preview.url : null;
 }
 
+/** The shared media-input behaviour, set up from a Home capability's declared input (its accept filter and word). */
+function useHomePick(
+  input: MediaInput,
+  file: File | null,
+  onFile: (file: File | null) => void,
+  onPendingChange?: (pending: boolean) => void,
+) {
+  return useMediaPick({
+    types: input.accept ? [input.accept] : undefined,
+    noun: input.word,
+    accepted: mediaPhrase(input),
+    current: file,
+    commit: (picked) => onFile(picked),
+    onPendingChange,
+  });
+}
+
+type HomePick = ReturnType<typeof useHomePick>;
+
+function PickStatus({ pick, className }: { pick: HomePick; className?: string }) {
+  return (
+    <>
+      {pick.pending ? (
+        <p role="status" className={cn("text-muted-foreground text-meta", className)}>
+          Adding {pick.noun}…
+        </p>
+      ) : null}
+      {pick.error ? (
+        <p role="alert" className={cn("text-destructive text-meta", className)}>
+          {pick.error}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+function HomeLibraryPicker({ pick }: { pick: HomePick }) {
+  if (!pick.libraryAvailable || !pick.kind) return null;
+  return (
+    <LibraryPicker
+      open={pick.libraryOpen}
+      onOpenChange={pick.setLibraryOpen}
+      kind={pick.kind}
+      noun={pick.noun}
+      types={pick.types}
+      onPick={(item) => void pick.pickFromLibrary(item)}
+    />
+  );
+}
+
+const PILL =
+  "border-border text-foreground text-meta hover:bg-muted focus-visible:ring-ring inline-flex h-9 items-center gap-1.5 rounded-full border px-4 font-medium transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none max-sm:min-h-11";
+
 /**
  * The composer's file input for one declared input modality (the way Midjourney, Runway and Meshy ask for a source
- * picture): a drop target that is also a button. Drop, choose or paste a file; on a phone the file input's accept
- * filter lets the system offer the camera. A chosen file shows as a thumbnail (a picture) or a name, with a way to
- * take it out. Nothing here names a kind of work: the modality and its accept filter are the data.
+ * picture): a drop target that is also a button. Drop, choose, paste or take a file from the Library; on a phone the
+ * file input's accept filter lets the system offer the camera. A chosen file shows as a thumbnail (a picture) or a
+ * name, with a way to take it out. Nothing here names a kind of work: the modality and its accept filter are the data.
  */
 export function HomeMediaInput({
   input,
   file,
   onFile,
   disabled = false,
+  onPendingChange,
   children,
 }: {
   input: MediaInput;
   file: File | null;
   onFile: (file: File | null) => void;
   disabled?: boolean;
+  /** Told while a Library pick is arriving, so Make waits for it. */
+  onPendingChange?: (pending: boolean) => void;
   /** An extra control under the prompt line, such as a hand-off to record in Try. */
   children?: React.ReactNode;
 }) {
   const inputId = useId();
-  const picker = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [refused, setRefused] = useState<string | null>(null);
+  const pick = useHomePick(input, file, onFile, onPendingChange);
   const preview = usePreview(file, input);
   const Icon = iconFor(input.modality);
-
-  function take(candidate: File | undefined) {
-    if (!candidate) return;
-    if (!fitsMediaInput(candidate, input)) {
-      setRefused(`That is not a ${input.word}. Choose a ${input.word}.`);
-      return;
-    }
-    setRefused(null);
-    onFile(candidate);
-  }
 
   function onDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setDragging(false);
     if (disabled) return;
-    take(Array.from(event.dataTransfer.files).find((candidate) => fitsMediaInput(candidate, input)) ?? event.dataTransfer.files[0]);
+    const dropped = Array.from(event.dataTransfer.files);
+    void pick.take(dropped.find((candidate) => fitsMediaInput(candidate, input)) ?? dropped[0]);
   }
 
   return (
@@ -93,17 +147,14 @@ export function HomeMediaInput({
       )}
     >
       <input
-        ref={picker}
+        ref={pick.fileInput}
         id={inputId}
         type="file"
-        accept={input.accept}
+        accept={pick.accept}
         disabled={disabled}
         className="sr-only"
         aria-label={`Choose ${mediaPhrase(input)}`}
-        onChange={(event) => {
-          take(event.target.files?.[0]);
-          event.target.value = "";
-        }}
+        onChange={pick.onFileInputChange}
       />
       {file ? (
         <div className="flex items-center gap-3">
@@ -118,11 +169,14 @@ export function HomeMediaInput({
           )}
           <p className="min-w-0 flex-1">
             <span className="block truncate font-medium">{file.name}</span>
-            <span className="text-muted-foreground text-meta block">{sizeWords(file.size)}</span>
+            <span className="text-muted-foreground text-meta block">{pick.source === LIBRARY_SOURCE ? `${LIBRARY_SOURCE} · ` : ""}{sizeWords(file.size)}</span>
           </p>
           <button
             type="button"
-            onClick={() => onFile(null)}
+            onClick={() => {
+              pick.clear();
+              onFile(null);
+            }}
             aria-label={`Remove ${file.name}`}
             className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex size-9 shrink-0 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none max-sm:size-11"
           >
@@ -135,23 +189,23 @@ export function HomeMediaInput({
           <p className="text-muted-foreground max-sm:hidden">
             Drop {mediaPhrase(input)} here
           </p>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => picker.current?.click()}
-            className="border-border text-foreground text-meta hover:bg-muted focus-visible:ring-ring inline-flex h-9 items-center gap-1.5 rounded-full border px-4 font-medium transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none max-sm:min-h-11"
-          >
-            <Upload aria-hidden="true" className="size-4" />
-            Choose {mediaPhrase(input)}
-          </button>
+          <div className="flex flex-wrap justify-center gap-2">
+            <button type="button" disabled={disabled} onClick={pick.openFileDialog} className={PILL}>
+              <Upload aria-hidden="true" className="size-4" />
+              Choose {mediaPhrase(input)}
+            </button>
+            {pick.libraryAvailable ? (
+              <button type="button" disabled={disabled} onClick={pick.openLibrary} className={PILL}>
+                <Library aria-hidden="true" className="size-4" />
+                Choose from Library
+              </button>
+            ) : null}
+          </div>
           {children}
         </div>
       )}
-      {refused ? (
-        <p role="alert" className="text-destructive text-meta mt-2">
-          {refused}
-        </p>
-      ) : null}
+      <PickStatus pick={pick} className="mt-2" />
+      <HomeLibraryPicker pick={pick} />
     </div>
   );
 }
@@ -197,60 +251,67 @@ export function PickedFileChip({
   );
 }
 
+const ATTACH_CLASS =
+  "text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50 max-sm:size-11";
+
 /**
- * The attach button in the toolbar, for the same kind of capability. It opens the file dialog (on a phone the accept
- * filter lets the system offer the camera). A file of the wrong kind is refused with a sentence.
+ * The attach button in the toolbar, for the same kind of capability. When the Library can hold the file it opens a
+ * two-item menu (choose a file, choose from the Library); otherwise it opens the file dialog straight away. On a
+ * phone the accept filter lets the system offer the camera. A file of the wrong kind is refused with a sentence.
  */
 export function AttachFileButton({
   input,
   file,
   onFile,
   disabled = false,
+  onPendingChange,
 }: {
   input: MediaInput;
   file: File | null;
   onFile: (file: File | null) => void;
   disabled?: boolean;
+  /** Told while a Library pick is arriving, so Make waits for it. */
+  onPendingChange?: (pending: boolean) => void;
 }) {
-  const picker = useRef<HTMLInputElement>(null);
-  const [refused, setRefused] = useState<string | null>(null);
+  const pick = useHomePick(input, file, onFile, onPendingChange);
+  const label = file ? `Change ${input.word}` : `Attach ${mediaPhrase(input)}`;
   return (
     <>
       <input
-        ref={picker}
+        ref={pick.fileInput}
         type="file"
-        accept={input.accept}
+        accept={pick.accept}
         disabled={disabled}
         className="sr-only"
         tabIndex={-1}
         aria-label={`Choose ${mediaPhrase(input)}`}
-        onChange={(event) => {
-          const candidate = event.target.files?.[0];
-          event.target.value = "";
-          if (!candidate) return;
-          if (!fitsMediaInput(candidate, input)) {
-            setRefused(`That is not a ${input.word}. Choose a ${input.word}.`);
-            return;
-          }
-          setRefused(null);
-          onFile(candidate);
-        }}
+        onChange={pick.onFileInputChange}
       />
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => picker.current?.click()}
-        aria-label={file ? `Change ${input.word}` : `Attach ${mediaPhrase(input)}`}
-        title={file ? `Change ${input.word}` : `Attach ${mediaPhrase(input)}`}
-        className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex size-8 shrink-0 items-center justify-center rounded-full transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50 max-sm:size-11"
-      >
-        <Paperclip aria-hidden="true" className="size-4" />
-      </button>
-      {refused ? (
-        <p role="alert" className="text-destructive text-meta basis-full">
-          {refused}
-        </p>
-      ) : null}
+      {pick.libraryAvailable ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" disabled={disabled} aria-label={label} title={label} className={ATTACH_CLASS}>
+              <Paperclip aria-hidden="true" className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onSelect={pick.openFileDialog}>
+              <Upload aria-hidden="true" />
+              Choose {mediaPhrase(input)}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={pick.openLibrary}>
+              <Library aria-hidden="true" />
+              Choose from Library
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <button type="button" disabled={disabled} onClick={pick.openFileDialog} aria-label={label} title={label} className={ATTACH_CLASS}>
+          <Paperclip aria-hidden="true" className="size-4" />
+        </button>
+      )}
+      <PickStatus pick={pick} className="basis-full" />
+      <HomeLibraryPicker pick={pick} />
     </>
   );
 }

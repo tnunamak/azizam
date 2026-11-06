@@ -215,11 +215,18 @@ export function HomeComposer({
   const [files, setFiles] = useState<Record<string, File | null>>({});
   const fileFor = (modality: string) => files[`${kind}:${modality}`] ?? null;
   const missingInput = inputs.media.find((input) => !fileFor(input.modality)) ?? null;
+  // A Library pick is still arriving for one of the inputs: Make waits, as it would for a missing file.
+  const [arriving, setArriving] = useState<Record<string, boolean>>({});
+  const pickArriving = Object.values(arriving).some(Boolean);
+  const arrivingFor = (input: { modality: string }) => (pending: boolean) =>
+    setArriving((current) =>
+      current[`${kind}:${input.modality}`] === pending ? current : { ...current, [`${kind}:${input.modality}`]: pending },
+    );
   // When words are the main input and a file is the second thing it takes (an edit), the file is a chip above the
   // words with an attach button in the toolbar. The large drop zone is for a capability whose inputs have no words.
   const filesBesideWords = inputs.text === "required" && inputs.media.length > 0;
   const textReady = inputs.text !== "required" || prompt.trim().length > 0;
-  const canMake = runnable && missingInput === null && textReady && model !== null;
+  const canMake = runnable && missingInput === null && !pickArriving && textReady && model !== null;
   // Why Make waits, said where the person looks and on the button itself: the first input the capability needs.
   const waitingFor = missingInput ? `Add ${mediaPhrase(missingInput)} to start` : !textReady ? "Write what you want to start" : null;
   // A capability that needs a picture can start from words: they become a picture first, in Try, when a capability
@@ -399,6 +406,7 @@ export function HomeComposer({
             file={fileFor(input.modality)}
             onFile={(file) => setFiles((current) => ({ ...current, [`${kind}:${input.modality}`]: file }))}
             disabled={!runnable}
+            onPendingChange={arrivingFor(input)}
           >
             {isRecordable(selected, input.modality) ? (
               <button
@@ -457,6 +465,7 @@ export function HomeComposer({
                     file={fileFor(input.modality)}
                     onFile={(file) => setFiles((current) => ({ ...current, [`${kind}:${input.modality}`]: file }))}
                     disabled={!runnable}
+                    onPendingChange={arrivingFor(input)}
                   />
                 ))
               : null}

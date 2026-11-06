@@ -64,6 +64,15 @@ export function kindIcon(kind: MediaKind): LucideIcon {
   return KIND_ICONS[kind] ?? KIND_ICONS[UNKNOWN_KIND];
 }
 
+/**
+ * Whether the Library can hold items of this kind: the kinds it has a drawing for, or any kind the gateway named
+ * for the member's Library. A media input offers "Choose from Library" only for a kind this says yes to; "file"
+ * (a type nobody could name) and an input that takes any file are not a kind.
+ */
+export function libraryHoldsKind(kind: MediaKind | null | undefined): kind is MediaKind {
+  return Boolean(kind) && kind !== UNKNOWN_KIND && (kind! in KIND_ICONS || knownNames.has(kind!));
+}
+
 export function kindLabel(kind: MediaKind): string {
   return knownNames.get(kind)?.label ?? capitalized(kind);
 }

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MediaInput } from "@/components/media-input/media-input";
 import { Input } from "@/components/ui/input";
 import {
   NetworkUnavailableError,
@@ -415,18 +416,21 @@ export function MeshMode({ detail, getSecret, busy, active, initialFile = null }
         <p className="text-muted-foreground text-sm">
           Send one picture. Get a 3D model you can turn around and download.
         </p>
-        <label className="block space-y-2">
-          <span className="text-sm font-medium">Picture</span>
-          <input
-            type="file"
-            accept={MESH_PICTURE_TYPES.join(",")}
-            className="block w-full text-sm"
-            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          />
-          <span className="text-muted-foreground block text-xs">
-            PNG, JPEG or WebP.
+        <div className="space-y-2">
+          <span id="mesh-picture-label" className="text-sm font-medium">
+            Picture
           </span>
-        </label>
+          <MediaInput
+            id="mesh-picture"
+            label="Picture"
+            kind="image"
+            types={MESH_PICTURE_TYPES}
+            accepted="a PNG, JPEG or WebP picture"
+            hint="PNG, JPEG or WebP."
+            file={file}
+            onFileChange={setFile}
+          />
+        </div>
         {detail.choices.length > 0 && (
           <label className="block space-y-2">
             <span className="text-sm font-medium">Detail</span>
