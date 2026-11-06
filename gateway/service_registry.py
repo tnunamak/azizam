@@ -1255,6 +1255,7 @@ def merge_imported_records(
         if not service_id:
             continue
         validate_protocol_dispatch_local_only(raw)
+        validate_record_connections(raw)
         record = normalize_service_record(service_id, raw)
         refuse_unoffered_kinds_in_record(service_id, record, before=out["services"].get(service_id))
         _merge_imported_record(out["services"], service_id, record, "service")
@@ -1604,6 +1605,7 @@ def validate_protocol_dispatch_registry(
                 continue
         try:
             validate_protocol_dispatch_local_only(service)
+            validate_record_connections(service)
         except ValueError as exc:
             raise ValueError(f"service {service_id!r}: {exc}") from exc
 
@@ -1647,6 +1649,17 @@ def _unsafe_address(address: str) -> bool:
     return any(char in address for char in "@\\") or any(char.isspace() or ord(char) < 32 for char in address)
 
 
+def validate_record_connections(service: Mapping[str, Any]) -> None:
+    """Check every ``connection`` block of a record: the top-level one and the one in its config.
+
+    The top-level block is the one the engine contract reads first, so it gets the same check as the config block.
+    """
+    config = service.get("config")
+    blocks = [service.get("connection"), config.get("connection") if isinstance(config, Mapping) else None]
+    for block in blocks:
+        native_lane.validate_connection(block)
+
+
 def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:
     """Protocol dispatch lacks paid-provider controls; accept only proven local addresses.
 
@@ -1680,6 +1693,10 @@ def validate_protocol_dispatch_local_only(service: Mapping[str, Any]) -> None:
         address = connection.get("address")
         if (not isinstance(address, str) or _unsafe_address(address)
                 or model_locality({"base_url": address}, None) != "local"):
+            raise ValueError(reason)
+        control = connection.get("control_address")
+        if control is not None and (not isinstance(control, str) or _unsafe_address(control)
+                                    or model_locality({"base_url": control}, None) != "local"):
             raise ValueError(reason)
 
 
@@ -2006,6 +2023,7 @@ def _endpoint_fingerprint(config: Mapping[str, Any]) -> tuple[Any, ...]:
     addresses = (
         service_base_url(config), native_host_url(config),
         str(config.get("address") or "").strip(), str(connection.get("address") or "").strip(),
+        str(connection.get("control_address") or "").strip(),
     )
     return (
         tuple(origin_of(address) or address for address in addresses),
@@ -2229,6 +2247,7 @@ def upsert_service_in_registry(
     name, enabled, and note may be changed.
     """
     validate_protocol_dispatch_local_only(raw)
+    validate_record_connections(raw)
     out = normalize_service_registry(registry)
     sid = normalize_id(service_id)
     if not sid:

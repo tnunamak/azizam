@@ -15,7 +15,15 @@ class CredentialUnavailable(ValueError):
     """The operation's configured key cannot be read; distinct from an origin or format error."""
 
 
-def credential_headers(service: Mapping[str, Any], operation_class: str) -> dict[str, str]:
+class CredentialOriginMismatch(ValueError):
+    """The key is approved for another origin than the address the request would go to. It is never sent."""
+
+
+def credential_headers(service: Mapping[str, Any], operation_class: str, *, address: str | None = None) -> dict[str, str]:
+    """The headers carrying the class's credential for a request to ``address`` (default: the connection address).
+
+    The credential is resolved only when its approved origin is the origin of the address the caller sends to.
+    """
     connection = service.get("connection") or (service.get("config") or {}).get("connection") or {}
     if not isinstance(connection, Mapping):
         raise ValueError("engine connection is invalid")
@@ -30,10 +38,10 @@ def credential_headers(service: Mapping[str, Any], operation_class: str) -> dict
         return {}
     if not isinstance(reference, str) or not reference:
         raise ValueError("engine credential reference is invalid")
-    actual = secret_store.credential_origin_from_url(str(connection.get("address") or ""))
+    actual = secret_store.credential_origin_from_url(str(address if address is not None else connection.get("address") or ""))
     approved = secret_store.credential_origin_from_url(str(credential.get("origin") or ""))
     if actual != approved:
-        raise ValueError("engine credential origin does not match connection origin")
+        raise CredentialOriginMismatch("engine credential origin does not match connection origin")
     header = credential.get("header") or "Authorization"
     scheme = credential.get("scheme") or ""
     if not isinstance(header, str) or not re.fullmatch(r"[A-Za-z0-9-]+", header):

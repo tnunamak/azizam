@@ -167,7 +167,7 @@ def _credential_runtime(monkeypatch, credential_headers, *, observations=None, s
 
 def test_runtime_resolves_only_current_operation_credentials(monkeypatch):
     calls = []
-    def headers(service, cls):
+    def headers(service, cls, **_):
         calls.append(cls)
         if cls == 'control':
             raise AssertionError('Unused control credential was resolved')
@@ -185,7 +185,7 @@ def test_runtime_resolves_only_current_operation_credentials(monkeypatch):
 
 def test_runtime_missing_generation_credential_is_typed_and_never_sent(monkeypatch):
     from gateway.engine_protocol.errors import ProtocolError
-    runtime = _credential_runtime(monkeypatch, lambda service, cls: {})
+    runtime = _credential_runtime(monkeypatch, lambda service, cls, **_: {})
     async def invoke(*args):
         pytest.fail('A generation request without its required credential was sent')
     monkeypatch.setattr(runtime.adapter, 'invoke', invoke)
@@ -198,7 +198,7 @@ def test_runtime_selection_and_observation_resolve_separate_credentials(monkeypa
     from types import SimpleNamespace
     from gateway.engine_protocol import dispatch
     calls = []
-    def headers(service, cls):
+    def headers(service, cls, **_):
         calls.append(cls)
         return {'Authorization': 'Bearer fixture-control'} if cls == 'control' else {}
     runtime = _credential_runtime(monkeypatch, headers,
