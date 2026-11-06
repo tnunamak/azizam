@@ -389,6 +389,23 @@ def test_nothing_begins_while_the_leftover_operations_are_not_yet_settled(wired,
     asyncio.run(scenario())
 
 
+def test_a_reconcile_that_fails_mid_read_refuses_the_submit_with_a_503(wired) -> None:
+    store, engine, runtime = wired
+    executor = runtime.executor()
+
+    def broken() -> Any:
+        raise sqlite3.OperationalError("database is locked")
+
+    executor.store.unfinished = broken  # type: ignore[method-assign]
+
+    async def scenario() -> None:
+        with pytest.raises(TransitionUnavailable) as caught:
+            await executor.submit(domain="dom", kind="park", idempotency_key="p", target=None)
+        assert caught.value.reason == "reconciling" and executor.active() == ()
+
+    asyncio.run(scenario())
+
+
 def test_the_reconcile_leaves_alone_an_operation_this_process_drives(wired, monkeypatch) -> None:
     store, engine, runtime = wired
     executor = runtime.executor()

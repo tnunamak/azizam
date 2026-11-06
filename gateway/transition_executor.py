@@ -425,7 +425,10 @@ class Executor:
 
     async def submit(self, *, domain: str, kind: TransitionKind, idempotency_key: str, target: Optional[str] = None,
                      compensates: Optional[str] = None, trigger: Optional[Callable[[], None]] = None) -> BeginResult:
-        await self.ensure_reconciled()
+        try:
+            await self.ensure_reconciled()
+        except Exception as exc:  # noqa: BLE001 - the table read and then failed mid-reconcile: refuse, never a 500
+            print(f"[transition-gate] reconcile before {domain!r} submit failed: {type(exc).__name__}", flush=True)
         if not self._ready:
             # Nothing begins before the leftover operations are settled: the reconcile must never find an
             # operation that a task of this process is driving.

@@ -543,6 +543,13 @@ def test_the_restored_snapshot_is_pinned_while_it_restores_and_released_after(ri
     assert rig.snapshots.collect(D) == (handle,), "and it is deletable again afterwards"
 
 
+def test_a_snapshot_that_cannot_be_pinned_serves_cold_without_a_restore(rig) -> None:
+    seed(rig)
+    rig.snapshots.pin = lambda handle, *, domain=None: False  # the row went away between the read and the pin
+    result = go(rig, "wake", rig.policy())
+    assert result.verdict == "continue" and "restore" not in rig.engine.calls and rig.engine.restored is None
+
+
 def test_a_restore_past_its_deadline_keeps_its_pin_until_the_late_restore_ends(rig) -> None:
     """The step gave up and returned, but the engine is still reading the file: nothing may delete it yet. The pin is
     released by the late restore's own completion."""
