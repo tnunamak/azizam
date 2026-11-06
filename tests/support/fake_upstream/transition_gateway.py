@@ -10,6 +10,7 @@ tell apart is an attribute the test sets before the run:
 - ``usage_shape``: ``standard`` or ``alternate`` (the same two counts at other JSON paths);
 - ``echo_auth``: an error body repeats the Authorization header, to prove the harness redacts it;
   ``echo_pad`` puts that many characters before the header text, so a test can place the key across a cut;
+- ``chat_key``: take this key on /v1/chat/completions and only ``key`` on the admin routes (the live split);
 - ``prompt_tokens_reported``: replace the usage prompt count (a seed that reports 0);
 - ``retry_503``: the next N chat requests after the first transition began answer 503 with ``Retry-After`` set
   to ``retry_after`` (default ``"1"``);
@@ -43,6 +44,7 @@ def _tokens(messages: list[dict[str, Any]]) -> int:
 class FakeTransitionGateway:
     def __init__(self) -> None:
         self.key = KEY
+        self.chat_key: Any = None  # when set, /v1 chat takes only this key and the admin routes only ``key``
         self.domain = DOMAIN
         self.park, self.wake, self.cache = "succeed", "succeed", "kept"
         self.slow_when_cached, self.usage_shape, self.echo_auth = False, "standard", False
@@ -89,7 +91,8 @@ class FakeTransitionGateway:
         await send({"type": "http.response.body", "body": data})
 
     async def _route(self, method: str, path: str, body: Any, auth: Any) -> tuple[Any, ...]:
-        if auth != f"Bearer {self.key}":
+        chat_key = self.chat_key or self.key
+        if auth != f"Bearer {chat_key if path == '/v1/chat/completions' else self.key}":
             return 401, {"error": "bad key"}
         prefix = f"/admin/api/engines/domains/{self.domain}/"
         if path == "/v1/chat/completions":
