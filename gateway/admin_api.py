@@ -2623,10 +2623,11 @@ def create_admin_router(
             ).as_response()
         return _registry_response(record)
 
-    def _excluded_error(exc: ValueError) -> JSONResponse:
-        if "not found" in str(exc):
-            return _RouteError(status.HTTP_404_NOT_FOUND, "record_not_found", str(exc)).as_response()
-        return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_service_registry", str(exc)).as_response()
+    def _excluded_error(exc: ValueError, body: Any = None) -> JSONResponse:
+        message = projection.scrub_text(str(exc), record_carriers.request_secret_texts(body))
+        if "not found" in message:
+            return _RouteError(status.HTTP_404_NOT_FOUND, "record_not_found", message).as_response()
+        return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_service_registry", message).as_response()
 
     def _excluded_section(section: str) -> str:
         if section not in dict(service_registry._SECTIONS):
@@ -2639,6 +2640,7 @@ def create_admin_router(
         ctx = (await asyncio.to_thread(_guard, request))
         if isinstance(ctx, JSONResponse):
             return ctx
+        body: Any = None
         try:
             section = _excluded_section(section)
             expected_generation = _registry_match(request)
@@ -2652,14 +2654,15 @@ def create_admin_router(
             return exc.as_response()
         except engine_check.DraftError as exc:
             return engine_admin.EngineRouteError(
-                status.HTTP_400_BAD_REQUEST, "invalid_engine", str(exc), field=exc.field
+                status.HTTP_400_BAD_REQUEST, "invalid_engine",
+                projection.scrub_text(str(exc), record_carriers.request_secret_texts(body)), field=exc.field
             ).as_response()
         except PermissionError as exc:
             return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
-            return _excluded_error(exc)
+            return _excluded_error(exc, body)
         return _registry_response(record)
 
     @router.delete("/operator/service-registry/excluded/{section}/{record_id}")
