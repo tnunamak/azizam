@@ -500,7 +500,8 @@
 # Config homes C2 merged onto the public-hygiene main (2026-11-06): main's 18989 + the 107 config cases; scripts/run-hermetic-pytest.sh --collect-only -q measured 19096.
 # S2.2 merged with main (2026-11-06): main 18989 + 29 S2.2 cases; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19018.
 # Config homes C3 (aliases, 2026-11-06): +36 cases (tests/test_config_aliases.py, one public_failure copy case); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19199.
-pytest = 19199
+# C3 review round (2026-11-06): +1 case, a blocked import is reported on its own section only; 19200.
+pytest = 19200
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
