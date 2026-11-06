@@ -19,8 +19,12 @@ Lifecycle: ``pending`` -> ``published`` -> ``abandoned`` -> ``deleted``. Only ``
   a regular, single-link file owned by this process. The domain's disk use is bounded by a
   declared ``SnapshotBudget``; a new checkpoint is refused when the domain is full.
 - Deletion goes only through ``collect``. It removes a file only when a ledger row owns it, the
-  row is ``abandoned`` and not pinned, and the file on disk is still the one the row recorded.
-  A file with no row is an orphan: it counts against the budget and is reported, never deleted.
+  row is ``abandoned`` and not pinned, and the file on disk is still the one the row recorded
+  (same file id, size and modification time). A file with no row is an orphan: it counts against
+  the budget and is reported, never deleted.
+- A handle is unique per checkpoint effect, per domain: ``pending`` refuses a handle that any earlier
+  row of the domain used, ``deleted`` rows included. An adapter that reuses a handle breaks the contract;
+  the refusal names it. The same handle in two domains is two different files and is allowed.
 
 The store compares compatibility maps and nothing else about an engine (D5 "Compatibility"). It
 names no engine, model or vendor.
@@ -62,6 +66,7 @@ CREATE TABLE IF NOT EXISTS transition_snapshot (
     created       REAL NOT NULL,
     updated       REAL NOT NULL
 );
+DROP INDEX IF EXISTS transition_snapshot_live_handle;
 CREATE UNIQUE INDEX IF NOT EXISTS transition_snapshot_live_domain_handle
     ON transition_snapshot(domain, handle) WHERE state != 'deleted';
 CREATE INDEX IF NOT EXISTS transition_snapshot_domain ON transition_snapshot(domain, state);
@@ -70,11 +75,6 @@ CREATE TABLE IF NOT EXISTS transition_snapshot_pointer (
     generation INTEGER NOT NULL REFERENCES transition_snapshot(generation)
 );
 """
-
-
-_OLD_LIVE_HANDLE_INDEX = "DROP INDEX IF EXISTS transition_snapshot_live_handle"
-"""The first schema kept one live row per handle across every domain. A handle names a file in its own domain's
-directory, so the bound is per domain; a ledger made by the first schema is migrated when it is opened."""
 
 
 class SnapshotRejected(Exception):
@@ -142,12 +142,13 @@ class PrivateSnapshotDir:
             raise SnapshotRejected("snapshot file is not a private regular file of this process")
         return FileFacts(size=facts.st_size, mtime_ns=facts.st_mtime_ns, file_id=f"{facts.st_dev}:{facts.st_ino}")
 
-    def remove(self, domain: str, handle: str, expected_file_id: str) -> bool:
-        """Remove the file if it is still the one with ``expected_file_id``. ``False``: already gone."""
+    def remove(self, domain: str, handle: str, expected: FileFacts) -> bool:
+        """Remove the file if it is still the recorded one (file id, size and modification time).
+        ``False``: already gone."""
         facts = self.facts(domain, handle)
         if facts is None:
             return False
-        if facts.file_id != expected_file_id:
+        if facts != expected:
             raise SnapshotRejected("the file at this handle is not the one the ledger recorded")
         self.path_for(domain, handle).unlink()
         return True
@@ -196,7 +197,6 @@ class SqliteSnapshotStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         connection = self._connect()
         try:
-            connection.execute(_OLD_LIVE_HANDLE_INDEX)
             connection.executescript(_SCHEMA)
         finally:
             connection.close()
@@ -218,15 +218,16 @@ class SqliteSnapshotStore:
         return Snapshot(handle=row["handle"], domain=row["domain"], op_id=row["op_id"], state=row["state"],
                         compatibility=json.loads(row["compatibility"]), bytes=row["bytes"], created=row["created"])
 
-    def _live_row(self, connection: sqlite3.Connection, handle: str, domain: Optional[str] = None) -> Optional[sqlite3.Row]:
-        """The live row of ``handle`` in ``domain``. Without a domain the handle must be live in one domain only: two
-        domains may use the same handle, and a call that does not say which one is refused, not guessed."""
-        query, args = "SELECT * FROM transition_snapshot WHERE handle = ? AND state != 'deleted'", [handle]
+    @staticmethod
+    def _live_row(connection: sqlite3.Connection, handle: str, domain: Optional[str] = None) -> Optional[sqlite3.Row]:
+        """The row for a live handle. Handles are unique per domain, so a call that omits the domain
+        must find at most one row; the same handle live in two domains is ambiguous and is refused."""
+        query, args = "SELECT * FROM transition_snapshot WHERE handle = ? AND state != 'deleted'", (handle,)
         if domain is not None:
-            query, args = query + " AND domain = ?", [handle, domain]
+            query, args = query + " AND domain = ?", (handle, domain)
         rows = connection.execute(query, args).fetchall()
         if len(rows) > 1:
-            raise SnapshotRejected("the handle is live in more than one domain: name the domain")
+            raise SnapshotRejected("the handle is live in more than one domain; name the domain")
         return rows[0] if rows else None
 
     # -- lifecycle --------------------------------------------------------------
@@ -248,13 +249,14 @@ class SqliteSnapshotStore:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     earlier = connection.execute(
-                        "SELECT state FROM transition_snapshot WHERE domain = ? AND handle = ? ORDER BY generation DESC LIMIT 1",
-                        (domain, handle)).fetchone()
+                        "SELECT state FROM transition_snapshot WHERE domain = ? AND handle = ? "
+                        "ORDER BY generation DESC LIMIT 1", (domain, handle)).fetchone()
                     if earlier is not None:
-                        # A handle names one file once. An adapter that answers every checkpoint with the same handle
-                        # would overwrite the file of a snapshot the ledger still trusts (or already deleted).
+                        # A handle names one file once. An adapter that answers every checkpoint with the same
+                        # handle would overwrite the file of a snapshot the ledger still trusts (or already deleted).
                         raise SnapshotRejected(
-                            "handle already belongs to a live snapshot" if earlier["state"] != "deleted" else
+                            "handle already belongs to a live snapshot of this domain; the adapter contract is one "
+                            "unique handle per checkpoint effect" if earlier["state"] != "deleted" else
                             "handle was used by an earlier snapshot of this domain (deleted rows count): "
                             "every checkpoint needs a new handle")
                     connection.execute(
@@ -272,7 +274,7 @@ class SqliteSnapshotStore:
         assert row is not None
         return self._snapshot(row)
 
-    def publish(self, handle: str, domain: Optional[str] = None) -> Snapshot:
+    def publish(self, handle: str, *, domain: Optional[str] = None) -> Snapshot:
         """Verify the pending snapshot, then move the domain's pointer to it in one transaction."""
         with self._lock:
             connection = self._connect()
@@ -412,10 +414,10 @@ class SqliteSnapshotStore:
 
     # -- pins, room, deletion ---------------------------------------------------
 
-    def pin(self, handle: str, domain: Optional[str] = None) -> bool:
+    def pin(self, handle: str, *, domain: Optional[str] = None) -> bool:
         return self._set_pin(handle, 1, domain)
 
-    def unpin(self, handle: str, domain: Optional[str] = None) -> bool:
+    def unpin(self, handle: str, *, domain: Optional[str] = None) -> bool:
         return self._set_pin(handle, 0, domain)
 
     def _set_pin(self, handle: str, value: int, domain: Optional[str]) -> bool:
@@ -440,8 +442,9 @@ class SqliteSnapshotStore:
     def collect(self, domain: str) -> Sequence[str]:
         """Delete the abandoned, unpinned snapshots of the domain whose files the ledger owns.
 
-        A file that is no longer the recorded one is left in place and the row stays ``abandoned``:
-        ownership is not proven, so the file is not ours to delete.
+        A file that is no longer the recorded one (another file id, size or modification time) is left
+        in place and the row stays ``abandoned``: ownership is not proven, so the file is not ours to
+        delete.
         """
         with self._lock:
             connection = self._connect()
@@ -451,7 +454,8 @@ class SqliteSnapshotStore:
                 deleted: list[str] = []
                 for row in rows:
                     try:
-                        self.files.remove(domain, row["handle"], row["file_id"])
+                        self.files.remove(domain, row["handle"], FileFacts(
+                            size=row["file_size"], mtime_ns=row["file_mtime_ns"], file_id=row["file_id"]))
                     except SnapshotRejected as exc:
                         print(f"[transition-snapshot] not deleting {row['handle']}: {exc}", flush=True)
                         continue

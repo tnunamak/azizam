@@ -17,6 +17,7 @@ Profile shape (every key optional; an absent key is the safe reading)::
     {"checkpoint": {"failure_semantics": "no_change" | "unknown", "query": bool},
      "restore":    {"failure_semantics": ..., "query": bool,
                     "reset": {"failure_semantics": ..., "query": bool, "verify": <observation>}},
+                    # a reset that failed with an attested no_change needs "verify"; without it the gate stays closed
      "servable_check": <observation>,   # default: the source's resident observation (G7)
      "placement_keys": [<compatibility key>, ...],
      "fresh_within_s": <seconds>}
@@ -59,7 +60,13 @@ _SEMANTICS = ("no_change", "unknown")
 
 
 class SnapshotAdapter(TransitionAdapter, Protocol):
-    """What the snapshot steps need beyond ``TransitionAdapter`` (interface addition, T1.3)."""
+    """What the snapshot steps need beyond ``TransitionAdapter`` (interface addition, T1.3).
+
+    Handle contract: the ``handle`` a checkpoint reports must be unique per checkpoint effect, never
+    reused while a snapshot with that handle is live in the domain. An adapter that writes every
+    checkpoint to one fixed handle breaks the contract. ``SnapshotStore.pending`` refuses a reused
+    handle, and the step treats the refusal as a failed checkpoint (no snapshot, cold next start).
+    """
 
     async def compatibility(self, domain: str) -> Mapping[str, str]:
         """The opaque compatibility token for the resolved effective state (D5); empty when unknown."""
@@ -82,9 +89,11 @@ class SnapshotLifecycle(SnapshotStore, Protocol):
 
     def collect(self, domain: str) -> object: ...
 
-    def pin(self, handle: str, domain: Optional[str] = None) -> bool: ...
+    def publish(self, handle: str, *, domain: Optional[str] = None) -> Snapshot: ...
 
-    def unpin(self, handle: str, domain: Optional[str] = None) -> bool: ...
+    def pin(self, handle: str, *, domain: Optional[str] = None) -> bool: ...
+
+    def unpin(self, handle: str, *, domain: Optional[str] = None) -> bool: ...
 
 
 def _mapping(value: object) -> Mapping[str, object]:
@@ -162,33 +171,51 @@ async def _blocking(function: Callable[..., _T], *args: object) -> _T:
     return await asyncio.to_thread(function, *args)
 
 
-async def _effect(call: Awaitable[EffectResult], deadline_s: float, *,
+_LATE_EFFECTS: set["asyncio.Future[EffectResult]"] = set()
+"""Strong references to effects still running after their deadline passed (the loop keeps only weak ones)."""
+
+
+def _log_late_outcome(name: str, future: "asyncio.Future[EffectResult]") -> None:
+    """The done-callback of an effect that outlived its deadline: its outcome is stale, so it is
+    logged and ignored (decision G10)."""
+    _LATE_EFFECTS.discard(future)
+    if future.cancelled():
+        _log(f"late {name} effect was cancelled after its deadline; outcome ignored")
+    elif future.exception() is not None:
+        _log(f"late {name} effect failed after its deadline ({type(future.exception()).__name__}); outcome ignored")
+    else:
+        _log(f"late {name} effect finished after its deadline ({future.result().outcome}); outcome ignored")
+
+
+async def _effect(call: Awaitable[EffectResult], deadline_s: float, name: str = "effect", *,
                   late: Optional[list["asyncio.Future[EffectResult]"]] = None) -> EffectResult:
     """Run one adapter effect under its deadline. A timeout or an error is ``unknown``: the
-    effect was dispatched and its outcome is not known.
+    effect was dispatched and its outcome is not known. A dispatched effect is never cancelled
+    (transition_ops): on a timeout the call keeps running and its late outcome is logged and ignored.
 
-    Without ``late`` the call is cancelled at the deadline. With ``late`` it is not: the effect may still be running in
-    the engine, so the caller gets the running task in ``late`` and decides what must wait for it."""
-    if late is None:
-        try:
-            return await asyncio.wait_for(call, deadline_s)
-        except asyncio.TimeoutError:
-            return EffectResult(outcome="unknown", evidence_ref="deadline_passed")
-        except Exception as exc:  # noqa: BLE001 - an adapter failure is an unknown outcome
-            return EffectResult(outcome="unknown", evidence_ref=f"adapter_error:{type(exc).__name__}")
+    A caller that must wait for the running effect (the restore holds a pin on the file it reads) passes
+    ``late``; the still-running task is appended to it on a timeout or when the caller is cancelled."""
     task = asyncio.ensure_future(call)
-    task.add_done_callback(lambda finished: finished.cancelled() or finished.exception())  # read it: never "not retrieved"
     try:
-        return await asyncio.wait_for(asyncio.shield(task), deadline_s)
-    except asyncio.TimeoutError:
-        late.append(task)
-        return EffectResult(outcome="unknown", evidence_ref="deadline_passed")
+        done, _ = await asyncio.wait({task}, timeout=deadline_s)
     except asyncio.CancelledError:
         if not task.done():
-            late.append(task)
+            _hold_late(task, name, late)
         raise
+    if not done:
+        _hold_late(task, name, late)
+        return EffectResult(outcome="unknown", evidence_ref="deadline_passed")
+    try:
+        return task.result()
     except Exception as exc:  # noqa: BLE001 - an adapter failure is an unknown outcome
         return EffectResult(outcome="unknown", evidence_ref=f"adapter_error:{type(exc).__name__}")
+
+
+def _hold_late(task: "asyncio.Future[EffectResult]", name: str, late: Optional[list["asyncio.Future[EffectResult]"]]) -> None:
+    _LATE_EFFECTS.add(task)
+    task.add_done_callback(lambda finished: _log_late_outcome(name, finished))
+    if late is not None:
+        late.append(task)
 
 
 async def _evidence(call: Awaitable[Evidence], deadline_s: float) -> Optional[Evidence]:
@@ -237,14 +264,18 @@ class CheckpointStep:
         intent = StepIntent(step="checkpoint", effect_key=f"{operation.op_id}:checkpoint",
                             expected_incarnation=operation.incarnation)
         await _blocking(ctx.store.write_intent, operation.op_id, intent)
+        # Any attempted checkpoint makes the next start cold unless it publishes a new snapshot. The
+        # old snapshot is retired here, not after the effect: a crash in between must not leave a
+        # published snapshot that predates the attempt (startup_reconcile never touches published rows).
+        await _blocking(self._snapshots.retire_published, domain)
         if resident is None:
             return await self._not_taken(ctx, sp, "source_residency_unknown")
         await _blocking(self._snapshots.collect, domain)
         if not await _blocking(self._snapshots.has_room, domain):
             return await self._not_taken(ctx, sp, "out_of_snapshot_storage")
-        result = await _effect(adapter.checkpoint(domain, intent), sp.deadline("checkpoint"))
+        result = await _effect(adapter.checkpoint(domain, intent), sp.deadline("checkpoint"), "checkpoint")
         if result.outcome == "unknown" and sp.checkpoint_query:
-            result = await _effect(adapter.query(domain, intent), sp.deadline("query"))
+            result = await _effect(adapter.query(domain, intent), sp.deadline("query"), "query")
         if result.outcome == "success":
             return await self._publish(ctx, sp, adapter, result)
         if result.outcome == "no_change" and sp.checkpoint_no_change:
@@ -264,7 +295,7 @@ class CheckpointStep:
                 domain=domain, op_id=operation.op_id, handle=handle, compatibility=compatibility,
                 bytes=result.bytes))
             await _blocking(ctx.store.set_snapshot_handle, operation.op_id, snapshot.handle)
-            await _blocking(self._snapshots.publish, snapshot.handle, domain)
+            await _blocking(lambda: self._snapshots.publish(snapshot.handle, domain=domain))
         except Exception as exc:  # noqa: BLE001 - the engine is unchanged; the file is not trustworthy
             return await self._not_taken(ctx, sp, f"snapshot_not_published: {exc}")
         await _blocking(ctx.store.write_outcome, operation.op_id, "checkpoint", EffectResult(
@@ -278,8 +309,9 @@ class CheckpointStep:
 
     async def _not_taken(self, ctx: StepContext, sp: SnapshotPolicy, reason: str, *,
                          unknown: bool = False) -> StepVerdict:
-        """No usable snapshot was made. Abandon any pending one before release (D4), and clear the
-        published pointer so the next start is cold."""
+        """No usable snapshot was made. Abandon any pending one before release (D4). The published
+        pointer was already cleared before the checkpoint was attempted; clearing it again is a no-op
+        that keeps the next start cold whatever failed."""
         operation, domain = ctx.operation, ctx.operation.domain
         await _blocking(self._snapshots.abandon_pending, domain, operation.op_id)
         await _blocking(self._snapshots.retire_published, domain)
@@ -338,7 +370,7 @@ class RestoreStep:
         snapshot = await _blocking(lambda: self._snapshots.latest_published(domain, compatibility, sp.placement_keys))
         if snapshot is None:
             return "skip"
-        await _blocking(self._snapshots.pin, snapshot.handle, domain)
+        await _blocking(lambda: self._snapshots.pin(snapshot.handle, domain=domain))
         late: list["asyncio.Future[EffectResult]"] = []
         try:
             return await self._restore(ctx, sp, adapter, snapshot.handle, late)
@@ -346,11 +378,11 @@ class RestoreStep:
             await self._unpin_when_idle(domain, snapshot.handle, late)
 
     async def _unpin_when_idle(self, domain: str, handle: str, late: list["asyncio.Future[EffectResult]"]) -> None:
-        """Release the pin once no restore effect is running. A restore that passed its deadline may still be reading the
-        file, so its pin is released from the done-callback of that late task, never before."""
+        """Release the pin once no restore effect is running. A restore that passed its deadline may still be
+        reading the file, so its pin is released from the done-callback of the late task, never before."""
         running = [task for task in late if not task.done()]
         if not running:
-            await _blocking(self._snapshots.unpin, handle, domain)
+            await _blocking(lambda: self._snapshots.unpin(handle, domain=domain))
             return
         loop = asyncio.get_running_loop()
         remaining = len(running)
@@ -359,7 +391,7 @@ class RestoreStep:
             nonlocal remaining
             remaining -= 1
             if remaining == 0:
-                loop.run_in_executor(None, self._snapshots.unpin, handle, domain)
+                loop.run_in_executor(None, lambda: self._snapshots.unpin(handle, domain=domain))
 
         for task in running:
             task.add_done_callback(finished)
@@ -370,9 +402,9 @@ class RestoreStep:
         intent = StepIntent(step="restore", effect_key=f"{operation.op_id}:restore",
                             expected_incarnation=operation.incarnation)
         await _blocking(ctx.store.write_intent, operation.op_id, intent)
-        result = await _effect(adapter.restore(domain, handle, intent), sp.deadline("restore"), late=late)
+        result = await _effect(adapter.restore(domain, handle, intent), sp.deadline("restore"), "restore", late=late)
         if result.outcome == "unknown" and sp.restore_query:
-            result = await _effect(adapter.query(domain, intent), sp.deadline("query"))
+            result = await _effect(adapter.query(domain, intent), sp.deadline("query"), "query")
         if result.outcome == "success":
             await _blocking(ctx.store.write_outcome, operation.op_id, "restore", EffectResult(
                 outcome="success", evidence_ref=f"restore:{handle}", handle=handle,
@@ -402,9 +434,9 @@ class RestoreStep:
         intent = StepIntent(step="restore", effect_key=f"{operation.op_id}:reset",
                             expected_incarnation=operation.incarnation)
         await _blocking(ctx.store.write_intent, operation.op_id, intent)
-        result = await _effect(adapter.reset(domain, intent), sp.deadline("reset"))
+        result = await _effect(adapter.reset(domain, intent), sp.deadline("reset"), "reset")
         if result.outcome == "unknown" and sp.reset_query:
-            result = await _effect(adapter.query(domain, intent), sp.deadline("query"))
+            result = await _effect(adapter.query(domain, intent), sp.deadline("query"), "query")
         if result.outcome == "unknown":
             await _blocking(ctx.store.write_outcome, operation.op_id, "restore",
                             EffectResult(outcome="unknown", evidence_ref="reset:unknown"))
@@ -413,6 +445,12 @@ class RestoreStep:
         if result.outcome != "success" and not failed_unchanged:
             await _blocking(ctx.store.write_outcome, operation.op_id, "restore",
                             EffectResult(outcome="partial", evidence_ref="reset:failed:state_unknown"))
+            return "fail_closed"
+        if failed_unchanged and not sp.reset_verify:
+            # The restore left the engine dirty and the reset did nothing. Only the profile's own
+            # verification can show a clean target; "resident" shows that something is loaded, not that it is clean.
+            await _blocking(ctx.store.write_outcome, operation.op_id, "restore",
+                            EffectResult(outcome="partial", evidence_ref="reset:failed:no_verify_declared"))
             return "fail_closed"
         clean = await self._clean(ctx, sp, adapter)
         if clean is True:
@@ -425,8 +463,8 @@ class RestoreStep:
         return "reconcile" if clean is None else "fail_closed"
 
     async def _clean(self, ctx: StepContext, sp: SnapshotPolicy, adapter: SnapshotAdapter) -> Optional[bool]:
-        """Is the target clean and serving? The profile's reset ``verify`` observation, else the
-        resident observation naming the target."""
+        """Is the target clean and serving? The profile's reset ``verify`` observation, else (only
+        after a reset that succeeded) the resident observation naming the target."""
         domain, target = ctx.operation.domain, ctx.operation.target
         call = adapter.observe(domain, sp.reset_verify) if sp.reset_verify else adapter.resident(domain)
         evidence = await _evidence(call, sp.deadline("query"))

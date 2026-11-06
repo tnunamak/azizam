@@ -168,7 +168,9 @@ one.
   - If the profile has no query or delete operation, a `pending` snapshot can never be published. Disk use is bounded
     by the retention limits, and an over-limit domain refuses new checkpoints (best-effort: skip; required: abort).
 - **Handles.** The adapter owns the physical paths. Core holds an opaque handle that is checked against the adapter's
-  pattern, never an unchecked path.
+  pattern, never an unchecked path. A handle is unique per checkpoint effect within a domain: a checkpoint that reports a
+  handle some live snapshot of the domain still holds is refused, and the step treats it as a failed checkpoint (no
+  snapshot; the next start is cold).
 - **Retention.** Each domain has a byte limit and a count limit. Old and orphan snapshots are deleted through the
   declared delete operation, with a verify. A snapshot that is pinned or being restored is never deleted.
 - **Privacy.** A snapshot holds private session cache. It stays in the engine's private directory and is never served.

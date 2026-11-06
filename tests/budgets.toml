@@ -497,7 +497,8 @@
 # T1.3 snapshot lifecycle, checkpoint and restore steps (2026-11-05): +169 cases (test_transition_snapshot_store.py, test_transition_snapshot_steps.py); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19157.
 # Transition proof harness (2026-11-05): +21 cases in tests/test_transition_proof.py; collect-only measured 19009 (18988 + 21).
 # T1.2 review round (2026-11-06): +25 cases (service id is not a domain, egress permit over the real invoke path, unreadable table at start-up, the waking request's lease, resume re-check, wake 503s, effect deadlines, profile-only fresh window); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19173.
-pytest = PLACEHOLDER
+# T1.3 gate-review fixes (2026-11-06): +9 cases (failed reset without verify, crash after the effect, reused handle, per-domain handles, in-place rewrite); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19166.
+pytest = 19200
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

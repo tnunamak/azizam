@@ -3,6 +3,7 @@
 ``SyncAdapter`` answers each effect when it finishes, after an optional delay, and can finish after its caller timed out.
 ``DeferredAdapter`` answers every checkpoint, restore and reset with ``unknown`` and reveals the real answer only through
 ``query``. Both run from the same script (``rig.script("restore", "no_change")``), so one scenario checks both shapes.
+A delayed sync effect sleeps inside the effect, so cancelling its caller would cancel it; ``engine.cancelled`` records that.
 
 Scripted outcomes for checkpoint, restore and reset: ``success`` (default), ``no_change``, ``partial``, ``unknown``
 (the effect did not happen and the reply is lost), plus checkpoint-only ``half_written`` (fewer bytes on disk than
@@ -40,6 +41,8 @@ class Engine:
     scripts: dict = field(default_factory=dict)
     delays: dict = field(default_factory=dict)
     on_release: Optional[object] = None
+    cancelled: list = field(default_factory=list)
+    """Names of effects whose coroutine received a ``CancelledError``. A dispatched effect is never cancelled."""
 
     def script(self, name: str, *outcomes: str, delay: float = 0.0) -> None:
         self.scripts[name] = list(outcomes)
@@ -127,27 +130,17 @@ class SyncAdapter(_Base):
         self.engine.calls.append(name)
         outcome = self.engine.next_outcome(name)
         delay = self.engine.delays.get(name, 0.0)
+        if delay:
+            try:
+                await asyncio.sleep(delay)  # the effect itself takes this long; its caller may give up meanwhile
+            except asyncio.CancelledError:
+                self.engine.cancelled.append(name)
+                raise
         if outcome == "unknown":
-            if delay:
-                await asyncio.sleep(delay)
             return EffectResult(outcome="unknown", evidence_ref="reply_lost")
-
-        def finish() -> EffectResult:
-            result = _apply(self.engine, name, domain, intent, outcome, handle)
-            self.engine.effects[intent.effect_key] = result
-            return result
-
-        if not delay:
-            return finish()
-        future: asyncio.Future = asyncio.get_running_loop().create_future()
-
-        def complete() -> None:
-            result = finish()  # the engine finishes even when its caller gave up
-            if not future.done():
-                future.set_result(result)
-
-        asyncio.get_running_loop().call_later(delay, complete)
-        return await future
+        result = _apply(self.engine, name, domain, intent, outcome, handle)
+        self.engine.effects[intent.effect_key] = result  # the engine finishes even when its caller gave up
+        return result
 
     async def checkpoint(self, domain, intent):
         return await self._effect("checkpoint", domain, intent)

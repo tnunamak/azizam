@@ -164,11 +164,26 @@ def test_pending_refuses_evidence_gaps(tmp_path) -> None:
     assert store.rows(D) == ()
 
 
-def test_pending_refuses_a_second_live_snapshot_on_the_same_handle(tmp_path) -> None:
+def test_pending_refuses_a_second_live_snapshot_on_the_same_handle_and_names_the_contract(tmp_path) -> None:
     files, store = make(tmp_path)
     record(files, store, "a.snap")
-    with pytest.raises(SnapshotRejected, match="live snapshot"):
+    with pytest.raises(SnapshotRejected, match="live snapshot of this domain.*unique handle per checkpoint effect"):
         store.pending(domain=D, op_id="o2", handle="a.snap", compatibility=COMPAT, bytes=len(BODY))
+
+
+def test_handle_uniqueness_is_per_domain(tmp_path) -> None:
+    files, store = make(tmp_path)
+    record(files, store, "a.snap", domain="one")
+    record(files, store, "a.snap", domain="two", op="op-2")  # another domain's file: allowed
+    store.publish("a.snap", domain="one")
+    store.publish("a.snap", domain="two")
+    assert store.pointer("one") == "a.snap" and store.pointer("two") == "a.snap"
+    with pytest.raises(SnapshotRejected, match="more than one domain"):
+        store.publish("a.snap")  # the domain-less form cannot choose
+    assert store.pin("a.snap", domain="one") and store.collect("two") == ()
+    store.abandon_pending("one")
+    store.retire_published("two")
+    assert store.collect("two") == ("a.snap",) and files.facts("one", "a.snap") is not None, "deleting one leaves the other"
 
 
 @pytest.mark.parametrize("handle", ["../escape", "a/b", "", ".hidden", "x" * 200, "a b"])
@@ -323,6 +338,24 @@ def test_collect_does_not_delete_a_file_that_is_no_longer_the_recorded_one(tmp_p
     os.replace(other, path)
     assert store.collect(D) == ()
     assert path.read_bytes() == b"someone else's file", "ownership was not proven, so the file stays"
+    assert store.get("a.snap").state == "abandoned"
+
+
+@pytest.mark.parametrize("rewrite", ["size", "mtime"])
+def test_collect_does_not_delete_a_file_rewritten_in_place(tmp_path, rewrite) -> None:
+    files, store = make(tmp_path)
+    path = record(files, store, "a.snap") and files.path_for(D, "a.snap")
+    store.abandon_pending(D)
+    inode = path.stat().st_ino
+    if rewrite == "size":
+        with open(path, "r+b") as handle:  # same inode, different content
+            handle.truncate(10)
+    else:
+        stamp = path.stat().st_mtime_ns + 5_000_000_000
+        os.utime(path, ns=(stamp, stamp))  # same inode, same size, different modification time
+    assert path.stat().st_ino == inode
+    assert store.collect(D) == ()
+    assert path.exists(), "the file is no longer the recorded one, so it is not ours to delete"
     assert store.get("a.snap").state == "abandoned"
 
 
@@ -540,10 +573,10 @@ def test_the_same_handle_may_be_live_in_two_domains_and_calls_name_the_domain(tm
     record(files, store, "same.snap", domain="two", op="op-2")
     with pytest.raises(SnapshotRejected, match="more than one domain"):
         store.publish("same.snap")
-    assert store.publish("same.snap", "two").domain == "two"
+    assert store.publish("same.snap", domain="two").domain == "two"
     assert store.pointer("one") == "same.snap" and store.pointer("two") == "same.snap"
-    assert store.pin("same.snap", "one") and store.get("same.snap", "two") is not None
-    assert store.unpin("same.snap", "one")
+    assert store.pin("same.snap", domain="one") and store.get("same.snap", "two") is not None
+    assert store.unpin("same.snap", domain="one")
 
 
 @pytest.mark.parametrize("path", ["live", "abandoned", "deleted"])
