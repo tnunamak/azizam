@@ -378,5 +378,25 @@ class ImageVideoJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(PROMPT, json.dumps(job))
 
 
+    async def test_a_video_seconds_refusal_keeps_its_bound_but_not_the_model(self) -> None:
+        job = await self.run_video_job({"model": "ltx-2.5", "prompt": "x", "seconds": -1})
+        self.assertTrue(job["error"].startswith("seconds must be between "), job["error"])
+        self.assertNotIn("ltx", job["error"].lower())
+        self.assertNotIn("model", job["error"].lower())
+        self.assertEqual(job["error_category"], "invalid_input")
+
+    def test_the_job_message_of_a_route_refusal_replaces_its_sentence(self) -> None:
+        refusal = proxy._gateway_input_error("Model secret-name needs X", job_message="This model needs X")
+        message, info = proxy._media_job_failure(refusal)
+        self.assertEqual(message, "This model needs X")
+        self.assertIn(b"secret-name", refusal.body)  # the synchronous reply still names it
+        self.assertEqual(info["error_category"], "invalid_input")
+
+    def test_the_audio_unknown_field_reason_never_names_the_field(self) -> None:
+        from gateway.audio_extensions import detect_unknown_audio_fields
+        reasons = detect_unknown_audio_fields({f"x-{PROMPT}": 1})
+        self.assertEqual(len(reasons), 1)
+        self.assertNotIn(PROMPT, next(iter(reasons.values())))
+
 if __name__ == "__main__":
     unittest.main()
