@@ -7004,7 +7004,7 @@ def _parse_image_output_shape(
     output_format, fmt_err = parse_output_format(output_format_raw)
     if fmt_err:
         _record_image_input(receipt, "output_format", rejected_reason=fmt_err)
-        return output_format, None, "auto", openai_error_response(
+        return output_format, None, "auto", _image_input_refusal(
             fmt_err, param="output_format", code="invalid_value",
         )
     if output_format_raw not in (None, ""):
@@ -7013,14 +7013,14 @@ def _parse_image_output_shape(
     conflict = background_format_conflict(background, output_format)
     if conflict:
         _record_image_input(receipt, "background", rejected_reason="conflicts_with_output_format")
-        return output_format, None, "auto", openai_error_response(
+        return output_format, None, "auto", _image_input_refusal(
             conflict, param="background", code="invalid_value",
         )
 
     output_compression, comp_err = parse_output_compression(output_compression_raw, output_format)
     if comp_err:
         _record_image_input(receipt, "output_compression", rejected_reason=comp_err)
-        return output_format, None, "auto", openai_error_response(
+        return output_format, None, "auto", _image_input_refusal(
             comp_err, param="output_compression", code="invalid_value",
         )
     if output_compression_raw not in (None, ""):
@@ -7029,7 +7029,7 @@ def _parse_image_output_shape(
     quality, quality_err = parse_quality(quality_raw)
     if quality_err:
         _record_image_input(receipt, "quality", rejected_reason=quality_err)
-        return output_format, output_compression, quality, openai_error_response(
+        return output_format, output_compression, quality, _image_input_refusal(
             quality_err, param="quality", code="invalid_value",
         )
     if quality_raw not in (None, ""):
@@ -8733,16 +8733,7 @@ async def proxy_graph_image_request(
     background, background_err = parse_image_background(body.get("background"))
     if background_err:
         _record_image_input(receipt, "background", rejected_reason=background_err)
-        return Response(
-            content=json.dumps({"error": {
-                "message": background_err,
-                "type": "invalid_request_error",
-                "param": "background",
-                "code": "invalid_value",
-            }}),
-            status_code=400,
-            media_type="application/json",
-        )
+        return _gateway_input_error(background_err, param="background", code="invalid_value")
     if "background" in body:
         _record_image_input(receipt, "background")
     output_format, output_compression, quality, output_shape_error = _parse_image_output_shape(
@@ -8757,10 +8748,10 @@ async def proxy_graph_image_request(
     n = body.get("n", 1)
     if isinstance(n, bool) or not isinstance(n, int):
         _record_image_input(receipt, "n", rejected_reason="not_integer")
-        return openai_error_response("n must be an integer", param="n")
+        return _image_input_refusal("n must be an integer", param="n")
     if n < 1 or n > 10:
         _record_image_input(receipt, "n", rejected_reason="out_of_range")
-        return openai_error_response("n must be between 1 and 10", param="n")
+        return _image_input_refusal("n must be between 1 and 10", param="n")
     _record_image_input(receipt, "n")
     response_format = body.get(
         "response_format",
@@ -8768,11 +8759,7 @@ async def proxy_graph_image_request(
     )
     if response_format not in ("b64_json", "url"):
         _record_image_input(receipt, "response_format", rejected_reason="unsupported_value")
-        return Response(
-            content=json.dumps({"error": {"message": "response_format must be 'b64_json' or 'url'", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json",
-        )
+        return _gateway_input_error("response_format must be 'b64_json' or 'url'")
     _record_image_input(receipt, "response_format")
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
     try:
@@ -8789,11 +8776,7 @@ async def proxy_graph_image_request(
 
     if not prompt:
         _record_image_input(receipt, "prompt", rejected_reason="missing")
-        return Response(
-            content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
-        )
+        return _gateway_input_error("prompt is required")
     _record_image_input(receipt, "prompt")
 
     manifest = _find_image_manifest("image.generate", str(model))
@@ -10925,11 +10908,15 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
 class _VideoAssetError(Exception):
     """A video-workflow asset input could not be resolved."""
 
-    def __init__(self, message: str, *, param: str, status: int = 400, code: str | None = None):
+    def __init__(self, message: str, *, param: str, status: int = 400, code: str | None = None,
+                 echoes_input: bool = False):
         super().__init__(message)
         self.param = param
         self.status = status
         self.code = code
+        # True when the message holds text the caller or a fetch sent (a URL, a transport error): an async job
+        # must not keep it. Every other message names a field and a bound.
+        self.echoes_input = echoes_input
 
 
 def _video_asset_error_response(exc: "_VideoAssetError") -> Response:
@@ -10940,7 +10927,10 @@ def _video_asset_error_response(exc: "_VideoAssetError") -> Response:
     }
     if exc.code:
         error["code"] = exc.code
-    return Response(content=json.dumps({"error": error}), status_code=exc.status, media_type="application/json")
+    response = Response(content=json.dumps({"error": error}), status_code=exc.status, media_type="application/json")
+    if exc.status < 500 and not exc.echoes_input:
+        return _gateway_input_refusal(response, str(exc))
+    return response
 
 
 async def _load_completed_video_bytes(
@@ -11023,7 +11013,8 @@ async def _resolve_video_workflow_asset(
             try:
                 data, name = await _load_completed_video_bytes(video_id, auth_context)
             except _VideoAssetError as exc:
-                raise _VideoAssetError(str(exc), param=param, status=exc.status, code=exc.code) from exc
+                raise _VideoAssetError(str(exc), param=param, status=exc.status, code=exc.code,
+                                       echoes_input=exc.echoes_input) from exc
             return data, name, "video/mp4"
         if isinstance(value, Mapping):
             value = value.get("url") or value.get("data")
@@ -11031,11 +11022,11 @@ async def _resolve_video_workflow_asset(
             header, _, b64 = value.partition(",")
             mime = header[len(_DATA_URI_PREFIX):].split(";", 1)[0].strip().lower()
             if not mime.startswith("video/"):
-                raise _VideoAssetError(f"{param} data URI must be video/*, got {mime or 'no type'}", param=param)
+                raise _VideoAssetError(f"{param} data URI must be video/*", param=param)
             try:
                 data = base64.b64decode(b64, validate=False)
             except Exception as exc:
-                raise _VideoAssetError(f"{param} is not valid base64: {exc}", param=param) from exc
+                raise _VideoAssetError(f"{param} is not valid base64", param=param) from exc
             return data, f"source{video_inputs.suffix_for_video(None, mime)}", mime
         if not isinstance(value, str) or not value.strip().startswith(("http://", "https://")):
             raise _VideoAssetError(
@@ -11045,13 +11036,13 @@ async def _resolve_video_workflow_asset(
         try:
             fetched = await _fetch_media_url(value.strip(), auth_context, request=request)
         except Exception as exc:
-            raise _VideoAssetError(f"failed to download {param}: {exc}", param=param) from exc
+            raise _VideoAssetError(f"failed to download {param}: {exc}", param=param, echoes_input=True) from exc
         mime = fetched.content_type if fetched.content_type != "application/octet-stream" else "video/mp4"
         return fetched.data, f"source{video_inputs.suffix_for_video(fetched.filename, mime)}", mime
     try:
         data, name = await _resolve_input_reference(value, auth_context, request=request)
     except _InputReferenceError as exc:
-        raise _VideoAssetError(f"{param}: {exc}", param=param) from exc
+        raise _VideoAssetError(f"{param}: {exc}", param=param, echoes_input=True) from exc
     suffix = Path(name).suffix.lower()
     mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}.get(suffix, "image/png")
     return data, name, mime
@@ -11481,15 +11472,7 @@ async def proxy_graph_video_create(
 
     raw_prompt = body.get("prompt")
     if raw_prompt is not None and not isinstance(raw_prompt, str):
-        return Response(
-            content=json.dumps({"error": {
-                "message": "prompt must be a string",
-                "type": "invalid_request_error",
-                "param": "prompt",
-            }}),
-            status_code=400,
-            media_type="application/json",
-        )
+        return _gateway_input_error("prompt must be a string", param="prompt")
     prompt = (raw_prompt or "").strip()
     requested_model = body.get("model") or VIDEO_DEFAULT_WORKFLOW
     public_model = str(requested_model)
@@ -11500,11 +11483,7 @@ async def proxy_graph_video_create(
     image_strength = body.get("image_strength")  # optional float 0..1, default 1.0 when input_reference present
 
     if not prompt and body.get("shots") is None:
-        return Response(
-            content=json.dumps({"error": {"message": "prompt is required", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
-        )
+        return _gateway_input_error("prompt is required")
 
     # OpenAI-compat: rewrite sora-* aliases to the local default before workflow lookup.
     try:
@@ -11535,15 +11514,8 @@ async def proxy_graph_video_create(
         if i2v_cfg:
             workflow_name, workflow_cfg = i2v_workflow_name, i2v_cfg
     if workflow_cfg.get("requires_input_reference") and not input_reference:
-        return Response(
-            content=json.dumps({"error": {
-                "message": f"Model {workflow_name} is image-to-video and requires input_reference",
-                "type": "invalid_request_error",
-                "param": "input_reference",
-            }}),
-            status_code=400,
-            media_type="application/json",
-        )
+        return _gateway_input_error(
+            f"Model {workflow_name} is image-to-video and requires input_reference", param="input_reference")
     # Long video: `shots`, or `seconds` past the model's native length when the
     # model names a chain workflow, or a chain workflow itself (video-long).
     chain_name = chain_cfg = None
@@ -11557,8 +11529,8 @@ async def proxy_graph_video_create(
         if body.get("shots") is not None or (beyond_native and workflow_cfg.get("chain_workflow")):
             chain_name, chain_cfg = _chain_workflow_for(requested_model)
             if chain_cfg is None:
-                return _json_error(
-                    400, f"Model {workflow_name} cannot render shots or clips longer than "
+                return _gateway_input_error(
+                    f"Model {workflow_name} cannot render shots or clips longer than "
                     f"{workflow_cfg.get('max_seconds', 8):g} s; use video-long, ltx-2.5-long or minimax-h3",
                     param="shots" if body.get("shots") is not None else "seconds",
                     code="long_video_not_supported")
@@ -11699,8 +11671,8 @@ async def proxy_graph_video_create(
                 ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
             )
         except video_subject.SubjectError as exc:
-            return _json_error(400, str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
-                               code="invalid_workflow_extension")
+            return _gateway_input_error(str(exc), param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{exc.param}",
+                                        code="invalid_workflow_extension")
 
     # Validate / clamp request inputs.
     max_seconds = float(workflow_cfg.get("max_seconds", 8))
@@ -11722,24 +11694,9 @@ async def proxy_graph_video_create(
         else:
             seconds_val = min(5.0, max_seconds)
     except (TypeError, ValueError):
-        return Response(
-            content=json.dumps({"error": {"message": "seconds must be a number", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
-        )
+        return _gateway_input_error("seconds must be a number")
     if seconds_val < min_seconds or seconds_val > max_seconds:
-        return Response(
-            content=json.dumps({
-                "error": {
-                    "message": (
-                        f"seconds must be between {min_seconds} and {max_seconds} for model {workflow_name}"
-                    ),
-                    "type": "invalid_request_error",
-                }
-            }),
-            status_code=400,
-            media_type="application/json"
-        )
+        return _gateway_input_error(f"seconds must be between {min_seconds} and {max_seconds} for model {workflow_name}")
 
     if source_seconds is not None and seconds_val > source_seconds + 0.05:
         return Response(
@@ -13214,6 +13171,15 @@ def _json_error(status: int, message: str, *, code: str | None = None, param: st
     if code:
         error["code"] = code
     return Response(content=json.dumps({"error": error}), status_code=status, media_type="application/json")
+
+
+def _gateway_input_error(message: str, *, code: str | None = None, param: str | None = None) -> Response:
+    """A 400 a media route's own checks wrote; its sentence may reach an async job's error.
+
+    Only for a message that names a field and a bound. One that can hold a caller's value (a model name, a URL,
+    an unknown field's name) goes through ``_json_error``, which an async job reports with fixed words.
+    """
+    return _gateway_input_refusal(_json_error(400, message, code=code, param=param), message)
 
 
 async def _submit_video_remix(
@@ -20633,7 +20599,8 @@ class ImageEditMaskContext:
 
 
 def _image_error_response(message: str, *, param: str, code: str) -> Response:
-    return Response(
+    """The gateway's own refusal of an image input; each message names a field and a bound, never a value."""
+    return _gateway_input_refusal(Response(
         content=json.dumps({
             "error": {
                 "message": message,
@@ -20644,7 +20611,12 @@ def _image_error_response(message: str, *, param: str, code: str) -> Response:
         }),
         status_code=400,
         media_type="application/json",
-    )
+    ), message)
+
+
+def _image_input_refusal(message: str, *, param: str, code: str | None = None) -> Response:
+    """A 400 the image route's own checks wrote; its sentence may reach an async job's error."""
+    return _gateway_input_refusal(openai_error_response(message, param=param, code=code), message)
 
 
 def _open_image_for_route(content: bytes, *, param: str):
