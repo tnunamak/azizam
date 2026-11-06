@@ -28,7 +28,7 @@ from typing import Any, Iterable, Mapping
 from fastapi import Request, status
 
 from gateway import log_scrub
-from gateway import admin_store, browser_sessions, engine_check, step_up, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
+from gateway import admin_store, browser_sessions, config_fold, engine_check, step_up, extension_packages, projection, projection_types, record_carriers, record_integrity, route_registry, secret_commands, secret_refs, secret_store, service_registry, trusted_addresses
 from gateway.admin_store import OIDC_CLIENT_SECRET_REF
 from gateway import session_guard
 from gateway.admin_api import (
@@ -66,8 +66,9 @@ ADMIN_CONTROL_ROLES = frozenset({"owner", "admin", "superadmin"})
 ADMIN_KEY_CREATABLE_ROLES = frozenset({"owner", "admin"})
 _ROLE_RANK = {"admin": 1, "superadmin": 2, "owner": 3}
 LOCAL_ADMIN_KEY_ISSUER = "local-admin-key"
-SERVICE_AVAILABILITY_OVERRIDES_KEY = "service_availability_overrides"
-MEDIA_JOB_ADMISSION_OVERRIDES_KEY = "media_job_admission_overrides"
+# The name the media admission revision goes by in the overrides view (``revisions``); the setting itself is a
+# config section (gateway/config_fold.py).
+MEDIA_JOB_ADMISSION_REVISION_KEY = "media_job_admission_overrides"
 OIDC_PROVIDER_SETTING_KEY = "oidc_provider_config"
 SERVICE_REGISTRY_SETTING_KEY = service_registry.SERVICE_REGISTRY_SETTING_KEY
 EXTENSION_PACKAGE_INDEX_SETTING_KEY = extension_packages.EXTENSION_PACKAGE_INDEX_SETTING_KEY
@@ -276,6 +277,8 @@ class AdminSQLiteStore:
         # from outside (e.g. proxy.py after ADMIN_STORE is created) to trigger
         # an in-process hot reload without a circular import.
         self.on_service_registry_changed: "Callable[[], None] | None" = None
+        # Called after a setting that lives in the config layer (media admission, service availability) is saved.
+        self.on_config_changed: "Callable[[], None] | None" = None
         # Called with the credential record (including its stored hash) after a
         # credential is revoked, so data keyed by that key (custom voices) can be removed.
         self.on_credential_revoked: "Callable[[Mapping[str, Any]], bool | None] | None" = None
@@ -756,68 +759,43 @@ class AdminSQLiteStore:
         ``operator_overrides`` also reads the media-admission setting and normalizes the extension package
         index; the transition gate needs none of that on a request path.
         """
-        setting = admin_store.get_operator_setting(SERVICE_AVAILABILITY_OVERRIDES_KEY, path=self.path)
-        value = setting["value"] if setting is not None else {}
-        return value if isinstance(value, dict) else {}
+        return config_fold.service_availability(self.path)
 
     def operator_overrides(self) -> dict[str, Any]:
-        service_setting = admin_store.get_operator_setting(
-            SERVICE_AVAILABILITY_OVERRIDES_KEY,
-            path=self.path,
-        )
-        media_setting = admin_store.get_operator_setting(
-            MEDIA_JOB_ADMISSION_OVERRIDES_KEY,
-            path=self.path,
-        )
+        media, media_revision = config_fold.media_job_admission(self.path)
         return {
-            "service_availability": (
-                service_setting["value"] if service_setting is not None else {}
-            ),
-            "media_job_admission": (
-                media_setting["value"] if media_setting is not None else {}
-            ),
+            "service_availability": config_fold.service_availability(self.path),
+            "media_job_admission": media,
             "extension_package_index": self.get_extension_package_index(),
-            "revisions": {MEDIA_JOB_ADMISSION_OVERRIDES_KEY: admin_store.operator_setting_revision(media_setting)},
+            "revisions": {MEDIA_JOB_ADMISSION_REVISION_KEY: media_revision},
         }
 
     def update_service_availability_overrides(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext, expected_revision: str | None = None,
     ) -> dict[str, Any]:
-        value = _copy_override_value(data)
-        record = admin_store.put_operator_setting(
-            SERVICE_AVAILABILITY_OVERRIDES_KEY,
-            value,
-            updated_by=actor.subject,
-            path=self.path,
-        )
-        admin_store.record_audit(
-            "operator.service_availability.update",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="operator_setting",
-            target_id=SERVICE_AVAILABILITY_OVERRIDES_KEY,
-            metadata={"override_count": len(value)},
-            path=self.path,
-        )
-        return record["value"]
+        record = config_fold.put_service_availability(
+            self.path, _copy_override_value(data), actor, expected_revision=expected_revision)
+        self._fire_config_changed()
+        return record
 
     def update_media_job_admission_overrides(
         self, *, data: Mapping[str, Any], actor: AdminContext,
-        expected_revision: str | None = None,
+        expected_revision: str,
     ) -> dict[str, Any]:
         value = _copy_override_value(data)
-        record = admin_store.put_operator_setting_with_audit(
-            MEDIA_JOB_ADMISSION_OVERRIDES_KEY, value,
-            updated_by=actor.subject, expected_revision=expected_revision,
-            audit_action="operator.media_job_admission.update",
-            audit_actor_kind=actor.actor_kind, audit_actor_id=actor.audit_actor_id,
-            audit_actor_label=actor.actor_label,
-            audit_target_kind="operator_setting",
-            audit_target_id=MEDIA_JOB_ADMISSION_OVERRIDES_KEY,
-            audit_metadata={"fields": sorted(value)}, path=self.path,
-        )
-        return {**record["value"], "revision": admin_store.operator_setting_revision(record)}
+        revision = config_fold.put_media_job_admission(self.path, value, actor, expected_revision=expected_revision)
+        self._fire_config_changed()
+        return {**value, "revision": revision}
+
+    def _fire_config_changed(self) -> None:
+        """Tell the host a folded setting changed, so it publishes a fresh snapshot. A failure is logged: the change is
+        stored and the readers of these settings read the store, so nothing served is stale."""
+        callback = self.on_config_changed
+        if callback is not None:
+            try:
+                callback()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[admin_runtime] WARNING: on_config_changed raised {type(exc).__name__}", flush=True)
 
     def get_service_registry(self) -> dict[str, Any]:
         registry = service_registry.load_service_registry(path=self.path)

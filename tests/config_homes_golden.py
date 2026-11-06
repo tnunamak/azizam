@@ -56,9 +56,21 @@ def raw_config(name: str) -> dict[str, Any]:
 
 
 def effective_config(proxy: Any, name: str, admin_db: Path) -> dict[str, Any]:
-    """The effective config for ``name``, built by the boot loader on a scratch admin.db."""
+    """The effective config for ``name``, built by the boot loader on a scratch admin.db.
+
+    A boot, so a section the release ships imports its startup block once (docs/design/CONFIG_HOMES.md, 8.1), as the
+    gateway does at start; the scratch store holds the rows only for this input. A blocked import is an error here: the
+    goldens are the settings the startup files mean, and a block that does not import would hide them.
+    """
+    from gateway import config_runtime
+
     with patch.object(proxy, "ADMIN_DB_PATH", admin_db):
-        return proxy._load_effective_runtime_config(copy.deepcopy(raw_config(name)))
+        effective = proxy._load_effective_runtime_config(copy.deepcopy(raw_config(name)), boot=True)
+    layer, _generation = config_runtime.carried(effective)
+    blocked = {section: found for section, found in layer.problems.items()
+               if any(problem["code"] == "legacy_import_blocked" for problem in found)}
+    assert not blocked, f"{name}: the startup block does not import: {blocked}"
+    return effective
 
 
 def _alias_samples(section: Any) -> list[tuple[str, str]]:
@@ -74,6 +86,7 @@ def _alias_samples(section: Any) -> list[tuple[str, str]]:
 
 
 def alias_table(proxy: Any, effective: dict[str, Any]) -> list[dict[str, Any]]:
+    """One row per sample, sorted by (operation, kind, name): the order of the keys in a dict is not a behaviour."""
     from gateway import stable_aliases
 
     rows: list[dict[str, Any]] = []
@@ -91,7 +104,7 @@ def alias_table(proxy: Any, effective: dict[str, Any]) -> list[dict[str, Any]]:
                 else:
                     row["resolution"] = resolution.to_dict() if resolution is not None else None
                 rows.append(row)
-    return rows
+    return sorted(rows, key=lambda row: (stable_aliases.OPERATIONS.index(row["operation"]), row["kind"], row["requested"]))
 
 
 def models_view(proxy: Any, effective: dict[str, Any]) -> dict[str, Any]:

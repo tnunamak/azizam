@@ -560,7 +560,8 @@ def test_the_override_read_asks_for_the_availability_setting_alone(tmp_path, mon
     admin_store.init_db(path)
     store = AdminSQLiteStore(path)
     assert store.service_availability_overrides() == {}
-    admin_store.put_operator_setting("service_availability_overrides", {"x": {"state": "maintenance"}}, now=1, path=path)
+    owner = SimpleNamespace(subject="owner", actor_kind="user", audit_actor_id="owner", actor_label="owner")
+    store.update_service_availability_overrides(data={"x": {"state": "maintenance"}}, actor=owner)
 
     def whole_document(*_args, **_kwargs):
         raise AssertionError("the whole operator_overrides() document must not be read")
@@ -574,7 +575,7 @@ def test_the_override_read_asks_for_the_availability_setting_alone(tmp_path, mon
     def broken(*_args, **_kwargs):
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(admin_store, "get_operator_setting", broken)
+    monkeypatch.setattr(admin_store, "read_config_section", broken)
     with pytest.raises(sqlite3.OperationalError):
         store.service_availability_overrides()
 

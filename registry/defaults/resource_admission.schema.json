@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://azizam.local/schemas/defaults/resource_admission.schema.json",
+  "title": "Resource admission",
+  "description": "Caps and throttles for media jobs. Each key is its own entry, and a missing key means 'no limit of that kind'. A list or a per-app map replaces the whole entry; there is no merge.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["media_jobs"],
+  "properties": {
+    "media_jobs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "disabled_intents": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "disabled_resource_classes": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "reserved_tokens": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "max_queue_depth": {"type": ["integer", "null"], "minimum": 0},
+        "max_app_concurrency": {
+          "x-azizam-entry": "atomic",
+          "type": "object",
+          "propertyNames": {"minLength": 1},
+          "additionalProperties": {"type": "integer", "minimum": 0}
+        },
+        "retry_after_seconds": {"type": ["integer", "null"], "minimum": 0},
+        "queue_retry_after_seconds": {"type": ["integer", "null"], "minimum": 0},
+        "scan_limit": {"type": ["integer", "null"], "minimum": 0}
+      }
+    }
+  }
+}

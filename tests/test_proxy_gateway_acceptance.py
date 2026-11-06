@@ -51,6 +51,7 @@ from tests.support.access import access, access_context, authenticated, plan_for
 from tests.support.mesh_pool import fake_mesh_pool  # noqa: E402
 from gateway import receipt_store  # noqa: E402
 from gateway.capabilities import Capability, summarize_capabilities  # noqa: E402
+from tests.support.config_snapshot import section_published
 
 
 # ---------------------------------------------------------------------------
@@ -995,8 +996,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(len(activations), 1)
         backend, model, mmproj, profile = activations[0]
         self.assertEqual(backend, "kobold")
-        self.assertEqual(model, proxy.ROLES["default"]["model"])
-        self.assertEqual(mmproj, proxy.ROLES["default"]["mmproj"])
+        self.assertEqual(model, proxy._roles()["default"]["model"])
+        self.assertEqual(mmproj, proxy._roles()["default"]["mmproj"])
         self.assertEqual(profile, "kv-q5-q4")
         forwarded = json.loads(calls[0].body.decode())
         self.assertEqual(forwarded["model"], "default")

@@ -10,22 +10,18 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, prompt_memory, receipt_store, retention, session_policy
+from gateway import admin_store, config_fold, prompt_memory, receipt_store, retention, session_policy
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
 from gateway import egress
 from gateway.projection import public_json
 
-INSTANCE_SETTING_KEY = "instance_presentation"
 # The prompts group's view of the household policy (gateway/retention.py): the resource the owner's screen edits.
 PROMPT_MEMORY_SETTING_KEY = retention.PROMPTS_VIEW_KEY
 
 
-def instance_settings(path: Path, defaults: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    value = {"name": "Azizam", "base_url": "", "theme_default": "system", **(defaults or {})}
-    stored = admin_store.get_operator_setting(INSTANCE_SETTING_KEY, path=path)
-    if stored:
-        value.update(stored["value"])
-    return value
+def instance_settings(path: Path) -> dict[str, Any]:
+    """The instance presentation in force: the release defaults with the owner's overrides (section ``instance``)."""
+    return config_fold.instance(path)
 
 
 def prompt_memory_settings(path: Path) -> dict[str, Any]:
@@ -47,13 +43,13 @@ def _has_pending_purge(value: Any) -> bool:
 
 def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                            config_provider: Callable[[], Mapping[str, Any]],
-                           instance_defaults: Callable[[], Mapping[str, Any]] | None = None,
                            overrides_provider: Callable[[], Mapping[str, Any]] | None = None,
                            prompt_memory_path: Path | None = None,
                            receipts_path: Path | None = None,
                            fact_store_path: Path | None = None,
                            on_prompt_memory_kill: Callable[[], Any] | None = None,
-                           purge_status_provider: Callable[[], Mapping[str, Any]] | None = None) -> APIRouter:
+                           purge_status_provider: Callable[[], Mapping[str, Any]] | None = None,
+                           on_config_changed: Callable[[], Any] | None = None) -> APIRouter:
     router = APIRouter(prefix="/admin/api/settings", tags=["admin"])
 
     def guard(request: Request) -> AdminContext | JSONResponse:
@@ -65,14 +61,11 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         return ctx
 
     def instance() -> dict[str, Any]:
-        return instance_settings(admin_path, instance_defaults() if instance_defaults else None)
+        return instance_settings(admin_path)
 
     def instance_response() -> JSONResponse:
-        record = admin_store.get_operator_setting(INSTANCE_SETTING_KEY, path=admin_path)
-        value = {"name": "Azizam", "base_url": "", "theme_default": "system", **(instance_defaults() if instance_defaults else {})}
-        if record:
-            value.update(record["value"])
-        return JSONResponse({"instance": value, "revision": admin_store.operator_setting_revision(record), "source": "admin.db", "apply_mode": "live"}, headers={"Cache-Control": "no-store"})
+        value, revision = config_fold.instance_with_revision(admin_path)
+        return JSONResponse({"instance": value, "revision": revision, "source": "admin.db", "apply_mode": "live"}, headers={"Cache-Control": "no-store"})
 
     def prompt_memory_response(*, extra: Mapping[str, Any] | None = None,
                                status_code: int = 200) -> JSONResponse:
@@ -333,21 +326,22 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         if not revision:
             return JSONResponse({"error": {"code": "settings_revision_required", "message": "Reload settings and supply If-Match."}}, status_code=428)
         try:
-            admin_store.put_operator_setting_with_audit(
-                INSTANCE_SETTING_KEY, body, updated_by=ctx.subject, expected_revision=revision.strip('"'),
-                audit_action="operator.instance.update", audit_actor_kind=ctx.actor_kind,
-                audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
-                audit_target_kind="operator_setting", audit_target_id=INSTANCE_SETTING_KEY,
-                audit_metadata={"fields": sorted(body)}, path=admin_path,
-            )
-        except admin_store.SettingsConflictError:
-            return JSONResponse({"error": {"code": "settings_conflict", "message": "Settings changed elsewhere; reload to see the latest"}}, status_code=409)
+            config_fold.put_instance(admin_path, body, ctx, expected_revision=revision.strip('"'))
+        except admin_store.ConfigRevisionMismatch:
+            return JSONResponse({"error": {"code": "settings_conflict", "message": "Settings changed elsewhere; reload to see the latest"}}, status_code=412)
+        if on_config_changed is not None:
+            try:
+                on_config_changed()
+            except Exception as exc:  # noqa: BLE001 - the change is stored; the readers of this setting read the store
+                print(f"[settings_api] WARNING: on_config_changed raised {type(exc).__name__}", flush=True)
         return instance_response()
 
     def defaults_response() -> JSONResponse:
         return JSONResponse({"defaults": {"invite_access_plan": admin_store.invite_access_plan(path=admin_path)},
                              "source": "admin.db", "apply_mode": "live",
-                             "aliases": public_json(config_provider().get("model_aliases", {})), "aliases_writable": False},
+                             "aliases": public_json(config_provider().get("model_aliases", {})),
+                             # Aliases are the model_aliases config section: the owner edits them through the config API.
+                             "aliases_writable": True},
                             headers={"Cache-Control": "no-store"})
 
     @router.get("/defaults")

@@ -43,8 +43,9 @@ def _ratchets() -> dict[str, int]:
     table = tomllib.loads(BUDGETS.read_text(encoding="utf-8"))["ratchets"]
     keys = {name[len(PREFIX):]: value for name, value in table.items() if name.startswith(PREFIX)}
     assert keys, f"[ratchets] has no {PREFIX}<section> key"
-    assert all(isinstance(value, int) and value > 0 for value in keys.values()), \
-        f"each {PREFIX}<section> must be a positive integer; delete a key whose count reached zero"
+    assert all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in keys.values()), \
+        f"each {PREFIX}<section> must be a whole number; a key whose count reached zero stays at 0 (the policy check " \
+        "refuses a removed ratchet)"
     return keys
 
 
@@ -69,9 +70,11 @@ def test_every_exclusion_still_matches_a_name_the_scan_reaches():
 def test_each_section_count_matches_its_ratchet_key():
     per_section = scanner.per_section(_inventory())
     keys = _ratchets()
-    assert set(per_section) == set(keys), (
-        f"sections with a count but no key: {sorted(set(per_section) - set(keys))}; "
-        f"keys with no count: {sorted(set(keys) - set(per_section))}. One [ratchets] key per section."
+    counted = {section for section, value in keys.items() if value > 0}
+    assert set(per_section) == counted, (
+        f"sections with a count but no key: {sorted(set(per_section) - counted)}; "
+        f"keys with no count: {sorted(counted - set(per_section))}. One [ratchets] key per section; "
+        "a section that reached zero keeps its key at 0."
     )
     for section, count in per_section.items():
         ceiling = keys[section]

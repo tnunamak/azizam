@@ -129,7 +129,10 @@ def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:
     assert old_engine["key"].pop("availability") == "unavailable"
     # Re-captured 2026-10-26: ace-step-1.5-2b-base left the catalog; nothing else in this digest moved.
     # Re-captured 2026-10-28: the video removal (779db850f) dropped video-remix and video-wan-2.2-ti2v-5b-q8; capabilities and engine did not move.
-    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "a1fe0716a0ec1c5ec3b0f1ce3fac4787225b1d688f64ef8841f863b8bb407e2d"
+    # Re-captured 2026-11-06: config homes C3 serves the aliases from the override store, so the entries of one alias
+    # table are listed in name order, not in the startup file's order. The same rows, types and architectures; only the
+    # order of image-anime/image-uncensored and of stt-diarize/stt-fast/stt-quality moved. Capabilities and engine did not move.
+    assert _digest({"models": model_surface, "capabilities": caps, "engine": old_engine}) == "4155396fb568ec2d4313437999281fc4347c3e0f373e5d7a67683f2ac019c379"
 
 
 def test_litellm_compiler_and_current_are_frozen() -> None:

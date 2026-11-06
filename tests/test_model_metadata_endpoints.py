@@ -23,6 +23,7 @@ from tests.support.access import access_context, authenticated, identity, plan_f
 from gateway import model_metadata as mm  # noqa: E402
 from gateway.models_catalog import build_models_catalog  # noqa: E402
 from gateway.capabilities import Capability  # noqa: E402
+from tests.support.config_snapshot import section_published
 
 SNAPSHOT = json.loads((ROOT / "tests" / "fixtures" / "models-list-snapshot-2026-10.json").read_text(encoding="utf-8"))
 
@@ -285,7 +286,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         transport = httpx.MockTransport(self._respond)
         patches = [
             patch.object(proxy, "config", cfg),
-            patch.object(proxy, "ROLES", {}),
+            section_published("roles", {}),
             patch.object(proxy, "MODELS_CATALOG", {}),
             patch.object(proxy, "LLM_BACKEND_HOSTS", {
                 name: record["base_url"] for name, record in self.backends.items()}),
@@ -346,7 +347,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
     def test_registry_activation_model_inherits_without_duplicate_role(self) -> None:
         target = self._route_current()
         self.assertEqual(target.model, "loaded-kobold")
-        self.assertEqual(proxy.ROLES, {})
+        self.assertEqual(proxy._roles(), {})
         self.assertEqual(proxy.MODELS_CATALOG, {})
         self.assertNotEqual(self.backends["kobold"]["models"][0]["id"], target.model)
         self.assertNotEqual(self.backends["kobold"]["models"][0]["model"], target.model)

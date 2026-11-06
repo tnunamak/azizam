@@ -28,6 +28,7 @@ import proxy  # noqa: E402
 from gateway import media_jobs, receipt_store, request_source  # noqa: E402
 from gateway.access_plans import AccessPlan  # noqa: E402
 from tests.support.access import access, plan_for, auth_identity  # noqa: E402
+from tests.support.config_snapshot import section_published
 
 
 RAW_KEY = "opk_runtime_policy_test"
@@ -87,7 +88,7 @@ OTHER_MODEL_PATH = "/models/other-model-not-loaded.gguf"
 
 
 def _roles_with_other_model() -> dict:
-    roles = copy.deepcopy(proxy.ROLES)
+    roles = copy.deepcopy(dict(proxy._roles()))
     roles[OTHER_ROLE] = {"backend": "kobold", "model": OTHER_MODEL_PATH}
     return roles
 
@@ -883,7 +884,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
     def test_plan_that_cannot_load_models_lists_them_but_denies_starting_one(self) -> None:
         """Discovery lists granted items with their state; starting one needs May load (design v4 §2.13)."""
-        default_role = proxy.ROLES.get("default") if isinstance(proxy.ROLES, dict) else {}
+        default_role = proxy._roles().get("default") or {}
         loaded_path = str(default_role.get("model") or "/models/default.gguf")
         current_loaded = plan_for("current-loaded", load=False)
         self.assertNotEqual(
@@ -893,9 +894,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             return _CaptureForwardClient(), _ForwardModelsResponse(["default", OTHER_ROLE])
 
-        with authenticated_profile(current_loaded), patch.object(
-            proxy, "ROLES", _roles_with_other_model()
-        ), patch.object(
+        with authenticated_profile(current_loaded), section_published("roles", _roles_with_other_model()), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", litellm_registry
         ), patch.object(
             proxy, "send_llm_execution_request", fake_send
@@ -913,9 +912,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertIn("default", ids)
         self.assertIn(OTHER_ROLE, ids)
 
-        with authenticated_profile(current_loaded), patch.object(
-            proxy, "ROLES", _roles_with_other_model()
-        ), patch.object(
+        with authenticated_profile(current_loaded), section_published("roles", _roles_with_other_model()), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
             proxy, "currently_loaded_model", lambda _backend: loaded_path
@@ -977,7 +974,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.json()["error"]["code"], "current_model_unavailable")
 
     def test_private_requested_model_field_cannot_spoof_existing_only_policy(self) -> None:
-        default_role = proxy.ROLES.get("default") if isinstance(proxy.ROLES, dict) else {}
+        default_role = proxy._roles().get("default") or {}
         loaded_path = str(default_role.get("model") or "/models/default.gguf")
         current_loaded = plan_for("current-loaded", load=False)
 
@@ -988,9 +985,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         async def forbidden_send(*_args, **_kwargs):
             raise AssertionError("spoofed existing-only request must not forward")
 
-        with authenticated_profile(current_loaded), patch.object(
-            proxy, "ROLES", _roles_with_other_model()
-        ), patch.object(
+        with authenticated_profile(current_loaded), section_published("roles", _roles_with_other_model()), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", litellm_registry
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
@@ -1101,7 +1096,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             }
 
         roles = {
-            **(proxy.ROLES if isinstance(proxy.ROLES, dict) else {}),
+            **proxy._roles(),
             "vision": {
                 "backend": "kobold",
                 "model": "/models/vision.gguf",
@@ -1112,9 +1107,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         def supports(backend: str, capability: str) -> bool:
             return backend == "kobold" and capability == "chat"
 
-        with authenticated_profile(chat_profile), patch.object(
-            proxy, "ROLES", roles
-        ), patch.object(
+        with authenticated_profile(chat_profile), section_published("roles", roles), patch.object(
             proxy, "backend_supports", supports
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")

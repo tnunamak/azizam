@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from gateway.admin_api import derive_admin_health_projection  # noqa: E402
+from tests.support.config_snapshot import section_published
 
 
 # ---------------------------------------------------------------------------
@@ -64,10 +65,10 @@ def _normalize(raw_models: list[dict], backends: dict | None = None) -> dict:
 
 
 def _role_entries(roles: dict, backends: dict | None = None) -> list[dict]:
-    """Call _build_role_catalog_entries under patched ROLES + config["backends"]."""
+    """Call _build_role_catalog_entries under a published roles section + config["backends"]."""
     with (
         patch.dict(proxy.config, {"backends": backends or {}}),
-        patch.object(proxy, "ROLES", roles),
+        section_published("roles", roles),
         patch.object(proxy, "MODELS_CATALOG", {}),
         patch.object(proxy, "EMBEDDINGS_ENABLED", False),
     ):
@@ -369,7 +370,7 @@ class TestRoleIsAlarmOnly(unittest.TestCase):
         }
         with (
             patch.dict(proxy.config, {"backends": backends}),
-            patch.object(proxy, "ROLES", {}),
+            section_published("roles", {}),
             patch.object(proxy, "MODELS_CATALOG", {}),
         ):
             backend, record = proxy._configured_model_record_for_id("special-model")

@@ -1,7 +1,7 @@
 """Store, reload and snapshot tests of the config-homes core (docs/design/CONFIG_HOMES.md 3.2, 3.6, 5; acceptance 10.1, C1).
 
 The store tests use a real admin.db in a temporary directory. The reload tests run the real ``proxy`` reload with a
-fixture section in a ``ConfigHome``; no section ships in this release, so the fixture is the only one.
+fixture section in a ``ConfigHome``; a test swaps it in for the sections the release ships.
 """
 from __future__ import annotations
 
@@ -422,9 +422,12 @@ def test_with_no_section_the_layer_returns_the_startup_config_and_reads_no_table
     assert effective is raw and type(effective) is dict
 
 
-def test_no_section_ships_in_this_release():
-    assert config_runtime.load_sections() == {}
-    assert proxy.CONFIG_HOME.sections == {}
+def test_the_release_ships_the_folded_owner_sections_the_model_aliases_and_the_c7_sections():
+    # Each slice that adds a section adds its name here (CONFIG_HOMES 10).
+    shipped = {"instance", "resource_admission", "service_availability", "model_aliases",
+               "llm", "model_routing", "reasoning", "roles"}
+    assert set(config_runtime.load_sections()) == shipped
+    assert set(proxy.CONFIG_HOME.sections) == shipped
 
 
 def test_a_stored_override_reaches_the_effective_section_with_its_source_and_a_stored_bad_row_is_reported(db):
@@ -894,6 +897,17 @@ def _store_raw(db: Path, section: str, pointer: str, value: Any) -> None:
     conn.close()
 
 
+def test_a_blocked_import_is_reported_on_its_own_section_only(db):
+    """A section whose startup block could not be imported does not mark a later section's load as blocked."""
+    home = config_runtime.ConfigHome({
+        "a": layers.Section.create("a", {"limit": 5}, CAP_SCHEMA),
+        "b": layers.Section.create("b", {"x": 1}, USE_SCHEMA),
+    })
+    layer = home.layer({"a": {"limit": 50}, "b": {"x": 2}}, path=db, legacy_import=True, log=lambda line: None)
+    assert {p["code"] for p in layer.problems["a"]} == {"legacy_import_blocked"}
+    assert "b" not in layer.problems and layer.config["b"] == {"x": 2}
+
+
 def test_n2_a_section_that_breaks_a_rule_against_the_effective_context_inherits_whatever_the_row_order():
     rows = {"a": [layers.Override("/limit", "set", 10)], "b": [layers.Override("/x", "set", 8)]}
     for reverse in (False, True):
@@ -962,7 +976,7 @@ def test_n4_a_rule_that_needs_the_registry_does_not_stop_the_import_check(db):
 
 
 def test_n6_with_no_section_a_load_reads_no_registry_generation(live, monkeypatch):  # noqa: F811
-    assert not proxy.CONFIG_HOME.sections, "no section ships in this release"
+    monkeypatch.setattr(proxy, "CONFIG_HOME", config_runtime.ConfigHome({}))
     monkeypatch.setattr(proxy, "_write_litellm_config_artifact", lambda registry: None)
     monkeypatch.setattr(proxy, "_generation_of_registry", lambda registry: pytest.fail("the generation was read and thrown away"))
     effective = proxy._load_effective_runtime_config(proxy._bootstrap_config)

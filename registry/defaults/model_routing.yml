@@ -1,0 +1,5 @@
+# Release defaults of the model_routing section (docs/design/CONFIG_HOMES.md, C7). Read-only; an owner's value is an
+# override. The values are the code's fallbacks. gguf_dir is not in this section: it is a storage root that stays in
+# the startup file until C10.
+switch_timeout: 60
+upstream_read_timeout: 600

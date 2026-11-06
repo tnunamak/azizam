@@ -10,7 +10,8 @@ Layer 2 (``stable``): the gateway's own semantic names (``fast``, ``image``,
 concrete role, workflow, or model id, or (speech and transcription) to an
 ordered list of *engines* where the first deployed engine wins.
 
-Everything lives in the ``model_aliases`` section of ``proxy_config.yml``, one
+Everything lives in the ``model_aliases`` config section (release defaults in
+``registry/defaults/model_aliases.yml``, the owner's changes in ``admin.db``), one
 sub-section per operation::
 
     model_aliases:
@@ -22,6 +23,9 @@ sub-section per operation::
         stable:   {tts: [omnivoice], tts-fast: [supertonic, omnivoice]}
         openai:   [{match: "tts-1", to: tts-fast}]
 
+A stable name whose target is ``null`` exists and is not configured: asking for it answers
+``alias_not_configured``. The release ships its names that way, so a fresh install names no model.
+
 This module is pure: no FastAPI, no network, no config loading. Callers pass in
 the section mapping and an ``engine_available`` predicate.
 """
@@ -32,6 +36,7 @@ import fnmatch
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from gateway.config_layers import DANGLING, INVALID, Problem
 from gateway.public_failure import describe
 
 OPERATIONS = (
@@ -220,7 +225,8 @@ def resolve_alias(
 
     Returns ``None`` when ``name`` is not an alias (the caller keeps treating it
     as a concrete model id). Raises :class:`AliasUnavailableError` when the name
-    is a known alias or engine but nothing behind it is deployed.
+    is a known alias or engine but nothing behind it is deployed, or (code
+    ``alias_not_configured``) when the owner has not set its target yet.
     """
     requested = str(name or "").strip()
     key = _norm(requested)
@@ -282,7 +288,9 @@ def resolve_alias(
                 )
             target = str(spec or "").strip()
             if not target:
-                return None
+                raise AliasUnavailableError.public(
+                    "alias_not_configured", requested, alias=cur, section=section_name,
+                )
             target_key = _norm(target)
             if target_key != cur and (target_key in stable or target_key in engines):
                 cur = target_key
@@ -315,59 +323,67 @@ def resolve_alias(
     )
 
 
-def validate_aliases(cfg: Mapping[str, Any] | None) -> list[str]:
-    """Return structural problems in a ``model_aliases`` mapping (empty = ok)."""
-    problems: list[str] = []
+def _pointer(*parts: Any) -> str:
+    return "".join("/" + str(part).replace("~", "~0").replace("/", "~1") for part in parts)
+
+
+def _alias_issues(cfg: Mapping[str, Any] | None) -> list[tuple[str, str]]:
+    """Structural problems as ``(JSON Pointer, text)``; the pointer is the entry the problem sits on ('' = the section)."""
+    issues: list[tuple[str, str]] = []
     if not isinstance(cfg, Mapping):
-        return ["model_aliases must be a mapping"]
+        return [("", "model_aliases must be a mapping")]
     for operation in cfg:
         if operation not in OPERATIONS:
-            problems.append(f"unknown operation section: {operation}")
+            issues.append((_pointer(operation), f"unknown operation section: {operation}"))
     for operation in OPERATIONS:
         section = cfg.get(operation)
         if section is None:
             continue
         if not isinstance(section, Mapping):
-            problems.append(f"{operation}: must be a mapping")
+            issues.append((_pointer(operation), f"{operation}: must be a mapping"))
             continue
         stable = _stable_map(section)
         engines = _engine_map(section)
         if engines and operation not in ENGINE_OPERATIONS:
-            problems.append(f"{operation}: engines are only valid for speech/transcriptions/rerank/decisions")
+            issues.append((_pointer(operation, "engines"),
+                           f"{operation}: engines are only valid for speech/transcriptions/rerank/decisions"))
         for engine_id, spec in engines.items():
+            where = _pointer(operation, "engines", engine_id)
             if not spec.get("service"):
-                problems.append(f"{operation}.engines.{engine_id}: missing service")
+                issues.append((where, f"{operation}.engines.{engine_id}: missing service"))
             if not spec.get("model"):
-                problems.append(f"{operation}.engines.{engine_id}: missing model")
+                issues.append((where, f"{operation}.engines.{engine_id}: missing model"))
         for name, spec in stable.items():
+            where = _pointer(operation, "stable", name)
+            if spec is None:
+                continue  # exists, not configured: a request answers alias_not_configured
             if isinstance(spec, list):
                 if not spec:
-                    problems.append(f"{operation}.stable.{name}: engine list must not be empty")
+                    issues.append((where, f"{operation}.stable.{name}: engine list must not be empty"))
                 if operation not in ENGINE_OPERATIONS:
-                    problems.append(f"{operation}.stable.{name}: engine list not allowed here")
+                    issues.append((where, f"{operation}.stable.{name}: engine list not allowed here"))
                 for cand in spec:
                     if _norm(cand) not in engines:
-                        problems.append(f"{operation}.stable.{name}: unknown engine {cand!r}")
+                        issues.append((where, f"{operation}.stable.{name}: unknown engine {cand!r}"))
             elif not isinstance(spec, str) or not spec.strip():
-                problems.append(f"{operation}.stable.{name}: target must be a non-empty string")
+                issues.append((where, f"{operation}.stable.{name}: target must be a non-empty string"))
             elif operation in ENGINE_OPERATIONS:
-                problems.append(f"{operation}.stable.{name}: must be an engine list")
+                issues.append((where, f"{operation}.stable.{name}: must be an engine list"))
         for pattern in _patterns(section):
+            where = _pointer(operation, "openai")
             if not pattern.get("match"):
-                problems.append(f"{operation}.openai: entry without match")
+                issues.append((where, f"{operation}.openai: entry without match"))
             elif not pattern.get("passthrough"):
                 for published in pattern_names(pattern):
                     if not fnmatch.fnmatchcase(_norm(published), _norm(pattern["match"])):
-                        problems.append(
-                            f"{operation}.openai[{pattern['match']}]: name {published!r} does not match the pattern"
-                        )
+                        issues.append((where, f"{operation}.openai[{pattern['match']}]: "
+                                              f"name {published!r} does not match the pattern"))
                 target = _norm(pattern.get("to"))
                 if not target:
-                    problems.append(f"{operation}.openai[{pattern['match']}]: missing to")
+                    issues.append((where, f"{operation}.openai[{pattern['match']}]: missing to"))
                 elif target not in stable and target not in engines:
-                    problems.append(
-                        f"{operation}.openai[{pattern['match']}]: to={target!r} is not a stable alias or engine"
-                    )
+                    issues.append((where, f"{operation}.openai[{pattern['match']}]: "
+                                          f"to={target!r} is not a stable alias or engine"))
         # Loop check: follow every string chain.
         for name in stable:
             seen = {name}
@@ -377,10 +393,39 @@ def validate_aliases(cfg: Mapping[str, Any] | None) -> list[str]:
                 if nxt == cur or nxt not in stable:
                     break
                 if nxt in seen:
-                    problems.append(f"{operation}.stable.{name}: alias loop")
+                    issues.append((_pointer(operation, "stable", name), f"{operation}.stable.{name}: alias loop"))
                     break
                 seen.add(nxt)
                 cur = nxt
+    return issues
+
+
+def validate_aliases(cfg: Mapping[str, Any] | None) -> list[str]:
+    """Return structural problems in a ``model_aliases`` mapping (empty = ok)."""
+    return [text for _pointer_, text in _alias_issues(cfg)]
+
+
+def alias_problems(candidate: Mapping[str, Any] | None, context: Mapping[str, Any] | None = None) -> list[Problem]:
+    """The ``model_aliases`` section's rule for the config layer: a structure fault is invalid, a gone service dangles.
+
+    A loop, an unknown engine or an empty target would break resolution, so the layer refuses it on write and skips it
+    on load. An engine whose ``service`` the registry no longer holds is the owner's data that is true, but its
+    target is gone: it is applied and shown dangling, never refused (design 3.5). With no registry in the context
+    (the release self-check at start) only the structure is judged. A stable name's string target (a role, a workflow,
+    a model id) cannot be checked here: what it may name depends on the operation and on what runs.
+    """
+    problems = [Problem(pointer or None, "alias_invalid", INVALID, text) for pointer, text in _alias_issues(candidate)]
+    registry = (context or {}).get("registry")
+    services = registry.get("services") if isinstance(registry, Mapping) else None
+    if isinstance(candidate, Mapping) and isinstance(services, Mapping):
+        for operation in OPERATIONS:
+            for engine_id, spec in _engine_map(_section(candidate, operation)).items():
+                service = str(spec.get("service") or "")
+                if service and service not in services:
+                    problems.append(Problem(
+                        _pointer(operation, "engines", engine_id), "service_gone", DANGLING,
+                        f"{operation}.engines.{engine_id}: service {service!r} is not in the service registry",
+                    ))
     return problems
 
 
@@ -398,6 +443,11 @@ def concrete_targets(cfg: Mapping[str, Any] | None, operation: str) -> dict[str,
     return out
 
 
+# (operation in model_aliases, config section that holds its legacy ``aliases`` table), in the order of the two proxy
+# constants VIDEO_ALIASES and AUDIO_ALIASES.
+LEGACY_ALIAS_TABLES = (("videos", "videos"), ("audio_generate", "audio"))
+
+
 def fold_workflow_aliases(config: dict[str, Any]) -> None:
     """Mirror video/audio-generate aliases into the legacy alias tables.
 
@@ -407,7 +457,7 @@ def fold_workflow_aliases(config: dict[str, Any]) -> None:
     names only; glob patterns are applied by the request resolver.
     """
     cfg = config.get("model_aliases")
-    for operation, key in (("videos", "videos"), ("audio_generate", "audio")):
+    for operation, key in LEGACY_ALIAS_TABLES:
         section = _section(cfg, operation)
         if not section:
             continue
@@ -489,6 +539,8 @@ def describe_aliases(
             except AliasUnavailableError as exc:
                 row["resolves_to"] = None
                 row["error"] = str(exc)
+                if exc.code == "alias_not_configured":
+                    row["configured"] = False  # the name exists; no target is set (a client list leaves it out)
             else:
                 if res is not None:
                     row["resolves_to"] = res.target
@@ -540,6 +592,7 @@ def describe_aliases(
 
 __all__ = [
     "AliasResolution",
+    "alias_problems",
     "AliasUnavailableError",
     "ENGINE_OPERATIONS",
     "OPERATIONS",

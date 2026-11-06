@@ -436,7 +436,7 @@ from gateway.runtime_auth import (
 )
 from gateway.protocols import anthropic as anthropic_protocol
 from gateway.protocols import ollama as ollama_protocol
-from gateway import config_runtime, provider_execution, providers
+from gateway import config_fold, config_rules, config_runtime, provider_execution, providers
 from gateway.provider_admin import create_provider_admin_router, provider_ledger_spending_snapshot
 from gateway.providers import provider_lookup
 
@@ -470,9 +470,9 @@ admin_cfg = config.get("admin", {}) or {}
 ADMIN_DB_PATH = _configured_admin_db_path(admin_cfg)
 
 
-# The release's config sections (registry/defaults/) and the snapshot of the running config. With no section shipped the
-# layer returns the startup config unchanged (docs/design/CONFIG_HOMES.md, C1).
-CONFIG_HOME = config_runtime.ConfigHome()
+# The release's config sections (registry/defaults/, each with its rule from gateway/config_rules.py) and the snapshot of
+# the running config (docs/design/CONFIG_HOMES.md, C1).
+CONFIG_HOME = config_rules.config_home()
 # {section: [problem, ...]} for the sections whose stored overrides were rejected or dangle; {} when all is well.
 CONFIG_PROBLEMS: dict[str, Any] = {}
 
@@ -486,7 +486,8 @@ def _layer_for(raw_config: Mapping[str, Any], registry: Mapping[str, Any], *, bo
     """The override layer for ``registry``. A reload lets an unreadable override store raise, so the old config keeps
     serving. A boot has no old config: it serves the release defaults with the same registry and reports the store."""
     try:
-        return CONFIG_HOME.layer(raw_config, path=ADMIN_DB_PATH, registry=registry)
+        # A boot first imports each section's startup block once (docs/design/CONFIG_HOMES.md, 8.1); a reload never does.
+        return CONFIG_HOME.layer(raw_config, path=ADMIN_DB_PATH, registry=registry, legacy_import=boot)
     except Exception as error:  # noqa: BLE001
         if not boot:
             raise
@@ -592,6 +593,21 @@ def _log_left_out(left_out: Mapping[str, str]) -> None:
         print(f"[proxy] ERROR: {label} left out of the running config: {reason}", flush=True)
 
 
+def _import_folded_settings(raw_config: Mapping[str, Any]) -> None:
+    """Import the old stores of instance, media admission and service availability as override rows, once per section.
+
+    Runs at boot, before the first layer is built. A failure is logged and boot goes on: the sections then serve the
+    release defaults, and the next boot tries the import again (a section's step is recorded only with its rows).
+    """
+    try:
+        for record in config_fold.migrate(ADMIN_DB_PATH, raw_config):
+            left_out = f", left out: {', '.join(record['dropped'])}" if record["dropped"] else ""
+            print(f"[proxy] config import {record['section']}: {record['rows']} override row(s){left_out}", flush=True)
+    except Exception as error:  # noqa: BLE001
+        print(f"[proxy] WARNING: the one-time import of the old owner settings failed ({type(error).__name__}); "
+              f"they serve the release defaults until the next boot", flush=True)
+
+
 def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """The config to boot with, and the problem to report (None when the registry applied whole).
 
@@ -601,6 +617,7 @@ def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[
     here and reported on the Overview. The LiteLLM config file is left as it is: a partial registry must
     not overwrite what the running LiteLLM reloads.
     """
+    _import_folded_settings(raw_config)
     try:
         return _load_effective_runtime_config(raw_config, boot=True), None
     except Exception as error:  # noqa: BLE001 - boot continues, degraded and loud
@@ -690,6 +707,22 @@ def _project_egress(backends: Mapping[str, Any] | None) -> engine_egress.Project
     return engine_egress.project(backends, extra_probe_paths=state_paths)
 
 
+# Workflow alias tables of the video and audio-generate paths. They are folded from `model_aliases` (stable_aliases.
+# fold_workflow_aliases), so they follow an alias edit: _derive_backend_constants returns them, and a reload republishes.
+VIDEO_ALIASES: dict[str, str] = {}
+AUDIO_ALIASES: dict[str, str] = {}
+
+
+def _workflow_alias_tables(effective_cfg: Mapping[str, Any]) -> dict[str, dict[str, str]]:
+    """``VIDEO_ALIASES`` and ``AUDIO_ALIASES`` from the effective config. A config without the sections gives empty tables."""
+    def table(section: str) -> dict[str, str]:
+        raw = (effective_cfg.get(section) or {}).get("aliases") or {}
+        return {str(name).strip().lower(): str(target).strip() for name, target in raw.items()}
+
+    names = ("VIDEO_ALIASES", "AUDIO_ALIASES")
+    return {name: table(section) for name, (_operation, section) in zip(names, stable_aliases.LEGACY_ALIAS_TABLES)}
+
+
 config, REGISTRY_APPLY_PROBLEM = _boot_effective_runtime_config(config)
 # The first snapshot: the boot config, before any reload. Reload swaps it by one reference (_publish_runtime_config).
 # The holder is the only source of what runtime() returns; the module's `config` is assigned from the snapshot.
@@ -704,6 +737,7 @@ def _publish_boot_snapshot(boot_config: Mapping[str, Any], registry_problem: Map
     # before the snapshot, so no request sees an enabled domain without its map entry.
     engine_egress.install(_project_egress(snapshot.config.get("backends")))
     CONFIG_HOME.publish(snapshot)
+    globals().update(_workflow_alias_tables(snapshot.config))
     return CONFIG_HOME.holder.current().config
 
 
@@ -956,10 +990,9 @@ def host_for_capability(capability: str) -> str | None:
     return None
 
 
-# Model routing - auto-detect backend from filesystem
-routing_cfg = config.get("model_routing", {})
-GGUF_DIR = routing_cfg.get("gguf_dir", "/media/windows/AI Models/LLMs/GGUF")
-SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
+# Model routing - auto-detect backend from filesystem. The model directory is a startup setting (CONFIG_HOMES C10): it is
+# read from the startup file, because the model_routing section does not carry it.
+GGUF_DIR = (_bootstrap_config.get("model_routing") or {}).get("gguf_dir", "/media/windows/AI Models/LLMs/GGUF")
 # Idle (inter-chunk) timeout when forwarding /v1/chat/completions and /v1/completions
 # to the LLM backend. This is the max silence between bytes — NOT a wall-clock cap.
 # It governs:
@@ -971,11 +1004,26 @@ SWITCH_TIMEOUT = routing_cfg.get("switch_timeout", 60)
 # processing; vision PP for a small image adds ~30-40s; long structured outputs
 # at >5 tok/s never approach this. 600s (10 min) of silence is well past any
 # legitimate work and tight enough that a hung backend frees the socket promptly.
-UPSTREAM_READ_TIMEOUT = float(os.environ.get("UPSTREAM_READ_TIMEOUT", routing_cfg.get("upstream_read_timeout", 600)))
+
+
+def upstream_read_timeout() -> float:
+    """model_routing.upstream_read_timeout, read per call from the snapshot (CONFIG_HOMES C7). An UPSTREAM_READ_TIMEOUT
+    in the environment still wins until C10 removes that override."""
+    env = os.environ.get("UPSTREAM_READ_TIMEOUT")
+    if env:
+        return float(env)
+    return float((runtime().config.get("model_routing") or {}).get("upstream_read_timeout", 600))
+
 # Roles: logical aliases for backends. Lets clients send `model: "default"` instead of
 # hardcoding a filename. Roles map to a backend type (any enabled
 # registry backend) — never to a specific model file for unmanaged backends.
-ROLES = config.get("roles", {})
+
+
+def _roles() -> Mapping[str, Any]:
+    """The roles of the snapshot this call reads (CONFIG_HOMES C7). A role is one entry of the roles section."""
+    roles = runtime().config.get("roles")
+    return roles if isinstance(roles, Mapping) else {}
+
 
 # A local-swap backend is one whose lifecycle driver swaps models (driver data on
 # the service record). Any backend whose role entry carries a "path" key is also
@@ -988,7 +1036,7 @@ def _is_local_swap_backend(backend: str | None) -> bool:
     return supports_swap(driver_for_service(backend, config.get("backends")))
 
 
-# Optional catalog of additional GGUF aliases (parallel to ROLES). Each entry has
+# Optional catalog of additional GGUF aliases (parallel to the roles section). Each entry has
 # id/backend/path[/description] and is treated like a role with a pinned model:
 # clients send `model: "<id>"` and the proxy resolves it via ensure_target().
 # This lets us surface arbitrary GGUFs on /v1/models without inventing roles.
@@ -1151,9 +1199,6 @@ IMAGE_VARIATIONS_DENOISE = float(IMAGE_VARIATIONS_CFG.get("denoise", 0.75))
 IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW = str(
     IMAGE_EDITS_CFG.get("multiref_default_workflow", "qwen-image-2.1-edit-multiref")
 )
-GATEWAY_CFG = config.get("gateway", {}) or {}
-RESOURCE_ADMISSION_CFG = GATEWAY_CFG.get("resource_admission", {}) or {}
-MEDIA_JOB_ADMISSION_CFG = RESOURCE_ADMISSION_CFG.get("media_jobs", {}) or {}
 IMAGE_MEDIA_JOB_PAYLOAD_DIR = Path(IMAGE_MEDIA_JOBS_CFG.get(
     "payload_dir",
     str(Path(__file__).parent / "data" / "image_media_jobs"),
@@ -1181,10 +1226,6 @@ _image_media_job_scheduled: set[str] = set()
 videos_cfg = config.get("videos", {})
 VIDEO_DEFAULT_WORKFLOW = videos_cfg.get("default_workflow", "video-ltx-13b-q8")
 VIDEO_WORKFLOWS = videos_cfg.get("workflows", {}) or {}
-VIDEO_ALIASES = {
-    str(k).strip().lower(): str(v).strip()
-    for k, v in (videos_cfg.get("aliases", {}) or {}).items()
-}
 # Workflow id that POST /v1/videos/{id}/remix and POST /v1/videos/edits run.
 # Unset means both routes return a clear 501 (video_remix_not_configured). The
 # routes submit as `video-remix`, so that alias must point at the same workflow.
@@ -1211,8 +1252,12 @@ _OPENAI_VIDEO_STATUS_BY_INTERNAL = {
 # llama-turbo to swap models — it serves with whatever's loaded and logs a
 # one-shot warning per distinct mismatched path. Manual swaps via `llm-switch`
 # remain the supported way to change the loaded GGUF.
-llm_cfg = config.get("llm", {}) or {}
-PIN_LOADED_MODEL = bool(llm_cfg.get("pin_loaded_model", True))
+
+
+def _pin_loaded_model() -> bool:
+    """llm.pin_loaded_model, read per call from the snapshot (CONFIG_HOMES C7)."""
+    return bool((runtime().config.get("llm") or {}).get("pin_loaded_model", True))
+
 
 USE_LOADED_MODEL_ALIAS = "current"
 USE_LOADED_FAST_MODEL_ALIAS = "current-fast"
@@ -1221,7 +1266,7 @@ USE_LOADED_MODEL_ALIASES = frozenset({
     USE_LOADED_FAST_MODEL_ALIAS,
 })
 
-# Tracks model_paths we've already warned about (when PIN_LOADED_MODEL=True)
+# Tracks model_paths we've already warned about (when llm.pin_loaded_model is set)
 # so we don't spam the journal with one warning per request.
 _pin_mismatch_warned: set = set()
 
@@ -1294,6 +1339,7 @@ def _derive_backend_constants(effective_cfg: dict) -> dict:
         "EMBEDDINGS_ENABLED": new_emb_enabled,
         "COMFY_ENABLED": new_cfy_enabled,
         "LLM_BACKEND_HOSTS": new_llm_hosts,
+        **_workflow_alias_tables(effective_cfg),
     }
 
 
@@ -1694,7 +1740,7 @@ async def _wake_if_parked(service_id: str, policy: TransitionPolicy) -> TriggerL
 
 def _swap_drain_settings() -> SwapDrainSettings:
     """`llm.swap_drain`, read per call so a config reload applies."""
-    return SwapDrainSettings.from_llm_config(config.get("llm"))
+    return SwapDrainSettings.from_llm_config(runtime().config.get("llm"))
 
 # Loaded-state cache, one entry per swap-managed backend. Seeded from the
 # backend's state endpoint on first read after startup, then reset after every
@@ -2112,7 +2158,7 @@ async def _ensure_target(
             target_model=model,
             loaded_aux=_currently_loaded_aux_for(backend),
             target_aux=mmproj or None,
-            pin_loaded=bool(bcfg.get("pin_loaded_model", PIN_LOADED_MODEL)),
+            pin_loaded=bool(bcfg.get("pin_loaded_model", _pin_loaded_model())),
             target_profile=profile,
         )
         drain = _swap_drain_settings()
@@ -2379,6 +2425,8 @@ host_commands.bind_admin_db(ADMIN_DB_PATH)
 # calls reload_runtime_config() so the new backend hosts take effect
 # immediately without a process restart.
 ADMIN_STORE.on_service_registry_changed = reload_runtime_config
+# The same for the owner settings that live in the config layer (media admission, service availability).
+ADMIN_STORE.on_config_changed = reload_runtime_config
 ADMIN_STORE.oidc_config_validator = lambda candidate: _validate_admin_oidc_db_candidate(candidate)
 ADMIN_AUTH = AdminAuthenticator(
     ADMIN_STORE,
@@ -3391,7 +3439,7 @@ def resolve_model_for_operation(operation: str, requested_model: str) -> ModelRe
 
 def model_compatibility_error(error: "str | Exception") -> Response:
     code = getattr(error, "code", None)
-    status_code = 503 if code == "model_not_deployed" else 404 if code == "model_not_found" else 400
+    status_code = 503 if code in ("model_not_deployed", "alias_not_configured") else 404 if code == "model_not_found" else 400
     body: dict[str, Any] = {
         "message": str(error),
         "type": "service_unavailable" if status_code == 503 else "invalid_request_error",
@@ -3716,7 +3764,7 @@ async def _prepare_litellm_local_llm_request(
             ), body
 
     if request_path in ("/v1/chat/completions", "/v1/completions"):
-        role_cfg = ROLES.get(model_name) if isinstance(ROLES, dict) else None
+        role_cfg = _roles().get(model_name)
         if isinstance(role_cfg, Mapping):
             sampling = role_cfg.get("sampling")
             if isinstance(sampling, Mapping):
@@ -10651,7 +10699,7 @@ async def _resolve_gateway_media_url(
     public_urls = [
         str(get_env("AZIZAM_PUBLIC_URL") or ""),
         str((config.get("proxy") or {}).get("public_url") or ""),
-        str(instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()).get("base_url") or ""),
+        str(instance_settings(ADMIN_DB_PATH).get("base_url") or ""),
     ]
     hosts = {urlsplit(base).hostname for base in public_urls if base}
     if request is not None:
@@ -14063,14 +14111,13 @@ def _role_catalog_ids_for_loaded_path(
             loaded_base,
         }
 
-    if isinstance(ROLES, dict):
-        for role_name, role_def in ROLES.items():
-            if not isinstance(role_def, Mapping) or role_def.get("backend") != backend:
-                continue
-            role_model = role_def.get("model")
-            if role_model:
-                if matches_path(role_model):
-                    ids.add(str(role_name))
+    for role_name, role_def in _roles().items():
+        if not isinstance(role_def, Mapping) or role_def.get("backend") != backend:
+            continue
+        role_model = role_def.get("model")
+        if role_model:
+            if matches_path(role_model):
+                ids.add(str(role_name))
 
     for model_id, spec in MODELS_CATALOG.items():
         if not isinstance(spec, Mapping) or spec.get("backend") != backend:
@@ -15089,6 +15136,8 @@ def _stable_alias_model_entries() -> list[dict[str, Any]]:
     entries: dict[str, dict[str, Any]] = {}
     for op, view in _gateway_aliases_provider().items():
         for row in view.get("stable", []):
+            if row.get("configured") is False:
+                continue  # no target yet: listing it would offer a model that answers alias_not_configured
             entry = entries.setdefault(row["alias"], {
                 "id": row["alias"],
                 "object": "model",
@@ -15583,7 +15632,7 @@ def _mcp_allowed_origins(_request: Request) -> list[str]:
     """Browser origins allowed to call /mcp: the configured list plus the
     saved public address. A request's own Host header is not evidence."""
     listed = [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])]
-    pinned = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["base_url"]
+    pinned = instance_settings(ADMIN_DB_PATH)["base_url"]
     return [*listed, pinned] if pinned else listed
 
 
@@ -16947,7 +16996,7 @@ app.include_router(
         ),
         # Add engine never calls the gateway itself: its default ports and the one it listens on.
         engine_fetch=engine_check.make_http_fetch(gateway_ports=_engine_check_self_ports),
-        engine_hop_timeout=lambda: UPSTREAM_READ_TIMEOUT,
+        engine_hop_timeout=upstream_read_timeout,
         stt_measurements=STT_MEASUREMENTS,
         frontend_status=lambda: FRONTEND_MOUNTS.status(),
         registry_problem=lambda: REGISTRY_APPLY_PROBLEM,
@@ -16956,29 +17005,17 @@ app.include_router(
 )
 
 
-def _instance_presentation_defaults() -> dict[str, str]:
-    brand = admin_cfg.get("brand") or {}
-    proxy_cfg = config.get("proxy") or {}
-    brand = brand if isinstance(brand, Mapping) else {}
-    proxy_cfg = proxy_cfg if isinstance(proxy_cfg, Mapping) else {}
-    return {
-        "name": str(get_env("AZIZAM_BRAND") or brand.get("product") or "Azizam"),
-        "base_url": str(get_env("AZIZAM_PUBLIC_URL") or proxy_cfg.get("public_url") or ""),
-        "theme_default": "system",
-    }
-
-
 app.include_router(create_settings_router(
     auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH, config_provider=lambda: {
         **config, "oidc": _admin_oidc_config_snapshot() or {},
         "service_registry": ADMIN_STORE.get_service_registry(),
     },
-    instance_defaults=_instance_presentation_defaults,
     overrides_provider=ADMIN_STORE.operator_overrides,
     prompt_memory_path=media_jobs.DB_PATH,
     receipts_path=receipt_store.DB_PATH, fact_store_path=media_jobs.DB_PATH,
     on_prompt_memory_kill=lambda: _purge_prompt_memory_on_kill(),
     purge_status_provider=lambda: _prompt_purge_status("*"),
+    on_config_changed=lambda: reload_runtime_config(),
 ))
 # Owner API over the config sections (docs/design/CONFIG_HOMES.md, 7). The dependencies are looked up per request, so
 # the layer, the registry and the reload are the ones running now.
@@ -17107,7 +17144,7 @@ app.include_router(create_account_router(
     signing_key_provider=_browser_admin_session_signing_key,
     oidc_provider=lambda: {"enabled": (cfg := _resolved_admin_oidc_config()[0]).enabled, "label": cfg.display_name,
                            "issuer": cfg.issuer},
-    instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
+    instance_provider=lambda: instance_settings(ADMIN_DB_PATH),
     client_ip_resolver=resolve_real_client_ip,
     on_person_prompt_purge=lambda person_id: _purge_person_prompt_memory(person_id),
     # A removed person's MCP connections end; re-adding them does not revive any.
@@ -17120,7 +17157,7 @@ SIGNIN_API = create_signin_api(
     store=ADMIN_STORE,
     oidc_config_provider=lambda: _resolved_admin_oidc_config()[0],
     states=lambda: ADMIN_OIDC_STATES,
-    public_base_provider=lambda request: instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
+    public_base_provider=lambda request: instance_settings(ADMIN_STORE.path)["base_url"],
     signing_key_provider=_browser_admin_session_signing_key,
     end_provider_access=_end_provider_access_in,
 )
@@ -18249,21 +18286,8 @@ def _operator_media_job_admission_overrides() -> dict[str, Any]:
 
 
 def _effective_media_job_admission_cfg() -> dict[str, Any]:
-    cfg = dict(MEDIA_JOB_ADMISSION_CFG) if isinstance(MEDIA_JOB_ADMISSION_CFG, Mapping) else {}
-    overrides = _operator_media_job_admission_overrides()
-    for key in (
-        "disabled_intents",
-        "disabled_resource_classes",
-        "reserved_tokens",
-        "max_queue_depth",
-        "max_app_concurrency",
-        "retry_after_seconds",
-        "queue_retry_after_seconds",
-        "scan_limit",
-    ):
-        if key in overrides:
-            cfg[key] = overrides[key]
-    return cfg
+    """The media admission settings in force: section ``resource_admission`` (release defaults, then the owner's rows)."""
+    return _operator_media_job_admission_overrides()
 
 
 async def _start_browser_login(request: Request, *, default_return_to: str) -> Response:
@@ -18294,7 +18318,7 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         accounts.throttle_oidc(str(client_ip), path=ADMIN_STORE.path)
         cfg = oidc_config_for_public_base(
             await _admin_oidc_config_with_discovery(),
-            instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
+            instance_settings(ADMIN_STORE.path)["base_url"],
         )
         return_to = _safe_admin_return_to(
             request.query_params.get("return_to"),
@@ -18797,7 +18821,7 @@ def _complete_setup_local_login(
 def _origin_header_allowed_for_request(request: Request) -> bool:
     # A same-origin attacker hostname can rebind to a private address. Setup
     # accepts literal host addresses, localhost, or the configured public host.
-    public_base = instance_settings(ADMIN_STORE.path, _instance_presentation_defaults()).get("base_url")
+    public_base = instance_settings(ADMIN_STORE.path).get("base_url")
     try:
         public = urlsplit(public_base) if public_base else None
         host = request.url.hostname
@@ -19166,7 +19190,7 @@ async def provider_sign_out(request: Request):
         accounts.throttle_oidc(str(client_ip), path=ADMIN_STORE.path)
         cfg = oidc_config_for_public_base(
             _effective_admin_oidc_config(),
-            instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
+            instance_settings(ADMIN_STORE.path)["base_url"],
         )
         address = await _provider_sign_out_address(cfg) if cfg.enabled else ""
     except accounts.AccountError as exc:
@@ -19981,7 +20005,7 @@ def _public_base_url(request: Request) -> str | None:
     ``None`` if no candidate is available so the discovery helper can
     emit relative links rather than fabricate an origin.
     """
-    pinned = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["base_url"]
+    pinned = instance_settings(ADMIN_DB_PATH)["base_url"]
     if pinned:
         return pinned
     host = (
@@ -20013,7 +20037,7 @@ def _brand_settings() -> tuple[str, tuple[str, str] | None]:
     """
     brand_cfg = admin_cfg.get("brand") if isinstance(admin_cfg, Mapping) else {}
     brand_cfg = brand_cfg if isinstance(brand_cfg, Mapping) else {}
-    product = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
+    product = instance_settings(ADMIN_DB_PATH)["name"]
     raw_wordmark = (
         get_env("AZIZAM_WORDMARK")
         or brand_cfg.get("wordmark")
@@ -20038,9 +20062,9 @@ async def well_known_azizam(request: Request):
         mcp_tools=mcp_server.TOOLS,
         mcp_sign_in=MCP_OAUTH_ENABLED and MCP_OAUTH.available(request),
     )
-    metadata["service"]["name"] = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
+    metadata["service"]["name"] = instance_settings(ADMIN_DB_PATH)["name"]
     metadata["presentation"] = {
-        "theme_default": instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["theme_default"],
+        "theme_default": instance_settings(ADMIN_DB_PATH)["theme_default"],
     }
     return metadata
 
@@ -23536,7 +23560,7 @@ def _media_job_queue_depth(
     *,
     admission_cfg: Mapping[str, Any] | None = None,
 ) -> int | None:
-    cfg = admission_cfg if isinstance(admission_cfg, Mapping) else MEDIA_JOB_ADMISSION_CFG
+    cfg = admission_cfg if isinstance(admission_cfg, Mapping) else _effective_media_job_admission_cfg()
     configured_scan_limit = _optional_int_config(cfg, "scan_limit") or 1000
     scan_limit = max(configured_scan_limit, max_queue_depth or 0)
     depth = 0
@@ -25915,7 +25939,6 @@ AUDIO_WORKFLOWS_DIR = Path(_AUDIO_WORKFLOWS_DIR_CFG)
 if not AUDIO_WORKFLOWS_DIR.is_absolute():
     AUDIO_WORKFLOWS_DIR = (Path(__file__).parent / _AUDIO_WORKFLOWS_DIR_CFG).resolve()
 AUDIO_WORKFLOWS_CFG = (_audio_cfg.get("workflows", {}) or {})
-AUDIO_ALIASES = (_audio_cfg.get("aliases", {}) or {})
 
 
 def _resolve_audio_workflow(model: str) -> tuple:
@@ -26574,7 +26597,7 @@ def _configured_model_record_for_id(model_id: str) -> tuple[str | None, Mapping[
     if not normalized:
         return None, None
 
-    role = ROLES.get(normalized) if isinstance(ROLES, Mapping) else None
+    role = _roles().get(normalized)
     if isinstance(role, Mapping):
         backend = str(role.get("backend") or "").strip() or None
         return backend, role
@@ -26847,47 +26870,46 @@ def _build_role_catalog_entries() -> list[dict]:
     known_backends: frozenset[str] = frozenset((config.get("backends") or {}).keys())
     entries: list[dict] = []
 
-    if isinstance(ROLES, dict):
-        for role_name, role_def in ROLES.items():
-            if not isinstance(role_def, dict):
+    for role_name, role_def in _roles().items():
+        if not isinstance(role_def, dict):
+            continue
+        backend = role_def.get("backend")
+        # Skip entries whose backend is not known in the registry.
+        if not backend or backend not in known_backends:
+            continue
+        is_local_swap = _is_local_swap_backend(backend) or bool(role_def.get("path"))
+        model_value = role_def.get("model")
+        if is_local_swap:
+            # Local-swap: model is a GGUF path.
+            model_path = model_value if isinstance(model_value, str) else None
+            entry = {
+                "id": str(role_name),
+                "object": "model",
+                "created": _entry_created_ts(model_path),
+                "owned_by": "azizam",
+                "description": str(role_def.get("description", "") or ""),
+                "azizam_role": True,
+                "azizam_backend": backend,
+            }
+            if model_path:
+                entry["azizam_model_path"] = model_path
+        else:
+            # Remote/routed backend: model is the upstream model name (required).
+            if not model_value or not str(model_value).strip():
+                # Skip malformed remote role entry (no model name to route to).
                 continue
-            backend = role_def.get("backend")
-            # Skip entries whose backend is not known in the registry.
-            if not backend or backend not in known_backends:
-                continue
-            is_local_swap = _is_local_swap_backend(backend) or bool(role_def.get("path"))
-            model_value = role_def.get("model")
-            if is_local_swap:
-                # Local-swap: model is a GGUF path.
-                model_path = model_value if isinstance(model_value, str) else None
-                entry = {
-                    "id": str(role_name),
-                    "object": "model",
-                    "created": _entry_created_ts(model_path),
-                    "owned_by": "azizam",
-                    "description": str(role_def.get("description", "") or ""),
-                    "azizam_role": True,
-                    "azizam_backend": backend,
-                }
-                if model_path:
-                    entry["azizam_model_path"] = model_path
-            else:
-                # Remote/routed backend: model is the upstream model name (required).
-                if not model_value or not str(model_value).strip():
-                    # Skip malformed remote role entry (no model name to route to).
-                    continue
-                upstream_model = str(model_value).strip()
-                entry = {
-                    "id": str(role_name),
-                    "object": "model",
-                    "created": _entry_created_ts(None),
-                    "owned_by": "azizam",
-                    "description": str(role_def.get("description", "") or ""),
-                    "azizam_role": True,
-                    "azizam_backend": backend,
-                    "azizam_model": upstream_model,
-                }
-            entries.append(entry)
+            upstream_model = str(model_value).strip()
+            entry = {
+                "id": str(role_name),
+                "object": "model",
+                "created": _entry_created_ts(None),
+                "owned_by": "azizam",
+                "description": str(role_def.get("description", "") or ""),
+                "azizam_role": True,
+                "azizam_backend": backend,
+                "azizam_model": upstream_model,
+            }
+        entries.append(entry)
 
     for mid, cat in MODELS_CATALOG.items():
         entries.append({
@@ -27761,7 +27783,7 @@ async def _forward_chat_completions(
         internal_forward_secret=_INTERNAL_PROTOCOL_FORWARD_SECRET,
         source_headers=source_headers,
         parent_request_id=parent_request_id,
-        read_timeout=UPSTREAM_READ_TIMEOUT,
+        read_timeout=upstream_read_timeout(),
     )
     client = engine_egress.async_client(timeout=loopback_request.timeout)
     if stream:
@@ -30359,7 +30381,7 @@ async def _forward_current_loaded_openai_request(
             try:
                 connection = _inference_connection(
                     target.backend, record, request_path.removeprefix("/v1"), fallback_address=f"{target.host}/v1",
-                    fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+                    fallback_timeout=upstream_read_timeout(), db_path=ADMIN_DB_PATH, env=get_env,
                 )
             except TransitionUnavailable as refused:
                 owner.report(status="failed", reason="failed")
@@ -30706,7 +30728,7 @@ async def _forward_litellm_proxy_request(
     read_timeout = (
         EMBEDDINGS_TIMEOUT
         if request_path == "/v1/embeddings"
-        else UPSTREAM_READ_TIMEOUT
+        else upstream_read_timeout()
     )
     engine_reply_timeout = router_reply_timeout(live_registry, model_name)
     if engine_reply_timeout is not None:
@@ -31615,7 +31637,7 @@ async def _forward_internal_litellm_local_upstream(
     try:
         connection = _inference_connection(
             backend, record, endpoint, fallback_address=f"{upstream_base}/v1",
-            fallback_timeout=UPSTREAM_READ_TIMEOUT, db_path=ADMIN_DB_PATH, env=get_env,
+            fallback_timeout=upstream_read_timeout(), db_path=ADMIN_DB_PATH, env=get_env,
         )
     except TransitionUnavailable as refused:
         return _transition_unavailable_response(refused)
@@ -32113,7 +32135,7 @@ def _build_provider_native_targets() -> dict[str, dict[str, Any]]:
             "service": str(raw_cfg.get("downstream_service") or provider),
             "host": host,
             "enabled": True,
-            "timeout": float(raw_cfg.get("timeout") or UPSTREAM_READ_TIMEOUT),
+            "timeout": float(raw_cfg.get("timeout") or upstream_read_timeout()),
             # The headers the owner listed for this engine (Add engine, Request headers): references, resolved
             # where the request is sent (``_native_engine_headers``), never held here.
             "header_rows": copy.deepcopy(raw_cfg.get("headers")) if isinstance(raw_cfg.get("headers"), list) else [],
@@ -32678,7 +32700,7 @@ async def _forward_provider_native(
         async with owner:
             timeout = httpx.Timeout(
                 connect=10.0,
-                read=float(target.get("timeout") or UPSTREAM_READ_TIMEOUT),
+                read=float(target.get("timeout") or upstream_read_timeout()),
                 write=60.0,
                 pool=None,
             )

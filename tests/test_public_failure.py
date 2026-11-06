@@ -46,7 +46,7 @@ def test_copy_key_separates_causes_that_share_a_code() -> None:
 
 @pytest.mark.parametrize("key", ["input_file_unavailable", "input_not_accepted",
                                   "input_set_by_gateway", "input_mapping_invalid",
-                                  "alias_misconfigured", "model_not_deployed"])
+                                  "alias_misconfigured", "alias_not_configured", "model_not_deployed"])
 def test_only_api_copy_names_the_clients_input_or_model(key):
     values = {"input": "input_private_id", "model": "model_private_id"}
     layer, ui = describe(key, **values)

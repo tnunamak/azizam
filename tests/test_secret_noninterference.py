@@ -54,6 +54,9 @@ EPOCH =re.compile(r"\b1[5-9]\d{8}(?:\.\d+)?\b")
 # slow run that crosses it stamps a later second. The time is a clock reading, not a function of a secret's bytes.
 VOLATILE_KEYS = {
     "updated_at", "created_at", "checked_at", "operator_settings_generation", "etag", "request_id", "latency_ms",
+    # The config snapshot's generation (GET /admin/api/config/problems) holds the registry and override revisions: it
+    # counts writes, and the replacement is a write. The bytes written do not reach it.
+    "generation",
     *EVIDENCE_TIME_FIELDS,
 }
 

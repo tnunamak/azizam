@@ -44,9 +44,11 @@ def test_live_shaped_hop_keeps_main_url_headers_body_and_read_timeout(monkeypatc
         raise Captured()
     monkeypatch.setattr(proxy, 'LlmExecutionRequest', capture)
     monkeypatch.setattr(proxy, '_dispatch_admission_response', lambda *args, **kwargs: None)
-    monkeypatch.setattr(proxy, 'UPSTREAM_READ_TIMEOUT', 1800.0)
     monkeypatch.setattr(proxy.ADMIN_STORE, 'get_service_registry', lambda: copy.deepcopy(LIVE))
     namespace = dict(vars(proxy))
+    # The fixture is main's request code verbatim, and main read UPSTREAM_READ_TIMEOUT from a module global. The global is
+    # now model_routing.upstream_read_timeout (read per call), so the parity value is given here, as main had it.
+    namespace['UPSTREAM_READ_TIMEOUT'] = 1800.0
     exec(compile((FIXTURES / 'main_hop.py').read_text(), 'main_hop.py', 'exec'), namespace)
     body = {'model': 'default', 'messages': [{'role': 'user', 'content': 'a test with é'}], 'stream': stream}
     for forward in (namespace['_forward_internal_litellm_local_upstream'], proxy._forward_internal_litellm_local_upstream):

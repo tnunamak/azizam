@@ -19,6 +19,7 @@ import pytest
 import proxy
 from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, KnownBug, expect_fixed, fake_upstreams, load_scenario, read_deadline  # noqa: F401
 from tests.support.gateway import LITELLM_MASTER_KEY, gateway_client, register_litellm, use_admin_db
+from tests.support.config_snapshot import publish_section
 
 MODEL = "fk-model"
 MESSAGES = [{"role": "user", "content": "hi"}]
@@ -224,7 +225,7 @@ def test_read_budget_wiring_on_the_real_clock_gives_a_504_error_envelope(fake_up
     """
     fake = _serve(fake_upstreams, monkeypatch, tmp_path, "slow-first-byte", wire=True)
     fake.waive("chat")
-    monkeypatch.setattr(proxy, "UPSTREAM_READ_TIMEOUT", 0.2)
+    publish_section(monkeypatch, "model_routing", {**proxy.config["model_routing"], "upstream_read_timeout": 0.2})
 
     response = _slow_first_byte_call(False)
 

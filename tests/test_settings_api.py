@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from gateway import admin_store, media_jobs, prompt_memory
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.settings_api import create_settings_router, instance_settings
+from tests.support.instance_settings import set_instance
 from tests.support.access import store_plan
 
 
@@ -28,8 +29,7 @@ def settings(tmp_path):
         return AdminContext(subject="tester", roles=frozenset({role}), auth_method="session", csrf_token="csrf-fixture")
 
     app = FastAPI()
-    app.include_router(create_settings_router(auth=auth, admin_path=path, config_provider=lambda: config,
-                                             instance_defaults=lambda: {"name": "Seed", "base_url": "https://seed.test"}))
+    app.include_router(create_settings_router(auth=auth, admin_path=path, config_provider=lambda: config))
     return TestClient(app), path, config
 
 
@@ -136,7 +136,7 @@ def test_instance_invalid_input_leaves_no_setting(settings, change):
     client, path, _ = settings
     body = {"name": "Valid", "base_url": "", "theme_default": "system", **change}
     assert client.put("/admin/api/settings/instance", json=body, headers=OWNER).status_code == 400
-    assert admin_store.get_operator_setting("instance_presentation", path=path) is None
+    assert admin_store.list_config_overrides("instance", path=path) == []
 
 
 def test_removed_lan_placeholder_keys_route_is_gone(settings):
@@ -149,6 +149,8 @@ def test_invitation_plan_default_saves_validates_and_audits(settings):
     first = store_plan("First", path=path)["id"]
     second = store_plan("Second", path=path)["id"]
     assert client.get("/admin/api/settings/defaults", headers=OWNER).json()["defaults"] == {"invite_access_plan": None}
+    # Aliases are the model_aliases config section now: the owner edits them through the config API.
+    assert client.get("/admin/api/settings/defaults", headers=OWNER).json()["aliases_writable"] is True
     for plan_id in (first, second, first):
         response = client.put("/admin/api/settings/defaults", json={"invite_access_plan": plan_id}, headers=OWNER)
         assert response.status_code == 200
@@ -196,9 +198,7 @@ def test_saved_presentation_drives_existing_brand_and_discovery(settings, monkey
     import proxy
     _, path, _ = settings
     monkeypatch.setattr(proxy, "ADMIN_DB_PATH", path)
-    admin_store.put_operator_setting("instance_presentation", {
-        "name": "Saved gateway", "base_url": "https://saved.example.test", "theme_default": "dark",
-    }, path=path)
+    set_instance(path, {"name": "Saved gateway", "base_url": "https://saved.example.test", "theme_default": "dark"})
     request = Request({"type": "http", "scheme": "http", "headers": [(b"host", b"request.example.test")], "path": "/"})
     assert proxy._brand_settings()[0] == "Saved gateway"
     assert proxy._public_base_url(request) == "https://saved.example.test"
