@@ -83,6 +83,7 @@ class Proof:
         step["http_status"] = reply["http_status"]
         step["op_id"] = data.get("op_id")
         if reply["http_status"] != 202 or not step["op_id"]:
+            step["response"] = reply["error"]
             step["error"] = {
                 404: "unknown domain, or a domain without transition enabled",
                 409: f"another operation holds the domain (op {step['op_id']}, state {data.get('state')})",

@@ -101,10 +101,9 @@ def test_kept_prefix_passes_with_every_step_recorded(gateway: FakeTransitionGate
 def test_request_mode_lets_the_followup_trigger_the_wake(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
     process, result = run(gateway, tmp_path, "--wake-mode", "request")
     assert process.returncode == 0, process.stdout + process.stderr
-    posts = [r["body"]["kind"] for r in gateway.requests if r["method"] == "POST" and r["path"].endswith("/transitions")]
-    assert posts == ["park", "wake"]  # the second is the gateway's own wake, key wake-auto
-    assert [r["body"]["idempotency_key"] for r in gateway.requests if r["body"] and "kind" in r["body"]] == [
-        "proof-t-park", "wake-auto"]
+    posted = [r["body"]["kind"] for r in gateway.requests if r["method"] == "POST" and r["path"].endswith("/transitions")]
+    assert posted == ["park"]  # the harness never posts the wake in this mode
+    assert [(op["kind"], op["key"]) for op in gateway.ops.values()] == [("park", "proof-t-park"), ("wake", "wake-auto")]
     assert steps(result)["wake"]["mode"] == "request" and assertions(result)["gate_open_after_followup"]
 
 
