@@ -384,8 +384,10 @@ def test_protocol_can_be_saved_off_and_changed_without_touching_unused_fields(tm
 
 
 @pytest.mark.parametrize('top_level', [False, True])
-def test_protocol_key_uses_actual_connection_origin_when_legacy_endpoint_differs(tmp_path, top_level):
-    saved = record()
+def test_protocol_key_uses_the_connection_origin_when_the_legacy_path_differs(tmp_path, top_level):
+    # The registry refuses a connection address on another host or port than the one the record dials, so the
+    # connection and the legacy endpoint share an origin here and differ only in their path.
+    saved = record(port=9090)
     connection = {'dispatch': 'protocol', 'protocol': 'openai-compatible', 'address': 'http://127.0.0.1:9090/native',
                   'credentials': {'control': {'secret_ref': 'separate-control-ref', 'origin': 'http://127.0.0.1:9090'}}}
     (saved if top_level else saved['config'])['connection'] = connection
