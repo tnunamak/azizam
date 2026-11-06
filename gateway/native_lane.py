@@ -274,7 +274,7 @@ def validate_connection(block: Any) -> None:
         parts = urlsplit(url) if isinstance(url, str) else None
         if (parts is None or parts.scheme not in ("http", "https") or not parts.hostname
                 or parts.username is not None or parts.password is not None or parts.query or parts.fragment):
-            raise ValueError(f"connection.{field} must be an http(s) URL with a host and no user, query or fragment")
+            raise ValueError(f"connection.{field} must be an http(s) URL with a host and no user, password, query or fragment")
     credentials = block.get("credentials")
     if credentials is None:
         return
