@@ -7,6 +7,7 @@ from unittest.mock import patch
 import yaml
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from tests.registry_test_helpers import seed_registry_document
 from gateway.litellm_substrate import compile_litellm_config_from_registry
 from tests.support.config_snapshot import section_published
@@ -56,10 +57,7 @@ def test_configured_aliases_share_one_uncensored_model_and_sticky_profile() -> N
 
 def test_q8_alias_resolves_profile_as_part_of_outer_activation_identity() -> None:
     config = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
-    with patch.object(proxy, "config", config), patch.object(
-        proxy,
-        "LLM_BACKEND_HOSTS",
-        {"kobold": "http://127.0.0.1:5051"},
+    with patch.object(proxy, "config", config), derived_patch("LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"},
     ):
         target = proxy._configured_litellm_local_model_target("coder-q8")
 

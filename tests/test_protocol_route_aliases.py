@@ -47,7 +47,7 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
             for method in getattr(route, "methods", set())
         }
 
-        for entry in proxy.CANONICAL_PROTOCOL_ROUTE_ALIASES:
+        for entry in proxy.DERIVED.CANONICAL_PROTOCOL_ROUTE_ALIASES:
             for method in entry["methods"]:
                 self.assertIn((method, entry["canonical"]), registered)
                 self.assertIn((method, entry["alias"]), registered)
@@ -238,7 +238,7 @@ class TestCanonicalProtocolRouteAliases(unittest.TestCase):
             ("GET", "/v1/models"),
             {
                 (method, entry["canonical"])
-                for entry in proxy.CANONICAL_PROTOCOL_ROUTE_ALIASES
+                for entry in proxy.DERIVED.CANONICAL_PROTOCOL_ROUTE_ALIASES
                 for method in entry["methods"]
                 if entry.get("alias") == "/anthropic/v1/models"
             },

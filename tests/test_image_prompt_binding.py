@@ -28,7 +28,6 @@ PROMPT = 'Change the jacket to bright green'
 def image_round(monkeypatch, fake_upstreams):
     fake = fake_upstreams.asgi(load_scenario('comfyui/upload-ok-any'))
     for name, value in {
-        'COMFY_HOST': fake.base_url, 'COMFY_ENABLED': True,
         '_select_edit_workflow': lambda model, **kwargs: model,
         '_dispatch_admission_response': Mock(return_value=None),
         '_service_availability_response': Mock(return_value=None),
@@ -41,6 +40,8 @@ def image_round(monkeypatch, fake_upstreams):
         'compute_max_batch': Mock(return_value=1),
     }.items():
         monkeypatch.setattr(proxy, name, value)
+    monkeypatch.setitem(proxy.runtime().derived, 'COMFY_HOST', fake.base_url)
+    monkeypatch.setitem(proxy.runtime().derived, 'COMFY_ENABLED', True)
     monkeypatch.setattr(proxy.media_delivery, 'current', lambda: None)
     monkeypatch.setattr(proxy.random, 'randint', lambda *args: 41)
     monkeypatch.setattr(proxy, '_build_image_response_payload',

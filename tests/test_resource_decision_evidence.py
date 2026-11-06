@@ -161,8 +161,9 @@ def test_receipt_roundtrip_preserves_owner_facts_and_redacts_client(tmp_path):
 
 def test_queue_read_failure_is_unknown_and_refused_without_dispatch():
     import proxy
+    from tests.support.config_snapshot import derived_patch
     from unittest.mock import patch
-    with patch.object(proxy, "COMFY_ENABLED", True), \
+    with derived_patch("COMFY_ENABLED", True), \
          patch.object(proxy, "_operator_service_availability_overrides", return_value={}), \
          patch.object(proxy, "_effective_media_job_admission_cfg", return_value={"max_queue_depth": 1}), \
          patch.object(proxy.media_jobs, "recent", side_effect=RuntimeError("private database detail")):
@@ -202,8 +203,9 @@ def test_unknown_app_and_queue_counts_are_not_zero():
 
 def test_empty_queue_read_is_measured_and_admitted():
     import proxy
+    from tests.support.config_snapshot import derived_patch
     from unittest.mock import patch
-    with patch.object(proxy, "COMFY_ENABLED", True), \
+    with derived_patch("COMFY_ENABLED", True), \
          patch.object(proxy, "_operator_service_availability_overrides", return_value={}), \
          patch.object(proxy, "_effective_media_job_admission_cfg", return_value={"max_queue_depth": 1}), \
          patch.object(proxy.media_jobs, "recent", return_value=[]):

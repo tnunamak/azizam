@@ -206,7 +206,7 @@ class RerankRouteTests(RouteCase):
 
     def test_policy_applies_even_when_the_db_route_list_lacks_rerank(self) -> None:
         self.use_upstream(_engine_answer)
-        with patch.dict(proxy._RUNTIME_ROUTE_POLICY, {}, clear=True):
+        with patch.dict(proxy.DERIVED._RUNTIME_ROUTE_POLICY, {}, clear=True):
             self.assertEqual(self._post({"query": "q", "documents": ["a"]}).status_code, 200)
         policy = proxy._enforce_runtime_route_policy.call_args.kwargs["policy"]
         self.assertEqual((policy["protocol"], policy["intent"]), ("openai.rerank", "text.embeddings"))

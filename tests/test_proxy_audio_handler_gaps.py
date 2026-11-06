@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from tests.support.audio_workflow import audio_manifest
 from tests.speech_tier_helpers import SttCase
 from tests.support.fake_upstream import fake_upstreams, load_scenario, read_deadline, scenario_from_data  # noqa: F401
@@ -201,8 +202,6 @@ class AudioFailurePollingGaps(unittest.IsolatedAsyncioTestCase):
         workflow = {"1": {"inputs": {}}}
         with ExitStack() as stack:
             replacements = {
-                "COMFY_ENABLED": True,
-                "COMFY_HOST": host,
                 "_dispatch_admission_response": lambda *a, **kw: None,
                 "_service_availability_response": lambda *a, **kw: None,
                 "_begin_media_delivery": lambda *a, **kw: None,
@@ -220,6 +219,8 @@ class AudioFailurePollingGaps(unittest.IsolatedAsyncioTestCase):
             }
             for name, value in replacements.items():
                 stack.enter_context(patch.object(proxy, name, value))
+            stack.enter_context(derived_patch("COMFY_ENABLED", True))
+            stack.enter_context(derived_patch("COMFY_HOST", host))
             sleep = stack.enter_context(patch.object(proxy.asyncio, "sleep", AsyncMock()))
             response = await asyncio.wait_for(
                 proxy.proxy_audio_generate(JsonRequest(), proxy.NO_AUTH_CONTEXT),

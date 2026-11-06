@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import derived_patch
 from tests.registry_test_helpers import seed_registry_document
 from gateway.service_registry import (  # noqa: E402
     apply_service_registry_to_config,
@@ -153,7 +154,7 @@ class TestBuildLlmBackendHosts(unittest.TestCase):
 
     def _build(self, backends: dict) -> dict:
         with patch.dict(proxy.config, {"backends": backends}, clear=False):
-            return proxy._build_llm_backend_hosts()
+            return proxy._derive_backend_constants(proxy.config)["LLM_BACKEND_HOSTS"]
 
     def test_vision_llm_and_kobold_included(self) -> None:
         result = self._build({"vision-llm": _make_vision_llm(), "kobold": _make_kobold()})
@@ -202,8 +203,8 @@ class TestHighestPriorityChatBackend(unittest.TestCase):
         # Rebuild LLM_BACKEND_HOSTS from the test backends, then call the function.
         with patch.dict(proxy.config, {"backends": backends}, clear=False):
             # Re-derive LLM_BACKEND_HOSTS for the patched config.
-            hosts = proxy._build_llm_backend_hosts()
-            with patch.object(proxy, "LLM_BACKEND_HOSTS", hosts):
+            hosts = proxy._derive_backend_constants(proxy.config)["LLM_BACKEND_HOSTS"]
+            with derived_patch("LLM_BACKEND_HOSTS", hosts):
                 return proxy._highest_priority_chat_backend()
 
     def test_single_backend_returned(self) -> None:
@@ -246,8 +247,8 @@ class TestVisionCapableLlmBackends(unittest.TestCase):
 
     def _call(self, backends: dict) -> list[str]:
         with patch.dict(proxy.config, {"backends": backends}, clear=False):
-            hosts = proxy._build_llm_backend_hosts()
-            with patch.object(proxy, "LLM_BACKEND_HOSTS", hosts):
+            hosts = proxy._derive_backend_constants(proxy.config)["LLM_BACKEND_HOSTS"]
+            with derived_patch("LLM_BACKEND_HOSTS", hosts):
                 return proxy.vision_capable_llm_backends()
 
     def test_vision_llm_with_vision_included(self) -> None:
@@ -614,27 +615,26 @@ class TestSeedPinning(unittest.TestCase):
 
     def test_litellm_excluded_from_llm_backend_hosts(self) -> None:
         """litellm execution substrate must never appear in LLM_BACKEND_HOSTS."""
-        hosts = proxy._build_llm_backend_hosts.__wrapped__ if hasattr(proxy._build_llm_backend_hosts, "__wrapped__") else proxy._build_llm_backend_hosts
         with patch.dict(proxy.config, {"backends": self.backends}, clear=False):
-            result = proxy._build_llm_backend_hosts()
+            result = proxy._derive_backend_constants(proxy.config)["LLM_BACKEND_HOSTS"]
         self.assertNotIn("litellm", result)
 
     def test_kobold_in_llm_backend_hosts(self) -> None:
         with patch.dict(proxy.config, {"backends": self.backends}, clear=False):
-            result = proxy._build_llm_backend_hosts()
+            result = proxy._derive_backend_constants(proxy.config)["LLM_BACKEND_HOSTS"]
         self.assertIn("kobold", result)
 
     def test_llm_backend_hosts_excludes_tts_stt_embeddings_comfyui(self) -> None:
         with patch.dict(proxy.config, {"backends": self.backends}, clear=False):
-            result = proxy._build_llm_backend_hosts()
+            result = proxy._derive_backend_constants(proxy.config)["LLM_BACKEND_HOSTS"]
         for excluded in ("tts", "stt", "embeddings", "comfyui"):
             self.assertNotIn(excluded, result, f"{excluded} should not be in LLM_BACKEND_HOSTS")
 
     def test_today_no_seeded_backend_is_statically_vision_capable(self) -> None:
         """kobold gains vision at runtime through its loaded mmproj, not a static capability."""
         with patch.dict(proxy.config, {"backends": self.backends}, clear=False):
-            hosts = proxy._build_llm_backend_hosts()
-            with patch.object(proxy, "LLM_BACKEND_HOSTS", hosts):
+            hosts = proxy._derive_backend_constants(proxy.config)["LLM_BACKEND_HOSTS"]
+            with derived_patch("LLM_BACKEND_HOSTS", hosts):
                 result = proxy.vision_capable_llm_backends()
         self.assertNotIn("kobold", result)
 

@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import Request, Response
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from gateway import accounts, admin_store, mcp_oauth, media_jobs
 from tests.support.access import store_plan
 
@@ -79,7 +80,6 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
             (proxy.receipt_store, "DB_PATH", self.receipts_db),
             (proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", root / "payloads"),
             (proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 1),
-            (proxy, "COMFY_ENABLED", True),
             (proxy, "_image_url_signing_secret", b"test-secret"),
             (proxy.receipt_store, "record", capture),
             (proxy, "_schedule_image_media_job", lambda job_id: True),
@@ -90,6 +90,9 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
             patcher = patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        comfy_enabled = derived_patch("COMFY_ENABLED", True)
+        comfy_enabled.start()
+        self.addCleanup(comfy_enabled.stop)
         overrides = patch.object(proxy.ADMIN_STORE, "operator_overrides",
                                  return_value={"service_availability": {}, "media_job_admission": {}})
         overrides.start()
@@ -373,7 +376,7 @@ class MediaJobIdentityTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(proxy, "_load_video_media_job_payload", lambda _job_id: payload), \
                 patch.object(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0), \
-                patch.object(proxy, "COMFY_VIDEO_TIMEOUT", 1), \
+                derived_patch("COMFY_VIDEO_TIMEOUT", 1), \
                 patch.object(proxy, "proxy_graph_video_status", status), \
                 patch.object(proxy, "proxy_graph_video_content", content):
             await asyncio.wait_for(proxy._run_video_media_job(job.job_id), 10)

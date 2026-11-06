@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from tests.support.access import access, auth_identity, plan_for  # noqa: E402
 from gateway import admin_store, media_jobs, media_metadata, receipt_store, prompt_memory
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
@@ -59,7 +60,7 @@ def test_speech_http_request_keeps_no_prompt_bytes_in_gateway_data_or_cache(tmp_
     body = {"model": "tts-1", "voice": "alloy", "input": sentinel, "response_format": "wav"}
     if policy == "request_forget":
         body["extensions"] = {"com.azizam.prompts": {"mode": "forget"}}
-    with patch.object(proxy, "TTS_ENABLED", True), \
+    with derived_patch("TTS_ENABLED", True), \
          patch.object(proxy, "IMAGE_CACHE_DIR", cache_dir), \
          patch.object(proxy.ADMIN_STORE, "path", admin_db), \
          patch.object(media_jobs, "DB_PATH", jobs_db), \

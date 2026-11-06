@@ -290,8 +290,6 @@ def image_gateway(fake_upstreams, monkeypatch, tmp_path):
         (media_jobs, "DB_PATH", media),
         (proxy, "IMAGE_CACHE_DIR", tmp_path / "asset-cache"),
         (proxy, "_image_url_signing_secret", b"test-secret"),
-        (proxy, "COMFY_ENABLED", True),
-        (proxy, "COMFY_HOST", comfy.base_url),
         (proxy, "get_vram_estimate", lambda *_args, **_kwargs: 1024),
         (proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**10)),
         (proxy, "_service_availability_response", lambda *_args, **_kwargs: None),
@@ -300,6 +298,8 @@ def image_gateway(fake_upstreams, monkeypatch, tmp_path):
          AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))),
     ):
         monkeypatch.setattr(target, name, value)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", comfy.base_url)
     return tmp_path, media
 
 

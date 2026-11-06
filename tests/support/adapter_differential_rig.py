@@ -296,7 +296,7 @@ class GatewayRig:
         patch(proxy, "IMAGE_CACHE_DIR", self.cache)
         patch(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", self.tmp / "payloads")
         patch(proxy, "_image_url_signing_secret", b"adapter-differential-secret")
-        patch(proxy, "COMFY_ENABLED", True)
+        self.monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
         # The VRAM probe samples on a real-time timer; one sample before and one after a round is the
         # deterministic part (a round that outlasts the interval would add a timer-driven /system_stats).
         patch(proxy, "_VRAM_PROBE_INTERVAL_MIN_S", 3600.0)
@@ -332,7 +332,12 @@ class GatewayRig:
         self.notes[key] = value
 
     def set(self, target: Any, name: str, value: Any) -> None:
-        self.monkeypatch.setattr(target, name, value)
+        """Set ``name`` on ``target``; a value the published snapshot derived (``target.DERIVED``) is set in that snapshot."""
+        derived = getattr(target, "DERIVED", None)
+        if derived is not None and name in target.runtime().derived:
+            self.monkeypatch.setitem(target.runtime().derived, name, value)
+        else:
+            self.monkeypatch.setattr(target, name, value)
 
     def engine(self, name: str, scenario_, *, host: str) -> FakeUpstream:
         """Serve ``scenario_`` at ``http://<host>`` (``host`` may carry a port) and remember it as ``name``."""

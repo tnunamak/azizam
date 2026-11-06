@@ -52,7 +52,7 @@ class TestBackgroundRemovalOutboundPayload:
         auth = proxy.AuthContext(identity=auth_identity(name="p", key_hash="sha256:p"))
         with patch.object(proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", True), \
              patch.object(proxy, "get_active_backend", active_backend), \
-             patch.dict(proxy.LLM_BACKEND_HOSTS, {"kobold": fake.base_url}), \
+             patch.dict(proxy.DERIVED.LLM_BACKEND_HOSTS, {"kobold": fake.base_url}), \
              patch.object(proxy, "effective_llm_model_for_host", model_for_host):
             decision = asyncio.run(proxy.decide_image_background_removal(prompt, auth_context=auth))
 
@@ -105,7 +105,7 @@ class TestBackgroundRemovalGateIsLifecycleData:
         with patch.object(proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", True), \
              patch.object(proxy, "get_active_backend", active_backend), \
              patch.dict(proxy.config, {"backends": backends}), \
-             patch.dict(proxy.LLM_BACKEND_HOSTS, {service_id: base_url}), \
+             patch.dict(proxy.DERIVED.LLM_BACKEND_HOSTS, {service_id: base_url}), \
              patch.object(proxy, "effective_llm_model_for_host", model_for_host):
             return asyncio.run(proxy.decide_image_background_removal("A logo", auth_context=auth))
 

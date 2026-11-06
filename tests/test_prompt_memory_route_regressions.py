@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from tests.support.access import auth_identity  # noqa: E402
 import pytest
 from fastapi.testclient import TestClient
@@ -57,12 +58,14 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
         self.admin_db = self.root / "admin.db"
         admin_store.init_db(self.admin_db)
         for target, name, value in (
-            (proxy, "COMFY_ENABLED", True),
             (proxy.ADMIN_STORE, "path", self.admin_db),
         ):
             p = patch.object(target, name, value)
             p.start()
             self.addCleanup(p.stop)
+        comfy_enabled = derived_patch("COMFY_ENABLED", True)
+        comfy_enabled.start()
+        self.addCleanup(comfy_enabled.stop)
         self.member = admin_store.upsert_oidc_user("iss", "robin", email="robin@example.test", path=self.admin_db)
         self.app = admin_store.create_app("Try", kind="personal", owner_user_id=self.member["id"], access_plan="person", path=self.admin_db)
         self.auth = proxy.AuthContext(identity=auth_identity(name="Try", key_hash="sha256:robin", app_id=self.app["id"], person_id=self.member["id"]))
@@ -77,7 +80,7 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
                 return body
 
         comfy = self.fakes.asgi(load_scenario("comfyui/image-complete-png", png_hex=_comfy_png_with(SENTINEL).hex()))
-        self.monkeypatch.setattr(proxy, "COMFY_HOST", comfy.base_url)
+        self.monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", comfy.base_url)
         receipt = proxy.start_image_route_receipt("/v1/images/generations", self.auth)
         with patch.object(
             proxy, "get_vram_estimate", lambda *_a, **_k: 1024), patch.object(

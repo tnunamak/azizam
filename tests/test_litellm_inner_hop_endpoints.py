@@ -102,7 +102,7 @@ def test_an_embeddings_only_member_is_served_by_the_hop_through_the_real_host_ma
     """Failed before the fix: the hop's host map listed chat-capable backends only, so an embeddings-only member
     answered 404 backend_not_found."""
     client, sent = hop
-    assert "embonly" in proxy.inner_hop_backend_hosts() and "embonly" not in proxy.LLM_BACKEND_HOSTS
+    assert "embonly" in proxy.inner_hop_backend_hosts() and "embonly" not in proxy.DERIVED.LLM_BACKEND_HOSTS
     response = client.post("/internal/litellm/local/embonly/v1/embeddings", headers=AUTH,
                            json={"model": "openai/m", "input": "hi"})
     assert response.status_code == 200, response.text

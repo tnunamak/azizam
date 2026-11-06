@@ -118,28 +118,22 @@ def _call_reload_with_config(effective_cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _snapshot_reload_derived_state() -> dict[str, Any]:
-    """Snapshot every module global reload_runtime_config() may reassign.
-
-    reload_runtime_config() atomically swaps `config` plus every name in
-    _derive_backend_constants()'s return (LLM_BACKEND_HOSTS, TTS_HOST, ...).
-    Any test that calls it (directly or via _call_reload_with_config) must
-    restore all of these, not a hand-picked subset, or it leaks derived
-    globals (e.g. TTS_HOST, LLM_BACKEND_HOSTS) into unrelated tests.
-    """
-    snapshot = {"config": copy.deepcopy(dict(proxy.config))}
-    for name in proxy._derive_backend_constants(proxy.config):
-        value = getattr(proxy, name)
-        snapshot[name] = copy.deepcopy(value) if isinstance(value, dict) else value
-    return snapshot
+    """Snapshot what reload_runtime_config() may swap: the published snapshot (the config and every value derived from
+    it, read through ``proxy.DERIVED``), the module's ``config`` and the two alias tables a reload also assigns."""
+    return {
+        "config": copy.deepcopy(dict(proxy.config)),
+        "snapshot": proxy.CONFIG_HOME.holder.current(),
+        "VIDEO_ALIASES": proxy.VIDEO_ALIASES,
+        "AUDIO_ALIASES": proxy.AUDIO_ALIASES,
+    }
 
 
 def _restore_reload_derived_state(snapshot: dict[str, Any]) -> None:
     proxy.config.clear()
     proxy.config.update(snapshot["config"])
-    for name, value in snapshot.items():
-        if name == "config":
-            continue
-        setattr(proxy, name, value)
+    proxy.CONFIG_HOME.holder.publish(snapshot["snapshot"])
+    proxy.VIDEO_ALIASES = snapshot["VIDEO_ALIASES"]
+    proxy.AUDIO_ALIASES = snapshot["AUDIO_ALIASES"]
 
 
 # ---------------------------------------------------------------------------
@@ -163,31 +157,31 @@ class TestGoldenParity(unittest.TestCase):
         compare the derived HOST constants rather than the raw backends dict.
         """
         # Snapshot the derived HOST constants before reload.
-        before_kobold = proxy.LLM_BACKEND_HOSTS.get("kobold")
-        before_tts = proxy.TTS_HOST
-        before_stt = proxy.STT_HOST
-        before_emb = proxy.EMBEDDINGS_HOST
-        before_comfy = proxy.COMFY_HOST
-        before_llm = dict(proxy.LLM_BACKEND_HOSTS)
+        before_kobold = proxy.DERIVED.LLM_BACKEND_HOSTS.get("kobold")
+        before_tts = proxy.DERIVED.TTS_HOST
+        before_stt = proxy.DERIVED.STT_HOST
+        before_emb = proxy.DERIVED.EMBEDDINGS_HOST
+        before_comfy = proxy.DERIVED.COMFY_HOST
+        before_llm = dict(proxy.DERIVED.LLM_BACKEND_HOSTS)
 
         # Use the REAL _load_effective_runtime_config — hits the live DB.
         proxy.reload_runtime_config()
 
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS.get("kobold"), before_kobold, "LLM_BACKEND_HOSTS[kobold] changed on no-op reload")
-        self.assertEqual(proxy.TTS_HOST, before_tts, "TTS_HOST changed on no-op reload")
-        self.assertEqual(proxy.STT_HOST, before_stt, "STT_HOST changed on no-op reload")
-        self.assertEqual(proxy.EMBEDDINGS_HOST, before_emb, "EMBEDDINGS_HOST changed on no-op reload")
-        self.assertEqual(proxy.COMFY_HOST, before_comfy, "COMFY_HOST changed on no-op reload")
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS, before_llm, "LLM_BACKEND_HOSTS changed on no-op reload")
+        self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS.get("kobold"), before_kobold, "LLM_BACKEND_HOSTS[kobold] changed on no-op reload")
+        self.assertEqual(proxy.DERIVED.TTS_HOST, before_tts, "TTS_HOST changed on no-op reload")
+        self.assertEqual(proxy.DERIVED.STT_HOST, before_stt, "STT_HOST changed on no-op reload")
+        self.assertEqual(proxy.DERIVED.EMBEDDINGS_HOST, before_emb, "EMBEDDINGS_HOST changed on no-op reload")
+        self.assertEqual(proxy.DERIVED.COMFY_HOST, before_comfy, "COMFY_HOST changed on no-op reload")
+        self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS, before_llm, "LLM_BACKEND_HOSTS changed on no-op reload")
 
     def test_golden_host_values(self):
         """Pin the exact HOST values produced by the current 8-service config."""
         # These are the values observed from the live admin.db + proxy_config.yml.
         # If they change, the registry or config has changed intentionally — update the
         # pinned values in the test (and update this comment).
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS.get("kobold"), "http://127.0.0.1:5051")
-        self.assertIn("kobold", proxy.LLM_BACKEND_HOSTS)
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS["kobold"], "http://127.0.0.1:5051")
+        self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS.get("kobold"), "http://127.0.0.1:5051")
+        self.assertIn("kobold", proxy.DERIVED.LLM_BACKEND_HOSTS)
+        self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS["kobold"], "http://127.0.0.1:5051")
 
 
 # ---------------------------------------------------------------------------
@@ -217,8 +211,8 @@ class TestLiveAdd(unittest.TestCase):
         self.assertEqual(updates["LLM_BACKEND_HOSTS"]["mynewllm"], "http://192.168.1.99:9999")
 
         # The module global was actually reassigned (not just the local dict).
-        self.assertIn("mynewllm", proxy.LLM_BACKEND_HOSTS)
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS["mynewllm"], "http://192.168.1.99:9999")
+        self.assertIn("mynewllm", proxy.DERIVED.LLM_BACKEND_HOSTS)
+        self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS["mynewllm"], "http://192.168.1.99:9999")
 
     def test_new_backend_survives_without_re_import(self):
         """Re-importing proxy is NOT required to see the new backend.
@@ -239,9 +233,9 @@ class TestLiveAdd(unittest.TestCase):
 
         # `proxy` here is the module reference imported at the top of this file —
         # same object that _call_reload_with_config modified via globals().
-        self.assertIn("extra", proxy.LLM_BACKEND_HOSTS,
+        self.assertIn("extra", proxy.DERIVED.LLM_BACKEND_HOSTS,
                       "Already-held module reference does not see the reloaded backend")
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS["extra"], "http://10.0.0.5:11434")
+        self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS["extra"], "http://10.0.0.5:11434")
 
     def test_config_backends_updated(self):
         """config['backends'] is updated so config.get() reads return the new backend."""
@@ -279,8 +273,8 @@ class TestLiveRemoveDisable(unittest.TestCase):
         updates = _call_reload_with_config(_make_effective_config(new_backends))
 
         self.assertNotIn("vision-llm", updates["LLM_BACKEND_HOSTS"])
-        self.assertNotIn("vision-llm", proxy.LLM_BACKEND_HOSTS)
-        self.assertIn("kobold", proxy.LLM_BACKEND_HOSTS)
+        self.assertNotIn("vision-llm", proxy.DERIVED.LLM_BACKEND_HOSTS)
+        self.assertIn("kobold", proxy.DERIVED.LLM_BACKEND_HOSTS)
 
     def test_removed_backend_absent_from_llm_backend_hosts(self):
         """Removing a backend from config entirely removes it from LLM_BACKEND_HOSTS."""
@@ -291,7 +285,7 @@ class TestLiveRemoveDisable(unittest.TestCase):
         updates = _call_reload_with_config(_make_effective_config(new_backends))
 
         self.assertNotIn("vision-llm", updates["LLM_BACKEND_HOSTS"])
-        self.assertNotIn("vision-llm", proxy.LLM_BACKEND_HOSTS)
+        self.assertNotIn("vision-llm", proxy.DERIVED.LLM_BACKEND_HOSTS)
 
     def test_host_constant_unchanged_when_backend_disabled(self):
         """A disabled chat backend is left out of LLM_BACKEND_HOSTS, and nothing else changes.
@@ -368,7 +362,7 @@ class TestReadSiteLiveness(unittest.TestCase):
         }
         _call_reload_with_config(_make_effective_config(new_backends))
 
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS["vision-llm"], f"http://192.168.1.1:{new_port}",
+        self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS["vision-llm"], f"http://192.168.1.1:{new_port}",
                          "LLM_BACKEND_HOSTS was not updated by reload")
 
     def test_llm_backend_host_updated_after_reload(self):
@@ -380,7 +374,7 @@ class TestReadSiteLiveness(unittest.TestCase):
         }
         _call_reload_with_config(_make_effective_config(new_backends))
 
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS.get("kobold"), f"http://192.168.1.2:{new_port}",
+        self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS.get("kobold"), f"http://192.168.1.2:{new_port}",
                          "LLM_BACKEND_HOSTS[kobold] was not updated by reload")
 
     def test_tts_host_updated(self):
@@ -397,7 +391,7 @@ class TestReadSiteLiveness(unittest.TestCase):
         })
         _call_reload_with_config(new_cfg)
 
-        self.assertEqual(proxy.TTS_HOST, "http://127.0.0.1:9988",
+        self.assertEqual(proxy.DERIVED.TTS_HOST, "http://127.0.0.1:9988",
                          "TTS_HOST was not updated after reload")
 
     def test_comfy_host_updated(self):
@@ -414,7 +408,7 @@ class TestReadSiteLiveness(unittest.TestCase):
         })
         _call_reload_with_config(new_cfg)
 
-        self.assertEqual(proxy.COMFY_HOST, "http://127.0.0.1:8765",
+        self.assertEqual(proxy.DERIVED.COMFY_HOST, "http://127.0.0.1:8765",
                          "COMFY_HOST was not updated after reload")
 
 
@@ -529,7 +523,7 @@ class TestMutationHook(unittest.TestCase):
             cb()  # invoke the hook as admin_runtime._fire_registry_changed() does
 
         # If the hook called reload_runtime_config, the chat backend's host must have updated.
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS.get("kobold"), "http://127.0.0.1:6666",
+        self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS.get("kobold"), "http://127.0.0.1:6666",
                          "Invoking the hook did not update LLM_BACKEND_HOSTS[kobold] — hook may not "
                          "be calling reload_runtime_config")
 
@@ -576,15 +570,15 @@ class TestDeriveBackendConstants(unittest.TestCase):
 
     def test_does_not_mutate_global_state(self):
         """_derive_backend_constants() is side-effect-free."""
-        original_kobold = proxy.LLM_BACKEND_HOSTS.get("kobold")
-        original_llm = dict(proxy.LLM_BACKEND_HOSTS)
+        original_kobold = proxy.DERIVED.LLM_BACKEND_HOSTS.get("kobold")
+        original_llm = dict(proxy.DERIVED.LLM_BACKEND_HOSTS)
 
         cfg = {"backends": {"vision-llm": _vision_backend(port=9999), "kobold": _kobold_backend(port=9998)}}
         proxy._derive_backend_constants(cfg)
 
         # Module globals must be untouched.
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS.get("kobold"), original_kobold)
-        self.assertEqual(proxy.LLM_BACKEND_HOSTS, original_llm)
+        self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS.get("kobold"), original_kobold)
+        self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS, original_llm)
 
     def test_empty_backends_produces_empty_llm_hosts(self):
         cfg = {"backends": {}}
@@ -615,18 +609,18 @@ def _pin_reload_state(monkeypatch) -> tuple[dict[str, Any], dict[str, Any]]:
     snapshot = _snapshot_reload_derived_state()
     old_config = copy.deepcopy(snapshot["config"])
     monkeypatch.setattr(proxy, "config", old_config)
-    for name, value in snapshot.items():
-        if name != "config":
-            monkeypatch.setattr(proxy, name, copy.deepcopy(value))
+    monkeypatch.setattr(proxy, "VIDEO_ALIASES", copy.deepcopy(snapshot["VIDEO_ALIASES"]))
+    monkeypatch.setattr(proxy, "AUDIO_ALIASES", copy.deepcopy(snapshot["AUDIO_ALIASES"]))
     return snapshot, old_config
 
 
 def _assert_reload_state_unchanged(snapshot: dict[str, Any], old_config: dict[str, Any]) -> None:
     assert proxy.config is old_config
     assert proxy.config == snapshot["config"]
-    for name, value in snapshot.items():
-        if name != "config":
-            assert getattr(proxy, name) == value, name
+    # The published snapshot, and so every value derived from it, is the one that served before.
+    assert proxy.CONFIG_HOME.holder.current() is snapshot["snapshot"]
+    assert proxy.VIDEO_ALIASES == snapshot["VIDEO_ALIASES"]
+    assert proxy.AUDIO_ALIASES == snapshot["AUDIO_ALIASES"]
 
 
 def test_load_failure_preserves_exact_config_and_constants(monkeypatch):
@@ -656,7 +650,7 @@ def test_reload_replaces_mapping_without_mutating_captured_snapshot(monkeypatch)
     assert proxy.config is not old_config
     assert old_config == snapshot["config"]
     assert proxy.config == new_config
-    assert proxy.LLM_BACKEND_HOSTS.get("kobold") == "http://127.0.0.1:18091"
+    assert proxy.DERIVED.LLM_BACKEND_HOSTS.get("kobold") == "http://127.0.0.1:18091"
     assert updates["LLM_BACKEND_HOSTS"]["kobold"] == "http://127.0.0.1:18091"
 
 
@@ -667,13 +661,10 @@ def test_derivation_failure_does_not_publish_a_partial_reload(monkeypatch):
     snapshot = _snapshot_reload_derived_state()
     old_config = copy.deepcopy(snapshot["config"])
     monkeypatch.setattr(proxy, "config", old_config)
-    for name, value in snapshot.items():
-        if name != "config":
-            monkeypatch.setattr(proxy, name, copy.deepcopy(value))
     candidate = _make_effective_config({"kobold": _kobold_backend(host="127.0.0.1", port=18092)})
     monkeypatch.setattr(proxy, "_load_effective_runtime_config", lambda _bootstrap: candidate)
 
-    def fail_derivation(config):
+    def fail_derivation(config, **_kwargs):
         assert config is candidate
         raise RuntimeError("fixture derivation failure")
 
@@ -683,9 +674,7 @@ def test_derivation_failure_does_not_publish_a_partial_reload(monkeypatch):
 
     assert proxy.config is old_config
     assert proxy.config == snapshot["config"]
-    for name, value in snapshot.items():
-        if name != "config":
-            assert getattr(proxy, name) == value, name
+    assert proxy.CONFIG_HOME.holder.current() is snapshot["snapshot"]
 
 
 if __name__ == "__main__":

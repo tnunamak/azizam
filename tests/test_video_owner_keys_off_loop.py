@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from gateway import ownership, request_connections
 from tests.support.access import access_context
 
@@ -45,7 +46,7 @@ def test_video_routes_resolve_owner_keys_off_the_loop(call_route):
             return await proxy.proxy_graph_video_status(proxy._video_id_from_prompt_id("p1"), access_context())
 
     with patch.object(proxy, "_video_job_records", records), \
-            patch.object(proxy, "COMFY_ENABLED", True), \
+            derived_patch("COMFY_ENABLED", True), \
             patch.object(proxy, "_graph_history", _no_history), \
             patch.object(proxy, "_graph_queue_status", _idle_queue), \
             patch.object(proxy, "_asset_owner_key", lambda _ctx: "owner-a"), \

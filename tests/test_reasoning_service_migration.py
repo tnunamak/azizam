@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from tests.registry_test_helpers import seed_registry_document
 from tests.support.access import authenticated  # noqa: E402
 from gateway import admin_store, service_registry
@@ -113,7 +114,7 @@ def assert_upstream_bytes_equal(tmp_path, old_registry, service_id, stream, effo
         # patching config makes it observe this same registry projection.
         with patch.object(proxy, "config", runtime), authenticated(), \
              patch.object(proxy, "_prepare_resolved_openai_request", prepare), \
-             patch.object(proxy, "LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5111"}), \
+             derived_patch("LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5111"}), \
              patch.object(proxy, "get_active_backend", AsyncMock(return_value=service_id)), \
              patch.object(proxy, "current_llm_model_for_backend", AsyncMock(return_value="fixture-model")), \
              patch.object(proxy, "_service_availability_response", return_value=None), \

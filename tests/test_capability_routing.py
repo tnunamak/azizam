@@ -237,25 +237,25 @@ class TestHostForCapability(unittest.TestCase):
     # --- Bit-identical proof for current single-backend config -------------
 
     def test_embeddings_host_matches_current_embeddings_host(self) -> None:
-        """host_for_capability("embeddings") == proxy.EMBEDDINGS_HOST for current config."""
+        """host_for_capability("embeddings") == proxy.DERIVED.EMBEDDINGS_HOST for current config."""
         backends = {"embeddings": _make_embeddings(host="127.0.0.1", port=5061)}
         result = self._call("embeddings", backends)
         self.assertEqual(result, "http://127.0.0.1:5061")
-        self.assertEqual(result, proxy.EMBEDDINGS_HOST)
+        self.assertEqual(result, proxy.DERIVED.EMBEDDINGS_HOST)
 
     def test_audio_speech_host_matches_current_tts_host(self) -> None:
-        """host_for_capability("audio.speech") == proxy.TTS_HOST for current config."""
+        """host_for_capability("audio.speech") == proxy.DERIVED.TTS_HOST for current config."""
         backends = {"tts": _make_tts(host="127.0.0.1", port=proxy.tts_cfg["port"])}
         result = self._call("audio.speech", backends)
-        self.assertEqual(result, proxy.TTS_HOST)
-        self.assertEqual(result, proxy.TTS_HOST)
+        self.assertEqual(result, proxy.DERIVED.TTS_HOST)
+        self.assertEqual(result, proxy.DERIVED.TTS_HOST)
 
     def test_audio_transcriptions_host_matches_current_stt_host(self) -> None:
-        """host_for_capability("audio.transcriptions") == proxy.STT_HOST for current config."""
+        """host_for_capability("audio.transcriptions") == proxy.DERIVED.STT_HOST for current config."""
         backends = {"stt": _make_stt(host="127.0.0.1", port=5092)}
         result = self._call("audio.transcriptions", backends)
         self.assertEqual(result, "http://127.0.0.1:5092")
-        self.assertEqual(result, proxy.STT_HOST)
+        self.assertEqual(result, proxy.DERIVED.STT_HOST)
 
     # --- Returns None when no backend declares the capability --------------
 
@@ -374,22 +374,22 @@ class TestLegacyFallback(unittest.TestCase):
             resolved = proxy.host_for_capability("audio.speech")
         self.assertIsNone(resolved)
         # Simulate the fallback expression used in proxy_tts_request:
-        fallback = resolved or (proxy.TTS_HOST if proxy.TTS_ENABLED else None) or proxy.TTS_HOST
-        self.assertEqual(fallback, proxy.TTS_HOST)
+        fallback = resolved or (proxy.DERIVED.TTS_HOST if proxy.DERIVED.TTS_ENABLED else None) or proxy.DERIVED.TTS_HOST
+        self.assertEqual(fallback, proxy.DERIVED.TTS_HOST)
 
     def test_empty_backends_stt_fallback_is_STT_HOST(self) -> None:
         with patch.dict(proxy.config, {"backends": {}}, clear=False):
             resolved = proxy.host_for_capability("audio.transcriptions")
         self.assertIsNone(resolved)
-        fallback = resolved or (proxy.STT_HOST if proxy.STT_ENABLED else None) or proxy.STT_HOST
-        self.assertEqual(fallback, proxy.STT_HOST)
+        fallback = resolved or (proxy.DERIVED.STT_HOST if proxy.DERIVED.STT_ENABLED else None) or proxy.DERIVED.STT_HOST
+        self.assertEqual(fallback, proxy.DERIVED.STT_HOST)
 
     def test_empty_backends_embeddings_fallback_is_EMBEDDINGS_HOST(self) -> None:
         with patch.dict(proxy.config, {"backends": {}}, clear=False):
             resolved = proxy.host_for_capability("embeddings")
         self.assertIsNone(resolved)
-        fallback = resolved or (proxy.EMBEDDINGS_HOST if proxy.EMBEDDINGS_ENABLED else None) or proxy.EMBEDDINGS_HOST
-        self.assertEqual(fallback, proxy.EMBEDDINGS_HOST)
+        fallback = resolved or (proxy.DERIVED.EMBEDDINGS_HOST if proxy.DERIVED.EMBEDDINGS_ENABLED else None) or proxy.DERIVED.EMBEDDINGS_HOST
+        self.assertEqual(fallback, proxy.DERIVED.EMBEDDINGS_HOST)
 
     def test_disabled_tts_returns_none_then_falls_back(self) -> None:
         """Disabled backend → capability returns None → legacy constant used."""
@@ -397,8 +397,8 @@ class TestLegacyFallback(unittest.TestCase):
         with patch.dict(proxy.config, {"backends": backends}, clear=False):
             resolved = proxy.host_for_capability("audio.speech")
         self.assertIsNone(resolved)
-        fallback = resolved or (proxy.TTS_HOST if proxy.TTS_ENABLED else None) or proxy.TTS_HOST
-        self.assertEqual(fallback, proxy.TTS_HOST)
+        fallback = resolved or (proxy.DERIVED.TTS_HOST if proxy.DERIVED.TTS_ENABLED else None) or proxy.DERIVED.TTS_HOST
+        self.assertEqual(fallback, proxy.DERIVED.TTS_HOST)
 
 
 # ---------------------------------------------------------------------------
@@ -451,15 +451,15 @@ class TestSeedCapabilityPinning(unittest.TestCase):
 
     def test_host_for_embeddings_matches_EMBEDDINGS_HOST(self) -> None:
         result = self._host_for("embeddings")
-        self.assertEqual(result, proxy.EMBEDDINGS_HOST)
+        self.assertEqual(result, proxy.DERIVED.EMBEDDINGS_HOST)
 
     def test_host_for_audio_speech_matches_TTS_HOST(self) -> None:
         result = self._host_for("audio.speech")
-        self.assertEqual(result, proxy.TTS_HOST)
+        self.assertEqual(result, proxy.DERIVED.TTS_HOST)
 
     def test_host_for_audio_transcriptions_matches_STT_HOST(self) -> None:
         result = self._host_for("audio.transcriptions")
-        self.assertEqual(result, proxy.STT_HOST)
+        self.assertEqual(result, proxy.DERIVED.STT_HOST)
 
     def test_host_for_audio_translations_is_none(self) -> None:
         """No backend declares audio.translations → None → STT_HOST fallback applies."""

@@ -6,6 +6,7 @@ import json
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import patch
+from tests.support.config_snapshot import derived_patch
 
 SOURCE_PROMPT_ID = "aaaaaaaa-0000-0000-0000-000000000001"
 NEW_PROMPT_ID = "bbbbbbbb-0000-0000-0000-000000000002"
@@ -98,7 +99,7 @@ class FakeComfy:
         out = [
             patch.object(proxy.httpx, "AsyncClient", self.client_class()),
             patch.object(proxy, "_service_availability_response", return_value=None),
-            patch.object(proxy, "COMFY_ENABLED", True),
+            derived_patch("COMFY_ENABLED", True),
             patch.object(proxy, "configured_downstream_headers", lambda _ac, _b: {}),
         ]
         if probe is not None:

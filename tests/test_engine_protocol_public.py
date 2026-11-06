@@ -413,7 +413,7 @@ def test_unmapped_multiline_sse_retains_every_data_line(engine,monkeypatch):
 def test_queued_protocol_image_jobs_do_not_depend_on_other_engine_enablement(engine,monkeypatch):
     from unittest.mock import Mock
     job=media_jobs.create(media_jobs.MediaJob(intent='image.generate',backend='prism-local',metadata={'mode':'async_image_generation'}),path=media_jobs.DB_PATH)
-    monkeypatch.setattr(proxy,'COMFY_ENABLED',False)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", False)
     monkeypatch.setattr(proxy,'IMAGE_MEDIA_JOB_RESUME_ON_START',True)
     monkeypatch.setattr(proxy,'_has_image_media_job_payload',lambda _:True)
     scheduled=Mock(return_value=True)

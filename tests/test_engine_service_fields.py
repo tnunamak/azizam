@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
 
 SERVICE_IDS = ["kobold", "brand-new-llm"]
@@ -34,7 +35,7 @@ def _swap_service(**driver_config) -> dict:
 
 
 def _activation(service_id: str, model: str, **driver_config):
-    with patch.object(proxy, "LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5051"}), patch.object(
+    with derived_patch("LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5051"}), patch.object(
         proxy, "config", {"backends": {service_id: _swap_service(**driver_config)}}
     ):
         return proxy._configured_litellm_local_model_target(model)
@@ -185,8 +186,7 @@ class TestVisionViaAux:
     """`aux.grants_input_modalities: [image]` lets a loaded aux file add image input."""
 
     def _prepare(self, service_id: str, *, aux_loaded: bool | None, **fields):
-        with patch.object(proxy, "config", {"backends": {service_id: _vision_service(**fields)}}), patch.object(
-            proxy, "LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5051"}
+        with patch.object(proxy, "config", {"backends": {service_id: _vision_service(**fields)}}), derived_patch("LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5051"}
         ), patch.object(proxy, "get_active_backend", AsyncMock(return_value=service_id)), patch.object(
             proxy, "loaded_aux_present", return_value=aux_loaded
         ), patch.object(proxy, "vision_capable_llm_backends", return_value=[]):
@@ -214,8 +214,7 @@ class TestVisionViaAux:
         for aux, asked in (({"grants_input_modalities": ["image"]}, True), (None, False)):
             fields = {"aux": aux} if aux else {}
             loaded = patch.object(proxy, "loaded_aux_present", return_value=True)
-            with patch.object(proxy, "config", {"backends": {service_id: _vision_service(**fields)}}), patch.object(
-                proxy, "LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5051"}
+            with patch.object(proxy, "config", {"backends": {service_id: _vision_service(**fields)}}), derived_patch("LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5051"}
             ), patch.object(proxy, "get_active_backend", AsyncMock(return_value=service_id)), patch.object(
                 proxy, "vision_capable_llm_backends", return_value=[]
             ), loaded as present:
@@ -232,8 +231,7 @@ class TestContextWindowProbe:
 
     def _read(self, fake, service_id: str, **fields):
         backends = {service_id: _path_service(5051, **fields), "other": _path_service(5052, **fields)}
-        with patch.object(proxy, "config", {"backends": backends}), patch.object(
-            proxy, "LLM_BACKEND_HOSTS", {service_id: fake.base_url, "other": "http://unreachable.fk.test"}
+        with patch.object(proxy, "config", {"backends": backends}), derived_patch("LLM_BACKEND_HOSTS", {service_id: fake.base_url, "other": "http://unreachable.fk.test"}
         ), patch.object(
             proxy.ADMIN_STORE, "get_service_registry", return_value={"services": {
                 service_id: {"config": {**backends[service_id], "base_url": f"{fake.base_url}/v1"}},

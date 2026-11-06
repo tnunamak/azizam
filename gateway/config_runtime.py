@@ -201,6 +201,10 @@ class ConfigHome:
         self.merge = merge
         self.verify_release_defaults()
         self.holder = SnapshotHolder()
+        # The function that computes a snapshot's ``derived`` values from its config. The loader that publishes passes
+        # ``derived`` itself (it also reads the registry); a snapshot built without it is derived here, so a reader of
+        # ``derived`` never meets a snapshot that lacks the values (CONFIG_HOMES C9). None until the owner of the values sets it.
+        self.derive: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None
         self._lock = threading.Lock()
         self._last_commit: tuple[str | None, tuple[tuple[str, str], ...]] | None = None
         self.reload_failed: dict[str, Any] | None = None
@@ -452,6 +456,8 @@ class ConfigHome:
         section and no problem. The snapshot holds the problems itself, the registry's as well.
         """
         layer = layer if layer is not None else carried(config)[0]
+        if derived is None and self.derive is not None:
+            derived = self.derive(config)
         problems: dict[str, Any] = {"config": dict(layer.problems)}
         if registry_problem:
             problems["registry"] = dict(registry_problem)

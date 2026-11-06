@@ -1775,10 +1775,7 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
                 return super().items()
 
         original_config = proxy.config
-        original_derived = {
-            name: getattr(proxy, name)
-            for name in proxy._derive_backend_constants(original_config)
-        }
+        original_snapshot = proxy.CONFIG_HOME.holder.current()
         try:
             with patch.object(proxy, "config", {"backends": ReloadingBackends(old)}), patch.object(
                 proxy, "_load_effective_runtime_config", return_value={"backends": new}
@@ -1788,8 +1785,7 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
                 self.assertEqual(proxy.service_for_capability("audio.transcriptions")[0], "stt-new")
         finally:
             proxy.config = original_config
-            for name, value in original_derived.items():
-                setattr(proxy, name, value)
+            proxy.CONFIG_HOME.holder.publish(original_snapshot)
 
     def test_snapshot_freezes_selected_service_identity_auth_and_new_requests_see_reload(self) -> None:
         old = {

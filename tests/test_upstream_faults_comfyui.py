@@ -27,7 +27,7 @@ HANG_BOUND_SECONDS = 10
 def _serve(fakes: FakeUpstreams, monkeypatch, name: str, *, wire: bool = False) -> FakeUpstream:
     scenario = load_scenario(f"comfyui/{name}", text="a red fox")
     fake = fakes.loopback(scenario) if wire else fakes.asgi(scenario, host="comfy.fk.test")
-    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
     return fake
 
 

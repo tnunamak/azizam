@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import derived_patch
 from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.extension_catalog import summarize_extensions  # noqa: E402
 from gateway.image_extensions import (  # noqa: E402
@@ -362,7 +363,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
                 return _Response({})
 
         client = _Client()
-        with patch.object(proxy, "COMFY_TIMEOUT", 0):
+        with derived_patch("COMFY_TIMEOUT", 0):
             err, images = await proxy._graph_run_round(
                 client,  # type: ignore[arg-type]
                 {},
@@ -410,7 +411,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
                 return True
 
         client = _Client()
-        with patch.object(proxy, "COMFY_TIMEOUT", 1):
+        with derived_patch("COMFY_TIMEOUT", 1):
             err, images = await proxy._graph_run_round(
                 client,  # type: ignore[arg-type]
                 {},
@@ -457,7 +458,7 @@ class TestComfyImageRunRoundErrors(unittest.IsolatedAsyncioTestCase):
             raise proxy.asyncio.CancelledError()
 
         client = _Client()
-        with patch.object(proxy, "COMFY_TIMEOUT", 1), patch.object(proxy.asyncio, "sleep", raise_cancelled):
+        with derived_patch("COMFY_TIMEOUT", 1), patch.object(proxy.asyncio, "sleep", raise_cancelled):
             with self.assertRaises(proxy.asyncio.CancelledError):
                 await proxy._graph_run_round(
                     client,  # type: ignore[arg-type]

@@ -17,6 +17,7 @@ import pytest
 import yaml
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from tests.registry_test_helpers import seed_registry_document
 from tests.support.access import authenticated, access_context  # noqa: E402
 import responses_translator
@@ -127,7 +128,7 @@ def _local_model_config() -> Iterator[None]:
             patch.object(proxy, "config", {"backends": {"local": _service_config()}})
         )
         stack.enter_context(
-            patch.object(proxy, "LLM_BACKEND_HOSTS", {"local": "http://fake-local"})
+            derived_patch("LLM_BACKEND_HOSTS", {"local": "http://fake-local"})
         )
         yield
 
@@ -436,8 +437,7 @@ def test_current_policy_is_logical_data_not_the_active_backend() -> None:
         return _FakeClient(), _FakeResponse()
 
     client = TestClient(proxy.app)
-    with patch.object(proxy, "config", {"backends": {"policy": policy_service, "active": active_service}}), patch.object(
-        proxy, "LLM_BACKEND_HOSTS", {"active": "http://fake-active"}
+    with patch.object(proxy, "config", {"backends": {"policy": policy_service, "active": active_service}}), derived_patch("LLM_BACKEND_HOSTS", {"active": "http://fake-active"}
     ), authenticated(), patch.object(
         proxy, "get_active_backend", AsyncMock(return_value="active")
     ), patch.object(
@@ -480,8 +480,7 @@ def test_current_alias_without_a_declared_policy_fails_closed_before_routing() -
         raise AssertionError("missing alias policy must not forward")
 
     client = TestClient(proxy.app)
-    with patch.object(proxy, "config", {"backends": {"local": old_registry_shape}}), patch.object(
-        proxy, "LLM_BACKEND_HOSTS", {"local": "http://fake-local"}
+    with patch.object(proxy, "config", {"backends": {"local": old_registry_shape}}), derived_patch("LLM_BACKEND_HOSTS", {"local": "http://fake-local"}
     ), authenticated(), patch.object(
         proxy, "send_llm_execution_request", forbidden_send
     ):
@@ -550,8 +549,7 @@ def test_unmigrated_or_invalid_default_fast_collection_fails_closed_before_egres
         raise AssertionError("unmigrated local policy data must not reach egress")
 
     client = TestClient(proxy.app)
-    with patch.object(proxy, "config", {"backends": {"local": old_db_service}}), patch.object(
-        proxy, "LLM_BACKEND_HOSTS", {"local": "http://fake-local"}
+    with patch.object(proxy, "config", {"backends": {"local": old_db_service}}), derived_patch("LLM_BACKEND_HOSTS", {"local": "http://fake-local"}
     ), authenticated(), patch.object(
         proxy.ADMIN_STORE, "get_service_registry", _litellm_registry
     ), patch.object(proxy, "send_llm_execution_request", forbidden_send):

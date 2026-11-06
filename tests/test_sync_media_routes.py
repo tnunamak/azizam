@@ -17,6 +17,7 @@ from starlette.responses import Response, StreamingResponse
 from starlette.testclient import TestClient
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from tests.support.access import authenticated, access_context, auth_identity  # noqa: E402
 from gateway import media_ingestion, media_jobs, receipt_store, provenance
 from gateway.api import create_gateway_router
@@ -349,7 +350,7 @@ class SyncMediaRouteTests(unittest.TestCase):
             return content
 
         client = TestClient(proxy.app)
-        with patch.object(proxy, "TTS_ENABLED", True), \
+        with derived_patch("TTS_ENABLED", True), \
              patch.object(proxy, "host_for_capability", lambda _capability: "http://tts.test"), \
              patch.object(proxy, "_ensure_speech_service_ready", return_value=None), \
              patch.object(proxy, "resolve_model_for_operation", lambda operation, requested: proxy.ModelResolution(requested, "tts-backend", operation)), \
@@ -448,7 +449,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         }
         self.addCleanup(lambda: proxy._video_job_records.pop(prompt_id, None))
 
-        with patch.object(proxy, "COMFY_ENABLED", True), \
+        with derived_patch("COMFY_ENABLED", True), \
              patch.object(proxy.httpx, "AsyncClient", _FakeVideoAsyncClient), \
              patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content):
             async def fetch_without_prompt_metadata():
@@ -516,7 +517,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         }
         self.addCleanup(lambda: proxy._video_job_records.pop(prompt_id, None))
 
-        with patch.object(proxy, "COMFY_ENABLED", True), \
+        with derived_patch("COMFY_ENABLED", True), \
              patch.object(proxy.httpx, "AsyncClient", _FakeVideoAsyncClient), \
              patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content):
             async def fetch_without_prompt_metadata():
@@ -587,7 +588,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         self.addCleanup(lambda: proxy._video_job_records.pop(prompt_id, None))
         self.addCleanup(lambda: setattr(_FakeVideoAsyncClient, "prompt_id", old_prompt))
 
-        with patch.object(proxy, "COMFY_ENABLED", True), \
+        with derived_patch("COMFY_ENABLED", True), \
              patch.object(proxy.httpx, "AsyncClient", _FakeVideoAsyncClient), \
              patch.object(media_ingestion.media_delivery, "attach_provenance", lambda content, suffix, record: content):
             async def fetch_without_index():

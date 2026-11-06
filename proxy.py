@@ -482,6 +482,24 @@ def runtime() -> config_runtime.RuntimeSnapshot:
     return config_runtime.runtime_for(CONFIG_HOME)
 
 
+class _DerivedValues:
+    """The values the published snapshot derived from its config and the registry (``RuntimeSnapshot.derived``).
+
+    ``DERIVED.COMFY_HOST`` is read from the snapshot of the call (the request's own, else the latest), never from a
+    module name that a reload assigns, so a reader sees one snapshot whole and a registry edit reaches it without a
+    restart. Each name is a key ``_derive_backend_constants`` returns (docs/design/CONFIG_HOMES.md, 5.1, class A and B).
+    """
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return runtime().derived[name]
+        except KeyError:
+            raise AttributeError(f"the snapshot derived no value named {name!r}") from None
+
+
+DERIVED = _DerivedValues()
+
+
 def _layer_for(raw_config: Mapping[str, Any], registry: Mapping[str, Any], *, boot: bool) -> config_runtime.Layer:
     """The override layer for ``registry``. A reload lets an unreadable override store raise, so the old config keeps
     serving. A boot has no old config: it serves the release defaults with the same registry and reports the store."""
@@ -793,7 +811,7 @@ def _native_backend_listed(backend_id: str, backend_cfg: Mapping, serves: Callab
 
 
 def _is_chat_capable_native_backend(backend_id: str, backend_cfg: Mapping) -> bool:
-    """Return True if this backend belongs in LLM_BACKEND_HOSTS (it has chat or completions)."""
+    """Return True if this backend belongs in DERIVED.LLM_BACKEND_HOSTS (it has chat or completions)."""
     return _native_backend_listed(backend_id, backend_cfg, lambda caps: bool(caps & {"chat", "completions"}))
 
 
@@ -817,22 +835,9 @@ def _backend_host_map(backends: Mapping[str, Any] | None, listed: Callable[[str,
     return result
 
 
-def _build_llm_backend_hosts() -> dict[str, str]:
-    """Derive the {id: "http://host:port"} map of chat-capable native backends.
-
-    Reads config["backends"] (a boot-time projection of the DB registry) so that
-    any service added via the admin UI and marked chat-capable is automatically
-    included after a restart.
-    """
-    return _backend_host_map(config.get("backends"), _is_chat_capable_native_backend)
-
-
-LLM_BACKEND_HOSTS: dict[str, str] = _build_llm_backend_hosts()
-
-
 def inner_hop_backend_hosts() -> dict[str, str]:
     """The backends the LiteLLM lifecycle hop proxies to: every one that declares a capability with an inner-hop
-    endpoint, an embeddings-only member included (LLM_BACKEND_HOSTS lists chat-capable backends only). Derived from the
+    endpoint, an embeddings-only member included (DERIVED.LLM_BACKEND_HOSTS lists chat-capable backends only). Derived from the
     request's own config snapshot on each call, so a reload needs no module-level copy of it. The hop is an internal
     route called once per local activation, and the scan is one pass over the registry's backends."""
     return _backend_host_map(runtime().config.get("backends"), _is_inner_hop_backend)
@@ -861,11 +866,11 @@ def _highest_priority_chat_backend() -> Optional[str]:
 
     Priority follows the registry convention: lower numeric value = higher priority
     (same ordering used by list_resource_summaries). Returns None when
-    LLM_BACKEND_HOSTS is empty.
+    DERIVED.LLM_BACKEND_HOSTS is empty.
     """
     backends = config.get("backends") or {}
     candidates = []
-    for bid in LLM_BACKEND_HOSTS:
+    for bid in DERIVED.LLM_BACKEND_HOSTS:
         bcfg = backends.get(bid)
         if not isinstance(bcfg, Mapping):
             continue
@@ -878,15 +883,15 @@ def _highest_priority_chat_backend() -> Optional[str]:
 
 
 def vision_capable_llm_backends() -> list[str]:
-    """Return ids of vision-capable backends in LLM_BACKEND_HOSTS, ordered by priority.
+    """Return ids of vision-capable backends in DERIVED.LLM_BACKEND_HOSTS, ordered by priority.
 
-    A backend is vision-capable if it is in LLM_BACKEND_HOSTS (enabled + chat/completions
+    A backend is vision-capable if it is in DERIVED.LLM_BACKEND_HOSTS (enabled + chat/completions
     capable) AND its capabilities include "vision".  The mmproj check is NOT done
     here — that is orchestration-level logic handled at the call site.
     """
     backends = config.get("backends") or {}
     result = []
-    for bid in LLM_BACKEND_HOSTS:
+    for bid in DERIVED.LLM_BACKEND_HOSTS:
         bcfg = backends.get(bid)
         if not isinstance(bcfg, Mapping):
             continue
@@ -914,7 +919,7 @@ def backends_for_capability(
     to 100.
 
     This is the capability-dispatch analogue of vision_capable_llm_backends():
-    it is NOT limited to LLM_BACKEND_HOSTS — it covers ALL backends (TTS, STT,
+    it is NOT limited to DERIVED.LLM_BACKEND_HOSTS — it covers ALL backends (TTS, STT,
     embeddings, etc.) so that /v1/audio/speech, /v1/audio/transcriptions, and
     /v1/embeddings can resolve their host from the registry rather than from a
     hardcoded constant.
@@ -1075,9 +1080,6 @@ MODELS_CATALOG = _normalize_models_catalog(config.get("models"))
 
 # TTS backend
 tts_cfg = config.get("backends", {}).get("tts", {})
-TTS_ENABLED = bool_from_config(tts_cfg.get("enabled"), True)
-TTS_HOST = f"http://{tts_cfg.get('host', '127.0.0.1')}:{tts_cfg.get('port', 8880)}"
-TTS_TIMEOUT = int(tts_cfg.get("timeout", 120))
 _TTS_BACKEND_ID = "tts"
 
 
@@ -1092,43 +1094,16 @@ def _tts_connection(address: str, read_s: float | None = None, *, service_id: st
     A request send needs a serving lease for ``service_id``'s residency domain (a second layer under the
     per-route refusals)."""
     _require_egress_lease(service_id)
-    read = read_s or TTS_TIMEOUT
+    read = read_s or DERIVED.TTS_TIMEOUT
     return AdapterConnection(address=address, timeouts=AdapterTimeouts(connect_s=10, first_byte_s=read, total_s=read))
 
 # STT backend
 stt_cfg = config.get("backends", {}).get("stt", {})
-STT_ENABLED = bool_from_config(stt_cfg.get("enabled"), True)
-STT_HOST = f"http://{stt_cfg.get('host', '127.0.0.1')}:{stt_cfg.get('port', 5092)}"
-STT_TIMEOUT = int(stt_cfg.get("timeout", 120))
 
-# Embeddings backend
-embeddings_cfg = config.get("backends", {}).get("embeddings", {})
-EMBEDDINGS_ENABLED = bool_from_config(
-    embeddings_cfg.get("enabled"),
-    bool(embeddings_cfg),
-)
-EMBEDDINGS_HOST = f"http://{embeddings_cfg.get('host', '127.0.0.1')}:{embeddings_cfg.get('port', 5061)}"
-EMBEDDINGS_HEALTH_ENDPOINT = embeddings_cfg.get("health_endpoint", "/health")
-EMBEDDINGS_TIMEOUT = int(os.environ.get("EMBEDDINGS_TIMEOUT", embeddings_cfg.get("timeout", 120)))
-EMBEDDINGS_BACKEND_MODEL = embeddings_cfg.get("model_id", "nomic-embed-text-v1.5")
-
-# ComfyUI backend
-comfy_cfg = config.get("backends", {}).get("comfyui", {})
-COMFY_ENABLED = bool_from_config(comfy_cfg.get("enabled"), True)
-COMFY_HOST = f"http://{comfy_cfg.get('host', '127.0.0.1')}:{comfy_cfg.get('port', 7890)}"
-COMFY_TIMEOUT = int(comfy_cfg.get("timeout", 300))
-_workflows_dir_cfg = comfy_cfg.get("workflows_dir", "./workflows/images")
-COMFY_WORKFLOWS_DIR = Path(_workflows_dir_cfg)
-if not COMFY_WORKFLOWS_DIR.is_absolute():
-    COMFY_WORKFLOWS_DIR = (Path(__file__).parent / _workflows_dir_cfg).resolve()
-COMFY_DEFAULT_MODEL = comfy_cfg.get("default_model", "flux2-klein-4b")
-# Video workflows live separately from image workflows so they're version-controlled
-# next to proxy.py rather than inside the ComfyUI directory.
-_video_workflows_dir_cfg = comfy_cfg.get("video_workflows_dir", "./workflows")
-COMFY_VIDEO_WORKFLOWS_DIR = Path(_video_workflows_dir_cfg)
-if not COMFY_VIDEO_WORKFLOWS_DIR.is_absolute():
-    COMFY_VIDEO_WORKFLOWS_DIR = (Path(__file__).parent / _video_workflows_dir_cfg).resolve()
-COMFY_VIDEO_TIMEOUT = int(comfy_cfg.get("video_timeout", 1800))
+# The embeddings, ComfyUI (graph engine) and speech/transcription addresses, timeouts, workflow directories and default
+# model are registry-derived: ``DERIVED`` below reads them from the published snapshot (CONFIG_HOMES C9), so a registry
+# edit reaches every reader without a restart. Video workflows live separately from image workflows so they are
+# version-controlled next to proxy.py rather than inside the ComfyUI directory (``DERIVED.COMFY_VIDEO_WORKFLOWS_DIR``).
 _GRAPH_BACKEND_ID = "comfyui"
 # The capability that selects the graph backend's adapter and protocol description (``_graph_adapter``), by route family.
 _GRAPH_CAPABILITY = "images"
@@ -1145,9 +1120,8 @@ def _graph_adapter(capability: str = "images"):
     return reviewed_adapters.adapter_for_backend((config.get("backends") or {}).get(_GRAPH_BACKEND_ID) or {}, capability)
 
 
-# The key under a workflow manifest's ``bindings`` that holds the graph engine's artifact: protocol data, read once
-# (catalog listings read it per workflow record).
-_GRAPH_BINDING = _graph_adapter().binding
+# The key under a workflow manifest's ``bindings`` that holds the graph engine's artifact is protocol data: the snapshot
+# derives it from the graph backend's record (``DERIVED._GRAPH_BINDING``; catalog listings read it per workflow record).
 
 
 def _graph_connection(first_byte_s: float | None = None, *, probe: bool = False) -> AdapterConnection:
@@ -1155,8 +1129,8 @@ def _graph_connection(first_byte_s: float | None = None, *, probe: bool = False)
     ``probe=True`` is for a health read, a metadata read, or an address that is only named in a message."""
     if not probe:
         _require_egress_lease(_GRAPH_BACKEND_ID)
-    return AdapterConnection(address=COMFY_HOST, timeouts=AdapterTimeouts(
-        connect_s=10, first_byte_s=first_byte_s or COMFY_TIMEOUT, total_s=first_byte_s or COMFY_TIMEOUT))
+    return AdapterConnection(address=DERIVED.COMFY_HOST, timeouts=AdapterTimeouts(
+        connect_s=10, first_byte_s=first_byte_s or DERIVED.COMFY_TIMEOUT, total_s=first_byte_s or DERIVED.COMFY_TIMEOUT))
 
 
 def _graph(client: Any, capability: str = "images", *, probe: bool = False):
@@ -1288,7 +1262,7 @@ VISION_MODEL_PATTERNS = [
 # =============================================================================
 # Live runtime registry — hot-reload without process restart
 # =============================================================================
-# Module-level names (LLM_BACKEND_HOSTS, TTS_HOST, …) are
+# Module-level names (DERIVED.LLM_BACKEND_HOSTS, DERIVED.TTS_HOST, …) are
 # Python globals: every function that references them looks up the current
 # value at call time, not at import time.  reload_runtime_config() re-derives
 # all of them from the DB and reassigns the module names atomically (one
@@ -1300,44 +1274,93 @@ VISION_MODEL_PATTERNS = [
 # Native-routed and capability-routed requests reflect the new registry
 # immediately after this function returns.
 
-def _derive_backend_constants(effective_cfg: dict) -> dict:
-    """Re-derive all backend-derived constants from *effective_cfg*.
+def _stored_registry_for_boot() -> dict[str, Any] | None:
+    """The stored registry for a reader that runs at import: the records that validate (the read leaves out the rest).
 
-    Returns a dict whose keys match the module-level names that
-    reload_runtime_config() will reassign.  Factored out so tests can call
-    it directly without touching global state.
+    A store that cannot be read at all raises, unless the boot already reported it (the ``empty`` mode):
+    then the bundled routes mount and nothing stored does.
     """
-    tts_c = effective_cfg.get("backends", {}).get("tts", {})
-    stt_c = effective_cfg.get("backends", {}).get("stt", {})
-    emb_c = effective_cfg.get("backends", {}).get("embeddings", {})
-    cfy_c = effective_cfg.get("backends", {}).get("comfyui", {})
+    try:
+        return service_registry.load_service_registry(path=ADMIN_DB_PATH)
+    except Exception:  # noqa: BLE001
+        if REGISTRY_APPLY_PROBLEM is None:
+            raise
+        return None
 
-    new_tts_host = f"http://{tts_c.get('host', '127.0.0.1')}:{tts_c.get('port', 8880)}"
-    new_stt_host = f"http://{stt_c.get('host', '127.0.0.1')}:{stt_c.get('port', 5092)}"
-    new_emb_host = f"http://{emb_c.get('host', '127.0.0.1')}:{emb_c.get('port', 5061)}"
-    new_cfy_host = f"http://{cfy_c.get('host', '127.0.0.1')}:{cfy_c.get('port', 7890)}"
-    new_tts_enabled = bool_from_config(tts_c.get("enabled"), True)
-    new_stt_enabled = bool_from_config(stt_c.get("enabled"), True)
-    new_stt_timeout = int(stt_c.get("timeout", 120))
-    new_emb_enabled = bool_from_config(emb_c.get("enabled"), bool(emb_c))
-    new_cfy_enabled = bool_from_config(cfy_c.get("enabled"), True)
 
-    # Build the host maps from the new config — the same predicates as the boot-time maps.
-    new_llm_hosts = _backend_host_map(effective_cfg.get("backends"), _is_chat_capable_native_backend)
+def _workflows_directory(configured: Any, default: str) -> Path:
+    """A workflow directory from a registry record: absolute as given, else relative to proxy.py."""
+    path = Path(str(configured if configured is not None else default))
+    return path if path.is_absolute() else (Path(__file__).parent / path).resolve()
+
+
+def _embeddings_backend_model(backends: Mapping[str, Any] | None) -> str:
+    """The model id the embeddings service's record names (its default when the record names none)."""
+    return ((backends or {}).get("embeddings") or {}).get("model_id", "nomic-embed-text-v1.5")
+
+
+def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Mapping[str, Any] | None = None) -> dict:
+    """Derive every registry-derived value (class A and B of docs/design/CONFIG_HOMES.md, 1.2) from *effective_cfg*.
+
+    The result is the snapshot's ``derived`` mapping: readers take each value through ``DERIVED``, so the boot and a
+    reload compute them by this one function and a reader never holds a copy that a registry edit leaves behind.
+    ``registry`` is the stored registry the routes are read from (None reads the release registry, as a boot with no
+    stored registry does). Pure: it reads no global state, so a bad candidate raises before anything goes live.
+    """
+    backends = effective_cfg.get("backends") or {}
+    tts_c = backends.get("tts") or {}
+    stt_c = backends.get("stt") or {}
+    emb_c = backends.get("embeddings") or {}
+    cfy_c = backends.get("comfyui") or {}
+    protocol_registry = registry or service_registry.release_registry()
+    route_args = {"registry": protocol_registry, "proxy_config": effective_cfg}
 
     return {
-        "TTS_HOST": new_tts_host,
-        "STT_HOST": new_stt_host,
-        "EMBEDDINGS_HOST": new_emb_host,
-        "COMFY_HOST": new_cfy_host,
-        "TTS_ENABLED": new_tts_enabled,
-        "STT_ENABLED": new_stt_enabled,
-        "STT_TIMEOUT": new_stt_timeout,
-        "EMBEDDINGS_ENABLED": new_emb_enabled,
-        "COMFY_ENABLED": new_cfy_enabled,
-        "LLM_BACKEND_HOSTS": new_llm_hosts,
+        "TTS_HOST": f"http://{tts_c.get('host', '127.0.0.1')}:{tts_c.get('port', 8880)}",
+        "STT_HOST": f"http://{stt_c.get('host', '127.0.0.1')}:{stt_c.get('port', 5092)}",
+        "EMBEDDINGS_HOST": f"http://{emb_c.get('host', '127.0.0.1')}:{emb_c.get('port', 5061)}",
+        "COMFY_HOST": f"http://{cfy_c.get('host', '127.0.0.1')}:{cfy_c.get('port', 7890)}",
+        "TTS_ENABLED": bool_from_config(tts_c.get("enabled"), True),
+        "STT_ENABLED": bool_from_config(stt_c.get("enabled"), True),
+        "STT_TIMEOUT": int(stt_c.get("timeout", 120)),
+        "EMBEDDINGS_ENABLED": bool_from_config(emb_c.get("enabled"), bool(emb_c)),
+        "COMFY_ENABLED": bool_from_config(cfy_c.get("enabled"), True),
+        # Build the host maps from the new config.
+        "LLM_BACKEND_HOSTS": _backend_host_map(backends, _is_chat_capable_native_backend),
+        # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
+        "TTS_TIMEOUT": int(tts_c.get("timeout", 120)),
+        "EMBEDDINGS_HEALTH_ENDPOINT": emb_c.get("health_endpoint", "/health"),
+        "EMBEDDINGS_TIMEOUT": int(os.environ.get("EMBEDDINGS_TIMEOUT", emb_c.get("timeout", 120))),
+        "EMBEDDINGS_BACKEND_MODEL": _embeddings_backend_model(backends),
+        "COMFY_TIMEOUT": int(cfy_c.get("timeout", 300)),
+        "COMFY_DEFAULT_MODEL": cfy_c.get("default_model", "flux2-klein-4b"),
+        "COMFY_VIDEO_TIMEOUT": int(cfy_c.get("video_timeout", 1800)),
+        "COMFY_WORKFLOWS_DIR": _workflows_directory(cfy_c.get("workflows_dir"), "./workflows/images"),
+        "COMFY_VIDEO_WORKFLOWS_DIR": _workflows_directory(cfy_c.get("video_workflows_dir"), "./workflows"),
+        "_GRAPH_BINDING": reviewed_adapters.adapter_for_backend(cfy_c, "images").binding,
+        # The route policies the registry's protocol frontends describe.
+        "_PROTOCOL_ROUTE_REGISTRY": protocol_registry,
+        "CANONICAL_PROTOCOL_ROUTE_ALIASES": route_registry.canonical_protocol_route_aliases(**route_args),
+        "_RUNTIME_ROUTE_POLICY": route_registry.runtime_route_policy(**route_args),
+        "_ASSET_CONTENT_ROUTE_POLICY_BY_KIND": route_registry.asset_content_route_policy_by_kind(**route_args),
+        "_AZIZAM_POLICY": route_registry.azizam_policy(**route_args),
         **_workflow_alias_tables(effective_cfg),
     }
+
+
+def _publish_boot_derived() -> None:
+    """Give the boot snapshot its derived values, now that the functions that derive them exist.
+
+    The boot snapshot is published before these helpers are defined (the config it holds is read at import), so it
+    starts with none. Nothing reads ``DERIVED`` before this runs. Every later snapshot is derived when it is built.
+    """
+    first = CONFIG_HOME.holder.current()
+    derived = _derive_backend_constants(first.config, registry=_stored_registry_for_boot())
+    CONFIG_HOME.holder.publish(replace(first, derived=derived))
+    CONFIG_HOME.derive = _derive_backend_constants
+
+
+_publish_boot_derived()
 
 
 def _prepare_frontend_mounts(effective_cfg: Mapping[str, Any]):
@@ -1429,7 +1452,11 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     # Derive every backend constant from the candidate BEFORE publishing
     # anything: a bad config must raise here and leave the old config and
     # constants serving, never a new config paired with old constants.
-    updates = _derive_backend_constants(new_cfg)
+    # The registry is read once here: the route policies derive from it, and the frontend table below reads the same
+    # stored value (the read is cached by the stored document, so the two see one registry unless a writer lands
+    # between them, and that writer's own reload follows this one).
+    registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
+    updates = _derive_backend_constants(new_cfg, registry=registry)
     # The send-time lease check's map is projected here too: a config the projection cannot read never goes live.
     egress = _project_egress(new_cfg.get("backends"))
     # The snapshot is built here too, before anything is published, so a failure leaves the old one serving.
@@ -1465,8 +1492,10 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     # snapshot whole, and `config` and the derived names below follow from it, never ahead of it.
     CONFIG_HOME.publish(snapshot)
     _g["config"] = snapshot.config
-    for name, value in updates.items():
-        _g[name] = value
+    # The alias tables are the module names that C8b and C3 still read; every other derived value is read through
+    # ``DERIVED``, from the snapshot just published.
+    for name in ("VIDEO_ALIASES", "AUDIO_ALIASES"):
+        _g[name] = updates[name]
     _g["CONFIG_PROBLEMS"] = dict(snapshot.problems.get("config") or {})
 
     print(
@@ -1506,13 +1535,13 @@ TTS_PATHS = [
 async def get_active_backend() -> Optional[str]:
     """Check which LLM backend is currently running.
 
-    Probes all backends in LLM_BACKEND_HOSTS (registry-derived) in priority
+    Probes all backends in DERIVED.LLM_BACKEND_HOSTS (registry-derived) in priority
     order and returns the id of the first one that answers healthy.
     """
     backends = config.get("backends") or {}
     # Sort by priority (lower = higher priority) so the preferred backend wins.
     candidates = sorted(
-        LLM_BACKEND_HOSTS.keys(),
+        DERIVED.LLM_BACKEND_HOSTS.keys(),
         key=lambda bid: int((backends.get(bid) or {}).get("priority") or 100),
     )
     for bid in candidates:
@@ -1764,8 +1793,8 @@ def _resolve_dot_path(data: dict, path: str) -> Optional[str]:
 
 def _backend_base_url(backend: str) -> str:
     """The service's own base URL: the registry-derived host, else its record's host and port."""
-    if backend in LLM_BACKEND_HOSTS:
-        return LLM_BACKEND_HOSTS[backend]
+    if backend in DERIVED.LLM_BACKEND_HOSTS:
+        return DERIVED.LLM_BACKEND_HOSTS[backend]
     cfg = (config.get("backends") or {}).get(backend) or {}
     return f"http://{cfg.get('host', '127.0.0.1')}:{cfg.get('port')}"
 
@@ -3171,7 +3200,7 @@ TTS_RESPONSE_MEDIA_TYPES = {
     "pcm": "audio/pcm",
 }
 STT_BACKEND_MODEL = MODEL_COMPAT_DEFAULTS.get("transcriptions") or stt_cfg.get("default_model", "parakeet-tdt-0.6b-v3")
-EMBEDDINGS_MODEL = MODEL_COMPAT_DEFAULTS.get("embeddings") or EMBEDDINGS_BACKEND_MODEL
+EMBEDDINGS_MODEL = MODEL_COMPAT_DEFAULTS.get("embeddings") or _embeddings_backend_model(config.get("backends"))
 IMAGE_EDIT_DEFAULT_MODEL = MODEL_COMPAT_DEFAULTS.get("image_edits", "qwen-image-2.1-edit")
 
 OPENAI_STATIC_MODEL_CATEGORIES = {
@@ -3316,13 +3345,13 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
     if operation == "translations":
         return STT_BACKEND_MODEL
     if operation == "images":
-        return COMFY_DEFAULT_MODEL
+        return DERIVED.COMFY_DEFAULT_MODEL
     if operation == "image_edits":
         return IMAGE_EDIT_DEFAULT_MODEL
     if operation == "videos":
         return VIDEO_DEFAULT_WORKFLOW
     if operation == "embeddings":
-        return EMBEDDINGS_MODEL if EMBEDDINGS_ENABLED else ""
+        return EMBEDDINGS_MODEL if DERIVED.EMBEDDINGS_ENABLED else ""
     return requested_model
 
 
@@ -3549,7 +3578,7 @@ def _configured_litellm_local_model_target(
     normalized = normalize_model_id(requested_model)
     backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
 
-    for backend in LLM_BACKEND_HOSTS:
+    for backend in DERIVED.LLM_BACKEND_HOSTS:
         if service_id is not None and backend != service_id:
             continue
         service_cfg = backends.get(backend, {})
@@ -3722,7 +3751,7 @@ async def _prepare_litellm_local_llm_request(
     if vision_needed and not target_backend:
         active = await get_active_backend()
         # vision_capable_llm_backends() answers the membership question: which
-        # backends in LLM_BACKEND_HOSTS carry the "vision" capability?  For
+        # backends in DERIVED.LLM_BACKEND_HOSTS carry the "vision" capability?  For
         # a backend declaring vision=True, [] otherwise.  The mmproj
         # check is orchestration-level logic that stays unchanged.
         _vision_members = vision_capable_llm_backends()
@@ -3872,7 +3901,7 @@ async def current_llm_model_for_backend(backend: str) -> str:
         loaded_id = await served_model_id_for_backend(backend)
         return loaded_id or os.path.basename(loaded_path) or loaded_path
 
-    host = LLM_BACKEND_HOSTS.get(backend)
+    host = DERIVED.LLM_BACKEND_HOSTS.get(backend)
     backend_cfg = (config.get("backends") or {}).get(backend, {})
     if not host or not isinstance(backend_cfg, Mapping):
         return ""
@@ -3911,7 +3940,7 @@ async def _current_loaded_llm_target(
             error_type="service_unavailable",
             code="current_model_unavailable",
         )
-    if active not in LLM_BACKEND_HOSTS:
+    if active not in DERIVED.LLM_BACKEND_HOSTS:
         return None, openai_error_response(
             f"model 'current' requested, but active backend {active!r} is not an OpenAI-compatible LLM backend.",
             status_code=503,
@@ -3927,7 +3956,7 @@ async def _current_loaded_llm_target(
         return None, _current_model_unavailable_response(active)
     return CurrentLoadedLlmTarget(
         backend=active,
-        host=LLM_BACKEND_HOSTS[active],
+        host=DERIVED.LLM_BACKEND_HOSTS[active],
         model=loaded_model,
     ), None
 
@@ -4173,7 +4202,7 @@ async def check_service_health(service_id: str) -> bool:
 
 async def check_embeddings_health() -> bool:
     """Check if the dedicated embeddings backend is healthy."""
-    if not EMBEDDINGS_ENABLED:
+    if not DERIVED.EMBEDDINGS_ENABLED:
         return False
     return await check_service_health("embeddings")
 
@@ -4184,7 +4213,7 @@ async def check_embeddings_health() -> bool:
 
 async def check_tts_health() -> bool:
     """Check if TTS backend is healthy."""
-    if not TTS_ENABLED:
+    if not DERIVED.TTS_ENABLED:
         return False
     return await check_service_health("tts")
 
@@ -4804,7 +4833,7 @@ async def _tts_tier_fallbacks(request: Request) -> tuple[list[tuple[str, str | N
 
 async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None, receipt: RouteReceipt | None = None) -> Response:
     """Forward TTS request to one TTS engine."""
-    if not TTS_ENABLED:
+    if not DERIVED.TTS_ENABLED:
         return openai_error_response(
             "TTS not enabled",
             status_code=503,
@@ -4812,7 +4841,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         )
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id="tts",
-        service_available=TTS_ENABLED, resource_class="audio", receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -4931,7 +4960,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 
     admission = _dispatch_admission_response(
         'speech.synthesis', auth_context=auth_context, service_id=tts_service_id,
-        service_available=TTS_ENABLED, resource_class='audio', receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED, resource_class='audio', receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -4944,14 +4973,14 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     _speech_capability = "audio.speech"
     _tts_selected = service_for_capability(_speech_capability)
     _tts_host_service = _tts_selected[0] if _tts_selected else tts_service_id
-    _tts_host = host_for_capability(_speech_capability) or (TTS_HOST if TTS_ENABLED else None) or TTS_HOST
+    _tts_host = host_for_capability(_speech_capability) or (DERIVED.TTS_HOST if DERIVED.TTS_ENABLED else None) or DERIVED.TTS_HOST
     if tts_service_id != "tts":
         _engine_service = (config.get("backends") or {}).get(tts_service_id) or {}
         _tts_host = f"http://{_engine_service.get('host')}:{_engine_service.get('port')}"
         _tts_host_service = tts_service_id
     admission = _dispatch_admission_response(
         "speech.synthesis", auth_context=auth_context, service_id=tts_service_id,
-        service_available=TTS_ENABLED, resource_class="audio", receipt=receipt,
+        service_available=DERIVED.TTS_ENABLED, resource_class="audio", receipt=receipt,
     )
     if admission is not None:
         return admission
@@ -5070,7 +5099,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 
 async def check_stt_health() -> bool:
     """Check if STT backend is healthy."""
-    if not STT_ENABLED:
+    if not DERIVED.STT_ENABLED:
         return False
     return await check_service_health("stt")
 
@@ -5162,7 +5191,7 @@ def _speech_model_policy_denial(
     The route check passes a plan that lists any speech model; this one names the
     engine, so a plan or category that lists one engine is not a key to the rest.
     """
-    route_policy = _RUNTIME_ROUTE_POLICY.get("/v1/audio/speech")
+    route_policy = DERIVED._RUNTIME_ROUTE_POLICY.get("/v1/audio/speech")
     alias = resolution.alias
     if route_policy is None or alias is None or not alias.engine:
         return None
@@ -5188,7 +5217,7 @@ def _apply_selected_stt_policy(
     the caller sent, so a plan or category that lists one engine is held to it.
     """
     path = f"/v1/audio/{operation}"
-    route_policy = _RUNTIME_ROUTE_POLICY.get(path)
+    route_policy = DERIVED._RUNTIME_ROUTE_POLICY.get(path)
     if route_policy is None:
         return None
     selected_policy = dict(route_policy)
@@ -6041,7 +6070,7 @@ def load_graph_workflow(model_name: str) -> Optional[dict]:
     `extra_data.extra_pnginfo.workflow`. The key survives deepcopy and is
     popped by `_build_graph_submit_payload`.
     """
-    workflow_path = COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+    workflow_path = DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
     if not workflow_path.exists():
         workflow_path = _graph_workflow_artifact_path_for_model(model_name)
     if not workflow_path.exists():
@@ -6097,12 +6126,12 @@ def _graph_workflow_artifact_path_for_model(model_name: str) -> Path:
     try:
         registry = GATEWAY_WORKFLOW_REGISTRY
     except NameError:
-        return COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        return DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
     for record in registry.records():
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, Mapping):
             continue
-        comfy = bindings.get(_GRAPH_BINDING)
+        comfy = bindings.get(DERIVED._GRAPH_BINDING)
         if not isinstance(comfy, Mapping):
             continue
         artifact = comfy.get("workflow")
@@ -6111,7 +6140,7 @@ def _graph_workflow_artifact_path_for_model(model_name: str) -> Path:
         if Path(artifact.replace("package://", "")).stem != model_name:
             continue
         return _resolve_workflow_artifact_path(record, artifact)
-    return COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+    return DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
 
 
 def _resolve_workflow_artifact_path(record: Any, artifact: str) -> Path:
@@ -6200,7 +6229,7 @@ def _manifest_job_envelope(manifest: Mapping[str, Any] | None, capability: str) 
     if not isinstance(manifest, Mapping):
         return None
     bindings = manifest.get("bindings")
-    binding = bindings.get(_GRAPH_BINDING) if isinstance(bindings, Mapping) else None
+    binding = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings, Mapping) else None
     if not isinstance(binding, Mapping):
         return None
     source_id = str(manifest.get("id") or "")
@@ -6213,7 +6242,7 @@ def _manifest_job_envelope(manifest: Mapping[str, Any] | None, capability: str) 
 
 async def check_comfy_health() -> bool:
     """Check if ComfyUI backend is healthy."""
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return False
     return await check_service_health(_GRAPH_BACKEND_ID)
 
@@ -7157,8 +7186,8 @@ async def decide_image_background_removal(
         return _background_removal_fallback("empty_prompt")
 
     active = await get_active_backend()
-    # Generic: any local-swap LLM backend resolves its host from LLM_BACKEND_HOSTS.
-    target_host = LLM_BACKEND_HOSTS.get(active) if active else None
+    # Generic: any local-swap LLM backend resolves its host from DERIVED.LLM_BACKEND_HOSTS.
+    target_host = DERIVED.LLM_BACKEND_HOSTS.get(active) if active else None
     if active and _is_local_swap_backend(active) and target_host:
         service = active
     else:
@@ -8001,7 +8030,7 @@ async def _graph_run_round(
 ) -> tuple[Optional[Response], list[bytes]]:
     """Submit a single prompt to the graph engine and harvest the resulting image bytes.
 
-    ``max_wait_s`` replaces COMFY_TIMEOUT as the wall-clock limit (queue wait included);
+    ``max_wait_s`` replaces DERIVED.COMFY_TIMEOUT as the wall-clock limit (queue wait included);
     async jobs pass a long value so a prompt queued behind a video render is not cancelled.
 
     Returns (error_response, image_bytes_list). On success error_response is None.
@@ -8073,7 +8102,7 @@ async def _graph_run_round(
 
         # Keep the original total sleep budget; history request time was never
         # charged against it. Check immediately, then back off to the old cadence.
-        remaining_wait_s = float(max_wait_s or COMFY_TIMEOUT)
+        remaining_wait_s = float(max_wait_s or DERIVED.COMFY_TIMEOUT)
         poll_delay_s = 0.0
         finished = None
         while remaining_wait_s > 0:
@@ -8671,12 +8700,12 @@ async def proxy_graph_image_request(
     """Handle OpenAI-compatible image generation request via ComfyUI."""
     admission = _dispatch_admission_response(
         'image.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        service_available=DERIVED.COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_disabled")
         return Response(
@@ -8719,7 +8748,7 @@ async def proxy_graph_image_request(
         return metadata_error
 
     prompt = body.get("prompt", "")
-    requested_model = body.get("model", COMFY_DEFAULT_MODEL)
+    requested_model = body.get("model", DERIVED.COMFY_DEFAULT_MODEL)
     model = requested_model
     requested_size = body.get("size")
     size = requested_size or "1024x1024"
@@ -8955,10 +8984,10 @@ async def proxy_graph_image_request(
         workflow_name_for_batching = workflow_name
 
     try:
-        async with engine_egress.async_client(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(DERIVED.COMFY_TIMEOUT, connect=10)) as client:
             admission = _dispatch_admission_response(
                 "image.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-                service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+                service_available=DERIVED.COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return admission
@@ -9086,12 +9115,12 @@ async def proxy_graph_image_edit_request(
     """Handle OpenAI-compatible image edit request via ComfyUI."""
     admission = _dispatch_admission_response(
         'image.edit', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        service_available=DERIVED.COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_disabled")
         return Response(
@@ -9302,7 +9331,7 @@ async def proxy_graph_image_edit_request(
             "prompt",
             ignored_reason="workflow does not use prompt",
         )
-    required_route_bound_inputs = _manifest_required_route_bound_inputs(manifest, _GRAPH_BINDING)
+    required_route_bound_inputs = _manifest_required_route_bound_inputs(manifest, DERIVED._GRAPH_BINDING)
     minimum_image_count = 1 + len(required_route_bound_inputs)
     if len(image_files) < minimum_image_count:
         _record_image_input(receipt, "image[]", rejected_reason="missing_required_image")
@@ -9379,7 +9408,7 @@ async def proxy_graph_image_edit_request(
     if target_decision is not None and target_decision.denied:
         return _policy_denied_response(target_decision)
     try:
-        async with engine_egress.async_client(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(DERIVED.COMFY_TIMEOUT, connect=10)) as client:
             image_content = await image_file.read()
             # What the caller gave the workflow, before any mask is applied: the result keeps these as its sources.
             made_from = [_upload_as_output_input(image_file, image_content)]
@@ -9502,7 +9531,7 @@ async def proxy_graph_image_edit_request(
                     )
                 workflow = bind_backend_request(
                     manifest,
-                    _GRAPH_BINDING,
+                    DERIVED._GRAPH_BINDING,
                     workflow,
                     {mask_input_name: uploaded_mask_filename},
                 ).request
@@ -9592,7 +9621,7 @@ async def proxy_graph_image_edit_request(
 
             admission = _dispatch_admission_response(
                 "image.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-                service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+                service_available=DERIVED.COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return admission
@@ -9688,12 +9717,12 @@ async def proxy_graph_image_variations_request(
     """
     admission = _dispatch_admission_response(
         'image.variation', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        service_available=DERIVED.COMFY_ENABLED, resource_class='image', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         if receipt is not None:
             receipt.add_fallback_reason("comfy_disabled")
         return Response(
@@ -11071,7 +11100,7 @@ async def _resolve_video_workflow_assets(
     if not isinstance(block, Mapping):
         raise _VideoAssetError("extensions must be a mapping", param="extensions")
     specs = manifest.get("inputs") or {}
-    binding_map = (((manifest.get("bindings") or {}).get(_GRAPH_BINDING) or {}).get("map")) or {}
+    binding_map = (((manifest.get("bindings") or {}).get(DERIVED._GRAPH_BINDING) or {}).get("map")) or {}
     source_input = workflow_cfg.get("source_video_input")
     ext_param = f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}"
     if source_input and source_input not in block:
@@ -11185,7 +11214,7 @@ async def _submit_video_graph(
         async with engine_egress.async_client(timeout=httpx.Timeout(30, connect=10)) as client:
             admission = _dispatch_admission_response(
                 "video.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-                service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
+                service_available=DERIVED.COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return admission
@@ -11410,12 +11439,12 @@ async def proxy_graph_video_create(
 
     admission = _dispatch_admission_response(
         'video.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        service_available=DERIVED.COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -12471,12 +12500,12 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
         'video.extend', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        service_available=DERIVED.COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
     service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
@@ -12534,7 +12563,7 @@ async def proxy_graph_video_extend(request: Request, auth_context: AuthContext, 
 async def proxy_graph_video_status(video_id: str, auth_context: AuthContext) -> Response:
     """GET /v1/videos/{video_id} — poll status."""
     await _warm_video_owner_keys(auth_context)
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -12662,7 +12691,7 @@ async def proxy_graph_video_content(
     are stripped before storage.
     """
     await _warm_video_owner_keys(auth_context)
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -12883,7 +12912,7 @@ async def proxy_graph_video_list(request: Request, auth_context: AuthContext) ->
     through the separate `/gateway/v1/media/jobs` durable job store.
     """
     await _warm_video_owner_keys(auth_context)
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -13044,7 +13073,7 @@ async def proxy_graph_video_delete(video_id: str, auth_context: AuthContext) -> 
     source of truth for every read route.
     """
     await _warm_video_owner_keys(auth_context)
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -13269,12 +13298,12 @@ async def proxy_graph_video_remix(
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
         'video.remix', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        service_available=DERIVED.COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Video generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -13328,12 +13357,12 @@ async def proxy_graph_video_edit(request: Request, auth_context: AuthContext) ->
     await _warm_video_owner_keys(auth_context)
     admission = _dispatch_admission_response(
         'video.edit', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        service_available=DERIVED.COMFY_ENABLED, resource_class='video', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
     service_response = (await asyncio.to_thread(_service_availability_response, _GRAPH_BACKEND_ID, service_label=_graph_adapter().label))
     if service_response is not None:
@@ -13585,9 +13614,9 @@ async def _serve(app: FastAPI):
     from gateway.lifecycle_drivers import _process_driver
     await asyncio.to_thread(_process_driver.recover, config.get("backends") or {})
     print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
-    print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
-    print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
-    print(f"[proxy] ComfyUI backend: {COMFY_HOST} (enabled: {COMFY_ENABLED})", flush=True)
+    print(f"[proxy] TTS backend: {DERIVED.TTS_HOST} (enabled: {DERIVED.TTS_ENABLED})", flush=True)
+    print(f"[proxy] STT backend: {DERIVED.STT_HOST} (enabled: {DERIVED.STT_ENABLED})", flush=True)
+    print(f"[proxy] ComfyUI backend: {DERIVED.COMFY_HOST} (enabled: {DERIVED.COMFY_ENABLED})", flush=True)
     print(f"[proxy] Model compatibility: {'enabled' if MODEL_COMPAT_ENABLED else 'disabled'}", flush=True)
     # Keep the last good ComfyUI node definitions on disk, so embedding a workflow
     # in generated media survives a ComfyUI that is restarting at submit time.
@@ -13619,7 +13648,7 @@ async def _serve(app: FastAPI):
     comfy_ws_task = None
     video_reconcile_stop = asyncio.Event()
     video_reconcile_task = None
-    if COMFY_ENABLED:
+    if DERIVED.COMFY_ENABLED:
         comfy_ws_task = asyncio.create_task(_graph_ws_listener(comfy_ws_stop))
         print(f"[proxy] ComfyUI ws listener started (client_id={COMFY_CLIENT_ID})", flush=True)
 
@@ -13836,28 +13865,6 @@ WEB_UI_DIR = Path(__file__).resolve().parent / "web" / "out"
 
 from gateway import ui_routes
 
-def _stored_registry_for_boot() -> dict[str, Any] | None:
-    """The stored registry for a reader that runs at import: the records that validate (the read leaves out the rest).
-
-    A store that cannot be read at all raises, unless the boot already reported it (the ``empty`` mode):
-    then the bundled routes mount and nothing stored does.
-    """
-    try:
-        return service_registry.load_service_registry(path=ADMIN_DB_PATH)
-    except Exception:  # noqa: BLE001
-        if REGISTRY_APPLY_PROBLEM is None:
-            raise
-        return None
-
-
-_PROTOCOL_ROUTE_REGISTRY = _stored_registry_for_boot() or service_registry.release_registry()
-CANONICAL_PROTOCOL_ROUTE_ALIASES: tuple[dict[str, object], ...] = (
-    route_registry.canonical_protocol_route_aliases(
-        registry=_PROTOCOL_ROUTE_REGISTRY,
-        proxy_config=config,
-    )
-)
-
 _MANIFEST_WORKFLOWS_DIR = Path(__file__).resolve().parent / "manifests" / "workflows"
 
 
@@ -13989,7 +13996,7 @@ def _target_activation(auth_context: AuthContext) -> str:
 
 
 def _graph_target_available() -> bool:
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return False
     override = _operator_service_availability_overrides().get(_GRAPH_BACKEND_ID, {})
     state = str((override or {}).get("state") or "available").strip().lower()
@@ -14434,13 +14441,13 @@ def _gateway_catalog_base() -> tuple[Mapping[str, Any], list[Capability]]:
     capabilities = list(build_local_capabilities(
         config,
         enabled_flags={
-            "llm": bool(LLM_BACKEND_HOSTS),
-            "embeddings": EMBEDDINGS_ENABLED and bool(embeddings_cfg),
-            "tts": TTS_ENABLED,
-            "stt": STT_ENABLED,
-            "images": COMFY_ENABLED,
-            "videos": COMFY_ENABLED,
-            "audio": COMFY_ENABLED,
+            "llm": bool(DERIVED.LLM_BACKEND_HOSTS),
+            "embeddings": DERIVED.EMBEDDINGS_ENABLED and bool((runtime().config.get("backends") or {}).get("embeddings")),
+            "tts": DERIVED.TTS_ENABLED,
+            "stt": DERIVED.STT_ENABLED,
+            "images": DERIVED.COMFY_ENABLED,
+            "videos": DERIVED.COMFY_ENABLED,
+            "audio": DERIVED.COMFY_ENABLED,
         },
         backends=_live_backends,
     ))
@@ -14465,7 +14472,7 @@ def _gateway_catalog_finish(
                     record,
                     backend=backend,
                     execution="job",
-                    resources=ResourceEstimate(gpu_required=backend == _GRAPH_BINDING),
+                    resources=ResourceEstimate(gpu_required=backend == DERIVED._GRAPH_BINDING),
                 ))
             except Exception:
                 continue
@@ -16182,10 +16189,10 @@ def _identity_job_envelope() -> job_envelope.JobEnvelope | None:
 
 async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any], uploads: dict[str, bytes]) -> bytes:
     engine = _graph_adapter().label
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         raise RuntimeError(f"{engine} media backend is disabled")
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
-    async with engine_egress.async_client(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+    async with engine_egress.async_client(timeout=httpx.Timeout(DERIVED.COMFY_TIMEOUT, connect=10)) as client:
         for node_id, content in uploads.items():
             try:
                 name, upload_error = await _upload_graph_image_bytes(
@@ -16200,7 +16207,7 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
             graph[node_id]["inputs"]["image"] = name
         admission = _dispatch_admission_response(
             "image.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-            service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+            service_available=DERIVED.COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
         )
         if admission is not None:
             raise identity_api.IdentityUnavailable(admission)
@@ -16431,7 +16438,7 @@ def _identity_admission(auth: AuthContext, path: str) -> Response | None:
         return denied
     return _dispatch_admission_response(
         "image.edit", auth_context=auth, service_id=_GRAPH_BACKEND_ID,
-        service_available=COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
+        service_available=DERIVED.COMFY_ENABLED, resource_class="image", queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
 
 
@@ -20254,7 +20261,7 @@ async def _handle_rerank(request: Request, path: str) -> Response:
         return auth_context
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context,
         _RERANK_POLICY_PATH,
-        policy=_RUNTIME_ROUTE_POLICY.get(_RERANK_POLICY_PATH) or _RERANK_DEFAULT_POLICY,))
+        policy=DERIVED._RUNTIME_ROUTE_POLICY.get(_RERANK_POLICY_PATH) or _RERANK_DEFAULT_POLICY,))
     if policy_response is not None:
         return policy_response
     try:
@@ -20564,26 +20571,12 @@ def _policy_denied_response(decision: PolicyDecision) -> Response:
     ), "authorization")
 
 
-_RUNTIME_ROUTE_POLICY: dict[str, dict[str, Any]] = route_registry.runtime_route_policy(
-    registry=_PROTOCOL_ROUTE_REGISTRY,
-    proxy_config=config,
-)
-
-
-_ASSET_CONTENT_ROUTE_POLICY_BY_KIND: dict[str, dict[str, Any]] = (
-    route_registry.asset_content_route_policy_by_kind(
-        registry=_PROTOCOL_ROUTE_REGISTRY,
-        proxy_config=config,
-    )
-)
-
-
 def _asset_content_route_policy(asset_id: str) -> dict[str, Any] | None:
     parsed = _parse_asset_id(asset_id)
     if parsed is None:
         return None
     kind, _ = parsed
-    return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get(kind)
+    return DERIVED._ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get(kind)
 
 
 def _runtime_route_policy_decision(
@@ -20592,7 +20585,7 @@ def _runtime_route_policy_decision(
     *,
     policy: Mapping[str, Any] | None = None,
 ) -> PolicyDecision | None:
-    route_policy = policy or _RUNTIME_ROUTE_POLICY.get(request_path)
+    route_policy = policy or DERIVED._RUNTIME_ROUTE_POLICY.get(request_path)
     if route_policy is None:
         return None
     return evaluate_and_apply(
@@ -20947,7 +20940,7 @@ def _reseed_image_workflow(
                 seed = random.randint(0, 2**32 - 1)
             workflow[node].get("inputs", {})[legacy_seed_field] = int(seed)
             return workflow, int(seed)
-    binding = ((manifest or {}).get("bindings") or {}).get(_GRAPH_BINDING) or {}
+    binding = ((manifest or {}).get("bindings") or {}).get(DERIVED._GRAPH_BINDING) or {}
     mapping = binding.get("map") or {}
     if not mapping.get("seed"):
         name = workflow_name.removesuffix("+rmbg")
@@ -20958,7 +20951,7 @@ def _reseed_image_workflow(
         return workflow, None
     if seed is None:
         seed = random.randint(0, 2**32 - 1)
-    return bind_backend_request(dict(manifest), _GRAPH_BINDING, workflow, {"seed": int(seed)}, identity=identity).request, int(seed)
+    return bind_backend_request(dict(manifest), DERIVED._GRAPH_BINDING, workflow, {"seed": int(seed)}, identity=identity).request, int(seed)
 
 
 async def _run_single_graph_image(
@@ -21127,7 +21120,7 @@ async def _proxy_offset_inpaint_tile_request(
     if base_extension_inputs:
         base_workflow = bind_backend_request(
             base_manifest,
-            _GRAPH_BINDING,
+            DERIVED._GRAPH_BINDING,
             base_workflow,
             base_extension_inputs,
         ).request
@@ -21163,7 +21156,7 @@ async def _proxy_offset_inpaint_tile_request(
     rounds = 0
 
     try:
-        async with engine_egress.async_client(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+        async with engine_egress.async_client(timeout=httpx.Timeout(DERIVED.COMFY_TIMEOUT, connect=10)) as client:
             for index in range(n):
                 base_seed = (
                     fixed_seed_int + (index * 2)
@@ -21218,7 +21211,7 @@ async def _proxy_offset_inpaint_tile_request(
                 set_workflow_background_removal(edit_workflow, edit_meta, False)
                 edit_workflow = bind_backend_request(
                     inpaint_manifest,
-                    _GRAPH_BINDING,
+                    DERIVED._GRAPH_BINDING,
                     edit_workflow,
                     {
                         "prompt": seam_prompt,
@@ -21282,7 +21275,7 @@ def _manifest_uses_source_alpha_mask(manifest: Mapping[str, Any] | None) -> bool
     if not isinstance(manifest, Mapping):
         return False
     bindings = manifest.get("bindings")
-    comfyui = bindings.get(_GRAPH_BINDING) if isinstance(bindings, Mapping) else None
+    comfyui = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings, Mapping) else None
     return bool(comfyui.get("mask_to_source_alpha")) if isinstance(comfyui, Mapping) else False
 
 
@@ -21290,7 +21283,7 @@ def _manifest_route_managed_mask_input(manifest: Mapping[str, Any] | None) -> st
     if not isinstance(manifest, Mapping):
         return None
     inputs = manifest.get("inputs")
-    binding = (manifest.get("bindings") or {}).get(_GRAPH_BINDING)
+    binding = (manifest.get("bindings") or {}).get(DERIVED._GRAPH_BINDING)
     mapping = binding.get("map") if isinstance(binding, Mapping) else None
     if not isinstance(inputs, Mapping) or not isinstance(mapping, Mapping):
         return None
@@ -21320,7 +21313,7 @@ def _apply_workflow_prompt(
     prompt: str,
 ) -> dict[str, Any]:
     """Prefer declared prompt targets; retain the legacy target when unmapped."""
-    binding = (manifest.get("bindings") or {}).get(_GRAPH_BINDING) if manifest else None
+    binding = (manifest.get("bindings") or {}).get(DERIVED._GRAPH_BINDING) if manifest else None
     mapping = binding.get("map") if isinstance(binding, Mapping) else None
     if isinstance(mapping, Mapping) and mapping.get("prompt"):
         return _apply_manifest_route_inputs(manifest, workflow, {"prompt": prompt})
@@ -21344,7 +21337,7 @@ def _apply_manifest_route_inputs(
     """
     if not isinstance(manifest, Mapping):
         return dict(workflow)
-    binding = (manifest.get("bindings") or {}).get(_GRAPH_BINDING)
+    binding = (manifest.get("bindings") or {}).get(DERIVED._GRAPH_BINDING)
     mapping = binding.get("map") if isinstance(binding, Mapping) else None
     if not isinstance(mapping, Mapping):
         return dict(workflow)
@@ -21357,7 +21350,7 @@ def _apply_manifest_route_inputs(
         return dict(workflow)
     return bind_backend_request(
         dict(manifest),
-        _GRAPH_BINDING,
+        DERIVED._GRAPH_BINDING,
         dict(workflow),
         mapped_values,
     ).request
@@ -21583,7 +21576,7 @@ def _allowed_image_extension_asset_fields(
             "manifest must define an 'inputs' mapping",
         )
 
-    supported = set(_workflow_extension_supported_names(manifest, _GRAPH_BINDING))
+    supported = set(_workflow_extension_supported_names(manifest, DERIVED._GRAPH_BINDING))
     fields: set[str] = set()
     for input_name, field_name in references.items():
         spec = inputs.get(input_name)
@@ -21767,7 +21760,7 @@ async def _upload_image_workflow_extension_assets(
     if not isinstance(inputs, Mapping):
         return updated, None
 
-    supported = set(_workflow_extension_supported_names(manifest, _GRAPH_BINDING))
+    supported = set(_workflow_extension_supported_names(manifest, DERIVED._GRAPH_BINDING))
     allowed_fields, allow_error = _allowed_image_extension_asset_fields(
         request_body=request_body,
         manifest=manifest,
@@ -21902,9 +21895,9 @@ async def _apply_workflow_extensions_to_image_request(
         result = bind_workflow_extensions(
             extension_body,
             manifest,
-            _GRAPH_BINDING,
+            DERIVED._GRAPH_BINDING,
             backend_request,
-            supported_names=_workflow_extension_supported_names(manifest, _GRAPH_BINDING),
+            supported_names=_workflow_extension_supported_names(manifest, DERIVED._GRAPH_BINDING),
             standard_fields=standard_fields,
         )
         if receipt is not None:
@@ -22725,7 +22718,7 @@ def _safe_image_media_job_metadata(
         "mode": "async_image_generation",
         "request_hash": request_hash,
         "idempotency": idempotency,
-        "requested_model": str(body.get("model", COMFY_DEFAULT_MODEL))[:160],
+        "requested_model": str(body.get("model", DERIVED.COMFY_DEFAULT_MODEL))[:160],
         "size": str(body.get("size", "1024x1024"))[:32],
         "n": max(1, min(n_value, 10)),
         "response_format": "url",
@@ -23004,19 +22997,19 @@ def _openai_video_payload_from_media_job(
 def _media_job_content_route_policy(job: Mapping[str, Any]) -> dict[str, Any] | None:
     intent = str(job.get("intent") or "")
     if intent in ("image.generate", _IDENTITY_JOB_INTENT):
-        return _RUNTIME_ROUTE_POLICY["/gateway/v1/media/jobs/{job_id}/content"]
+        return DERIVED._RUNTIME_ROUTE_POLICY["/gateway/v1/media/jobs/{job_id}/content"]
     if intent in _AUDIO_MEDIA_JOB_INTENTS:
-        return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get("aud")
+        return DERIVED._ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get("aud")
     if intent == INTENT_VIDEO_GENERATE:
-        return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get("vid")
+        return DERIVED._ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get("vid")
     # Any other kind of job is checked by the content policy that names its intent (the registry's data).
-    return next((policy for policy in _ASSET_CONTENT_ROUTE_POLICY_BY_KIND.values() if policy.get("intent") == intent), None)
+    return next((policy for policy in DERIVED._ASSET_CONTENT_ROUTE_POLICY_BY_KIND.values() if policy.get("intent") == intent), None)
 
 
 def _media_job_content_preflight_response(auth_context: AuthContext) -> Response | None:
     # Before the lookup: the plans must allow some media capability at all.
     # The media a job can make: the intent of every asset content policy, and the audio intents that share the audio one.
-    media_intents = sorted({str(policy["intent"]) for policy in _ASSET_CONTENT_ROUTE_POLICY_BY_KIND.values()}
+    media_intents = sorted({str(policy["intent"]) for policy in DERIVED._ASSET_CONTENT_ROUTE_POLICY_BY_KIND.values()}
                            | _AUDIO_MEDIA_JOB_INTENTS)
     decisions = [
         evaluate_and_apply(
@@ -23465,7 +23458,7 @@ def _resume_pending_image_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
+        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not DERIVED.COMFY_ENABLED):
             _mark_image_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -23709,7 +23702,7 @@ def _media_job_admission_response(
     service_degraded = override_state == "degraded"
     resource_class = _MEDIA_JOB_RESOURCE_CLASS_BY_INTENT.get(intent, "media")
     service_reasons_list: list[str] = []
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         service_reasons_list.append(f"{_graph_adapter().label} media backend disabled")
     if service_blocked or service_degraded:
         reason = str(service_override.get("reason") or "").strip()
@@ -23724,10 +23717,10 @@ def _media_job_admission_response(
         intent=intent,
         observed_at=time.time(),
         load_quality="measured",
-        service_available=COMFY_ENABLED and not service_blocked,
+        service_available=DERIVED.COMFY_ENABLED and not service_blocked,
         service_degraded=service_degraded,
         service_retry_after=service_retry_after
-        or (30 if (not COMFY_ENABLED or service_blocked) else None),
+        or (30 if (not DERIVED.COMFY_ENABLED or service_blocked) else None),
         service_reasons=tuple(service_reasons_list),
         resource_class=resource_class,
         app_id=app_id, active_by_app=_media_job_app_load(app_id, app_limits),
@@ -23791,7 +23784,7 @@ _audio_media_job_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
 
 
 def _audio_media_job_policy() -> dict[str, Any]:
-    return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND["aud"]
+    return DERIVED._ASSET_CONTENT_ROUTE_POLICY_BY_KIND["aud"]
 
 
 def _audio_generation_body_from_media_job_payload(
@@ -24067,7 +24060,7 @@ def _resume_pending_audio_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
+        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not DERIVED.COMFY_ENABLED):
             _mark_audio_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -24214,7 +24207,7 @@ _VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS = 5.0
 
 
 def _video_media_job_policy() -> dict[str, Any]:
-    return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND["vid"]
+    return DERIVED._ASSET_CONTENT_ROUTE_POLICY_BY_KIND["vid"]
 
 
 def _video_route_policy() -> dict[str, Any]:
@@ -24230,7 +24223,7 @@ def _video_route_policy() -> dict[str, Any]:
     (via `_enforce_runtime_route_policy`'s `policy=` override) gets list and
     delete the same protection without touching that shared dict at all.
     """
-    return _ASSET_CONTENT_ROUTE_POLICY_BY_KIND["vid"]
+    return DERIVED._ASSET_CONTENT_ROUTE_POLICY_BY_KIND["vid"]
 
 
 def _video_generation_body_from_media_job_payload(
@@ -24524,7 +24517,7 @@ async def _run_video_media_job(job_id: str) -> None:
                 path=media_jobs.DB_PATH,
             )
 
-        deadline = time.monotonic() + max(1, COMFY_VIDEO_TIMEOUT)
+        deadline = time.monotonic() + max(1, DERIVED.COMFY_VIDEO_TIMEOUT)
         last_progress = 5
         while time.monotonic() < deadline:
             await asyncio.sleep(_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS)
@@ -24694,7 +24687,7 @@ def _resume_pending_video_media_jobs() -> int:
             continue
         from gateway.engine_protocol.dispatch import opted_in
         service = (ADMIN_STORE.get_service_registry().get("services") or {}).get(job.get("backend")) or {}
-        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not COMFY_ENABLED):
+        if not IMAGE_MEDIA_JOB_RESUME_ON_START or (not opted_in(service) and not DERIVED.COMFY_ENABLED):
             _mark_video_media_job_failed(job_id, "The gateway restarted with job recovery turned off")
             continue
         if metadata.get("cancel_requested_at"):
@@ -25000,7 +24993,7 @@ async def gateway_image_generations_media_job(request: Request):
         return response
     if protocol_target is not None:
         receipt.backend = protocol_target.engine_id
-    model = str(body.get("model", COMFY_DEFAULT_MODEL))
+    model = str(body.get("model", DERIVED.COMFY_DEFAULT_MODEL))
     manifest = _find_image_manifest("image.generate", model)
     if receipt is not None:
         receipt.requested_workflow = model
@@ -25591,12 +25584,12 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         )
     admission = _dispatch_admission_response(
         "video.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
+        service_available=DERIVED.COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
     adapter = _graph_adapter("videos")
-    binding = (record.manifest.get("bindings") or {}).get(_GRAPH_BINDING)
+    binding = (record.manifest.get("bindings") or {}).get(DERIVED._GRAPH_BINDING)
     artifact = binding.get("workflow") if isinstance(binding, Mapping) else None
     if not isinstance(artifact, str):
         return Response(
@@ -25676,7 +25669,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         receipt.backend = _GRAPH_BACKEND_ID
         _capture_retention_facts(receipt)
     headers = configured_downstream_headers(auth_context, _GRAPH_BACKEND_ID)
-    async with engine_egress.async_client(timeout=httpx.Timeout(COMFY_TIMEOUT, connect=10)) as client:
+    async with engine_egress.async_client(timeout=httpx.Timeout(DERIVED.COMFY_TIMEOUT, connect=10)) as client:
         graph = _graph(client, "videos")
         for input_name, (filename, raw_bytes, content_type) in asset_uploads.items():
             upload = await graph.upload({"image": (filename, raw_bytes, content_type)}, headers=headers)
@@ -25688,7 +25681,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
                 )
             validation.accepted[input_name] = uploaded_name
         workflow = bind_backend_request(
-            record.manifest, _GRAPH_BINDING, workflow_template, validation.accepted
+            record.manifest, DERIVED._GRAPH_BINDING, workflow_template, validation.accepted
         ).request
 
         refusal = {"out_of_memory": False}
@@ -25696,7 +25689,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         async def submit_and_collect() -> tuple[dict[str, Any] | None, Response | None]:
             admission = _dispatch_admission_response(
                 "video.edit", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-                service_available=COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
+                service_available=DERIVED.COMFY_ENABLED, resource_class="video", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return None, admission
@@ -25711,7 +25704,7 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
                     content=json.dumps({"error": {"message": f"{adapter.label} returned no prompt_id", "type": "api_error"}}),
                     status_code=502, media_type="application/json",
                 )
-            for _ in range(COMFY_TIMEOUT * 2):
+            for _ in range(DERIVED.COMFY_TIMEOUT * 2):
                 await asyncio.sleep(0.5)
                 history = await graph.history(prompt_id, headers=headers)
                 job = history.json().get(prompt_id) if history.status == 200 else None
@@ -25795,7 +25788,7 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
     auth_context = _gateway_auth_context(request, "/gateway/v1/workflows/{workflow_id}/run")
     if isinstance(auth_context, Response):
         return auth_context
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return Response(status_code=503, content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} media backend is disabled", "type": "service_unavailable"}}), media_type="application/json")
     policy_response = (await asyncio.to_thread(_enforce_runtime_route_policy, auth_context, "/gateway/v1/workflows/{workflow_id}/run"))
     if policy_response is not None:
@@ -25986,7 +25979,7 @@ def _load_audio_pin(job_id: str) -> pinned_definitions.PinnedDefinitions:
     """The job's pin, with its manifest and graph checked now, so a job that cannot run fails as ``definition_unavailable``
     before it starts. Raises ``DefinitionUnavailable``."""
     pinned = pinned_definitions.load(job_id, media_jobs.DB_PATH)
-    pinned.manifest(_GRAPH_BINDING)
+    pinned.manifest(DERIVED._GRAPH_BINDING)
     _pinned_graph(pinned)
     return pinned
 
@@ -26052,7 +26045,7 @@ def _manifest_names_audio_workflow(manifest: Mapping[str, Any], workflow_name: s
     if manifest_id == workflow_name or manifest_id.endswith(f".{workflow_name}"):
         return True
     bindings = manifest.get("bindings")
-    graph_binding = bindings.get(_GRAPH_BINDING) if isinstance(bindings, Mapping) else None
+    graph_binding = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings, Mapping) else None
     artifact = graph_binding.get("workflow") if isinstance(graph_binding, Mapping) else None
     return isinstance(artifact, str) and Path(artifact).stem == workflow_name
 
@@ -26096,12 +26089,12 @@ async def proxy_audio_generate(
     """
     admission = _dispatch_admission_response(
         'audio.generate', auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-        service_available=COMFY_ENABLED, resource_class='audio', queue_key=_MEDIA_JOB_QUEUE_KEY,
+        service_available=DERIVED.COMFY_ENABLED, resource_class='audio', queue_key=_MEDIA_JOB_QUEUE_KEY,
     )
     if admission is not None:
         return admission
 
-    if not COMFY_ENABLED:
+    if not DERIVED.COMFY_ENABLED:
         return Response(
             content=json.dumps({"error": {"message": "Audio generation not enabled", "type": "service_unavailable"}}),
             status_code=503,
@@ -26148,7 +26141,7 @@ async def proxy_audio_generate(
     workflow_id = f"audio.generate.{workflow_name}"
     if pinned is not None:
         try:
-            manifest = pinned.manifest(_GRAPH_BINDING)
+            manifest = pinned.manifest(DERIVED._GRAPH_BINDING)
             pinned_graph = _pinned_graph(pinned)
             if pinned_workflow != workflow_id:
                 raise definition_store.DefinitionUnavailable(
@@ -26191,7 +26184,7 @@ async def proxy_audio_generate(
     duration_value = inputs.get("duration")
     seed_val = inputs.get("seed")
     # The template is the one the manifest's binding names, so the map and the graph it writes come from one place.
-    graph_binding = (manifest.get("bindings") or {}).get(_GRAPH_BINDING) or {}
+    graph_binding = (manifest.get("bindings") or {}).get(DERIVED._GRAPH_BINDING) or {}
     workflow = pinned_graph if pinned is not None else _load_audio_workflow_file({"file": graph_binding.get("workflow")})
     if not workflow:
         return Response(
@@ -26227,7 +26220,7 @@ async def proxy_audio_generate(
         return _policy_denied_response(target_decision)
 
     try:
-        workflow = node_graph.compile_workflow(effective, _GRAPH_BINDING, workflow, inputs)
+        workflow = node_graph.compile_workflow(effective, DERIVED._GRAPH_BINDING, workflow, inputs)
     except node_graph.InputRefused as error:
         return openai_error_response(str(error), param=error.param)
     except ManifestError as error:
@@ -26245,7 +26238,7 @@ async def proxy_audio_generate(
             graph = _graph(client, "audio.generate")
             admission = _dispatch_admission_response(
                 "audio.generate", auth_context=auth_context, service_id=_GRAPH_BACKEND_ID,
-                service_available=COMFY_ENABLED, resource_class="audio", queue_key=_MEDIA_JOB_QUEUE_KEY,
+                service_available=DERIVED.COMFY_ENABLED, resource_class="audio", queue_key=_MEDIA_JOB_QUEUE_KEY,
             )
             if admission is not None:
                 return admission
@@ -26753,7 +26746,7 @@ def _workflow_public_model_id(manifest: Mapping[str, Any]) -> str | None:
     if model_id:
         return model_id
     bindings = manifest.get("bindings") if isinstance(manifest.get("bindings"), Mapping) else {}
-    graph_binding = bindings.get(_GRAPH_BINDING) if isinstance(bindings.get(_GRAPH_BINDING), Mapping) else {}
+    graph_binding = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings.get(DERIVED._GRAPH_BINDING), Mapping) else {}
     artifact = graph_binding.get("workflow")
     if not isinstance(artifact, str) or not artifact:
         return None
@@ -26920,7 +26913,7 @@ def _build_role_catalog_entries() -> list[dict]:
             "azizam_model_path": cat.get("path"),
         })
 
-    if EMBEDDINGS_ENABLED and EMBEDDINGS_MODEL:
+    if DERIVED.EMBEDDINGS_ENABLED and EMBEDDINGS_MODEL:
         entries.append({
             "id": EMBEDDINGS_MODEL,
             "object": "model",
@@ -26970,14 +26963,14 @@ def _build_workflow_model_entries(
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, dict):
             continue
-        backend = _GRAPH_BINDING
+        backend = DERIVED._GRAPH_BINDING
         model_id = _gateway_image_model_id(record.manifest)
         workflow_artifact = ""
         if model_id:
             backend = "gateway"
             workflow_artifact = str(record.source_path) if record.source_path else ""
         else:
-            graph_binding = bindings.get(_GRAPH_BINDING)
+            graph_binding = bindings.get(DERIVED._GRAPH_BINDING)
             if not isinstance(graph_binding, dict):
                 continue
             artifact = graph_binding.get("workflow")
@@ -27829,7 +27822,7 @@ async def _forward_embeddings(
         internal_forward_header=_INTERNAL_PROTOCOL_FORWARD_HEADER,
         internal_forward_secret=_INTERNAL_PROTOCOL_FORWARD_SECRET,
         source_headers=_protocol_loopback_source_headers(request),
-        read_timeout=EMBEDDINGS_TIMEOUT,
+        read_timeout=DERIVED.EMBEDDINGS_TIMEOUT,
     )
     client = engine_egress.async_client(timeout=loopback_request.timeout)
     try:
@@ -29535,11 +29528,6 @@ _OPENAI_COMPAT_JSON_BODY_OPENAPI = {
     },
 }
 
-_AZIZAM_POLICY = route_registry.azizam_policy(
-    registry=_PROTOCOL_ROUTE_REGISTRY,
-    proxy_config=config,
-)
-
 _INTERNAL_PROTOCOL_FORWARD_HEADER = "x-azizam-internal-protocol-forward"
 _INTERNAL_PROTOCOL_FORWARD_SECRET = secrets.token_urlsafe(32)
 _INTERNAL_PROTOCOL_FORWARD_HOSTS = frozenset({"127.0.0.1", "::1"})
@@ -29665,7 +29653,7 @@ def _azizam_policy_decision(
     requested_model: str | None = None,
 ) -> PolicyDecision | None:
     """``requested_model`` is the name the caller sent when ``body`` already holds the model it resolved to."""
-    spec = _AZIZAM_POLICY.get(request_path)
+    spec = DERIVED._AZIZAM_POLICY.get(request_path)
     if spec is None:
         return None
 
@@ -29895,7 +29883,7 @@ def _start_litellm_route_receipt(
     parent_request_id: str = "",
 ) -> RouteReceipt:
     if protocol is None or intent is None:
-        protocol, intent = _AZIZAM_POLICY.get(
+        protocol, intent = DERIVED._AZIZAM_POLICY.get(
             request_path,
             ("openai.chat", "chat.generate"),
         )
@@ -30723,7 +30711,7 @@ async def _forward_litellm_proxy_request(
     )
     gateway_metadata.update(_gateway_request_id_metadata(receipt.request_id))
     read_timeout = (
-        EMBEDDINGS_TIMEOUT
+        DERIVED.EMBEDDINGS_TIMEOUT
         if request_path == "/v1/embeddings"
         else upstream_read_timeout()
     )
@@ -31467,7 +31455,7 @@ async def _handle_openai_litellm_request_once(
 
     admission = _model_dispatch_admission_response(
         auth_context, parsed_body.get("model"),
-        intent=_AZIZAM_POLICY.get(request_path, ("openai.chat", "chat.generate"))[1],
+        intent=DERIVED._AZIZAM_POLICY.get(request_path, ("openai.chat", "chat.generate"))[1],
         resource_class="embeddings" if request_path == "/v1/embeddings" else "chat",
     )
     if admission is not None:
@@ -32946,7 +32934,7 @@ FRONTEND_TRANSLATORS.mount_owned(app)
 FRONTEND_MOUNTS = frontend_mount.FrontendMounts(
     app, FRONTEND_TRANSLATORS, authenticate=_authenticate_mounted_route, refuse=_frontend_refusal,
 )
-FRONTEND_MOUNTS.apply(route_registry.mount_frontend_records(registry=_PROTOCOL_ROUTE_REGISTRY, proxy_config=config))
+FRONTEND_MOUNTS.apply(route_registry.mount_frontend_records(registry=DERIVED._PROTOCOL_ROUTE_REGISTRY, proxy_config=config))
 
 
 # The web app: just before the catch-all, never a partial match (gateway/ui_routes.py).

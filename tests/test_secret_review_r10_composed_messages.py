@@ -45,7 +45,7 @@ def test_a_refused_graph_upload_never_puts_the_engines_text_in_the_502(fake_upst
         "exchanges": [{"id": "upload", "match": {"method": "POST", "path": "/upload/image"},
                        "response": {"status": status, "body": [{"text": body}]}}],
     }))
-    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
     _, response = asyncio.run(proxy._upload_video_workflow_assets({}, {"source_video": (b"x", "a.mp4", "video/mp4")}, proxy.NO_AUTH_CONTEXT))
     assert response is not None and response.status_code == 502
     assert MARKER not in response.body.decode()
@@ -90,7 +90,7 @@ def video_state(monkeypatch):
     monkeypatch.setattr(proxy, "_video_records_restored", set())
     monkeypatch.setattr(proxy, "_video_progress_lock", asyncio.Lock())
     monkeypatch.setattr(proxy, "_persist_video_record", Mock())
-    monkeypatch.setattr(proxy, "COMFY_ENABLED", True)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
     monkeypatch.setattr(proxy, "configured_downstream_headers", lambda *a: {})
     monkeypatch.setattr(proxy.prompt_memory, "delete_asset", Mock())
 
@@ -101,7 +101,7 @@ def _history_fake(fake_upstreams, monkeypatch, job):
         "provenance": {"source": "hand-written", "reference": "ComfyUI server route GET /history/{prompt_id} (ComfyUI server.py)"},
         "exchanges": [{"id": "history", "repeat": True, "match": {"method": "GET", "path": "/history/p"}, "response": {"json": {"p": job}}}],
     }))
-    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
 
 
 def _status(graph):

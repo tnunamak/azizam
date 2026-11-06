@@ -7,6 +7,7 @@ code that reads the snapshot (the decision runtime, the mesh frontend records). 
 from __future__ import annotations
 
 from typing import Any, Mapping
+from unittest import mock
 
 import pytest
 
@@ -56,6 +57,38 @@ class section_published:
             self._saved = None
 
     def __enter__(self) -> "section_published":
+        self.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.stop()
+
+
+class derived_patch:
+    """Patch one value of the published snapshot's ``derived`` mapping (``proxy.DERIVED.<name>``), for a ``with`` block or
+    ``start``/``stop``.
+
+    A test that patched a module constant a reader used to read (``patch.object(proxy, "COMFY_ENABLED", True)``) patches the
+    snapshot the reader now takes it from. The snapshot is the one published when ``start`` runs, so a list of patchers that
+    starts a ``section_published`` first patches that snapshot. A test that publishes another snapshot afterwards (a reload,
+    ``publish_config``) must patch after that.
+    """
+
+    def __init__(self, name: str, value: Any) -> None:
+        self.name = name
+        self.value = value
+        self._patch: Any = None
+
+    def start(self) -> None:
+        self._patch = mock.patch.dict(proxy.runtime().derived, {self.name: self.value})
+        self._patch.start()
+
+    def stop(self) -> None:
+        if self._patch is not None:
+            self._patch.stop()
+            self._patch = None
+
+    def __enter__(self) -> "derived_patch":
         self.start()
         return self
 

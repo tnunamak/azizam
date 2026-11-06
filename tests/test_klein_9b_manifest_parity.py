@@ -12,6 +12,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 import pytest
 from test_image_route_receipts import _MultipartRequest, _MultipartUpload, _png_bytes
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: F401
@@ -22,7 +23,7 @@ NAMESPACE = "com.azizam.workflow"
 @pytest.fixture
 def _serve_upload(fake_upstreams, monkeypatch):
     fake = fake_upstreams.asgi(load_scenario("comfyui/upload-ok-any"))
-    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
 
 
 class KleinNineBParityTests(IsolatedAsyncioTestCase):
@@ -34,7 +35,6 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
         stack = ExitStack()
         self.addCleanup(stack.close)
         for name, value in (
-            ("COMFY_ENABLED", True),
             ("_dispatch_admission_response", Mock(return_value=None)),
             ("_service_availability_response", Mock(return_value=None)),
             ("configured_downstream_headers", Mock(return_value={})),
@@ -46,6 +46,7 @@ class KleinNineBParityTests(IsolatedAsyncioTestCase):
             ("compute_max_batch", Mock(return_value=1)),
         ):
             stack.enter_context(patch.object(proxy, name, value))
+        stack.enter_context(derived_patch("COMFY_ENABLED", True))
         stack.enter_context(patch.object(proxy.media_delivery, "current", return_value=None))
         stack.enter_context(patch.object(
             proxy, "_build_image_response_payload",

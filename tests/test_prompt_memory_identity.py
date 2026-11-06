@@ -42,7 +42,7 @@ def test_same_app_other_person_can_read_media_but_not_video_prompt(tmp_path, mon
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", admin_db)
     monkeypatch.setattr(media_jobs, "DB_PATH", jobs_db)
     monkeypatch.setattr(prompt_memory, "DB_PATH", jobs_db)
-    monkeypatch.setattr(proxy, "COMFY_ENABLED", True)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *_a, **_kw: None)
     monkeypatch.setattr(proxy, "configured_downstream_headers", lambda *_a: {})
     monkeypatch.setattr(proxy, "_video_job_records", {"private": {
@@ -180,7 +180,7 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", path)
     monkeypatch.setattr(media_jobs, "DB_PATH", jobs_db)
     monkeypatch.setattr(prompt_memory, "DB_PATH", jobs_db)
-    monkeypatch.setattr(proxy, "COMFY_ENABLED", True)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
     monkeypatch.setattr(proxy, "configured_downstream_headers", lambda *_a: {})
     monkeypatch.setattr(proxy, "_video_job_records", {"private": {
         "app_id": app["id"], "person_id": member["id"],

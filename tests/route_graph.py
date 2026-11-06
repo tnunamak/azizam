@@ -63,12 +63,12 @@ def routes(app) -> list[dict[str, Any]]:
 
 def policy(proxy_module) -> dict[str, Any]:
     return {
-        "runtime": proxy_module._RUNTIME_ROUTE_POLICY,
-        "azizam": {path: list(spec) for path, spec in sorted(proxy_module._AZIZAM_POLICY.items())},
-        "asset_content": proxy_module._ASSET_CONTENT_ROUTE_POLICY_BY_KIND,
+        "runtime": proxy_module.DERIVED._RUNTIME_ROUTE_POLICY,
+        "azizam": {path: list(spec) for path, spec in sorted(proxy_module.DERIVED._AZIZAM_POLICY.items())},
+        "asset_content": proxy_module.DERIVED._ASSET_CONTENT_ROUTE_POLICY_BY_KIND,
         "aliases": [
             {"methods": list(entry["methods"]), "canonical": entry["canonical"], "alias": entry["alias"]}
-            for entry in proxy_module.CANONICAL_PROTOCOL_ROUTE_ALIASES
+            for entry in proxy_module.DERIVED.CANONICAL_PROTOCOL_ROUTE_ALIASES
         ],
     }
 

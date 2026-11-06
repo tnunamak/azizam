@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import proxy
+from tests.support.config_snapshot import derived_patch
 import pytest
 from gateway.receipts import RouteReceipt
 from test_image_route_receipts import _MultipartRequest, _MultipartUpload, _png_bytes
@@ -30,7 +31,7 @@ def serve_comfy(fake_upstreams, monkeypatch):
     def serve(name, *, wire=False, **values):
         scenario = load_scenario(f"comfyui/{name}", **values)
         fake = fake_upstreams.loopback(scenario) if wire else fake_upstreams.asgi(scenario)
-        monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+        monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
         return fake
 
     serve.fakes = fake_upstreams
@@ -43,7 +44,7 @@ def _refused_comfy_host(monkeypatch):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         host = f"http://127.0.0.1:{probe.getsockname()[1]}"
-    monkeypatch.setattr(proxy, "COMFY_HOST", host)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", host)
 
 
 class ImageHandlerGapTests(IsolatedAsyncioTestCase):
@@ -83,7 +84,6 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
             }},
         }
         for name, value in (
-            ("COMFY_ENABLED", True),
             ("_dispatch_admission_response", Mock(return_value=None)),
             ("_service_availability_response", Mock(return_value=None)),
             ("configured_downstream_headers", Mock(return_value={})),
@@ -101,6 +101,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
             ("IMAGE_FREE_VRAM_ON_EXHAUSTION", True),
         ):
             self.stack.enter_context(patch.object(proxy, name, value))
+        self.stack.enter_context(derived_patch("COMFY_ENABLED", True))
         self.stack.enter_context(patch.object(proxy.media_delivery, "current", return_value=None))
         self.stack.enter_context(patch.object(proxy.random, "randint", return_value=999))
         self.stack.enter_context(patch.object(proxy, "_build_image_response_payload",
@@ -490,7 +491,7 @@ def test_graph_failure_response_maps_transport_failures_and_httpx_errors(monkeyp
     """Adapter transport failures and the httpx errors of other calls in the same try read the same to the caller."""
     from gateway.engine_protocol.errors import TransportFailure
 
-    monkeypatch.setattr(proxy, "COMFY_HOST", "http://graph.test:1")
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", "http://graph.test:1")
     for error, status, message in (
         (TransportFailure("timeout", "read"), 504, "ComfyUI request timeout"),
         (httpx.ReadTimeout("read"), 504, "ComfyUI request timeout"),
@@ -507,7 +508,7 @@ def test_graph_failure_response_maps_transport_failures_and_httpx_errors(monkeyp
 def test_identity_upload_refusal_still_raises_the_httpx_error(monkeypatch):
     """The identity routes catch httpx.HTTPError: an upload that cannot connect keeps raising the error they handle."""
     _refused_comfy_host(monkeypatch)
-    monkeypatch.setattr(proxy, "COMFY_ENABLED", True)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
     with pytest.raises(httpx.ConnectError):
         asyncio.run(asyncio.wait_for(
             proxy._identity_run_workflow(proxy.NO_AUTH_CONTEXT, {"1": {"inputs": {}}}, {"1": _png_bytes((0, 0, 0, 255))}),

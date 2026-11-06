@@ -525,7 +525,8 @@
 # Train 8 (2026-11-06): connection address refuses a credential (+1), transition-proof trace records parked (+0); measured 19821.
 # feat/config-homes-c4 (2026-11-06): registry layering, migration step, export/import and rollback tests; measured 19849 (+28 net of the seed and backfill tests it removed).
 # C4 review fixes: a damaged stored registry is never overwritten (+3); measured 19852.
-pytest = 19852
+# feat/config-homes-c9 (2026-11-06): registry-derived constants acceptance tests (+13); measured 19865.
+pytest = 19865
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -762,7 +763,8 @@ ad_hoc_upstream_fake_files = 46
 # 830 on 2026-11-05 (mesh gate fix): -10 where the kind words moved from gateway/asset_types.py to registry/asset_kinds.yml.
 # 826 on 2026-11-06 (S2.2 pinned-workflow check): the audio route names its resolved workflow once instead of five times.
 # 825 on 2026-11-06 (feat/config-homes-c4): -1 where the mesh upgrade step names left with the engine backfill.
-domain_literals = 825
+# 824 on 2026-11-06 (feat/config-homes-c9): -1 where the TTS/STT/COMFY constant blocks left proxy.py for the derive function.
+domain_literals = 824
 # Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
 # scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
 # a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through
@@ -781,7 +783,9 @@ domain_literals = 825
 "import_time_config_reads.admin" = 2
 "import_time_config_reads.audio" = 4
 "import_time_config_reads.auth" = 5
-"import_time_config_reads.backends" = 23
+# C9 (feat/config-homes-c9) lowered backends 23 to 3: the ten class A and ten class B constants of the registry records are
+# derived into the snapshot (DERIVED.*). Left: TTS_BACKEND_MODEL, STT_BACKEND_MODEL (C8c moves both) and EMBEDDINGS_MODEL (C8c).
+"import_time_config_reads.backends" = 3
 "import_time_config_reads.gateway" = 0
 "import_time_config_reads.identity" = 1
 "import_time_config_reads.images" = 27
@@ -795,7 +799,8 @@ domain_literals = 825
 "import_time_config_reads.roles" = 0
 "import_time_config_reads.videos" = 7
 # C4 (feat/config-homes-c4) lowered whole_config 6 to 5: the registry boot read no longer hands the startup config to the registry seed.
-"import_time_config_reads.whole_config" = 5
+# C9 lowered it 5 to 1: the route policies and the protocol route aliases are derived into the snapshot; the boot frontend mount stays.
+"import_time_config_reads.whole_config" = 1
 
 # Browser hygiene (TEST_STRATEGY.md 3.4 rules 1-3, and 3.4's intercept rule):
 # occurrences in Playwright code under web/e2e and *.e2e.* / *.playwright.*

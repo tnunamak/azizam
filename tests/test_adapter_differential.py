@@ -6,7 +6,7 @@ traces to be identical, records the trace for the junit dump, and compares it wi
 ``docs/verification/ENGINE_W6B_DIFFERENTIAL.md``.
 
 The engine is the scenario-driven ``comfyui`` fake (tests/support/fake_upstream), served
-in process at ``http://comfy.fk.test`` with ``proxy.COMFY_HOST`` pointed at it. A scenario
+in process at ``http://comfy.fk.test`` with ``proxy.DERIVED.COMFY_HOST`` pointed at it. A scenario
 that needs the engine to be down routes the host to a transport that refuses.
 
 Not reachable hermetically: the image background decision ``background: "auto"`` asks a
