@@ -63,9 +63,14 @@ def effective_config(proxy: Any, name: str, admin_db: Path) -> dict[str, Any]:
     goldens are the settings the startup files mean, and a block that does not import would hide them.
     """
     from gateway import config_runtime
+    from tests.registry_test_helpers import seed_registry_from_backends
 
+    raw = raw_config(name)
+    # The gateway does not seed a registry from the file's ``backends`` (CONFIG_HOMES 8.5): the install the goldens mean
+    # is one whose owner already holds those engines as registry records.
+    seed_registry_from_backends(admin_db, raw)
     with patch.object(proxy, "ADMIN_DB_PATH", admin_db):
-        effective = proxy._load_effective_runtime_config(copy.deepcopy(raw_config(name)), boot=True)
+        effective = proxy._load_effective_runtime_config(copy.deepcopy(raw), boot=True)
     layer, _generation = config_runtime.carried(effective)
     blocked = {section: found for section, found in layer.problems.items()
                if any(problem["code"] == "legacy_import_blocked" for problem in found)}
