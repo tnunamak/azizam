@@ -36,6 +36,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/images/fibo-2-edit-turbo.json
+    selectors:
+      image: {node: '10', key: images, from: output_dir, decode: none, take: all}
     map:
       prompt:
         - node: "6"

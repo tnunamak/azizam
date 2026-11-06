@@ -400,7 +400,7 @@
           "intent": "image.generate",
           "job_id": null,
           "latency_ms": "<duration>",
-          "manifest_hash": "9aed1752d05b0e8bfa743a08ee5372a4e723d24d248c7a8c95e3e3b1ea6cea3a",
+          "manifest_hash": "180ae693b5fca4383bf63e326df4c3c1920cf6bcd680d94c09f2f3f51bd40d24",
           "manifest_id": "image.generate.krea2-turbo",
           "manifest_version": "0.1.0",
           "metadata": {},

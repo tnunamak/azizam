@@ -29,6 +29,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/videos/rife-interpolate.json
+    selectors:
+      video: {node: '6', key: images, from: output_dir, decode: none, take: first}
     map:
       source_video:
         - node: "1"

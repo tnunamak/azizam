@@ -17,6 +17,10 @@ class ManifestError(ValueError):
     """Raised when a manifest or backend binding is invalid."""
 
 
+# The input types that carry media: a value that names a stored or supplied file, not a plain value.
+MEDIA_INPUT_TYPES = frozenset({"asset", "image"})
+
+
 @dataclass
 class InputValidationResult:
     accepted: dict[str, Any] = field(default_factory=dict)
@@ -134,6 +138,10 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
             isinstance(name, str) and name in manifest["inputs"] for name in edge_only
         ):
             raise ManifestError(f"binding {backend} edge_only_inputs must name declared inputs")
+    # A binding that declares output selectors is checked against its adapter's descriptor (CODE_TO_DATA_S2, D8).
+    from gateway import output_selectors
+
+    output_selectors.check_manifest(manifest)
 
 
 def validate_inputs(
@@ -314,7 +322,7 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     elif expected_type == "boolean":
         if not isinstance(value, bool):
             return f"{name} must be a boolean"
-    elif expected_type in {"asset", "image"}:
+    elif expected_type in MEDIA_INPUT_TYPES:
         # An image input is a media reference, like an asset: a data URI, URL or gateway reference.
         if not isinstance(value, (str, dict)):
             return f"{name} must be an asset reference"

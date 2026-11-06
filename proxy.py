@@ -112,7 +112,7 @@ from gateway import asset_types, media_delivery, media_fetch, media_metadata, pr
 from gateway import video_subject, thumbnails, output_availability
 from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
-from gateway import definition_store, job_envelope, pinned_definitions
+from gateway import definition_store, job_envelope, output_selectors, pinned_definitions, result_bundle
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
 from gateway import exclusive_pool, mesh_api, mesh_manifest
@@ -1139,7 +1139,6 @@ _VIDEO_GRAPH_CAPABILITY = "videos"
 _AUDIO_GRAPH_CAPABILITY = "audio.generate"
 # What a finished prompt names, read by the adapter that knows the engine's answers.
 _first_video_output = node_graph.first_video_output
-_first_audio_output = node_graph.first_audio_output
 _queue_prompt_ids = node_graph.queue_prompt_ids
 
 
@@ -22547,6 +22546,7 @@ def _collect_definition_garbage() -> None:
         store = _definition_stores[path] = definition_store.DefinitionStore(path)
     try:
         store.collect_garbage(grace_s=_DEFINITION_GC_GRACE_S, limit=_DEFINITION_GC_BATCH)
+        result_bundle.sweep(path=path)
     except sqlite3.OperationalError as exc:
         if "locked" not in str(exc) and "busy" not in str(exc):
             raise
@@ -23261,6 +23261,11 @@ def _request_shim_from_image_job_payload(payload: Mapping[str, Any]) -> _JsonBod
 
 def _recover_media_jobs() -> None:
     """Run on every startup, even when the operator disables resuming."""
+    # Before any job resumes: no run is staging results yet, so every unpublished stage is a dead attempt's.
+    try:
+        result_bundle.startup_scan()
+    except Exception as exc:  # noqa: BLE001 - a failed scan must not stop recovery; the next start runs it again
+        _MEDIA_JOB_LOG.warning("result startup scan failed: %s", log_scrub.describe_error(exc))
     _resume_pending_image_media_jobs()
     _resume_pending_audio_media_jobs()
     _resume_pending_video_media_jobs()
@@ -24023,6 +24028,24 @@ def _mark_audio_media_job_failed(
     _delete_audio_media_job_payload(job_id)
 
 
+_RESULT_REFUSED = "The result was larger or other than the gateway allows, so it was not delivered."
+
+
+def _fail_refused_result(job_id: str, refused: result_bundle.ResultRefused, http_status: int) -> None:
+    """End a job whose result broke a limit (CODE_TO_DATA_S2, D6). The message and the code name no value."""
+    _MEDIA_JOB_LOG.warning("job %s: a result was refused: %s", job_id, refused.code)
+    _mark_audio_media_job_failed(job_id, _RESULT_REFUSED, http_status=http_status, error_info={
+        "error_code": "result_refused", "error_category": "upstream", "retryable": False})
+
+
+def _result_refusal_response(code: str, status_code: int) -> Response:
+    """The refusal of a result a selector or a fetch limit would not deliver (CODE_TO_DATA_S2, D5 and D6). It names a code, never a value."""
+    return Response(
+        content=json.dumps({"error": {"message": "The result could not be read within the deployment's limits",
+                                      "type": "api_error", "code": code}}),
+        status_code=status_code, media_type="application/json")
+
+
 @_settle_native_job
 async def _run_audio_media_job(job_id: str) -> None:
     async with _audio_media_job_semaphore:
@@ -24125,6 +24148,13 @@ async def _run_audio_media_job(job_id: str) -> None:
             response_format=str(response_format) if response_format else None,
             media_type=media_type,
         )
+        # The result limits are checked before the files are saved: a refused result leaves nothing behind.
+        result_limits = result_bundle.limits_from_config(runtime().config)
+        try:
+            result_bundle.check_assets(result_limits, [len(artifact.content) for artifact in artifacts])
+        except result_bundle.ResultRefused as exc:
+            _fail_refused_result(job_id, exc, status_code)
+            return
         assets = await asyncio.to_thread(audio_media_jobs.store_audio_artifacts,
             artifacts,
             store_asset=store_asset_bytes,
@@ -24138,14 +24168,17 @@ async def _run_audio_media_job(job_id: str) -> None:
             )
             return
 
-        media_jobs.update_status(
-            job_id,
-            media_jobs.STATUS_SUCCEEDED,
-            progress=100,
-            add_assets=assets,
-            metadata_patch={"completed_at": int(time.time()), **_job_metadata_mode_patch()},
-            path=media_jobs.DB_PATH,
-        )
+        try:
+            # The job lists its assets as before; its result bundle mirrors that list (CODE_TO_DATA_S2, D4).
+            result_bundle.mirror_assets(
+                job_id, assets, limits=result_limits, name=getattr(response, "selected_result", None) or result_bundle.DEFAULT_NAME,
+                progress=100,
+                metadata_patch={"completed_at": int(time.time()), **_job_metadata_mode_patch()},
+                path=media_jobs.DB_PATH,
+            )
+        except result_bundle.ResultRefused as exc:
+            _fail_refused_result(job_id, exc, status_code)
+            return
         media_jobs.append_event(
             job_id,
             "completed",
@@ -26433,13 +26466,30 @@ async def proxy_audio_generate(
                 status_obj = job.get("status", {}) or {}
                 status = status_obj.get("status_str") or status_obj.get("status") or ""
                 if status == "success":
-                    file_info = _first_audio_output(job)
+                    # The result is the file the workflow's selector names (CODE_TO_DATA_S2, D5), within the D6 limits.
+                    result_limits = result_bundle.limits_from_config(runtime().config)
+                    try:
+                        picked = adapter.collect(
+                            job, graph_binding, manifest.get("outputs") or {}, limits=result_limits,
+                            legacy_allowed=output_selectors.legacy_collection_enabled(runtime().config),
+                            history_bytes=len(history_resp.raw or b""))
+                    except node_graph.SelectionRefused as refusal:
+                        if refusal.code == "result_missing":
+                            picked = {}
+                        else:
+                            return _result_refusal_response(refusal.code, 502)
+                    selected_name, selected_files = next(iter(picked.items()), (None, ()))
+                    file_info = selected_files[0] if selected_files else None
                     if file_info and file_info.get("filename"):
                         # Fetch the audio file
                         params = {"filename": file_info["filename"], "type": file_info.get("type", "output")}
                         if file_info.get("subfolder"):
                             params["subfolder"] = file_info["subfolder"]
-                        audio_resp = await graph.view(params, headers=headers)
+                        try:
+                            async with output_selectors.FETCH_GATE.slot(result_limits):
+                                audio_resp = await graph.view(params, headers=headers)
+                        except output_selectors.FetchRefused as refusal:
+                            return _result_refusal_response(refusal.code, 504)
                         if audio_resp.status == 200:
                             content_type = audio_resp.headers.get("content-type", "audio/wav")
                             audio_bytes = audio_resp.raw
@@ -26487,12 +26537,15 @@ async def proxy_audio_generate(
                                     status_code=502,
                                     media_type="application/json",
                                 )
-                            return Response(
+                            delivered = Response(
                                 content=audio_bytes,
                                 status_code=200,
                                 media_type=content_type,
                                 headers={"X-Audio-Model": workflow_name, "X-Audio-Type": audio_type}
                             )
+                            # The job names its bundle result by the output the selector read.
+                            delivered.selected_result = selected_name
+                            return delivered
                     return Response(
                         content=json.dumps({"error": {"message": "No audio output found", "type": "api_error"}}),
                         status_code=502,
