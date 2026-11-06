@@ -792,7 +792,8 @@ domain_literals = 825
 "import_time_config_reads.request_body_limits" = 1
 "import_time_config_reads.roles" = 0
 "import_time_config_reads.videos" = 7
-"import_time_config_reads.whole_config" = 6
+# C4 (feat/config-homes-c4) lowered whole_config 6 to 5: the registry boot read no longer hands the startup config to the registry seed.
+"import_time_config_reads.whole_config" = 5
 
 # Browser hygiene (TEST_STRATEGY.md 3.4 rules 1-3, and 3.4's intercept rule):
 # occurrences in Playwright code under web/e2e and *.e2e.* / *.playwright.*

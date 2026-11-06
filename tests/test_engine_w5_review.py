@@ -156,7 +156,7 @@ def test_engine_create_returns_the_registry_revision_after_reload_backfills(tmp_
     db = tmp_path / 'admin.db'
     admin_store.init_db(db)
     store = AdminSQLiteStore(db)
-    store.on_service_registry_changed = lambda: service_registry.ensure_service_registry({'backends': {}}, path=db)
+    store.on_service_registry_changed = lambda: service_registry.ensure_service_registry(path=db)
     created = asyncio.run(engine_admin.EngineService(store).create(
         AdminContext(subject='owner', roles=frozenset({'owner'})), {
             'definition': 'openai-compatible', 'name': 'new-engine', 'disabled': True,

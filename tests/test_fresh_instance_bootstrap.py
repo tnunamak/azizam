@@ -3,7 +3,7 @@
 These tests exercise the pieces that matter for a new self-hoster:
   1. admin_store.init_db() creates a usable schema on a blank DB.
   2. default_profiles.seed_default_profiles() populates profiles into a blank DB.
-  3. service_registry.ensure_service_registry() accepts a minimal config without
+  3. service_registry.ensure_service_registry() starts an empty store without
      touching any live data.
   4. AZIZAM_ADMIN_DB env override is honoured -- we never touch data/admin.db.
 
@@ -22,27 +22,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 LIVE_DB = ROOT / "data" / "admin.db"
-
-# Minimal proxy_config.yml content for a fresh self-hoster -- no owner-specific paths.
-MINIMAL_CONFIG: dict = {
-    "proxy": {"host": "127.0.0.1", "port": 15000},
-    "auth": {"enabled": False},
-    "backends": {
-        "example-llm": {
-            "name": "Example LLM",
-            "native_passthrough": True,
-            "host": "127.0.0.1",
-            "port": 19999,
-            "health_endpoint": "/v1/models",
-            "role": "standby",
-            "capabilities": ["chat", "completions"],
-            "managed": False,
-        }
-    },
-    "routing": {"default_backend": "example-llm"},
-    "roles": {"default": {"backend": "example-llm"}},
-}
-
 
 class TestFreshInstanceBootstrap(unittest.TestCase):
     def setUp(self) -> None:
@@ -86,12 +65,11 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
 
     # -- 3. service_registry with minimal config -------------------------------
 
-    def test_ensure_service_registry_with_minimal_config(self) -> None:
+    def test_ensure_service_registry_on_an_empty_store(self) -> None:
         from gateway import admin_store, service_registry
 
         admin_store.init_db(self.db)
         registry = service_registry.ensure_service_registry(
-            MINIMAL_CONFIG,
             path=self.db,
             actor="harness-test",
         )
