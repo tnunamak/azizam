@@ -12,6 +12,7 @@ import yaml
 from starlette.requests import Request
 
 import proxy
+from tests.registry_test_helpers import seed_registry_document
 from gateway import service_registry
 from gateway.litellm_substrate import compile_litellm_config_from_registry
 from tests.support.fake_upstream import fake_upstreams, scenario_from_data  # noqa: F401
@@ -23,7 +24,7 @@ MAIN_PROBES = json.loads((FIXTURES / 'main-probes.json').read_text())
 
 @pytest.mark.parametrize('shape', ['seed', 'live'])
 def test_unedited_registry_compiles_to_the_main_bytes(shape):
-    registry = LIVE if shape == 'live' else service_registry.build_service_registry_seed(
+    registry = LIVE if shape == 'live' else seed_registry_document(
         yaml.safe_load((Path(__file__).parents[1] / 'proxy_config.yml').read_text()))
     compiled = compile_litellm_config_from_registry(registry)
     from gateway.litellm_content import profile

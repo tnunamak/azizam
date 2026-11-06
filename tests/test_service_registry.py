@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.registry_test_helpers import seed_registry_document
 from gateway import admin_store, service_registry
 from tests.registry_test_helpers import write_service_registry_for_test
 
@@ -327,7 +328,7 @@ records:
         encoding="utf-8",
     )
 
-    registry = service_registry.build_service_registry_seed(
+    registry = seed_registry_document(
         {"registry": {"catalog_dir": str(tmp_path)}, "backends": {}}
     )
 
@@ -336,7 +337,7 @@ records:
 
 
 def test_litellm_substrate_service_is_seed_data() -> None:
-    registry = service_registry.build_service_registry_seed({"backends": {}})
+    registry = seed_registry_document({"backends": {}})
 
     service = registry["services"]["litellm"]
     assert service["kind"] == "llm-substrate"
@@ -381,7 +382,7 @@ def test_litellm_substrate_service_backfills_existing_registries() -> None:
 
 
 def test_protocol_frontend_metadata_is_preserved_for_discovery() -> None:
-    registry = service_registry.build_service_registry_seed(
+    registry = seed_registry_document(
         {
             "protocol_frontends": {
                 "custom": {
@@ -423,7 +424,7 @@ def test_seed_metadata_backfills_older_builtin_protocol_records() -> None:
 
 
 def test_service_kind_is_data_not_inferred_from_capability_names() -> None:
-    registry = service_registry.build_service_registry_seed(
+    registry = seed_registry_document(
         {
             "backends": {
                 "chatty": {
@@ -443,7 +444,7 @@ def test_service_kind_is_data_not_inferred_from_capability_names() -> None:
 
 
 def test_proxy_config_can_seed_custom_protocol_frontends() -> None:
-    registry = service_registry.build_service_registry_seed(
+    registry = seed_registry_document(
         {
             "protocol_frontends": {
                 "custom": {
@@ -804,7 +805,7 @@ def test_list_resource_summaries_sorted_by_priority() -> None:
 
 
 def _seed_with_provisioned() -> dict:
-    return service_registry.build_service_registry_seed(
+    return seed_registry_document(
         {
             "backends": {
                 "tabby": {
@@ -883,7 +884,7 @@ def test_upsert_edit_allows_provisioned_records() -> None:
 
 def test_upsert_edit_rejects_managed_substrate_host_changes() -> None:
     # Managed-substrate rows (litellm) block endpoint/protocol changes.
-    reg = service_registry.build_service_registry_seed({"backends": {}})
+    reg = seed_registry_document({"backends": {}})
     assert service_registry.is_litellm_service_record("litellm", reg["services"]["litellm"])
     raw = service_registry.service_form_to_raw(
         {"name": "LiteLLM", "base_url": "http://127.0.0.1:9999/v1"}
@@ -899,7 +900,7 @@ def test_upsert_edit_rejects_managed_substrate_host_changes() -> None:
 
 def test_upsert_edit_allows_managed_substrate_rename() -> None:
     # Managed-substrate rows allow name, enabled, note changes.
-    reg = service_registry.build_service_registry_seed({"backends": {}})
+    reg = seed_registry_document({"backends": {}})
     raw = {"name": "LiteLLM Renamed", "enabled": True}
     reg2, rec = service_registry.upsert_service_in_registry(
         reg, service_id="litellm", raw=raw, replace=True
@@ -911,7 +912,7 @@ def test_upsert_edit_allows_managed_substrate_rename() -> None:
 
 def test_upsert_edit_persists_managed_note_in_canonical_config() -> None:
     """Managed metadata PATCH stores note in config without losing config data."""
-    reg = service_registry.build_service_registry_seed({"backends": {}})
+    reg = seed_registry_document({"backends": {}})
     original_config = dict(reg["services"]["litellm"]["config"])
 
     reg2, rec = service_registry.upsert_service_in_registry(
@@ -948,7 +949,7 @@ def test_remove_allows_any_non_managed_source() -> None:
 
 def test_remove_blocks_managed_substrate() -> None:
     # Only managed-substrate rows (litellm) are blocked from removal.
-    reg = service_registry.build_service_registry_seed({"backends": {}})
+    reg = seed_registry_document({"backends": {}})
     assert "litellm" in reg["services"]
     try:
         service_registry.remove_service_from_registry(reg, "litellm")
@@ -1191,7 +1192,7 @@ def test_nested_lifecycle_driver_survives_first_boot_seed() -> None:
     }
 
     registry = service_registry.normalize_service_registry(
-        service_registry.build_service_registry_seed(proxy_config)
+        seed_registry_document(proxy_config)
     )
     backends = service_registry.runtime_backends(registry)
 
@@ -1314,7 +1315,7 @@ def test_existing_registry_model_rows_are_not_silently_upgraded_from_yaml(tmp_pa
     }
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
-    old_registry = service_registry.build_service_registry_seed(old_config)
+    old_registry = seed_registry_document(old_config)
     write_service_registry_for_test(
         old_registry,
         updated_by="test",
@@ -1476,7 +1477,7 @@ def test_models_list_round_trips_through_form_to_raw_to_litellm(tmp_path: Path) 
     ]
 
     # Upsert into registry.
-    seed = service_registry.build_service_registry_seed({"backends": {}})
+    seed = seed_registry_document({"backends": {}})
     registry, record = service_registry.upsert_service_in_registry(
         seed, service_id="my-tgw", raw=raw, source="ui"
     )
@@ -1497,7 +1498,7 @@ def test_models_list_round_trips_through_form_to_raw_to_litellm(tmp_path: Path) 
 
 def test_litellm_service_is_editable_false_managed_substrate() -> None:
     """litellm is the only editable=False record after the editability law."""
-    registry = service_registry.build_service_registry_seed({"backends": {}})
+    registry = seed_registry_document({"backends": {}})
     litellm_svc = registry["services"]["litellm"]
     assert litellm_svc["editable"] is False
     assert service_registry.is_litellm_service_record("litellm", litellm_svc)
@@ -1613,7 +1614,7 @@ def test_full_embeddings_record_round_trips_through_form_to_raw() -> None:
     ]
 
     # Upsert into a fresh registry — stored config must carry all fields.
-    seed = service_registry.build_service_registry_seed({"backends": {}})
+    seed = seed_registry_document({"backends": {}})
     registry, record = service_registry.upsert_service_in_registry(
         seed, service_id="embeddings", raw=raw, source="ui"
     )
@@ -1683,7 +1684,7 @@ def test_comfyui_protocol_fields_stored_in_config() -> None:
             "default_model": "my_workflow",
         }
     )
-    seed = service_registry.build_service_registry_seed({"backends": {}})
+    seed = seed_registry_document({"backends": {}})
     _registry, record = service_registry.upsert_service_in_registry(
         seed, service_id="comfyui", raw=raw, source="ui"
     )
@@ -1746,7 +1747,7 @@ def test_model_policy_records_round_trip_through_form_and_registry() -> None:
         }
     )
     registry, record = service_registry.upsert_service_in_registry(
-        service_registry.build_service_registry_seed({"backends": {}}),
+        seed_registry_document({"backends": {}}),
         service_id="models",
         raw=raw,
     )
@@ -1817,7 +1818,7 @@ def test_registry_rejects_invalid_model_policy_graphs(models: list[dict], match:
 def test_registry_write_rejects_an_invalid_model_policy_reference() -> None:
     with pytest.raises(ValueError, match="unknown base_model_id"):
         service_registry.upsert_service_in_registry(
-            service_registry.build_service_registry_seed({"backends": {}}),
+            seed_registry_document({"backends": {}}),
             service_id="service",
             raw={
                 "models": [

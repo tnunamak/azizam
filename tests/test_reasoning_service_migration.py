@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 import proxy
+from tests.registry_test_helpers import seed_registry_document
 from tests.support.access import authenticated  # noqa: E402
 from gateway import admin_store, service_registry
 from gateway.transforms import REGISTRY, TransformContext, run_request_pipeline
@@ -285,10 +286,10 @@ def test_errors_and_nonchat_match_old_code(tmp_path, request_path, extra):
 def test_fresh_seed_declares_opt_in_as_data():
     import yaml
     config = yaml.safe_load((Path(__file__).parents[1] / "proxy_config.yml").read_text())
-    seed = service_registry.build_service_registry_seed(config)
+    seed = seed_registry_document(config)
     for service_id in ("kobold",):
         assert "reasoning-effort-final-chat" in seed["services"][service_id]["config"]["transforms"]
-    custom = service_registry.build_service_registry_seed({"backends": {"custom": {"capabilities": ["chat"], "port": 5111}}})
+    custom = seed_registry_document({"backends": {"custom": {"capabilities": ["chat"], "port": 5111}}})
     assert "transforms" not in custom["services"]["custom"]["config"]
 
 

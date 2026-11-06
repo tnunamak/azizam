@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from tests.registry_test_helpers import seed_registry_document
 from gateway import route_registry, service_registry
 
 
@@ -56,7 +57,7 @@ def test_enabled_frontend_routes_present_in_registered_routes() -> None:
 
 
 def test_route_aliases_and_policies_are_projected_from_catalog() -> None:
-    registry = service_registry.build_service_registry_seed({"backends": {}})
+    registry = seed_registry_document({"backends": {}})
 
     aliases = route_registry.canonical_protocol_route_aliases(registry=registry)
     runtime_policy = route_registry.runtime_route_policy(registry=registry)

@@ -22,6 +22,7 @@ import httpx
 from starlette.requests import Request
 
 import proxy
+from tests.registry_test_helpers import seed_registry_document
 from tests.support.access import access_context
 from tests.support.stt_pcm import pcm_bytes, planning_pcm, write_pcm
 from gateway import stt_chunking
@@ -1890,9 +1891,9 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
                 }
             }
         }
-        seeded = service_registry.build_service_registry_seed(bootstrap)
+        seeded = seed_registry_document(bootstrap)
         self.assertEqual(seeded["services"]["stt"]["config"]["chunking"]["max_segments"], 16)
-        existing = service_registry.build_service_registry_seed({
+        existing = seed_registry_document({
             "backends": {
                 "stt": {
                     "host": "127.0.0.1",

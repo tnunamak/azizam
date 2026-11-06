@@ -32,9 +32,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.registry_test_helpers import seed_registry_document
 from gateway.service_registry import (  # noqa: E402
     apply_service_registry_to_config,
-    build_service_registry_seed,
 )
 
 # ---------------------------------------------------------------------------
@@ -417,7 +417,7 @@ class TestSeedCapabilityPinning(unittest.TestCase):
         cfg_path = ROOT / "proxy_config.yml"
         with open(cfg_path, encoding="utf-8") as f:
             pconf = yaml.safe_load(f)
-        registry = build_service_registry_seed(pconf)
+        registry = seed_registry_document(pconf)
         projected = apply_service_registry_to_config(pconf, registry)
         cls.backends: dict = projected.get("backends", {})
 
