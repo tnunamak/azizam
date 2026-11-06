@@ -67,7 +67,7 @@ def test_the_release_names_no_model_and_no_face_service():
     assert compat["defaults"] == {} and compat["aliases"] == {}
     assert "generated_aliases_file" not in compat
     identity = yaml.safe_load((DEFAULTS / "identity.yml").read_text(encoding="utf-8"))
-    assert identity == {"max_wait_s": 3600}
+    assert identity == {}
 
 
 def test_the_release_ships_no_secret_value():
@@ -132,13 +132,13 @@ def test_the_legacy_import_gives_each_section_its_startup_block(tmp_path):
     startup = raw_config("tracked")
     expected = {key: value for key, value in startup["model_compatibility"].items() if key != "generated_aliases_file"}
     assert effective["model_compatibility"] == expected
-    assert effective["identity"] == {"max_wait_s": 3600, **startup["identity"]}
+    assert effective["identity"] == startup["identity"]
 
 
 def test_a_first_run_has_the_release_values(tmp_path):
     effective = effective_config(proxy, "first_run", tmp_path / "admin.db")
     assert effective["model_compatibility"] == yaml.safe_load((DEFAULTS / "model_compatibility.yml").read_text(encoding="utf-8"))
-    assert effective["identity"] == {"max_wait_s": 3600}
+    assert effective["identity"] == {}
 
 
 def test_the_import_runs_once_and_a_second_boot_keeps_the_owner_edit(tmp_path):
@@ -199,7 +199,7 @@ def test_an_owner_edit_reaches_the_readers_through_the_layer_and_a_publish(tmp_p
     startup = raw_config("tracked")
     _import(db, startup)
     _owner_set(db, "model_compatibility", "/defaults/speech", "edited-speech-model", base=startup["model_compatibility"]["defaults"]["speech"])
-    _owner_set(db, "identity", "/max_wait_s", 99, base=3600)
+    _owner_set(db, "identity", "/max_wait_s", 99, base=None)
     monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
     effective = proxy._load_effective_runtime_config(copy.deepcopy(startup))
     monkeypatch.setattr(proxy, "config", effective)
@@ -215,13 +215,14 @@ def test_the_identity_readers_follow_the_snapshot():
         assert proxy._identity_cfg()["max_wait_s"] == 12
         assert dict(proxy._identity_face_cfg()) == face
         assert proxy._workflow_availability_services({"services": {}})["services"]["faces"]["config"] == face
-    with section_published("identity", {"max_wait_s": 3600}):
+    with section_published("identity", {}):
+        assert "max_wait_s" not in proxy._identity_cfg()
         assert dict(proxy._identity_face_cfg()) == {}
         assert "faces" not in proxy._workflow_availability_services({"services": {}})["services"]
 
 
 def test_an_unconfigured_face_service_answers_not_configured():
-    with section_published("identity", {"max_wait_s": 3600}):
+    with section_published("identity", {}):
         response = asyncio.run(proxy._identity_ensure_face_service())
     assert response is not None and response.status_code == 503
     assert "not configured" in json.loads(response.body)["error"]["message"]
