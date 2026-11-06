@@ -190,15 +190,20 @@ class ContentGate:
         """Run the first check in the background, so a request after start finds a verdict.
 
         The launcher starts LiteLLM beside the gateway, so its process proof may not exist yet.
-        The task keeps checking until it reaches a definite verdict or the window ends.
+        The task keeps checking until it reaches a definite verdict or the window ends. The gateway calls it
+        once per start; a second call while the first still runs is an error.
         """
+        if self.warm_settled is not None and not self.warm_settled.is_set():
+            raise RuntimeError("the content gate is already warming")
         settled = self.warm_settled = asyncio.Event()
         return asyncio.create_task(self._warm(base_url, settled, window_seconds, poll_seconds), name="litellm-content-warm")
 
     async def _warm(self, base_url: str, settled: asyncio.Event, window_seconds: float, poll_seconds: float) -> None:
         end = time.monotonic() + window_seconds
         try:
-            while await self.check(base_url, force=True) in {"not_checked", "profile_check_unavailable"}:
+            # Retry only an unknown: missing process proof or a database that could not be read yet.
+            while await self.check(base_url, force=True) in {"not_checked", "profile_check_unavailable",
+                                                             "database_check_unavailable"}:
                 if time.monotonic() >= end:
                     return
                 await asyncio.sleep(poll_seconds)

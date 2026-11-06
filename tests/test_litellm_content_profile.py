@@ -506,6 +506,50 @@ def test_warming_waits_for_the_process_proof_and_later_requests_find_the_verdict
     asyncio.run(run())
 
 
+def test_request_while_warming_sleeps_between_checks_waits_for_the_next_check(monkeypatch):
+    """The first check found no process proof and set its backoff; a request in the gap waits for the next check."""
+    base = 'http://127.0.0.1:4011'
+    async def run():
+        verdict = {'release': asyncio.Event(), 'problem': None}
+        verdict['release'].set()
+        gate, calls = _warming_gate(monkeypatch, verdict)
+        ready = [False]
+        def generation(_):
+            if not ready[0]:
+                raise FileNotFoundError('no process proof yet')
+            return ('same-process',)
+        monkeypatch.setattr(gate, 'generation', generation)
+        warm = gate.start_warming(base, poll_seconds=0.2)
+        await asyncio.sleep(0.05)
+        assert gate.problem == 'profile_check_unavailable' and not warm.done(), 'warming sleeps between checks'
+        request = asyncio.create_task(content.execution_refusal(base))
+        await asyncio.sleep(0.05)
+        assert not request.done(), 'the request was refused on the backoff instead of waiting for warming'
+        ready[0] = True
+        assert await asyncio.wait_for(request, 5) is None
+        await asyncio.wait_for(warm, 5)
+        assert calls == [1]
+    asyncio.run(run())
+
+
+def test_warming_retries_a_database_that_could_not_be_read_yet(monkeypatch):
+    base = 'http://127.0.0.1:4011'
+    async def run():
+        verdict = {'release': asyncio.Event(), 'problem': 'database_check_unavailable'}
+        verdict['release'].set()
+        gate, calls = _warming_gate(monkeypatch, verdict)
+        warm = gate.start_warming(base, poll_seconds=0.01)
+        while len(calls) < 2:
+            await asyncio.sleep(0.01)
+        verdict['problem'] = None
+        await asyncio.wait_for(warm, 5)
+        assert gate.problem is None
+        with pytest.raises(RuntimeError):
+            gate.warm_settled = asyncio.Event()
+            gate.start_warming(base)
+    asyncio.run(run())
+
+
 def test_request_is_refused_when_the_first_check_does_not_finish_in_time(monkeypatch):
     base = 'http://127.0.0.1:4011'
     monkeypatch.setattr(content, 'CHECK_TIMEOUT_SECONDS', 0.05)
