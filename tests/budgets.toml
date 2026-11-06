@@ -525,7 +525,8 @@
 # Train 8 (2026-11-06): connection address refuses a credential (+1), transition-proof trace records parked (+0); measured 19821.
 # fix/url-credential-gaps (2026-11-06): registry, excluded-record and provider refusals never quote a body secret (+4); measured 19825.
 # Train 9 (2026-11-06): registry, excluded-record and provider refusals never quote a body secret (+4); measured 19825.
-pytest = 19825
+# fix/schemeless-address-scrub: a schemeless address gives up its query secret to the refusal scrub (+1); measured 19826.
+pytest = 19826
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
