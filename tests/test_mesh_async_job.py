@@ -443,6 +443,9 @@ def test_the_drain_snapshot_counts_a_running_mesh_job_until_it_ends(harness: Asy
         running = harness.drain.snapshot()
         harness.let_engine_return()
         await harness.idle()
+        # The run leaves the counted set through a done callback, one loop step after the task ends; a real
+        # counter that never drops still times out here.
+        await _until(lambda: harness.drain.snapshot()["active"]["async_media_jobs"] == {"mesh": 0})
         return running, harness.drain.snapshot()
 
     running, finished = run(scenario())
