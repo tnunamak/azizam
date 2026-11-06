@@ -290,8 +290,8 @@ def domain_violations(services: Mapping[str, Any], *, paths: Callable[[str, Mapp
                 "Remove the capability or serve it another way")
         elif not found.leased:
             errors[str(service_id)] = (
-                f"{head}; it has no leased path. Declare an openai-compatible service with "
-                "config.gateway_lifecycle, an engine protocol, or native_passthrough")
+                f"{head}; it has no leased path. Give it config.gateway_lifecycle, an engine protocol, "
+                "or native_passthrough")
     return errors
 
 

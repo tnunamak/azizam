@@ -4753,9 +4753,10 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         return not_ready
 
     # The host can belong to another service than ``tts_service_id``; the lease check names both.
-    _tts_selected = service_for_capability("audio.speech")
+    _speech_capability = "audio.speech"
+    _tts_selected = service_for_capability(_speech_capability)
     _tts_host_service = _tts_selected[0] if _tts_selected else tts_service_id
-    _tts_host = host_for_capability("audio.speech") or (TTS_HOST if TTS_ENABLED else None) or TTS_HOST
+    _tts_host = host_for_capability(_speech_capability) or (TTS_HOST if TTS_ENABLED else None) or TTS_HOST
     if tts_service_id != "tts":
         _engine_service = (config.get("backends") or {}).get(tts_service_id) or {}
         _tts_host = f"http://{_engine_service.get('host')}:{_engine_service.get('port')}"
