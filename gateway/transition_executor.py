@@ -1,0 +1,678 @@
+"""The transition executor and its steps: close, drain, release, load, open (D2 and D4, step T1.2).
+
+``TransitionExecutor`` runs one operation on a task the caller does not own, under the domain's swap lock.
+``submit`` takes the lock, then the store's compare-and-set closes the gate; the task keeps the lock until the
+operation ends in a state that leaves the gate ``open``, ``failed_closed`` or ``reconciling``. A caller that
+is cancelled after the effect started changes nothing.
+
+Rules the steps keep:
+
+- Write-ahead. An effect step writes its intent in one transaction, calls the adapter, and writes its
+  outcome in another. The outcome is written once, after the step verified it.
+- An unknown outcome never reopens. A timeout, an adapter error or an ``unknown`` result goes to
+  ``adapter.query``; a result that stays unknown holds the operation ``reconciling`` (503 + Retry-After),
+  until a query, a restart reconcile or the owner resolves it.
+- Release counts as stock released only when the result is ``attested``. The executor does not trust the
+  adapter's word for the engine state: after a ``success`` it asks ``adapter.resident`` and needs fresh
+  evidence, for the intent's incarnation, that nothing is resident. Stale, missing or foreign evidence is
+  ``unknown``; resident evidence is ``partial`` (a residual allocation). Neither settles stock.
+- Load verifies the target: fresh evidence that the target itself is resident and ready.
+- Recovery from a failed load is a new operation (``compensates=``), never a rollback call.
+- Leases live in memory. The open step mints the trigger's lease under the lock and then finishes the
+  operation and opens the gate in one transaction (decision G6). Reconcile never mints a lease.
+
+Engine-agnostic: the executor knows domains, targets and adapters, never what an engine is.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
+
+from gateway.swap_drain import SwapDeferred, SwapDrain, SwapDrainSettings
+from gateway.transition_gate import TransitionUnavailable
+from gateway.transition_ops import (
+    FINISHED_STATES, STEP_ORDER, BeginResult, Begun, Conflict, EffectResult, Evidence, Operation, OperationStore,
+    SameOperation, Step, StepContext, StepIntent, StepName, StepVerdict, TransitionAdapter, TransitionKind,
+)
+from gateway.transition_store import StaleOutcome, request_hash
+
+EFFECT_STEPS: frozenset[str] = frozenset({"checkpoint", "release", "load", "restore"})
+
+DEFAULTS: dict[str, float] = {
+    "drain_deadline_s": 60.0,
+    "release_deadline_s": 120.0,
+    "load_deadline_s": 300.0,
+    "checkpoint_deadline_s": 120.0,
+    "restore_deadline_s": 300.0,
+    "query_deadline_s": 30.0,
+    "probe_deadline_s": 5.0,
+    "fresh_within_s": 2.0,
+    "idle_poll_s": 0.5,
+    "lock_wait_s": 30.0,
+    "retry_after_s": 30.0,
+}
+
+
+def setting(policy: Mapping[str, object], key: str) -> float:
+    try:
+        value = float(policy.get(key, DEFAULTS[key]))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULTS[key]
+    return value if value > 0 else DEFAULTS[key]
+
+
+class InvalidTransition(Exception):
+    """The request names a transition that cannot be started (HTTP 422): no offering to wake, a missing target."""
+
+
+def evidence_state(evidence: Optional[Evidence], *, now: float, fresh_within_s: float,
+                   incarnation: Optional[str]) -> Optional[bool]:
+    """``evidence.value`` when it is fresh and from the expected incarnation, else None (unknown).
+
+    D3: evidence older than ``fresh_within_s``, or for another incarnation, counts as unknown.
+    """
+    if evidence is None or evidence.value is None:
+        return None
+    if now - evidence.observed_at > fresh_within_s:
+        return None
+    if incarnation is not None and evidence.incarnation is not None and evidence.incarnation != incarnation:
+        return None
+    return evidence.value
+
+
+class TriggerLease:
+    """The triggering request's lease, minted by the open step on the executor's task (decision G6).
+
+    The requester passes ``trigger`` to ``submit`` and, once the operation succeeds, ``take()`` returns
+    the lease for its own task to record and release. If the requester goes away first, ``abandon()``
+    releases a lease already minted and makes a later mint do nothing, so no lease is ever orphaned.
+    """
+
+    def __init__(self, mint: Callable[[], Any]) -> None:
+        self._mint = mint
+        self._lease: Any = None
+        self._abandoned = False
+        self.minted = 0
+
+    def trigger(self) -> None:
+        if self._abandoned or self._lease is not None:
+            return
+        self._lease = self._mint()
+        self.minted += 1
+
+    def take(self) -> Any:
+        lease, self._lease = self._lease, None
+        return lease
+
+    def abandon(self) -> None:
+        self._abandoned = True
+        lease = self.take()
+        if lease is not None:
+            lease.release()
+
+
+# -- the steps ------------------------------------------------------------------------------------
+
+
+class _EffectStep:
+    """Shared by release and load: intent, call, query on unknown, verify, outcome."""
+
+    name: StepName
+
+    def __init__(self, *, clock: Callable[[], float] = time.time) -> None:
+        self._clock = clock
+
+    def applies(self, operation: Operation, adapter: TransitionAdapter) -> bool:
+        raise NotImplementedError
+
+    def _intent(self, ctx: StepContext) -> StepIntent:
+        return StepIntent(step=self.name, effect_key=f"{ctx.operation.op_id}:{self.name}",
+                          expected_incarnation=ctx.operation.incarnation)
+
+    async def _call(self, ctx: StepContext, intent: StepIntent) -> EffectResult:
+        raise NotImplementedError
+
+    async def _verify(self, ctx: StepContext, intent: StepIntent, result: EffectResult) -> EffectResult:
+        """Turn a ``success`` into ``success``, ``partial`` or ``unknown`` by fresh evidence."""
+        raise NotImplementedError
+
+    def _deadline(self, ctx: StepContext) -> float:
+        return setting(ctx.policy, f"{self.name}_deadline_s")
+
+    async def run(self, ctx: StepContext) -> StepVerdict:
+        intent = self._intent(ctx)
+        await asyncio.to_thread(ctx.store.write_intent, ctx.operation.op_id, intent)
+        try:
+            result = await asyncio.wait_for(self._call(ctx, intent), self._deadline(ctx))
+        except asyncio.TimeoutError:
+            result = EffectResult(outcome="unknown", evidence_ref="deadline")
+        except Exception as exc:  # noqa: BLE001 - an adapter error says nothing about what the engine did
+            result = EffectResult(outcome="unknown", evidence_ref=f"adapter_error:{type(exc).__name__}")
+        if result.outcome == "unknown":
+            result = await query_effect(ctx, intent, result)
+        return await self.settle(ctx, intent, result)
+
+    async def settle(self, ctx: StepContext, intent: StepIntent, result: EffectResult) -> StepVerdict:
+        """Verify ``result``, write the step's outcome once, and say what the executor does next."""
+        if result.outcome == "success":
+            try:
+                result = await self._verify(ctx, intent, result)
+            except Exception as exc:  # noqa: BLE001 - evidence that cannot be read is unknown
+                result = EffectResult(outcome="unknown", evidence_ref=f"verify_error:{type(exc).__name__}")
+        written = await asyncio.to_thread(ctx.store.write_outcome, ctx.operation.op_id, self.name, result)
+        if written.step_outcome != result.outcome:
+            # The store ignored the outcome as stale (decision G10): another incarnation, or a settled step.
+            # Nothing is learned from it, so the step is unknown.
+            result = EffectResult(outcome="unknown", evidence_ref="stale_outcome")
+            await asyncio.to_thread(ctx.store.write_outcome, ctx.operation.op_id, self.name, result)
+        return verdict_for(result.outcome)
+
+
+def verdict_for(outcome: str) -> StepVerdict:
+    """Success goes on; an unknown outcome holds ``reconciling``; anything else holds ``failed_closed``."""
+    if outcome == "success":
+        return "continue"
+    if outcome == "unknown":
+        return "reconcile"
+    return "fail_closed"
+
+
+async def query_effect(ctx: StepContext, intent: StepIntent, first: EffectResult) -> EffectResult:
+    """Ask the adapter what became of an effect whose outcome is unknown. Still unknown stays unknown."""
+    try:
+        resolved = await asyncio.wait_for(ctx.adapter.query(ctx.operation.domain, intent),
+                                          setting(ctx.policy, "query_deadline_s"))
+    except asyncio.TimeoutError:
+        return first
+    except Exception:  # noqa: BLE001
+        return first
+    return resolved if resolved.outcome != "unknown" else first
+
+
+class ReleaseStep(_EffectStep):
+    name: StepName = "release"
+
+    def applies(self, operation: Operation, adapter: TransitionAdapter) -> bool:
+        return operation.kind in ("park", "select")
+
+    async def _call(self, ctx: StepContext, intent: StepIntent) -> EffectResult:
+        return await ctx.adapter.release(ctx.operation.domain, intent)
+
+    async def _verify(self, ctx: StepContext, intent: StepIntent, result: EffectResult) -> EffectResult:
+        evidence = await asyncio.wait_for(ctx.adapter.resident(ctx.operation.domain), setting(ctx.policy, "probe_deadline_s"))
+        seen = evidence_state(evidence, now=self._clock(), fresh_within_s=setting(ctx.policy, "fresh_within_s"),
+                              incarnation=intent.expected_incarnation)
+        if seen is False:
+            return result
+        if seen is True:
+            return EffectResult(outcome="partial", evidence_ref=result.evidence_ref or "still_resident",
+                                correlation_id=result.correlation_id)
+        return EffectResult(outcome="unknown", evidence_ref="release_unverified", correlation_id=result.correlation_id)
+
+
+class LoadStep(_EffectStep):
+    name: StepName = "load"
+
+    def applies(self, operation: Operation, adapter: TransitionAdapter) -> bool:
+        return operation.kind in ("select", "wake")
+
+    def _intent(self, ctx: StepContext) -> StepIntent:
+        # The load may start a new process, so no incarnation is expected before it.
+        return StepIntent(step="load", effect_key=f"{ctx.operation.op_id}:load", expected_incarnation=None)
+
+    async def _call(self, ctx: StepContext, intent: StepIntent) -> EffectResult:
+        assert ctx.operation.target is not None
+        return await ctx.adapter.load(ctx.operation.domain, ctx.operation.target, intent)
+
+    async def _verify(self, ctx: StepContext, intent: StepIntent, result: EffectResult) -> EffectResult:
+        evidence = await asyncio.wait_for(ctx.adapter.resident(ctx.operation.domain), setting(ctx.policy, "probe_deadline_s"))
+        seen = evidence_state(evidence, now=self._clock(), fresh_within_s=setting(ctx.policy, "fresh_within_s"),
+                              incarnation=None)
+        if seen is None:
+            return EffectResult(outcome="unknown", evidence_ref="load_unverified", correlation_id=result.correlation_id)
+        detail = evidence.detail if evidence is not None else {}
+        if seen is True and detail.get("offering") == ctx.operation.target and detail.get("ready") is True:
+            return result
+        # Something else is resident, or the target is not ready: the load is partial, never a success.
+        return EffectResult(outcome="partial", evidence_ref=result.evidence_ref or "target_not_verified",
+                            correlation_id=result.correlation_id)
+
+
+class DrainStep:
+    name: StepName = "drain"
+
+    def __init__(self, drain: SwapDrain, *, clock: Callable[[], float] = time.time,
+                 monotonic: Callable[[], float] = time.monotonic,
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+        self._drain = drain
+        self._clock = clock
+        self._monotonic = monotonic
+        self._sleep = sleep
+
+    def applies(self, operation: Operation, adapter: TransitionAdapter) -> bool:
+        return operation.kind in ("park", "select")
+
+    async def run(self, ctx: StepContext) -> StepVerdict:
+        operation = ctx.operation
+        deadline = setting(ctx.policy, "drain_deadline_s")
+        remaining = deadline
+        if operation.step == "drain" and operation.step_intent is not None and operation.step_outcome is None:
+            # Resumed after a restart: the deadline counts from the first intent, not from now.
+            remaining = deadline - (self._clock() - operation.updated)
+        intent = StepIntent(step="drain", effect_key=f"{operation.op_id}:drain", expected_incarnation=operation.incarnation)
+        await asyncio.to_thread(ctx.store.write_intent, operation.op_id, intent)
+        if remaining > 0 and await self._drained(ctx, remaining):
+            await asyncio.to_thread(ctx.store.write_outcome, operation.op_id, "drain", EffectResult(outcome="success"))
+            return "continue"
+        # Decision G2: the deadline passed with no effect started. Nothing changed; the operation aborts, the gate opens.
+        await asyncio.to_thread(ctx.store.write_outcome, operation.op_id, "drain",
+                                EffectResult(outcome="no_change", evidence_ref="drain_deadline"))
+        return "reopen"
+
+    async def _drained(self, ctx: StepContext, remaining: float) -> bool:
+        domain = ctx.operation.domain
+        end = self._monotonic() + remaining
+        try:
+            await self._drain.clear_for_swap(domain, SwapDrainSettings(enabled=True, timeout_s=remaining))
+        except SwapDeferred:
+            return False
+        probe = setting(ctx.policy, "probe_deadline_s")
+        fresh = setting(ctx.policy, "fresh_within_s")
+        while True:
+            if await self._nothing_resident(ctx, probe, fresh):
+                return True
+            if await self._idle(ctx, probe, fresh):
+                return True
+            left = end - self._monotonic()
+            if left <= 0:
+                return False
+            await self._sleep(min(setting(ctx.policy, "idle_poll_s"), left))
+
+    async def _idle(self, ctx: StepContext, probe: float, fresh: float) -> bool:
+        try:
+            evidence = await asyncio.wait_for(ctx.adapter.idle(ctx.operation.domain), probe)
+        except Exception:  # noqa: BLE001 - unknown idle evidence is not idle
+            return False
+        return evidence_state(evidence, now=self._clock(), fresh_within_s=fresh,
+                              incarnation=ctx.operation.incarnation) is True
+
+    async def _nothing_resident(self, ctx: StepContext, probe: float, fresh: float) -> bool:
+        """Fresh evidence that no offering is resident: there is nothing to drain (e.g. the first step of a compensating select)."""
+        try:
+            evidence = await asyncio.wait_for(ctx.adapter.resident(ctx.operation.domain), probe)
+        except Exception:  # noqa: BLE001
+            return False
+        return evidence_state(evidence, now=self._clock(), fresh_within_s=fresh,
+                              incarnation=ctx.operation.incarnation) is False
+
+
+class OpenStep:
+    name: StepName = "open"
+
+    def applies(self, operation: Operation, adapter: TransitionAdapter) -> bool:
+        return True
+
+    async def run(self, ctx: StepContext) -> StepVerdict:
+        operation = ctx.operation
+        intent = StepIntent(step="open", effect_key=f"{operation.op_id}:open", expected_incarnation=None)
+        await asyncio.to_thread(ctx.store.write_intent, operation.op_id, intent)
+        if ctx.trigger is not None and operation.kind in ("select", "wake"):
+            ctx.trigger()  # in memory, under the lock, while the gate is still closed
+        await asyncio.to_thread(ctx.store.finish, operation.op_id, "succeeded", "open")
+        return "continue"
+
+
+def core_steps(drain: SwapDrain, *, clock: Callable[[], float] = time.time,
+               monotonic: Callable[[], float] = time.monotonic,
+               sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> dict[StepName, Step]:
+    """The T1.2 step table: drain, release, load, open. Close is the executor's own ``submit``.
+    T1.3 merges its checkpoint and restore steps into this dict."""
+    return {"drain": DrainStep(drain, clock=clock, monotonic=monotonic, sleep=sleep),
+            "release": ReleaseStep(clock=clock), "load": LoadStep(clock=clock), "open": OpenStep()}
+
+
+# -- the executor ---------------------------------------------------------------------------------
+
+
+@dataclass
+class _Running:
+    task: "asyncio.Task[None]"
+
+
+class Executor:
+    """Implements ``TransitionExecutor`` (gateway/transition_ops.py)."""
+
+    def __init__(self, *, store: OperationStore, steps: Mapping[StepName, Step],
+                 adapter_for: Callable[[str], TransitionAdapter], policy_of: Callable[[str], Mapping[str, object]],
+                 lock_for: Callable[[str], asyncio.Lock], config_revision: Callable[[], int] = lambda: 0,
+                 snapshots: Any = None, gate_hold: Optional[Callable[[str, str], None]] = None,
+                 gate_parked: Optional[Callable[[str], Optional[str]]] = None) -> None:
+        self.store = store
+        self._steps = steps
+        self._adapter_for = adapter_for
+        self._policy_of = policy_of
+        self._lock_for = lock_for
+        self._config_revision = config_revision
+        self._snapshots = snapshots
+        gates = getattr(store, "gates", None)
+        self._gate_hold = gate_hold or (gates.force if gates is not None else (lambda domain, state: None))
+        self._gate_parked = gate_parked or (gates.parked if gates is not None else (lambda domain: None))
+        self._submit_locks: dict[str, asyncio.Lock] = {}
+        self._tasks: dict[str, "asyncio.Task[None]"] = {}
+        self._ready = False
+
+    # -- submit -------------------------------------------------------------
+
+    async def submit(self, *, domain: str, kind: TransitionKind, idempotency_key: str, target: Optional[str] = None,
+                     compensates: Optional[str] = None, trigger: Optional[Callable[[], None]] = None) -> BeginResult:
+        mutex = self._submit_locks.setdefault(domain, asyncio.Lock())
+        async with mutex:
+            return await self._submit_serialized(domain, kind, idempotency_key, target, compensates, trigger)
+
+    async def _submit_serialized(self, domain: str, kind: TransitionKind, key: str, target: Optional[str],
+                                 compensates: Optional[str], trigger: Optional[Callable[[], None]]) -> BeginResult:
+        policy = self._policy_of(domain)
+        target = await self._resolve_target(domain, kind, target, compensates)
+        # A contender is answered without the lock: a second POST must not wait for the first transition.
+        existing = await asyncio.to_thread(self.store.by_idempotency_key, domain, key)
+        if existing is not None:
+            same = existing.request_hash == request_hash(kind, target, compensates)
+            return SameOperation(existing) if same else Conflict(existing)
+        held = await asyncio.to_thread(self.store.current, domain)
+        if held is not None:
+            return Conflict(held)
+        lock = self._lock_for(domain)
+        try:
+            await asyncio.wait_for(lock.acquire(), setting(policy, "lock_wait_s"))
+        except asyncio.TimeoutError:
+            raise TransitionUnavailable(domain, reason="lock_busy", retry_after_s=int(setting(policy, "retry_after_s"))) from None
+        handed_off = False
+        try:
+            incarnation = await self._incarnation(domain, policy)
+            result = await asyncio.to_thread(
+                self.store.begin, domain=domain, kind=kind, idempotency_key=key, target=target,
+                incarnation=incarnation, config_revision=self._config_revision(), compensates=compensates)
+            if isinstance(result, Begun):
+                task = asyncio.get_running_loop().create_task(self._run(result.operation, lock, trigger, after=None))
+                self._tasks[result.operation.op_id] = task
+                task.add_done_callback(lambda _t, op_id=result.operation.op_id: self._tasks.pop(op_id, None))
+                handed_off = True
+            return result
+        finally:
+            if not handed_off:
+                lock.release()
+
+    async def _resolve_target(self, domain: str, kind: TransitionKind, target: Optional[str],
+                              compensates: Optional[str]) -> Optional[str]:
+        if kind == "park":
+            return await self._resident_offering(domain)
+        if kind == "select" and not target:
+            raise InvalidTransition("a select needs a target offering")
+        if kind == "wake":
+            target = target or await asyncio.to_thread(self.store.last_target, domain)
+            if not target:
+                raise InvalidTransition(f"domain {domain!r} has no offering to wake")
+        if compensates is not None:
+            origin = await asyncio.to_thread(self.store.get, compensates)
+            if origin is None or origin.domain != domain or origin.state != "failed_closed":
+                raise InvalidTransition(f"{compensates!r} is not a failed_closed operation of domain {domain!r}")
+        return target
+
+    async def _incarnation(self, domain: str, policy: Mapping[str, object]) -> Optional[str]:
+        try:
+            evidence = await asyncio.wait_for(self._adapter_for(domain).resident(domain), setting(policy, "probe_deadline_s"))
+        except Exception:  # noqa: BLE001 - no incarnation known; the evidence checks then need none
+            return None
+        return evidence.incarnation
+
+    async def _resident_offering(self, domain: str) -> Optional[str]:
+        """The offering resident now, as the engine reports it (what a park releases), else None."""
+        try:
+            evidence = await asyncio.wait_for(self._adapter_for(domain).resident(domain),
+                                              setting(self._policy_of(domain), "probe_deadline_s"))
+        except Exception:  # noqa: BLE001
+            return None
+        offering = evidence.detail.get("offering") if evidence.value else None
+        return offering if isinstance(offering, str) and offering else None
+
+    # -- running ------------------------------------------------------------
+
+    async def wait(self, op_id: str) -> Operation:
+        """Wait for the operation's task (if it runs here), then return its record."""
+        task = self._tasks.get(op_id)
+        if task is not None:
+            await asyncio.shield(task)
+        found = await asyncio.to_thread(self.store.get, op_id)
+        assert found is not None
+        return found
+
+    async def _run(self, operation: Operation, lock: asyncio.Lock, trigger: Optional[Callable[[], None]],
+                   after: Optional[StepName]) -> None:
+        try:
+            await self._drive(operation, trigger, after)
+        except asyncio.CancelledError:
+            # Shutdown: the durable record says closed; the next start reconciles it.
+            self._gate_hold(operation.domain, "reconciling")
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"[transition-gate] operation {operation.op_id} stopped by {type(exc).__name__}: {exc}", flush=True)
+            await self._hold(operation)
+        finally:
+            lock.release()
+
+    async def _hold(self, operation: Operation) -> None:
+        """An unexpected error: keep the gate closed, and say what is known.
+
+        An effect with no outcome is unknown (``reconciling``). A failure after an effect settled leaves the
+        engine changed and the operation unfinished: ``failed_closed``, for a compensating operation. A failure
+        before any effect changed nothing: the operation aborts and the gate opens.
+        """
+        try:
+            current = await asyncio.to_thread(self.store.get, operation.op_id)
+            if current is None or current.state in FINISHED_STATES:
+                return
+            outstanding = current.step_intent is not None and current.step_outcome in (None, "unknown")
+            if outstanding:
+                if current.step_outcome is None:
+                    await asyncio.to_thread(self.store.write_outcome, current.op_id, current.step_intent.step,  # type: ignore[union-attr]
+                                            EffectResult(outcome="unknown", evidence_ref="executor_error"))
+                if current.state != "reconciling":
+                    await asyncio.to_thread(self.store.finish, current.op_id, "reconciling", "reconciling")
+            elif current.step in EFFECT_STEPS or current.step == "open":
+                await asyncio.to_thread(self.store.finish, current.op_id, "failed_closed", "failed_closed")
+            else:
+                await asyncio.to_thread(self.store.finish, current.op_id, "aborted", "open")
+        except Exception as exc:  # noqa: BLE001 - the table cannot be written: hold the gate in memory
+            print(f"[transition-gate] cannot record the hold of {operation.op_id}: {type(exc).__name__}", flush=True)
+            self._gate_hold(operation.domain, "reconciling")
+
+    def _order(self) -> list[StepName]:
+        return [name for name in STEP_ORDER if name in self._steps]
+
+    async def _drive(self, operation: Operation, trigger: Optional[Callable[[], None]], after: Optional[StepName]) -> None:
+        adapter = self._adapter_for(operation.domain)
+        policy = self._policy_of(operation.domain)
+        order = [name for name in self._order() if after is None or STEP_ORDER.index(name) > STEP_ORDER.index(after)]
+        current = operation
+        for name in order:
+            step = self._steps[name]
+            if not step.applies(current, adapter):
+                continue
+            ctx = StepContext(operation=current, store=self.store, adapter=adapter, snapshots=self._snapshots,
+                              policy=policy, trigger=trigger)
+            verdict = await step.run(ctx)
+            refreshed = await asyncio.to_thread(self.store.get, current.op_id)
+            assert refreshed is not None
+            current = refreshed
+            if verdict in ("continue", "skip"):
+                if current.state != "running":
+                    return
+                continue
+            await self._apply_verdict(current, verdict)
+            return
+        if current.state == "running":
+            await asyncio.to_thread(self.store.finish, current.op_id, "succeeded", "open")
+
+    async def _apply_verdict(self, operation: Operation, verdict: StepVerdict) -> None:
+        state, gate = {"reopen": ("aborted", "open"), "fail_closed": ("failed_closed", "failed_closed"),
+                       "reconcile": ("reconciling", "reconciling")}[verdict]
+        await asyncio.to_thread(self.store.finish, operation.op_id, state, gate)  # type: ignore[arg-type]
+
+    # -- recovery -----------------------------------------------------------
+
+    async def reconcile_startup(self) -> None:
+        """Before any admission: settle or hold every unfinished operation (D2 "Startup").
+
+        An effect with an intent and no outcome is asked of ``adapter.query``. A resolved outcome is
+        written and the operation goes on with its next step; an unresolved one holds ``reconciling``.
+        An operation that stopped between steps, with no effect outstanding, goes on from where it was
+        (the drain counts its deadline from its first intent). The gate of every such domain is already
+        ``closed`` or ``reconciling`` in the table, so nothing is admitted while this runs.
+        """
+        for operation in await asyncio.to_thread(self.store.unfinished):
+            try:
+                await self._recover(operation)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[transition-gate] cannot recover {operation.op_id}: {type(exc).__name__}: {exc}", flush=True)
+                await self._hold(operation)
+        self._ready = True
+
+    async def _recover(self, operation: Operation) -> None:
+        domain = operation.domain
+        try:
+            adapter = self._adapter_for(domain)
+        except Exception as exc:  # noqa: BLE001 - no adapter for the domain any more: hold, never open
+            print(f"[transition-gate] {domain!r} has no adapter ({type(exc).__name__}); holding {operation.op_id}", flush=True)
+            await self._hold(operation)
+            return
+        policy = self._policy_of(domain)
+        intent = operation.step_intent
+        outstanding = intent is not None and operation.step_outcome in (None, "unknown") and operation.step in EFFECT_STEPS
+        after: Optional[StepName] = None
+        if outstanding:
+            assert intent is not None
+            step = self._steps.get(operation.step)  # type: ignore[arg-type]
+            result = await query_effect(
+                StepContext(operation=operation, store=self.store, adapter=adapter, snapshots=self._snapshots, policy=policy),
+                intent, EffectResult(outcome="unknown", evidence_ref="restart"))
+            if operation.state == "running" and result.outcome == "unknown":
+                # The effect may have happened: write the unknown outcome so the record says so, then hold.
+                await asyncio.to_thread(self.store.write_outcome, operation.op_id, intent.step, result)
+                await asyncio.to_thread(self.store.finish, operation.op_id, "reconciling", "reconciling")
+                return
+            if result.outcome == "unknown":
+                return  # already reconciling, still unknown
+            verdict = await self._settle(step, operation, adapter, policy, intent, result)
+            if verdict not in ("continue", "skip"):
+                await self._finish_for(operation, verdict)
+                return
+            after = intent.step
+        elif operation.state == "reconciling":
+            return  # reconciling without an unknown effect: only the owner resolves it
+        else:
+            if operation.step_outcome in ("no_change", "partial"):
+                # The step ended badly and the gate write was lost: finish as the verdict says.
+                await self._finish_for(operation, "reopen" if operation.step == "drain" else "fail_closed")
+                return
+            after = self._resume_point(operation)
+        current = await asyncio.to_thread(self.store.get, operation.op_id)
+        assert current is not None
+        if current.state == "reconciling":
+            current = await asyncio.to_thread(self.store.resume, operation.op_id)
+        self._launch_resume(current, after)
+
+    async def _settle(self, step: Optional[Step], operation: Operation, adapter: TransitionAdapter,
+                      policy: Mapping[str, object], intent: StepIntent, result: EffectResult) -> StepVerdict:
+        ctx = StepContext(operation=operation, store=self.store, adapter=adapter, snapshots=self._snapshots, policy=policy)
+        settle = getattr(step, "settle", None)
+        if settle is not None:
+            return await settle(ctx, intent, result)
+        written = await asyncio.to_thread(self.store.write_outcome, operation.op_id, intent.step, result)
+        return verdict_for(written.step_outcome or "unknown")
+
+    def _resume_point(self, operation: Operation) -> Optional[StepName]:
+        """The step to go on after: the last one that ended, or None to start from the first.
+
+        A drain or open step with an intent and no outcome starts again: it has no effect to repeat.
+        """
+        if operation.step in ("close", None):
+            return None
+        if operation.step_outcome is None:
+            earlier = [name for name in self._order() if STEP_ORDER.index(name) < STEP_ORDER.index(operation.step)]  # type: ignore[arg-type]
+            return earlier[-1] if earlier else None
+        return operation.step
+
+    def _launch_resume(self, operation: Operation, after: Optional[StepName]) -> None:
+        lock = self._lock_for(operation.domain)
+
+        async def go() -> None:
+            await lock.acquire()  # at start-up nobody holds it; later, the resolve waits its turn
+            await self._run(operation, lock, None, after)
+
+        task = asyncio.get_running_loop().create_task(go())
+        self._tasks[operation.op_id] = task
+        task.add_done_callback(lambda _t, op_id=operation.op_id: self._tasks.pop(op_id, None))
+
+    async def _finish_for(self, operation: Operation, verdict: StepVerdict) -> None:
+        current = await asyncio.to_thread(self.store.get, operation.op_id)
+        assert current is not None
+        if current.state in FINISHED_STATES:
+            return
+        await self._apply_verdict(current, verdict)
+
+    async def resolve(self, op_id: str, *, step: StepName, outcome: str, evidence_ref: Optional[str]) -> Operation:
+        """The owner settles a held step (decision G3). Only a reconciling operation, at that step, takes it.
+
+        ``success`` lets the operation go on with its next step; ``unknown`` changes nothing; any other
+        outcome holds ``failed_closed``. A stale call raises ``StaleOutcome`` and changes nothing.
+        """
+        operation = await asyncio.to_thread(self.store.get, op_id)
+        if operation is None:
+            raise KeyError(op_id)
+        if operation.state != "reconciling" or operation.step != step or operation.step_intent is None:
+            raise StaleOutcome(f"operation {op_id} is {operation.state} at step {operation.step!r}; nothing to resolve at {step!r}")
+        result = EffectResult(outcome=outcome, evidence_ref=evidence_ref)  # type: ignore[arg-type]
+        written = await asyncio.to_thread(self.store.write_outcome, op_id, step, result)
+        if written.step_outcome != outcome:
+            raise StaleOutcome(f"operation {op_id}: the outcome was refused as stale")
+        verdict = verdict_for(outcome)
+        if verdict == "reconcile":
+            return written
+        if verdict != "continue":
+            await self._apply_verdict(written, verdict)
+            return (await asyncio.to_thread(self.store.get, op_id))  # type: ignore[return-value]
+        resumed = await asyncio.to_thread(self.store.resume, op_id)
+        self._launch_resume(resumed, step)
+        return resumed
+
+    # -- a parked domain ----------------------------------------------------
+
+    async def ensure_awake(self, domain: str, *, wait_s: float, trigger: Optional[Callable[[], None]] = None) -> Optional[Operation]:
+        """If ``domain`` is parked, wake it and wait up to ``wait_s`` (D4 "After a park").
+
+        The wake key is ``wake-<park op id>``, so every request that finds the domain parked joins one
+        wake. Only the request whose submit began the wake passes its ``trigger``; the wake mints that
+        lease under the lock before the gate opens. Returns the finished wake, or None when the domain
+        was not parked. Raises ``TransitionUnavailable`` when the wake is not done in time or did not succeed.
+        """
+        parked_by = self._gate_parked(domain)
+        if parked_by is None:
+            return None
+        policy = self._policy_of(domain)
+        retry = int(setting(policy, "retry_after_s"))
+        began = await self.submit(domain=domain, kind="wake", idempotency_key=f"wake-{parked_by}", trigger=trigger)
+        if isinstance(began, Conflict):
+            raise TransitionUnavailable(domain, reason="transition_in_progress", retry_after_s=retry)
+        try:
+            finished = await asyncio.wait_for(self.wait(began.operation.op_id), wait_s)
+        except asyncio.TimeoutError:
+            raise TransitionUnavailable(domain, reason="wake_in_progress", retry_after_s=retry) from None
+        if finished.state != "succeeded":
+            raise TransitionUnavailable(domain, reason=f"wake_{finished.state}", retry_after_s=retry)
+        return finished
+
+    def active(self) -> Sequence[str]:
+        return tuple(self._tasks)
