@@ -398,5 +398,18 @@ class ImageVideoJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(reasons), 1)
         self.assertNotIn(PROMPT, next(iter(reasons.values())))
 
+    def test_a_manifest_input_refusal_names_the_input_and_its_bound_never_the_value(self) -> None:
+        # The graph compile marks these reasons for a job's error (node_graph.InputRefused), so none may echo a value.
+        from gateway.manifests import validate_input_value
+        canary = f"canary-{PROMPT}"
+        specs = [{"type": "number"}, {"type": "integer"}, {"type": "boolean"}, {"type": "string", "enum": ["a", "b"]},
+                 {"type": "integer", "minimum": 0, "maximum": 4}, {"type": "integer", "step": 2}]
+        for spec in specs:
+            for value in (canary, 99, 3, [canary], {canary: canary}):
+                reason = validate_input_value("field", value, spec)
+                if reason is not None:
+                    self.assertNotIn(canary, reason, spec)
+                    self.assertNotIn(PROMPT, reason, spec)
+
 if __name__ == "__main__":
     unittest.main()
