@@ -292,3 +292,18 @@ no behaviour.
   and the executor skips checkpoint and restore. Engine-specific adapters stay outside the gate core.
 - **The proof harness** drives only the HTTP surface: park, then wake, then replays frozen request bodies and checks
   the cached prefix. It names no engine; the domain and the bodies are its arguments.
+
+### Decisions on the T1.2 test-design gaps (2026-11-05)
+
+An independent test design found ten points that D2 to D4 leave open. They are settled here.
+
+- **G1. Reset failure.** The profile declares `reset.failure_semantics` (`no_change` or `unknown`); the default is `unknown`, so a failed reset keeps the gate closed.
+- **G2. Drain deadline.** The drain step's outcome is `no_change`, the operation ends `aborted`, and the gate opens.
+- **G3. Recovery.** Besides the automatic `adapter.query`, the owner resolves a held step with `POST /admin/engines/domains/{domain}/transitions/{op_id}/resolve` and body `{step, outcome, evidence_ref}`. The same freshness and incarnation checks as a normal outcome write apply.
+- **G4. Same key, different request.** The store keeps a hash of kind and target. The same key with the same hash returns the same operation; with another hash it is a `409` that carries the existing `op_id`.
+- **G5. Out-of-band unload.** A domain whose last finished operation is a park needs a wake before it serves. Detecting an unload made outside the gate is not T1.2 work: D6 (T1.5) removes the other effectors. Until then the guarantee covers only mediated effects.
+- **G6. Trigger lease and open.** Leases live in process memory. Step 7 mints the lease under the lock, then sets the gate to `open` and finishes the operation in one transaction. A crash between the two loses the lease together with its requester. Reconcile never mints a lease, so no lease is ever minted twice.
+- **G7. Required checkpoint re-check.** The profile may declare a `servable_check` observation; the default is the source's resident observation.
+- **G8. Retry-After.** Its value is `transition.retry_after_s`.
+- **G9. `failed_closed`.** It is a finished operation state. The gate stays `failed_closed`, which answers 503, but it accepts a new owner transition such as the compensating one. `reconciling` refuses new transitions.
+- **G10. Stale outcomes.** An outcome is written only when the operation's state, current step and incarnation match. Anything else is ignored and logged, and never becomes a `step_outcome`.

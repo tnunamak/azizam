@@ -28,10 +28,12 @@ TransitionKind = Literal["select", "park", "wake"]
 GateState = Literal["open", "closed", "failed_closed", "reconciling"]
 
 OperationState = Literal["running", "succeeded", "aborted", "failed_closed", "reconciling"]
-"""``succeeded`` and ``aborted`` are finished. ``failed_closed`` and ``reconciling`` are
-unfinished: they hold the domain until an owner or a recovery query resolves them."""
+"""``succeeded``, ``aborted`` and ``failed_closed`` are finished. ``running`` and ``reconciling``
+are unfinished and hold the domain. A ``failed_closed`` operation leaves the gate
+``failed_closed`` (requests get 503) but accepts a new owner transition, e.g. the compensating
+one (decision G9). ``reconciling`` refuses new transitions until resolved."""
 
-FINISHED_STATES: frozenset[str] = frozenset({"succeeded", "aborted"})
+FINISHED_STATES: frozenset[str] = frozenset({"succeeded", "aborted", "failed_closed"})
 
 StepName = Literal["close", "drain", "checkpoint", "release", "load", "restore", "open"]
 
