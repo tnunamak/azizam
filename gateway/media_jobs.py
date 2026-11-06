@@ -686,6 +686,10 @@ class OutstandingLimitReached(Exception):
         self.limit = limit
 
 
+class EnvelopeNotRecorded(RuntimeError):
+    """``create(require_envelope=True)`` could not record the job's envelope; nothing was stored."""
+
+
 class IdempotencyConflict(ValueError):
     """A request key cannot alias another owner, operation, or input."""
 
@@ -727,6 +731,7 @@ def create(
     path: Path = DB_PATH,
     maker_from_request: bool = True,
     envelope: JobEnvelope | None = None,
+    require_envelope: bool = False,
 ) -> MediaJob:
     """Create a job; replay only matching owner, operation and submission facts.
 
@@ -749,9 +754,11 @@ def create(
     input; those retries conflict rather than reconstructing proof from metadata.
 
     ``envelope`` is what the job pinned (``gateway/job_envelope.py``). It is written in the same transaction as the
-    job row, so a job never exists without it nor it without the job. Recording it is best effort in S2.1b: nothing
-    reads it yet, so a refusal (a bad envelope, a store error) is logged and rolled back to a savepoint, and the job is
-    created as it always was. A replay of an existing job records nothing.
+    job row, so a job never exists without it nor it without the job. By default recording is best effort: a refusal
+    (a bad envelope, a store error) is logged and rolled back to a savepoint, and the job is created without it. A
+    route whose jobs run from their pin passes ``require_envelope=True``: a missing envelope or a failed write raises
+    ``EnvelopeNotRecorded`` (the cause is chained), the whole transaction rolls back and no job row is left. A replay
+    of an existing job records nothing.
     """
     record = _coerce_to_job(job)
     # Auth-disabled submissions still record an explicit scope. Missing scope
@@ -818,14 +825,25 @@ def create(
         if record.assets:
             record.first_output_at = observed_at
         _write_job(conn, record)
+        if envelope is None and require_envelope:
+            conn.rollback()
+            raise EnvelopeNotRecorded("the job pinned no envelope")
         if envelope is not None:
-            _record_envelope_best_effort(conn, record.job_id, envelope)
+            try:
+                _record_envelope(conn, record.job_id, envelope, require=require_envelope)
+            except EnvelopeNotRecorded:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
         conn.commit()
     return record
 
 
-def _record_envelope_best_effort(conn: sqlite3.Connection, job_id: str, envelope: JobEnvelope) -> None:
-    """Write the envelope in the caller's transaction, inside a savepoint: a failure leaves the job row untouched."""
+def _record_envelope(conn: sqlite3.Connection, job_id: str, envelope: JobEnvelope, *, require: bool) -> None:
+    """Write the envelope in the caller's transaction, inside a savepoint: a failure leaves the job row untouched.
+
+    A failure is logged and swallowed, or with ``require`` raised as ``EnvelopeNotRecorded`` for the caller to roll the
+    whole transaction back."""
     from gateway import definition_store  # imports this module, so it cannot be imported at the top
 
     conn.execute("SAVEPOINT job_envelope")
@@ -833,7 +851,9 @@ def _record_envelope_best_effort(conn: sqlite3.Connection, job_id: str, envelope
         definition_store.record_envelope_in(
             conn, job_id, envelope.envelope, generators={}, now=time.time(), blobs=envelope.blobs,
         )
-    except Exception as exc:  # noqa: BLE001 - the job must be created as it always was
+    except Exception as exc:  # noqa: BLE001 - without ``require`` the job is created as it always was
+        if require:
+            raise EnvelopeNotRecorded(f"{type(exc).__name__}: {exc}") from exc
         if not conn.in_transaction:
             # SQLite rolled back the whole transaction (disk full, I/O error): the job row is gone too, and the
             # savepoint with it. Raise the real cause, not "no such savepoint".

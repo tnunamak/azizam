@@ -74,14 +74,14 @@ def test_jobs_that_pin_the_same_definitions_share_blobs(db: Path):
 
 
 def test_the_envelope_and_the_job_share_one_transaction(db: Path, monkeypatch: pytest.MonkeyPatch):
-    real = media_jobs._record_envelope_best_effort
+    real = media_jobs._record_envelope
 
-    def record_then_fail(conn, job_id, envelope):
-        real(conn, job_id, envelope)
+    def record_then_fail(conn, job_id, envelope, *, require):
+        real(conn, job_id, envelope, require=require)
         assert rows_in(conn, "job_envelope") == 1, "the envelope row is written before the commit"
         raise RuntimeError("the process stops before the commit")
 
-    monkeypatch.setattr(media_jobs, "_record_envelope_best_effort", record_then_fail)
+    monkeypatch.setattr(media_jobs, "_record_envelope", record_then_fail)
     with pytest.raises(RuntimeError):
         create(db, "req-1", make_envelope())
     assert rows(db, "media_jobs") == []
@@ -103,6 +103,23 @@ def test_an_envelope_the_store_refuses_leaves_the_job_and_no_partial_rows(db: Pa
     assert "the envelope was not recorded" in caplog.text
     # And the transaction is still usable: the next job records normally.
     later = create(db, "req-2", good)
+    assert [r[0] for r in rows(db, "job_envelope")] == [later.job_id]
+
+
+def test_a_required_envelope_that_cannot_be_written_stores_no_job(db: Path):
+    good = make_envelope()
+    missing_blob = JobEnvelope(envelope=good.envelope, blobs=good.blobs[:1])
+    with pytest.raises(media_jobs.EnvelopeNotRecorded):
+        media_jobs.create(media_jobs.MediaJob(intent="image.generate", request_id="req-1"),
+                          envelope=missing_blob, require_envelope=True, path=db)
+    with pytest.raises(media_jobs.EnvelopeNotRecorded):
+        media_jobs.create(media_jobs.MediaJob(intent="image.generate", request_id="req-2"),
+                          envelope=None, require_envelope=True, path=db)
+    for table in ("media_jobs", "job_envelope", "definition_blob", "definition_ref"):
+        assert rows(db, table) == [], table
+    # The transaction is released: a later job records normally.
+    later = media_jobs.create(media_jobs.MediaJob(intent="image.generate", request_id="req-3"),
+                              envelope=good, require_envelope=True, path=db)
     assert [r[0] for r in rows(db, "job_envelope")] == [later.job_id]
 
 

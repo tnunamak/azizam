@@ -208,6 +208,26 @@ Every step is additive and keeps the current route path as the default. Each ste
 | S2.5 | The v2 `start` outcome, with an http-v1 synchronous fixture. | v1 adapters are unchanged. |
 | S2.6 | The asset resolver, the disclosure check, the upload capability. | The image routes keep their current ingestion until their goldens pass on the resolver. |
 
+### S2.2 as built
+
+- The setting is `workflow_execution.compile_from_pin.<capability>` in the runtime config, read on each job
+  (`gateway/pinned_definitions.py`, `compile_from_pin_enabled`). The key is the route's graph capability. It is on for
+  `audio.generate`, which covers the audio, music and sound-effect job intents.
+- The job runner reads the pin before it starts (`pinned_definitions.load`). The audio route then takes its manifest
+  and graph from the pin and never reads the registry or the workflow file. A job with no envelope, a missing or
+  damaged blob, or a pin that is not a manifest fails with `definition_unavailable`. So does a job whose model now
+  resolves to another workflow than the one it pinned (an alias or `audio.workflows` edit): the run never mixes a pinned
+  graph with another workflow's limits.
+- A route with the flag on refuses to accept a job that could not pin: a pin that cannot be built, or one the store
+  refuses to write, is a 503 and no job row (`media_jobs.create(require_envelope=True)`). With the flag off, writing
+  the envelope stays best effort.
+- A job pinned before S2.2 (a contract without `schema_version`, `id` and `intent`) fails `definition_unavailable`.
+  There is no reader for the old shape: the product is unreleased.
+- The deployment limits (`audio.workflows.<name>`) are not pinned. They narrow the pinned contract at run time.
+- The synchronous `/v1/audio/generate` route has no job, so it still reads the live files.
+- The pinned contract now carries the manifest header (`schema_version`, `id`, `intent`) next to the inputs and outputs,
+  because the compile validates it. The job goldens moved only by that blob.
+
 ## Done when: the S2 acceptance matrix
 
 1. **Data only.**

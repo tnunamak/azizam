@@ -24,3 +24,8 @@ def pin_inner_hop_hosts(monkeypatch: pytest.MonkeyPatch, hosts: Mapping[str, str
     published config derives unless ``only`` is set. For a test that needs an address no config entry carries."""
     derived = proxy.inner_hop_backend_hosts
     monkeypatch.setattr(proxy, "inner_hop_backend_hosts", lambda: {**({} if only else derived()), **hosts})
+
+
+def publish_section(monkeypatch: pytest.MonkeyPatch, section: str, value: Any) -> None:
+    """``publish_config`` of the current config with one top-level ``section`` replaced by ``value``."""
+    publish_config(monkeypatch, {**proxy.config, section: value})

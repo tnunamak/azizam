@@ -31,6 +31,7 @@ import pytest
 
 import proxy
 from tests.media_test_bytes import mp4_bytes
+from tests.support.config_snapshot import publish_section
 from tests.support.adapter_differential_rig import (
     REAL_OBJECT_INFO_LOOKUP, comfy_exchanges, comfy_object_info, exchange, history_done, play, scenario,
 )
@@ -418,8 +419,10 @@ def test_audio_generate_sync(tmp_path, record_testsuite_property):
          description="POST /v1/audio/generate against a fake audio file served by /view")
 
 
-def test_audio_generate_job(tmp_path, record_testsuite_property):
+def _audio_job_golden(tmp_path, record_testsuite_property, *, from_pin: bool):
+    """The audio job scenario with the route compiling from the job's pin or from the live file: one golden for both."""
     def setup(rig):
+        publish_section(rig.monkeypatch, "workflow_execution", {"compile_from_pin": {"audio.generate": from_pin}})
         _capture_scheduling(rig)
         _audio_comfy(rig)
 
@@ -429,7 +432,27 @@ def test_audio_generate_job(tmp_path, record_testsuite_property):
                                            "request": {"prompt": "a door creaks", "model": "tangoflux", "duration": 4}},
                                 unordered_json=True)
         job_id = submit.json()["job_id"]
+        # Count what the run reads: the live definitions (registry manifest, graph file) or the job's pin.
+        live_reads: list[str] = []
+        pin_reads: list[str] = []
+        def spying(name: str, seen: list[str]):
+            real = getattr(proxy, name)
+
+            def spy(*args, **kwargs):
+                seen.append(name)
+                return real(*args, **kwargs)
+            return spy
+
+        rig.set(proxy, "_load_audio_workflow_manifest", spying("_load_audio_workflow_manifest", live_reads))
+        rig.set(proxy, "_load_audio_workflow_file", spying("_load_audio_workflow_file", live_reads))
+        real_pin = proxy._load_audio_pin
+        rig.set(proxy, "_load_audio_pin", lambda pinned_job_id: (pin_reads.append(pinned_job_id), real_pin(pinned_job_id))[1])
         await proxy._run_audio_media_job(rig.scheduled[0])
+        # The two routes give one golden, so the golden alone cannot show the flag took effect: the reads do.
+        if from_pin:
+            assert pin_reads == [job_id] and live_reads == [], (pin_reads, live_reads)
+        else:
+            assert pin_reads == [] and live_reads, (pin_reads, live_reads)
         await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}", label="poll the finished job")
         content = await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/content", label="job content")
         await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/events", label="job events")
@@ -437,6 +460,14 @@ def test_audio_generate_job(tmp_path, record_testsuite_property):
 
     play("audio_generate_job", tmp_path, record_testsuite_property, setup, drive,
          description="queued audio media job through the generic submit route, executor run explicitly")
+
+
+def test_audio_generate_job(tmp_path, record_testsuite_property):
+    _audio_job_golden(tmp_path, record_testsuite_property, from_pin=False)
+
+
+def test_audio_generate_job_compiled_from_pin(tmp_path, record_testsuite_property):
+    _audio_job_golden(tmp_path, record_testsuite_property, from_pin=True)
 
 
 def test_audio_generate_unreachable(tmp_path, record_testsuite_property):
