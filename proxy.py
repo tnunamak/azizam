@@ -25990,11 +25990,12 @@ async def proxy_audio_generate(
                 code="model_not_found",
             )
         )
+    workflow_id = f"audio.generate.{workflow_name}"
     if pinned is not None:
         try:
             manifest = pinned.manifest(_GRAPH_BINDING)
             pinned_graph = _pinned_graph(pinned)
-            if pinned_workflow != f"audio.generate.{workflow_name}":
+            if pinned_workflow != workflow_id:
                 raise definition_store.DefinitionUnavailable(
                     f"job {pinned.envelope.source_id}: the model now resolves to workflow {workflow_name}, not the one it pinned")
         except definition_store.DefinitionUnavailable as exc:
@@ -26050,7 +26051,7 @@ async def proxy_audio_generate(
             protocol="openai.audio",
             intent=INTENT_AUDIO_GENERATE,
             model=str(model) if model is not None else None,
-            workflow=f"audio.generate.{workflow_name}",
+            workflow=workflow_id,
             backend=_GRAPH_BACKEND_ID,
             capability_exposure="default",
             capability_trust_tier="stable",
@@ -26065,7 +26066,7 @@ async def proxy_audio_generate(
         requested=str(model) if model is not None else None,
         resolved=str(workflow_name),
         manifest=manifest,
-        extra_ids=(f"audio.generate.{workflow_name}",),
+        extra_ids=(workflow_id,),
     )
     if target_decision is not None and target_decision.denied:
         return _policy_denied_response(target_decision)
@@ -26143,7 +26144,7 @@ async def proxy_audio_generate(
                                 from gateway import media_ingestion
                                 receipt.requested_model = str(model)
                                 receipt.resolved_model = workflow_name
-                                receipt.resolved_workflow = f"audio.generate.{workflow_name}"
+                                receipt.resolved_workflow = workflow_id
                                 await asyncio.to_thread(media_ingestion.store_audio_response, audio_bytes, content_type, receipt, store_asset=store_asset_bytes)
                             try:
                                 if not store_full and media_delivery.current_mode() == provenance.METADATA_NONE:
@@ -26159,7 +26160,7 @@ async def proxy_audio_generate(
                                             kind="audio",
                                             requested_model=str(model),
                                             resolved_model=workflow_name,
-                                            workflow_id=f"audio.generate.{workflow_name}",
+                                            workflow_id=workflow_id,
                                             backend=_GRAPH_BACKEND_ID,
                                             seed=seed_val,
                                             parameters={
