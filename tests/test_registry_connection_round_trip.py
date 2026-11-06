@@ -241,3 +241,10 @@ def test_the_body_secret_texts_take_a_schemeless_address_and_skip_a_short_key():
     texts = record_carriers.request_secret_texts(
         {"host": "user:raw-secret-value@127.0.0.1", "key": "kind", "api_key": "sk-long-provider-key"})
     assert "raw-secret-value" in texts and "sk-long-provider-key" in texts and "kind" not in texts
+
+
+def test_the_body_secret_texts_take_a_query_secret_from_a_schemeless_address():
+    from gateway import record_carriers
+
+    texts = record_carriers.request_secret_texts({"host": "127.0.0.1:5053/v1?token=raw-query-secret"})
+    assert "raw-query-secret" in texts
