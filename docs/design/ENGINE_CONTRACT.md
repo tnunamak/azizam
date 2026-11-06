@@ -45,9 +45,11 @@ provenance: {source: ui | provisioned | imported | builtin, package: null}
 connection:
   transport: http                   # http | websocket | tcp | unix (non-http needs an adapter)
   address: http://127.0.0.1:8080    # root; the protocol joins operation paths
+  control_address: null             # optional; where `class: control` operations go (a separate management
+                                    # listener). Inference, streams and observation probes stay on `address`.
   protocol: openai-compatible       # protocol description id (section 4)
   dispatch: protocol                # explicit public http-v1 execution opt-in; absent keeps the current path
-  credentials:                      # per operation class, each bound to the address origin (F5)
+  credentials:                      # per operation class, each bound to the origin it is sent to (F5)
     inference: {secret_ref: null, header: Authorization, scheme: Bearer}
     control: null                   # load, unload, switch, admin; owner-only
   headers: []                       # credential-like names are owner-only, stored as secrets
@@ -372,7 +374,9 @@ resources:
     library; a restorable encrypted secret
     backup; moving the remaining admin routers (settings, sign-in, accounts, categories,
     home, activity) onto `ManagementRoute`; Schemathesis and a Hypothesis state machine.
-  - Credentials are per operation class and bound to the address origin.
+  - Credentials are per operation class and bound to the address origin. With a `control_address`, the
+    control credential is bound to that origin instead; a key is never sent to an origin it is not approved for
+    (a probe goes without it, an operation is refused with `engine_credential_origin_mismatch`).
     Cross-origin redirects are refused.
 
 ## 3. Routing objects (aliases and pools) (F9, F10)
