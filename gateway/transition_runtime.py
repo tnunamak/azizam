@@ -82,6 +82,7 @@ class TransitionRuntime:
         self._snapshots = snapshots
         self._startup = tuple(startup)
         self._built: Optional[tuple[GateStore, Executor]] = None
+        self._late_reconcile: Optional["asyncio.Task[None]"] = None
 
     def policy(self, domain: str) -> TransitionPolicy:
         return policy_for(domain, self._services())
@@ -158,6 +159,23 @@ class TransitionRuntime:
         except Exception as exc:  # noqa: BLE001 - a table that fails mid-read leaves the gate closed, never a crashed start
             print(f"[transition-gate] startup reconcile failed ({type(exc).__name__}: {exc}); gates stay closed", flush=True)
 
+    async def reconcile_if_due(self, wait_s: float) -> None:
+        """Called on a request's admission path: if the start-up reconcile was skipped (the table was unreadable) and
+        the table reads now, run it once on a task of its own and wait up to ``wait_s`` for it. A reconcile that is
+        not done in time goes on in the background; the request is refused by its gate meanwhile, as before."""
+        try:
+            executor = self.executor()
+            if executor.reconciled():
+                return
+            if self._late_reconcile is None or self._late_reconcile.done():
+                self._late_reconcile = asyncio.get_running_loop().create_task(executor.ensure_reconciled())
+                self._late_reconcile.add_done_callback(_log_reconcile_end)
+            await asyncio.wait_for(asyncio.shield(self._late_reconcile), wait_s)
+        except asyncio.TimeoutError:
+            pass
+        except Exception as exc:  # noqa: BLE001 - the gate still refuses; the reconcile is tried again on the next request
+            print(f"[transition-gate] late reconcile failed ({type(exc).__name__}: {exc}); gates stay closed", flush=True)
+
     def leases(self, domain: str) -> tuple[int, Optional[float]]:
         """``(active_leases, last_lease_at)`` for the domain, read-only from the lease registry. The count is the
         leases held right now; ``last_lease_at`` is epoch seconds of the last mint since the process started."""
@@ -172,3 +190,8 @@ class TransitionRuntime:
     def enabled(self, domain: str) -> bool:
         policy = self.policy(domain)
         return policy.enabled and policy.profile is not None and transition_profiles.known(policy.profile)
+
+
+def _log_reconcile_end(task: "asyncio.Task[None]") -> None:
+    if not task.cancelled() and task.exception() is not None:
+        print(f"[transition-gate] late reconcile failed ({type(task.exception()).__name__}); gates stay closed", flush=True)

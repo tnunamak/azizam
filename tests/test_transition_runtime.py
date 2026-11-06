@@ -283,6 +283,96 @@ def test_startup_completes_when_the_table_reads_then_fails_during_recovery(wired
     asyncio.run(runtime.reconcile_startup())
 
 
+# -- review round: a table that was unreadable at start-up is reconciled once it reads --------------------------
+
+
+def _leftover_operation(store, runtime, engine, *, with_intent: bool):
+    executor = runtime.executor()
+    began = executor.store.begin(domain="dom", kind="park", idempotency_key="crashed", target="alpha",
+                                 incarnation="inc-1", config_revision=0)
+    op = began.operation
+    if with_intent:
+        executor.store.write_intent(op.op_id, StepIntent(step="release", effect_key=f"{op.op_id}:release",
+                                                         expected_incarnation="inc-1"))
+    engine.query_outcome = "unknown"
+    return executor, op
+
+
+def _unreadable_at_start(store, monkeypatch):
+    """The table could not be read at start-up and cannot be until ``readable_again`` runs."""
+    real_load = store.load
+    monkeypatch.setattr(store, "load", lambda: None)
+    store._readable = False
+
+    def readable_again() -> None:
+        monkeypatch.setattr(store, "load", real_load)
+        store._last_load = None
+
+    return readable_again
+
+
+def test_an_operation_left_running_is_reconciled_when_the_table_first_reads_after_an_unreadable_start(wired, monkeypatch) -> None:
+    store, engine, runtime = wired
+    executor, op = _leftover_operation(store, runtime, engine, with_intent=True)
+    readable_again = _unreadable_at_start(store, monkeypatch)
+
+    async def scenario() -> None:
+        await runtime.reconcile_startup()
+        assert not executor.reconciled() and executor.store.get(op.op_id).state == "running", "nothing could be settled yet"
+        readable_again()
+        with pytest.raises(TransitionUnavailable) as caught:
+            async with proxy._admission_lock("alpha"):
+                raise AssertionError("not admitted")
+        assert caught.value.reason == "gate_reconciling", "the first request settled the leftover operation"
+        assert executor.reconciled() and executor.store.get(op.op_id).state == "reconciling"
+        assert not [call for call in engine.calls if call[0] == "transition.release"], "no effect was repeated"
+
+    asyncio.run(scenario())
+
+
+def test_a_resumable_operation_left_running_finishes_and_the_gate_opens_after_an_unreadable_start(wired, monkeypatch) -> None:
+    store, engine, runtime = wired
+    executor, op = _leftover_operation(store, runtime, engine, with_intent=False)
+    readable_again = _unreadable_at_start(store, monkeypatch)
+
+    async def scenario() -> None:
+        await runtime.reconcile_startup()
+        readable_again()
+        with pytest.raises(TransitionUnavailable):
+            async with proxy._admission_lock("alpha"):
+                raise AssertionError("the gate is still closed for the first request")
+        done = await executor.wait(op.op_id)
+        assert (done.state, store.state("dom")) == ("succeeded", "open"), "the gate was not left closed for good"
+        assert store.parked("dom") == op.op_id
+        await executor.ensure_reconciled()
+        assert len([call for call in engine.calls if call[0] == "transition.release"]) == 1, "reconciled once"
+
+    asyncio.run(scenario())
+
+
+def test_the_reconcile_runs_once_even_when_requests_arrive_together(wired, monkeypatch) -> None:
+    store, engine, runtime = wired
+    executor, _ = _leftover_operation(store, runtime, engine, with_intent=True)
+    readable_again = _unreadable_at_start(store, monkeypatch)
+    runs: list[int] = []
+    real = executor.reconcile_startup
+
+    async def counted() -> None:
+        runs.append(1)
+        await real()
+
+    executor.reconcile_startup = counted  # type: ignore[method-assign]
+
+    async def scenario() -> None:
+        await runtime.reconcile_startup()
+        readable_again()
+        await asyncio.gather(*(executor.ensure_reconciled() for _ in range(5)), runtime.reconcile_if_due(5.0))
+        await executor.ensure_reconciled()
+
+    asyncio.run(scenario())
+    assert runs == [1]
+
+
 # -- review round: the waking request's lease is minted under the lock -------------------------------------
 
 

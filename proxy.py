@@ -1551,6 +1551,10 @@ async def _admission_lock(service_id: str, *, bounded: bool = True):
                 await asyncio.wait_for(asyncio.to_thread(gates.refresh_if_due), _ADMISSION_READ_TIMEOUT_S)
             except asyncio.TimeoutError:
                 pass  # the gate stays as it was in memory; an unreadable table is "reconciling" and refuses below
+            if gates.readable():
+                # A table that was unreadable at start-up was never reconciled: settle its unfinished operations
+                # now, once, so a leftover "running" operation cannot hold this domain closed for good.
+                await TRANSITION_RUNTIME.reconcile_if_due(_ADMISSION_READ_TIMEOUT_S)
             try:
                 overrides = await asyncio.wait_for(
                     asyncio.to_thread(_strict_service_availability_overrides), _ADMISSION_READ_TIMEOUT_S)

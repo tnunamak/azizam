@@ -419,11 +419,13 @@ class Executor:
         self._submit_locks: dict[str, asyncio.Lock] = {}
         self._tasks: dict[str, "asyncio.Task[None]"] = {}
         self._ready = False
+        self._reconcile_lock: Optional[asyncio.Lock] = None
 
     # -- submit -------------------------------------------------------------
 
     async def submit(self, *, domain: str, kind: TransitionKind, idempotency_key: str, target: Optional[str] = None,
                      compensates: Optional[str] = None, trigger: Optional[Callable[[], None]] = None) -> BeginResult:
+        await self.ensure_reconciled()
         mutex = self._submit_locks.setdefault(domain, asyncio.Lock())
         async with mutex:
             return await self._submit_serialized(domain, kind, idempotency_key, target, compensates, trigger)
@@ -592,6 +594,30 @@ class Executor:
         await asyncio.to_thread(self.store.finish, operation.op_id, state, gate)  # type: ignore[arg-type]
 
     # -- recovery -----------------------------------------------------------
+
+    def reconciled(self) -> bool:
+        return self._ready
+
+    async def ensure_reconciled(self) -> None:
+        """Run ``reconcile_startup`` once, the first time the transition table reads as readable.
+
+        The gateway's start-up hook skips the reconcile while the table is unreadable and nothing else would run
+        it later: an operation left ``running`` by the last process would hold its domain closed for good. Every
+        entry (``submit``, ``ensure_awake``, and the gateway's admission) calls this; it is a flag read once the
+        reconcile has run, and a no-op while the table still cannot be read. One lock makes it run once.
+        """
+        if self._ready:
+            return
+        gates = getattr(self.store, "gates", None)
+        if gates is not None and not gates.readable():
+            await asyncio.to_thread(gates.refresh_if_due)
+            if not gates.readable():
+                return
+        if self._reconcile_lock is None:
+            self._reconcile_lock = asyncio.Lock()
+        async with self._reconcile_lock:
+            if not self._ready:
+                await self.reconcile_startup()
 
     async def reconcile_startup(self) -> None:
         """Before any admission: settle or hold every unfinished operation (D2 "Startup").
@@ -763,6 +789,7 @@ class Executor:
         lease under the lock before the gate opens. Returns the finished wake, or None when the domain
         was not parked. Raises ``TransitionUnavailable`` when the wake is not done in time or did not succeed.
         """
+        await self.ensure_reconciled()
         parked_by = self._gate_parked(domain)
         if parked_by is None:
             return None
