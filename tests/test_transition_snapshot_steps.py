@@ -4,10 +4,12 @@ reveals the result through ``query``. Oracle items 8 (restore part) and 9; decis
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
 
+from gateway.transition_ops import EffectResult
 from gateway.transition_snapshot_steps import SnapshotPolicy, parse_policy, snapshot_steps
 from gateway.transition_snapshots import SqliteSnapshotStore
 from tests.support.transition_snapshot_rig import PAYLOAD, Rig
@@ -264,10 +266,13 @@ def test_an_out_of_storage_domain_refuses_a_new_checkpoint(tmp_path) -> None:
     assert orphan.exists(), "an unowned file is never deleted to make room"
 
 
-def test_a_slow_checkpoint_past_its_deadline_is_unknown_and_its_late_file_is_never_published(rig) -> None:
+def test_a_slow_checkpoint_past_its_deadline_is_unknown_and_its_late_file_is_never_published(rig, capsys) -> None:
     rig.engine.script("checkpoint", "success", delay=0.3 if rig.shape == "sync" else 0.0)
     result = go(rig, "park", rig.policy(deadlines={"checkpoint": 0.05}, query=False), settle=0.4)
     assert (result.verdict, result.gate) == ("reconcile", "reconciling")
+    assert rig.engine.cancelled == [], "a dispatched effect is never cancelled by its deadline"
+    if rig.shape == "sync":
+        assert "late checkpoint effect finished after its deadline (success); outcome ignored" in capsys.readouterr().out
     assert rig.snapshots.orphans(D) == ("op-1-checkpoint.snap",), "the file arrived after the step gave up"
     assert rig.snapshots.pointer(D) is None and rig.snapshots.latest_published(D, rig.engine.compat) is None
 
@@ -275,6 +280,7 @@ def test_a_slow_checkpoint_past_its_deadline_is_unknown_and_its_late_file_is_nev
 def test_a_checkpoint_that_finishes_after_its_deadline_is_resolved_by_the_declared_query(rig) -> None:
     rig.engine.script("checkpoint", "success", delay=0.3 if rig.shape == "sync" else 0.0)
     result = go(rig, "park", rig.policy(deadlines={"checkpoint": 0.05}, query=True), settle=0.4)
+    assert rig.engine.cancelled == [], "a dispatched effect is never cancelled by its deadline"
     if rig.shape == "sync":
         # the query ran at the deadline, before the effect finished: still unknown, so the gate stays closed
         assert result.verdict == "reconcile" and rig.snapshots.pointer(D) is None
@@ -458,6 +464,18 @@ def test_g1_a_failed_reset_declared_no_change_still_closes_when_the_target_is_no
     assert (result.verdict, result.gate) == ("fail_closed", "failed_closed") and rig.engine.dirty
 
 
+def test_g1_a_failed_reset_declared_no_change_without_a_verify_observation_stays_closed(rig) -> None:
+    seed(rig)
+    rig.engine.script("restore", "partial")  # the engine is dirty
+    rig.engine.script("reset", "no_change")  # and the reset did nothing
+    policy = rig.policy(restore={"reset": {"failure_semantics": "no_change", "query": rig.shape == "deferred"}})
+    assert "verify" not in policy["profile"]["restore"]["reset"]
+    result = go(rig, "wake", policy)
+    assert (result.verdict, result.gate) == ("fail_closed", "failed_closed") and rig.engine.dirty
+    assert rig.engine.calls.count("resident") == 0, "'something is loaded' does not show a clean target"
+    assert rig.ops.get("op-1").step_outcome == "partial"
+
+
 @pytest.mark.parametrize("script", ["partial", "unknown"])
 def test_a_reset_that_fails_or_is_unknown_stays_closed(rig, script) -> None:
     seed(rig)
@@ -490,6 +508,7 @@ def test_a_restore_that_succeeds_after_its_timeout_is_not_served_cold_over(rig) 
     result = go(rig, "wake", rig.policy(deadlines={"restore": 0.05, "query": 1}, query=True), settle=0.3)
     assert "reset" not in rig.engine.calls, "an unknown outcome never runs the reset"
     assert rig.engine.restored == "seed.snap", "the late restore completed"
+    assert rig.engine.cancelled == [], "a dispatched effect is never cancelled by its deadline"
     if rig.shape == "sync":
         assert (result.verdict, result.gate) == ("reconcile", "reconciling"), "the query ran before it finished"
     else:
@@ -502,6 +521,8 @@ def test_a_restore_that_succeeds_after_its_timeout_with_no_query_stays_closed(ri
     policy = rig.policy(deadlines={"restore": 0.05}, query=False)
     result = go(rig, "wake", policy, settle=0.3)
     assert (result.verdict, result.gate) == ("reconcile", "reconciling") and "reset" not in rig.engine.calls
+    assert rig.engine.cancelled == [], "a dispatched effect is never cancelled by its deadline"
+    assert rig.engine.restored == "seed.snap", "the late restore completed"
 
 
 def test_the_restored_snapshot_is_pinned_while_it_restores_and_released_after(rig) -> None:
@@ -537,9 +558,11 @@ class Crash(BaseException):
     pass
 
 
-@pytest.mark.parametrize("point,expected", [("publish:verified", "seed.snap"), ("publish:in_transaction", "seed.snap"),
+@pytest.mark.parametrize("point,expected", [("publish:verified", None), ("publish:in_transaction", None),
                                             ("publish:committed", "op-1-checkpoint.snap")])
-def test_a_crash_during_checkpoint_publish_restores_whichever_snapshot_the_pointer_names(rig, point, expected) -> None:
+def test_a_crash_during_checkpoint_publish_restores_only_a_snapshot_published_by_that_checkpoint(rig, point, expected) -> None:
+    """The old snapshot is retired before the checkpoint is dispatched, so a crash before the new pointer commits
+    leaves no published snapshot: the next start is cold. After the commit, the new one is restored."""
     seed(rig)
 
     def hook(name: str) -> None:
@@ -555,3 +578,47 @@ def test_a_crash_during_checkpoint_publish_restores_whichever_snapshot_the_point
     result = go(rig, "wake", rig.policy())
     assert result.verdict == "continue" and rig.engine.restored == expected
     assert "pending" not in states(rig)
+
+
+def test_a_crash_after_the_checkpoint_effect_but_before_any_publish_leaves_the_next_start_cold(rig) -> None:
+    seed(rig)
+    original = rig.adapter.checkpoint
+
+    async def checkpoint_then_die(domain, intent):
+        await original(domain, intent)  # the effect ran and wrote its file
+        raise Crash("process died after the effect")
+
+    rig.adapter.checkpoint = checkpoint_then_die
+    with pytest.raises(Crash):
+        go(rig, "park", rig.policy(query=False))
+    rig.adapter.checkpoint = original
+    rig.reopen().startup_reconcile()  # the gateway restarts; it never touches a published row
+    assert rig.snapshots.pointer(D) is None, "the old snapshot was retired before the attempt"
+    rig.ops = FakeOperationStore()
+    result = go(rig, "wake", rig.policy())
+    assert result.verdict == "continue" and rig.engine.restored is None and "restore" not in rig.engine.calls
+
+
+def test_a_checkpoint_that_reuses_a_live_handle_is_refused_by_name_and_the_next_start_is_cold(rig, capsys) -> None:
+    handle = seed(rig)
+    assert rig.snapshots.pin(handle, domain=D)  # a restore holds it, so collect cannot remove it before the checkpoint
+    original_query = rig.adapter.query
+
+    async def checkpoint(domain, intent):
+        scratch = rig.files.path_for(D, "rewrite.tmp")
+        scratch.write_bytes(PAYLOAD)
+        scratch.chmod(0o600)
+        os.replace(scratch, rig.files.path_for(D, handle))  # rename-over onto the fixed handle
+        result = EffectResult(outcome="success", handle=handle, bytes=len(PAYLOAD))
+        rig.engine.effects[intent.effect_key] = result
+        return result if rig.shape == "sync" else EffectResult(outcome="unknown", evidence_ref="accepted")
+
+    rig.adapter.checkpoint = checkpoint
+    rig.adapter.query = original_query
+    result = go(rig, "park", rig.policy())
+    assert result.verdict == "continue", "best effort: the failed checkpoint only makes the next start cold"
+    assert rig.snapshots.pointer(D) is None and states(rig) == ["abandoned"], "no second row, nothing published"
+    log = capsys.readouterr().out
+    assert "unique handle per checkpoint effect" in log and "snapshot_not_published" in log
+    rig.snapshots.unpin(handle, domain=D)
+    assert go(rig, "wake", rig.policy()).verdict == "continue" and rig.engine.restored is None

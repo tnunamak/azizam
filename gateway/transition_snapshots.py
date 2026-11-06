@@ -19,8 +19,12 @@ Lifecycle: ``pending`` -> ``published`` -> ``abandoned`` -> ``deleted``. Only ``
   a regular, single-link file owned by this process. The domain's disk use is bounded by a
   declared ``SnapshotBudget``; a new checkpoint is refused when the domain is full.
 - Deletion goes only through ``collect``. It removes a file only when a ledger row owns it, the
-  row is ``abandoned`` and not pinned, and the file on disk is still the one the row recorded.
-  A file with no row is an orphan: it counts against the budget and is reported, never deleted.
+  row is ``abandoned`` and not pinned, and the file on disk is still the one the row recorded
+  (same file id, size and modification time). A file with no row is an orphan: it counts against
+  the budget and is reported, never deleted.
+- A handle is unique per checkpoint effect, per domain: while a row for ``(domain, handle)`` is not
+  ``deleted``, ``pending`` refuses that handle. An adapter that reuses a handle breaks the contract;
+  the refusal names it. The same handle in two domains is two different files and is allowed.
 
 The store compares compatibility maps and nothing else about an engine (D5 "Compatibility"). It
 names no engine, model or vendor.
@@ -62,8 +66,9 @@ CREATE TABLE IF NOT EXISTS transition_snapshot (
     created       REAL NOT NULL,
     updated       REAL NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS transition_snapshot_live_handle
-    ON transition_snapshot(handle) WHERE state != 'deleted';
+DROP INDEX IF EXISTS transition_snapshot_live_handle;
+CREATE UNIQUE INDEX IF NOT EXISTS transition_snapshot_live_domain_handle
+    ON transition_snapshot(domain, handle) WHERE state != 'deleted';
 CREATE INDEX IF NOT EXISTS transition_snapshot_domain ON transition_snapshot(domain, state);
 CREATE TABLE IF NOT EXISTS transition_snapshot_pointer (
     domain     TEXT PRIMARY KEY,
@@ -137,12 +142,13 @@ class PrivateSnapshotDir:
             raise SnapshotRejected("snapshot file is not a private regular file of this process")
         return FileFacts(size=facts.st_size, mtime_ns=facts.st_mtime_ns, file_id=f"{facts.st_dev}:{facts.st_ino}")
 
-    def remove(self, domain: str, handle: str, expected_file_id: str) -> bool:
-        """Remove the file if it is still the one with ``expected_file_id``. ``False``: already gone."""
+    def remove(self, domain: str, handle: str, expected: FileFacts) -> bool:
+        """Remove the file if it is still the recorded one (file id, size and modification time).
+        ``False``: already gone."""
         facts = self.facts(domain, handle)
         if facts is None:
             return False
-        if facts.file_id != expected_file_id:
+        if facts != expected:
             raise SnapshotRejected("the file at this handle is not the one the ledger recorded")
         self.path_for(domain, handle).unlink()
         return True
@@ -209,9 +215,17 @@ class SqliteSnapshotStore:
         return Snapshot(handle=row["handle"], domain=row["domain"], op_id=row["op_id"], state=row["state"],
                         compatibility=json.loads(row["compatibility"]), bytes=row["bytes"], created=row["created"])
 
-    def _live_row(self, connection: sqlite3.Connection, handle: str) -> Optional[sqlite3.Row]:
-        return connection.execute("SELECT * FROM transition_snapshot WHERE handle = ? AND state != 'deleted'",
-                                  (handle,)).fetchone()
+    @staticmethod
+    def _live_row(connection: sqlite3.Connection, handle: str, domain: Optional[str] = None) -> Optional[sqlite3.Row]:
+        """The row for a live handle. Handles are unique per domain, so a call that omits the domain
+        must find at most one row; the same handle live in two domains is ambiguous and is refused."""
+        query, args = "SELECT * FROM transition_snapshot WHERE handle = ? AND state != 'deleted'", (handle,)
+        if domain is not None:
+            query, args = query + " AND domain = ?", (handle, domain)
+        rows = connection.execute(query, args).fetchall()
+        if len(rows) > 1:
+            raise SnapshotRejected("the handle is live in more than one domain; name the domain")
+        return rows[0] if rows else None
 
     # -- lifecycle --------------------------------------------------------------
 
@@ -231,14 +245,16 @@ class SqliteSnapshotStore:
             try:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
-                    if self._live_row(connection, handle) is not None:
-                        raise SnapshotRejected("handle already belongs to a live snapshot")
+                    if self._live_row(connection, handle, domain) is not None:
+                        raise SnapshotRejected(
+                            "handle already belongs to a live snapshot of this domain; the adapter contract is one "
+                            "unique handle per checkpoint effect")
                     connection.execute(
                         "INSERT INTO transition_snapshot(domain, handle, op_id, state, compatibility, bytes, file_size,"
                         " file_mtime_ns, file_id, created, updated) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
                         (domain, handle, op_id, json.dumps(dict(compatibility), sort_keys=True), bytes, facts.size,
                          facts.mtime_ns, facts.file_id, now, now))
-                    row = self._live_row(connection, handle)
+                    row = self._live_row(connection, handle, domain)
                     connection.execute("COMMIT")
                 except BaseException:
                     connection.execute("ROLLBACK")
@@ -248,12 +264,12 @@ class SqliteSnapshotStore:
         assert row is not None
         return self._snapshot(row)
 
-    def publish(self, handle: str) -> Snapshot:
+    def publish(self, handle: str, *, domain: Optional[str] = None) -> Snapshot:
         """Verify the pending snapshot, then move the domain's pointer to it in one transaction."""
         with self._lock:
             connection = self._connect()
             try:
-                row = self._live_row(connection, handle)
+                row = self._live_row(connection, handle, domain)
                 if row is None:
                     raise SnapshotRejected("unknown snapshot")
                 if row["state"] != "pending":
@@ -284,7 +300,7 @@ class SqliteSnapshotStore:
                 except BaseException:
                     connection.execute("ROLLBACK")
                     raise
-                published = self._live_row(connection, handle)
+                published = self._live_row(connection, handle, row["domain"])
             finally:
                 connection.close()
         assert published is not None
@@ -388,18 +404,21 @@ class SqliteSnapshotStore:
 
     # -- pins, room, deletion ---------------------------------------------------
 
-    def pin(self, handle: str) -> bool:
-        return self._set_pin(handle, 1)
+    def pin(self, handle: str, *, domain: Optional[str] = None) -> bool:
+        return self._set_pin(handle, 1, domain)
 
-    def unpin(self, handle: str) -> bool:
-        return self._set_pin(handle, 0)
+    def unpin(self, handle: str, *, domain: Optional[str] = None) -> bool:
+        return self._set_pin(handle, 0, domain)
 
-    def _set_pin(self, handle: str, value: int) -> bool:
+    def _set_pin(self, handle: str, value: int, domain: Optional[str]) -> bool:
         with self._lock:
             connection = self._connect()
             try:
-                cursor = connection.execute("UPDATE transition_snapshot SET pinned = ? WHERE handle = ?"
-                                            " AND state != 'deleted'", (value, handle))
+                row = self._live_row(connection, handle, domain)
+                if row is None:
+                    return False
+                cursor = connection.execute("UPDATE transition_snapshot SET pinned = ? WHERE generation = ?",
+                                            (value, row["generation"]))
                 return cursor.rowcount == 1
             finally:
                 connection.close()
@@ -413,8 +432,9 @@ class SqliteSnapshotStore:
     def collect(self, domain: str) -> Sequence[str]:
         """Delete the abandoned, unpinned snapshots of the domain whose files the ledger owns.
 
-        A file that is no longer the recorded one is left in place and the row stays ``abandoned``:
-        ownership is not proven, so the file is not ours to delete.
+        A file that is no longer the recorded one (another file id, size or modification time) is left
+        in place and the row stays ``abandoned``: ownership is not proven, so the file is not ours to
+        delete.
         """
         with self._lock:
             connection = self._connect()
@@ -424,7 +444,8 @@ class SqliteSnapshotStore:
                 deleted: list[str] = []
                 for row in rows:
                     try:
-                        self.files.remove(domain, row["handle"], row["file_id"])
+                        self.files.remove(domain, row["handle"], FileFacts(
+                            size=row["file_size"], mtime_ns=row["file_mtime_ns"], file_id=row["file_id"]))
                     except SnapshotRejected as exc:
                         print(f"[transition-snapshot] not deleting {row['handle']}: {exc}", flush=True)
                         continue
@@ -464,20 +485,20 @@ class SqliteSnapshotStore:
 
     # -- introspection (diagnostics and tests) ---------------------------------
 
-    def get(self, handle: str) -> Optional[Snapshot]:
+    def get(self, handle: str, domain: Optional[str] = None) -> Optional[Snapshot]:
         with self._lock:
             connection = self._connect()
             try:
-                row = self._live_row(connection, handle)
+                row = self._live_row(connection, handle, domain)
             finally:
                 connection.close()
         return None if row is None else self._snapshot(row)
 
-    def generation_of(self, handle: str) -> Optional[int]:
+    def generation_of(self, handle: str, domain: Optional[str] = None) -> Optional[int]:
         with self._lock:
             connection = self._connect()
             try:
-                row = self._live_row(connection, handle)
+                row = self._live_row(connection, handle, domain)
             finally:
                 connection.close()
         return None if row is None else int(row["generation"])
