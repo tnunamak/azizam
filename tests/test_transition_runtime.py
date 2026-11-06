@@ -334,21 +334,29 @@ def test_a_request_that_leaves_while_it_waits_for_the_lock_gives_the_wakes_lease
     asyncio.run(scenario())
 
 
-def test_a_request_that_only_joins_another_wake_holds_no_bridge_lease(wired) -> None:
+def test_a_request_that_only_joins_another_wake_holds_no_bridge_lease(wired, monkeypatch) -> None:
     store, engine, runtime = wired
+    bridges: list[Any] = []
+    real_lease = proxy._swap_drain.lease
+
+    def counting(backend: str, **kwargs: Any) -> Any:
+        lease = real_lease(backend, **kwargs)
+        if kwargs.get("admit") is False:
+            bridges.append(lease)  # only the transition executor mints without the admit hook
+        return lease
+
+    monkeypatch.setattr(proxy._swap_drain, "lease", counting)
 
     async def scenario() -> None:
         await park(runtime)
-        counts: list[int] = []
 
         async def request(service: str) -> None:
             async with proxy._admission_lock(service):
-                counts.append(proxy._swap_drain.in_flight(service))
                 proxy._swap_drain.lease(service).release()
 
         await asyncio.gather(*(request(name) for name in ("alpha", "beta", "alpha")))
-        assert sorted(counts) == [0, 0, 1], "only the request whose submit began the wake holds a bridge lease"
-        assert proxy._swap_drain.in_flight("alpha") == 0
+        assert len(bridges) == 1, "only the request whose submit began the wake gets a bridge lease"
+        assert bridges[0].released and proxy._swap_drain.in_flight("alpha") == 0
 
     asyncio.run(scenario())
 
