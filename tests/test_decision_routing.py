@@ -2,6 +2,7 @@
 import asyncio
 import copy
 import json
+import time
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -485,20 +486,28 @@ def test_configured_decision_timeout_still_bounds_startup(monkeypatch, timeout):
     monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .25)
     cfg = config()
     cfg["backends"]["large"]["timeout"] = .25 if timeout == .03 else timeout
-    cancelled = []
+    started, cancelled, finished = [], [], []
 
     async def ensure(service):
+        started.append(service)
         try:
             await asyncio.sleep(30)  # outlasts the deadline; only a missing bound lets it finish
         except asyncio.CancelledError:
             cancelled.append(service)
             raise
+        finished.append(service)
 
     rt = runtime(cfg=cfg, ensure=ensure)
+    began = time.monotonic()
     result = asyncio.run(rt.dispatch(None, LOCAL, {**BODY, "model": "decide-quality"}, "r"))
+    elapsed = time.monotonic() - began
+    # The deadline ended the call, whether or not the startup coroutine got to run first (under host load the
+    # deadline can fire before it starts, and then there is nothing to cancel).
+    assert finished == [], "the startup call ran to its end: nothing bounded it"
     assert result.status_code == 529
     assert result.fallback_reasons == ("large:deadline_exceeded",)
-    assert cancelled == ["large"]
+    assert elapsed < 10, "dispatch waited for the 30 s startup call instead of the deadline"
+    assert cancelled == started, "a startup call that began was cancelled by the deadline"
 
 
 def test_explicit_timeout_bounds_lifecycle_and_fallback_budget(monkeypatch):

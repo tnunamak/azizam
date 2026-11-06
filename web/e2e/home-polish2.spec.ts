@@ -5,6 +5,11 @@ import type { HomeSnapshot } from "../src/app/_home/home-api";
 import { readFile } from "node:fs/promises";
 import { fulfilJson, fulfilBytes } from "./fixtures/intercept";
 
+// The Home pass-through route can still be fetching when a test ends.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
 test("the real seeded registry agrees on chat readiness across Home and Models", async ({
   page,
   request,

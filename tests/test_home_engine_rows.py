@@ -42,17 +42,25 @@ def test_the_grid_deadline_ends_a_trickling_probe_and_keeps_the_other_rows():
             "slow": {"name": "Slow", "health_endpoint": f"{slow.base_url}/health", "role": "required"},
             "fast": {"name": "Fast", "health_endpoint": f"{fast.base_url}/health", "role": "required"},
         }}
-        started = time.monotonic()
-        rows = asyncio.run(status_endpoint._backend_grid(config, deadline_s=0.3))
-        elapsed = time.monotonic() - started
+        status_endpoint.tls_context()  # the first TLS context build is seconds of CPU on a loaded host; it is not the grid
+
+        async def timed_grid():
+            began = time.monotonic()  # only the grid call: not the servers' start, not the event loop's set-up
+            grid = await status_endpoint._backend_grid(config, deadline_s=0.3)
+            return grid, time.monotonic() - began
+
+        rows, elapsed = asyncio.run(timed_grid())
     finally:
         slow.stop()
         fast.stop()
 
     by_key = {row["key"]: row for row in rows}
-    assert elapsed < 2.0, "the deadline, not the 10 s body, ends the slow probe"
+    # The slow row's status and error are the proof that the deadline ended the probe. The bound only catches a
+    # missing deadline: the body runs 10 s, so a grid that waited for it is far over 5 s, and a loaded host's delay
+    # of the 0.3 s deadline is not.
     assert (by_key["slow"]["status"], by_key["slow"]["last_error"]) == ("degraded", "timeout")
     assert by_key["fast"]["status"] == "up"
+    assert elapsed < 5.0, "the deadline, not the 10 s body, ends the slow probe"
 
 
 def test_the_grid_deadline_reports_a_lifecycle_check_that_does_not_finish_as_unknown(monkeypatch):

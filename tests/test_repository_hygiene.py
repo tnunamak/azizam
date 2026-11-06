@@ -129,6 +129,9 @@ def test_sensitive_runtime_artifact_is_ignored_by_repo_gitignore(path, isolated_
     assert lines, f"expected -v output for ignored path {path!r}, got none"
     verbose_match = re.match(r"^(?P<source>.*):(?P<line>\d+):[^\t]*\t", lines[-1])
     assert verbose_match, f"unexpected -v output for ignored path {path!r}: {lines[-1]!r}"
+    assert not _deciding_pattern(result).startswith("!"), (
+        f"expected {path!r} to be ignored, but a negation re-includes it: {lines[-1]!r}"
+    )
     source = verbose_match.group("source")
     # git reports the source relative to the cwd it was invoked from.
     # when the source is inside the repo; resolve before comparing so this
@@ -143,9 +146,18 @@ def test_sensitive_runtime_artifact_is_ignored_by_repo_gitignore(path, isolated_
     )
 
 
+def _deciding_pattern(result: subprocess.CompletedProcess) -> str:
+    """The pattern that decided a ``check-ignore -v`` match: the last line's "<source>:<line>:<pattern>\\t<path>"."""
+    lines = [line for line in result.stdout.splitlines() if line]
+    return lines[-1].split("\t", 1)[0].split(":", 2)[2] if lines else ""
+
+
 @pytest.mark.parametrize("path", NOT_IGNORED_PATHS)
 def test_canonical_source_or_config_is_not_ignored(path, isolated_git_worktree):
     result = _check_ignore_verbose(path, worktree=isolated_git_worktree)
+    # With -v, git also reports a path that a negation ("!pattern") re-includes, and exits 0 for it.
+    if result.returncode == 0 and _deciding_pattern(result).startswith("!"):
+        return
     assert result.returncode == 1, (
         f"expected {path!r} to be tracked/unignored but it is gitignored "
         f"(returncode={result.returncode} stdout={result.stdout!r} "
