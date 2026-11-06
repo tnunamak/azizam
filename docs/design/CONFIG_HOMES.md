@@ -648,9 +648,10 @@ Steps, after C1, C2 and C3 are on main and through the gate:
    against a copy of the live file and a scratch database (the C3 test harness does this) and read the full row list.
 6. Capture the after-golden the same way. It must equal the before-golden. Read the import report in
    `GET /admin/api/config/changes`; the three live-edit pointers must be in it.
-7. Restore the tracked file: `git -C ~/applications/azizam checkout -- proxy_config.yml`. Check `git status` is clean
-   for that file. The file block is now ignored (8.1 step 4); a safe-restart is not needed, but the next boot must
-   still give the same golden.
+7. Restore the tracked `model_aliases` block only. The live file can hold other host-only edits outside the sections
+   (for example `auth.trusted_proxies`); a whole-file checkout would drop them. Reverse-apply only the `model_aliases`
+   hunk of `git diff proxy_config.yml`, then check that the diff shows no `model_aliases` lines. The file block is now
+   ignored (8.1 step 4); a safe-restart is not needed, but the next boot must still give the same golden.
 8. Keep the backups until C10 is live (step 1).
 
 Rollback, if step 6 fails or a fault shows later. The code before C3 never reads the new tables, so the new rows are
