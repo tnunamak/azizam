@@ -533,8 +533,7 @@ def real(monkeypatch, tmp_path):
     wire = EngineWire()
     base = transport.HttpxTransport.for_tests(HandlerTransport(wire))
     monkeypatch.setattr(protocol_executor, "HttpxTransport", lambda: base)
-    monkeypatch.setattr(engine_egress, "_destinations", engine_egress._destinations)  # restored after the test
-    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    monkeypatch.setattr(engine_egress, "_live", engine_egress._live)  # restored after the test
     engine_egress.publish(proxy.config["backends"])
     store = GateStore(tmp_path / "transition.db")
     store.load()

@@ -970,11 +970,11 @@ def test_a_deadline_never_cancels_a_dispatched_effect(tmp_path: Path, adapter: s
 
 
 def test_the_fresh_window_comes_from_the_reviewed_profile_never_from_owner_config() -> None:
-    from gateway.transition_executor import DEFAULTS, fresh_within
+    from gateway.transition_executor import DEFAULT_FRESH_WITHIN_S, fresh_within
 
-    assert fresh_within({"fresh_within_s": 999.0}) == DEFAULTS["fresh_within_s"], "an owner value is ignored"
+    assert fresh_within({"fresh_within_s": 999.0}) == DEFAULT_FRESH_WITHIN_S, "an owner value is ignored"
     assert fresh_within({"profile": {"fresh_within_s": 9.0}, "fresh_within_s": 999.0}) == 9.0
-    assert fresh_within({"profile": {"fresh_within_s": -1}}) == DEFAULTS["fresh_within_s"]
+    assert fresh_within({"profile": {"fresh_within_s": -1}}) == DEFAULT_FRESH_WITHIN_S
 
 
 def test_a_stale_window_in_owner_config_does_not_make_old_evidence_fresh(tmp_path: Path) -> None:

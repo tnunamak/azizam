@@ -449,8 +449,6 @@ class Executor:
             await asyncio.wait_for(lock.acquire(), setting(policy, "lock_wait_s"))
         except asyncio.TimeoutError:
             raise TransitionUnavailable(domain, reason="lock_busy", retry_after_s=int(setting(policy, "retry_after_s"))) from None
-        handed_off = False
-        try:
         # Everything from the incarnation read to the task hand-off is one unit on a task of its own. A requester that
         # is cancelled in the middle (a client that hung up) leaves the unit running: it ends with the operation begun
         # and its task owning the lock, or with the lock released. It never ends with a row and no task.
@@ -463,6 +461,8 @@ class Executor:
                                   compensates: Optional[str], trigger: Optional[Callable[[], None]],
                                   policy: Mapping[str, object], lock: asyncio.Lock) -> BeginResult:
         """Runs with ``lock`` held. A new operation's task takes the lock over; in every other end it is released here."""
+        handed_off = False
+        try:
             incarnation = await self._incarnation(domain, policy)
             result = await asyncio.to_thread(
                 self.store.begin, domain=domain, kind=kind, idempotency_key=key, target=target,
