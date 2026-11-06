@@ -22,6 +22,7 @@ from gateway import media_jobs, receipt_store  # noqa: E402
 from gateway import stable_aliases as sa  # noqa: E402
 from gateway.local_capabilities import build_alias_capabilities  # noqa: E402
 from tests.speech_tier_helpers import _wav_bytes  # noqa: E402
+from tests.support.config_snapshot import section_published
 
 SHIPPED = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
 ALIASES = SHIPPED["model_aliases"]
@@ -387,7 +388,7 @@ class RouteTests(unittest.TestCase):
 
     def test_shadowed_role_backend_does_not_override_public_vision_alias(self):
         roles = {"vision": {"backend": "metadata-only"}}
-        with patch.object(proxy, "ROLES", roles):
+        with section_published("roles", roles):
             body = self._chat_body_seen(
                 "/v1/chat/completions",
                 {"model": "vision", "messages": [{"role": "user", "content": "hi"}]},

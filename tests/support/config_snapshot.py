@@ -6,7 +6,8 @@ code that reads the snapshot (the decision runtime, the mesh frontend records). 
 """
 from __future__ import annotations
 
-from typing import Any, Mapping
+from contextlib import contextmanager
+from typing import Any, Iterator, Mapping
 
 import pytest
 
@@ -29,3 +30,21 @@ def pin_inner_hop_hosts(monkeypatch: pytest.MonkeyPatch, hosts: Mapping[str, str
 def publish_section(monkeypatch: pytest.MonkeyPatch, section: str, value: Any) -> None:
     """``publish_config`` of the current config with one top-level ``section`` replaced by ``value``."""
     publish_config(monkeypatch, {**proxy.config, section: value})
+
+
+@contextmanager
+def section_published(section: str, value: Any) -> Iterator[None]:
+    """Publish the current config with one top-level ``section`` replaced, for the length of a ``with`` block.
+
+    For a test that patched a module global a reader used to read (``patch.object(proxy, "ROLES", ...)``): the reader now
+    reads ``proxy.runtime()``, which answers the published snapshot. The previous config and snapshot are restored on exit.
+    """
+    saved_config = proxy.config
+    saved = proxy.CONFIG_HOME.holder.current()
+    proxy.config = {**saved_config, section: value}
+    proxy.CONFIG_HOME.publish(proxy.CONFIG_HOME.snapshot(proxy.config))
+    try:
+        yield
+    finally:
+        proxy.config = saved_config
+        proxy.CONFIG_HOME.holder.publish(saved)

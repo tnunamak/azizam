@@ -2,7 +2,7 @@
  "inputs": {
   "first_run": {
    "aliases": [],
-   "effective_digest": "sha256:c69bd249e7180573f2ae8e4e9b35034d0c527721dda8a603fd81ef62b3b11926",
+   "effective_digest": "sha256:d25073c369a1aaefac849ab8d92ee804f4c27386e7c48e9ba447432d7556750f",
    "models": {
     "alias_targets": {},
     "ids": [
@@ -47,7 +47,11 @@
    "section_digests": {
     "admin": "sha256:59e48897fbdd4b943a30138e6382013e9cc3f09257e1376f495fe4cbbe200958",
     "backends": "sha256:c04579d7529a29adc687010e697af83e1f67bfae102a7e75575e29985f4c5690",
-    "proxy": "sha256:5050773c14fd8a3afc36d5be4f32d0e0ba9cdee34f939774270a9bac829e2a7c"
+    "llm": "sha256:f0b23a1522a753f584618c94aa5a1a3a0be99f7aeb70aa06d6cc106be227c2c8",
+    "model_routing": "sha256:16888923b3c83293586b90cb60cd95a71a06f65ee11073429d91fe25c27b30b8",
+    "proxy": "sha256:5050773c14fd8a3afc36d5be4f32d0e0ba9cdee34f939774270a9bac829e2a7c",
+    "reasoning": "sha256:c3433f2bac58a806843e1714e87c60766a4671f2108bce49b5c3dc0f5841eb0e",
+    "roles": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
    }
   },
   "live_like": {
@@ -1493,7 +1497,7 @@
      "resolution": null
     }
    ],
-   "effective_digest": "sha256:7922fb5b2c9cc661520a8631645b4d2f883b67fab4a1a183078b2ce9f7852a81",
+   "effective_digest": "sha256:4fa5dce299f3debd5cb1e67bf3398531271f64e5cae580b6bca569178f85a76b",
    "models": {
     "alias_targets": {
      "character-replace": {
@@ -1691,7 +1695,7 @@
     "llm": "sha256:267c3ceaf8a269d3d018c00e12ddba089cb425f4dec461172df6ac2aa3b17a31",
     "model_aliases": "sha256:bcc97fd060fb1e8112dbd94b22ca25c2198b4741989dfb5548b08ddeebc34d89",
     "model_compatibility": "sha256:a746bcbd7969991deb45af79cba927f2bd563268e130d4b9f1a5d4ffc9ddb582",
-    "model_routing": "sha256:366d003ebee764c3158da68e711a57e6c99b3a0315859aeb026bd73cb50f4572",
+    "model_routing": "sha256:50f8e359f69fd8d4e4beb50487c8143ac28800cfca674ec826f4f0c13ad5dd14",
     "models": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
     "proxy": "sha256:eb54786a4198a6447164af440eb0d6a953d040a51dd8fc9d037082250dc11899",
     "reasoning": "sha256:b2cf797b0686a584b5fdd3127abacd2dda82271d39a903b0904c81a2bcaf9760",
@@ -3119,7 +3123,7 @@
      "resolution": null
     }
    ],
-   "effective_digest": "sha256:18b8ea6e0bc0018e7b7533784a96bc8cf36ac2cf27a9b39060c72cd7794627e9",
+   "effective_digest": "sha256:81e5ac090577a3b69cb6f9cfe73d190d46732057541d3c6fed3a7564e180ce04",
    "models": {
     "alias_targets": {
      "character-replace": {
@@ -3313,7 +3317,7 @@
     "llm": "sha256:267c3ceaf8a269d3d018c00e12ddba089cb425f4dec461172df6ac2aa3b17a31",
     "model_aliases": "sha256:ba5fa0813ab6c5aaae7426b40a571b13dd8bcfb3bc28f29f1e7bffafcd21b479",
     "model_compatibility": "sha256:a746bcbd7969991deb45af79cba927f2bd563268e130d4b9f1a5d4ffc9ddb582",
-    "model_routing": "sha256:366d003ebee764c3158da68e711a57e6c99b3a0315859aeb026bd73cb50f4572",
+    "model_routing": "sha256:50f8e359f69fd8d4e4beb50487c8143ac28800cfca674ec826f4f0c13ad5dd14",
     "models": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
     "proxy": "sha256:eb54786a4198a6447164af440eb0d6a953d040a51dd8fc9d037082250dc11899",
     "reasoning": "sha256:b2cf797b0686a584b5fdd3127abacd2dda82271d39a903b0904c81a2bcaf9760",
