@@ -1,7 +1,9 @@
 """Reviewed transition profiles (design D3), read from ``registry/transition_profiles/*.yml``.
 
 A profile is reviewed data. It names the operations an engine's protocol description declares for ``idle``,
-``resident``, ``release``, ``load`` and ``query``, and whether a successful release is attested. An owner picks a
+``resident``, ``release``, ``load`` and ``query``, and, when the profile drives snapshots, for ``checkpoint``,
+``restore``, ``reset`` and ``compatibility``; it also names the observations the adapter answers, as observation
+name -> protocol operation name. It says whether a successful release is attested. An owner picks a
 profile by id (``residency.transition.profile``); the owner cannot set ``attested`` or the operations
 (``transition_gate.forbidden_profile_keys``). No engine name appears in a profile or in this module.
 """
@@ -16,7 +18,7 @@ from typing import Any, Mapping, Optional
 import yaml
 
 PROFILE_DIR = Path(__file__).resolve().parent.parent / "registry" / "transition_profiles"
-OPERATION_KEYS: frozenset[str] = frozenset({"idle", "resident", "release", "load", "query"})
+OPERATION_KEYS: frozenset[str] = frozenset({"idle", "resident", "release", "load", "query", "checkpoint", "restore", "reset", "compatibility"})
 REQUIRED_OPERATIONS: frozenset[str] = frozenset({"resident", "release", "load", "query"})
 REVIEWED_POLICY_KEYS: frozenset[str] = frozenset({"checkpoint", "restore", "servable_check", "placement_keys", "fresh_within_s"})
 """Reviewed profile blocks the snapshot steps (T1.3) read through ``StepContext.policy["profile"]``. They pass through
@@ -36,6 +38,8 @@ class Profile:
     attested: bool
     declared: Mapping[str, Any] = field(default_factory=dict)
     """The ``REVIEWED_POLICY_KEYS`` blocks the file declares, as written."""
+    observations: Mapping[str, str] = field(default_factory=dict)
+    """Observation name -> the operation name in the engine's protocol description."""
 
     def as_policy(self) -> Mapping[str, Any]:
         """The reviewed profile as ``StepContext.policy["profile"]``: the only place attested fields are read from."""
@@ -67,9 +71,44 @@ def parse_profile(raw: Any, *, source: str) -> Profile:
     attested = raw.get("attested", False)
     if not isinstance(attested, bool):
         raise ProfileError(f"{source}: attested is true or false")
+    observations = raw.get("observations", {})
+    if not isinstance(observations, Mapping):
+        raise ProfileError(f"{source}: observations is a mapping of observation name to protocol operation name")
+    observed: dict[str, str] = {}
+    for key, name in observations.items():
+        if not isinstance(key, str) or not key.strip():
+            raise ProfileError(f"{source}: observations needs a non-empty observation name")
+        if not isinstance(name, str) or not name.strip():
+            raise ProfileError(f"{source}: observations {key!r} needs a protocol operation name")
+        observed[key.strip()] = name.strip()
     declared = {key: raw[key] for key in REVIEWED_POLICY_KEYS if key in raw}
+    if ("checkpoint" in names) != ("restore" in names):
+        raise ProfileError(f"{source}: operations 'checkpoint' and 'restore' are declared together or not at all")
+    if "reset" in names and "restore" not in names:
+        raise ProfileError(f"{source}: operation 'reset' needs 'restore'")
+    if "checkpoint" in names and "compatibility" not in names:
+        raise ProfileError(f"{source}: operation 'compatibility' is required when 'checkpoint' is declared")
+    checkpoint_block = declared.get("checkpoint")
+    if isinstance(checkpoint_block, Mapping) and checkpoint_block and "checkpoint" not in names:
+        raise ProfileError(f"{source}: checkpoint needs the 'checkpoint' operation")
+    restore_block = declared.get("restore")
+    if isinstance(restore_block, Mapping) and restore_block:
+        if "restore" not in names:
+            raise ProfileError(f"{source}: restore needs the 'restore' operation")
+        reset_block = restore_block.get("reset")
+        if isinstance(reset_block, Mapping) and reset_block and "reset" not in names:
+            raise ProfileError(f"{source}: restore.reset needs the 'reset' operation")
+    servable = raw.get("servable_check")
+    if isinstance(servable, str) and servable and servable not in observed:
+        raise ProfileError(f"{source}: servable_check names an unknown observation {servable!r}")
+    if isinstance(restore_block, Mapping):
+        reset_block = restore_block.get("reset")
+        if isinstance(reset_block, Mapping):
+            verify = reset_block.get("verify")
+            if isinstance(verify, str) and verify and verify not in observed:
+                raise ProfileError(f"{source}: restore.reset.verify names an unknown observation {verify!r}")
     return Profile(id=profile_id.strip(), title=str(raw.get("title") or profile_id), operations=names, attested=attested,
-                   declared=declared)
+                   declared=declared, observations=observed)
 
 
 _CACHE: dict[Path, tuple[tuple[tuple[str, int, int], ...], dict[str, Profile]]] = {}
