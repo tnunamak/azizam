@@ -192,6 +192,7 @@ CREDENTIAL_NAMES_OF_OTHER_THINGS = {
     "secret_ref": "the reference an entry holds; every projection reads it through its entry policies",
     "source_ref": "a config source's own descriptor",
     "voice_ref": "a voice reference in a request, not a service setting",
+    "evidence_ref": "an engine adapter's id for the proof of one transition step (gateway/transition_adapter.py), not a credential",
 }
 
 

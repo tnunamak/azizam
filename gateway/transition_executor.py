@@ -31,6 +31,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping, Optional, Sequence
 
+from gateway import log_scrub
 from gateway.swap_drain import SwapDeferred, SwapDrain, SwapDrainSettings
 from gateway.transition_gate import TransitionUnavailable
 from gateway.transition_ops import (
@@ -538,7 +539,7 @@ class Executor:
             self._gate_hold(operation.domain, "reconciling")
             raise
         except Exception as exc:  # noqa: BLE001
-            print(f"[transition-gate] operation {operation.op_id} stopped by {type(exc).__name__}: {exc}", flush=True)
+            print(f"[transition-gate] operation {operation.op_id} stopped by {log_scrub.describe_error(exc)}", flush=True)
             await self._hold(operation)
         finally:
             lock.release()
@@ -642,7 +643,7 @@ class Executor:
             try:
                 await self._recover(operation)
             except Exception as exc:  # noqa: BLE001
-                print(f"[transition-gate] cannot recover {operation.op_id}: {type(exc).__name__}: {exc}", flush=True)
+                print(f"[transition-gate] cannot recover {operation.op_id}: {log_scrub.describe_error(exc)}", flush=True)
                 await self._hold(operation)
         self._ready = True
 
@@ -807,14 +808,14 @@ class Executor:
             policy = self._policy_of(domain)
             retry = int(setting(policy, "retry_after_s"))
         except Exception as exc:  # noqa: BLE001 - an unreadable gate or policy is a refusal, never a 500
-            print(f"[transition-gate] wake of {domain!r} not checkable: {type(exc).__name__}: {exc}", flush=True)
+            print(f"[transition-gate] wake of {domain!r} not checkable: {log_scrub.describe_error(exc)}", flush=True)
             raise TransitionUnavailable(domain, reason="wake_unavailable", retry_after_s=5) from None
         try:
             began = await self.submit(domain=domain, kind="wake", idempotency_key=f"wake-{parked_by}", trigger=trigger)
         except TransitionUnavailable:
             raise
         except Exception as exc:  # noqa: BLE001 - an invalid wake or an unreadable store is a refusal, never a 500
-            print(f"[transition-gate] wake of {domain!r} refused: {type(exc).__name__}: {exc}", flush=True)
+            print(f"[transition-gate] wake of {domain!r} refused: {log_scrub.describe_error(exc)}", flush=True)
             raise TransitionUnavailable(domain, reason="wake_unavailable", retry_after_s=retry) from None
         if isinstance(began, Conflict):
             raise TransitionUnavailable(domain, reason="transition_in_progress", retry_after_s=retry)
@@ -823,7 +824,7 @@ class Executor:
         except asyncio.TimeoutError:
             raise TransitionUnavailable(domain, reason="wake_in_progress", retry_after_s=retry) from None
         except Exception as exc:  # noqa: BLE001 - the read of the finished record failed: a refusal, never a 500
-            print(f"[transition-gate] wake of {domain!r} not readable: {type(exc).__name__}: {exc}", flush=True)
+            print(f"[transition-gate] wake of {domain!r} not readable: {log_scrub.describe_error(exc)}", flush=True)
             raise TransitionUnavailable(domain, reason="wake_unavailable", retry_after_s=retry) from None
         if finished.state != "succeeded":
             raise TransitionUnavailable(domain, reason=f"wake_{finished.state}", retry_after_s=retry)

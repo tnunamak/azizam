@@ -162,7 +162,7 @@ GATEWAY_CODES = frozenset({
     "video_cancel_failed", "video_extend_not_configured", "video_extend_not_supported", "video_fps_unsupported",
     "video_generation_failed", "video_not_ready", "video_remix_not_configured", "video_too_short", "video_total_length_exceeded",
     "vision_unsupported", "voice_not_available", "workflow_manifest_missing",
-    "engine_transitioning", "transition_unsupported",
+    "engine_transitioning", "transition_unsupported", "unknown_engine", "unknown_operation",
 })
 
 ERROR_CODES = frozenset(CODE_REASONS) | GATEWAY_CODES

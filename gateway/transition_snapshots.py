@@ -109,9 +109,12 @@ class PrivateSnapshotDir:
     """
 
     def __init__(self, root: Path | str) -> None:
+        # Made on the first snapshot write, not here: an instance with no transition profile keeps no
+        # private directory in its data folder (a container-owned 0700 directory there blocks the host
+        # user's backup and cleanup tools). One that exists already is checked now.
         self.root = Path(root)
-        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self._require_private_dir(self.root)
+        if self.root.exists() or self.root.is_symlink():
+            self._require_private_dir(self.root)
 
     @staticmethod
     def _require_private_dir(path: Path) -> None:
@@ -120,6 +123,8 @@ class PrivateSnapshotDir:
             raise SnapshotRejected(f"snapshot directory {path.name} is not a private directory of this process")
 
     def _domain_dir(self, domain: str) -> Path:
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._require_private_dir(self.root)
         path = self.root / hashlib.sha256(domain.encode()).hexdigest()[:32]
         path.mkdir(exist_ok=True, mode=0o700)
         self._require_private_dir(path)
