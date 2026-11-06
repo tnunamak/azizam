@@ -1,0 +1,3 @@
+# Release defaults of resource admission. The release sets no cap, no reserved token and no disabled intent: an owner
+# who wants one adds it as an override (docs/design/CONFIG_HOMES.md, section 3.3).
+media_jobs: {}

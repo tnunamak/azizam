@@ -1,0 +1,755 @@
+{
+ "audit": [
+  {
+   "action": "operator.instance.update",
+   "actor_id": "fixture-owner",
+   "actor_kind": "user",
+   "metadata": {
+    "fields": [
+     "base_url",
+     "name",
+     "theme_default"
+    ]
+   },
+   "target_id": "instance_presentation",
+   "target_kind": "operator_setting"
+  },
+  {
+   "action": "operator.instance.update",
+   "actor_id": "fixture-owner",
+   "actor_kind": "user",
+   "metadata": {
+    "fields": [
+     "base_url",
+     "name",
+     "theme_default"
+    ]
+   },
+   "target_id": "instance_presentation",
+   "target_kind": "operator_setting"
+  },
+  {
+   "action": "operator.media_job_admission.update",
+   "actor_id": "fixture-owner",
+   "actor_kind": "user",
+   "metadata": {
+    "fields": [
+     "disabled_intents",
+     "disabled_resource_classes",
+     "max_app_concurrency",
+     "max_queue_depth",
+     "reserved_tokens",
+     "retry_after_seconds"
+    ]
+   },
+   "target_id": "media_job_admission_overrides",
+   "target_kind": "operator_setting"
+  },
+  {
+   "action": "operator.media_job_admission.update",
+   "actor_id": "fixture-owner",
+   "actor_kind": "user",
+   "metadata": {
+    "fields": [
+     "disabled_intents",
+     "disabled_resource_classes",
+     "max_queue_depth",
+     "reserved_tokens",
+     "retry_after_seconds"
+    ]
+   },
+   "target_id": "media_job_admission_overrides",
+   "target_kind": "operator_setting"
+  },
+  {
+   "action": "operator.media_job_admission.update",
+   "actor_id": "fixture-owner",
+   "actor_kind": "user",
+   "metadata": {
+    "fields": [
+     "disabled_intents",
+     "disabled_resource_classes",
+     "max_queue_depth",
+     "reserved_tokens",
+     "retry_after_seconds"
+    ]
+   },
+   "target_id": "media_job_admission_overrides",
+   "target_kind": "operator_setting"
+  },
+  {
+   "action": "operator.media_job_admission.update",
+   "actor_id": "fixture-owner",
+   "actor_kind": "user",
+   "metadata": {
+    "fields": [
+     "disabled_intents",
+     "disabled_resource_classes",
+     "max_queue_depth",
+     "reserved_tokens",
+     "retry_after_seconds"
+    ]
+   },
+   "target_id": "media_job_admission_overrides",
+   "target_kind": "operator_setting"
+  },
+  {
+   "action": "operator.service_availability.update",
+   "actor_id": "fixture-owner",
+   "actor_kind": "user",
+   "metadata": {
+    "override_count": 0
+   },
+   "target_id": "service_availability_overrides",
+   "target_kind": "operator_setting"
+  },
+  {
+   "action": "operator.service_availability.update",
+   "actor_id": "fixture-owner",
+   "actor_kind": "user",
+   "metadata": {
+    "override_count": 1
+   },
+   "target_id": "service_availability_overrides",
+   "target_kind": "operator_setting"
+  },
+  {
+   "action": "operator.service_availability.update",
+   "actor_id": "fixture-owner",
+   "actor_kind": "user",
+   "metadata": {
+    "override_count": 1
+   },
+   "target_id": "service_availability_overrides",
+   "target_kind": "operator_setting"
+  },
+  {
+   "action": "operator.service_availability.update",
+   "actor_id": "fixture-owner",
+   "actor_kind": "user",
+   "metadata": {
+    "override_count": 2
+   },
+   "target_id": "service_availability_overrides",
+   "target_kind": "operator_setting"
+  },
+  {
+   "action": "operator.service_availability.update",
+   "actor_id": "fixture-owner",
+   "actor_kind": "user",
+   "metadata": {
+    "override_count": 2
+   },
+   "target_id": "service_availability_overrides",
+   "target_kind": "operator_setting"
+  }
+ ],
+ "effective_instance": {
+  "base_url": "https://gw.example",
+  "name": "Home",
+  "theme_default": "dark"
+ },
+ "effective_operator_overrides": {},
+ "steps": [
+  {
+   "body": {
+    "apply_mode": "live",
+    "instance": {
+     "base_url": "",
+     "name": "Azizam",
+     "theme_default": "system"
+    },
+    "revision": "0",
+    "source": "admin.db"
+   },
+   "method": "GET",
+   "path": "/admin/api/settings/instance",
+   "status": 200,
+   "step": "instance: fresh"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "settings_revision_required",
+     "message": "Reload settings and supply If-Match."
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/settings/instance",
+   "status": 428,
+   "step": "instance: no If-Match"
+  },
+  {
+   "body": {
+    "apply_mode": "live",
+    "instance": {
+     "base_url": "https://gw.example",
+     "name": "Home",
+     "theme_default": "dark"
+    },
+    "revision": "1",
+    "source": "admin.db"
+   },
+   "method": "PUT",
+   "path": "/admin/api/settings/instance",
+   "status": 200,
+   "step": "instance: first save"
+  },
+  {
+   "body": {
+    "apply_mode": "live",
+    "instance": {
+     "base_url": "https://gw.example",
+     "name": "Home",
+     "theme_default": "dark"
+    },
+    "revision": "1",
+    "source": "admin.db"
+   },
+   "method": "GET",
+   "path": "/admin/api/settings/instance",
+   "status": 200,
+   "step": "instance: after save"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "settings_conflict",
+     "message": "Settings changed elsewhere; reload to see the latest"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/settings/instance",
+   "status": 412,
+   "step": "instance: stale write"
+  },
+  {
+   "body": {
+    "apply_mode": "live",
+    "instance": {
+     "base_url": "https://gw.example",
+     "name": "Home",
+     "theme_default": "dark"
+    },
+    "revision": "2",
+    "source": "admin.db"
+   },
+   "method": "PUT",
+   "path": "/admin/api/settings/instance",
+   "status": 200,
+   "step": "instance: identical re-save"
+  },
+  {
+   "body": {
+    "apply_mode": "live",
+    "instance": {
+     "base_url": "https://gw.example",
+     "name": "Home",
+     "theme_default": "dark"
+    },
+    "revision": "2",
+    "source": "admin.db"
+   },
+   "method": "GET",
+   "path": "/admin/api/settings/instance",
+   "status": 200,
+   "step": "instance: after identical re-save"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_instance",
+     "message": "Supply a name, a valid HTTP(S) base URL and system/light/dark theme"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/settings/instance",
+   "status": 400,
+   "step": "instance: empty name"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_instance",
+     "message": "Supply a name, a valid HTTP(S) base URL and system/light/dark theme"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/settings/instance",
+   "status": 400,
+   "step": "instance: bad url"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_instance",
+     "message": "Supply a name, a valid HTTP(S) base URL and system/light/dark theme"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/settings/instance",
+   "status": 400,
+   "step": "instance: missing field"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_instance",
+     "message": "Supply a name, a valid HTTP(S) base URL and system/light/dark theme"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/settings/instance",
+   "status": 400,
+   "step": "instance: bad theme"
+  },
+  {
+   "body": {
+    "overrides": {
+     "extension_package_index": {
+      "packages": {},
+      "schema_version": 1,
+      "sources": [],
+      "updated_at": 0
+     },
+     "media_job_admission": {},
+     "revisions": {
+      "media_job_admission_overrides": "0"
+     },
+     "service_availability": {}
+    }
+   },
+   "method": "GET",
+   "path": "/admin/api/operator/overrides",
+   "status": 200,
+   "step": "overrides: fresh"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "settings_revision_required",
+     "message": "Reload settings and supply the current revision in If-Match."
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/media-job-admission",
+   "status": 428,
+   "step": "media: no If-Match"
+  },
+  {
+   "body": {
+    "media_job_admission": {
+     "disabled_intents": [
+      "a",
+      "b"
+     ],
+     "disabled_resource_classes": [],
+     "max_queue_depth": 3,
+     "reserved_tokens": [],
+     "retry_after_seconds": null
+    },
+    "revision": "1"
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/media-job-admission",
+   "status": 200,
+   "step": "media: first save"
+  },
+  {
+   "body": {
+    "overrides": {
+     "extension_package_index": {
+      "packages": {},
+      "schema_version": 1,
+      "sources": [],
+      "updated_at": 0
+     },
+     "media_job_admission": {
+      "disabled_intents": [
+       "a",
+       "b"
+      ],
+      "disabled_resource_classes": [],
+      "max_queue_depth": 3,
+      "reserved_tokens": [],
+      "retry_after_seconds": null
+     },
+     "revisions": {
+      "media_job_admission_overrides": "1"
+     },
+     "service_availability": {}
+    }
+   },
+   "method": "GET",
+   "path": "/admin/api/operator/overrides",
+   "status": 200,
+   "step": "overrides: after media save"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "settings_conflict",
+     "message": "Settings changed elsewhere; reload to see the latest"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/media-job-admission",
+   "status": 412,
+   "step": "media: stale write"
+  },
+  {
+   "body": {
+    "media_job_admission": {
+     "disabled_intents": [],
+     "disabled_resource_classes": [],
+     "max_app_concurrency": {
+      "mine": 2
+     },
+     "max_queue_depth": null,
+     "reserved_tokens": [],
+     "retry_after_seconds": 7
+    },
+    "revision": "2"
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/media-job-admission",
+   "status": 200,
+   "step": "media: with app limits"
+  },
+  {
+   "body": {
+    "media_job_admission": {
+     "disabled_intents": [],
+     "disabled_resource_classes": [],
+     "max_queue_depth": null,
+     "reserved_tokens": [
+      "t1"
+     ],
+     "retry_after_seconds": null
+    },
+    "revision": "3"
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/media-job-admission",
+   "status": 200,
+   "step": "media: replace whole document"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_operator_override",
+     "message": "max_queue_depth must be a non-negative integer"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/media-job-admission",
+   "status": 400,
+   "step": "media: negative depth"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_operator_override",
+     "message": "unknown media admission override fields: ['bogus']"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/media-job-admission",
+   "status": 400,
+   "step": "media: unknown field"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_operator_override",
+     "message": "max_app_concurrency limits must be non-negative integers"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/media-job-admission",
+   "status": 400,
+   "step": "media: bad app limit"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_operator_override",
+     "message": "disabled_intents must be a list of strings"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/media-job-admission",
+   "status": 400,
+   "step": "media: bad list"
+  },
+  {
+   "body": {
+    "media_job_admission": {
+     "disabled_intents": [],
+     "disabled_resource_classes": [],
+     "max_queue_depth": null,
+     "reserved_tokens": [],
+     "retry_after_seconds": null
+    },
+    "revision": "4"
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/media-job-admission",
+   "status": 200,
+   "step": "media: empty document"
+  },
+  {
+   "body": {
+    "overrides": {
+     "extension_package_index": {
+      "packages": {},
+      "schema_version": 1,
+      "sources": [],
+      "updated_at": 0
+     },
+     "media_job_admission": {
+      "disabled_intents": [],
+      "disabled_resource_classes": [],
+      "max_queue_depth": null,
+      "reserved_tokens": [],
+      "retry_after_seconds": null
+     },
+     "revisions": {
+      "media_job_admission_overrides": "4"
+     },
+     "service_availability": {}
+    }
+   },
+   "method": "GET",
+   "path": "/admin/api/operator/overrides",
+   "status": 200,
+   "step": "overrides: after media empty save"
+  },
+  {
+   "body": {
+    "service_availability": {
+     "engine-a": {
+      "reason": "fixing",
+      "retry_after_seconds": 30,
+      "state": "maintenance"
+     }
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/service-availability",
+   "status": 200,
+   "step": "availability: set one"
+  },
+  {
+   "body": {
+    "service_availability": {
+     "engine-a": {
+      "reason": "fixing",
+      "retry_after_seconds": 30,
+      "state": "maintenance"
+     },
+     "engine-b": {
+      "reason": null,
+      "retry_after_seconds": null,
+      "state": "draining"
+     }
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/service-availability",
+   "status": 200,
+   "step": "availability: add second, wrapped body"
+  },
+  {
+   "body": {
+    "overrides": {
+     "extension_package_index": {
+      "packages": {},
+      "schema_version": 1,
+      "sources": [],
+      "updated_at": 0
+     },
+     "media_job_admission": {
+      "disabled_intents": [],
+      "disabled_resource_classes": [],
+      "max_queue_depth": null,
+      "reserved_tokens": [],
+      "retry_after_seconds": null
+     },
+     "revisions": {
+      "media_job_admission_overrides": "4"
+     },
+     "service_availability": {
+      "engine-a": {
+       "reason": "fixing",
+       "retry_after_seconds": 30,
+       "state": "maintenance"
+      },
+      "engine-b": {
+       "reason": null,
+       "retry_after_seconds": null,
+       "state": "draining"
+      }
+     }
+    }
+   },
+   "method": "GET",
+   "path": "/admin/api/operator/overrides",
+   "status": 200,
+   "step": "overrides: after availability"
+  },
+  {
+   "body": {
+    "service_availability": {
+     "engine-b": {
+      "reason": null,
+      "retry_after_seconds": null,
+      "state": "draining"
+     }
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/service-availability",
+   "status": 200,
+   "step": "availability: clear one"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_operator_override",
+     "message": "service state must be one of: available, degraded, disabled, draining, maintenance"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/service-availability",
+   "status": 400,
+   "step": "availability: bad state"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_operator_override",
+     "message": "unknown service override fields: ['extra']"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/service-availability",
+   "status": 400,
+   "step": "availability: unknown field"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_operator_override",
+     "message": "service reason must be a string"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/service-availability",
+   "status": 400,
+   "step": "availability: bad reason"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_operator_override",
+     "message": "retry_after_seconds must be a non-negative integer"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/service-availability",
+   "status": 400,
+   "step": "availability: bad retry"
+  },
+  {
+   "body": {
+    "error": {
+     "code": "invalid_operator_override",
+     "message": "service id is required"
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/service-availability",
+   "status": 400,
+   "step": "availability: empty id"
+  },
+  {
+   "body": {
+    "service_availability": {
+     "a/b~c": {
+      "reason": null,
+      "retry_after_seconds": null,
+      "state": "degraded"
+     },
+     "engine-b": {
+      "reason": null,
+      "retry_after_seconds": null,
+      "state": "draining"
+     }
+    }
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/service-availability",
+   "status": 200,
+   "step": "availability: id with slash and tilde"
+  },
+  {
+   "body": {
+    "service_availability": {}
+   },
+   "method": "PUT",
+   "path": "/admin/api/operator/service-availability",
+   "status": 200,
+   "step": "availability: clear the rest"
+  },
+  {
+   "body": {
+    "overrides": {
+     "extension_package_index": {
+      "packages": {},
+      "schema_version": 1,
+      "sources": [],
+      "updated_at": 0
+     },
+     "media_job_admission": {
+      "disabled_intents": [],
+      "disabled_resource_classes": [],
+      "max_queue_depth": null,
+      "reserved_tokens": [],
+      "retry_after_seconds": null
+     },
+     "revisions": {
+      "media_job_admission_overrides": "4"
+     },
+     "service_availability": {}
+    }
+   },
+   "method": "GET",
+   "path": "/admin/api/operator/overrides",
+   "status": 200,
+   "step": "overrides: after availability cleared"
+  },
+  {
+   "body": {
+    "config": {
+     "instance": {
+      "base_url": "https://gw.example",
+      "name": "Home",
+      "theme_default": "dark"
+     },
+     "operator_overrides": {},
+     "receipt_retention": {
+      "retention_days": null
+     }
+    },
+    "export_url": "/admin/api/settings/effective/export",
+    "read_only": true,
+    "redacted": true
+   },
+   "method": "GET",
+   "path": "/admin/api/settings/effective",
+   "status": 200,
+   "step": "effective view"
+  }
+ ]
+}

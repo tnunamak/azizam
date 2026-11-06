@@ -477,8 +477,8 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         with authenticated(), patch.object(
             proxy,
-            "MEDIA_JOB_ADMISSION_CFG",
-            {"max_queue_depth": 1, "queue_retry_after_seconds": 9},
+            "_effective_media_job_admission_cfg",
+            return_value={"max_queue_depth": 1, "queue_retry_after_seconds": 9},
         ):
             response = await proxy._dispatch_gateway_media_job_submission(
                 request=_StubJsonRequest({}),  # type: ignore[arg-type]
@@ -511,10 +511,6 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with authenticated(), patch.object(
-            proxy,
-            "MEDIA_JOB_ADMISSION_CFG",
-            {},
-        ), patch.object(
             proxy.ADMIN_STORE,
             "operator_overrides",
             return_value=overrides,
@@ -591,8 +587,8 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         with authenticated(), patch.object(
             proxy,
-            "MEDIA_JOB_ADMISSION_CFG",
-            {
+            "_effective_media_job_admission_cfg",
+            return_value={
                 "max_queue_depth": 3,
                 "scan_limit": 1,
                 "queue_retry_after_seconds": 9,

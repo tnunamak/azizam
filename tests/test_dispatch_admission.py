@@ -61,7 +61,6 @@ class _DispatchCalls(list):
 def dispatch_env(fake_upstreams, monkeypatch, tmp_path):
     signed_in = authenticated(identity(plan_for('test')))
     signed_in.start()
-    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {})
     monkeypatch.setattr(proxy, '_operator_override_docs', lambda: {'service_availability': {}, 'media_job_admission': {}})
     monkeypatch.setattr(proxy, 'PROXY_PORT', 19999)
     monkeypatch.setattr(proxy, 'COMFY_ENABLED', True)
@@ -131,7 +130,7 @@ def test_default_response_differential(dispatch_env, name, path, body):
 @pytest.mark.parametrize('name,path,body', CASES, ids=[c[0] for c in CASES])
 def test_configured_resource_class_blocks_dispatch(dispatch_env, monkeypatch, name, path, body):
     client, calls = dispatch_env
-    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'disabled_resource_classes': ['chat', 'embeddings', 'decision', 'image', 'audio']})
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_resource_classes': ['chat', 'embeddings', 'decision', 'image', 'audio']})
     response = client.post(path, json=body)
     assert response.status_code == 503, response.text
     assert not calls
@@ -225,7 +224,7 @@ def test_late_dispatch_refusal_keeps_protocol_decision(dispatch_env, monkeypatch
         return original(intent, **kwargs)
     # Initial frontend gate allows; resolved inner dispatch observes a changed rule.
     monkeypatch.setattr(proxy, '_dispatch_admission_response', late)
-    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'disabled_intents': ['chat.generate']})
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_intents': ['chat.generate']})
     path = '/v1/messages' if protocol == 'anthropic' else '/api/chat'
     response = client.post(path, json={'model': 'test', 'messages': [{'role': 'user', 'content': 'hi'}], 'max_tokens': 10, 'stream': stream})
     assert response.status_code == 503
@@ -303,7 +302,7 @@ def test_non_admission_upstream_error_keeps_legacy_envelope(dispatch_env, monkey
 ])
 def test_facade_uses_its_declared_intent(dispatch_env, monkeypatch, path, body, intent):
     client, calls = dispatch_env
-    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'disabled_intents': [intent]})
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_intents': [intent]})
     response = client.post(path, json=body)
     assert response.status_code == 503
     assert 'intent_disabled' in response.json()['admission']['reason_codes']
@@ -333,7 +332,7 @@ def test_image_rechecks_policy_after_async_preparation(dispatch_env, monkeypatch
     original = proxy._apply_workflow_extensions_to_image_request
     async def prepare(*args, **kwargs):
         result = await original(*args, **kwargs)
-        monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'disabled_intents': ['image.generate']})
+        monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_intents': ['image.generate']})
         return result
     monkeypatch.setattr(proxy, '_apply_workflow_extensions_to_image_request', prepare)
     response = client.post('/v1/images/generations', json={'model': 'flux2-klein-4b', 'prompt': 'hi'})
@@ -345,7 +344,7 @@ def test_image_rechecks_policy_after_async_preparation(dispatch_env, monkeypatch
 def test_speech_rechecks_policy_after_service_start(dispatch_env, monkeypatch):
     client, calls = dispatch_env
     async def start(*args, **kwargs):
-        monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'disabled_intents': ['speech.synthesis']})
+        monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_intents': ['speech.synthesis']})
         return None
     monkeypatch.setattr(proxy, '_ensure_speech_service_ready', start)
     response = client.post('/v1/audio/speech', json={'model': 'tts-1', 'input': 'hi', 'voice': 'alloy'})
@@ -355,7 +354,7 @@ def test_speech_rechecks_policy_after_service_start(dispatch_env, monkeypatch):
 
 def test_enabled_transport_does_not_claim_unknown_target_is_available(dispatch_env, monkeypatch):
     client, calls = dispatch_env
-    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'disabled_intents': ['unrelated']})
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_intents': ['unrelated']})
     # The initial route check passed. Only the transport is configured; there is
     # no target availability fact at the final handoff.
     monkeypatch.setattr(proxy, '_model_dispatch_admission_response', lambda *a, **kw: None)

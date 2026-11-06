@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 from fastapi.testclient import TestClient
 import pytest
 
+from tests.support.instance_settings import set_instance
 from gateway import admin_store
 from gateway.admin_oidc import (
     CookieConfig, OIDCConfig, consume_state, oidc_config_for_public_base,
@@ -64,11 +65,7 @@ def browser_gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "ADMIN_OIDC_CONFIG", config())
     monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", config().signing_key)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", config().cookie)
-    admin_store.put_operator_setting(
-        "instance_presentation",
-        {"base_url": "https://gateway.family.example"},
-        path=path,
-    )
+    set_instance(path, {"base_url": "https://gateway.family.example"})
     monkeypatch.setattr(proxy, "ADMIN_OIDC_STATES", {})
     # Auth handlers need the initialized temporary store, not engine listeners.
     # Match the route integration fixtures and leave process lifespan to its own tests.
@@ -90,7 +87,7 @@ def browser_gateway(tmp_path, monkeypatch):
 ])
 def test_oidc_callback_returns_to_product_page_and_pins_origin(browser_gateway, monkeypatch, public_origin, target, return_page):
     proxy, client, path = browser_gateway
-    admin_store.put_operator_setting("instance_presentation", {"base_url": public_origin}, path=path)
+    set_instance(path, {"base_url": public_origin})
     login = client.get("/login", params={"return_to": target}, follow_redirects=False)
     assert login.status_code == 302
     if "redirect_uri=" not in login.headers["location"]:
@@ -101,7 +98,7 @@ def test_oidc_callback_returns_to_product_page_and_pins_origin(browser_gateway, 
     state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
     assert record.return_to == return_page
     # Mid-login Settings edits must not alter the URI used to exchange this code.
-    admin_store.put_operator_setting("instance_presentation", {"base_url": "https://changed.example"}, path=path)
+    set_instance(path, {"base_url": "https://changed.example"})
 
     async def exchange(code, *, config, pkce):
         assert config.redirect_uri == expected

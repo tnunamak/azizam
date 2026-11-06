@@ -28,29 +28,33 @@ def client_store(tmp_path):
     return TestClient(app), store, actor
 
 
-@pytest.mark.parametrize('url,key,body', [
-    ('/admin/api/settings/instance', 'instance_presentation', {'name': 'Original', 'base_url': '', 'theme_default': 'dark'}),
-    ('/admin/api/operator/media-job-admission', 'media_job_admission_overrides', {'max_queue_depth': 3}),
+@pytest.mark.parametrize('url,section,body', [
+    ('/admin/api/settings/instance', 'instance', {'name': 'Original', 'base_url': '', 'theme_default': 'dark'}),
+    ('/admin/api/operator/media-job-admission', 'resource_admission', {'max_queue_depth': 3}),
 ])
-def test_settings_require_revision_and_reject_stale_writes(client_store, url, key, body):
+def test_settings_require_revision_and_reject_stale_writes(client_store, url, section, body):
     client, store, _ = client_store
+
+    def revision_of() -> str:
+        return admin_store.read_config_section(section, path=store.path)['revision']
+
     assert client.put(url, json=body).status_code == 428
     first = client.put(url, json=body, headers={'If-Match': '0'})
     assert first.status_code == 200, first.text
-    revision = store.setting_revision(key)
+    revision = revision_of()
     assert first.json()['revision'] == revision
     assert revision != '0'
-    if key == 'media_job_admission_overrides':
-        assert client.get('/admin/api/operator/overrides').json()['overrides']['revisions'][key] == revision
+    if section == 'resource_admission':
+        assert client.get('/admin/api/operator/overrides').json()['overrides']['revisions']['media_job_admission_overrides'] == revision
     else:
         assert client.get(url).json()['revision'] == revision
     stale = client.put(url, json=body, headers={'If-Match': '0'})
-    assert stale.status_code == 409
+    assert stale.status_code == 412
     assert stale.json()['error']['code'] == 'settings_conflict'
-    assert store.setting_revision(key) == revision
+    assert revision_of() == revision
     assert len(admin_store.list_audit(path=store.path)) == 1
     assert client.put(url, json=body, headers={'If-Match': revision}).status_code == 200
-    assert store.setting_revision(key) != revision  # even identical same-second writes advance
+    assert revision_of() != revision  # even identical same-second writes advance
 
 
 def test_oidc_disable_cannot_strand_oidc_only_sign_in(client_store):

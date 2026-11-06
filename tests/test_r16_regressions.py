@@ -134,7 +134,7 @@ def test_decision_rechecks_policy_after_readiness():
 @pytest.mark.parametrize('path,body', [('/v1/chat/completions', {'model': 'test', 'messages': [{'role': 'user', 'content': 'hi'}]}), ('/v1/embeddings', {'model': 'test', 'input': 'hi'})])
 def test_direct_traffic_ignores_untracked_limits(dispatch_env, monkeypatch, cfg, path, body):
     client, calls = dispatch_env
-    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', cfg)
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: cfg)
     monkeypatch.setattr(proxy, '_resolve_request_target', lambda *a, **kw: SimpleNamespace(logical_service_id='selected'))
     monkeypatch.setitem(proxy.config['backends'], 'selected', {'enabled': True})
     # This path has an app identity but no tracked queue or active-request counter.
@@ -147,7 +147,7 @@ def test_direct_traffic_ignores_untracked_limits(dispatch_env, monkeypatch, cfg,
 
 
 def test_media_app_limit_uses_stored_occupancy(dispatch_env, monkeypatch):
-    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'max_app_concurrency': {'mine': 1}})
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'max_app_concurrency': {'mine': 1}})
     from gateway.receipts import RouteReceipt
     receipt = RouteReceipt(protocol='test', intent='image.generate', app_id='mine')
     assert proxy._media_job_admission_response('image.generate', receipt=receipt) is None
@@ -177,7 +177,7 @@ def test_admission_translation_is_idempotent(protocol):
 
 
 def test_media_app_load_failure_is_unknown_not_zero(dispatch_env, monkeypatch):
-    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'max_app_concurrency': {'mine': 1}})
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'max_app_concurrency': {'mine': 1}})
     from gateway.receipts import RouteReceipt
     receipt = RouteReceipt(protocol='test', intent='image.generate', app_id='mine')
     monkeypatch.setattr(media_jobs, 'active_count', lambda **kw: (_ for _ in ()).throw(OSError('unavailable')))
@@ -186,7 +186,7 @@ def test_media_app_load_failure_is_unknown_not_zero(dispatch_env, monkeypatch):
 
 
 def test_media_dispatch_counts_app_and_exempts_its_worker(dispatch_env, monkeypatch):
-    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {'max_app_concurrency': {'mine': 1}})
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'max_app_concurrency': {'mine': 1}})
     from gateway.receipts import RouteReceipt
     receipt = RouteReceipt(protocol='test', intent='image.generate', app_id='mine')
     args = dict(resource_class='image', service_available=True, queue_key=proxy._MEDIA_JOB_QUEUE_KEY, receipt=receipt)

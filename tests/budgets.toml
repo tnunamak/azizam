@@ -511,7 +511,8 @@
 # Warm-up review round (2026-11-06): +2 cases, a request in the gap between warm-up checks waits, and a database read failure is retried; 19035.
 # Train 3 (2026-11-06): main (19163) + T1 integration with its gate-review fixes (+4 reconcile, wake and restore cases) + the LiteLLM warm-up (+8); scripts/run-hermetic-pytest.sh --collect-only -q measured 19646.
 # Train 3 ratchet fixes (2026-11-06): +1 case, the snapshot directory is made by the first write; measured 19647.
-pytest = 19647
+# Config homes C6 (2026-11-06): the folded settings add test_config_fold.py (25), test_config_fold_responses.py (4) and cases in the touched settings, admin and config tests; scripts/run-hermetic-pytest.sh --collect-only -q measured 19192.
+pytest = 1
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -644,7 +645,8 @@ pytest = 19647
 # Mesh review fixes (2026-11-05): mesh-job.spec.ts and mesh-panel.spec.tsx (Azizam is not answering, Check again), plus the specs
 # the base lane added since; vitest list --json measured 3795 (--root web).
 # Library pick everywhere (2026-11-06): +111 vitest cases (shared media input, picker, hook, focus-ring contrast); measured with npx vitest list on the merge candidate: 3913.
-vitest = 3913
+# Config homes C6 (2026-11-06): the settings page spec runs its stale-write case for 412 and 409 (+2 over the base); vitest list measured 3804 (--root web).
+vitest = 1
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -753,11 +755,12 @@ domain_literals = 826
 # The corrected scan measures proxy.py before C0 at 97 as well, so C1 moved no real import-time read: DECISION_RUNTIME
 # and MESH_DEPS read the config inside a lambda, which was never an import-time read. Each section slice moves its readers to the runtime
 # snapshot and lowers its key; a key is removed when its count reaches zero.
+# 94 on 2026-11-06 (C6): the instance, media admission and service availability settings moved into the config layer, so the
+# "gateway" key (GATEWAY_CFG, RESOURCE_ADMISSION_CFG, MEDIA_JOB_ADMISSION_CFG) reached zero and is gone.
 "import_time_config_reads.admin" = 2
 "import_time_config_reads.audio" = 5
 "import_time_config_reads.auth" = 5
 "import_time_config_reads.backends" = 23
-"import_time_config_reads.gateway" = 3
 "import_time_config_reads.identity" = 1
 "import_time_config_reads.images" = 27
 "import_time_config_reads.llm" = 1

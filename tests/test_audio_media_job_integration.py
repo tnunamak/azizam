@@ -151,7 +151,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             },
         }
 
-        with patch.object(proxy, "MEDIA_JOB_ADMISSION_CFG", {}), patch.object(
+        with patch.object(
             proxy.ADMIN_STORE,
             "operator_overrides",
             return_value=overrides,

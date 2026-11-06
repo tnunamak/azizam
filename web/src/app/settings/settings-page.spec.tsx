@@ -717,8 +717,9 @@ describe("default access choices", () => {
 });
 
 // The revision-guarded forms share one contract: a dirty form keeps its
-// draft across a background refresh, a clean form rebases onto it, a 409 asks
-// for a reload, and every PUT carries the revision the form was last rebased to.
+// draft across a background refresh, a clean form rebases onto it, a stale write
+// (412 from these two settings, 409 from the older settings) asks for a reload,
+// and every PUT carries the revision the form was last rebased to.
 const revisionForms = [
   {
     section: "Instance",
@@ -799,7 +800,7 @@ async function refresh(path: string) {
 }
 
 describe.each(revisionForms)("$save", (form) => {
-  it("dirty refresh conflicts, clean refresh and successful response rebase revisions", async () => {
+  it.each([412, 409] as const)("dirty refresh conflicts (%i), clean refresh and successful response rebase revisions", async (conflictStatus) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(1_800_000_000_000);
     seed("seeded");
@@ -812,7 +813,7 @@ describe.each(revisionForms)("$save", (form) => {
         received.push(request.ifMatch);
         if (conflict)
           return {
-            status: 409,
+            status: conflictStatus,
             json: { error: { code: "settings_conflict", message: "Conflict" } },
           };
         value = form.saved;

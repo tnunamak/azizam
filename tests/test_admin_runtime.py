@@ -89,9 +89,10 @@ class AdminRuntimeTests(unittest.TestCase):
         client.headers.update({"Authorization": f"Bearer {key}"})
         original_put = client.put
         def put_current_settings(url, **kwargs):
-            setting = {"/admin/api/operator/media-job-admission": "media_job_admission_overrides"}.get(url)
-            if setting:
-                kwargs["headers"] = {"If-Match": self.store.setting_revision(setting), **kwargs.get("headers", {})}
+            section = {"/admin/api/operator/media-job-admission": "resource_admission"}.get(url)
+            if section:
+                revision = admin_store.read_config_section(section, path=self.store.path)["revision"]
+                kwargs["headers"] = {"If-Match": revision, **kwargs.get("headers", {})}
             return original_put(url, **kwargs)
         client.put = put_current_settings
         return client
@@ -783,9 +784,10 @@ class AdminOidcSettingsTests(unittest.TestCase):
         client.headers.update({"Authorization": f"Bearer {key}"})
         original_put = client.put
         def put_current_settings(url, **kwargs):
-            setting = {"/admin/api/operator/media-job-admission": "media_job_admission_overrides"}.get(url)
-            if setting:
-                kwargs["headers"] = {"If-Match": self.store.setting_revision(setting), **kwargs.get("headers", {})}
+            section = {"/admin/api/operator/media-job-admission": "resource_admission"}.get(url)
+            if section:
+                revision = admin_store.read_config_section(section, path=self.store.path)["revision"]
+                kwargs["headers"] = {"If-Match": revision, **kwargs.get("headers", {})}
             return original_put(url, **kwargs)
         client.put = put_current_settings
         return client

@@ -1860,7 +1860,7 @@ def test_resource_admission_route_inventory(gateway, monkeypatch):
     that silently returns generated output cannot inherit a blanket 2xx exemption.
     The successful dispatch cases are exercised by test_dispatch_admission.py.
     """
-    monkeypatch.setattr(proxy, 'MEDIA_JOB_ADMISSION_CFG', {
+    monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {
         'disabled_resource_classes': ['chat', 'embeddings', 'decision', 'image', 'audio', 'video', 'native'],
     })
     monkeypatch.setattr(proxy, '_operator_override_docs', lambda: {'service_availability': {}, 'media_job_admission': {}})

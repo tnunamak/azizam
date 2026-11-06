@@ -290,7 +290,9 @@ function MutationError({ error }: { error: unknown }) {
     <p role="alert" className="text-destructive text-meta">
       <span className="font-medium">Unsaved changes. </span>
       {error instanceof ApiError &&
-      error.status === 409 &&
+      // A stale precondition: 412 from the settings kept in the config layer
+      // (instance, media admission), 409 from the others.
+      (error.status === 412 || error.status === 409) &&
       error.code !== "oidc_unavailable"
         ? "Settings changed elsewhere; reload to see the latest"
         : error instanceof ApiError && error.status === 403

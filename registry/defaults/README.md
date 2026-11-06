@@ -4,7 +4,18 @@ This directory holds the release defaults of the config sections (design: `docs/
 Every file here is read-only data that ships with a release. An upgrade replaces it. The owner never edits it: an
 owner's change is a sparse override in `admin.db` (tables `config_overrides` and `config_changes`).
 
-No section ships yet. A section slice adds the first one.
+Three sections ship, the owner settings that existed before the layer:
+
+| Section | Holds | Routes that write it |
+|---|---|---|
+| `instance` | the instance name, public base URL and default theme | `PUT /admin/api/settings/instance` |
+| `resource_admission` | the media job admission limits (`media_jobs`) | `PUT /admin/api/operator/media-job-admission` |
+| `service_availability` | per-service availability overrides, keyed by service id (no release entries) | `PUT /admin/api/operator/service-availability` |
+
+Each route keeps its request and response shape. A write is a revision-checked change of the section: a missing
+`If-Match` is 428 and a stale one is 412. On first boot after the upgrade, the values in the old `operator_settings`
+keys (`instance_presentation`, `media_job_admission_overrides`, `service_availability_overrides`) become override rows
+once. The old keys stay in the database, unread, until a later release deletes them, so a rollback still finds them.
 
 ## A section is two files
 
