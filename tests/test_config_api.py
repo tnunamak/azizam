@@ -50,6 +50,7 @@ class Gateway:
         self.startup = startup if startup is not None else {}
         self.reloads = 0
         self.reload_error: Exception | None = None
+        self.after_failure_note: Callable[[], None] | None = None
         self.during_reload: Callable[[], None] | None = None  # runs inside the reload, before it fails: another writer's turn
         app = FastAPI()
         app.include_router(config_api.create_config_router(
@@ -80,6 +81,11 @@ class Gateway:
             hook, self.during_reload = self.during_reload, None
             hook()
         if self.reload_error is not None:
+            # As proxy's reload does: note the cleaned failure text, then re-raise.
+            self.home.note_reload_failed(f"{type(self.reload_error).__name__}: {self.reload_error}", path=self.db)
+            if self.after_failure_note is not None:
+                hook, self.after_failure_note = self.after_failure_note, None
+                hook()
             raise self.reload_error
         self.reloads += 1
         self.reload_ok()
@@ -422,9 +428,19 @@ def test_a_failed_reload_names_its_own_change_when_a_publish_clears_the_shared_n
     failed = gw.client.get(f"{API}/sections/{SECTION}", headers=OWNER).json()["reload_failed"]
     assert failed is not None and failed["change_id"] == response.json()["change_id"]
     assert [(e["section"], e["pointer"]) for e in failed["entries"]] == [(SECTION, "/timeout")]
-    # With the cleaned note gone, the raw exception text (which can quote a stored value) is never recorded or answered.
-    assert "snapshot build failed" not in failed["error"]
-    assert "snapshot build failed" not in response.json()["reload"]["error"]
+
+
+def test_a_failed_reload_whose_cleaned_note_a_publish_cleared_records_only_the_error_type(gw):
+    # The reload notes its cleaned failure text and releases the lock; another writer's reload publishes (clearing the
+    # note) before A's handler reads it. The raw exception text can quote a stored value, so it is never recorded or
+    # answered: only the error type.
+    gw.reload_error = RuntimeError("snapshot build failed near a stored value")
+    gw.after_failure_note = gw.reload_ok
+    response = gw.patch(setting("/timeout", 60))
+    assert response.status_code == 202
+    failed = gw.client.get(f"{API}/sections/{SECTION}", headers=OWNER).json()["reload_failed"]
+    assert failed["change_id"] == response.json()["change_id"]
+    assert failed["error"] == response.json()["reload"]["error"] == "RuntimeError; see the gateway log"
 
 
 def test_an_object_value_is_served_with_its_keys_in_the_order_the_owner_sent(gw):
