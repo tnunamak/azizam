@@ -1262,12 +1262,10 @@ VISION_MODEL_PATTERNS = [
 # =============================================================================
 # Live runtime registry — hot-reload without process restart
 # =============================================================================
-# Module-level names (DERIVED.LLM_BACKEND_HOSTS, DERIVED.TTS_HOST, …) are
-# Python globals: every function that references them looks up the current
-# value at call time, not at import time.  reload_runtime_config() re-derives
-# all of them from the DB and reassigns the module names atomically (one
-# reference assignment per name, safe under the GIL), so any in-flight or
-# subsequent request sees either the old or the new values — never a mix.
+# Registry-derived values (DERIVED.LLM_BACKEND_HOSTS, DERIVED.TTS_HOST, …) live on the published config snapshot,
+# not in module names: DERIVED reads the snapshot of the current request (or the latest one) at each access.
+# reload_runtime_config() derives all of them from the DB into a new snapshot and publishes it with one reference
+# swap, so a request bound to a snapshot sees either the old values or the new ones, never a mix (CONFIG_HOMES C9).
 #
 # The LiteLLM subprocess still needs its own restart to pick up litellm
 # config-file changes (that is a separate concern tracked in the design doc).
@@ -1383,14 +1381,12 @@ _RELOAD_LOCK = threading.RLock()
 
 
 def reload_runtime_config() -> dict:
-    """Re-derive all backend constants from the current DB service registry.
+    """Re-derive all registry-derived values from the current DB service registry and publish them.
 
-    Atomically reassigns every module-level name that was originally computed
-    from config["backends"] at import time.  Safe to call from any thread:
-    reloads run one at a time, and each name assignment is a single reference
-    swap under the GIL.
+    Builds one new config snapshot with its derived values and publishes it with a single reference swap. Safe to
+    call from any thread: reloads run one at a time.
 
-    Returns the dict of updated names → new values (for logging / tests).
+    Returns the derived mapping of the published snapshot (for logging / tests).
 
     A stored registry with records that do not validate applies the ones that do,
     as a restart would, and the Overview lists the rest (``partial``). Any other
@@ -1538,10 +1534,12 @@ async def get_active_backend() -> Optional[str]:
     Probes all backends in DERIVED.LLM_BACKEND_HOSTS (registry-derived) in priority
     order and returns the id of the first one that answers healthy.
     """
-    backends = config.get("backends") or {}
+    # Hosts and priorities come from one snapshot, so a reload between the two reads cannot pair them wrongly.
+    snapshot = runtime()
+    backends = snapshot.config.get("backends") or {}
     # Sort by priority (lower = higher priority) so the preferred backend wins.
     candidates = sorted(
-        DERIVED.LLM_BACKEND_HOSTS.keys(),
+        snapshot.derived["LLM_BACKEND_HOSTS"].keys(),
         key=lambda bid: int((backends.get(bid) or {}).get("priority") or 100),
     )
     for bid in candidates:
