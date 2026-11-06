@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import socket
 from typing import Iterator
 
 import httpx
@@ -41,10 +42,13 @@ class FakeUpstreams:
         self._fakes.append(fake)
         return fake
 
-    def loopback(self, scenario: Scenario) -> FakeUpstream:
-        """Serve ``scenario`` on a 127.0.0.1 port (wire faults and timeouts)."""
+    def loopback(self, scenario: Scenario, *, sock: socket.socket | None = None) -> FakeUpstream:
+        """Serve ``scenario`` on a 127.0.0.1 port (wire faults and timeouts).
+
+        ``sock`` is a port the test bound earlier. It refused connections until now, like a server still starting.
+        """
         fake = FakeUpstream(scenario, self.clock, name=scenario.name)
-        server = LoopbackServer(fake).start()
+        server = LoopbackServer(fake, sock=sock).start()
         self._servers.append(server)
         fake.base_url = server.base_url
         fake.name = f"{scenario.name}@{server.base_url}"
