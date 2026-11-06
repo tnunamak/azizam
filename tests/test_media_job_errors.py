@@ -12,13 +12,17 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
+import pytest
 from fastapi import Response
 
 import proxy
 from gateway import media_jobs
 from gateway.mcp_server import McpDeps, Tools
 from gateway.policy import DENIED, PolicyDecision
+from tests.support.access import access_context, authenticated
+from tests.support.audio_workflow import audio_manifest
 
 PROMPT = "a secret red fox at dawn"
 
@@ -141,6 +145,96 @@ class McpJobResultTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["error_category"], "authorization")
         self.assertIs(result["retryable"], False)
         self.assertNotIn("upstream_http_status", result)
+
+
+class _JsonRequest:
+    method = "POST"
+    scope: dict[str, Any] = {"auth_context": access_context()}
+    query_params: dict[str, str] = {}
+
+    def __init__(self, body: dict[str, Any]) -> None:
+        self._body = dict(body)
+        self.headers = {"host": "gateway.test"}
+        self.url = SimpleNamespace(scheme="http", netloc="gateway.test")
+
+    async def json(self) -> dict[str, Any]:
+        return dict(self._body)
+
+
+@pytest.mark.usefixtures("isolated_receipts")
+class AudioJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
+    """What an async audio job keeps of a 400, by who wrote the refusal."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        self.db = root / "media_jobs.db"
+        media_jobs.init_db(self.db)
+        for patcher in (
+            patch.object(media_jobs, "DB_PATH", self.db),
+            patch.object(proxy, "IMAGE_CACHE_DIR", root / "images"),
+            patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", root / "payloads"),
+            authenticated(),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def submit(self, body: dict[str, Any]) -> str:
+        with patch.object(proxy, "_schedule_audio_media_job", lambda _job_id: True):
+            response = await proxy._dispatch_gateway_media_job_submission(
+                request=_JsonRequest({}),  # type: ignore[arg-type]
+                payload={"intent": "sfx.generate", "request": body}, audience="client")
+        assert response is not None and response.status_code == 202, getattr(response, "body", None)
+        return json.loads(response.body.decode("utf-8"))["job_id"]
+
+    def failed(self, job_id: str) -> dict[str, Any]:
+        job = media_jobs.get(job_id, audience="client", path=self.db)
+        assert job is not None
+        self.assertEqual(job["status"], media_jobs.STATUS_FAILED)
+        return job
+
+    async def test_a_gateway_validation_refusal_keeps_its_own_message(self) -> None:
+        """The real route refuses duration 2 against a 5 second floor; the job says so."""
+        job_id = await self.submit({"model": "tangoflux", "prompt": PROMPT, "type": "sfx", "duration": 2})
+        sync = None
+        with patch.multiple(
+            proxy,
+            COMFY_ENABLED=True,
+            _compile_from_pin=lambda _capability: False,
+            _dispatch_admission_response=lambda *a, **kw: None,
+            _service_availability_response=lambda *a, **kw: None,
+            _resolve_audio_workflow=lambda model: ("fake-audio", {"min_seconds": 5, "max_seconds": 30}),
+            _load_audio_workflow_manifest=lambda name: audio_manifest(name, {"prompt": [("1", "text")],
+                                                                          "duration": [("1", "seconds")]}),
+        ):
+            sync = await proxy.proxy_audio_generate(
+                _JsonRequest({"model": "tangoflux", "prompt": PROMPT, "type": "sfx", "duration": 2}),  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT)
+            await proxy._run_audio_media_job(job_id)
+        self.assertEqual(sync.status_code, 400)
+        reason = json.loads(sync.body)["error"]["message"]
+        self.assertIn("duration", reason)
+        job = self.failed(job_id)
+        self.assertEqual(job["error"], reason)
+        self.assertEqual(job["error_category"], "invalid_input")
+        self.assertEqual(job["error_code"], "invalid_input")
+        self.assertIs(job["retryable"], False)
+        self.assertNotIn(PROMPT, job["error"])
+
+    async def test_an_upstream_400_that_echoes_the_prompt_keeps_the_fixed_sentence(self) -> None:
+        job_id = await self.submit({"model": "tangoflux", "prompt": PROMPT, "type": "sfx"})
+
+        async def upstream_refuses(_request, _auth_context, **_kwargs):
+            return _json(400, {"message": f"cannot render: {PROMPT}", "type": "invalid_request_error"})
+
+        with patch.object(proxy, "proxy_audio_generate", upstream_refuses):
+            await proxy._run_audio_media_job(job_id)
+        job = self.failed(job_id)
+        self.assertEqual(job["error"], "The gateway did not accept this job's inputs.")
+        self.assertEqual(job["error_category"], "invalid_input")
+        self.assertNotIn(PROMPT, json.dumps(job))
+
 
 if __name__ == "__main__":
     unittest.main()
