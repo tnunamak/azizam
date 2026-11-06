@@ -627,6 +627,12 @@ class Executor:
             if await self._opens_next(operation, adapter, after) and not await self._load_still_verified(operation, adapter, policy):
                 # The load was verified before the restart; the engine may have died since. Never open on that old evidence.
                 print(f"[transition-gate] {operation.op_id} resumes at open but the target is not resident now; holding", flush=True)
+                # The hold is recorded at the open step (a held operation needs an unknown outcome): the owner resolves it
+                # there, after looking at the engine.
+                held = StepIntent(step="open", effect_key=f"{operation.op_id}:open", expected_incarnation=None)
+                await asyncio.to_thread(self.store.write_intent, operation.op_id, held)
+                await asyncio.to_thread(self.store.write_outcome, operation.op_id, "open",
+                                        EffectResult(outcome="unknown", evidence_ref="load_unverified_at_resume"))
                 await asyncio.to_thread(self.store.finish, operation.op_id, "reconciling", "reconciling")
                 return
         current = await asyncio.to_thread(self.store.get, operation.op_id)
