@@ -74,6 +74,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { expiryNote } from "@/lib/library-expiry";
+import { formatDuration } from "@/lib/media-pick";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -260,14 +261,6 @@ function shortTitle(asset: MediaAsset): string {
     prompt.split(/(?<=[.!?])\s|,\s/)[0]?.replace(/[.!?]$/, "") ?? prompt;
   const words = clause.split(/\s+/);
   return words.length <= 12 ? clause : `${words.slice(0, 10).join(" ")}…`;
-}
-
-function formatDuration(seconds: number) {
-  if (typeof seconds !== "number") return null;
-  const rounded = Math.round(seconds);
-  const minutes = Math.floor(rounded / 60);
-  const remainingSeconds = rounded % 60;
-  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 }
 
 function buildMediaPath(filters: {

@@ -77,7 +77,7 @@ import { modelDisplayName } from "@/lib/model-name";
 import { useUnsavedWork, type UnsavedKind } from "@/lib/unsaved-work";
 import { Button } from "@/components/ui/button";
 import { useCopied } from "@/components/ui/copy-button";
-import { Input } from "@/components/ui/input";
+import { MediaInput } from "@/components/media-input/media-input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -3086,16 +3086,18 @@ export default function TryPage() {
                           />
                         </div>
                       )}
-                      <label className="block space-y-2">
-                        <span className="text-sm font-medium">Audio file</span>
-                        <Input
-                          type="file"
-                          accept="audio/*"
-                          onChange={(event) =>
-                            setFile(event.target.files?.[0] ?? null)
-                          }
+                      <div role="group" aria-labelledby={`${idBase}-transcribe-file-label`} className="space-y-2">
+                        <span id={`${idBase}-transcribe-file-label`} className="text-sm font-medium">
+                          Audio file
+                        </span>
+                        <MediaInput
+                          id={`${idBase}-transcribe-file`}
+                          label="Audio file"
+                          kind="audio"
+                          file={file}
+                          onFileChange={setFile}
                         />
-                      </label>
+                      </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <Button
                           type="button"
@@ -3115,12 +3117,12 @@ export default function TryPage() {
                           <Pause aria-hidden="true" />
                           Stop
                         </Button>
-                        {file && (
-                          <span className="text-muted-foreground text-sm">
-                            {file.name}
-                          </span>
-                        )}
                       </div>
+                      {file && !recording && (
+                        <p className="text-muted-foreground text-xs">
+                          Recording replaces the audio file above.
+                        </p>
+                      )}
                     </div>
                   )}
                   {tab.value === "decide" && (

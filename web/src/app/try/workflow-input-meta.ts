@@ -17,10 +17,6 @@ import {
 
 export type OutputKind = "video" | "image" | "audio" | "other";
 
-/** Largest file the picker turns into a data URI; larger ones need a link. */
-export const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
-export const MAX_MEDIA_LABEL = "10 MB";
-
 const OUTPUT_NOUN: Record<Exclude<OutputKind, "other">, string> = {
   video: "video",
   image: "picture",

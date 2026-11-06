@@ -4,6 +4,7 @@ import {
   requestCapability,
   type CapabilityView,
 } from "@/lib/capability-state";
+import { fileFitsTypes } from "@/lib/media-pick";
 import { knownCapabilityLabel } from "@/components/product/readiness";
 import { appPlumbingCapabilities } from "@/lib/terms";
 import type { HomeCapability, HomeChat, HomeCreation, HomeReceipt } from "./home-api";
@@ -195,7 +196,7 @@ export function mediaPhrase(input: MediaInput): string {
 
 /** Whether a file can be given to a media input: its type fits the accept filter, or the input takes any file. */
 export function fitsMediaInput(file: File, input: MediaInput): boolean {
-  return !input.accept || file.type.startsWith(input.accept.replace(/\*$/, ""));
+  return fileFitsTypes(file, input.accept ? [input.accept] : undefined);
 }
 
 /** The capability row that can make a picture from words alone, so a typed description can become the picture a

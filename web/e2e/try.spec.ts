@@ -514,7 +514,7 @@ test("try records audio, uploads it, and stops microphone tracks", async ({
   await waitForCatalog(page);
   await page.getByRole("tab", { name: "Transcribe a recording" }).click();
 
-  await page.getByRole("button", { name: "Record" }).click();
+  await page.getByRole("button", { name: "Record", exact: true }).click();
   await expect(page.getByRole("button", { name: "Stop" })).toBeEnabled();
   await page.getByRole("button", { name: "Stop" }).click();
   await expect(page.getByText("recording.webm", { exact: true })).toBeVisible();
@@ -544,7 +544,9 @@ test("try records audio, uploads it, and stops microphone tracks", async ({
   expect(uploadedBody).toContain('name="file"; filename="recording.webm"');
   expect(uploadedBody).toContain('name="model"');
 
-  await page.getByRole("button", { name: "Record" }).click();
+  // A file is chosen, so the page says that recording replaces it.
+  await expect(page.getByText("Recording replaces the audio file above.")).toBeVisible();
+  await page.getByRole("button", { name: "Record", exact: true }).click();
   await expect(page.getByRole("button", { name: "Stop" })).toBeEnabled();
   await page.getByRole("tab", { name: "Chat" }).click();
   await expect

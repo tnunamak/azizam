@@ -84,6 +84,7 @@ const TRY_FILES = [
   "**/long-jobs.spec.ts",
   "**/bugfix-actions.spec.ts",
   "**/try-mesh.spec.ts",
+  "**/library-pick-everywhere.spec.ts",
 ];
 
 function server(gatewayPort: number, name: string, extraEnv: Record<string, string> = {}) {

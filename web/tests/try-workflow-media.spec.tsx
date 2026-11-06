@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Profiler, useState } from "react";
 import TryPage from "@/app/try/page";
 import { WorkflowInputs } from "@/app/try/workflow-inputs";
-import { MediaInput } from "@/app/try/workflow-media-input";
+import { MediaInput } from "@/components/media-input/media-input";
 import catalog from "./fixtures/workflows-ltx-i2v.json";
 
 
@@ -552,7 +552,7 @@ describe("media selection races", () => {
       value="https://example.test/original.png" onChange={changed} />);
     fireEvent.change(pickerInput(), { target: { files: [PNG] } });
     if (action === "remove") {
-      fireEvent.click(screen.getByRole("button", { name: "Remove picture for Picture" }));
+      fireEvent.click(screen.getByRole("button", { name: "Remove Picture from a link" }));
     } else if (action === "link") {
       fireEvent.change(screen.getByRole("textbox", { name: "Link, Library link or data URI" }), {
         target: { value: "https://example.test/new.png" },
@@ -570,7 +570,7 @@ describe("media selection races", () => {
       url.includes("/download") ? pending : Promise.resolve(json(libraryAssets)));
     const changed = vi.fn();
     const view = render(<MediaInput id="picture" label="Picture" kind="image"
-      file={PNG} onFileChange={changed} />);
+      file={null} onFileChange={changed} />);
     fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
     fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
     if (action === "file") {
@@ -803,7 +803,7 @@ describe("media input states", () => {
       value="https://example.test/a.png" onChange={onChange} />);
     fireEvent.error(screen.getByRole("img", { name: "Chosen picture" }));
     expect(screen.getByText("Preview unavailable")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Remove picture for Picture" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Remove Picture from a link" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Retry preview of picture for Picture" }));
     expect(screen.getByRole("img", { name: "Chosen picture" })).toBeVisible();
     expect(screen.queryByText("Preview unavailable")).toBeNull();

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  assetIdFromPasted,
   inputHint,
   inputLabel,
   inputPlaceholder,
@@ -22,7 +23,7 @@ import {
   missingMessage,
   type OutputKind,
 } from "./workflow-input-meta";
-import { MediaInput } from "./workflow-media-input";
+import { MediaInput } from "@/components/media-input/media-input";
 import { isMediaInput, mediaKindOf } from "@/lib/workflow-media-input";
 
 export type WorkflowInput = {
@@ -338,7 +339,7 @@ function WorkflowInputControl({
     ? "This setting cannot be changed here yet."
     : inputHint(input, outputKind);
   const errorId = problem ? `${id}-error` : undefined;
-  const hintId = hint || detail ? `${id}-hint` : undefined;
+  const hintId = hint ? `${id}-hint` : undefined;
   // The helper line, then the problem: both are what the control says about itself.
   const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
   const disabled = parentDisabled || isUnsupportedValue(value);
@@ -359,13 +360,18 @@ function WorkflowInputControl({
       </span>
     </span>
   );
-  // The hint and, for an owner, the technical detail: one helper line, in two spans.
-  const hintLine = hint || detail ? (
+  // The helper line is what the control says to a person. Where the value goes and how it is sent is a builder's
+  // detail: an owner gets it in a folded disclosure after the control, never in the helper line.
+  const hintLine = hint ? (
     <span id={hintId} className="text-muted-foreground text-xs">
-      {hint ? <span>{hint}</span> : null}
-      {hint && detail ? " " : null}
-      {detail ? <span data-slot="input-detail">{detail}</span> : null}
+      {hint}
     </span>
+  ) : null;
+  const detailLine = detail ? (
+    <details data-slot="input-detail" className="text-muted-foreground text-xs">
+      <summary className="min-h-8 cursor-pointer py-1">API details</summary>
+      <span className="block">{detail}</span>
+    </details>
   ) : null;
   const problemLine = problem ? (
     <span
@@ -390,30 +396,20 @@ function WorkflowInputControl({
       <div role="group" aria-labelledby={`${id}-label`} className={wrapper}>
         {header}
         {hintLine}
-        {kind ? (
-          <MediaInput
-            id={id}
-            label={text}
-            kind={kind}
-            file={file}
-            invalid={Boolean(problem)}
-            describedBy={describedBy}
-            onFileChange={onFileChange}
-          />
-        ) : (
-          <Input
-            id={id}
-            type="file"
-            aria-labelledby={`${id}-label`}
-            aria-required={input.required || undefined}
-            aria-invalid={Boolean(problem) || undefined}
-            aria-describedby={describedBy}
-            onChange={(event) =>
-              onFileChange(event.currentTarget.files?.[0] ?? null)
-            }
-          />
-        )}
+        <MediaInput
+          id={id}
+          label={text}
+          // A file input the catalog does not type takes any file, and has
+          // no Library to offer.
+          kind={kind}
+          file={file}
+          invalid={Boolean(problem)}
+          required={input.required}
+          describedBy={describedBy}
+          onFileChange={onFileChange}
+        />
         {problemLine}
+        {detailLine}
       </div>
     );
   }
@@ -429,27 +425,33 @@ function WorkflowInputControl({
           // A media input the catalog does not type is a picture: the
           // only kind Try's workflows take without saying so.
           kind={mediaKindOf(input) ?? "image"}
+          normalizeReference={assetIdFromPasted}
           value={typeof value === "string" ? value : undefined}
           invalid={Boolean(problem)}
+          required={input.required}
           describedBy={describedBy}
           onChange={onChange}
         />
         {problemLine}
+        {detailLine}
       </div>
     );
   }
 
   return (
-    <label className={wrapper}>
-      {header}
-      {controlFor(input, id, label, value, disabled || fileInput, fileInput, onChange, {
-        placeholder: inputPlaceholder(input, outputKind),
-        invalid: Boolean(problem),
-        describedBy,
-      })}
-      {hintLine}
-      {problemLine}
-    </label>
+    <div className={wrapper}>
+      <label className="flex min-w-0 flex-col gap-2">
+        {header}
+        {controlFor(input, id, label, value, disabled || fileInput, fileInput, onChange, {
+          placeholder: inputPlaceholder(input, outputKind),
+          invalid: Boolean(problem),
+          describedBy,
+        })}
+        {hintLine}
+        {problemLine}
+      </label>
+      {detailLine}
+    </div>
   );
 }
 
