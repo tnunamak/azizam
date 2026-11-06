@@ -156,12 +156,14 @@ def _release_registry(directory: str, signature: tuple[tuple[str, int, int], ...
 
 def _release_key(catalog_dir: Path | None) -> tuple[str, tuple[tuple[str, int, int], ...]]:
     directory = Path(catalog_dir or DEFAULT_CATALOG_DIR)
-    signature = tuple(
-        (name, stat.st_mtime_ns, stat.st_size)
-        for name in ("services.yml", "protocol_frontends.yml", "workflows.yml", "capabilities.yml")
-        for stat in [(directory / name).stat()] if (directory / name).exists()
-    )
-    return str(directory), signature
+    signature: list[tuple[str, int, int]] = []
+    for name in ("services.yml", "protocol_frontends.yml", "workflows.yml", "capabilities.yml"):
+        try:
+            stat = (directory / name).stat()
+        except FileNotFoundError:
+            continue
+        signature.append((name, stat.st_mtime_ns, stat.st_size))
+    return str(directory), tuple(signature)
 
 
 def release_registry(catalog_dir: Path | None = None) -> dict[str, Any]:
