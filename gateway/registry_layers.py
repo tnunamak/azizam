@@ -149,7 +149,7 @@ def layer(stored: Mapping[str, Any], release: Mapping[str, Any]) -> dict[str, An
                 records[record_id] = copy.deepcopy(record)
         for record_id, entry in owned.items():
             records[record_id] = apply_entry(base[record_id], entry) if layered and record_id in base else _whole(entry)
-        effective[name] = records
+        effective[name] = {record_id: records[record_id] for record_id in sorted(records)}
     return effective
 
 
