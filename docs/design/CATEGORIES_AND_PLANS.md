@@ -216,9 +216,7 @@ cover missing, None and empty tags; allowed and disallowed tags together;
 unknown categories; multiple assertions; person and app mismatch; empty
 grants; route changes; helpers; retries; cache, output and share paths.
 
-Run `scripts/categories-migration-report` against a private database snapshot.
-The [report guide](CATEGORIES_MIGRATION_REPORT.md) documents its deterministic
-conversion, static metadata call-site inventory and finite scope.
+The report tool and its guide are not built yet; this section is the plan.
 
 ## Bundled defaults
 
