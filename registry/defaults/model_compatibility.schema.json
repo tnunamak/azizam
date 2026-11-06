@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/model_compatibility",
+  "title": "model_compatibility",
+  "description": "How OpenAI model names are recognised and which model each operation uses by default (docs/design/CONFIG_HOMES.md, C8c). The path of the generated OpenAI model list is not a setting: it is the release file registry/openai_model_aliases.generated.yml.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-azizam-startup-only": [
+    "generated_aliases_file"
+  ],
+  "properties": {
+    "enabled": {
+      "description": "When false, a requested model name is used as sent: no OpenAI-name recognition and no default model.",
+      "type": "boolean"
+    },
+    "openai_models_api_url": {
+      "description": "The model list that `proxy.py refresh-openai-models` reads to regenerate the release list.",
+      "type": "string",
+      "minLength": 1
+    },
+    "include_private": {
+      "description": "When true, the refresh keeps fine-tunes and models owned by other accounts.",
+      "type": "boolean"
+    },
+    "defaults": {
+      "description": "The model an operation uses when the request names none or names an OpenAI model. Keyed by operation (chat, completions, speech, transcriptions, embeddings, images, image_edits, videos). An operation with no entry falls back to its engine's default.",
+      "type": "object",
+      "x-azizam-entry": "collection",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+      "additionalProperties": {"type": "string"}
+    },
+    "aliases": {
+      "description": "Model names the gateway should treat as an OpenAI family, keyed by model id. A value is a family name (for example embeddings) or an object with a category or operation.",
+      "type": "object",
+      "x-azizam-entry": "collection",
+      "additionalProperties": {
+        "type": ["string", "object"],
+        "additionalProperties": false,
+        "properties": {
+          "category": {"type": "string"},
+          "operation": {"type": "string"}
+        }
+      }
+    }
+  }
+}

@@ -528,7 +528,10 @@
 # fix/schemeless-address-scrub: a schemeless address gives up its query secret to the refusal scrub (+1); measured 19826.
 # Train 10 (2026-11-06): a schemeless address gives its query secret to the refusal scrub (+1); measured 19826.
 # fix/engine-address-one-endpoint: a connection address must name the host the service is dialed at (+4); measured 19830.
-pytest = 19830
+# feat/config-homes-c8c (2026-11-06): C8c model_compatibility and identity sections, +17 cases (tests/test_config_c8c_sections.py); measured 19838.
+# C8c review fix: the status page reads the generated model list where the gateway does (+1); measured 19839.
+# Train 11 (2026-11-06): engine address guard (+4), C8c model_compatibility and identity sections (+18); measured 19848.
+pytest = 19848
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -782,16 +785,19 @@ domain_literals = 826
 # C7 (roles, models, llm, reasoning, model_routing): llm and roles reach zero; model_routing
 # falls 3 -> 1 (SWITCH_TIMEOUT and UPSTREAM_READ_TIMEOUT moved; GGUF_DIR stays in the startup file until C10). models
 # keeps its one count: its startup list cannot be a section root yet (CONFIG_HOMES C7, not done).
+# C8c (model_compatibility, identity): both keys reach zero (7 and 1 constants moved). TTS_BACKEND_MODEL, STT_BACKEND_MODEL
+# and EMBEDDINGS_MODEL also became per-call readers of model_compatibility.defaults; they were counted under "backends"
+# (first of their sections alphabetically), so that key falls 23 -> 20.
 "import_time_config_reads.admin" = 2
 "import_time_config_reads.audio" = 4
 "import_time_config_reads.auth" = 5
-"import_time_config_reads.backends" = 23
+"import_time_config_reads.backends" = 20
 "import_time_config_reads.gateway" = 0
-"import_time_config_reads.identity" = 1
+"import_time_config_reads.identity" = 0
 "import_time_config_reads.images" = 27
 "import_time_config_reads.llm" = 0
 "import_time_config_reads.mcp" = 1
-"import_time_config_reads.model_compatibility" = 7
+"import_time_config_reads.model_compatibility" = 0
 "import_time_config_reads.model_routing" = 1
 "import_time_config_reads.models" = 1
 "import_time_config_reads.proxy" = 2

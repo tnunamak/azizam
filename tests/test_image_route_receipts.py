@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 from gateway import ownership  # noqa: E402
 from tests.support.access import access, identity, plan_for, auth_identity  # noqa: E402
+from tests.support.config_snapshot import section_published  # noqa: E402
 from gateway.receipts import RouteReceipt  # noqa: E402
 
 # The image handlers apply the caller's plans; these tests run as the owner.
@@ -1832,7 +1833,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 class TestEditWorkflowSelection(unittest.TestCase):
     def test_configured_image_defaults_and_fallback_workflows(self) -> None:
         self.assertEqual(proxy.COMFY_DEFAULT_MODEL, "krea2-turbo")
-        self.assertEqual(proxy.IMAGE_EDIT_DEFAULT_MODEL, "qwen-image-2.1-edit")
+        self.assertEqual(proxy.image_edit_default_model(), "qwen-image-2.1-edit")
         self.assertEqual(
             proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW, "qwen-image-2.1-edit"
         )
@@ -1851,7 +1852,7 @@ class TestEditWorkflowSelection(unittest.TestCase):
 
     def test_default_edit_routes_by_input_shape(self) -> None:
         with (
-            patch.object(proxy, "IMAGE_EDIT_DEFAULT_MODEL", "qwen-image-2.1-edit"),
+            section_published("model_compatibility", {"defaults": {"image_edits": "qwen-image-2.1-edit"}}),
             patch.object(
                 proxy,
                 "IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW",
@@ -1884,7 +1885,7 @@ class TestEditWorkflowSelection(unittest.TestCase):
             )
 
     def test_explicit_fallback_model_stays_selected_for_multi_image(self) -> None:
-        with patch.object(proxy, "IMAGE_EDIT_DEFAULT_MODEL", "qwen-image-2.1-edit"):
+        with section_published("model_compatibility", {"defaults": {"image_edits": "qwen-image-2.1-edit"}}):
             self.assertEqual(
                 proxy._select_edit_workflow(
                     "flux2-klein-4b", image_count=2, has_mask=False
