@@ -4,15 +4,22 @@ sees "parked", and unfinished operations are settled or held before the first ad
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 
 import proxy
+from gateway import engine_egress, transition_gate
+from gateway.engine_protocol import description, executor as protocol_executor, transport
 from gateway.transition_gate import GateStore, TransitionUnavailable
 from gateway.transition_ops import EffectResult, StepIntent
 from gateway.transition_runtime import TransitionRuntime
+from tests.support.fake_upstream import HandlerTransport
 from tests.test_transition_admin import FAST, FakeEngine, PROFILE, services
 
 
@@ -342,5 +349,118 @@ def test_a_request_that_only_joins_another_wake_holds_no_bridge_lease(wired) -> 
         await asyncio.gather(*(request(name) for name in ("alpha", "beta", "alpha")))
         assert sorted(counts) == [0, 0, 1], "only the request whose submit began the wake holds a bridge lease"
         assert proxy._swap_drain.in_flight("alpha") == 0
+
+    asyncio.run(scenario())
+
+
+# -- review round: the executor's own calls through the real invoke path and the real egress hook -----------
+
+TGATE_FIXTURE = Path(__file__).parent / "fixtures" / "engine_protocol" / "tgate"
+REAL_FAST = {"admission_wait_s": 2, "drain_deadline_s": 1, "idle_poll_s": 0.01, "probe_deadline_s": 1, "release_deadline_s": 2,
+             "load_deadline_s": 2, "query_deadline_s": 0.5, "lock_wait_s": 1, "retry_after_s": 7}
+
+
+class EngineWire:
+    """The engine's HTTP side: answers the fixture protocol's five operations from its own state and records each request."""
+
+    def __init__(self) -> None:
+        self.resident: str | None = "alpha"
+        self.requests: list[tuple[str, str, bytes]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append((request.url.host + ":" + str(request.url.port), request.url.path, request.content))
+        body = json.loads(request.content or b"{}")
+        path = request.url.path
+        if path == "/t/resident":
+            answer = {"resident": self.resident is not None, "offering": self.resident, "ready": True, "incarnation": "inc-1"}
+        elif path == "/t/idle":
+            answer = {"idle": True, "incarnation": "inc-1"}
+        elif path == "/t/release":
+            self.resident = None
+            answer = {"outcome": "success", "incarnation": "inc-1"}
+        elif path == "/t/load":
+            self.resident = body["target"]
+            answer = {"outcome": "success", "evidence_ref": "loaded"}
+        else:
+            answer = {"outcome": "unknown"}
+        return httpx.Response(200, json=answer)
+
+
+def _engine_record(domain: str, port: int) -> dict[str, Any]:
+    return {"enabled": True,
+            "config": {"connection": {"transport": "http", "dispatch": "protocol", "protocol": "tgate",
+                                      "address": f"http://127.0.0.1:{port}", "credentials": {},
+                                      "timeouts": {"connect_s": 2, "first_byte_s": 5, "total_s": 10}}},
+            "residency": {"domain": domain, "transition": {"enabled": True, "profile": PROFILE, **REAL_FAST}}}
+
+
+@pytest.fixture
+def real(monkeypatch, tmp_path):
+    """Two enabled domains on two addresses, the real http-v1 invoke path, the real egress hook and a recording wire."""
+    records = {"eng-a": _engine_record("dom-a", 9201), "eng-b": _engine_record("dom-b", 9202)}
+    monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), **records})
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {"schema_version": 2, "services": records})
+    monkeypatch.setattr(description, "REGISTRY_DIR", TGATE_FIXTURE)
+    original = description.load_registry
+    monkeypatch.setattr(description, "load_registry", lambda directory=TGATE_FIXTURE: original(directory))
+    wire = EngineWire()
+    base = transport.HttpxTransport.for_tests(HandlerTransport(wire))
+    monkeypatch.setattr(protocol_executor, "HttpxTransport", lambda: base)
+    monkeypatch.setattr(engine_egress, "_destinations", engine_egress._destinations)  # restored after the test
+    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    engine_egress.publish(proxy.config["backends"])
+    store = GateStore(tmp_path / "transition.db")
+    store.load()
+    monkeypatch.setattr(proxy, "TRANSITION_GATES", store)
+    monkeypatch.setattr(proxy, "_swap_drain", proxy._new_swap_drain())
+    monkeypatch.setattr(proxy, "_service_swap_locks", {})
+    monkeypatch.setattr(proxy, "_strict_service_availability_overrides", lambda: {})
+    token = transition_gate._EGRESS_LEASES.set(())
+    runtime = TransitionRuntime(gates=lambda: store, services=lambda: proxy.config.get("backends") or {},
+                                lock_for=proxy.swap_lock_for, drain=lambda: proxy._swap_drain,
+                                protocol_invoke=proxy._transition_protocol_invoke)
+    monkeypatch.setattr(proxy, "TRANSITION_RUNTIME", runtime)
+    yield SimpleNamespace(wire=wire, store=store, runtime=runtime)
+    transition_gate._EGRESS_LEASES.reset(token)
+
+
+def test_the_executors_control_call_is_sent_for_its_own_domain_and_refused_for_any_other(real) -> None:
+    async def scenario() -> None:
+        # A lease-less send to an enabled domain's address is refused by the hook: the map is real.
+        client = engine_egress.async_client(transport=HandlerTransport(real.wire))
+        with pytest.raises(TransitionUnavailable) as refused:
+            await client.post("http://127.0.0.1:9201/t/resident", content=b"{}")
+        assert refused.value.reason == "path_not_leased" and real.wire.requests == []
+
+        reply = await proxy._transition_protocol_invoke("eng-a", "transition.resident", {})
+        assert reply.status == 200 and reply.selected["offering"] == "alpha"
+        assert [(host, path) for host, path, _ in real.wire.requests] == [("127.0.0.1:9201", "/t/resident")]
+
+        # The permit covers the domain of the call only, and only for the call.
+        with engine_egress.permit_domain("dom-a"):
+            with pytest.raises(TransitionUnavailable) as other:
+                await client.post("http://127.0.0.1:9202/t/resident", content=b"{}")
+            assert other.value.domain == "dom-b"
+        with pytest.raises(TransitionUnavailable):
+            await client.post("http://127.0.0.1:9201/t/resident", content=b"{}")
+        assert len(real.wire.requests) == 1, "nothing else was sent"
+        await client.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_a_park_and_a_wake_run_over_the_real_invoke_path_with_no_serving_lease(real) -> None:
+    async def scenario() -> None:
+        executor = real.runtime.executor()
+        began = await executor.submit(domain="dom-a", kind="park", idempotency_key="park-1")
+        parked = await executor.wait(began.operation.op_id)
+        assert (parked.state, real.wire.resident) == ("succeeded", None)
+        assert real.store.parked("dom-a") == parked.op_id
+        woke = await executor.ensure_awake("dom-a", wait_s=5.0)
+        assert woke is not None and woke.state == "succeeded" and real.wire.resident == "alpha"
+        paths = [path for _, path, _ in real.wire.requests]
+        assert "/t/release" in paths and "/t/load" in paths and paths.count("/t/resident") >= 2
+        assert {host for host, _, _ in real.wire.requests} == {"127.0.0.1:9201"}, "no call reached the other domain"
+        assert proxy._swap_drain.in_flight("dom-a") == 0 and real.store.state("dom-a") == "open"
 
     asyncio.run(scenario())
