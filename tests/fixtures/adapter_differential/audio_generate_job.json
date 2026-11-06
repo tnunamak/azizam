@@ -202,12 +202,12 @@
       {
         "body": {
           "kind": "binary",
-          "len": 357,
-          "magic": "7b22696e70757473",
-          "sha256": "2d8c595102111e3f29a3556b85f59e25e0a1cf2a68963d6089847806dce9866c"
+          "len": 434,
+          "magic": "7b226964223a2261",
+          "sha256": "17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8"
         },
         "created": "<time>",
-        "sha": "sha256:2d8c595102111e3f29a3556b85f59e25e0a1cf2a68963d6089847806dce9866c"
+        "sha": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8"
       },
       {
         "body": {
@@ -232,7 +232,7 @@
     ],
     "definition_ref": [
       {
-        "blob_sha": "sha256:2d8c595102111e3f29a3556b85f59e25e0a1cf2a68963d6089847806dce9866c",
+        "blob_sha": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
         "holder_kind": "job",
         "job_id": "<job:1>"
       },
@@ -253,7 +253,7 @@
         "envelope_json": {
           "definitions": {
             "binding": "sha256:a751de5308ddba66d194fbe3a1f558456b29678cd110c5e19ed20d5e9bb3b235",
-            "contract": "sha256:2d8c595102111e3f29a3556b85f59e25e0a1cf2a68963d6089847806dce9866c",
+            "contract": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
             "protocol": {
               "id": "node-graph",
               "revision": "unrevisioned"
@@ -272,7 +272,7 @@
           "source": {
             "id": "audio.generate.tangoflux",
             "kind": "workflow",
-            "revision": "sha256:1abe43499bc8558adb85ab5b1b3fe76e57f17cb175340a2b59234169130e8172"
+            "revision": "sha256:96fb2ee47fde04782208d515e5aef61b701d8bd998efed40798a6f222e2b9dc3"
           },
           "upstream": {
             "origin_digest": "sha256:1e234fab60fcadd9d9362e437c5366d789d810a656c59ce14ecf27b6b48859d2",
