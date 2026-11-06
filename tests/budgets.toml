@@ -527,7 +527,7 @@
 # Train 9 (2026-11-06): registry, excluded-record and provider refusals never quote a body secret (+4); measured 19825.
 # fix/job-refusal-reason: a job keeps the gateway's own input-refusal sentence (+2 cases).
 # fix/job-refusal-reason-imgvid: image and video jobs keep it too (+8 cases); measured 19835.
-# Job-refusal review fixes: a job refusal drops the model name (+4 job-level, +1 helper), the audio and manifest reasons never echo a value (+1); measured 19841.
+# Job-refusal review fixes: a job refusal drops the model name (+3 job-level, +1 helper), the audio and manifest reasons never echo a value (+2); measured 19841.
 pytest = 19841
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
