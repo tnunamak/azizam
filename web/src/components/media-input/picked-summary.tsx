@@ -102,7 +102,7 @@ export function PickedSummary({
             {parts.map((part, index) => (
               <Fragment key={index}>
                 {index > 0 ? " · " : null}
-                <span>{part}</span>
+                <span className="whitespace-nowrap">{part}</span>
               </Fragment>
             ))}
           </span>

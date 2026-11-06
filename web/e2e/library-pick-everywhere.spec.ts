@@ -312,6 +312,7 @@ for (const view of VIEWPORTS) {
     const listed = await routeLibrary(page);
     await page.route("**/audio/transcriptions", (route) => fulfilJson(route, { text: "hello there" }));
     await page.goto("/try/?capability=transcribe");
+    await expect(page.getByRole("combobox", { name: "Model name" })).toContainText("Demo Transcribe");
     await page.getByRole("button", { name: "Choose from Library" }).click();
     await page.getByRole("button", { name: "A short spoken note" }).waitFor();
     await expect(page.getByRole("button", { name: "A teal fish" })).toHaveCount(0);
