@@ -151,6 +151,7 @@ from gateway import likeness as likeness_module
 from gateway import stt_chunking, stt_measurement
 from gateway.lifecycle_drivers import SwapRecoveryFailed
 from gateway.swap_drain import ServingLease, SwapDeferred, SwapDrain, SwapDrainSettings
+from gateway.transition_executor import TriggerLease
 from gateway.transition_runtime import TransitionRuntime
 from gateway.transition_snapshot_steps import snapshot_steps
 from gateway.transition_snapshots import DEFAULT_SNAPSHOT_BUDGET, LazySnapshotStore, PrivateSnapshotDir, SqliteSnapshotStore
@@ -1523,10 +1524,20 @@ async def _admission_lock(service_id: str, *, bounded: bool = True):
     domain that changed while this task waited is refused. The gate retry and the
     overrides are read off the event loop; a read error refuses."""
     policy = _transition_policy(service_id)
+    trigger: TriggerLease | None = None
     if bounded and policy.enabled and policy.profile is not None:
-        await _wake_if_parked(policy)
+        trigger = await _wake_if_parked(service_id, policy)
     lock = swap_lock_for(service_id)
-    await acquire_bounded(lock, policy if bounded else None)
+    try:
+        await acquire_bounded(lock, policy if bounded else None)
+    except BaseException:
+        if trigger is not None:
+            trigger.abandon()  # timed out or cancelled while waiting: release a lease the wake already minted
+        raise
+    # The wake minted this request's lease under the wake's own hold of the lock, so no owner transition could drain
+    # the domain between the wake and this request. The lease stays counted until this hold ends; the request mints
+    # its own lease inside the hold, so the count never drops to zero in between.
+    bridge = trigger.take() if trigger is not None else None
     try:
         held = _transition_policy(service_id)
         if held.domain != policy.domain and (held.enabled or policy.enabled):
@@ -1546,10 +1557,23 @@ async def _admission_lock(service_id: str, *, bounded: bool = True):
             except Exception as exc:  # noqa: BLE001 - an unreadable or slow override store never admits
                 print(f"[transition-gate] override read failed, refusing {held.domain!r}: {type(exc).__name__}", flush=True)
                 raise TransitionUnavailable(held.domain, reason="overrides_unreadable", retry_after_s=5) from None
-            _transition_admit(held, gates.state(held.domain), overrides, parked=gates.parked(held.domain) is not None)
+            if bridge is None:
+                _transition_admit(held, gates.state(held.domain), overrides, parked=gates.parked(held.domain) is not None)
+            else:
+                # The wake that minted the bridge lease opened the gate in the same transaction that finished it,
+                # and nothing could close it since. Only the manual overrides are checked again.
+                _transition_admit(held, "open", overrides, parked=False)
         yield
     finally:
-        lock.release()
+        try:
+            # The bridge lease ends before the lock does, so a request that takes the lock next never counts it. The
+            # request's own lease, minted inside the hold, keeps the count above zero.
+            if bridge is not None:
+                bridge.release()
+            if trigger is not None:
+                trigger.abandon()  # a mint that comes late does nothing
+        finally:
+            lock.release()
 
 
 def _require_egress_lease(service_id: str) -> None:
@@ -1594,7 +1618,7 @@ _swap_drain = _new_swap_drain()
 async def _transition_protocol_invoke(service_id: str, op: str, body: Mapping[str, Any]) -> Any:
     """Send one declared control operation of an engine record through the http-v1 invoke path (transition effects).
     The operation must be declared by the record's protocol description with class ``control``. The caller holds the
-    domain lock and no serving lease, so no egress lease check applies."""
+    domain lock and no serving lease: the call sends under ``engine_egress.permit_domain`` for the record's domain."""
     from gateway.engine_contract_view import connection_config
     from gateway.engine_protocol import description as protocol_description, dispatch as protocol_dispatch
 
@@ -1609,7 +1633,10 @@ async def _transition_protocol_invoke(service_id: str, op: str, body: Mapping[st
         return protocol_dispatch.Target(service_id, service, {"id": service_id}, doc)
 
     runtime = protocol_dispatch.Runtime(await asyncio.to_thread(target))
-    reply = await runtime.invoke(op, body)
+    # The send-time egress hook refuses an enabled domain's address without a lease. The executor's task holds none
+    # (a serving lease would count against the drain), so it sends under a permit scoped to this one domain.
+    with engine_egress.permit_domain(_transition_policy(service_id).domain):
+        reply = await runtime.invoke(op, body)
     if isinstance(reply, ProtocolStreamReply):
         await reply.aclose()
         raise ProtocolError("A transition operation cannot be streamed.", code="malformed_response")
@@ -1636,18 +1663,28 @@ def _new_transition_runtime() -> TransitionRuntime:
 TRANSITION_RUNTIME = _new_transition_runtime()
 
 
-async def _wake_if_parked(policy: TransitionPolicy) -> None:
+async def _wake_if_parked(service_id: str, policy: TransitionPolicy) -> TriggerLease | None:
     """A request for a parked domain wakes it first (D4 "After a park"): one wake for every request that finds it
     parked, joined on the key ``wake-<park op id>``, bounded by the domain's ``admission_wait_s``. Raises
-    ``TransitionUnavailable`` when the wake is not done in time or did not succeed."""
+    ``TransitionUnavailable`` when the wake is not done in time or did not succeed.
+
+    Returns the request's ``TriggerLease``: the wake that this request began mints it under the lock before the
+    gate opens (``_admission_lock`` takes it). None when the domain was not parked. A request that only joined
+    another's wake gets a lease that is never minted."""
     gates = TRANSITION_GATES if TRANSITION_GATES is not None else await asyncio.to_thread(_transition_gates)
     if gates.parked(policy.domain) is None:
-        return
+        return None
     try:
         executor = TRANSITION_RUNTIME.executor()
     except Exception:  # noqa: BLE001 - no executor: admission below refuses as "parked"
-        return
-    await executor.ensure_awake(policy.domain, wait_s=policy.admission_wait_s)
+        return None
+    trigger = TriggerLease(lambda: _swap_drain.lease(service_id, admit=False))
+    try:
+        await executor.ensure_awake(policy.domain, wait_s=policy.admission_wait_s, trigger=trigger.trigger)
+    except BaseException:
+        trigger.abandon()  # a refusal, a timeout or a cancel: nobody will take a lease the wake mints later
+        raise
+    return trigger
 
 
 def _swap_drain_settings() -> SwapDrainSettings:

@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 
 from gateway import egress
 from gateway.engine_admin import EngineRouteError, _is_owner, _owner_only
-from gateway.transition_executor import InvalidTransition
+from gateway.transition_executor import InvalidTransition, UnknownDomain
 from gateway.transition_gate import TransitionUnavailable
 from gateway.transition_ops import Conflict, Operation, STEP_ORDER
 from gateway.transition_runtime import NoProfile, TransitionRuntime
@@ -61,7 +61,7 @@ def register_transition_routes(router: APIRouter, *, runtime: Callable[[], Trans
         if not _is_owner(ctx):
             raise _Early(_owner_only("Only the owner can run a transition.").as_response())
         wired = runtime()
-        if not await asyncio.to_thread(wired.enabled, domain):
+        if not await asyncio.to_thread(lambda: wired.is_domain(domain) and wired.enabled(domain)):
             raise _Early(EngineRouteError(status.HTTP_404_NOT_FOUND, "unknown_domain",
                                           "No such residency domain with a transition profile.").as_response())
         return ctx, wired
@@ -94,6 +94,8 @@ def register_transition_routes(router: APIRouter, *, runtime: Callable[[], Trans
             return early.response
         except EngineRouteError as exc:
             return exc.as_response()
+        except UnknownDomain:
+            return EngineRouteError(status.HTTP_404_NOT_FOUND, "unknown_domain", "No such residency domain.").as_response()
         except InvalidTransition as exc:
             return EngineRouteError(422, "invalid_transition", str(exc)).as_response()
         except NoProfile:

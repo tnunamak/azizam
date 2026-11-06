@@ -371,3 +371,8 @@ nothing was sent (manifest, a body whose sha256 differs, a missing or empty key 
 held gate: a `failed_closed` or `reconciling` operation is reported and left to the owner. `--dry-run` validates the
 manifest, the bodies and their sha256, and sends nothing.
 
+
+- **G11. Domain keys only.** A transition starts only on a residency domain key, never on a service id that resolves to its domain. The owner routes answer `404` for an alias, and `Executor.submit` refuses it (`UnknownDomain`), so the store, the lock and the gate always share one key.
+- **G12. Egress permit.** The executor's control calls (release, load, query, probes) run while the gate is closed and hold no serving lease: a lease would count against the drain that comes before them. They send under `engine_egress.permit_domain(<domain>)`, a task-scoped permit for that one domain. The send-time hook honours it; a send to any other enabled domain still needs a lease.
+- **G13. Effect deadlines.** A deadline never cancels a dispatched effect. The call keeps running on its own task, the step records `unknown`, and the late outcome is only logged (G10). Probes are read-only and may be cancelled.
+- **G14. Resume re-checks the load.** An operation that resumes at the open step (select or wake) first runs the load step's check again with a fresh `resident` probe. If it does not show the target resident and ready, the operation holds `reconciling` at the open step. The fresh window (`fresh_within_s`) comes from the reviewed profile only; owner config that sets it is refused at load. The request that begins a wake gets its lease minted by the wake under the lock (`TriggerLease`); the proxy holds it as a bridge lease until its own lease exists.

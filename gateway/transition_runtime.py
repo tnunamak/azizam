@@ -20,6 +20,9 @@ from gateway.transition_gate import GateStore, TransitionPolicy, policy_for
 from gateway.transition_ops import Step, StepName
 from gateway.transition_store import SqliteOperationStore
 
+REVIEWED_ONLY: frozenset[str] = frozenset({"fresh_within_s"})
+"""Settings in ``DEFAULTS`` that the reviewed profile sets and owner config never does (the config refuses them)."""
+
 ProtocolInvoke = Callable[[str, str, Mapping[str, Any]], Awaitable[Any]]
 """``(service_id, protocol_op, body)`` -> an http-v1 ``Reply``."""
 
@@ -39,6 +42,8 @@ def transition_settings(services: Mapping[str, Any], policy: TransitionPolicy) -
         if not isinstance(declared, Mapping):
             continue
         for key in DEFAULTS:
+            if key in REVIEWED_ONLY:
+                continue
             try:
                 value = float(declared[key])
             except (KeyError, TypeError, ValueError):
@@ -130,7 +135,7 @@ class TransitionRuntime:
         store = SqliteOperationStore(gates)
         executor = Executor(store=store, steps={**core_steps(self._drain()), **self._extra_steps}, adapter_for=self.adapter,
                             policy_of=self.settings, lock_for=self._lock_for, config_revision=self._config_revision,
-                            snapshots=self._snapshots)
+                            snapshots=self._snapshots, is_domain=self.is_domain)
         self._built = (gates, executor)
         return executor
 
@@ -143,13 +148,26 @@ class TransitionRuntime:
                 await asyncio.to_thread(hook)
             except Exception as exc:  # noqa: BLE001
                 print(f"[transition-gate] startup hook failed ({type(exc).__name__}: {exc})", flush=True)
-        await self.executor().reconcile_startup()
+        try:
+            if not self._gates().readable():
+                # The gate fails closed for every domain (``reconciling``) while the table cannot be read. There is
+                # nothing to settle until it can; the gate's own retry reloads it.
+                print("[transition-gate] the transition table is unreadable; unfinished operations stay held", flush=True)
+                return
+            await self.executor().reconcile_startup()
+        except Exception as exc:  # noqa: BLE001 - a table that fails mid-read leaves the gate closed, never a crashed start
+            print(f"[transition-gate] startup reconcile failed ({type(exc).__name__}: {exc}); gates stay closed", flush=True)
 
     def leases(self, domain: str) -> tuple[int, Optional[float]]:
         """``(active_leases, last_lease_at)`` for the domain, read-only from the lease registry. The count is the
         leases held right now; ``last_lease_at`` is epoch seconds of the last mint since the process started."""
         drain = self._drain()
         return drain.in_flight(domain), drain.last_lease_at(domain)
+
+    def is_domain(self, name: str) -> bool:
+        """True when ``name`` is a residency domain key. A service id resolves to its domain in ``policy_for``,
+        but it names no domain: the store, the lock and the gate are all keyed on the domain."""
+        return self.policy(name).domain == name
 
     def enabled(self, domain: str) -> bool:
         policy = self.policy(domain)

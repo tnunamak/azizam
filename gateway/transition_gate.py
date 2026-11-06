@@ -137,7 +137,7 @@ def declared_profile(service: Mapping[str, Any]) -> Optional[str]:
 # Keys an owner may not set in a service's residency block: the reviewed profile holds them (D3 "Attestation is
 # not owner data"). A config that carries one is refused at load.
 PROFILE_ONLY_KEYS = frozenset({"attested", "failure_semantics", "idle_evidence", "operations", "verify", "residual",
-                               "servable_check", "placement_keys"})
+                               "servable_check", "placement_keys", "fresh_within_s"})
 
 
 def forbidden_profile_keys(service: Mapping[str, Any]) -> tuple[str, ...]:
