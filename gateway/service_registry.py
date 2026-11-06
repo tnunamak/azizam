@@ -176,12 +176,6 @@ def _release_digest(directory: str, signature: tuple[tuple[str, int, int], ...])
     return registry_layers.digest(_release_registry(directory, signature))
 
 
-def unstored_registry() -> dict[str, Any]:
-    """The registry of a database that holds none: the empty owner document, so every release record is inherited."""
-    return normalize_service_registry(registry_layers.layer(
-        registry_layers.empty_stored(SERVICE_REGISTRY_SCHEMA_VERSION), release_registry()))
-
-
 def release_digest() -> str:
     """A label of the release records, so a cache of a layered registry never outlives a change of the release."""
     return _release_digest(*_release_key(None))

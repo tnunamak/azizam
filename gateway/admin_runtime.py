@@ -800,14 +800,20 @@ class AdminSQLiteStore:
     def get_service_registry(self) -> dict[str, Any]:
         registry = service_registry.load_service_registry(path=self.path)
         if registry is None:
-            return service_registry.unstored_registry()
+            return {
+                "schema_version": service_registry.SERVICE_REGISTRY_SCHEMA_VERSION,
+                "services": {},
+                "protocol_frontends": {},
+                "workflows": {},
+                "capabilities": {},
+            }
         return registry
 
     def get_service_registry_snapshot(self) -> tuple[dict[str, Any], int]:
         """One registry read binds the engine view and its compare-and-swap revision."""
         snapshot = admin_store.get_service_registry_with_generation(path=self.path)
         if snapshot is None:
-            return service_registry.read_registry(service_registry.unstored_registry())[0], 0
+            return service_registry.read_registry({})[0], 0
         registry, _excluded = service_registry.read_registry(snapshot["value"])
         return registry, int(snapshot["operator_settings_generation"])
 

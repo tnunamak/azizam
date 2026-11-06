@@ -243,7 +243,7 @@ def test_existing_canonical_provider_under_legacy_row_cannot_be_replaced(tmp_pat
         })
         assert conflicting.status_code == 409, conflicting.json()
         assert get_provider_secret("provider:acme:api_key", db_path=db) == "synthetic-original-key"
-        assert set(store.get_service_registry()["services"]) == {"legacy-row", "litellm", "openrouter"}
+        assert set(store.get_service_registry()["services"]) == {"legacy-row"}
 
 
 @pytest.mark.parametrize("path", [
