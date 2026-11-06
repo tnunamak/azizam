@@ -298,6 +298,11 @@ AFFECTED_RECORD = Obj("AffectedRecord", {"kind": SHORT, "id": SHORT, "action": S
 BODY_KEYS: dict[str, Policy] = {
     "service_registry": REGISTRY_DOC,
     "excluded": EXCLUDED_LIST,
+    # {id: {"source", "fields"}}: names of the manifest fields a stored workflow changes over the bundled one, no values
+    "workflow_overrides": JSON,
+    # The manifest the release ships under an id a save tried to take (the 409 ``id_is_bundled``): release data, so a
+    # client can copy it before it overrides it.
+    "bundled_workflow": JSON,
     "extension_packages": PACKAGE_INDEX,
     "extension_package": PACKAGE_RECORD,
     "review": REVIEW,

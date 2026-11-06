@@ -1571,6 +1571,7 @@ def _validate_service_registry(
         ) from exc
     # Not inside the try above: a refused model kind keeps its own code and field (engine_check.DraftError).
     service_registry.refuse_unoffered_kinds_in_registry(registry, before=before)
+    service_registry.refuse_unclaimed_bundled_workflows(payload, registry, before=before)
     return registry
 
 
@@ -2525,6 +2526,7 @@ def create_admin_router(
                 # Stored records that do not validate: left out of the registry above, kept in the store.
                 "excluded": [projection_types.excluded_view(item.section, item.id, item.error, item.record)
                              for item in _stored_exclusions(store)],
+                "workflow_overrides": service_registry.workflow_overrides(store.get_service_registry()),
             },
         )
         if hasattr(store, "path"):
@@ -2565,6 +2567,7 @@ def create_admin_router(
                 "service_registry": record["value"],
                 "excluded": [projection_types.excluded_view(item.section, item.id, item.error, item.record)
                              for item in record.get("excluded") or ()],
+                "workflow_overrides": service_registry.workflow_overrides(record["value"]),
                 **(extra or {}),
             },
         )
@@ -2610,6 +2613,9 @@ def create_admin_router(
             return _owner_required(exc)
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
+        except service_registry.BundledWorkflowId as exc:
+            return egress.error_with_projection(
+                status.HTTP_409_CONFLICT, "id_is_bundled", str(exc), {"bundled_workflow": exc.bundled})
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
