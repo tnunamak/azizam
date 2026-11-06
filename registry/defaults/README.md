@@ -33,7 +33,7 @@ A section that an older release read from the startup file is imported once at t
 `gateway/config_legacy_import.py`). To read what the import would write for a copy of a startup file, without touching a
 live database: `python -m gateway.config_legacy_import --config <copy of the file>`. A schema may list, at its root, the
 keys of the old block that the section does not own (`x-azizam-startup-only`); the import leaves them in the startup
-file. `model_routing` lists `gguf_dir`, a storage root a later slice moves. `models` is not a section yet: its startup
+file. `model_routing` lists `gguf_dir`, a storage root a later slice moves. `model_compatibility` lists `generated_aliases_file`: the generated OpenAI model list is the release file `registry/openai_model_aliases.generated.yml`, so its path is not a setting. `models` is not a section yet: its startup
 block is a list, and a section root must be a mapping.
 
 ## A section is two files
