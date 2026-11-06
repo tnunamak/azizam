@@ -1,0 +1,11 @@
+# Release defaults of the reasoning section (docs/design/CONFIG_HOMES.md, C7). Read-only; an owner's value is an
+# override. The budgets are the transform's own defaults (gateway/transforms.py). No default effort is applied when
+# the release ships none.
+default_effort: null
+effort_budgets:
+  none: 0
+  minimal: 2048
+  low: 4096
+  medium: 6144
+  high: 8192
+  xhigh: unlimited

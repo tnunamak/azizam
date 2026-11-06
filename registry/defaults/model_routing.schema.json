@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/model_routing",
+  "title": "model_routing",
+  "description": "Timeouts of the model routing (docs/design/CONFIG_HOMES.md, C7). The model directory is a startup setting.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-azizam-startup-only": [
+    "gguf_dir"
+  ],
+  "properties": {
+    "switch_timeout": {
+      "description": "Seconds a model switch may take.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "upstream_read_timeout": {
+      "description": "Idle (inter-chunk) read timeout, in seconds, for forwarding a chat or completion to the backend. Not a wall-clock cap.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    }
+  }
+}

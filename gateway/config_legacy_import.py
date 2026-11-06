@@ -108,7 +108,8 @@ def plan_import(
     """The overrides that make the effective section equal ``block``, judged against every section as stored."""
     context = {"registry": registry, "sections": {
         name: result.effective for name, result in home.build_candidate(rows, registry).items()}}
-    overrides, blocked = layers.overrides_for_target(home.sections[section_id], block, context)
+    section = home.sections[section_id]
+    overrides, blocked = layers.overrides_for_target(section, layers.owned_part(section, block), context)
     return ImportPlan(section_id, tuple(overrides), tuple(blocked))
 
 
@@ -176,6 +177,7 @@ def ignored_entries(section: layers.Section, block: Any, effective: Any) -> int:
     """How many entries of the startup block differ from the effective section (an entry on one side only counts)."""
     if not isinstance(block, Mapping):
         return 0
+    block = layers.owned_part(section, block)
     pointers = set(section.index.entries_in(block)) | set(section.index.entries_in(effective))
     return sum(1 for pointer in pointers
                if not layers.same_value(layers.get_at(block, pointer), layers.get_at(effective, pointer)))

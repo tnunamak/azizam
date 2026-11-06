@@ -515,7 +515,8 @@
 # Config homes C3 (aliases, 2026-11-06): +36 cases (tests/test_config_aliases.py, one public_failure copy case); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19199.
 # C3 review round (2026-11-06): +1 case, a blocked import is reported on its own section only; 19200.
 # Train 4 (2026-11-06): train 3 (19647) + config homes C6 (+29 fold and response cases, +1 boot-order retry case) + C3 (+37); scripts/run-hermetic-pytest.sh --collect-only -q measured 19714.
-pytest = 19714
+# Config homes C7 (2026-11-06): +17 cases, test_config_c7_sections.py (release files, legacy import, blocked and unreadable boots, snapshot readers); scripts/run-hermetic-pytest.sh --collect-only -q measured 19180.
+pytest = 1
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -764,20 +765,21 @@ domain_literals = 826
 # C3 (aliases) lowered videos 8 to 7 (VIDEO_ALIASES) and audio 5 to 4 (AUDIO_ALIASES): both tables are derived from the
 # effective config by _workflow_alias_tables and republished at every reload. They are counted under the section their
 # source statement read, so there is no model_aliases key to lower.
+# C7 (roles, models, llm, reasoning, model_routing): llm and roles reach zero and their keys are removed; model_routing
+# falls 3 -> 1 (SWITCH_TIMEOUT and UPSTREAM_READ_TIMEOUT moved; GGUF_DIR stays in the startup file until C10). models
+# keeps its one count: its startup list cannot be a section root yet (CONFIG_HOMES C7, not done).
 "import_time_config_reads.admin" = 2
 "import_time_config_reads.audio" = 4
 "import_time_config_reads.auth" = 5
 "import_time_config_reads.backends" = 23
 "import_time_config_reads.identity" = 1
 "import_time_config_reads.images" = 27
-"import_time_config_reads.llm" = 1
 "import_time_config_reads.mcp" = 1
 "import_time_config_reads.model_compatibility" = 7
-"import_time_config_reads.model_routing" = 3
+"import_time_config_reads.model_routing" = 1
 "import_time_config_reads.models" = 1
 "import_time_config_reads.proxy" = 2
 "import_time_config_reads.request_body_limits" = 1
-"import_time_config_reads.roles" = 1
 "import_time_config_reads.videos" = 7
 "import_time_config_reads.whole_config" = 6
 

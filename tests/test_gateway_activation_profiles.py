@@ -9,6 +9,7 @@ import yaml
 import proxy
 from gateway.litellm_substrate import compile_litellm_config_from_registry
 from gateway.service_registry import build_service_registry_seed
+from tests.support.config_snapshot import section_published
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -89,9 +90,7 @@ def test_context_catalog_reads_a_distinct_profile_limit_from_config() -> None:
             record["context_window"] = 217088
     config["roles"]["rp"]["activation_profile"] = "kv-test-large"
     config["roles"]["rp"]["context_window"] = 217088
-    with patch.object(proxy, "config", config), patch.object(
-        proxy, "ROLES", config["roles"]
-    ):
+    with patch.object(proxy, "config", config), section_published("roles", config["roles"]):
         assert asyncio.run(proxy._context_window_for_model_id("rp")) == 217088
         assert asyncio.run(proxy._context_window_for_model_id("coder-q5")) == 202752
 

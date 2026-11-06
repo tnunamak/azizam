@@ -1,7 +1,7 @@
 """Layered config sections: release defaults, sparse owner overrides, and what comes out (pure).
 
 docs/design/CONFIG_HOMES.md sections 3 to 6. A *section* is a read-only release defaults document plus a closed JSON
-Schema (Draft 2020-12) with four ``x-azizam-*`` annotations. The owner's changes are sparse *overrides*, keyed by
+Schema (Draft 2020-12) with five ``x-azizam-*`` annotations. The owner's changes are sparse *overrides*, keyed by
 ``(section, JSON Pointer)``, each one ``set`` (replace an entry) or ``delete`` (a tombstone). Resetting an entry to
 inherit removes its override. Nothing here reads a file, a database or the network.
 
@@ -53,10 +53,13 @@ ENTRY_KEY = "x-azizam-entry"
 APPLY_KEY = "x-azizam-apply"
 FAIL_KEY = "x-azizam-fail"
 SECRET_KEY = "x-azizam-secret"
+# Root only: keys of the section's old startup-file block that the section does not own. They stay in the startup file
+# (a later slice moves them), so the one-time import leaves them out instead of refusing the block.
+STARTUP_ONLY_KEY = "x-azizam-startup-only"
 _ENTRY_VALUES = ("collection", "atomic")
 _APPLY_VALUES = ("live", "restart")
 _FAIL_VALUES = ("inherit", "closed")
-_KNOWN_KEYS = {ENTRY_KEY, APPLY_KEY, FAIL_KEY, SECRET_KEY}
+_KNOWN_KEYS = {ENTRY_KEY, APPLY_KEY, FAIL_KEY, SECRET_KEY, STARTUP_ONLY_KEY}
 _MAX_REF_DEPTH = 16
 
 
@@ -377,6 +380,15 @@ class EntryIndex:
                 errors.append(f"{where or '/'}: {key} must be one of {', '.join(allowed)}")
         if SECRET_KEY in node and not isinstance(node[SECRET_KEY], bool):
             errors.append(f"{where or '/'}: {SECRET_KEY} must be true or false")
+        if STARTUP_ONLY_KEY in node:
+            keys = node[STARTUP_ONLY_KEY]
+            owned = node.get("properties") if isinstance(node.get("properties"), Mapping) else {}
+            if where:
+                errors.append(f"{where}: {STARTUP_ONLY_KEY} is allowed only at the root")
+            elif not isinstance(keys, list) or not all(isinstance(key, str) and key for key in keys):
+                errors.append(f"/: {STARTUP_ONLY_KEY} must be a list of key names")
+            elif any(key in owned for key in keys):
+                errors.append(f"/: {STARTUP_ONLY_KEY} names a key the section owns")
         kind = node.get(ENTRY_KEY)
         if (not inside_entry and _is_object(node) and kind not in _ENTRY_VALUES
                 and node.get("additionalProperties") is not False):
@@ -442,6 +454,14 @@ class Section:
             raise SectionDataError(f"section {section_id}: the release files break their rules:\n  " + "\n  ".join(errors[:20]))
         return cls(section_id, copy.deepcopy(dict(defaults)), copy.deepcopy(dict(schema)), index, validator,
                    digest(defaults), schema_validator)
+
+
+def owned_part(section: Section, block: Any) -> Any:
+    """A startup-file block without the root keys the section leaves in the startup file (``x-azizam-startup-only``)."""
+    keys = section.schema.get(STARTUP_ONLY_KEY) or ()
+    if not keys or not isinstance(block, Mapping):
+        return block
+    return {key: value for key, value in block.items() if key not in keys}
 
 
 def _structure_problems(schema_validator: Any, candidate: Any) -> list[Problem]:
