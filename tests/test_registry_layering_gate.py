@@ -234,3 +234,4 @@ def test_no_code_path_reads_the_startup_files_backends_to_build_a_registry():
     sources = {path: path.read_text(encoding="utf-8") for path in [ROOT / "proxy.py", *(ROOT / "gateway").glob("*.py")]}
     hits = sorted(f"{path.name}: {name}" for path, text in sources.items() for name in forbidden if name in text)
     assert hits == []
+
