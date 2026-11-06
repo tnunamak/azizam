@@ -30,6 +30,7 @@ ADDED_PATHS: dict[str, str] = {
     "/me/api/credentials/{credential_id}/replace": "a person replaces a key they cannot keep, on their own App; tests/test_me_binding_adoption.py covers it",
     "/me/api/apps/{app_id}/trusted-addresses/{entry_id}": "a person removes a trusted address from their own App; tests/test_me_binding_adoption.py covers it",
     "/v1/meshes/generate": "source-defined mesh route owned by the mesh frontend: one image in, one GLB out, fail-closed until capacity is enabled; tests/test_mesh_route.py and tests/test_mesh_manifest.py cover it",
+    "/admin/api/engines/domains": "owner-only service transition gate: start a transition, read one, read the gate and its lease counts, resolve a held step; tests/test_transition_admin.py covers them",
     "/admin/api/me/retention/ledger": "owner/admin offline retention ledger; tests/test_retention_slice6.py covers scope and no network reads",
     "/admin/api/categories/plan-reach": "the access plan editor's before-Save preview of who a change to a plan's categories reaches (owner only; it reads the rules and the plan and writes nothing); tests/test_category_audience.py covers it",
     "/admin/api/requests/{request_id}/retention/ledger": "dated ledger for a request receipt; tests/test_retention_slice6.py covers revisions",
@@ -184,7 +185,9 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # recovers the document with digest edfc855d1cc6a59ba843fb3cfa404ec88ad18963af237f1ccc8b2371faa0db2a exactly.
         # Re-captured 2026-11-05 after the kobold wiring left proxy.py: only the hot-reload route's description moved
         # (it no longer lists KOBOLD_HOST); tests/fixtures/headless_openapi.json shows the same one-line change.
-        assert route_graph.openapi_digest(proxy.app) == "07410fbacc45a00c2dd669a3213d285d782897a57de979c10c08b01b7f1cb7fe"
+        # Re-captured 2026-11-05 for the four /admin/api/engines/domains/... transition routes (see ADDED_PATHS); removing
+        # those paths and nothing else changed in the document (tests/fixtures/headless_openapi.json adds the same four).
+        assert route_graph.openapi_digest(proxy.app) == "ca396a2c84b37085b0ae454ac6b09b4a708314730c91913504afaeae19d02fcc"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -205,4 +208,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # under ``submit``, the shape every async route has; only that part of x-azizam-workflows moved
         # (tests/fixtures/headless_openapi.json shows the same change). Before it the frozen digest was
         # c31760a71916116e6e65da2f260b796df6295e9125f78a3666f8486ca3ec5168.
+        # Re-captured 2026-11-05 for the four /admin/api/engines/domains/... transition routes: only those paths differ.
+        # Before it the frozen digest was dce19f7d0e1c01037ee0154b9da207150e8884d5e10470275bec0cbf52fba388.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]
