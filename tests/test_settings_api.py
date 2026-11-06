@@ -149,6 +149,8 @@ def test_invitation_plan_default_saves_validates_and_audits(settings):
     first = store_plan("First", path=path)["id"]
     second = store_plan("Second", path=path)["id"]
     assert client.get("/admin/api/settings/defaults", headers=OWNER).json()["defaults"] == {"invite_access_plan": None}
+    # Aliases are the model_aliases config section now: the owner edits them through the config API.
+    assert client.get("/admin/api/settings/defaults", headers=OWNER).json()["aliases_writable"] is True
     for plan_id in (first, second, first):
         response = client.put("/admin/api/settings/defaults", json={"invite_access_plan": plan_id}, headers=OWNER)
         assert response.status_code == 200

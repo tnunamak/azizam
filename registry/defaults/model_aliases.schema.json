@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "model_aliases",
+  "description": "One table per operation: stable names, engines and OpenAI-name patterns. A null target means the name exists and is not configured. Any lower-case operation id is accepted here; gateway/stable_aliases.py (OPERATIONS) lists the ids the gateway serves.",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stable": {
+          "type": "object",
+          "x-azizam-entry": "collection",
+          "description": "Gateway names. A string points at a role, workflow, model id or another stable name. A list names engines in order (speech, transcriptions, rerank, decisions). Null means not configured.",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "engines": {
+          "type": "object",
+          "x-azizam-entry": "collection",
+          "description": "Engines by id: a service, an upstream model and the engine's own settings.",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "openai": {
+          "type": "array",
+          "description": "Ordered patterns that map OpenAI model names to a stable name. The whole list is one entry.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "voice_aliases": {
+          "type": "object",
+          "x-azizam-entry": "collection",
+          "description": "Voice names mapped to the voice an engine knows.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "patternProperties": {
+    "^[a-z][a-z0-9_]*$": {
+      "$ref": "#/$defs/operation"
+    }
+  }
+}

@@ -235,7 +235,8 @@ def live(monkeypatch, tmp_path):
     """The live gateway on a fresh admin store; its config and runtime constants are put back, and the table remounted."""
     db = use_admin_db(monkeypatch, tmp_path)
     for name in ("config", "TTS_HOST", "STT_HOST", "EMBEDDINGS_HOST", "COMFY_HOST", "TTS_ENABLED",
-                 "STT_ENABLED", "STT_TIMEOUT", "EMBEDDINGS_ENABLED", "COMFY_ENABLED", "LLM_BACKEND_HOSTS"):
+                 "STT_ENABLED", "STT_TIMEOUT", "EMBEDDINGS_ENABLED", "COMFY_ENABLED", "LLM_BACKEND_HOSTS",
+                 "VIDEO_ALIASES", "AUDIO_ALIASES"):
         monkeypatch.setattr(proxy, name, getattr(proxy, name))
     boot = route_registry.mount_frontend_records(registry=proxy._PROTOCOL_ROUTE_REGISTRY, proxy_config=proxy.config)
     yield db

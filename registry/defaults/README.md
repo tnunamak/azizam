@@ -4,7 +4,14 @@ This directory holds the release defaults of the config sections (design: `docs/
 Every file here is read-only data that ships with a release. An upgrade replaces it. The owner never edits it: an
 owner's change is a sparse override in `admin.db` (tables `config_overrides` and `config_changes`).
 
-No section ships yet. A section slice adds the first one.
+One section ships: `model_aliases` (the stable names, engines and voice aliases of each operation). Its release defaults
+are neutral: they name stable aliases with no target and name no model, engine or service. A name with no target answers
+`alias_not_configured` until the owner sets it. The semantic rule for the section is in `gateway/stable_aliases.py`
+(`alias_problems`) and is registered in `gateway/config_rules.py`.
+
+A section that an older release read from the startup file is imported once at the first boot (design 8.1, step 1;
+`gateway/config_legacy_import.py`). To read what the import would write for a copy of a startup file, without touching a
+live database: `python -m gateway.config_legacy_import --config <copy of the file>`.
 
 ## A section is two files
 

@@ -14,6 +14,7 @@ them together, so the order of the section ids never changes a result.
 from __future__ import annotations
 
 import contextvars
+import copy
 import json
 import threading
 from dataclasses import dataclass, field, replace
@@ -28,6 +29,11 @@ DEFAULTS_DIR = Path(__file__).resolve().parent.parent / "registry" / "defaults"
 SCHEMA_SUFFIX = ".schema.json"
 CODE_STORE_UNREADABLE = "config_store_unreadable"
 CODE_UNSETTLED = "config_unsettled"
+SOURCE_STARTUP_FILE = "startup_file"  # a section serving its startup block because the import was blocked
+
+
+def _print_log(line: str) -> None:
+    print(line, flush=True)
 
 
 def load_sections(
@@ -197,6 +203,10 @@ class ConfigHome:
         self._lock = threading.Lock()
         self._last_commit: tuple[str | None, tuple[tuple[str, str], ...]] | None = None
         self.reload_failed: dict[str, Any] | None = None
+        # Sections whose startup block could not be imported at the last boot, with that block: a reload keeps serving
+        # the block, as the boot did, until a later boot imports it (design 8.1 step 1).
+        self._unimported: dict[str, tuple[Any, tuple[layers.Problem, ...]]] = {}
+        self._warned_ignored: set[str] = set()
 
     def verify_release_defaults(self) -> None:
         """Stop when the release's own defaults break a section's rule. A packaging fault, like a broken schema.
@@ -215,23 +225,59 @@ class ConfigHome:
 
     # -- build ---------------------------------------------------------------------------------------------------------
 
-    def layer(self, raw_config: Mapping[str, Any], *, path: Path, registry: Mapping[str, Any] | None = None) -> Layer:
+    def layer(
+        self, raw_config: Mapping[str, Any], *, path: Path, registry: Mapping[str, Any] | None = None,
+        legacy_import: bool = False, log: Callable[[str], None] | None = None,
+    ) -> Layer:
         """The startup config with each registered section replaced by its effective value. Never raises for an override.
 
         A store that cannot be read does raise: the caller keeps what is running, as for the registry. ``registry`` is
         the service registry the config will be applied with; cross-section rules see it in their context.
+
+        ``legacy_import`` is a boot: a section not imported yet takes its startup block into the store first (design
+        8.1), and one already imported says once per boot how many entries of its ignored block differ. ``log`` receives
+        those lines (default: print).
         """
         if not self.sections:
             return Layer(config=raw_config)
         from gateway import admin_store  # lazy: pure users of this module need no database
 
         admin_store.init_db(path)
+        if legacy_import:
+            self._import_at_boot(raw_config, path=path, registry=registry, log=log or _print_log)
         state = admin_store.read_config_state(path=path)
         rows: dict[str, list[layers.Override]] = {}
         for row in state["rows"]:
             rows.setdefault(row["section"], []).append(override_from_row(row))
         revisions = tuple((name, state["revisions"].get(name, "0")) for name in sorted(self.sections))
         return self._layer_from(raw_config, rows, registry, revisions=revisions, rows_digest=layers.digest(state["rows"]))
+
+    def _import_at_boot(
+        self, raw_config: Mapping[str, Any], *, path: Path, registry: Mapping[str, Any] | None, log: Callable[[str], None],
+    ) -> None:
+        from gateway import config_legacy_import  # lazy: it imports this module
+
+        found = config_legacy_import.import_at_boot(self, raw_config, path=path, registry=registry, log=log)
+        self._unimported = dict(found.blocked)
+        for section_id in found.done:
+            block = raw_config.get(section_id)
+            if section_id in self._warned_ignored or not isinstance(block, Mapping) or not block:
+                continue
+            effective = self.build_candidate(self._stored_rows(path), registry)[section_id].effective
+            differing = config_legacy_import.ignored_entries(self.sections[section_id], block, effective)
+            if differing:
+                self._warned_ignored.add(section_id)
+                log(f"[proxy] WARNING: the startup file's {section_id} block is ignored (it was imported once); "
+                    f"{differing} of its entries differ from what runs. Review them with "
+                    f"POST /admin/api/config/sections/{section_id}/legacy-import?dry_run=1.")
+
+    def _stored_rows(self, path: Path) -> dict[str, list[layers.Override]]:
+        from gateway import admin_store
+
+        rows: dict[str, list[layers.Override]] = {}
+        for row in admin_store.read_config_state(path=path)["rows"]:
+            rows.setdefault(row["section"], []).append(override_from_row(row))
+        return rows
 
     def defaults_layer(self, raw_config: Mapping[str, Any], error: BaseException, registry: Mapping[str, Any] | None = None) -> Layer:
         """The layer for a boot whose override store cannot be read: release defaults, and a problem that says so.
@@ -262,6 +308,15 @@ class ConfigHome:
                 view.pointer: {"source": view.source, "apply": view.apply, "drift": view.drift.kind if view.drift else None}
                 for view in layers.entry_views(self.sections[name], result, rows.get(name, []))
             }
+            unimported = self._unimported.get(name)
+            if unimported is not None:
+                # The startup block could not be imported: it keeps serving, as before the section existed.
+                block, faults = unimported
+                merged[name] = copy.deepcopy(block)
+                sources[name] = {pointer: {"source": SOURCE_STARTUP_FILE, "apply": "live", "drift": None}
+                                 for pointer in self.sections[name].index.entries_in(block)}
+                extra = (*extra, *(layers.Problem(p.pointer, "legacy_import_blocked", layers.INVALID, p.message)
+                                   for p in faults))
             found = [problem.as_dict() for problem in (*result.problems, *extra)]
             if found:
                 problems[name] = found

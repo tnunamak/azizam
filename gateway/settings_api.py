@@ -347,7 +347,9 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
     def defaults_response() -> JSONResponse:
         return JSONResponse({"defaults": {"invite_access_plan": admin_store.invite_access_plan(path=admin_path)},
                              "source": "admin.db", "apply_mode": "live",
-                             "aliases": public_json(config_provider().get("model_aliases", {})), "aliases_writable": False},
+                             "aliases": public_json(config_provider().get("model_aliases", {})),
+                             # Aliases are the model_aliases config section: the owner edits them through the config API.
+                             "aliases_writable": True},
                             headers={"Cache-Control": "no-store"})
 
     @router.get("/defaults")

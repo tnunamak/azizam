@@ -1506,7 +1506,11 @@ def test_websocket_route_policy_inventory(gateway, monkeypatch):
 
 @pytest.mark.parametrize("gateway", ["discovery"], indirect=True)
 def test_ungoverned_discovery_snapshot(gateway, monkeypatch):
-    """Full JSON bytes captured on the parent implementation remain unchanged."""
+    """Full JSON bytes of the listings stay the same, up to the order of alias names the startup file added.
+
+    Those names reach the effective section through the override store (config homes C3), which orders them by
+    pointer; the neutral release defaults come first. The set of rows and every value are unchanged.
+    """
     monkeypatch.setattr(gateway.client._transport, "raise_server_exceptions", True)
     monkeypatch.setattr(proxy.time, "time", lambda: 123)
     monkeypatch.setattr(proxy.ollama_protocol, "_iso_utc_now", lambda: "1970-01-01T00:02:03Z")

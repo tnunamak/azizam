@@ -20,7 +20,7 @@ from typing import Any, Callable, Mapping, Sequence
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, config_layers as layers, config_runtime, secret_refs
+from gateway import admin_store, config_layers as layers, config_legacy_import, config_runtime, secret_refs
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
 from gateway.session_guard import SessionEnded
 
@@ -46,14 +46,9 @@ def _with(key: str, value: Any) -> dict[str, Any]:
     return {} if value is layers.ABSENT else {key: value}
 
 
-def _canonical(value: Any) -> str:
-    """Key-sorted JSON: for a stored release base, which is only ever compared, never served."""
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
-
-
-def _store(value: Any) -> str:
-    """JSON of an owner's value as given: object keys keep their order, so the first write serves what was sent."""
-    return json.dumps(value, ensure_ascii=False)
+# A stored release base is only compared; an owner's value keeps the key order it was sent in.
+_canonical = config_legacy_import.base_json
+_store = config_legacy_import.stored_json
 
 
 def _revision_text(value: Any) -> str:
@@ -596,37 +591,17 @@ def create_config_router(
                 return _error(409, "no_startup_block", f"The startup file has no block for {section_id!r}.")
             reg = registry()
             state = _State(h, db())
-            section = h.sections[section_id]
-            context = {"registry": reg, "sections": {
-                name: result.effective for name, result in h.build_candidate(state.rows, reg).items()}}
-            overrides, blocked = layers.overrides_for_target(section, block, context)
-            if blocked:
-                found = [{"section": section_id, **{**p.as_dict(), "code": "legacy_import_blocked", "reason": p.code}}
-                         for p in blocked]
+            plan = config_legacy_import.plan_import(h, section_id, block, state.rows, reg)
+            if plan.blocked:
+                found = plan.blocked_view()
                 if dry_run:
                     return _ok({"dry_run": True, "applicable": False, "blocked": found})
                 return _error(422, "legacy_import_blocked", "The startup block does not fit the section.", problems=found)
             existing = {o.pointer: o for o in state.rows[section_id]}
-            items: list[admin_store.ConfigItem] = []
-            for override in overrides:
-                have = existing.get(override.pointer)
-                if have is not None and have.op == override.op and layers.same_value(have.value, override.value):
-                    continue
-                items.append(admin_store.ConfigItem(
-                    section_id, override.pointer, override.op,
-                    _store(override.value) if override.op == layers.OP_SET else None,
-                    None if override.base is layers.ABSENT else _canonical(override.base),
-                ))
-            kept = {override.pointer for override in overrides}
-            resets = sorted(existing.keys() - kept)
+            items = plan.items(state.rows[section_id])
+            resets = sorted(existing.keys() - {override.pointer for override in plan.overrides})
             items += [admin_store.ConfigItem(section_id, pointer, "reset") for pointer in resets]
-            report = {
-                "section": section_id,
-                "rows": [{"pointer": o.pointer, "op": o.op, **({"file_value": o.value} if o.op == layers.OP_SET else {}),
-                          **_with("release_value", o.base)} for o in overrides if o.op == layers.OP_SET],
-                "removes": [{"pointer": o.pointer, **_with("release_value", o.base)} for o in overrides if o.op == layers.OP_DELETE],
-                "resets": resets,
-            }
+            report = plan.report(resets)
             if not items:
                 return _ok({**report, "dry_run": dry_run, "applicable": True, "change_id": None, "entry_count": 0,
                             "diff": [], "valid": True, "problems": []})

@@ -76,5 +76,7 @@ def test_the_effective_config_does_not_depend_on_the_scratch_database_path(tmp_p
 
 def test_first_run_has_no_aliases_or_roles_and_the_goldens_say_so():
     first_run = load_golden()["inputs"]["first_run"]
-    assert first_run["aliases"] == []
+    # C3: the release ships the alias names with no target, so each one answers "not configured"; no engine, no pattern.
+    assert first_run["aliases"] and {(row["kind"], row.get("error")) for row in first_run["aliases"]} == {
+        ("stable", "alias_not_configured")}
     assert first_run["models"]["roles"] == []

@@ -132,6 +132,8 @@ _COPY: dict[str, tuple[str, str] | tuple[str, str, str]] = {
                                        "Ask the owner to check it.",
                             "Model '{model}' is set up incorrectly on this gateway. "
                             "Ask the owner to check it."),
+    "alias_not_configured": ("gateway", "This model isn't set up on this gateway yet. Ask the owner to set it up.",
+                             "Model '{model}' isn't set up on this gateway yet. Ask the owner to set it up."),
     # What runs the work.
     "model_not_deployed": ("engine", "No engine or provider is running this model right now. "
                                      "Choose another model, or ask the owner to turn one on.",
