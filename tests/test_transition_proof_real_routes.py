@@ -190,7 +190,7 @@ def test_a_409_from_the_real_routes_names_the_running_operation(real: RealRoutes
         first = client.post(base, json={"kind": "park", "idempotency_key": "other"})
         assert first.status_code == 202 and set(first.json()) == {"op_id", "state", "gate"}
         step = Proof(client, domain=DOMAIN, model="alias", wake_mode="post", run_id="t", poll_interval_s=0.02,
-                     poll_timeout_s=1)._transition("park")
+                     poll_timeout_s=1)._transition("park", "small")
         assert step["http_status"] == 409 and first.json()["op_id"] in step["error"] and step["ok"] is False
         real.run_on_server_loop(hold.set)
         for _ in range(500):  # let the held park finish before the server stops
