@@ -432,7 +432,27 @@ def _audio_job_golden(tmp_path, record_testsuite_property, *, from_pin: bool):
                                            "request": {"prompt": "a door creaks", "model": "tangoflux", "duration": 4}},
                                 unordered_json=True)
         job_id = submit.json()["job_id"]
+        # Count what the run reads: the live definitions (registry manifest, graph file) or the job's pin.
+        live_reads: list[str] = []
+        pin_reads: list[str] = []
+        def spying(name: str, seen: list[str]):
+            real = getattr(proxy, name)
+
+            def spy(*args, **kwargs):
+                seen.append(name)
+                return real(*args, **kwargs)
+            return spy
+
+        rig.set(proxy, "_load_audio_workflow_manifest", spying("_load_audio_workflow_manifest", live_reads))
+        rig.set(proxy, "_load_audio_workflow_file", spying("_load_audio_workflow_file", live_reads))
+        real_pin = proxy._load_audio_pin
+        rig.set(proxy, "_load_audio_pin", lambda pinned_job_id: (pin_reads.append(pinned_job_id), real_pin(pinned_job_id))[1])
         await proxy._run_audio_media_job(rig.scheduled[0])
+        # The two routes give one golden, so the golden alone cannot show the flag took effect: the reads do.
+        if from_pin:
+            assert pin_reads == [job_id] and live_reads == [], (pin_reads, live_reads)
+        else:
+            assert pin_reads == [] and live_reads, (pin_reads, live_reads)
         await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}", label="poll the finished job")
         content = await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/content", label="job content")
         await rig.call("GET", f"/gateway/v1/media/jobs/{job_id}/events", label="job events")

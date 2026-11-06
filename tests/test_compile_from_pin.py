@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 import proxy
-from gateway import media_jobs, pinned_definitions
+from gateway import definition_store, media_jobs, pinned_definitions
 from gateway.definition_store import DefinitionUnavailable
 from gateway.job_envelope import build_job_envelope
 from tests.support.adapter_differential_rig import GatewayRig, comfy_exchanges, history_done, scenario
@@ -202,6 +202,72 @@ def test_a_route_that_compiles_from_the_pin_refuses_a_job_it_cannot_pin(rig: Gat
         return await submit(False), await submit(True)
 
     assert run(both()) == (202, 503), "with the flag off a job without a pin is accepted as it always was"
+
+
+def job_count() -> int:
+    with sqlite3.connect(media_jobs.DB_PATH) as conn:
+        return conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0]
+
+
+def test_a_route_that_compiles_from_the_pin_refuses_a_job_whose_pin_cannot_be_written(
+        rig: GatewayRig, monkeypatch: pytest.MonkeyPatch):
+    """The envelope builds, the store then refuses it (here: raises). With the flag on that is a 503 and no job row,
+    not a 202 for a job that would fail ``definition_unavailable`` later; with the flag off it is the old best effort."""
+    def refuse(*_args: Any, **_kwargs: Any) -> None:
+        raise ValueError("the store refused the envelope")
+
+    monkeypatch.setattr(definition_store, "record_envelope_in", refuse)
+
+    async def submit(on: bool, prompt: str) -> int:
+        set_flag(rig, on)
+        made = await rig.call("POST", "/gateway/v1/media/jobs", label=f"submit with the flag {on}", unordered_json=True,
+                              json_body={"intent": "audio.generate",
+                                         "request": {"prompt": prompt, "model": "tangoflux", "duration": 4}})
+        return made.status_code
+
+    async def both() -> tuple[int, int, int]:
+        on = await submit(True, "pinned")
+        rows_after_refusal = job_count()
+        off = await submit(False, "unpinned")
+        return on, rows_after_refusal, off
+
+    on, rows_after_refusal, off = run(both())
+    assert (on, rows_after_refusal) == (503, 0), "the refused job left no row"
+    assert off == 202 and job_count() == 1, "with the flag off a failed envelope write is still best effort"
+    assert len(rig.scheduled) == 1, "only the accepted job was scheduled"
+
+
+def test_a_pinned_job_whose_model_now_resolves_to_another_workflow_fails_instead_of_mixing(rig: GatewayRig):
+    """After an alias or ``audio.workflows`` edit and a restart, a resumed job must not compile its pinned graph with
+    the limits, policy and receipt of whatever workflow the model resolves to now."""
+    set_flag(rig, True)
+
+    async def scenario_() -> str:
+        job_id = await accept(rig, model="tangoflux-sfx")
+        rig.set(proxy, "AUDIO_ALIASES", {**proxy.AUDIO_ALIASES, "tangoflux-sfx": "sa3-small-sfx"})
+        await proxy._run_audio_media_job(job_id)
+        return job_id
+
+    job_id = run(scenario_())
+    failed = job(job_id)
+    assert failed["status"] == media_jobs.STATUS_FAILED
+    assert failed["error_code"] == "definition_unavailable" and failed["retryable"] is False
+    assert prompts(rig) == [], "no request reached the engine"
+
+
+def test_a_pinned_job_still_runs_when_its_alias_is_renamed_to_the_same_workflow(rig: GatewayRig):
+    """Control for the test above: the check is on the workflow the model resolves to, not on the alias spelling."""
+    set_flag(rig, True)
+
+    async def scenario_() -> str:
+        job_id = await accept(rig, model="tangoflux-sfx")
+        rig.set(proxy, "AUDIO_ALIASES", {"tangoflux-sfx": "tangoflux"})
+        await proxy._run_audio_media_job(job_id)
+        return job_id
+
+    job_id = run(scenario_())
+    assert job(job_id)["status"] == media_jobs.STATUS_SUCCEEDED, job(job_id).get("error")
+    assert len(prompts(rig)) == 1
 
 
 # ---------------------------------------------------------------------------------------------- the flag
