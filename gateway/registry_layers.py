@@ -33,6 +33,10 @@ LAYERING_VERSION = 1
 TOMBSTONES_KEY = "tombstones"
 BASES_KEY = "bases"
 REPLACE_KEY = "$replace"
+# A stored patch of a release record also names the record: the keys the code before the layer needs to read a stored row
+# as the release record it copies (a rollback then rebuilds the row from the release). A merge changes nothing, since each
+# equals the release value; ``field_names`` leaves them out of a report.
+IDENTITY_KEYS = ("id", "source", "kind")
 # The one-time step that turns a registry stored before this layer into one that holds owner data only.
 LAYERING_STEP = "config-homes-registry-layering"
 
@@ -186,6 +190,10 @@ def unlayer(
             entry = record_entry(base[record_id], record)
             if entry is None:
                 continue
+            if REPLACE_KEY not in entry:
+                for key in IDENTITY_KEYS:
+                    if key in base[record_id] and key not in entry:
+                        entry[key] = copy.deepcopy(base[record_id][key])
             out[record_id] = entry
             old_entry = _collection(before, name).get(record_id)
             old_base = _collection(_collection(before, BASES_KEY), name).get(record_id)
@@ -238,7 +246,7 @@ def sources(stored: Mapping[str, Any], release: Mapping[str, Any]) -> dict[str, 
                     row["drift"] = DRIFT_RELEASE_REMOVED
             elif record_id in owned:
                 row["source"] = SOURCE_OWNER
-                row["fields"] = field_names(owned[record_id])
+                row["fields"] = field_names(owned[record_id], base[record_id])
                 if record_id in recorded and recorded[record_id] != digest(base[record_id]):
                     row["drift"] = DRIFT_RELEASE_CHANGED
             else:
@@ -255,14 +263,18 @@ def sources(stored: Mapping[str, Any], release: Mapping[str, Any]) -> dict[str, 
     return view
 
 
-def field_names(entry: Any) -> list[str]:
-    """The names of the fields a stored entry changes: top-level names, and for ``config`` its key names. No values."""
+def field_names(entry: Any, release_record: Any = None) -> list[str]:
+    """The names of the fields a stored entry changes: top-level names, and for ``config`` its key names. No values.
+
+    With the release record given, an identity key (``IDENTITY_KEYS``) that equals the release value is not a change."""
     if not isinstance(entry, Mapping):
         return []
     if set(entry) == {REPLACE_KEY}:
         return [REPLACE_KEY]
     names: list[str] = []
     for key in sorted(entry):
+        if key in IDENTITY_KEYS and isinstance(release_record, Mapping) and release_record.get(key) == entry[key]:
+            continue
         names.append(str(key))
         if key == "config" and isinstance(entry[key], Mapping):
             names.extend(f"config.{inner}" for inner in sorted(entry[key]))

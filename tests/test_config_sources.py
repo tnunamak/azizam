@@ -282,8 +282,7 @@ def test_lifecycle_semantics_per_ownership_category():
     env_db = by_id["env:DATABASE_URL"]
     assert env_db["provisioning"] == "secret_bootstrap"
 
-    # Service/provider seed data is file-owned input. Runtime service records
-    # live in the DB registry after seeding/import.
+    # The file's backends block is not read. Runtime service records live in the DB registry.
     backend_seed = by_id["config:backends"]
     assert backend_seed["authored_via"] == "proxy_config.yml"
     assert backend_seed["stored_in"] == "proxy_config.yml"

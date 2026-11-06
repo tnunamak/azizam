@@ -235,7 +235,7 @@ def plan_layering(
             replaced = isinstance(entry, Mapping) and set(entry) == {layers.REPLACE_KEY}
             owner_edit = (record_id in edited) if name == "services" else None
             plan.patches.append(PatchRow(
-                name, record_id, "replace" if replaced else "patch", tuple(layers.field_names(entry)), owner_edit,
+                name, record_id, "replace" if replaced else "patch", tuple(layers.field_names(entry, base.get(record_id))), owner_edit,
                 probably_stale_copy=owner_edit is False,
             ))
     return plan

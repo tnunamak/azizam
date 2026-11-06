@@ -5,9 +5,11 @@ The gateway has two different kinds of configuration:
 * bootstrap/provisioning inputs needed before the process can start;
 * runtime product state operators manage from the dashboard/API.
 
-This module turns legacy ``proxy_config.yml`` backend/API declarations into a
-durable registry document in ``admin.db``. After that first seed, the registry
-is the runtime source of truth. A service row's ``source`` is provenance, not
+The registry is layered (docs/design/CONFIG_HOMES.md, 3.4). The release layer is the bundled ``registry/`` catalogs.
+``admin.db`` stores only the owner's data: records the owner made, field-level patches of release records, and
+tombstones (``gateway/registry_layers.py``). ``admin_store`` layers on read and unlayers on write, so every reader sees
+the one effective registry. ``ensure_service_registry`` runs the one-time ``config-homes-registry-layering`` step on an
+install that stored a whole document. The startup file's ``backends`` are never read. A service row's ``source`` is provenance, not
 permission: every non-managed row remains editable, enableable/disableable,
 and removable in the DB/UI registry. The managed LiteLLM substrate is the sole
 exception: its endpoint/protocol fields and removal are locked, while its name,

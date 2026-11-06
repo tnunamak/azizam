@@ -1880,20 +1880,8 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
         self.assertNotIn(hostile, stored)
         self.assertEqual(receipt.accepted_inputs, ["prompt", "file"])
 
-    def test_registry_seed_and_existing_record_backfill_keep_operator_chunk_limits(self) -> None:
-        bootstrap = {
-            "backends": {
-                "stt": {
-                    "host": "127.0.0.1",
-                    "port": 5092,
-                    "capabilities": ["audio", "transcriptions"],
-                    "chunking": {"spool_dir": "data/stt-spool", "max_segments": 16},
-                }
-            }
-        }
-        seeded = seed_registry_document(bootstrap)
-        self.assertEqual(seeded["services"]["stt"]["config"]["chunking"]["max_segments"], 16)
-        existing = seed_registry_document({
+    def test_a_stored_record_keeps_the_operator_chunk_limits_when_the_registry_is_applied(self) -> None:
+        stored = seed_registry_document({
             "backends": {
                 "stt": {
                     "host": "127.0.0.1",
@@ -1903,10 +1891,8 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
                 }
             }
         })
-        backfilled = service_registry.backfill_seed_catalog_metadata(existing, proxy_config=bootstrap)
-        effective = service_registry.apply_service_registry_to_config(bootstrap, backfilled)
+        effective = service_registry.apply_service_registry_to_config({}, stored)
         self.assertEqual(effective["backends"]["stt"]["chunking"]["max_segments"], 4)
-        self.assertEqual(effective["backends"]["stt"]["chunking"]["spool_dir"], "data/stt-spool")
 
 
 def _write_silenced_wav(path: Path) -> None:
