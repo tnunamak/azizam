@@ -552,7 +552,7 @@ describe("media selection races", () => {
       value="https://example.test/original.png" onChange={changed} />);
     fireEvent.change(pickerInput(), { target: { files: [PNG] } });
     if (action === "remove") {
-      fireEvent.click(screen.getByRole("button", { name: "Remove picture for Picture" }));
+      fireEvent.click(screen.getByRole("button", { name: "Remove Picture from a link" }));
     } else if (action === "link") {
       fireEvent.change(screen.getByRole("textbox", { name: "Link, Library link or data URI" }), {
         target: { value: "https://example.test/new.png" },
@@ -803,7 +803,7 @@ describe("media input states", () => {
       value="https://example.test/a.png" onChange={onChange} />);
     fireEvent.error(screen.getByRole("img", { name: "Chosen picture" }));
     expect(screen.getByText("Preview unavailable")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Remove picture for Picture" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Remove Picture from a link" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Retry preview of picture for Picture" }));
     expect(screen.getByRole("img", { name: "Chosen picture" })).toBeVisible();
     expect(screen.queryByText("Preview unavailable")).toBeNull();

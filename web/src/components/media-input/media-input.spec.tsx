@@ -492,6 +492,58 @@ test("a chosen file is one summary: name, source and size, with one remove contr
     expect(summary.textContent).toContain("2 KB");
     expect(summary.querySelectorAll("button").length).toBe(1);
   }
-  fireEvent.click(screen.getByRole("button", { name: "Remove picture for As reference" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Remove fox.png" })[1]);
   expect(document.querySelectorAll('[data-slot="picked-summary"]').length).toBe(1);
+});
+
+test("a Library pick is named by the Library's title; the file keeps its real name; a local file keeps its own", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  const onFile = vi.fn();
+  render(<FileHarness onFile={onFile} />);
+  await openAndPick();
+  const summary = await waitFor(() => {
+    const found = document.querySelector<HTMLElement>('[data-slot="picked-summary"]');
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  expect(summary.querySelector("p > span")?.textContent).toBe("A teal fish");
+  expect(screen.getByText("From your Library")).toBeTruthy();
+  expect(summary.textContent).toContain("PNG");
+  expect(summary.textContent).toMatch(/\d+ KB/);
+  // What is sent is still the file, under its own name and type.
+  expect((onFile.mock.calls[0][0] as File).name).toBe("library-picture.png");
+  expect((onFile.mock.calls[0][0] as File).type).toBe("image/png");
+  // One remove control, named for what the person sees.
+  expect(screen.getByRole("button", { name: "Remove A teal fish" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Remove A teal fish" }));
+  fireEvent.change(document.querySelector("input[data-media-file-input]")!, {
+    target: { files: [new File([new Uint8Array(1024)], "fox.png", { type: "image/png" })] },
+  });
+  const local = await screen.findByRole("button", { name: "Remove fox.png" });
+  expect(local).toBeTruthy();
+  expect(screen.queryByText("From your Library")).toBeNull();
+  expect(document.querySelector('[data-slot="picked-summary"]')?.textContent).toContain("PNG · 1 KB");
+});
+
+test("the Library dialog: a caption under each picture, a duration under an audio clip, focus on the first tile", async () => {
+  vi.stubGlobal("fetch", route({ file: [new Uint8Array(PNG)], listed: { prompt: "A teal fish that swims by the reef", duration_s: 7 } }).mock);
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  const tile = await screen.findByRole("button", { name: "A teal fish that swims by the reef" });
+  expect(tile.querySelector("span.truncate")?.textContent).toBe("A teal fish that swims by the reef");
+  expect(tile.textContent).toContain("0:07");
+  expect(tile.getAttribute("title")).toBe("A teal fish that swims by the reef");
+  expect(screen.getByText("Your Library, newest first.")).toBeTruthy();
+  await waitFor(() => expect(document.activeElement).toBe(tile));
+  // The close button sits in the header row, not over the title.
+  const header = document.querySelector('[data-slot="library-picker-header"]')!;
+  expect(header.contains(screen.getByRole("button", { name: "Close" }))).toBe(true);
+});
+
+test("an item with no duration shows no duration line", async () => {
+  vi.stubGlobal("fetch", route().mock);
+  render(<FileHarness onFile={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+  const tile = await screen.findByRole("button", { name: "A teal fish" });
+  expect(tile.textContent).toBe("A teal fish");
 });

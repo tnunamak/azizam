@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/cn";
 import { kindIcon } from "@/lib/media-kind";
-import { sizeWords } from "@/lib/media-pick";
+import { sizeWords, typeWords } from "@/lib/media-pick";
 import type { MediaInput } from "./home-model";
 import { fitsMediaInput, mediaPhrase } from "./home-model";
 
@@ -124,8 +124,10 @@ export function HomeMediaInput({
       onDrop={onDrop}
       className={cn(
         // The drop zone and the text box share one inner padding (COMPOSER_PAD), so their left edges line up.
-        "mx-(--composer-pad) mt-(--composer-pad) mb-2 rounded-[calc(var(--radius-composer)-0.5rem)] border border-dashed px-4 py-4 transition-colors duration-(--motion-fast)",
-        dragging ? "border-ring bg-accent" : "border-composer-edge-hover bg-muted/40",
+        // Once a file is chosen the frame goes (it would make the row look empty), as on the Try pages.
+        "mx-(--composer-pad) mt-(--composer-pad) mb-2 rounded-[calc(var(--radius-composer)-0.5rem)] border transition-colors duration-(--motion-fast)",
+        file && !dragging ? "border-transparent px-0 py-1" : "border-dashed px-4 py-4",
+        dragging ? "border-ring bg-accent" : file ? "" : "border-composer-edge-hover bg-muted/40",
       )}
     >
       <input
@@ -140,14 +142,13 @@ export function HomeMediaInput({
       />
       {file ? (
         <PickedSummary
-          name={file.name}
-          details={[pick.source === LIBRARY_SOURCE && LIBRARY_SOURCE, sizeWords(file.size)]}
+          name={pick.sourceTitle ?? file.name}
+          source={pick.source === LIBRARY_SOURCE ? LIBRARY_SOURCE : null}
+          facts={[typeWords(file.type), sizeWords(file.size)]}
           kind={file.type.split("/")[0] || input.modality}
           previewUrl={preview}
-          noun={input.word}
           previewAlt={`Your ${input.word}: ${file.name}`}
           retryLabel={`Retry preview of ${file.name}`}
-          removeLabel={`Remove ${file.name}`}
           onRemove={() => {
             pick.clear();
             onFile(null);

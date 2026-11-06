@@ -654,7 +654,7 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     const library = withLibrary([PICTURE_ITEM]);
     fireEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
     fireEvent.click(await screen.findByRole("button", { name: "A teal fish" }));
-    expect(await screen.findByText("library-picture.png")).toBeVisible();
+    expect(await screen.findByText("A teal fish", { selector: "[data-slot=picked-summary] span" })).toBeVisible();
     expect(screen.getByText(/From your Library/)).toBeVisible();
     expect(library.listed[0]).toContain("kind=image");
     await waitFor(() => expect(makeButton().getAttribute("aria-disabled")).toBe("false"));
@@ -682,7 +682,7 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Adding picture…");
     expect(makeButton().getAttribute("aria-disabled")).toBe("true");
     release();
-    expect(await screen.findByText("library-picture.png")).toBeVisible();
+    expect(await screen.findByText("A teal fish", { selector: "[data-slot=picked-summary] span" })).toBeVisible();
     await waitFor(() => expect(makeButton().getAttribute("aria-disabled")).toBe("false"));
   });
 
@@ -693,7 +693,7 @@ describe("the composer follows the chosen capability's declared inputs", () => {
     expect(await screen.findByRole("heading", { name: "Choose a recording from your Library" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "A teal fish" })).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "A short spoken note" }));
-    expect(await screen.findByText("library-recording.wav")).toBeVisible();
+    expect(await screen.findByText("A short spoken note", { selector: "[data-slot=picked-summary] span" })).toBeVisible();
     expect(library.listed.every((url) => url.includes("kind=audio"))).toBe(true);
   });
 

@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ImageIcon } from "lucide-react";
+import { ImageIcon, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ErrorState } from "@/components/product";
@@ -16,11 +16,12 @@ import { kindIcon } from "@/lib/media-kind";
 import { networkFetch } from "@/lib/network-error";
 import {
   fileFitsTypes,
+  formatDuration,
   mediaNoun,
   withArticle,
   type MediaTypes,
 } from "@/lib/media-pick";
-import type { LibraryAsset, LibraryPick } from "@/lib/library-file";
+import { libraryTitle, type LibraryAsset, type LibraryPick } from "@/lib/library-file";
 
 type LibraryPage = { assets?: LibraryAsset[]; next_cursor?: string | null };
 
@@ -56,6 +57,7 @@ export function LibraryPicker({
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [more, setMore] = useState<"idle" | "loading" | "error">("idle");
   const [unshown, setUnshown] = useState<Set<string>>(new Set());
+  const content = useRef<HTMLDivElement>(null);
   const [attempt, setAttempt] = useState(0);
   const [previousOpen, setPreviousOpen] = useState(open);
   // Each reload or reopen is a new list; a "Show more" answer for an older
@@ -124,6 +126,16 @@ export function LibraryPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, attempt, kind, types?.join(",")]);
 
+  // The dialog opens with focus on itself, not on a control: a close button that takes focus first draws its ring
+  // over the title. When the tiles arrive, focus moves to the first one.
+  useEffect(() => {
+    if (!open || state !== "ready") return;
+    const dialog = content.current;
+    if (dialog && document.activeElement === dialog) {
+      dialog.querySelector<HTMLElement>("ul button")?.focus();
+    }
+  }, [open, state]);
+
   async function showMore() {
     if (!nextCursor) return;
     const mine = generation.current;
@@ -150,114 +162,140 @@ export function LibraryPicker({
     setUnshown((current) => new Set(current).add(assetId));
   }
 
-  const capitalNoun = `${noun[0].toUpperCase()}${noun.slice(1)}`;
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Choose {withArticle(noun)} from your Library</DialogTitle>
-          <DialogDescription>{capitalNoun}s you made, newest first.</DialogDescription>
-        </DialogHeader>
-        {state === "loading" && (
-          <div
-            aria-busy="true"
-            className="grid grid-cols-3 gap-2 sm:grid-cols-4"
-          >
-            {Array.from({ length: 8 }, (_, index) => (
-              <Skeleton key={index} className="aspect-square w-full" />
-            ))}
+      <DialogContent
+        ref={content}
+        showCloseButton={false}
+        tabIndex={-1}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          content.current?.focus();
+        }}
+        className="max-h-[85vh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-2xl"
+      >
+        {/* The header and its close button stay put; the tiles scroll under them. */}
+        <div data-slot="library-picker-header" className="flex flex-col gap-2 text-left">
+          <div className="flex items-start gap-3">
+            <DialogTitle className="min-w-0 flex-1 leading-snug!">
+              Choose {withArticle(noun)} from your Library
+            </DialogTitle>
+            {/* As tall as the title's first line, so the button is centred on it and sits inside the dialog's padding. */}
+            <div className="flex h-[1.4rem] shrink-0 items-center">
+              <DialogClose
+                data-slot="dialog-close"
+                className="ring-offset-background focus:ring-ring text-muted-foreground hover:text-foreground flex size-8 items-center justify-center rounded-md transition-colors focus:ring-2 focus:ring-offset-2 focus:outline-hidden max-sm:size-11 [&_svg]:pointer-events-none"
+              >
+                <X aria-hidden="true" className="size-4" />
+                <span className="sr-only">Close</span>
+              </DialogClose>
+            </div>
           </div>
-        )}
-        {state === "error" && (
-          <ErrorState
-            heading="Could not open your Library"
-            message={`Your ${noun}s could not be loaded.`}
-            action={{
-              label: "Try loading it again",
-              onClick: () => setAttempt((count) => count + 1),
-            }}
-          />
-        )}
-        {state === "ready" && assets.length === 0 && (
-          <p className="text-muted-foreground text-sm">
-            No {noun}s in your Library yet. Make one, or choose a file.
-          </p>
-        )}
-        {state === "ready" && assets.length > 0 && (
-          <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-            {assets.map((asset) => {
-              const title =
-                asset.prompt?.trim().slice(0, 80) ||
-                `${capitalNoun} from your Library`;
-              // The list's own signed links show the item; the download route
-              // answers with a link, not an image.
-              const link =
-                (kind === "image" ? asset.thumbnail_url : null) ??
-                asset.download_url;
-              const src = link && !unshown.has(asset.asset_id) ? link : null;
-              const drawn = kind === "image" || kind === "video";
-              return (
-                <li key={asset.asset_id}>
-                  <button
-                    type="button"
-                    title={title}
-                    aria-label={title}
-                    onClick={() => onPick(asset)}
-                    className="rounded-media focus-visible:ring-ring/50 bg-muted/40 flex aspect-square w-full items-center justify-center overflow-hidden border focus-visible:ring-[3px] focus-visible:outline-none"
-                  >
-                    {!drawn || !src ? (
-                      <span className="text-muted-foreground flex flex-col items-center gap-1 p-1 text-xs">
-                        {drawn ? (
-                          <ImageIcon aria-hidden="true" className="size-6" />
+          <DialogDescription>Your Library, newest first.</DialogDescription>
+        </div>
+        <div data-slot="library-picker-body" className="-m-1 flex min-h-0 flex-col gap-4 overflow-y-auto p-1">
+          {state === "loading" && (
+            <div aria-busy="true" className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {Array.from({ length: 8 }, (_, index) => (
+                <Skeleton key={index} className="aspect-square w-full" />
+              ))}
+            </div>
+          )}
+          {state === "error" && (
+            <ErrorState
+              heading="Could not open your Library"
+              message={`Your ${noun}s could not be loaded.`}
+              action={{
+                label: "Try loading it again",
+                onClick: () => setAttempt((count) => count + 1),
+              }}
+            />
+          )}
+          {state === "ready" && assets.length === 0 && (
+            <p className="text-muted-foreground text-sm">
+              No {noun}s in your Library yet. Make one, or choose a file.
+            </p>
+          )}
+          {state === "ready" && assets.length > 0 && (
+            <ul className="grid grid-cols-3 gap-x-2 gap-y-3 sm:grid-cols-4">
+              {assets.map((asset) => {
+                const title = libraryTitle(asset, noun);
+                // The list's own signed links show the item; the download route
+                // answers with a link, not an image.
+                const link =
+                  (kind === "image" ? asset.thumbnail_url : null) ??
+                  asset.download_url;
+                const src = link && !unshown.has(asset.asset_id) ? link : null;
+                const drawn = kind === "image" || kind === "video";
+                const length =
+                  typeof asset.duration_s === "number" && asset.duration_s > 0
+                    ? formatDuration(asset.duration_s)
+                    : null;
+                return (
+                  <li key={asset.asset_id} className="min-w-0">
+                    <button
+                      type="button"
+                      title={title}
+                      aria-label={title}
+                      onClick={() => onPick(asset)}
+                      className="focus-visible:ring-ring/50 rounded-media flex w-full flex-col gap-1 text-left focus-visible:ring-[3px] focus-visible:outline-none"
+                    >
+                      <span className="rounded-media bg-muted/40 flex aspect-square w-full items-center justify-center overflow-hidden border">
+                        {!drawn || !src ? (
+                          <span className="text-muted-foreground flex flex-col items-center gap-1 p-1 text-xs">
+                            {drawn ? (
+                              <ImageIcon aria-hidden="true" className="size-6" />
+                            ) : (
+                              <Icon aria-hidden="true" className="size-6" />
+                            )}
+                            {drawn && "Preview unavailable"}
+                          </span>
+                        ) : kind === "video" ? (
+                          <video
+                            src={src}
+                            muted
+                            preload="metadata"
+                            className="size-full object-cover"
+                            onError={() => markUnshown(asset.asset_id)}
+                          />
                         ) : (
-                          <Icon aria-hidden="true" className="size-6" />
-                        )}
-                        {drawn && "Preview unavailable"}
-                        {!drawn && (
-                          <span className="line-clamp-3">{title}</span>
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={src}
+                            alt=""
+                            loading="lazy"
+                            className="size-full object-cover"
+                            onError={() => markUnshown(asset.asset_id)}
+                          />
                         )}
                       </span>
-                    ) : kind === "video" ? (
-                      <video
-                        src={src}
-                        muted
-                        preload="metadata"
-                        className="size-full object-cover"
-                        onError={() => markUnshown(asset.asset_id)}
-                      />
-                    ) : (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={src}
-                        alt=""
-                        loading="lazy"
-                        className="size-full object-cover"
-                        onError={() => markUnshown(asset.asset_id)}
-                      />
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        {state === "ready" && more === "error" && (
-          <p role="alert" className="text-destructive text-xs">
-            Could not load more {noun}s. Try again.
-          </p>
-        )}
-        {state === "ready" && nextCursor && (
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            disabled={more === "loading"}
-            onClick={() => void showMore()}
-          >
-            {more === "loading" ? "Loading…" : "Show more"}
-          </Button>
-        )}
+                      <span className="text-meta block truncate font-medium">{title}</span>
+                      {length && (
+                        <span className="text-muted-foreground text-meta -mt-1 block">{length}</span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {state === "ready" && more === "error" && (
+            <p role="alert" className="text-destructive text-xs">
+              Could not load more {noun}s. Try again.
+            </p>
+          )}
+          {state === "ready" && nextCursor && (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              disabled={more === "loading"}
+              onClick={() => void showMore()}
+            >
+              {more === "loading" ? "Loading…" : "Show more"}
+            </Button>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

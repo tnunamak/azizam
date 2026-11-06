@@ -17,6 +17,20 @@ export function sizeWords(bytes: number): string {
   return megabytes(bytes);
 }
 
+/** A length of time as people read it on a player: "0:03", "12:07". */
+export function formatDuration(seconds: number): string {
+  const rounded = Math.round(seconds);
+  return `${Math.floor(rounded / 60)}:${(rounded % 60).toString().padStart(2, "0")}`;
+}
+
+/** What a media type is called in a line of detail: "image/png" is "PNG", "audio/mpeg" is "MP3". */
+export function typeWords(mediaType: string): string | null {
+  const subtype = /^[a-z]+\/([a-z0-9.+-]+)/i.exec(mediaType)?.[1]?.toLowerCase();
+  if (!subtype) return null;
+  const named: Record<string, string> = { mpeg: "MP3", quicktime: "MOV", "svg+xml": "SVG", "x-wav": "WAV", "vnd.wave": "WAV" };
+  return named[subtype] ?? subtype.replace(/^x-/, "").replace(/\+.*$/, "").toUpperCase();
+}
+
 export function megabytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
 }

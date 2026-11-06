@@ -12,7 +12,7 @@ import {
   withArticle,
   type MediaTypes,
 } from "@/lib/media-pick";
-import { TooBigError, libraryFile, limitLabel, type LibraryPick } from "@/lib/library-file";
+import { TooBigError, libraryFile, libraryTitle, limitLabel, type LibraryPick } from "@/lib/library-file";
 
 /** The label under a choice that came from the Library. */
 export const LIBRARY_SOURCE = "From your Library";
@@ -85,7 +85,7 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     [],
   );
 
-  const [source, setSource] = useState<{ label: string; file: File | null } | null>(null);
+  const [source, setSource] = useState<{ label: string; file: File | null; title?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   // A read or download is under way: the choice is not in the form yet.
@@ -183,7 +183,7 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
       });
       if (active.current !== operation) return;
       if (!(await handOver(picked, operation))) return;
-      setSource({ label: LIBRARY_SOURCE, file: picked });
+      setSource({ label: LIBRARY_SOURCE, file: picked, title: libraryTitle(pick, noun) });
       setPendingState(false);
     } catch (failure) {
       if (active.current !== operation) return;
@@ -216,6 +216,8 @@ export function useMediaPick<Prepared = undefined>(options: MediaPickOptions<Pre
     source: held ? held.label : null,
     /** The file the source label is about; in reference mode the media itself is a data URI, and this names it. */
     sourceFile: held ? held.file : null,
+    /** What the Library calls the item picked from it; the file's own name is only what is sent. */
+    sourceTitle: held ? (held.title ?? null) : null,
     take,
     pickFromLibrary,
     openFileDialog: () => fileInput.current?.click(),

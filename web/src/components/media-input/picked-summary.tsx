@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
@@ -19,33 +19,35 @@ export function useObjectUrl(file: File | null | undefined): string | null {
 }
 
 /**
- * What every media input shows once something is chosen: a thumbnail (or the kind's icon), the name, a line under
- * it with where it came from and how big it is, and one remove control on the same row. The sites differ only in
- * the words (`noun`, `removeLabel`), never in the layout.
+ * What every media input shows once something is chosen: a thumbnail (or the kind's icon), the name (the Library's
+ * title for an item taken from it, else the file's name), a line under it with where it came from and what and how
+ * big it is, and one remove control on the same row. The sites differ only in the words, never in the layout.
+ *
+ * On a phone the source sits on its own line over the facts ("PNG · 19 KB"), so no separator is stranded at the end
+ * of a line; from `sm` up they share one line, "From your Library · PNG · 19 KB".
  */
 export function PickedSummary({
   name,
-  details,
+  source,
+  facts,
   kind,
   previewUrl,
-  noun,
   previewAlt,
   retryLabel,
-  removeLabel,
   invalid = false,
   onRemove,
   className,
 }: {
   name: string;
-  /** The parts of the line under the name, such as the source and the size. */
-  details: readonly (string | null | undefined | false)[];
+  /** Where it came from, when that is worth saying ("From your Library"). */
+  source?: string | null;
+  /** What it is and how big: the type and the size. */
+  facts: readonly (string | null | undefined | false)[];
   /** The family the preview draws ("image", "video"); any other kind shows its icon. */
   kind: string | null;
   previewUrl: string | null;
-  noun: string;
   previewAlt: string;
   retryLabel: string;
-  removeLabel: string;
   invalid?: boolean;
   onRemove: () => void;
   className?: string;
@@ -60,7 +62,7 @@ export function PickedSummary({
   const { failed, attempt } = failure;
   const drawable = previewUrl !== null && (kind === "image" || kind === "video");
   const Icon = kindIcon(kind ?? "file");
-  const parts = details.filter((part): part is string => Boolean(part));
+  const tail = facts.filter((part): part is string => Boolean(part)).join(" · ");
   return (
     <div data-slot="picked-summary" className={cn("flex items-center gap-3", className)}>
       <div
@@ -97,14 +99,11 @@ export function PickedSummary({
       </div>
       <p className="min-w-0 flex-1">
         <span className="block truncate font-medium">{name}</span>
-        {parts.length > 0 && (
+        {(source || tail) && (
           <span className="text-muted-foreground text-meta block">
-            {parts.map((part, index) => (
-              <Fragment key={index}>
-                {index > 0 ? " · " : null}
-                <span className="whitespace-nowrap">{part}</span>
-              </Fragment>
-            ))}
+            {source && <span className="max-sm:block">{source}</span>}
+            {source && tail ? <span className="max-sm:hidden"> · </span> : null}
+            {tail && <span className="whitespace-nowrap">{tail}</span>}
           </span>
         )}
         {drawable && failed && (
@@ -128,8 +127,8 @@ export function PickedSummary({
       <button
         type="button"
         onClick={onRemove}
-        aria-label={removeLabel}
-        title={`Remove ${noun}`}
+        aria-label={`Remove ${name}`}
+        title={`Remove ${name}`}
         className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring inline-flex size-9 shrink-0 items-center justify-center rounded-full focus-visible:ring-2 focus-visible:outline-none max-sm:size-11"
       >
         <X aria-hidden="true" className="size-4" />

@@ -22,7 +22,7 @@ const fixture = (name: string) => readFileSync(path.resolve(__dirname, "fixtures
 const PNG = fixture("teal-fish.png");
 const WAV = fixture("spoken-note.wav");
 
-type Item = { id: string; kind: string; type: string; prompt: string; bytes: Buffer };
+type Item = { id: string; kind: string; type: string; prompt: string; bytes: Buffer; seconds?: number };
 const picture = (n: number, prompt: string, file: string): Item => ({
   id: `img_${String(n).repeat(64)}`,
   kind: "image",
@@ -36,6 +36,8 @@ const recording = (n: number, prompt: string): Item => ({
   type: "audio/wav",
   prompt,
   bytes: WAV,
+  // The Library's own length for the clip (the fixture runs 2.9 s).
+  seconds: 3,
 });
 const PICTURES = [
   picture(1, "A teal fish", "teal-fish.png"),
@@ -49,12 +51,14 @@ const RECORDINGS = [
   recording(7, "Meeting recap"),
 ];
 const ITEMS = [...PICTURES, ...RECORDINGS];
-// The same four pictures again under new names, so the dialog fills and scrolls.
-const MANY_PICTURES = Array.from({ length: 14 }, (_, index) => ({
-  ...PICTURES[index % PICTURES.length],
-  id: `img_${(index + 10).toString(16).padStart(2, "0").repeat(32)}`,
-  prompt: `${PICTURES[index % PICTURES.length].prompt}${index >= PICTURES.length ? ` ${Math.floor(index / PICTURES.length) + 1}` : ""}`,
-}));
+// The same four pictures again under new names, so the dialog fills and scrolls: a Library past one screen.
+const manyPictures = (count: number): Item[] =>
+  Array.from({ length: count }, (_, index) => ({
+    ...PICTURES[index % PICTURES.length],
+    id: `img_${(index + 16).toString(16).padStart(2, "0").repeat(32)}`,
+    prompt: `${PICTURES[index % PICTURES.length].prompt}${index >= PICTURES.length ? ` ${Math.floor(index / PICTURES.length) + 1}` : ""}`,
+  }));
+const MANY_PICTURES = manyPictures(44);
 
 const VIEWPORTS = [
   { name: "390", width: 390, height: 844 },
@@ -74,6 +78,7 @@ async function routeLibrary(page: Page, items: Item[] = ITEMS) {
         kind: item.kind,
         media_type: item.type,
         prompt: item.prompt,
+        ...(item.seconds ? { duration_s: item.seconds } : {}),
         available: true,
         thumbnail_url: `/signed/${item.id}`,
         download_url: `/signed/${item.id}`,
@@ -101,6 +106,18 @@ async function routeLibrary(page: Page, items: Item[] = ITEMS) {
 async function libraryOpen(page: Page) {
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
+  // Focus starts on the first tile, not on the close button.
+  await expect(dialog.locator("ul button").first()).toBeFocused();
+  // The title is left-aligned, and the close button sits inside the dialog's padding, on the title's first line,
+  // clear of the title.
+  const title = (await dialog.locator('[data-slot="dialog-title"]').boundingBox())!;
+  const close = (await dialog.getByRole("button", { name: "Close" }).boundingBox())!;
+  const frame = (await dialog.boundingBox())!;
+  expect(title.x).toBeLessThan(frame.x + 30);
+  expect(title.x + title.width).toBeLessThanOrEqual(close.x);
+  expect(close.x + close.width).toBeLessThanOrEqual(frame.x + frame.width - 20);
+  expect(close.y).toBeGreaterThanOrEqual(frame.y + 8);
+  expect(Math.abs(close.y + close.height / 2 - (title.y + 12))).toBeLessThan(5);
   await expect.poll(() => dialog.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
   await expect.poll(() => dialog.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
   // The surface is opaque: an rgb() colour, or an rgba() whose alpha is 1.
@@ -122,15 +139,30 @@ async function libraryClosed(page: Page) {
 }
 
 /**
- * Every site shows what it holds as the one shared summary: the file's name, where it came from, and a single
- * remove control. The thumbnail, if it is a picture, has loaded.
+ * Every site shows what it holds as the one shared summary: the Library's title as the main line (the file's real
+ * name is only what is sent), where it came from with its type and size, and a single remove control named for the
+ * title, with a 44 px hit area on a phone. The thumbnail, if it is a picture, has loaded.
  */
-async function pickedSummary(scope: Page | Locator, name: string) {
+async function pickedSummary(page: Page, scope: Page | Locator, title: string, type: string) {
   const summary = scope.locator('[data-slot="picked-summary"]');
   await expect(summary).toHaveCount(1);
-  await expect(summary).toContainText(name);
+  await expect(summary.locator("p > span").first()).toHaveText(title);
   await expect(summary).toContainText("From your Library");
+  await expect(summary).toContainText(type);
+  await expect(summary).not.toContainText("library-");
+  const remove = summary.getByRole("button", { name: `Remove ${title}` });
   await expect(summary.getByRole("button")).toHaveCount(1);
+  await expect(remove).toBeVisible();
+  const phone = (page.viewportSize()?.width ?? 1440) < 640;
+  const box = (await remove.boundingBox())!;
+  if (phone) {
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+  // On a phone the source and the facts sit on two lines, with no separator stranded between them.
+  const separator = summary.locator("span.max-sm\\:hidden");
+  if (phone) await expect(separator).toBeHidden();
+  else await expect(separator).toBeVisible();
   await expect
     .poll(() =>
       summary.evaluate((el) => Array.from(el.querySelectorAll("img")).every((img) => img.complete && img.naturalWidth > 0)),
@@ -186,10 +218,15 @@ for (const view of VIEWPORTS) {
     expect(kindRequests.length).toBeGreaterThan(0);
     expect(kindRequests.every((search) => search.includes("kind=image"))).toBe(true);
     await libraryOpen(page);
+    // Each picture has its title as a one-line caption under it.
+    await expect(page.getByRole("dialog").getByRole("button", { name: "A teal fish" }).locator("span.truncate")).toHaveText("A teal fish");
     await shot(page, `home-picker-${view.name}`);
     await page.getByRole("button", { name: "A teal fish" }).click();
     await libraryClosed(page);
-    await pickedSummary(page, "library-picture.png");
+    await pickedSummary(page, page, "A teal fish", "PNG");
+    // The dashed frame of the empty drop zone is gone: it would make the filled row look empty.
+    const zone = page.locator('[data-slot="home-media-input"]');
+    expect(await zone.evaluate((el) => getComputedStyle(el).borderTopStyle)).not.toBe("dashed");
     await shot(page, `home-picked-${view.name}`);
     await page.getByRole("button", { name: "Make", exact: true }).click();
     await expect(page).toHaveURL(/\/try\/\?capability=mesh/);
@@ -218,7 +255,7 @@ for (const view of VIEWPORTS) {
     await shot(page, `try-workflow-picker-${view.name}`);
     await page.getByRole("button", { name: "A teal fish" }).click();
     await libraryClosed(page);
-    await pickedSummary(group, "library-picture.png");
+    await pickedSummary(page, group, "A teal fish", "PNG");
     await expect(group.getByRole("img", { name: "Chosen picture" })).toBeVisible();
     await page.getByRole("textbox", { name: /Describe the video/ }).fill("A teal fish swims past a reef.");
     await shot(page, `try-workflow-picked-${view.name}`);
@@ -274,7 +311,7 @@ for (const view of VIEWPORTS) {
     await shot(page, `photo-to-3d-picker-${view.name}`);
     await page.getByRole("button", { name: "A teal fish" }).click();
     await libraryClosed(page);
-    await pickedSummary(page, "library-picture.png");
+    await pickedSummary(page, page, "A teal fish", "PNG");
     await shot(page, `photo-to-3d-picked-${view.name}`);
     const request = page.waitForRequest("**/v1/meshes/generate");
     await page.getByRole("button", { name: "Make 3D model" }).click();
@@ -320,10 +357,12 @@ for (const view of VIEWPORTS) {
     expect(kindRequests.length).toBeGreaterThan(0);
     expect(kindRequests.every((search) => search.includes("kind=audio"))).toBe(true);
     await libraryOpen(page);
+    // The Library already carries the clip's length, so the tile shows it under the name.
+    await expect(page.getByRole("dialog").getByRole("button", { name: "A short spoken note" })).toContainText("0:03");
     await shot(page, `transcribe-picker-${view.name}`);
     await page.getByRole("button", { name: "A short spoken note" }).click();
     await libraryClosed(page);
-    await pickedSummary(page, "library-audio-clip.wav");
+    await pickedSummary(page, page, "A short spoken note", "WAV");
     await shot(page, `transcribe-picked-${view.name}`);
     const request = page.waitForRequest("**/audio/transcriptions");
     await page.getByRole("button", { name: "Run", exact: true }).click();
@@ -334,7 +373,7 @@ for (const view of VIEWPORTS) {
 }
 
 for (const view of VIEWPORTS) {
-  test(`The Library dialog full of pictures at ${view.name}px`, async ({ page }) => {
+  test(`A Library of ${MANY_PICTURES.length} pictures scrolls inside the dialog at ${view.name}px`, async ({ page }) => {
     await page.setViewportSize({ width: view.width, height: view.height });
     await page.route("**/me/api/workflows", (route) => fulfilJson(route, meshCatalog));
     await routeLibrary(page, MANY_PICTURES);
@@ -343,7 +382,57 @@ for (const view of VIEWPORTS) {
     else await page.getByRole("combobox", { name: "Task", exact: true }).selectOption("mesh");
     await page.getByRole("button", { name: "Choose from Library" }).click();
     await libraryOpen(page);
-    await expect(page.getByRole("dialog").locator("ul button")).toHaveCount(MANY_PICTURES.length);
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.locator("ul button")).toHaveCount(MANY_PICTURES.length);
     await shot(page, `library-full-${view.name}`);
+    // The dialog has a maximum height; the tiles scroll inside it while the header and its close button stay put.
+    const frame = (await dialog.boundingBox())!;
+    expect(frame.height).toBeLessThanOrEqual(view.height * 0.85 + 1);
+    const body = dialog.locator('[data-slot="library-picker-body"]');
+    expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight + 100)).toBe(true);
+    const close = dialog.getByRole("button", { name: "Close" });
+    const before = (await close.boundingBox())!;
+    await body.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+    await expect.poll(() => body.evaluate((el) => Math.round(el.scrollTop + el.clientHeight) >= el.scrollHeight - 1)).toBe(true);
+    await expect(close).toBeInViewport({ ratio: 1 });
+    const after = (await close.boundingBox())!;
+    expect(after.y).toBe(before.y);
+    expect((await dialog.boundingBox())!.y).toBe(frame.y);
+    await expect(dialog.locator('[data-slot="dialog-title"]')).toBeInViewport({ ratio: 1 });
+    await shot(page, `library-scrolled-${view.name}`);
   });
 }
+
+test("The Library dialog at 360px: the title clears the close button", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await page.route("**/me/api/models/catalog*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await fulfilJson(
+      route,
+      {
+        ...body,
+        models: [
+          ...(body.models ?? []),
+          {
+            id: "demo-transcribe",
+            name: "demo-transcribe",
+            capability: "transcribe",
+            capabilities: [{ intent: "speech.transcription", input_modalities: ["audio"] }],
+            locality: "local",
+          },
+        ],
+      },
+      { response },
+    );
+  });
+  await routeLibrary(page);
+  await page.goto("/try/?capability=transcribe");
+  await page.getByRole("button", { name: "Choose from Library" }).click();
+  await libraryOpen(page);
+  await shot(page, "transcribe-picker-360");
+  await page.getByRole("button", { name: "A short spoken note" }).click();
+  await libraryClosed(page);
+  await pickedSummary(page, page, "A short spoken note", "WAV");
+  await shot(page, "transcribe-picked-360");
+});

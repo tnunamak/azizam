@@ -15,13 +15,29 @@ export type LibraryAsset = {
   media_type?: string | null;
   size_bytes?: number | null;
   prompt?: string | null;
+  /** The name the Library gives an item made from another item, when it has no prompt. */
+  derived_title?: string | null;
+  /** Length in seconds, for audio and video, when the Library knows it. */
+  duration_s?: number | null;
   available?: boolean;
   // Signed links the list carries for showing the item; they are not for sending.
   thumbnail_url?: string | null;
   download_url?: string | null;
 };
 
-export type LibraryPick = Pick<LibraryAsset, "asset_id" | "media_type" | "size_bytes">;
+export type LibraryPick = Pick<LibraryAsset, "asset_id" | "media_type" | "size_bytes" | "prompt" | "derived_title">;
+
+/**
+ * What the Library calls an item: its prompt, else the name it was derived from, else a plain "<Noun> from your
+ * Library". The picker's tiles and the chosen summary both use it, so the name a person picked is the name they see.
+ */
+export function libraryTitle(asset: Pick<LibraryAsset, "prompt" | "derived_title">, noun: string): string {
+  return (
+    asset.prompt?.trim().slice(0, 80) ||
+    asset.derived_title?.trim() ||
+    `${noun[0].toUpperCase()}${noun.slice(1)} from your Library`
+  );
+}
 
 const SUBTYPE = /^[a-z]+\/([a-z0-9]+)/i;
 
