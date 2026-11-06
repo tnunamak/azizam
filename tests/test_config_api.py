@@ -7,12 +7,10 @@ the same dependencies the gateway gives it; one test class at the end mounts it 
 from __future__ import annotations
 
 import copy
-import http.server
 import json
 import sqlite3
 import subprocess
 import sys
-import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -24,6 +22,7 @@ import proxy
 from gateway import admin_store, config_api, config_cli, config_layers as layers, config_runtime
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.admin_runtime import create_admin_service_account_key
+from tests.support.fake_upstream.loopback import LoopbackServer
 from tests.support.gateway import use_admin_db
 from tests.test_config_layers import DEFAULTS, SCHEMA, limits_in_order
 from tests.test_frontend_mount_reload import live  # noqa: F401 - fixture
@@ -726,45 +725,30 @@ def test_the_command_line_exports_and_imports_with_a_dry_run_first(tmp_path, cap
     assert list(target.entries()["/pair"]["value"]) == ["right", "left"], "export and import keep the owner's key order"
 
 
-class _Redirector(http.server.BaseHTTPRequestHandler):
-    """Answers 302 to ``target`` and records what each server was sent."""
-    target = ""
-    seen: list[tuple[str, dict[str, str]]] = []
-
-    def do_GET(self) -> None:  # noqa: N802 - the http.server hook name
-        type(self).seen.append((self.path, dict(self.headers)))
-        if self.path.startswith("/admin/api/config"):
-            self.send_response(302)
-            self.send_header("Location", type(self).target)
-            self.end_headers()
+def _redirecting(seen: list[tuple[str, dict[str, str]]], target: Callable[[], str]):
+    """An upstream that records each request and answers the config API with a 302 to ``target()``."""
+    async def app(scope, receive, send) -> None:
+        await receive()
+        seen.append((scope["path"], {k.decode("latin-1"): v.decode("latin-1") for k, v in scope["headers"]}))
+        if scope["path"].startswith("/admin/api/config"):
+            await send({"type": "http.response.start", "status": 302, "headers": [(b"location", target().encode())]})
+            await send({"type": "http.response.body", "body": b""})
         else:
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b"{}")
-
-    def log_message(self, *args: Any) -> None:
-        pass
+            await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": b"{}"})
+    return app
 
 
 def test_the_command_line_does_not_follow_a_redirect_and_never_sends_the_key_elsewhere(tmp_path, capsys, monkeypatch):
     seen: list[tuple[str, dict[str, str]]] = []
-    elsewhere = type("Elsewhere", (_Redirector,), {"seen": seen})
-    other = http.server.ThreadingHTTPServer(("127.0.0.1", 0), elsewhere)
-    gateway_side = type("Gateway", (_Redirector,), {"seen": seen})
-    gateway_side.target = f"http://127.0.0.1:{other.server_port}/stolen"
-    front = http.server.ThreadingHTTPServer(("127.0.0.1", 0), gateway_side)
-    servers = [other, front]
-    threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in servers]
-    for thread in threads:
-        thread.start()
+    other = LoopbackServer(_redirecting(seen, lambda: "")).start()
+    front = LoopbackServer(_redirecting(seen, lambda: f"{other.base_url}/stolen")).start()
     try:
         monkeypatch.setenv("AZIZAM_ADMIN_KEY", "owner-key-secret")
-        code = config_cli.main(["--url", f"http://127.0.0.1:{front.server_port}", "get"])
+        code = config_cli.main(["--url", front.base_url, "get"])
     finally:
-        for server in servers:
-            server.shutdown()
-            server.server_close()
+        front.stop()
+        other.stop()
     captured = capsys.readouterr()
     assert code == 1 and "HTTP 302" in captured.err and "redirect" in captured.err
     assert [path for path, _ in seen] == ["/admin/api/config"], "the redirect target was never asked"
