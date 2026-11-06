@@ -30,6 +30,7 @@ from tests.test_transition_proof import STANDARD, assertions, steps, write_cases
 from tests.support.fake_upstream.transition_gateway import KEY
 import subprocess
 import sys
+import time
 
 DOMAIN = "dom"
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "transition-proof"
@@ -146,8 +147,7 @@ def test_the_harness_passes_against_the_real_routes_in_post_mode(real: RealRoute
     assert ("POST", f"{base}/transitions", 202) in log and ("GET", f"{base}/gate", 200) in log
     posted = [e for e in real.log if e["method"] == "POST" and e["path"] == f"{base}/transitions"]
     assert len(posted) == 2 and all(e["status"] == 202 for e in posted)
-    assert any(m == "GET" and p.startswith(f"{base}/transitions/op-") and s == 200 for m, p, s in log) or \
-        any(m == "GET" and p.startswith(f"{base}/transitions/") and s == 200 for m, p, s in log)
+    assert any(m == "GET" and p.startswith(f"{base}/transitions/") and s == 200 for m, p, s in log)
     assert steps(result)["park"]["states"][-1] == "succeeded" and steps(result)["wake"]["final_state"] == "succeeded"
     assert [t["gate"] for t in result["cases"][0]["gate_trace"]] == ["open"] * 4
     assert [c[0] for c in real.engine.calls if c[0] in ("transition.release", "transition.load")] == \
@@ -159,7 +159,6 @@ def test_request_mode_wakes_through_the_real_executor(real: RealRoutesGateway, t
     assert process.returncode == 0, process.stdout + process.stderr
     posted = [e for e in real.log if e["method"] == "POST" and e["path"].endswith("/transitions")]
     assert len(posted) == 1, "only the park is posted; the follow-up woke the domain"
-    kinds = [real.runtime.executor().store.get(f"op-{n}") for n in ()]  # noqa: F841 - ids are opaque; read by key below
     store = real.runtime.executor().store
     assert store.by_idempotency_key(DOMAIN, "proof-t-park").kind == "park"
     assert store.by_idempotency_key(DOMAIN, "wake-auto").kind == "wake"
@@ -182,18 +181,21 @@ def test_a_held_domain_is_a_503_with_retry_after_and_the_harness_reports_it(real
     assert refused[0]["status"] == 503 and refused[0]["retry_after"] == "7"
 
 
-def test_a_409_from_the_real_routes_names_the_running_operation(real: RealRoutesGateway, tmp_path: Path) -> None:
+def test_a_409_from_the_real_routes_names_the_running_operation(real: RealRoutesGateway) -> None:
     hold = asyncio.Event()
     real.engine.hold_release = hold
-    base = f"{real.server.base_url}/admin/api/engines/domains/{DOMAIN}/transitions"
     headers = {"Authorization": f"Bearer {KEY}"}
-    with httpx.Client(headers=headers, timeout=10) as client:
+    with httpx.Client(headers=headers, timeout=10, base_url=real.server.base_url) as client:
+        base = f"/admin/api/engines/domains/{DOMAIN}/transitions"
         first = client.post(base, json={"kind": "park", "idempotency_key": "other"})
         assert first.status_code == 202 and set(first.json()) == {"op_id", "state", "gate"}
-        client_proof = Proof(client, domain=DOMAIN, model="alias", wake_mode="post", run_id="t", poll_interval_s=0.02,
-                             poll_timeout_s=1)
-        client_proof.client = httpx.Client(headers=headers, timeout=10, base_url=real.server.base_url)
-        step = client_proof._transition("park")
+        step = Proof(client, domain=DOMAIN, model="alias", wake_mode="post", run_id="t", poll_interval_s=0.02,
+                     poll_timeout_s=1)._transition("park")
         assert step["http_status"] == 409 and first.json()["op_id"] in step["error"] and step["ok"] is False
-    real.run_on_server_loop(hold.set)
-    client_proof.client.close()
+        real.run_on_server_loop(hold.set)
+        for _ in range(500):  # let the held park finish before the server stops
+            if client.get(f"/admin/api/engines/domains/{DOMAIN}/gate").json()["gate"] == "open":
+                break
+            time.sleep(0.02)
+        else:
+            raise AssertionError("the held park did not finish")
