@@ -89,8 +89,8 @@ def test_kept_prefix_passes_with_every_step_recorded(gateway: FakeTransitionGate
     assert [t["gate"] for t in case["gate_trace"]] == ["open", "open", "open", "open"]
     assert steps(result)["seed"]["reply_text"] == "answer" and steps(result)["seed"]["usage"]["prompt_tokens"] > 0
     assert followup["cached_tokens"] == steps(result)["seed"]["prompt_tokens"] and followup["seconds"] > 0
-    assert gateway.paths()[:3] == ["POST /v1/chat/completions", "GET /admin/engines/domains/proof-domain/gate",
-                                   "POST /admin/engines/domains/proof-domain/transitions"]
+    assert gateway.paths()[:3] == ["POST /v1/chat/completions", "GET /admin/api/engines/domains/proof-domain/gate",
+                                   "POST /admin/api/engines/domains/proof-domain/transitions"]
     sent = [r for r in gateway.requests if r["path"] == "/v1/chat/completions"]
     assert {r["body"]["model"] for r in sent} == {"alias"}  # the frozen body's own model name is never sent
     assert sent[1]["body"]["messages"][:-1] == sent[0]["body"]["messages"]

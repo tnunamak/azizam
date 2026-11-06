@@ -75,7 +75,7 @@ class FakeTransitionGateway:
     async def _route(self, method: str, path: str, body: Any, auth: Any) -> tuple[int, Any]:
         if auth != f"Bearer {self.key}":
             return 401, {"error": "bad key"}
-        prefix = f"/admin/engines/domains/{self.domain}/"
+        prefix = f"/admin/api/engines/domains/{self.domain}/"
         if path == "/v1/chat/completions":
             return await self._chat(body)
         if not path.startswith(prefix):
@@ -117,7 +117,7 @@ class FakeTransitionGateway:
             op["polls_left"] -= 1
             if op["polls_left"] <= 0:
                 self._settle(op)
-        return 200, {"op_id": op_id, "domain": self.domain, "kind": op["kind"], "state": op["state"]}
+        return 200, {"operation": {"op_id": op_id, "domain": self.domain, "kind": op["kind"], "state": op["state"]}}
 
     def _settle(self, op: dict[str, Any]) -> None:
         mode = getattr(self, op["kind"])

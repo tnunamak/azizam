@@ -288,14 +288,14 @@ class TransitionExecutor(Protocol):
         ...
 
 
-# HTTP surface (T1.2), owner only, under the existing admin engine router:
-#   POST /admin/engines/domains/{domain}/transitions
+# HTTP surface (T1.2), owner only, on the admin router (prefix /admin/api, gateway/transition_admin.py):
+#   POST /admin/api/engines/domains/{domain}/transitions
 #        body {"kind": "select"|"park"|"wake", "target"?: str, "idempotency_key": str}
 #        202 {"op_id", "state", "gate"}   new or same key (retry)
 #        409 {"op_id", "state"}           another unfinished operation holds the domain
 #        404                              unknown domain, or a domain without transition enabled
-#   GET  /admin/engines/domains/{domain}/transitions/{op_id}   the Operation as JSON
-#   GET  /admin/engines/domains/{domain}/gate                  {"gate", "op_id"}
+#   GET  /admin/api/engines/domains/{domain}/transitions/{op_id}   {"operation": the Operation as JSON}
+#   GET  /admin/api/engines/domains/{domain}/gate                  {"gate", "op_id", ...}
 # A refused request while the gate is not open is TransitionUnavailable (503 + Retry-After).
 # A request to a parked domain triggers ``wake`` through ``submit`` (key: "wake-<incarnation>")
 # and waits on the lock up to admission_wait_s; the wake mints that request's lease under the

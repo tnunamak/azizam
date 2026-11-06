@@ -16,6 +16,8 @@ import httpx
 
 from .manifest import Case, read_path
 
+ADMIN_DOMAINS = "/admin/api/engines/domains"
+"""Where the gateway mounts the owner transition routes (gateway/transition_admin.py, on the admin router)."""
 TERMINAL_OK = "succeeded"
 HOLDING = ("failed_closed", "reconciling")
 KNOWN_STATES = ("running", "succeeded", "aborted", *HOLDING)
@@ -54,7 +56,7 @@ class Proof:
         return record
 
     def _gate(self) -> Optional[str]:
-        reply = self._call("GET", f"/admin/engines/domains/{self.domain}/gate")
+        reply = self._call("GET", f"{ADMIN_DOMAINS}/{self.domain}/gate")
         data = reply["json"]
         return data.get("gate") if reply["http_status"] == 200 and isinstance(data, dict) else None
 
@@ -77,7 +79,7 @@ class Proof:
         key = f"proof-{self.run_id}-{kind}"
         step: dict[str, Any] = {"name": kind, "idempotency_key": key, "op_id": None, "states": [], "ok": False}
         started = time.monotonic()
-        reply = self._call("POST", f"/admin/engines/domains/{self.domain}/transitions",
+        reply = self._call("POST", f"{ADMIN_DOMAINS}/{self.domain}/transitions",
                            {"kind": kind, "idempotency_key": key})
         data = reply["json"] if isinstance(reply["json"], dict) else {}
         step["http_status"] = reply["http_status"]
@@ -92,8 +94,9 @@ class Proof:
             return step
         deadline = time.monotonic() + self.poll_timeout_s
         while True:
-            poll = self._call("GET", f"/admin/engines/domains/{self.domain}/transitions/{step['op_id']}")
-            operation = poll["json"] if isinstance(poll["json"], dict) else {}
+            poll = self._call("GET", f"{ADMIN_DOMAINS}/{self.domain}/transitions/{step['op_id']}")
+            body = poll["json"] if isinstance(poll["json"], dict) else {}
+            operation = body.get("operation") if isinstance(body.get("operation"), dict) else {}
             state = operation.get("state")
             if poll["http_status"] != 200 or state not in KNOWN_STATES:
                 step["error"] = poll["error"] or f"the operation read gave status {poll['http_status']}, state {state!r}"
