@@ -499,7 +499,8 @@
 # Batched service-health history (2026-11-05): +38 cases, test_status_service_history_batch (oracle, grouped helpers, statement counts); collect-only measured 19026.
 # Config homes C2 merged onto the public-hygiene main (2026-11-06): main's 18989 + the 107 config cases; scripts/run-hermetic-pytest.sh --collect-only -q measured 19096.
 # S2.2 merged with main (2026-11-06): main 18989 + 29 S2.2 cases; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19018.
-pytest = 19163
+# Config homes C6 (2026-11-06): the folded settings add test_config_fold.py (25), test_config_fold_responses.py (4) and cases in the touched settings, admin and config tests; scripts/run-hermetic-pytest.sh --collect-only -q measured 19192.
+pytest = 19192
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -631,7 +632,8 @@ pytest = 19163
 # Stop waiting, Cancel), mesh-job.spec.ts and mesh-mode.spec.ts; vitest list measured 3769 (--root web).
 # Mesh review fixes (2026-11-05): mesh-job.spec.ts and mesh-panel.spec.tsx (Azizam is not answering, Check again), plus the specs
 # the base lane added since; vitest list --json measured 3795 (--root web).
-vitest = 3802
+# Config homes C6 (2026-11-06): the settings page spec runs its stale-write case for 412 and 409 (+2 over the base); vitest list measured 3804 (--root web).
+vitest = 3804
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
