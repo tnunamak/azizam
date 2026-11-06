@@ -88,6 +88,15 @@ def ensure_service_registry(*, path: Path = admin_store.DB_PATH, actor: str = "s
             action = "operator.service_registry.seed"
             expected_generation = 0
         else:
+            if not _parses_as_object(record["value_json"]):
+                # A damaged value would read as an empty document and migrate to an empty owner layer, replacing the
+                # owner's whole registry on this start. Leave it as stored, for a restore or an import, and serve the
+                # release records. The message names the setting, never its contents.
+                print(f"[service_registry] ERROR: the stored {SERVICE_REGISTRY_SETTING_KEY!r} is not a JSON object; "
+                      "it is left as stored and the release records are served. Restore it from a backup or import "
+                      "a registry.", flush=True)
+                return normalize_service_registry(
+                    registry_layers.layer(registry_layers.empty_stored(SERVICE_REGISTRY_SCHEMA_VERSION), release))
             stored = _stored_document(record["value_json"])
             if registry_layers.is_layered(stored):
                 if not admin_store.migration_step_recorded(registry_layers.LAYERING_STEP, path=path):
@@ -128,6 +137,13 @@ def ensure_service_registry(*, path: Path = admin_store.DB_PATH, actor: str = "s
         return normalize_service_registry(registry_layers.layer(stored, release))
 
     raise RuntimeError("service registry changed during bounded startup retry")
+
+
+def _parses_as_object(document: str) -> bool:
+    try:
+        return isinstance(json.loads(document), dict)
+    except (TypeError, ValueError):
+        return False
 
 
 def _stored_document(document: str) -> dict[str, Any]:
