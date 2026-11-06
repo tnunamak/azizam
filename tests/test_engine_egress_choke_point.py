@@ -161,19 +161,41 @@ def test_a_probe_get_needs_no_lease_and_the_mark_never_reaches_the_transport(pub
 
 def test_a_probe_mark_covers_only_the_paths_the_record_declares(published) -> None:
     """Some engines change state on a GET (llama-swap ``GET /unload``): the mark on an undeclared path exempts nothing.
-    Failed before the fix: any marked GET passed."""
+    A path counts only when it equals a declared path: llama-swap starts a model on ``GET /upstream/<model>/<anything>``,
+    so ``/upstream/m/health`` is refused although it ends with ``/health``. Failed before the fix: any marked GET
+    passed, then any path that ended with a declared one."""
     wire = Wire()
-    for path in ("/healthz", "/health", "/api/ps", "/v1/models", "/prefix/healthz"):
+    for path in ("/healthz", "/health", "/api/ps", "/v1/models"):
         assert _send(engine_egress.async_client(transport=wire.transport), "GET", f"{ENGINE}{path}",
                      extensions=engine_egress.probe()).status_code == 200
     sent = len(wire.requests)
-    for path in ("/unload", "/running/../unload", "/v1/chat/completions", "/healthz/unload", "/"):
+    for path in ("/unload", "/running/../unload", "/v1/chat/completions", "/healthz/unload", "/",
+                 "/upstream/m/health", "/upstream/m/healthz", "/health/", "/x/health"):
         with pytest.raises(TransitionUnavailable):
             _send(engine_egress.async_client(transport=wire.transport), "GET", f"{ENGINE}{path}", extensions=engine_egress.probe())
     assert len(wire.requests) == sent, "a refused GET is not sent"
     transition_gate._EGRESS_LEASES.set((_lease("dom"),))
     assert _send(engine_egress.async_client(transport=wire.transport), "GET", f"{ENGINE}/unload",
                  extensions=engine_egress.probe()).status_code == 200, "with a lease any request goes"
+
+
+def test_a_probe_mark_covers_the_declared_path_under_the_records_own_url_prefix(monkeypatch) -> None:
+    """A record whose URL is ``http://h:port/v1`` is read at ``/v1/health``: its own prefix plus a declared path."""
+    monkeypatch.setattr(engine_egress, "_destinations", engine_egress.mapped_destinations())
+    monkeypatch.setattr(engine_egress, "_probe_paths", engine_egress._probe_paths)
+    engine_egress.publish({"engine": {"enabled": True, "base_url": f"{ENGINE}/v1/", "health_endpoint": "/healthz",
+                                      "residency": {"domain": "dom", "transition": dict(ENABLED)}}})
+    token = transition_gate._EGRESS_LEASES.set(())
+    try:
+        wire = Wire()
+        for path in ("/healthz", "/health", "/v1/healthz", "/v1/health"):
+            assert _send(engine_egress.async_client(transport=wire.transport), "GET", f"{ENGINE}{path}",
+                         extensions=engine_egress.probe()).status_code == 200
+        for path in ("/v2/health", "/v1/v1/unload", "/v1/unload", "/upstream/m/v1/health"):
+            with pytest.raises(TransitionUnavailable):
+                _send(engine_egress.async_client(transport=wire.transport), "GET", f"{ENGINE}{path}", extensions=engine_egress.probe())
+    finally:
+        transition_gate._EGRESS_LEASES.reset(token)
 
 
 def test_the_declared_paths_are_read_from_the_record_and_its_offerings() -> None:

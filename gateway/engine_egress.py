@@ -14,9 +14,10 @@ websocket is not an httpx request: the hook cannot see its send, so the websocke
 
 A probe is a read of health or metadata. It marks its own request with ``probe()`` (a request extension the hook
 removes before the transport sees it). The mark counts only on a GET, and only when the path is one the service
-record declares as a health, metadata or observer path (``declared_probe_paths``): some engines change state on
-a GET (llama-swap ``GET /unload``), so a GET of any other path to an enabled domain needs a lease. Nothing else
-is exempt, and no function name is.
+record declares as a health, metadata or observer path (``declared_probe_paths``), whole and equal to the request
+path (or that path under the path prefix of the record's own URL): some engines change state on a GET
+(llama-swap ``GET /unload``, ``GET /upstream/<model>/...``), so a GET of any other path to an enabled domain needs
+a lease. Nothing else is exempt, and no function name is.
 
 The destination map is host and port only: two names for one address are two destinations, and an engine
 reached by a name that is not the one in its record is not mapped. The gateway builds every engine URL from
@@ -48,7 +49,8 @@ _LOOPBACK = {"localhost": "127.0.0.1", "::1": "127.0.0.1", "[::1]": "127.0.0.1"}
 _URL_FIELDS = ("url", "base_url", "api_base", "default_base_url", "address", "upstream")
 
 _destinations: Mapping[str, tuple[str, ...]] = MappingProxyType({})
-# The health, metadata and observer paths the records declare, by destination (see ``declared_probe_paths``).
+# The exact request paths a probe mark covers, by destination: each path a record declares (see
+# ``declared_probe_paths``), alone and under the path prefix of the record's own URL.
 _probe_paths: Mapping[str, frozenset[str]] = MappingProxyType({})
 # The path a service reads for health when its record names none.
 DEFAULT_HEALTH_PATH = "/health"
@@ -71,9 +73,17 @@ def _key_of_url(value: Any) -> str | None:
         return None
 
 
-def destinations_of(record: Mapping[str, Any]) -> set[str]:
-    """The ``host:port`` keys one service record is reached at: its host and port, and its URL fields."""
-    found: set[str] = set()
+def _prefix_of_url(value: Any) -> str:
+    """The path of a record's URL with no trailing slash (``/v1`` for ``http://h:1/v1/``); empty when it has none."""
+    try:
+        return urlsplit(value.strip()).path.rstrip("/")
+    except (AttributeError, ValueError):
+        return ""
+
+
+def _destination_prefixes(record: Mapping[str, Any]) -> dict[str, set[str]]:
+    """The ``host:port`` keys one service record is reached at, each with the URL path prefixes the record gives it."""
+    found: dict[str, set[str]] = {}
     scopes = [record]
     if isinstance(record.get("config"), Mapping):
         scopes.append(record["config"])
@@ -83,19 +93,23 @@ def destinations_of(record: Mapping[str, Any]) -> set[str]:
             if "://" in host:
                 key = _key_of_url(host)
                 if key:
-                    found.add(key)
+                    found.setdefault(key, set()).add(_prefix_of_url(host))
             elif isinstance(port, (int, str)) and not isinstance(port, bool) and str(port).isdigit():
-                found.add(destination_key(host, int(port), str(scope.get("scheme") or "http")))
-        for field in _URL_FIELDS:
-            key = _key_of_url(scope.get(field))
-            if key:
-                found.add(key)
+                found.setdefault(destination_key(host, int(port), str(scope.get("scheme") or "http")), set()).add("")
+        urls = [scope.get(field) for field in _URL_FIELDS]
         connection = scope.get("connection")
         if isinstance(connection, Mapping):
-            key = _key_of_url(connection.get("address"))
+            urls.append(connection.get("address"))
+        for url in urls:
+            key = _key_of_url(url)
             if key:
-                found.add(key)
+                found.setdefault(key, set()).add(_prefix_of_url(url))
     return found
+
+
+def destinations_of(record: Mapping[str, Any]) -> set[str]:
+    """The ``host:port`` keys one service record is reached at: its host and port, and its URL fields."""
+    return set(_destination_prefixes(record))
 
 
 def _path_of(value: Any) -> str | None:
@@ -117,7 +131,7 @@ def declared_probe_paths(record: Mapping[str, Any]) -> set[str]:
 
     These are the record's ``health_endpoint`` (and the default health path), its ``context_window_probe`` endpoint,
     the path of each declared observation, the ``verify_endpoint`` of its lifecycle driver, and the same fields of
-    each offering. A path is matched at the end of the request path, because a base URL may carry a prefix.
+    each offering. ``publish`` allows each path as written and under the path prefix of the record's own URL.
     """
     found: set[str] = {DEFAULT_HEALTH_PATH}
     scopes: list[Mapping[str, Any]] = [record]
@@ -150,8 +164,18 @@ def declared_probe_paths(record: Mapping[str, Any]) -> set[str]:
     return found
 
 
-def publish(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[Mapping[str, Any]], Iterable[str]] | None = None) -> None:
-    """Replace the map from the services of the runtime config just published (one reference swap).
+class Projection:
+    """The destination map and the probe paths, built from one set of services and not yet live (see ``project``)."""
+
+    __slots__ = ("destinations", "probe_paths")
+
+    def __init__(self, destinations: Mapping[str, tuple[str, ...]], probe_paths: Mapping[str, frozenset[str]]) -> None:
+        self.destinations = destinations
+        self.probe_paths = probe_paths
+
+
+def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[Mapping[str, Any]], Iterable[str]] | None = None) -> Projection:
+    """Build the map from these services without making it live, so a failure here changes nothing.
 
     ``extra_probe_paths`` names further metadata paths a record's kind reads (the loaded-state endpoint of its
     ``state_type``): the engine kinds are known to the caller, not to this module.
@@ -167,17 +191,28 @@ def publish(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
         declared = declared_probe_paths(record)
         if extra_probe_paths is not None:
             declared.update(path for path in map(_path_of, extra_probe_paths(record)) if path)
-        for key in destinations_of(record):
+        for key, prefixes in _destination_prefixes(record).items():
             if policy.domain not in built.setdefault(key, []):
                 built[key].append(policy.domain)
-            paths.setdefault(key, set()).update(declared)
+            paths.setdefault(key, set()).update(prefix + path for prefix in prefixes | {""} for path in declared)
+    return Projection(MappingProxyType({key: tuple(domains) for key, domains in built.items()}),
+                      MappingProxyType({key: frozenset(value) for key, value in paths.items()}))
+
+
+def install(projection: Projection) -> None:
+    """Make a projection live (one reference swap for each of the two maps)."""
     global _destinations, _probe_paths
-    _probe_paths = MappingProxyType({key: frozenset(value) for key, value in paths.items()})
-    _destinations = MappingProxyType({key: tuple(domains) for key, domains in built.items()})
+    _probe_paths = projection.probe_paths
+    _destinations = projection.destinations
+
+
+def publish(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[Mapping[str, Any]], Iterable[str]] | None = None) -> None:
+    """Replace the map from these services: ``project`` then ``install``."""
+    install(project(services, extra_probe_paths=extra_probe_paths))
 
 
 def _declared_probe(key: str, path: str) -> bool:
-    return any(path == declared or path.endswith(declared) for declared in _probe_paths.get(key, ()))
+    return path in _probe_paths.get(key, ())
 
 
 def mapped_destinations() -> Mapping[str, tuple[str, ...]]:
