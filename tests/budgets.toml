@@ -739,11 +739,12 @@ domain_literals = 826
 # The corrected scan measures proxy.py before C0 at 97 as well, so C1 moved no real import-time read: DECISION_RUNTIME
 # and MESH_DEPS read the config inside a lambda, which was never an import-time read. Each section slice moves its readers to the runtime
 # snapshot and lowers its key; a key is removed when its count reaches zero.
+# 94 on 2026-11-06 (C6): the instance, media admission and service availability settings moved into the config layer, so the
+# "gateway" key (GATEWAY_CFG, RESOURCE_ADMISSION_CFG, MEDIA_JOB_ADMISSION_CFG) reached zero and is gone.
 "import_time_config_reads.admin" = 2
 "import_time_config_reads.audio" = 5
 "import_time_config_reads.auth" = 5
 "import_time_config_reads.backends" = 23
-"import_time_config_reads.gateway" = 3
 "import_time_config_reads.identity" = 1
 "import_time_config_reads.images" = 27
 "import_time_config_reads.llm" = 1
