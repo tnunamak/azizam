@@ -128,13 +128,13 @@ def test_sources_names_each_record_origin_and_never_a_value():
     assert "Secret-looking value" not in repr(view)
 
 
-def test_an_old_whole_document_reads_as_a_set_of_complete_patches_plus_the_release_records_it_lacks():
+def test_an_old_whole_document_reads_as_whole_records_plus_the_release_records_it_lacks():
     whole = {"services": {"engine": {"id": "engine", "name": "Old engine"}}}
 
     effective = layers.layer(whole, RELEASE)
 
     assert effective["services"]["engine"]["name"] == "Old engine"
-    assert effective["services"]["engine"]["config"]["timeout"] == 30  # merged under, as a patch
+    assert "config" not in effective["services"]["engine"]  # replaces the release record: a patch cannot delete a key
     assert "provider" in effective["services"]
 
 

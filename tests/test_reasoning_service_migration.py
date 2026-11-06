@@ -255,13 +255,12 @@ def test_migration_scope_generation_and_opt_out(tmp_path):
     admin_store.init_db(db)
     assert snapshot(db) == opted_out
     # Normalization/backfill must not reattach after an operator removes it.
-    runtime = {"backends": {"local": {**prototype["config"], "transforms": ["reasoning-effort-final-chat"]}}}
-    assert service_registry.ensure_service_registry(runtime, path=db)["services"]["local"]["config"]["transforms"] == []
+    assert service_registry.ensure_service_registry(path=db)["services"]["local"]["config"]["transforms"] == []
     with sqlite3.connect(db) as conn:
         value = json.loads(snapshot(db)[0])
         del value["services"]["local"]["config"]["transforms"]
         conn.execute("UPDATE operator_settings SET value_json=? WHERE key='service_registry'", (json.dumps(value),))
-    assert "transforms" not in service_registry.ensure_service_registry(runtime, path=db)["services"]["local"]["config"]
+    assert "transforms" not in service_registry.ensure_service_registry(path=db)["services"]["local"]["config"]
 
 
 @pytest.mark.parametrize("request_path", ["/v1/chat/completions", "/v1/completions"])

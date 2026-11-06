@@ -38,7 +38,8 @@ def _live_shaped_registry() -> dict:
     document = seed_registry_document(raw)  # provisioned engines + the release records, as the old seed built them
     document["services"].pop("openrouter", None)  # never backfilled
     litellm = document["services"]["litellm"]
-    litellm.update({"name": "Operator LiteLLM", "enabled": False, "note": "the owner's own note"})
+    litellm.update({"name": "Operator LiteLLM", "enabled": False})
+    litellm["config"]["note"] = "the owner's own note"  # where the managed row keeps a note
     for service_id in ("ui-chat", "ui-voice", "ui-notes"):  # made in the UI: no release record
         document["services"][service_id] = service_registry.normalize_service_record(service_id, {
             "name": service_id, "source": "ui", "kind": "provider", "enabled": True, "capabilities": ["chat"],
@@ -90,6 +91,7 @@ def test_the_step_leaves_the_route_table_mounts_models_and_aliases_where_they_we
     db, document = old_install
     catalogs = service_registry.load_seed_catalogs({})
     before_registry, _carried = registry_migration.effective_before(document, catalogs)  # what the old boot served
+    before_registry = json.loads(json.dumps(before_registry, sort_keys=True))  # the store keeps keys in sorted order
     before = _observables(_boot(tmp_path / "before.db", stored_registry=before_registry), before_registry)
 
     after_registry = service_registry.ensure_service_registry(path=db, actor="test")  # the step runs here
@@ -119,7 +121,7 @@ def test_stored_after_the_step_holds_patches_tombstones_and_owner_records_only(o
     service_registry.ensure_service_registry(path=db, actor="test")
     stored = admin_store.get_operator_setting("service_registry", path=db)["value"]
 
-    assert set(stored["services"]["litellm"]) == {"name", "enabled", "note"}  # a patch: the release supplies the rest
+    assert set(stored["services"]["litellm"]) == {"name", "enabled", "config"}  # a patch: the release supplies the rest
     assert stored["tombstones"]["services"] == ["openrouter"]
     assert {"ui-chat", "ui-voice", "ui-notes", "kobold"} <= set(stored["services"])  # owner records, whole
     assert set(stored["protocol_frontends"]) == {"acme"}  # builtin frontends inherit; none is stored
@@ -149,7 +151,7 @@ def test_a_release_change_to_another_field_reaches_a_migrated_install_without_an
     assert registry["services"]["litellm"]["config"]["health_endpoint"] == "/health/changed"
     assert registry["services"]["litellm"]["name"] == "Operator LiteLLM"
     assert registry["protocol_frontends"]["mesh"]["name"] == "Mesh, renamed by the release"
-    assert view["services"]["litellm"]["fields"] == ["enabled", "name", "note"]
+    assert view["services"]["litellm"]["fields"] == ["config", "config.note", "enabled", "name"]
 
 
 def test_a_deleted_release_record_stays_deleted_when_a_later_release_changes_it(old_install, tmp_path):
@@ -174,7 +176,7 @@ def test_the_report_names_records_and_fields_and_the_audit_edit_and_never_a_valu
     printed = capsys.readouterr().out
 
     assert status == 0
-    assert "patch   services/litellm" in printed and "fields: enabled, name, note" in printed
+    assert "patch   services/litellm" in printed and "fields: config, config.note, enabled, name" in printed
     assert "owner edit in audit log: yes" in printed
     assert "tombstone" in printed and "openrouter" in printed
     assert "gate: equal before and after" in printed
