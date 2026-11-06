@@ -92,6 +92,7 @@ def test_kept_prefix_passes_with_every_step_recorded(gateway: FakeTransitionGate
     assert (park["op_id"], park["idempotency_key"], park["states"]) == ("op-1", "proof-t-small-park", ["running", "succeeded"])
     assert (wake["op_id"], wake["idempotency_key"]) == ("op-2", "proof-t-small-wake")
     assert [t["gate"] for t in case["gate_trace"]] == ["open", "open", "open", "open"]
+    assert [t["parked"] for t in case["gate_trace"]] == [None, "op-1", None, None]
     assert steps(result)["seed"]["reply_text"] == "answer" and steps(result)["seed"]["usage"]["prompt_tokens"] > 0
     assert followup["cached_tokens"] == steps(result)["seed"]["prompt_tokens"] and followup["seconds"] > 0
     assert gateway.paths()[:3] == ["POST /v1/chat/completions", "GET /admin/api/engines/domains/proof-domain/gate",
@@ -159,7 +160,7 @@ def test_a_gate_that_stays_reconciling_is_reported_not_waited_out(gateway: FakeT
     assert process.returncode == 1
     park = steps(result)["park"]
     assert park["final_state"] == "reconciling" and "owner" in park["error"]
-    assert result["cases"][0]["gate_trace"][-1] == {"at": "after_park", "gate": "reconciling"}
+    assert result["cases"][0]["gate_trace"][-1] == {"at": "after_park", "gate": "reconciling", "parked": None}
     assert result["cases"][0]["status"] == "failed"
 
 
