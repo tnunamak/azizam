@@ -307,9 +307,10 @@ def create_config_router(
         except Exception as error:  # noqa: BLE001 - the change is committed; the old snapshot keeps serving and says so
             # This change's own id and entries, never the shared last-commit note: another writer may have replaced
             # it, and a publish may have cleared it.
-            # The reload itself noted its failure text (cleaned of stored values); keep that text, not the raw one.
+            # The reload itself noted its failure text (cleaned of stored values); keep that text. If a publish cleared
+            # the note first, the raw text could quote a stored value, so name only the error type.
             noted = h.reload_failed
-            text = noted["error"] if noted is not None else f"{type(error).__name__}: {error}"
+            text = noted["error"] if noted is not None else f"{type(error).__name__}; see the gateway log"
             failed = h.note_reload_failed(text, path=db(), change_id=change_id, entries=entries)
             return _ok({**result, "reload": {"status": "failed", "error": failed["error"]}}, status=202)
         return _ok({**result, "reload": {"status": "ok"}})

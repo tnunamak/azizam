@@ -85,7 +85,7 @@ class Client:
 
 
 def _show(value: Any) -> None:
-    print(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False))
+    print(json.dumps(value, indent=2, ensure_ascii=False))
 
 
 def _change(client: Client, op: str, section: str, pointer: str, args: argparse.Namespace, value: Any = None) -> None:
@@ -116,7 +116,7 @@ def run(args: argparse.Namespace, client: Client) -> None:
     elif args.command == "export":
         document = client.call("GET", f"{API}/export?format=v1" + ("&view=effective" if args.effective else ""))
         if args.output:
-            Path(args.output).write_text(json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+            Path(args.output).write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         else:
             _show(document)
     elif args.command == "import":

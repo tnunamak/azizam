@@ -422,6 +422,9 @@ def test_a_failed_reload_names_its_own_change_when_a_publish_clears_the_shared_n
     failed = gw.client.get(f"{API}/sections/{SECTION}", headers=OWNER).json()["reload_failed"]
     assert failed is not None and failed["change_id"] == response.json()["change_id"]
     assert [(e["section"], e["pointer"]) for e in failed["entries"]] == [(SECTION, "/timeout")]
+    # With the cleaned note gone, the raw exception text (which can quote a stored value) is never recorded or answered.
+    assert "snapshot build failed" not in failed["error"]
+    assert "snapshot build failed" not in response.json()["reload"]["error"]
 
 
 def test_an_object_value_is_served_with_its_keys_in_the_order_the_owner_sent(gw):
@@ -704,6 +707,7 @@ def test_the_command_line_exports_and_imports_with_a_dry_run_first(tmp_path, cap
     assert "dry run only" in capsys.readouterr().err
     assert config_cli.main(["--url", "http://gateway.test", "import", str(out_file), "--apply"], transport=run.transport) == 0
     assert target.digest() == source.digest()
+    assert list(target.entries()["/pair"]["value"]) == ["right", "left"], "export and import keep the owner's key order"
 
 
 class _Redirector(http.server.BaseHTTPRequestHandler):
