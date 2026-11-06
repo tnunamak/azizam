@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any, Iterator
 
+import httpx
 import pytest
 
 from scripts.transition_proof.manifest import InputError, load_cases, read_path
@@ -36,7 +37,8 @@ def gateway() -> Iterator[FakeTransitionGateway]:
         fake.stop()
 
 
-def write_cases(directory: Path, cache_check: dict[str, Any] = STANDARD, *, labels: tuple[str, ...] = ("small",)) -> Path:
+def write_cases(directory: Path, cache_check: dict[str, Any] = STANDARD, *, labels: tuple[str, ...] = ("small",),
+                estimate: bool = True) -> Path:
     cases = []
     for label in labels:
         body = {"model": "frozen-name", "stream": False, "seed": 1, "temperature": 0, "max_tokens": 8,
@@ -45,14 +47,14 @@ def write_cases(directory: Path, cache_check: dict[str, Any] = STANDARD, *, labe
         raw = json.dumps(body).encode()
         (directory / f"{label}.json").write_bytes(raw)
         cases.append({"label": label, "file": f"{label}.json", "sha256": hashlib.sha256(raw).hexdigest(),
-                      "followup": "What is record 7?", "count_estimate": {"input_tokens": 1000}})
+                      "followup": "What is record 7?", **({"count_estimate": {"input_tokens": 1000}} if estimate else {})})
     manifest = directory / "cases.json"
     manifest.write_text(json.dumps({"cache_check": cache_check, "cases": cases}))
     return manifest
 
 
 def run(gateway: FakeTransitionGateway, tmp_path: Path, *extra: str, manifest: Path | None = None,
-        key_file: Path | None = None) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+        key_file: Path | None = None, run_id: str = "t") -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
     if key_file is None:
         key_file = tmp_path / "owner.key"
         key_file.write_text(KEY + "\n")
@@ -60,7 +62,7 @@ def run(gateway: FakeTransitionGateway, tmp_path: Path, *extra: str, manifest: P
     process = subprocess.run(
         [sys.executable, str(SCRIPT), "--base-url", gateway.base_url, "--domain", DOMAIN, "--model", "alias",
          "--cases", str(manifest or write_cases(tmp_path)), "--owner-key-file", str(key_file), "--out", str(out),
-         "--poll-interval-s", "0.02", "--poll-timeout-s", "1", "--request-timeout-s", "10", "--run-id", "t", *extra],
+         "--poll-interval-s", "0.02", "--poll-timeout-s", "1", "--request-timeout-s", "10", "--run-id", run_id, *extra],
         capture_output=True, text=True, check=False, timeout=60)
     return process, json.loads(out.read_text()) if out.exists() else {}
 
@@ -84,8 +86,8 @@ def test_kept_prefix_passes_with_every_step_recorded(gateway: FakeTransitionGate
         "followup_replied": True, "cached_tokens_reported": True, "seed_prompt_tokens_known": True,
         "cached_prefix_kept": True, "cold_baseline_replied": True, "followup_faster_than_cold": True}
     park, wake, followup = steps(result)["park"], steps(result)["wake"], steps(result)["followup"]
-    assert (park["op_id"], park["idempotency_key"], park["states"]) == ("op-1", "proof-t-park", ["running", "succeeded"])
-    assert (wake["op_id"], wake["idempotency_key"]) == ("op-2", "proof-t-wake")
+    assert (park["op_id"], park["idempotency_key"], park["states"]) == ("op-1", "proof-t-small-park", ["running", "succeeded"])
+    assert (wake["op_id"], wake["idempotency_key"]) == ("op-2", "proof-t-small-wake")
     assert [t["gate"] for t in case["gate_trace"]] == ["open", "open", "open", "open"]
     assert steps(result)["seed"]["reply_text"] == "answer" and steps(result)["seed"]["usage"]["prompt_tokens"] > 0
     assert followup["cached_tokens"] == steps(result)["seed"]["prompt_tokens"] and followup["seconds"] > 0
@@ -103,7 +105,7 @@ def test_request_mode_lets_the_followup_trigger_the_wake(gateway: FakeTransition
     assert process.returncode == 0, process.stdout + process.stderr
     posted = [r["body"]["kind"] for r in gateway.requests if r["method"] == "POST" and r["path"].endswith("/transitions")]
     assert posted == ["park"]  # the harness never posts the wake in this mode
-    assert [(op["kind"], op["key"]) for op in gateway.ops.values()] == [("park", "proof-t-park"), ("wake", "wake-auto")]
+    assert [(op["kind"], op["key"]) for op in gateway.ops.values()] == [("park", "proof-t-small-park"), ("wake", "wake-auto-1")]
     assert steps(result)["wake"]["mode"] == "request" and assertions(result)["gate_open_after_followup"]
 
 
@@ -131,8 +133,10 @@ def test_cache_paths_are_data_not_code(gateway: FakeTransitionGateway, tmp_path:
     assert process.returncode == 0, process.stdout
     assert "cold_baseline" not in steps(result) or steps(result)["cold_baseline"]["status"] == "skipped"
     # The same reply read through the standard paths reports no count, so the run fails on that.
-    process, result = run(gateway, tmp_path, manifest=write_cases(tmp_path, {**STANDARD, "max_timing_ratio": None}))
+    process, result = run(gateway, tmp_path, manifest=write_cases(tmp_path, {**STANDARD, "max_timing_ratio": None}),
+                          run_id="second")
     assert process.returncode == 1 and assertions(result)["cached_tokens_reported"] is False
+    assert assertions(result)["cached_prefix_kept"] is False  # no count means no proof of a kept prefix
 
 
 def test_a_failed_park_stops_before_wake_and_followup(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
@@ -267,3 +271,231 @@ def test_a_streaming_body_is_refused(tmp_path: Path) -> None:
     manifest.write_text(json.dumps(data))
     with pytest.raises(InputError, match="stream"):
         load_cases(manifest)
+
+
+# -- review findings ---------------------------------------------------------------------------------------
+
+
+def post_transition(gateway: FakeTransitionGateway, kind: str, key: str) -> Any:
+    return httpx.post(f"{gateway.base_url}/admin/engines/domains/{DOMAIN}/transitions",
+                      json={"kind": kind, "idempotency_key": key}, headers={"Authorization": f"Bearer {KEY}"})
+
+
+def settle(gateway: FakeTransitionGateway, op_id: str) -> None:
+    while gateway.ops[op_id]["state"] == "running":
+        httpx.get(f"{gateway.base_url}/admin/engines/domains/{DOMAIN}/transitions/{op_id}",
+                  headers={"Authorization": f"Bearer {KEY}"})
+
+
+def test_each_case_gets_its_own_keys_and_operations(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    process, result = run(gateway, tmp_path, manifest=write_cases(tmp_path, labels=("a", "b")))
+    assert process.returncode == 0, process.stdout
+    ops = [(steps(result, i)[name]["idempotency_key"], steps(result, i)[name]["op_id"])
+           for i in (0, 1) for name in ("park", "wake")]
+    assert [key for key, _ in ops] == ["proof-t-a-park", "proof-t-a-wake", "proof-t-b-park", "proof-t-b-wake"]
+    assert len({op for _, op in ops}) == 4 and len(gateway.ops) == 4  # case b really parked and woke
+
+
+def test_a_reused_key_returns_the_finished_operation_so_a_shared_key_would_pass_without_a_park(
+        gateway: FakeTransitionGateway) -> None:
+    """The old harness sent ``proof-{run}-park`` for every case. Show what that does against the real store's rule."""
+    first = post_transition(gateway, "park", "proof-t-park").json()
+    settle(gateway, first["op_id"])
+    settle(gateway, post_transition(gateway, "wake", "proof-t-wake").json()["op_id"])
+    ops_before = len(gateway.ops)
+    again = post_transition(gateway, "park", "proof-t-park")  # case b under the old key scheme
+    assert again.status_code == 202 and again.json()["op_id"] == first["op_id"]
+    assert again.json()["state"] == "succeeded"  # a finished park is returned: case b would "pass" without parking
+    assert len(gateway.ops) == ops_before and gateway.parked is False
+    assert post_transition(gateway, "wake", "proof-t-park").status_code == 409  # same key, another kind
+
+
+def test_a_seed_that_reports_zero_prompt_tokens_cannot_pass_with_the_cache_lost(
+        gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    gateway.cache, gateway.prompt_tokens_reported = "lost", 0
+    cache_check = {**STANDARD, "max_timing_ratio": None}
+    process, result = run(gateway, tmp_path, manifest=write_cases(tmp_path, cache_check, estimate=False))
+    assert process.returncode == 1
+    found = assertions(result)
+    assert found["seed_prompt_tokens_known"] is False and found["cached_prefix_kept"] is False
+    detail = next(a for a in result["cases"][0]["assertions"] if a["name"] == "cached_prefix_kept")
+    assert "cannot be computed" in detail["reason"]
+    # With a manifest estimate, a count of 0 is unknown too, so the estimate is the denominator and 0 cached fails.
+    process, result = run(gateway, tmp_path, manifest=write_cases(tmp_path, cache_check), run_id="estimated")
+    detail = next(a for a in result["cases"][0]["assertions"] if a["name"] == "cached_prefix_kept")
+    assert process.returncode == 1 and detail["denominator_source"] == "manifest_count_estimate"
+    assert detail["passed"] is False and detail["seed_prompt_tokens"] == 1000
+
+
+def test_a_missing_cached_count_fails_the_prefix_assertion_itself(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    gateway.usage_shape = "alternate"  # the standard paths find nothing
+    process, result = run(gateway, tmp_path, manifest=write_cases(tmp_path, {**STANDARD, "max_timing_ratio": None}))
+    assert process.returncode == 1 and assertions(result)["cached_prefix_kept"] is False
+
+
+def test_a_key_across_the_300_char_cut_leaks_no_prefix(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    marker = json.dumps({"op_id": "op-other", "state": "running", "echo": "MARK"}).index("MARK")
+    gateway.echo_auth, gateway.park = True, "conflict"
+    gateway.echo_pad = 290 - marker - len("Authorization: Bearer ")  # the key starts 10 characters before the cut
+    process, result = run(gateway, tmp_path)
+    assert process.returncode == 1
+    text = (tmp_path / "result.json").read_text()
+    assert "[redacted]" in text
+    for piece in (KEY, KEY[:6], KEY[-6:]):
+        assert piece not in process.stdout + process.stderr + text
+
+
+def test_a_key_file_with_more_than_one_token_is_refused_and_nothing_is_sent(
+        gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    for index, content in enumerate((f"{KEY}\nsecond-line\n", f"{KEY} extra", f"{KEY[:10]}\n{KEY[10:]}")):
+        key_file = tmp_path / f"multi{index}.key"
+        key_file.write_text(content)
+        process, result = run(gateway, tmp_path, key_file=key_file)
+        assert process.returncode == 2 and gateway.requests == [] and result["status"] == "invalid_input"
+        for surface in (process.stdout, process.stderr, (tmp_path / "result.json").read_text()):
+            assert KEY[:6] not in surface and KEY[-6:] not in surface and "second-line" not in surface
+    non_ascii = tmp_path / "unicode.key"
+    non_ascii.write_text("clé-é", encoding="utf-8")
+    process, _ = run(gateway, tmp_path, key_file=non_ascii)
+    assert process.returncode == 2 and gateway.requests == []
+
+
+def test_a_key_file_is_checked_in_a_dry_run_too(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    key_file = tmp_path / "multi.key"
+    key_file.write_text("one\ntwo")
+    process, _ = run(gateway, tmp_path, "--dry-run", key_file=key_file)
+    assert process.returncode == 2
+
+
+def manifest_with(tmp_path: Path, change: Any) -> Path:
+    manifest = write_cases(tmp_path)
+    data = json.loads(manifest.read_text())
+    change(data)
+    manifest.write_text(json.dumps(data))
+    return manifest
+
+
+BAD_MANIFESTS = {
+    "count_estimate is a number": lambda d: d["cases"][0].update(count_estimate=5),
+    "count_estimate is a string": lambda d: d["cases"][0].update(count_estimate="5"),
+    "count_estimate tokens not a number": lambda d: d["cases"][0].update(count_estimate={"input_tokens": "many"}),
+    "count_estimate tokens not positive": lambda d: d["cases"][0].update(count_estimate={"input_tokens": 0}),
+    "cache_check is a list": lambda d: d.update(cache_check=[1]),
+    "cache_check is an empty list": lambda d: d.update(cache_check=[]),
+    "cache_check is a string": lambda d: d.update(cache_check="paths"),
+    "case cache_check is a list": lambda d: d["cases"][0].update(cache_check=["x"]),
+    "case cache_check is a string": lambda d: d["cases"][0].update(cache_check="x"),
+    "file name has a null byte": lambda d: d["cases"][0].update(file="a\u0000b.json"),
+    "file is not a string": lambda d: d["cases"][0].update(file=["small.json"]),
+    "cases hold a number": lambda d: d.update(cases=[7]),
+}
+
+
+@pytest.mark.parametrize("name", list(BAD_MANIFESTS))
+def test_a_malformed_manifest_is_exit_2_with_nothing_sent(gateway: FakeTransitionGateway, tmp_path: Path, name: str) -> None:
+    process, result = run(gateway, tmp_path, manifest=manifest_with(tmp_path, BAD_MANIFESTS[name]))
+    assert process.returncode == 2, process.stdout + process.stderr
+    assert "Traceback" not in process.stderr and result["status"] == "invalid_input" and result["exit_code"] == 2
+    assert gateway.requests == []
+
+
+def test_a_manifest_that_is_not_an_object_or_is_too_deep_is_exit_2(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    for text in ("[1, 2]", "null", '"x"', "[" * 100000 + "]" * 100000):
+        manifest = tmp_path / "bad.json"
+        manifest.write_text(text)
+        process, result = run(gateway, tmp_path, manifest=manifest)
+        assert process.returncode == 2 and "Traceback" not in process.stderr and result["status"] == "invalid_input"
+    assert gateway.requests == []
+
+
+def test_a_503_in_request_mode_waits_for_retry_after_and_resends(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    gateway.retry_503 = 1
+    process, result = run(gateway, tmp_path, "--wake-mode", "request", "--poll-timeout-s", "20",
+                          manifest=write_cases(tmp_path, {**STANDARD, "max_timing_ratio": None}))
+    assert process.returncode == 0, process.stdout + process.stderr
+    follow = steps(result)["followup"]
+    assert follow["retries"] == [{"http_status": 503, "retry_after": "1", "waited_s": 1.0}]
+    assert follow["seconds"] >= 1.0 and assertions(result)["followup_replied"] and assertions(result)["cached_prefix_kept"]
+    sent = [r for r in gateway.requests if r["path"] == "/v1/chat/completions"]
+    assert len(sent) == 3 and sent[1]["body"] == sent[2]["body"]  # seed, the refused follow-up, the same follow-up again
+
+
+def test_a_503_that_outlasts_the_deadline_is_a_failed_followup(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    gateway.retry_503 = 100
+    process, result = run(gateway, tmp_path, "--wake-mode", "request", "--poll-timeout-s", "1.5")
+    assert process.returncode == 1
+    follow = steps(result)["followup"]
+    assert follow["http_status"] == 503 and len(follow["retries"]) >= 1 and assertions(result)["followup_replied"] is False
+
+
+def test_post_mode_does_not_retry_a_503(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    gateway.retry_503 = 1
+    process, result = run(gateway, tmp_path)  # post mode: the wake was posted, so a 503 after it is a real failure
+    assert process.returncode == 1 and "retries" not in steps(result)["followup"]
+
+
+def test_a_failed_closed_operation_does_not_block_a_new_transition(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    gateway.park = "fail"
+    process, _ = run(gateway, tmp_path)
+    assert process.returncode == 1 and gateway.gate == "failed_closed"
+    gateway.park = "succeed"  # G9: the owner's next transition is accepted
+    process, result = run(gateway, tmp_path, run_id="again")
+    assert process.returncode == 0, process.stdout
+    assert steps(result)["park"]["http_status"] == 202 and steps(result)["park"]["op_id"] == "op-2"
+
+
+def test_a_reconciling_operation_still_blocks_a_new_transition(gateway: FakeTransitionGateway) -> None:
+    gateway.park = "reconcile"
+    first = post_transition(gateway, "park", "k1").json()
+    settle(gateway, first["op_id"])
+    assert gateway.ops[first["op_id"]]["state"] == "reconciling"
+    assert post_transition(gateway, "wake", "k2").status_code == 409
+
+
+def test_a_gateway_that_rejects_the_key_leaks_no_key_pieces(gateway: FakeTransitionGateway, tmp_path: Path) -> None:
+    wrong = tmp_path / "wrong.key"
+    wrong.write_text("wrong-key-abcdefghij\n")
+    process, result = run(gateway, tmp_path, key_file=wrong)
+    assert process.returncode == 1 and result["cases"][0]["steps"][0]["http_status"] == 401
+
+
+def _dead(gateway: FakeTransitionGateway) -> None:
+    gateway.stop()
+
+
+FAILURE_PATHS = {
+    "conflict with echo": (lambda g: (setattr(g, "echo_auth", True), setattr(g, "park", "conflict")), [], 1),
+    "echo across the cut": (lambda g: (setattr(g, "echo_auth", True), setattr(g, "park", "conflict"),
+                                       setattr(g, "echo_pad", 215)), [], 1),
+    "park fails": (lambda g: setattr(g, "park", "fail"), [], 1),
+    "wake hangs": (lambda g: setattr(g, "wake", "hang"), ["--poll-timeout-s", "0.3"], 1),
+    "gate stays reconciling": (lambda g: setattr(g, "park", "reconcile"), [], 1),
+    "lost prefix": (lambda g: setattr(g, "cache", "lost"), [], 1),
+    "gateway down": (_dead, [], 1),
+    "dry run": (lambda g: None, ["--dry-run"], 0),
+    "persistent 503": (lambda g: setattr(g, "retry_503", 100), ["--wake-mode", "request", "--poll-timeout-s", "1.2"], 1),
+}
+
+
+@pytest.mark.parametrize("name", list(FAILURE_PATHS))
+def test_the_key_appears_in_no_output_channel_on_any_failure_path(
+        gateway: FakeTransitionGateway, tmp_path: Path, name: str) -> None:
+    setup, extra, code = FAILURE_PATHS[name]
+    setup(gateway)
+    process, _ = run(gateway, tmp_path, *extra)
+    assert process.returncode == code, process.stdout + process.stderr
+    channels = process.stdout + process.stderr + (tmp_path / "result.json").read_text()
+    for piece in (KEY, KEY[:8], KEY[-8:], KEY[10:20]):
+        assert piece not in channels
+
+
+@pytest.mark.parametrize("content", ["a-b-c-d-secret-1\nsecond-secret-2\n", "secret-one secret-two"])
+def test_the_key_appears_in_no_output_channel_when_the_key_file_is_refused(
+        gateway: FakeTransitionGateway, tmp_path: Path, content: str) -> None:
+    key_file = tmp_path / "bad.key"
+    key_file.write_text(content)
+    process, _ = run(gateway, tmp_path, key_file=key_file)
+    assert process.returncode == 2 and gateway.requests == []
+    channels = process.stdout + process.stderr + (tmp_path / "result.json").read_text()
+    for piece in content.split():
+        assert piece not in channels

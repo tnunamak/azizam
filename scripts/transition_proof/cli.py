@@ -7,6 +7,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -18,6 +19,7 @@ from .manifest import InputError, load_cases
 from .runner import Proof
 
 SCHEMA = "transition-proof/1"
+_TOKEN = re.compile(r"^[\x21-\x7e]+$")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -49,6 +51,10 @@ def _read_key(path: Optional[Path]) -> str:
         raise InputError(f"cannot read the owner key file: {error.strerror}") from None
     if not key:
         raise InputError("the owner key file is empty")
+    if not _TOKEN.match(key):
+        # An inner line break or space would go into the Authorization header, and the HTTP library quotes a
+        # refused header value in its error. Never send such a key, and never name any part of it.
+        raise InputError("the owner key file must hold one token: printable ASCII, no spaces or line breaks")
     return key
 
 
@@ -95,7 +101,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     with httpx.Client(base_url=args.base_url.rstrip("/"), headers={"Authorization": f"Bearer {key}"},
                       timeout=timeout) as client:
         proof = Proof(client, domain=args.domain, model=args.model, wake_mode=args.wake_mode, run_id=run_id,
-                      poll_interval_s=args.poll_interval_s, poll_timeout_s=args.poll_timeout_s)
+                      poll_interval_s=args.poll_interval_s, poll_timeout_s=args.poll_timeout_s, secret=key)
         for case in cases:
             record = proof.run_case(case)
             result["cases"].append(record)

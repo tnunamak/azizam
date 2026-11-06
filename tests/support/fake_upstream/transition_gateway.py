@@ -8,7 +8,13 @@ tell apart is an attribute the test sets before the run:
 - ``cache``: ``kept`` (a park leaves the prefix cached) or ``lost`` (a park drops it);
 - ``slow_when_cached``: a cached reply is as slow as a cold one;
 - ``usage_shape``: ``standard`` or ``alternate`` (the same two counts at other JSON paths);
-- ``echo_auth``: an error body repeats the Authorization header, to prove the harness redacts it.
+- ``echo_auth``: an error body repeats the Authorization header, to prove the harness redacts it;
+  ``echo_pad`` puts that many characters before the header text, so a test can place the key across a cut;
+- ``prompt_tokens_reported``: replace the usage prompt count (a seed that reports 0);
+- ``retry_503``: the next N chat requests after the first transition began answer 503 with ``Retry-After: 1``.
+
+The transition store follows the design (D2, G4, G9): a repeated key with the same kind returns the same operation in
+any state, the same key with another kind is a 409, and only a running or reconciling operation blocks a new one.
 
 A reply's prompt size is its message text length divided by four; the cached count is the length of the longest
 earlier request whose messages are a prefix of this one.
@@ -37,19 +43,23 @@ class FakeTransitionGateway:
         self.park, self.wake, self.cache = "succeed", "succeed", "kept"
         self.slow_when_cached, self.usage_shape, self.echo_auth = False, "standard", False
         self.polls_to_finish = 2
+        self.echo_pad, self.prompt_tokens_reported, self.retry_503 = 0, None, 0
         self.cold_delay_s, self.warm_delay_s = 0.25, 0.01
         self.requests: list[dict[str, Any]] = []
         self.gate, self.parked = "open", False
         self.ops: dict[str, dict[str, Any]] = {}
         self._cached: list[list[dict[str, Any]]] = []
         self._server = LoopbackServer(self._app)
+        self._stopped = False
 
     def start(self) -> "FakeTransitionGateway":
         self._server.start()
         return self
 
     def stop(self) -> None:
-        self._server.stop()
+        if not self._stopped:  # a test may stop the server to play a dead gateway; the fixture stops it again
+            self._stopped = True
+            self._server.stop()
 
     @property
     def base_url(self) -> str:
@@ -66,13 +76,14 @@ class FakeTransitionGateway:
         body = json.loads(raw) if raw else None
         self.requests.append({"method": scope["method"], "path": scope["path"], "body": body,
                               "authorization": headers.get("authorization")})
-        status, payload = await self._route(scope["method"], scope["path"], body, headers.get("authorization"))
+        status, payload, *extra = await self._route(scope["method"], scope["path"], body, headers.get("authorization"))
         data = json.dumps(payload).encode()
         await send({"type": "http.response.start", "status": status,
-                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(data)).encode())]})
+                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(data)).encode()),
+                                *[(k.encode(), v.encode()) for k, v in (extra[0] if extra else {}).items()]]})
         await send({"type": "http.response.body", "body": data})
 
-    async def _route(self, method: str, path: str, body: Any, auth: Any) -> tuple[int, Any]:
+    async def _route(self, method: str, path: str, body: Any, auth: Any) -> tuple[Any, ...]:
         if auth != f"Bearer {self.key}":
             return 401, {"error": "bad key"}
         prefix = f"/admin/engines/domains/{self.domain}/"
@@ -93,10 +104,13 @@ class FakeTransitionGateway:
 
     def _begin(self, body: dict[str, Any]) -> tuple[int, Any]:
         mode = getattr(self, body["kind"])
-        for op_id, op in self.ops.items():
-            if op["state"] in ("running", "failed_closed", "reconciling"):
-                if op["key"] == body["idempotency_key"]:
-                    return 202, {"op_id": op_id, "state": op["state"], "gate": self.gate}
+        for op_id, op in self.ops.items():  # a repeated key finds its operation whatever state it is in
+            if op["key"] == body["idempotency_key"]:
+                if op["kind"] != body["kind"]:
+                    return 409, {"op_id": op_id, "state": op["state"], "echo": self._echo()}
+                return 202, {"op_id": op_id, "state": op["state"], "gate": self.gate}
+        for op_id, op in self.ops.items():  # G9: a failed_closed operation is finished and blocks nothing
+            if op["state"] in ("running", "reconciling"):
                 return 409, {"op_id": op_id, "state": op["state"], "echo": self._echo()}
         if mode == "conflict":
             return 409, {"op_id": "op-other", "state": "running", "echo": self._echo()}
@@ -107,7 +121,7 @@ class FakeTransitionGateway:
         return 202, {"op_id": op_id, "state": "running", "gate": "closed"}
 
     def _echo(self) -> str:
-        return f"Authorization: Bearer {self.key}" if self.echo_auth else ""
+        return "x" * self.echo_pad + f"Authorization: Bearer {self.key}" if self.echo_auth else ""
 
     def _read(self, op_id: str) -> tuple[int, Any]:
         op = self.ops.get(op_id)
@@ -131,8 +145,11 @@ class FakeTransitionGateway:
     # -- chat ---------------------------------------------------------------------------------------------
 
     async def _chat(self, body: dict[str, Any]) -> tuple[int, Any]:
+        if self.ops and self.retry_503 > 0:
+            self.retry_503 -= 1
+            return 503, {"error": "the domain is waking"}, {"Retry-After": "1"}
         if self.parked:
-            op_status, op = self._begin({"kind": "wake", "idempotency_key": "wake-auto"})
+            op_status, op = self._begin({"kind": "wake", "idempotency_key": f"wake-auto-{len(self.ops)}"})
             if op_status == 202 and self.wake != "hang":
                 self._settle(self.ops[op["op_id"]])
             if op_status != 202 or self.gate != "open":
@@ -142,10 +159,11 @@ class FakeTransitionGateway:
         self._cached.append(messages)
         await asyncio.sleep(self.warm_delay_s if cached and not self.slow_when_cached else self.cold_delay_s)
         prompt = _tokens(messages)
+        reported = prompt if self.prompt_tokens_reported is None else self.prompt_tokens_reported
         usage: dict[str, Any] = {"completion_tokens": 3}
         extra: dict[str, Any] = {}
         if self.usage_shape == "standard":
-            usage.update(prompt_tokens=prompt, prompt_tokens_details={"cached_tokens": cached})
+            usage.update(prompt_tokens=reported, prompt_tokens_details={"cached_tokens": cached})
         else:
-            extra["timings"] = {"prompt_n": prompt, "cache_n": cached}
+            extra["timings"] = {"prompt_n": reported, "cache_n": cached}
         return 200, {"choices": [{"message": {"role": "assistant", "content": "answer"}}], "usage": usage, **extra}
