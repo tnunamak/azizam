@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 from tests.support.config_snapshot import section_key_published  # noqa: E402
 from tests.support.access import authenticated  # noqa: E402
+from tests.media_test_bytes import png_bytes  # noqa: E402
 from gateway import video_inputs  # noqa: E402
 from _fake_comfy_video import (  # noqa: E402
     NEW_PROMPT_ID,
@@ -36,7 +37,7 @@ SOURCE_ID = f"video_{SOURCE_PROMPT_ID}"
 NEW_ID = f"video_{NEW_PROMPT_ID}"
 PROBE_24 = video_inputs.VideoProbe(fps=24.0, duration=3.5, frames=84, width=832, height=480)
 NS = "com.azizam.workflow"
-PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
+PNG = png_bytes((0, 0, 0))
 # Stand-in for videos.remix_workflow. The shipped config leaves remix off, and
 # the route's checks below its 501 gate need a truthy value. No test in this
 # module lets a request reach submission under this id.

@@ -99,6 +99,8 @@ def sniff(data: bytes, hint: str | None = None) -> tuple[str, str]:
         return "image/png", ".png"
     if data[:3] == b"\xff\xd8\xff":
         return "image/jpeg", ".jpg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", ".gif"
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp", ".webp"
     if data[4:8] == b"ftyp":
@@ -113,7 +115,7 @@ def sniff(data: bytes, hint: str | None = None) -> tuple[str, str]:
         return "audio/ogg", ".ogg"
     hint = (hint or "").split(";")[0].strip().lower()
     return hint or "application/octet-stream", {
-        "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "video/mp4": ".mp4",
+        "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "video/mp4": ".mp4",
         "video/webm": ".webm", "audio/wav": ".wav", "audio/mpeg": ".mp3", "audio/flac": ".flac",
         "audio/ogg": ".ogg", "audio/mp4": ".m4a", "audio/aac": ".aac", "audio/opus": ".ogg",
     }.get(hint, ".bin")

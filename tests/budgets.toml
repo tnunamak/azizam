@@ -549,7 +549,16 @@
 # feat/config-homes-c5 (2026-11-06): stored workflows win over bundled ones, the workflow registry follows a registry save, the pre-deploy report (+13); measured 19865.
 # C5 review fix: repairing a left-out workflow under a bundled id needs the overrides claim (+2); measured 19867.
 # S2 acceptance matrix, items 2 and 3 (2026-11-06): tests/test_s2_matrix_privacy.py (+7) and tests/test_s2_matrix_replay.py (+27); scripts/run-hermetic-pytest.sh --collect-only -q measured 20275.
-pytest = 20321
+# S2.6 (2026-11-06): media input resolver, leases and markers (+36 in tests/test_media_inputs.py), image route extension inputs on the resolver (+13 in tests/test_media_inputs_image_route.py); measured 19897.
+# S2.6 review fixes (2026-11-06): the sweep re-check, the download cap and the raised upload (+4 in test_media_inputs.py, +2 in test_media_inputs_image_route.py); measured 19903.
+# S2.6 review follow-up: a stored asset the sweep removed before its lease is refused as missing (+1); measured 19904.
+# S2.6 durable removal duty: two owners' cleanup, the existence check inside the marker transaction, erasure and a failed removal (+4); measured 19908.
+# S2.6 claim rule: an ingest never owes the removal of a claim the owner already held, and the store port claim check (+2); measured 19910.
+# S2.6b (2026-11-06): upload and reference image inputs on the resolver (+37 in test_media_inputs_upload_routes.py, +2 check_upload cases); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 19936.
+# S2.6b merged with the S2.6 review fixes: 19936 + 7; summed 19943.
+# S2.6b merged with the S2.6 removal-duty fix: 19943 + 4; summed 19947.
+# S2.6b merged with the S2.6 claim rule: 19947 + 2; summed 19949.
+pytest = 20366
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

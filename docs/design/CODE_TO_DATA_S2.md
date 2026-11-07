@@ -390,6 +390,156 @@ Left for S2.5 and later:
 - Turn the legacy flag off by default once no workflow in use lacks selectors, and delete the legacy collection.
 - The call to `check_for_save` from the registration route (S4).
 
+### S2.6 as built (resolver)
+
+This is the resolver half. The upload capability is the next step, after S2.4 owns the adapter descriptor.
+
+**Built**
+
+- `gateway/media_inputs.py` is the trusted resolver. A route gives it the authenticated context and one of: an asset id
+  (`resolve_asset`), an uploaded body (`resolve_upload`) or a URL (`resolve_url`). It returns an immutable `StoredInput`
+  (asset id, measured type, measured size, sha256, lease id). `resolve_upload` has no parameter for a claimed type,
+  size or name, so the caller cannot pass one. The resolver measures the bytes itself (magic numbers, no hint) and
+  checks the result against the input's `accepts` list (exact types or `image/*`). A type the sniffer does not know
+  measures as `application/octet-stream` and matches only an `accepts` entry that names it.
+- The order is fixed and every refusal comes before any effect: disclosure, then the asset read check, then the size,
+  emptiness and type checks, then the lease or the ingest. A refused input causes no store write, no lease and no
+  upstream call.
+- The disclosure check (`check_disclosure`) uses the existing access plan. A local service may receive the input. A
+  remote service may receive it only when the plan lists that provider in `paid_providers` (the same fact the policy
+  evaluator reads). A service the registry does not know may not.
+- URLs have one path. The resolver holds no HTTP client. It calls a `fetch` callable from its caller, which is the
+  gateway's media ingestion (`gateway/media_fetch.py`, with its origin and redirect rules). A test reads the module's
+  imports and fails if a network library appears.
+- `gateway/media_input_leases.py` holds the lease and marker tables in the jobs database. An ingest writes its marker
+  (`media_input_effect`) first, then the file, then the lease. The marker is deleted in the lease's transaction. A
+  crash between the steps leaves a marker and nothing else. This is the S2.1 pattern.
+- A lease (`media_input_lease`) names a holder: a `job` or a `request`. Release only sets `released_at`, in the same
+  transaction as the write that caused it:
+  - a job reaches a terminal status (`media_jobs._write_job`);
+  - a job row is deleted (`_release_envelopes_in`, so retention, delete and the kill switch are covered by the S2.1b
+    path scan);
+  - an owner is erased, or a household (`*`) is erased (`erase_prompt_derivatives`);
+  - a request ends (`MediaInputResolver.release`).
+- The sweep (`MediaInputResolver.sweep`) runs in the prompt-memory maintenance loop, after the definition garbage
+  sweep. It deletes stale markers, releases request leases past their TTL, releases job leases whose job row does not
+  exist after the grace period, deletes released lease rows, and removes an owner's claim on a stored file only when a
+  duty row (`media_input_created`) names it and no live lease or marker holds the file. It is idempotent. The scan
+  commits first; then each claim is checked again, removed, and its duty row deleted, in one write transaction
+  (`MediaInputLedger.discard_unheld`). A lease or marker that lands after the scan keeps the file, and the duty row
+  stays until a later pass finds the file unheld. There is no flag to hand over: the duty is a row, so it cannot be lost
+  to a second owner, a crash, an erasure or a failed removal.
+- `proxy.py` has seven hunks in `git diff`: the import; one block with the resolver factory, the destination for a
+  service and the sweep entry point; `_resolve_image_extension_asset`; the request holder in
+  `_upload_image_workflow_extension_assets`; the `asset_id` call there; the release after the upload (in a
+  `try/finally`, so a raised upload still releases the request lease); and the sweep call in the maintenance loop.
+
+**Decisions the design did not settle**
+
+- Disclosure rule: local passes, remote needs a plan grant, unknown is refused (above).
+- `created` detection. An ingest writes a duty row `(asset_id, owner_key)` only for a claim it adds: when this owner
+  held no claim on the planned asset id before (a file that is not there has no claim). A claim the owner already
+  held, such as a file in their library, never gets a removal duty, whatever other owners owe; an earlier rule that
+  also owed a removal whenever another owner's row was pending would have removed such a claim. The check runs inside
+  the write transaction that writes the ingest marker, and the sweep removes files inside its own write transaction,
+  so a claim the ingest saw cannot be removed before the marker holds it. The planned id is
+  the sha256 of the metadata-stripped bytes, which the store computes. Residual: a type whose stripper is not
+  idempotent could plan an id that differs from the stored one. The row would then name a file that does not exist,
+  and the discard would find nothing. No bundled type does this.
+- An ingest of bytes the store already holds adds the caller's owner claim to that asset. The sweep removes only a
+  claim a duty row names, and the store removes the file only when no owner and no maker remains.
+- Leases live in the jobs database, not a new file, so a job write and its release share one transaction. There is no
+  schema-version bump: the tables are `CREATE IF NOT EXISTS`, and a database without them has no leases to release.
+- A request lease expires after one hour, and a marker or an orphan job lease after the same grace period. Both are
+  parameters of the sweep.
+- The sniffer now recognises GIF (`GIF87a`, `GIF89a`). The image store already held GIF files, so without this the
+  resolver would have refused them.
+- One behaviour change: an `img_` asset whose bytes are not a recognised image is now refused with the existing
+  "asset_id must reference a cached image asset" text. The old path sent any bytes it found under an image id. The
+  `ast_` prefix is still refused by the kept prefix check. Every other refusal keeps its old text.
+- The download cap (`media_fetch.max_bytes()`) bounds bytes the gateway fetches or receives as an upload. It does not
+  apply to an asset that is already stored: `resolve_asset` never refuses one for its size, as the old path never did.
+  A test holds both sides (a stored image over the cap still resolves; an upload and a fetched body over it are refused).
+
+**Left**
+
+- The upload capability on the adapter descriptor, after S2.4. Nothing in this step adds it.
+- Inputs that still use the old ingestion, and why (see "S2.6b as built"): the image edit route's `mask`, the identity
+  alias's reference photos, and the video route's source-video inputs (video id, video data URI, video URL).
+
+### S2.6b as built (uploads and references)
+
+The three image input paths that were still on the old ingestion now go through the resolver. The wire is unchanged: the
+bytes, the file name and the content type sent upstream, the response bodies, the job view, the receipts and the frozen
+snapshots. `tests/test_media_inputs_upload_routes.py` holds each path equal to what the old ingestion sent, for PNG,
+JPEG, WebP and GIF (the old ingestion is the literal expected value: the upload as it came, the name the caller gave or
+the route's default, the content type the route fixes or the caller claimed).
+
+**Moved**
+
+- The multipart branch of the image extension inputs (`_upload_image_workflow_extension_assets`). The caller's file name
+  and content type are still what the engine is told; the resolver ignores them and measures the bytes.
+- The image edit route's `image[]` uploads, by the resolver's check only. Every reference image is read first, then each
+  is checked with `MediaInputResolver.check_upload` (the refusals of `resolve_upload`: disclosure, size, emptiness and
+  measured type, with no store write and no lease), and only then does the first one go to the engine. So one refused
+  image leaves no upload behind for the others, and the check comes before the mask step. The route does **not**
+  ingest or lease the images: it already stores each one as a source of its result (`made_from`), with the same owner
+  key and the same file id. A second claim from the resolver is the same claim, so the sweep would remove the file
+  that the result keeps as its source (the frozen `image_edit` trace shows that source file). The variations route calls
+  this route and is covered with it.
+- The video route's `input_reference` (`_resolve_input_reference`, used by the single clip, the long-video chain, the
+  extension route and the image inputs of video workflows). An asset id goes through `resolve_asset` (the existing
+  `_resolve_image_extension_asset`). A data: URI, raw base64 and an uploaded part (the multipart reader turns it into a
+  data: URI first) go through `resolve_upload`. A URL goes through `resolve_url`, and the injected fetch is the existing
+  `_fetch_media_url` (origin and redirect rules in `gateway/media_fetch.py`). The fetched file name is read from that
+  fetch call, because the resolver returns bytes, not names.
+
+**Leases.** Every ingested input (the extension uploads and the video references) holds a request lease.
+`proxy_graph_video_create` and the extension route's chain call run inside `_with_request_media_inputs`, which makes the
+request holder and, when the call ends on any exit, releases it and runs the maintenance sweep once
+(`_end_request_media_inputs`). The public name of the create route is unchanged; its old body is
+`_proxy_graph_video_create`. So a file an upload made is removed when its request ends, not at the next maintenance
+round; nothing an upload made stays in the asset store (the frozen traces list the store, and they are unchanged). The
+extension multipart branch does the same after the engine upload, also when the upload raises. A caller of
+`_resolve_input_reference` with no holder (tests, callers outside a request) gets a holder that ends with that call. No
+job-held lease is needed on these paths: the engine has the bytes before the request returns. The existing release API
+is used; there is no second one.
+
+**Refusals that are new** (each is a refusal the resolver already makes; each comes before any store write, lease or
+upstream call)
+
+- Bytes that are not a recognised image are refused on every moved path, whatever name or type the caller claimed.
+  The old paths sent them on. Text: asset ids keep "asset_id must reference a cached image asset"; the upload paths
+  have no earlier text, so they use the resolver's "the input is not a file type this model accepts". On the edit route
+  this is HTTP 400, `param: "image[]"`, `code: "input_type_unsupported"`, and the receipt records the code as the
+  rejected reason for `image[]`. Extension uploads use the existing extension error shape with the field name as param.
+- An empty body (an empty data: URI, an empty upload) is refused ("the input is empty"). The old paths sent it.
+- A picture the asset store cannot hold (the metadata stripper rejects it, for example a PNG cut short) is refused on the
+  ingesting paths with the same unsupported-type text. `AssetPort.planned_id` raises `ValueError` for it; the resolver
+  turns that into the refusal before the marker. The edit route only measures, so it still forwards such a picture.
+- A body over `media_fetch.max_bytes()` (256 MiB by default) is refused ("the input is larger than the size limit").
+- Disclosure: a remote engine the access plan does not list, and an engine the registry does not know, receive nothing
+  ("Your access plan does not allow sending files to the provider this model runs on."). The old upload paths did not
+  check.
+- A URL fetch failure keeps its old text, "failed to download input_reference: <reason>".
+- **Known gap.** The sniffer knows PNG, JPEG, GIF and WebP. An upload in another image format (BMP, TIFF, AVIF) now
+  measures as `application/octet-stream` and is refused, where the old paths forwarded it. The asset store only holds
+  those four types today. Adding a format is one sniffer entry and one suffix.
+
+**Store effect.** An uploaded input on the extension and video paths is ingested for the length of its request: the store
+writes it (with the caller's owner claim, no maker, no prompt) behind an ingest marker, the lease keeps it, and the end
+of the request removes it (see Leases). The old paths stored nothing. While the request runs, the file is one the
+caller's own asset reads can see.
+
+**Left on the old path, and why**
+
+- The edit route's `mask`. It is not an input the model reads as an image of its own: it is normalised by the mask step,
+  which has its own refusals and error text. Moving it changes which error a bad mask gets.
+- The identity alias's reference photos (`image[]` on the identity model). The face service decodes them and answers with
+  its own errors; the bytes are not forwarded as they came.
+- Source-video inputs (video id, video data URI, video URL). The sniffer knows only MP4 among video types, so a WebM
+  source would be refused: a wire change. The image-only `accepts` of this step does not cover them.
+
 ## Done when: the S2 acceptance matrix
 
 1. **Data only.**
