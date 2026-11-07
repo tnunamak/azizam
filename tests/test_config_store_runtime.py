@@ -741,20 +741,40 @@ def test_proxy_runtime_in_a_real_request_keeps_the_snapshot_it_started_with_whil
 # The generation in the snapshot key (review finding 9)
 # ---------------------------------------------------------------------------------------------------------------------
 
-def test_the_generation_in_the_key_is_the_one_of_the_registry_the_config_was_built_from(live):  # noqa: F811
+def test_the_generation_in_the_key_is_the_one_of_the_registry_the_config_was_built_from(live, monkeypatch, caplog):  # noqa: F811
     from gateway import service_registry
 
     registry = service_registry.ensure_service_registry(path=live)  # what a load builds its config from
+    monkeypatch.setattr(proxy, "_GENERATION_READ_FAILURE_LOGGED", False)
     stored = admin_store.get_service_registry_with_generation(path=live)
     assert proxy._generation_of_registry(registry) == stored["operator_settings_generation"]
     moved = copy.deepcopy(registry)
-    moved["services"]["a-newer-service"] = copy.deepcopy(next(iter(registry["services"].values())))
+    moved["services"]["a-newer-service"] = {**copy.deepcopy(next(iter(registry["services"].values()))), "id": "a-newer-service"}
     admin_store.write_service_registry_with_audit(
         moved, expected_generation=stored["operator_settings_generation"], updated_by="test", audit_action="test.registry",
         audit_actor_kind="admin", audit_actor_id="test", audit_actor_label="Test", audit_target_kind="operator_setting",
         audit_target_id="service_registry", audit_metadata={}, session=None, path=live,
     )
     assert proxy._generation_of_registry(registry) is None, "the store now holds a newer registry than the one used"
+    failed_reads = [r for r in caplog.records if "registry generation could not be read" in r.getMessage()]
+    assert not failed_reads, "None came from the compare, not from a read that failed"
+
+
+def test_an_unreadable_store_gives_no_generation_and_names_the_failure_once_by_type(live, monkeypatch, caplog):  # noqa: F811
+    from gateway import service_registry
+
+    registry = service_registry.ensure_service_registry(path=live)
+    monkeypatch.setattr(proxy, "_GENERATION_READ_FAILURE_LOGGED", False)
+
+    def locked(**_kwargs):
+        raise sqlite3.OperationalError("database is locked: secret-value")
+
+    monkeypatch.setattr(proxy.admin_store, "get_service_registry_with_generation", locked)
+    with caplog.at_level("WARNING", logger="proxy"):
+        assert proxy._generation_of_registry(registry) is None
+        assert proxy._generation_of_registry(registry) is None
+    warnings = [record.getMessage() for record in caplog.records]
+    assert len(warnings) == 1 and "OperationalError" in warnings[0] and "secret-value" not in warnings[0]
 
 
 def test_a_load_carries_the_generation_of_the_registry_it_used_not_a_later_read(live, monkeypatch):  # noqa: F811
