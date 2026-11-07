@@ -171,6 +171,22 @@ def test_the_legacy_collection_reports_a_missing_result_and_does_not_guess_from_
         assert caught.value.code == "result_missing"
 
 
+def test_a_suffix_filter_keeps_only_matching_files_and_takes_the_first_in_node_order():
+    keys, suffixes = ("clips", "stills"), (".mp4", ".webm")
+    history = job(n1={"stills": [file("peek.png")]}, n2={"stills": [file("a.png"), file("b.WEBM")], "clips": [file("c.mp4")]},
+                  n3={"clips": [file("d.mp4")]})
+    # Two nodes give a clip, which would be ambiguous without a filter; with one, node order decides.
+    picked = node_graph.legacy_select(history, OUTPUT, keys=keys, suffixes=suffixes)
+    assert [f["filename"] for f in picked["result"]] == ["c.mp4"]
+    # The filter and the keys are the caller's: a key that is not listed is not read, and no match is a missing result.
+    with pytest.raises(SelectionRefused) as caught:
+        node_graph.legacy_select(job(n1={"images": [file("a.mp4")]}), OUTPUT, keys=keys, suffixes=suffixes)
+    assert caught.value.code == "result_missing"
+    with pytest.raises(SelectionRefused) as caught:
+        node_graph.legacy_select(job(n1={"clips": [file("a.png")]}), OUTPUT, keys=keys, suffixes=suffixes)
+    assert caught.value.code == "result_missing"
+
+
 # ----------------------------------------------------------------------------------------------- collect()
 
 BLOCK = {"workflow": "w.json", "selectors": {"result": sel(node="9", key="images", take="first")}}

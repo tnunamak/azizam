@@ -8,6 +8,7 @@ media type, and that the stored copy stays full.
 from __future__ import annotations
 
 import base64
+import contextlib
 import copy
 import hashlib
 import io
@@ -647,6 +648,9 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
             status_code = 200
             content = raw
 
+            async def aiter_bytes(self):
+                yield raw
+
         class Client:
             async def __aenter__(self):
                 return self
@@ -657,6 +661,10 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
             async def get(self, *_a, **_k):
                 return View()
 
+            @contextlib.asynccontextmanager
+            async def stream(self, _method, *_a, **_k):
+                yield View()
+
         class Req(StubRequest):
             query_params = __import__("starlette.datastructures", fromlist=["QueryParams"]).QueryParams(query)
 
@@ -665,7 +673,8 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         ), patch.dict(proxy._video_job_records, {prompt_id: record}, clear=False), patch.object(
             proxy, "_graph_history", AsyncMock(return_value={"outputs": {}})
         ), patch.object(proxy, "_job_status_from_history", lambda _j: ("succeeded", None)), patch.object(
-            proxy, "_first_video_output", lambda _j: {"filename": "v.mp4", "type": "output", "subfolder": ""}
+            proxy, "_select_video_file",
+            lambda _j, _m: ("video", {"filename": "v.mp4", "type": "output", "subfolder": ""}, None)
         ), patch.object(proxy.httpx, "AsyncClient", lambda *a, **k: Client()), patch.object(
             proxy, "configured_downstream_headers", lambda *_a: {}
         ), patch.object(proxy, "authenticate_request", lambda *_a: auth), patch.object(
@@ -921,6 +930,9 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
             def json(self):
                 return self._p
 
+            async def aiter_bytes(self):
+                yield self.content
+
         class Client:
             def __init__(self, **_k):
                 pass
@@ -931,6 +943,10 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
             async def __aexit__(self, *_a):
                 return False
 
+            @contextlib.asynccontextmanager
+            async def stream(self, _method, url, **kw):
+                yield await self.get(url, **kw)
+
             async def post(self, url, **kw):
                 if url.endswith("/upload/image"):
                     return Resp(200, {"name": "sample.mp4"})
@@ -939,7 +955,7 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
             async def get(self, url, **kw):
                 if "/history/" in url:
                     return Resp(200, {"p1": {"status": {"completed": True},
-                                              "outputs": {"6": {"videos": [{"filename": "r.mp4", "type": "output"}]}}}})
+                                              "outputs": {"6": {"images": [{"filename": "r.mp4", "type": "output"}]}}}})
                 return Resp(200, content=raw)
 
         with patch.object(proxy.httpx, "AsyncClient", Client), patch.object(proxy.asyncio, "sleep", return_value=None):

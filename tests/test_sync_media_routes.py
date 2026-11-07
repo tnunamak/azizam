@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import tempfile
@@ -93,6 +94,12 @@ class _FakeVideoAsyncClient:
         if url.endswith("/view"):
             return proxy.httpx.Response(200, content=self.video_content, headers={"content-type": "video/mp4"})
         return proxy.httpx.Response(404, content=b"")
+
+    @contextlib.asynccontextmanager
+    async def stream(self, method: str, url: str, **kwargs):
+        # The video routes read a result file as a bounded stream (NodeGraphAdapter.fetch_file).
+        assert method == "GET"
+        yield await self.get(url, **kwargs)
 
 
 class _StubUrlRequest:

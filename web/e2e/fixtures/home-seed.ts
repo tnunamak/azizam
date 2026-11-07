@@ -224,6 +224,12 @@ export async function seedOwner(page: Page, request: APIRequestContext) {
   await serveSeedFiles(page);
   const real = await (await request.get("/me/api/home")).json();
   const status = await (await request.get("/admin/api/status")).json();
+  // The Home model also reads the service registry, which @global-state cases change while this one runs; the seed
+  // answers the copy read here, so the working line counts one registry for the whole case.
+  const registry = await (await request.get("/admin/api/operator/service-registry")).json();
+  await page.route("**/admin/api/operator/service-registry", (route) =>
+    route.request().method() === "GET" ? fulfilJson(route, registry) : route.fallback(),
+  );
   const now = Date.now() / 1000;
   const template = real.capabilities.find((row: Json) => row.icon_key === "chat") ?? real.capabilities[0];
   await page.route("**/me/api/home", (route) =>

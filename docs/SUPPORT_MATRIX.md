@@ -62,6 +62,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `GET` | `/gateway/v1/media/jobs/{job_id}/content` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `gateway_media_job_content` |
 | `GET` | `/gateway/v1/media/jobs/{job_id}/events` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `list_media_job_events` |
 | `POST` | `/gateway/v1/media/jobs/{job_id}/events` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `append_media_job_event` |
+| `GET` | `/gateway/v1/media/jobs/{job_id}/results/{name:path}` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `get_media_job_result` |
 | `GET` | `/gateway/v1/models/{model}/capabilities` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `get_model_capabilities` |
 | `GET` | `/gateway/v1/providers` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `provider_native_list` |
 | `GET` | `/gateway/v1/providers/{provider}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `provider_native_detail` |

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -39,6 +40,9 @@ from gateway.manifests import (
 
 VALID_AUDIENCES = ("client", "admin", "internal")
 MANIFEST_GLOBS = ("*.yml", "*.yaml")
+# The workflow manifests the release ships: the release layer under the owner's stored workflows
+# (docs/design/CONFIG_HOMES.md, 3.4 and 8.4).
+BUNDLED_WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "manifests" / "workflows"
 
 
 @dataclass(frozen=True)
@@ -115,9 +119,11 @@ class WorkflowRegistry:
         manifest: dict[str, Any],
         *,
         source_path: Path | str | None = None,
+        replace: bool = False,
     ) -> WorkflowRecord:
+        """Add a manifest. A second one with the same id is refused, unless ``replace`` says it takes the place of the first."""
         identity = manifest_identity(manifest)
-        if identity.id in self._records:
+        if identity.id in self._records and not replace:
             raise ManifestError(
                 f"duplicate workflow manifest id: {identity.id}"
             )
@@ -137,7 +143,22 @@ class WorkflowRegistry:
         return sorted(self._records)
 
     def records(self) -> list[WorkflowRecord]:
-        return [self._records[id_] for id_ in self.ids()]
+        current = self._records  # one read: a swap (``adopt``) between two reads must not drop an id
+        return [current[id_] for id_ in sorted(current)]
+
+    def contents(self) -> tuple[dict[str, WorkflowRecord], list[RegistryLoadError]]:
+        """What the registry holds now, for ``adopt`` or a test that puts it back."""
+        return self._records, self._errors
+
+    def adopt(self, other: "WorkflowRegistry") -> None:
+        """Take the records of ``other``. The object stays the same, so every holder of it serves the new records.
+
+        A reload builds the next registry whole and swaps it in here, so a reader sees the old records or the new ones.
+        """
+        self.restore(other.contents())
+
+    def restore(self, contents: tuple[dict[str, WorkflowRecord], list[RegistryLoadError]]) -> None:
+        self._records, self._errors = contents
 
     def get(self, workflow_id: str) -> WorkflowRecord | None:
         return self._records.get(workflow_id)
@@ -340,3 +361,23 @@ def _check_audience(audience: str) -> None:
         raise ValueError(
             f"audience must be one of {VALID_AUDIENCES!r}, got {audience!r}"
         )
+
+
+def _manifest_signature(directory: Path) -> tuple[tuple[str, int, int], ...]:
+    rows = []
+    for path in sorted(_iter_manifest_files(directory)):
+        stat = path.stat()
+        rows.append((str(path), stat.st_mtime_ns, stat.st_size))
+    return tuple(rows)
+
+
+@lru_cache(maxsize=2)
+def _bundled_manifests(directory: str, signature: tuple[tuple[str, int, int], ...]) -> dict[str, dict[str, Any]]:
+    del signature  # part of the key: a changed file loads again
+    return {record.id: record.manifest for record in WorkflowRegistry.from_directory(directory).records()}
+
+
+def bundled_workflow_manifests(directory: Path | None = None) -> dict[str, dict[str, Any]]:
+    """``{id: manifest}`` of the manifests the release ships. A fresh copy; a manifest that does not load is left out."""
+    root = Path(directory or BUNDLED_WORKFLOWS_DIR)
+    return copy.deepcopy(_bundled_manifests(str(root), _manifest_signature(root)))

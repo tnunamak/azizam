@@ -107,6 +107,9 @@ class JobStatus:
     state: JobState
     detail: str | None = None
     assets: tuple[str, ...] = ()   # the engine's handles for finished artifacts; ``fetch_assets`` turns them into AssetRefs
+    # What the adapter looked at to say ``succeeded``, for the same adapter to read the named results from without a second
+    # look at the engine. Core never reads it, and it takes no part in equality.
+    record: Any = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -174,3 +177,50 @@ class Health:
 class Inventory:
     ids: tuple[str, ...]
     evidence: str = ""
+
+
+# --- interface version 2: one start outcome (CODE_TO_DATA_S2, D3) ------------------------------------------------
+
+
+@dataclass(frozen=True)
+class JsonResult:
+    """One named result that is a JSON value. ``raw`` is the value as JSON bytes; core checks it under the result limits."""
+
+    raw: bytes
+
+
+@dataclass(frozen=True)
+class AssetsResult:
+    """One named result that is a list of stored files. The bytes are already in the media store; this names them."""
+
+    assets: tuple[AssetRef, ...]
+
+
+@dataclass(frozen=True)
+class ResultBundle:
+    """The named results of one finished run, by result name. Names come from the contract, never from the adapter."""
+
+    results: Mapping[str, JsonResult | AssetsResult]
+
+
+@dataclass(frozen=True)
+class Pending:
+    """``start`` outcome: the engine took the job and will finish it later. Core saves the reference and polls."""
+
+    ref: JobRef
+
+
+@dataclass(frozen=True)
+class Completed:
+    """``start`` outcome: the engine answered at once, and this is the whole result. Core stages and publishes it."""
+
+    bundle: ResultBundle
+
+
+@dataclass(frozen=True)
+class ResultContext:
+    """What core hands an adapter that reads results after a job: the deployment's result limits (never a manifest value)
+    and whether a binding with no selectors may still be read by the adapter's legacy collection."""
+
+    limits: Any
+    legacy_allowed: bool = True

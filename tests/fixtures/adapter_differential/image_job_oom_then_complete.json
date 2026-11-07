@@ -67,10 +67,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"img_d3775d63c1a79f4a9958677d213c516c96447422826e32ba078a32bab902e6a2\",\"asset_url\":\"http://gateway.test/v1/assets/img_d3775d63c1a79f4a9958677d213c516c96447422826e32ba078a32bab902e6a2/content?expires=<expires>&md=none&sig=<sig>\",\"media_type\":\"image/png\",\"url\":\"http://gateway.test/v1/images/img_d3775d63c1a79f4a9958677d213c516c96447422826e32ba078a32bab902e6a2/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"image.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"attempts\":1,\"completed_at\":\"<time>\",\"idempotency\":\"request\",\"last_http_status\":200,\"mode\":\"async_image_generation\",\"n\":1,\"request_hash\":\"<random-hash>\",\"requested_model\":\"krea2-turbo\",\"response_format\":\"url\",\"size\":\"1024x1024\",\"started_at\":\"<time>\"},\"parent_request_id\":\"<req:1>\",\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<req:1>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"image.generate.krea2-turbo\",\"asset_url_ttl_s\":3600}"
+          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"img_d3775d63c1a79f4a9958677d213c516c96447422826e32ba078a32bab902e6a2\",\"asset_url\":\"http://gateway.test/v1/assets/img_d3775d63c1a79f4a9958677d213c516c96447422826e32ba078a32bab902e6a2/content?expires=<expires>&md=none&sig=<sig>\",\"media_type\":\"image/png\",\"url\":\"http://gateway.test/v1/images/img_d3775d63c1a79f4a9958677d213c516c96447422826e32ba078a32bab902e6a2/content?expires=<expires>&md=none&sig=<sig>\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"image.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"attempts\":1,\"completed_at\":\"<time>\",\"idempotency\":\"request\",\"last_http_status\":200,\"mode\":\"async_image_generation\",\"n\":1,\"request_hash\":\"<random-hash>\",\"requested_model\":\"krea2-turbo\",\"response_format\":\"url\",\"size\":\"1024x1024\",\"started_at\":\"<time>\"},\"parent_request_id\":\"<req:1>\",\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<req:1>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"image.generate.krea2-turbo\",\"results\":{\"image\":{\"kind\":\"assets\",\"count\":1}},\"asset_url_ttl_s\":3600}"
         },
         "headers": {
-          "content-length": "<1312 after normalisation>",
+          "content-length": "<1360 after normalisation>",
           "content-type": "application/json"
         },
         "status": 200
@@ -396,18 +396,18 @@
             "contract": "sha256:0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2",
             "protocol": {
               "id": "node-graph",
-              "revision": "unrevisioned"
+              "revision": "sha256:84391540e9d8d834292fd4386d44e7821375eb989c8b36963a1b9734f7856454"
             },
             "template": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e"
           },
           "envelope_version": 1,
           "executor": {
             "adapter_id": "node-graph",
-            "interface_version": 1
+            "interface_version": 2
           },
           "generated": {},
           "results": {
-            "bundle": null
+            "bundle": "bundle:<job:1>:1"
           },
           "source": {
             "id": "image.generate.krea2-turbo",
@@ -570,6 +570,58 @@
     "media_jobs_schema_version": [
       {
         "version": 6
+      }
+    ],
+    "result_bundle": [
+      {
+        "attempt": 1,
+        "bundle_ref": "bundle:<job:1>:1",
+        "job_id": "<job:1>",
+        "published_at": "<time>",
+        "receipt_linked_at": "<time>",
+        "summary_json": {
+          "bundle": "bundle:<job:1>:1",
+          "bundle_version": 1,
+          "envelope": {
+            "adapter_id": "node-graph",
+            "binding": "sha256:15e1948b4c061931b370bf9b66c17c2de0f2195312b372139e366c67363e6545",
+            "contract": "sha256:0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2",
+            "interface_version": 2,
+            "source_id": "image.generate.krea2-turbo",
+            "source_kind": "workflow",
+            "source_revision": "sha256:47b8866959ca8cf7faeb2040f891d2ed5f217314738f7bf1b1f9f46169c513d0",
+            "template": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e"
+          },
+          "results": [
+            {
+              "count": 1,
+              "kind": "assets",
+              "name": "image",
+              "size_bytes": 77
+            }
+          ]
+        }
+      }
+    ],
+    "result_stage": [
+      {
+        "attempt": 1,
+        "bytes": 77,
+        "count": 1,
+        "created": "<time>",
+        "items_json": [
+          {
+            "asset_ref": "img_d3775d63c1a79f4a9958677d213c516c96447422826e32ba078a32bab902e6a2",
+            "media_type": "image/png",
+            "size_bytes": 77
+          }
+        ],
+        "job_id": "<job:1>",
+        "kind": "assets",
+        "name": "image",
+        "ref": "stage:<job:1>:1:image",
+        "sha256": null,
+        "state": "published"
       }
     ],
     "retention_fact_destinations": [
@@ -911,7 +963,30 @@
           "manifest_hash": "180ae693b5fca4383bf63e326df4c3c1920cf6bcd680d94c09f2f3f51bd40d24",
           "manifest_id": "image.generate.krea2-turbo",
           "manifest_version": "0.1.0",
-          "metadata": {},
+          "metadata": {
+            "result_bundle": {
+              "bundle": "bundle:<job:1>:1",
+              "bundle_version": 1,
+              "envelope": {
+                "adapter_id": "node-graph",
+                "binding": "sha256:15e1948b4c061931b370bf9b66c17c2de0f2195312b372139e366c67363e6545",
+                "contract": "sha256:0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2",
+                "interface_version": 2,
+                "source_id": "image.generate.krea2-turbo",
+                "source_kind": "workflow",
+                "source_revision": "sha256:47b8866959ca8cf7faeb2040f891d2ed5f217314738f7bf1b1f9f46169c513d0",
+                "template": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e"
+              },
+              "results": [
+                {
+                  "count": 1,
+                  "kind": "assets",
+                  "name": "image",
+                  "size_bytes": 77
+                }
+              ]
+            }
+          },
           "owner_key_hash": "app:app_test",
           "parent_request_id": null,
           "path": "/gateway/v1/media/jobs/image-generations",
@@ -1071,7 +1146,29 @@
           "manifest_id": "image.generate.krea2-turbo",
           "manifest_version": "0.1.0",
           "metadata": {
-            "comfyui_models_freed_for_vram": true
+            "comfyui_models_freed_for_vram": true,
+            "result_bundle": {
+              "bundle": "bundle:<job:1>:1",
+              "bundle_version": 1,
+              "envelope": {
+                "adapter_id": "node-graph",
+                "binding": "sha256:15e1948b4c061931b370bf9b66c17c2de0f2195312b372139e366c67363e6545",
+                "contract": "sha256:0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2",
+                "interface_version": 2,
+                "source_id": "image.generate.krea2-turbo",
+                "source_kind": "workflow",
+                "source_revision": "sha256:47b8866959ca8cf7faeb2040f891d2ed5f217314738f7bf1b1f9f46169c513d0",
+                "template": "sha256:3e184a21a2998fcabb02869c6366af40ff6bc1a79a41fb47d49e159530c9f40e"
+              },
+              "results": [
+                {
+                  "count": 1,
+                  "kind": "assets",
+                  "name": "image",
+                  "size_bytes": 77
+                }
+              ]
+            }
           },
           "owner_key_hash": "app:app_test",
           "parent_request_id": null,

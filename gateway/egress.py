@@ -250,6 +250,12 @@ def safe_error_response(status_code: int, code: str, message: str, *, extra: Map
     return SafeErrorResponse(content={"error": error}, status_code=status_code)
 
 
+def error_with_projection(status_code: int, code: str, message: str, content: Mapping[str, Any]) -> SafeErrorResponse:
+    """An error in the one fixed shape, with the projected keys of ``content`` beside it (each a registered projection type)."""
+    error = json.loads(safe_error_response(status_code, code, message).body)
+    return SafeErrorResponse(content={**error, **projection_types.project_body(dict(content)).tree}, status_code=status_code)
+
+
 def fixed_error_response(status_code: int) -> SafeErrorResponse:
     code, message = _FIXED.get(status_code, _BLOCKED)
     return safe_error_response(status_code, code, message)

@@ -375,3 +375,14 @@ def test_the_time_limit_covers_waiting_for_a_slot():
         return caught.value.code
 
     assert asyncio.run(main()) == "fetch_timeout"
+
+
+@pytest.mark.parametrize("name", ["a/b", "a%2Fb", "..", ".x", "a b", "", "x" * 129])
+def test_a_manifest_output_name_that_is_not_one_path_segment_is_refused(name: str):
+    from gateway.manifests import RESULT_NAME_RULE, load_workflow_manifest
+
+    manifest = copy.deepcopy(load_workflow_manifest(ROOT / "manifests" / "workflows" / "tangoflux.yml"))
+    manifest["outputs"] = {name: {"media_type": "audio/wav"}}
+    with pytest.raises(ManifestError, match="result name starts with a letter or digit") as refused:
+        validate_manifest(manifest)
+    assert RESULT_NAME_RULE in str(refused.value)

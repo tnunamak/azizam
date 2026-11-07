@@ -210,7 +210,8 @@ def world(fake_upstreams, monkeypatch, tmp_path):
             return httpx.Response(200, json={"prompt_id": "matrix-job"})
         if request.url.path == "/history/matrix-job":
             return httpx.Response(200, json={"matrix-job": {"status": {"completed": True}, "outputs": {
-                "6": {"videos" if video else "images": [{"filename": filename, "type": "output"}]}}}})
+                # The save node of the workflow each shape runs: the rife video one, the qwen image edit one.
+                "6" if video else "10": {"images": [{"filename": filename, "type": "output"}]}}}})
         if request.url.path == "/view":
             return httpx.Response(200, content=b"rendered-video" if video else comfy_png(),
                                   headers={"content-type": "video/mp4" if video else "image/png"})
@@ -228,6 +229,9 @@ def world(fake_upstreams, monkeypatch, tmp_path):
               "capabilities": ["audio", "transcriptions"], "default_model": "matrix-speech",
               "chunking": {"enabled": False, "spool_dir": str(tmp_path / "spool")}}
     registry["services"]["matrix-speech"] = service_from_backend_config("matrix-speech", speech, source="ui")
+    # A media input may go only to a service the registry knows (the image edit upload is checked against it).
+    registry["services"].setdefault(proxy._GRAPH_BACKEND_ID, {
+        "id": proxy._GRAPH_BACKEND_ID, "config": {"base_url": "http://matrix-graph.fk.test"}})
     write_service_registry_for_test(registry, path=db)
     cfg = copy.deepcopy(proxy.config)
     cfg["backends"] = {"matrix-speech": speech}

@@ -439,7 +439,7 @@ test("at 1440 px the owner's panel is a quiet muted block, and the fault shows t
   // The working line counts what works against what is on (Video is down; Sound effects is off, so not counted).
   const working = panel.getByText("4 of 5 working");
   await expect(working).toBeVisible();
-  expect(await working.evaluate((node) => getComputedStyle(node).textWrap)).toBe("balance");
+  await expect(working).toHaveCSS("text-wrap", "balance");
   const block = panel.locator("ul").first().locator("..");
   const look = await block.evaluate((node) => {
     const probe = document.createElement("div");

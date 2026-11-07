@@ -412,6 +412,10 @@ NOT_CREDENTIAL_TABLES = {
     "access_plans", "account_login_limits", "account_oidc_verification", "account_session_lineage",
     "account_session_revocations", "account_sessions", "account_signin_refusals", "apps", "asset_prompts",
     "audit_events", "media_hidden_assets",
+    # The media input resolver's bookkeeping: which stored input file an ingest made, and which request or job holds it.
+    # File ids, holder ids and the owner a created file is owed back to. Only gateway/media_input_leases.py writes them.
+    # They grant nothing: a row at most owes the removal of one owner's claim on a file the ingest itself made.
+    "media_input_created", "media_input_effect", "media_input_lease",
     # Which creating request made each media asset: asset, job and request ids only. Library deletes read it to find the
     # requests behind an asset. Only the media job store writes it, on save and in the schema backfill. It grants nothing.
     # What a finished job produced (S2.3): stage rows name assets, the bundle row holds the summary, and the value

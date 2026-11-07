@@ -707,6 +707,16 @@ take-ownership ([RB] "Home Assistant and Helm"). A collision of a workflow id wi
 moves into the snapshot, so a stored workflow is live without a restart. The live database holds no stored workflow
 today (read-only count), so the flip changes no live behaviour; C5 checks the count again before deploy.
 
+As built (C5). Stored workflows are records of the registry's `workflows` collection, saved by the whole-registry `PUT`.
+The record says `"overrides": "<id>"` (the record's own field; a stored record does not keep it). A save that adds or
+changes a manifest under a bundled id without it answers 409 `id_is_bundled` with the bundled manifest under
+`bundled_workflow`; a registry read and written back unchanged saves, because an unchanged override is not a new claim. Reset
+to inherit is deleting the record. A package cannot install a workflow under a bundled id (it has no `overrides`).
+The registry GET and PUT answer `workflow_overrides`: `{id: {source: "owner", fields: [...]}}`, field names only. A reload builds
+the next workflow registry whole before it publishes anything, then swaps its records into the one `GATEWAY_WORKFLOW_REGISTRY`
+object, because the gateway router and a bound `records` method hold that object from import. `scripts/workflow_override_report.py`
+reads a copy of admin.db and lists the stored workflows that have a bundled id (the pre-deploy count).
+
 ### 8.5 Engine seed and backfill
 
 Dropped in C4 (3.4 item 3). A fresh install already starts with `backends: {}` (`first-run.yml`). The 737-line

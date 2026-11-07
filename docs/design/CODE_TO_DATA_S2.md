@@ -205,7 +205,8 @@ Every step is additive and keeps the current route path as the default. Each ste
 | S2.2 | Compile from the pinned template, per route, behind a config flag. The audio route goes first. | The flag is off until the audio goldens, plus a crash test and a pin test, pass with it on. Then it is turned on for audio. |
 | S2.3 | The result bundle, staging and publication, the private JSON store, receipts, limits. The routes keep `assets`. | Existing routes publish a bundle that mirrors their assets. Client output is unchanged. |
 | S2.4 | Selectors and adapter descriptors; selector migration of the bundled workflows (golden-checked); the legacy fallback flag; refusal at save. | The legacy fallback stays on until every bundled workflow has selectors. |
-| S2.5 | The v2 `start` outcome, with an http-v1 synchronous fixture. | v1 adapters are unchanged. |
+| S2.5a | The v2 `start` outcome in the runner, an http-v1 selector descriptor, the pinned runtime, and the data-only and pin tests (acceptance 1 and 4). | v1 adapters are unchanged. No route calls the runner yet. |
+| S2.5b | The image and video routes collect through `adapter.collect`; the `results` job-view field and the JSON read route; the legacy collection goes off. | Route goldens move on purpose. S2.5b did the first two; the legacy flag stays on (four bundled workflows have no selectors; see "S2.5b as built"). |
 | S2.6 | The asset resolver, the disclosure check, the upload capability. | The image routes keep their current ingestion until their goldens pass on the resolver. |
 
 ### S2.2 as built
@@ -307,8 +308,8 @@ one helper). The module names no workflow, engine, model, intent or modality.
   protocol description (`registry/protocols/node-graph.yml`; the schema is `protocol.schema.json`). The block lists
   `fields` (each `text` or `enum`, required or with a default), `identity` (the fields that say where a result is),
   `template_node` (the field that names a node of the template) and `kind_field` (an enum field whose values map to a
-  result kind, `json` or `assets`). The compiler refuses the block unless the executor is a reviewed adapter that names a
-  binding. A malformed descriptor raises `DescriptorError`, so the description does not load.
+  result kind, `json` or `assets`). The compiler refuses the block unless the description names a binding (S2.5a relaxed an earlier
+  rule that also required an adapter executor, so an http-v1 description can carry one). A malformed descriptor raises `DescriptorError`, so the description does not load.
 - **Selectors in the binding.** `selectors: {<result name>: {node, key, from: output_dir, decode: none|json,
   take: all|first|single}}`. `validate_manifest` checks the shape against the descriptor at load: declared fields only,
   the right types, required fields present, defaults filled, every named result a declared output, every output covered,
@@ -379,16 +380,347 @@ Decisions the design did not settle:
   belongs with the http-v1 adapter.
 - **`check_for_save` has no caller yet** (see above).
 
-Left for S2.5 and later:
+Left for S2.5b and later:
 - The image and video job routes: collect through `adapter.collect`, name their bundle results by output, and refresh
   their goldens on purpose.
-- A selector descriptor for the http-v1 adapter, so a JSON-only or mixed contract runs through it and through a
-  graph fixture (acceptance items 1 and 4).
 - The `results` field in the job view and the authenticated JSON read route.
-- Reading a `json` result through `fetch_json` into the result store from a route, with the streaming reader through
-  `LimitedAssetStore`.
 - Turn the legacy flag off by default once no workflow in use lacks selectors, and delete the legacy collection.
 - The call to `check_for_save` from the registration route (S4).
+
+### S2.6 as built (resolver)
+
+This is the resolver half. The upload capability is the next step, after S2.4 owns the adapter descriptor.
+
+**Built**
+
+- `gateway/media_inputs.py` is the trusted resolver. A route gives it the authenticated context and one of: an asset id
+  (`resolve_asset`), an uploaded body (`resolve_upload`) or a URL (`resolve_url`). It returns an immutable `StoredInput`
+  (asset id, measured type, measured size, sha256, lease id). `resolve_upload` has no parameter for a claimed type,
+  size or name, so the caller cannot pass one. The resolver measures the bytes itself (magic numbers, no hint) and
+  checks the result against the input's `accepts` list (exact types or `image/*`). A type the sniffer does not know
+  measures as `application/octet-stream` and matches only an `accepts` entry that names it.
+- The order is fixed and every refusal comes before any effect: disclosure, then the asset read check, then the size,
+  emptiness and type checks, then the lease or the ingest. A refused input causes no store write, no lease and no
+  upstream call.
+- The disclosure check (`check_disclosure`) uses the existing access plan. A local service may receive the input. A
+  remote service may receive it only when the plan lists that provider in `paid_providers` (the same fact the policy
+  evaluator reads). A service the registry does not know may not.
+- URLs have one path. The resolver holds no HTTP client. It calls a `fetch` callable from its caller, which is the
+  gateway's media ingestion (`gateway/media_fetch.py`, with its origin and redirect rules). A test reads the module's
+  imports and fails if a network library appears.
+- `gateway/media_input_leases.py` holds the lease and marker tables in the jobs database. An ingest writes its marker
+  (`media_input_effect`) first, then the file, then the lease. The marker is deleted in the lease's transaction. A
+  crash between the steps leaves a marker and nothing else. This is the S2.1 pattern.
+- A lease (`media_input_lease`) names a holder: a `job` or a `request`. Release only sets `released_at`, in the same
+  transaction as the write that caused it:
+  - a job reaches a terminal status (`media_jobs._write_job`);
+  - a job row is deleted (`_release_envelopes_in`, so retention, delete and the kill switch are covered by the S2.1b
+    path scan);
+  - an owner is erased, or a household (`*`) is erased (`erase_prompt_derivatives`);
+  - a request ends (`MediaInputResolver.release`).
+- The sweep (`MediaInputResolver.sweep`) runs in the prompt-memory maintenance loop, after the definition garbage
+  sweep. It deletes stale markers, releases request leases past their TTL, releases job leases whose job row does not
+  exist after the grace period, deletes released lease rows, and removes an owner's claim on a stored file only when a
+  duty row (`media_input_created`) names it and no live lease or marker holds the file. It is idempotent. The scan
+  commits first; then each claim is checked again, removed, and its duty row deleted, in one write transaction
+  (`MediaInputLedger.discard_unheld`). A lease or marker that lands after the scan keeps the file, and the duty row
+  stays until a later pass finds the file unheld. There is no flag to hand over: the duty is a row, so it cannot be lost
+  to a second owner, a crash, an erasure or a failed removal.
+- `proxy.py` has seven hunks in `git diff`: the import; one block with the resolver factory, the destination for a
+  service and the sweep entry point; `_resolve_image_extension_asset`; the request holder in
+  `_upload_image_workflow_extension_assets`; the `asset_id` call there; the release after the upload (in a
+  `try/finally`, so a raised upload still releases the request lease); and the sweep call in the maintenance loop.
+
+**Decisions the design did not settle**
+
+- Disclosure rule: local passes, remote needs a plan grant, unknown is refused (above).
+- `created` detection. An ingest writes a duty row `(asset_id, owner_key)` only for a claim it adds: when this owner
+  held no claim on the planned asset id before (a file that is not there has no claim). A claim the owner already
+  held, such as a file in their library, never gets a removal duty, whatever other owners owe; an earlier rule that
+  also owed a removal whenever another owner's row was pending would have removed such a claim. The check runs inside
+  the write transaction that writes the ingest marker, and the sweep removes files inside its own write transaction,
+  so a claim the ingest saw cannot be removed before the marker holds it. The planned id is
+  the sha256 of the metadata-stripped bytes, which the store computes. Residual: a type whose stripper is not
+  idempotent could plan an id that differs from the stored one. The row would then name a file that does not exist,
+  and the discard would find nothing. No bundled type does this.
+- An ingest of bytes the store already holds adds the caller's owner claim to that asset. The sweep removes only a
+  claim a duty row names, and the store removes the file only when no owner and no maker remains.
+- Leases live in the jobs database, not a new file, so a job write and its release share one transaction. There is no
+  schema-version bump: the tables are `CREATE IF NOT EXISTS`, and a database without them has no leases to release.
+- A request lease expires after one hour, and a marker or an orphan job lease after the same grace period. Both are
+  parameters of the sweep.
+- The sniffer now recognises GIF (`GIF87a`, `GIF89a`). The image store already held GIF files, so without this the
+  resolver would have refused them.
+- One behaviour change: an `img_` asset whose bytes are not a recognised image is now refused with the existing
+  "asset_id must reference a cached image asset" text. The old path sent any bytes it found under an image id. The
+  `ast_` prefix is still refused by the kept prefix check. Every other refusal keeps its old text.
+- The download cap (`media_fetch.max_bytes()`) bounds bytes the gateway fetches or receives as an upload. It does not
+  apply to an asset that is already stored: `resolve_asset` never refuses one for its size, as the old path never did.
+  A test holds both sides (a stored image over the cap still resolves; an upload and a fetched body over it are refused).
+
+**Left**
+
+- The upload capability on the adapter descriptor, after S2.4. Nothing in this step adds it.
+- Inputs that still use the old ingestion, and why (see "S2.6b as built"): the image edit route's `mask`, the identity
+  alias's reference photos, and the video route's source-video inputs (video id, video data URI, video URL).
+
+### S2.6b as built (uploads and references)
+
+The three image input paths that were still on the old ingestion now go through the resolver. The wire is unchanged: the
+bytes, the file name and the content type sent upstream, the response bodies, the job view, the receipts and the frozen
+snapshots. `tests/test_media_inputs_upload_routes.py` holds each path equal to what the old ingestion sent, for PNG,
+JPEG, WebP and GIF (the old ingestion is the literal expected value: the upload as it came, the name the caller gave or
+the route's default, the content type the route fixes or the caller claimed).
+
+**Moved**
+
+- The multipart branch of the image extension inputs (`_upload_image_workflow_extension_assets`). The caller's file name
+  and content type are still what the engine is told; the resolver ignores them and measures the bytes.
+- The image edit route's `image[]` uploads, by the resolver's check only. Every reference image is read first, then each
+  is checked with `MediaInputResolver.check_upload` (the refusals of `resolve_upload`: disclosure, size, emptiness and
+  measured type, with no store write and no lease), and only then does the first one go to the engine. So one refused
+  image leaves no upload behind for the others, and the check comes before the mask step. The route does **not**
+  ingest or lease the images: it already stores each one as a source of its result (`made_from`), with the same owner
+  key and the same file id. A second claim from the resolver is the same claim, so the sweep would remove the file
+  that the result keeps as its source (the frozen `image_edit` trace shows that source file). The variations route calls
+  this route and is covered with it.
+- The video route's `input_reference` (`_resolve_input_reference`, used by the single clip, the long-video chain, the
+  extension route and the image inputs of video workflows). An asset id goes through `resolve_asset` (the existing
+  `_resolve_image_extension_asset`). A data: URI, raw base64 and an uploaded part (the multipart reader turns it into a
+  data: URI first) go through `resolve_upload`. A URL goes through `resolve_url`, and the injected fetch is the existing
+  `_fetch_media_url` (origin and redirect rules in `gateway/media_fetch.py`). The fetched file name is read from that
+  fetch call, because the resolver returns bytes, not names.
+
+**Leases.** Every ingested input (the extension uploads and the video references) holds a request lease.
+`proxy_graph_video_create` and the extension route's chain call run inside `_with_request_media_inputs`, which makes the
+request holder and, when the call ends on any exit, releases it and runs the maintenance sweep once
+(`_end_request_media_inputs`). The public name of the create route is unchanged; its old body is
+`_proxy_graph_video_create`. So a file an upload made is removed when its request ends, not at the next maintenance
+round; nothing an upload made stays in the asset store (the frozen traces list the store, and they are unchanged). The
+extension multipart branch does the same after the engine upload, also when the upload raises. A caller of
+`_resolve_input_reference` with no holder (tests, callers outside a request) gets a holder that ends with that call. No
+job-held lease is needed on these paths: the engine has the bytes before the request returns. The existing release API
+is used; there is no second one.
+
+**Refusals that are new** (each is a refusal the resolver already makes; each comes before any store write, lease or
+upstream call)
+
+- Bytes that are not a recognised image are refused on every moved path, whatever name or type the caller claimed.
+  The old paths sent them on. Text: asset ids keep "asset_id must reference a cached image asset"; the upload paths
+  have no earlier text, so they use the resolver's "the input is not a file type this model accepts". On the edit route
+  this is HTTP 400, `param: "image[]"`, `code: "input_type_unsupported"`, and the receipt records the code as the
+  rejected reason for `image[]`. Extension uploads use the existing extension error shape with the field name as param.
+- An empty body (an empty data: URI, an empty upload) is refused ("the input is empty"). The old paths sent it.
+- A picture the asset store cannot hold (the metadata stripper rejects it, for example a PNG cut short) is refused on the
+  ingesting paths with the same unsupported-type text. `AssetPort.planned_id` raises `ValueError` for it; the resolver
+  turns that into the refusal before the marker. The edit route only measures, so it still forwards such a picture.
+- A body over `media_fetch.max_bytes()` (256 MiB by default) is refused ("the input is larger than the size limit").
+- Disclosure: a remote engine the access plan does not list, and an engine the registry does not know, receive nothing
+  ("Your access plan does not allow sending files to the provider this model runs on."). The old upload paths did not
+  check.
+- A URL fetch failure keeps its old text, "failed to download input_reference: <reason>".
+- **Known gap.** The sniffer knows PNG, JPEG, GIF and WebP. An upload in another image format (BMP, TIFF, AVIF) now
+  measures as `application/octet-stream` and is refused, where the old paths forwarded it. The asset store only holds
+  those four types today. Adding a format is one sniffer entry and one suffix.
+
+**Store effect.** An uploaded input on the extension and video paths is ingested for the length of its request: the store
+writes it (with the caller's owner claim, no maker, no prompt) behind an ingest marker, the lease keeps it, and the end
+of the request removes it (see Leases). The old paths stored nothing. While the request runs, the file is one the
+caller's own asset reads can see.
+
+**Left on the old path, and why**
+
+- The edit route's `mask`. It is not an input the model reads as an image of its own: it is normalised by the mask step,
+  which has its own refusals and error text. Moving it changes which error a bad mask gets.
+- The identity alias's reference photos (`image[]` on the identity model). The face service decodes them and answers with
+  its own errors; the bytes are not forwarded as they came.
+- Source-video inputs (video id, video data URI, video URL). The sniffer knows only MP4 among video types, so a WebM
+  source would be refused: a wire change. The image-only `accepts` of this step does not cover them.
+
+(S2.5a did the selector descriptor for the http-v1 adapter, the JSON read through the fetch gate, and the data-only tests.)
+
+### S2.5a as built
+
+The code is `gateway/engine_protocol/jobs.py` (the runner), `gateway/pinned_runtime.py` (new), the v2 methods of
+`http_adapter.py` and `node_graph.py`, the result types in `gateway/engine_protocol/types.py`, and small hunks in
+`description.py`, `output_selectors.py`, `executor.py`, `manifests.py`, `pinned_definitions.py`, `job_envelope.py` and
+`proxy.py`. None of them names a workflow, engine, model, intent or modality; a test reads the tokens of `jobs.py`,
+`pinned_runtime.py` and `http_adapter.py` and fails on a modality or engine word.
+
+- **Interface version 2.** `SUPPORTED_INTERFACE_VERSIONS = (1, 2)`. `start(conn, op, request)` answers `Pending(ref)` or
+  `Completed(ResultBundle)`. An optional `results(conn, ref, status, request, context)` reads the named results of a job
+  that has succeeded. The http-v1 and node-graph adapters declare version 2. The reviewed inline-speech and chunked-speech
+  adapters stay on version 1 and still use `submit`, `poll` and `fetch_assets`.
+- **The runner decides by the declared number, never by a name.** A version 2 adapter without `start` is refused as
+  `adapter_version_mismatch` before anything is resolved or sent. A version 2 job that is already finished returns
+  `None` before its connection is resolved (D3, first row). The marker is written before `start`, as before. A
+  `Completed` bundle is staged and published in the one transaction of D4, and that commit clears
+  `protocol_submitting`. A crash before the commit leaves the marker, so a restart reads `submission_unknown` and sends
+  nothing. A `Pending` outcome follows today's loop (`protocol_job` saved, then poll). When the poll succeeds and the
+  adapter has `results`, the runner commits that bundle and leaves the marker alone (the job id is saved, so the marker
+  no longer decides a restart); an adapter without `results` goes through `fetch_assets` as before.
+- **What `run` returns.** The adapter's files for a version 1 adapter. The published `ResultBundle` for a version 2
+  adapter that returned results. `None` for a finished version 2 job. Tests that drove a graph workflow through `run`
+  read the bundle now.
+- **A refused result publishes nothing.** `ResultRefused` (a limit) or `SelectionRefused` (a result that is missing,
+  null, ambiguous or of the wrong type) leaves the job running, the marker set, and every staged result aborted.
+- **Result limits reach the adapter through the runtime.** The runner asks its runtime for `result_context()` (the limits
+  and the legacy setting). A runtime that does not have one gets the code defaults.
+- **The http-v1 selector form** is the descriptor in the description, as for the graph. The test fixture uses
+  `identity: [source]`, `kind_field: decode` and `fields.source` (text, the name of a `select` entry of the response) and
+  `fields.decode` (`json`, `base64` or `binary`, mapped to the kinds `json`, `assets` and `assets`). Names, fields and
+  values are data. Core reads only `identity`, `kind_field` and the kind map.
+  - `json`: the selected value, written as canonical JSON, is the result bytes.
+  - `base64`: the selected text is an encoded file that the adapter decodes and saves. This is how one synchronous
+    reply holds a JSON value and a file at once (a mixed contract).
+  - `binary`: the whole binary body is one file result. A reply has one body, so at most one result may read it.
+  - A selected value that is missing or null is `result_missing`. A text that is not valid base64 is `result_malformed`.
+    An operation with a `job` pattern is `Pending` and takes the usual loop; an operation with neither a `job` nor a
+    binding that has selectors is refused (`selectors_missing`), because a synchronous answer has no legacy reading. A
+    streamed reply has no selectors and is refused (`UnsupportedByAdapter`).
+- **Result against contract** (`output_selectors.wrong_type_reason`, used by both adapters). A `json` result fits an
+  output that declares `application/json`. A file result fits an output that declares the same top-level type for every
+  file, as the reviewed sniffer names it, and never fits a JSON output. An output that declares no type accepts either.
+  The reason never holds a value.
+- **A pinned run** (`pinned_runtime.PinnedRuntime`) asks its envelope, not a file or a registry. The request carries the
+  pinned manifest (pinned contract, one pinned binding) and the pinned template, so an edit or a delete after accept
+  changes nothing. The connection is the live one, checked against the pin first: protocol id and revision, adapter id
+  and interface version, and the digest of the engine address. A difference raises `DefinitionUnavailable` and nothing
+  is sent. The address is stored only as a digest, so a moved engine cannot be followed; the job needs a new
+  acceptance. The check runs on every call, so a runtime built after a restart meets the same pin.
+  - **The adapter id** is the named adapter, or the built-in executor (`http-v1`) when the description names none. The
+    envelope needs a non-empty value.
+  - **The protocol revision** is the SHA-256 of the canonical JSON of the parsed description. Comments and spacing do not
+    change it; any other edit does. `proxy.py` pins it for graph jobs in place of the `unrevisioned` marker, so a job
+    accepted before this change fails the identity check (the product is unreleased, so there is no compatibility path).
+  - **The pinned manifest is checked against the pinned protocol's own selector descriptor** (`validate_manifest` and
+    `PinnedDefinitions.manifest` take the descriptors), not the shipped registry. `compile_workflow` no longer re-checks
+    selectors in its view of one binding (they say how results are read, not how inputs are bound, and were checked at
+    load).
+- **The JSON read goes through the fetch gate.** `NodeGraphAdapter.fetch_json` took no part in `FETCH_GATE`. Called alone
+  it now takes a slot under the deployment limits (a refused wait is `SelectionRefused('fetch_timeout')`). `results` holds
+  one slot for its whole read (history, JSON and files) and passes its session, so the gate is taken once. Tests cover
+  both: a held slot times a standalone read and a result read out.
+- **A JSON file on a graph engine is read through a `key`.** The descriptor's `key` enum lists the history lists that
+  hold files (`images`, `videos`, `gifs`, `audios`, `audio`, `wav`, `mp3`), so a JSON file must be listed under one of
+  them. A node that writes JSON under another key needs the enum widened in the adapter's description (data). Not done:
+  no bundled engine does this.
+
+Goldens that moved (path by path): `image_job_succeeds`, `image_job_upstream_failure`, `image_job_oom_then_complete`,
+`video_job_succeeds` and `audio_generate_job` (shared by the compiled-from-pin run). All changes are in the pinned
+envelope and the copies of it: `$.media_jobs.job_envelope[0].envelope_json.definitions.protocol.revision`
+(`unrevisioned` becomes the description digest) and `...executor.interface_version` (1 becomes 2). `audio_generate_job`
+also moves `$.media_jobs.result_bundle[0].summary_json.envelope.interface_version` and
+`$.receipts.receipts[0].receipt_json.metadata.result_bundle.envelope.interface_version` (1 becomes 2), because the
+bundle summary and the receipt copy the envelope. No other path moved. The audio route wire goldens, the OpenAPI snapshots
+and the job view did not move.
+
+Tests are in `tests/test_start_outcome_v2.py`. Every name a contract or description uses is made at random when a test
+builds its rig. The same checks run on a synchronous http-v1 fixture and a graph fixture, for a JSON-only and a mixed
+contract, and for one offering envelope. Positive controls put back an identity branch and a modality branch in the
+commit step; each must fail the check. Revert-checks (each mutation made the named tests fail, and was reverted):
+`start` not chosen for version 2 (26 tests), the contract type check removed from the http adapter (the wrong-type
+case), the pin identity check removed (the seven pin cases), the gate removed from standalone `fetch_json` and from
+`results` (one test each).
+
+Decisions the design did not settle:
+- **No route calls the runner or `PinnedRuntime` yet.** S2.5b moves the image and video routes; until then the new path is
+  exercised only by tests, as the runner was before.
+- **Both adapters moved to version 2 now**, not only http-v1, so one pin and one runner path cover them. This is why the
+  goldens above moved.
+- **`run` returns the bundle**, not a list of files, for a version 2 job that published one.
+- **An answer with no declared selectors is refused on a synchronous operation.** The legacy collection reads a graph
+  history only, so it has nothing to read here.
+- **Left for S2.5b:** the items listed above, plus choosing the graph engine's JSON `key` values when a bundled engine
+  needs one.
+
+### S2.5b as built
+
+What changed:
+- **Image and video routes collect by selector.** The graph round takes the binding and the contract outputs of the
+  workflow's manifest. For an image job the poll carries the history entry it already read (`JobStatus.record`, a
+  `FinishedRecord` with the entry and its size), and `NodeGraphAdapter.fetch_selected` collects from it with the binding's
+  selectors, so no second history call is made. The file reads go through `output_selectors.FETCH_GATE` and are bounded
+  while they are read: the number of files, the bytes of one file and the total are the deployment's result limits, and a
+  file is refused at the first byte past a limit. The video content route collects with `adapter.collect` on the finished
+  entry (`_select_video_file`) and reads the one file inside the fetch gate. The old `_first_video_output` alias is gone.
+- **A bundle is named by output.** `response.selected_result` carries the output name the selector chose, and the three
+  `mirror_assets` call sites (image, video, and the audio route from S2.4) pass it as the bundle result name, so an image
+  job publishes a result `image`, a video job `video`. A workflow with no selector keeps the default name. The job's
+  `assets` entries are unchanged: `mirror_assets(stored=)` takes the size and media type of a saved asset from a separate
+  map (`_stored_asset_facts`) when the entry does not carry them, so the client view and the OpenAPI schema do not move.
+- **The streaming JSON reader.** A JSON result file is read as it arrives and refused at the first byte over the limit
+  (`json_too_large`), not after the file is held.
+- **`results` in the job view.** A published result is listed by name with its kind and count; a JSON result also carries
+  `href`, the route that reads it. An asset result has no `href`: its files are already in `assets` and fetched by their
+  own route. No value is ever in the view. The field is added at every audience (the gateway's own owner view reads at the
+  internal audience), for a job, the job list and the batch read, from `result_bundle.results_view`. A job that published
+  nothing, or a failed job whose results are only staged, has no `results` field.
+- **`GET /gateway/v1/media/jobs/{job_id}/results/{name}`.** It reads one published JSON result through
+  `result_bundle.read_json` (the streaming reader with the result limits, the owner check and erasure handling that S2.3
+  built). The reader (`owner_scope`, person, credential, connection) is built from the authenticated identity by
+  `_gateway_result_reader`, the way the job's own authorization is. The record authorizer runs first on the job. Every
+  refusal is the same 404 body (`media_job_result_not_found`): no such job or result, another maker or another App's
+  credential, a staged result of a failed run, an erased or expired value, an asset result, no identity. A caller cannot
+  tell them apart. The answer is the stored bytes with `Cache-Control: private, no-store` and `X-Content-Type-Options:
+  nosniff`.
+
+Tests and evidence:
+- `tests/test_media_job_results.py` (16 cases, the real router on a temporary jobs database) and
+  `tests/test_image_video_route_selectors.py` (13 cases on the adapter-differential rig: a selector beats a temp preview,
+  an input echo and a saved file of a side branch; the history, asset and fetch-gate limits refuse before or while the file
+  is read, for images and for videos; the legacy video collection skips a picture and takes the first clip; the bundle is
+  named by output and listed in the view).
+- Revert-checks (each mutation made the named tests fail, and was reverted): `fetch_selected` given an empty binding (four
+  image cases), `_select_video_file` given an empty binding (three video cases), `with_results` returning no results (view,
+  list and asset-result cases), and the record authorizer removed from the read route (the authorizer case).
+- Moved goldens, on purpose (`tests/fixtures/adapter_differential/`): `image_job_succeeds.json`, `video_job_succeeds.json`,
+  `image_job_oom_then_complete.json` and `audio_generate_job.json`. Paths that moved: the `media_jobs.job_envelope` row's
+  `results.bundle` (null to a bundle id) and the new `result_bundle` and `result_stage` tables for image and video; the
+  `result_bundle` summary in the receipt and job `metadata` for image and video; `results` (and `content-length`) in the
+  client job view of all four. The audio view gained the field only; its bundle was S2.4's. The wire request to the client
+  and the engine requests did not change (the goldens' request lines are identical).
+- Route fixtures regenerated with the repo's tool (`scripts/generate_headless_fixtures.py` through the hermetic runner):
+  `headless_openapi.json` gained the one new path and nothing else (a structural diff confirmed it), then
+  `route_graph_frozen.json`, `headless_non_control_routes.json`, `route_policy_known_gaps.txt` (the new route is a 404 for the
+  probe, as its sibling `.../events` is, in both sections) and `content_access_inventory.json` (the route row, and the new
+  `source_sha256` of the event writers whose bodies changed). Two audio writers (`_run_audio_media_job`, `completed` and
+  `started`) already had stale hashes on the S2.5a base; they were refreshed with the rest.
+- Test fakes corrected to match each workflow's own selector, since the old collection took any file: video fakes use the
+  key `images` and the save node of their manifest (node 60 for the ltx workflows, 18 for minimax, 6 for rife), image fakes
+  use node 9, 10 or 13 as the workflow saves. These fakes were wrong about the engine, not the gateway.
+
+Review fixes (round 2):
+- **A result name is one path segment.** The read route takes `{name:path}`, so a path-shaped name never falls out of the
+  handler: it gets the same 404 body as any missing name. A published name could not be read back if it held a `/`, so the
+  store refuses such a name when it is staged (`bad_name`), and a manifest whose output has one is refused when it is
+  checked (`RESULT_NAME_RULE` in `gateway/manifests.py`): a letter or digit first, then letters, digits, `.`, `_` and `-`,
+  at most 128. Every bundled output name already fits.
+- **The legacy video collection keeps its old reading** while the flag is on (`legacy_select(..., kind="video")`): only
+  video files count, so a preview picture ahead of the clip is skipped, and the first clip in node order is the result, so
+  several output nodes are not `result_ambiguous`. It still reads the output directory only. The legacy image collection is
+  unchanged.
+- **Video reads are bounded.** `NodeGraphAdapter.fetch_file` reads one chosen file inside the fetch gate and refuses at the
+  first byte past `max_asset_bytes` (`asset_too_large`), as the image read does. Both video routes use it. The source-video
+  helper for workflow inputs now takes the fetch gate too; it keeps its own byte bound (`media_fetch`).
+
+Decisions the design did not settle:
+- **The legacy flag stays on.** Four bundled workflows have no selectors: `face-likeness`, `flux2-klein-4b-seamless-tile`,
+  `image-identity` (a gateway binding; it runs a graph) and `mesh.generate.trellis-2`. Turning it off would fail them. The
+  legacy code is not deleted. The flag goes off when those four declare selectors.
+- **The view carries a summary, never a value;** a JSON value is read only on its own route, so a list of jobs can never
+  carry a canary.
+- **One 404 for every refusal** on the read route, in line with the job route's uniform "not found" for other makers.
+- **No history read per round.** The poll's entry is reused, so an image job makes the same engine calls as before.
+
+Left:
+- Selectors for the four workflows above, then the flag off by default and the legacy code deleted.
+- The `check_for_save` call from the registration route (S4).
+- S2.6 (the asset resolver, disclosure check and upload capability).
+- Base failures seen, not chased here: `tests/test_store_write_locks.py::test_prompt_erasure_locks_each_batch_and_rolls_a_failed_batch_back`,
+  `tests/test_config_keys_are_classified.py` (`asset_ref`), and
+  `tests/test_no_upstream_text_in_client_errors.py::test_no_error_response_takes_text_an_upstream_wrote`
+  (`NodeGraphAdapter.results`, which this slice did not change); all fail on the S2.5a base.
 
 ## Done when: the S2 acceptance matrix
 
@@ -430,3 +762,24 @@ Left for S2.5 and later:
    - The runtime still checks hostile engine replies.
 
 The full public oracle (owner registration, hot edit, the generic route) stays with S4 to S6. S2 does not claim it.
+
+### S2 matrix coverage: items 2 and 3
+
+Files: `tests/test_s2_matrix_privacy.py` (item 2) and `tests/test_s2_matrix_replay.py` (item 3). "Existing" means a test
+that was already in the tree.
+
+| Bullet | Tests | State |
+|---|---|---|
+| 2.1 Canary values in neutral string, enum, integer, number, boolean, nested, filename and URL inputs | `test_neutral_input_values_do_not_change_what_the_envelope_pins` (all eight shapes, compared with a fixed baseline, so a copied boolean or enum is caught); `SubmittedCanaryCarrierTests::test_the_submitted_values_reach_the_engine_and_no_durable_carrier` (string, integer and number through the real audio route; the engine gets them). Existing: `test_job_envelope_privacy.py`. | covered. The audio route takes only a string, an integer and a number, so the other shapes are checked at the store. The seed and the duration stay in the internal job row on purpose (`_safe_request_metadata`); the test pins that they are nowhere else. |
+| 2.2 Envelope, job, events, receipts, client and admin views | The same `SubmittedCanaryCarrierTests` test reads the envelope tables, the job row, the events table, the receipts table, and the job, event and receipt views for the client and the admin audience, each checked non-empty first. | partly: one route (audio). No HTTP or UI rendering of the views. |
+| 2.3 Forget, member-off, kill switch, erasure, stale worker rewrite | `test_a_privacy_mode_leaves_no_durable_copy_of_the_body` (member-off, kill, person erasure: spool, saved prompt, job fingerprint, events and envelope tables; a stale prompt write is refused; another person is untouched under member-off and person erasure, while the kill switch purges prompt memory for everyone by design); `test_forget_keeps_the_body_in_memory_only_and_it_dies_with_the_process`; `test_a_stale_worker_rewrite_cannot_restore_what_erasure_removed` (a worker paused before its write while erasure commits). | covered for the spool, the saved prompt, the job fingerprint and the seeded request IDs. The envelope's `generated` block is always empty today, so clearing a non-empty one is untested. |
+| 2.4 The normal spool keeps working | Existing: `test_prompt_memory_lifecycle.py::test_normal_async_spool_survives_memory_loss`, `::test_old_active_disk_payload_survives_cleanup`. New control in the privacy-mode test: the other person's spool still loads after the erasure. | covered |
+| 3.1 Crash before and after the envelope commit | `test_a_crash_around_the_envelope_commit_replays_to_one_job` (before and after the commit, then a retry with a different envelope); `test_a_crash_after_the_job_row_but_before_the_envelope_leaves_nothing`. | covered |
+| 3.1 Around each upload | None. The media input ledger and the engine upload are not on this base (S2.6 is a separate branch). | not covered |
+| 3.1 Around the attempt marker; after send but before the id is saved; during fetch | `test_a_crash_at_each_point_of_a_protocol_run_resends_only_when_nothing_could_have_been_sent` (before the marker, after the marker before the send, after the send before the id, after the id, during the fetch; sends and fetches counted at the engine). | covered for the protocol runner. The audio, image and video job runners in `proxy.py` are not driven here. |
+| 3.1 During the final commit | `test_a_crash_in_the_final_job_commit_leaves_the_prior_state` (a crash in the `before_commit` hook, and at the commit). | covered for the job state and what the hook writes. Result-bundle publication is judged under item 5. |
+| 3.2 Concurrent same-key retries | `test_concurrent_same_key_creates_record_one_job_and_one_envelope` (the second create waits on the write lock, then replays). | covered at the store; not a scheduler test |
+| 3.2 Changed input, owner or person | `test_a_replay_with_one_changed_submission_fact_conflicts` (input, owner, person). | covered |
+| 3.2 Erased fingerprints | `test_an_erased_fingerprint_cannot_authorize_a_replay` (plain, and with a stale worker rewrite). | covered |
+| 3.2 Both sides of the 14-day window | `test_a_finished_job_replays_up_to_and_including_the_window_edge` (three terminal states, 1 s inside, on, and 1 s outside the edge); `test_an_unfinished_job_replays_however_old`. | covered |
+

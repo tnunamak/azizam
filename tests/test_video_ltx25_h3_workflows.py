@@ -21,8 +21,9 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 from gateway import manifests, workflow_call  # noqa: E402
 from tests.support.access import access_context  # noqa: E402
+from tests.media_test_bytes import png_bytes  # noqa: E402
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+PNG = png_bytes((0, 0, 0))
 
 
 def test_ltx_frame_rate_is_integer_and_manifest_routes_reject_other_types() -> None:

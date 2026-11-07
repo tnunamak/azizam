@@ -32,7 +32,7 @@ import asyncio
 import contextlib
 import logging
 import weakref
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -426,3 +426,29 @@ class FetchGate:
 
 FETCH_GATE = FetchGate()
 
+
+
+# ----------------------------------------------------------------------------------------- result against contract
+
+JSON_MEDIA_TYPE = "application/json"
+
+
+def wrong_type_reason(spec: Any, kind: str, media_types: Iterable[str]) -> str | None:
+    """Why a finished result does not fit what its output declares, or ``None`` if it fits (or declares no type).
+
+    A ``json`` result fits an output that declares ``application/json``. An ``assets`` result fits an output that declares
+    the same top-level type (``type/subtype`` before the slash) for every file, as the reviewed sniffer named it. The
+    reason never holds a value.
+    """
+    declared = _declared_type(spec).split(";", 1)[0].strip().lower()
+    if not declared:
+        return None
+    if kind == "json":
+        return None if declared == JSON_MEDIA_TYPE else f"the result is JSON, but the contract declares {declared}"
+    if declared == JSON_MEDIA_TYPE:
+        return "the result is files, but the contract declares JSON"
+    family = declared.split("/", 1)[0]
+    for media_type in media_types:
+        if str(media_type).split("/", 1)[0].lower() != family:
+            return f"a file is {media_type}, but the contract declares {declared}"
+    return None

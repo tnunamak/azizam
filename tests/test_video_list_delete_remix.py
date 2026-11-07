@@ -8,6 +8,7 @@ used elsewhere in this file's sibling video tests -- no real ComfyUI.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sys
 import unittest
@@ -67,6 +68,12 @@ class _FakeVideoAsyncClient:
         if prompt_id in self.history:
             return _StubHistoryResponse(200, {prompt_id: self.history[prompt_id]})
         return _StubHistoryResponse(200, {})
+
+    @contextlib.asynccontextmanager
+    async def stream(self, method: str, url: str, **kwargs: Any):
+        # The video routes read a result file as a bounded stream (NodeGraphAdapter.fetch_file).
+        assert method == "GET"
+        yield await self.get(url, **kwargs)
 
     async def post(self, url: str, **kwargs: Any) -> _StubHistoryResponse:
         self.posts.append((url, kwargs.get("json") or {}))
