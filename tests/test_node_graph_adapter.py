@@ -252,29 +252,13 @@ def test_recover_reads_history_then_the_queue_and_says_none_when_neither_knows_t
     assert (running.state, pending.state, lost) == (JobState.running, JobState.pending, None)
 
 
-def test_outputs_are_read_in_node_order_and_an_unreadable_file_is_skipped() -> None:
+def test_a_finished_status_names_every_output_file_in_node_order() -> None:
     job = {"status": {"completed": True}, "outputs": {
         "9": {"images": [{"filename": "a.png", "subfolder": "s", "type": "output"}, {"filename": "gone.png"}]},
         "10": {"videos": [{"filename": "v.mp4"}], "images": [{"filename": "b.png", "type": "temp"}]},
     }}
     status = run(NodeGraphAdapter().poll(CONN, JobRef("x", "p1"), session=session(history(job))))
-    assert len(status.assets) == 4
-
-    def answer(method, url, kwargs):
-        name = kwargs["params"]["filename"]
-        if name == "gone.png":
-            raise httpx.ReadTimeout("slow")
-        return Response(200, content=name.encode())
-
-    client = RecordingClient(answer)
-    got = run(NodeGraphAdapter().fetch_outputs(CONN, status, headers={"h": "1"}, session=session(client)))
-    assert got == [b"a.png", b"b.png"]
-    assert [c[2]["params"] for c in client.calls] == [
-        {"filename": "a.png", "type": "output", "subfolder": "s"},
-        {"filename": "gone.png", "type": "output"},
-        {"filename": "b.png", "type": "temp"},
-    ]
-    assert all(c[2]["headers"] == {"h": "1"} for c in client.calls)
+    assert [json.loads(h)["filename"] for h in status.assets] == ["a.png", "gone.png", "b.png", "v.mp4"]
 
 
 def test_fetch_assets_needs_a_media_store() -> None:
@@ -352,7 +336,7 @@ def test_execution_errors_read_as_they_always_did(job: Any, expected: str | None
     assert node_graph.execution_error_message(job, "L", GRAPH) == expected
 
 
-def test_error_node_state_queue_and_output_helpers() -> None:
+def test_error_node_state_queue_and_view_helpers() -> None:
     job = {"status": {"completed": True, "messages": [["execution_error", {"node_id": "12"}]]}}
     assert node_graph.execution_error_node_id(job) == "12"
     assert node_graph.execution_error_node_id({"status": {"messages": [["x"]]}}) is None
@@ -364,15 +348,6 @@ def test_error_node_state_queue_and_output_helpers() -> None:
     assert node_graph.queue_position({"queue_pending": "no"}, "p") is None
     assert node_graph.queue_prompt_ids([[0, "a"], [1, ""], [2, 3], "x", ["only"]]) == {"a"}
     assert node_graph.queue_prompt_ids("not a list") == set()
-    video = {"outputs": {"1": {"images": [{"filename": "src.mp4", "type": "input"}]},
-                          "2": {"videos": [{"filename": "out.webm", "subfolder": "v", "type": "output"}]}}}
-    assert node_graph.first_video_output(video) == {"filename": "out.webm", "subfolder": "v", "type": "output"}
-    assert node_graph.first_video_output({"outputs": {"1": {"images": [{"filename": "src.mp4", "type": "input"}]}}}) == \
-        {"filename": "src.mp4", "subfolder": "", "type": "input"}
-    assert node_graph.first_video_output({"outputs": {"1": {"images": [{"filename": "a.png"}]}}}) is None
-    audio = {"outputs": {"3": {"audio": [{"filename": "a.flac", "type": "temp"}]}}}
-    assert node_graph.first_audio_output(audio) == {"filename": "a.flac", "subfolder": "", "type": "temp"}
-    assert node_graph.first_audio_output({}) is None
     assert node_graph.view_params({"filename": "a", "subfolder": "s"}) == {"filename": "a", "type": "output", "subfolder": "s"}
     assert node_graph.decode_output(node_graph.encode_output("images", {"filename": "a"}))["filename"] == "a"
     with pytest.raises(MalformedResponse):
@@ -611,9 +586,6 @@ def test_an_output_list_that_is_not_made_of_objects_does_not_break_the_image_han
     }}
     status = run(NodeGraphAdapter().poll(CONN, JobRef("x", "p1"), session=session(history(job))))
     assert [json.loads(h).get("filename") for h in status.assets] == ["ok.png", None]
-    client = RecordingClient(lambda m, u, k: Response(404, content=b""))
-    run(NodeGraphAdapter().fetch_outputs(CONN, status, session=session(client)))
-    assert [c[2]["params"] for c in client.calls] == [{"filename": "ok.png", "type": "output"}, {"filename": None, "type": "output"}]
 
 
 def test_a_reply_reads_nothing_until_it_is_asked() -> None:

@@ -17,6 +17,7 @@ import httpx
 
 import proxy
 from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, fake_upstreams, load_scenario  # noqa: F401
+from tests.support.graph_selectors import IMAGE_AT_NODE_1
 
 HANG_BOUND_SECONDS = 10
 WORKFLOW = {"1": {"class_type": "FkNode", "inputs": {"text": "a red fox"}}}
@@ -28,6 +29,7 @@ def _generate(fakes: FakeUpstreams, monkeypatch, scenario: str):
     monkeypatch.setattr(proxy, "get_vram_estimate", lambda *a: 100)  # known cost: no VRAM probe round
     monkeypatch.setattr(proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**12))
     monkeypatch.setattr(proxy, "_image_free_vram_on_exhaustion", lambda: True)
+    monkeypatch.setattr(proxy, "_graph_result_source", lambda *_a, **_k: IMAGE_AT_NODE_1)  # the made-up workflow has no manifest
     monkeypatch.setattr(proxy, "_build_image_response_payload", lambda request, images, response_format, warning_headers, **kw: proxy.Response(
         json.dumps({"count": len(images)}), status_code=200, media_type="application/json", headers=warning_headers))
 
@@ -76,6 +78,7 @@ def test_a_refused_background_removal_round_is_retried_without_it_and_the_gatewa
     monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
     monkeypatch.setattr(proxy, "get_vram_estimate", lambda *a: 100)
     monkeypatch.setattr(proxy, "graph_free_vram_bytes", AsyncMock(return_value=10**12))
+    monkeypatch.setattr(proxy, "_graph_result_source", lambda *_a, **_k: IMAGE_AT_NODE_1)  # the made-up workflow has no manifest
     monkeypatch.setattr(proxy, "_build_image_response_payload", lambda request, images, response_format, warning_headers, **kw: proxy.Response(
         json.dumps({"count": len(images)}), status_code=200, media_type="application/json", headers=warning_headers))
     fallback = {"2": {"class_type": "FkFallbackNode", "inputs": {"text": "a red fox"}}}

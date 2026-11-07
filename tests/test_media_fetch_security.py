@@ -17,6 +17,7 @@ import proxy
 from tests.support.access import access_context  # noqa: E402
 from gateway import media_fetch
 from tests.media_test_bytes import mp4_bytes
+from tests.support.graph_selectors import video_manifest
 
 
 def _response(status=200, *, headers=None, data=b"media"):
@@ -326,6 +327,7 @@ def test_legacy_gateway_video_url_checks_ownership_and_streams_under_cap(monkeyp
     comfy = FakeComfy()
     monkeypatch.setattr(proxy.httpx, "AsyncClient", comfy.client_class())
     monkeypatch.setattr(proxy, "configured_downstream_headers", lambda *args: {})
+    monkeypatch.setattr(proxy, "_video_manifest_of_job", lambda _prompt_id: video_manifest("60", "images"))
     url = f"https://gateway.example/v1/videos/video_{SOURCE_PROMPT_ID}/content"
     with patch.object(media_fetch, "_resolve_addresses", side_effect=AssertionError("no public URL network")):
         fetched = asyncio.run(proxy._fetch_media_url(url, owner))

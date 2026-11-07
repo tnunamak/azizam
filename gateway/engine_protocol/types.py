@@ -219,8 +219,6 @@ class Completed:
 
 @dataclass(frozen=True)
 class ResultContext:
-    """What core hands an adapter that reads results after a job: the deployment's result limits (never a manifest value)
-    and whether a binding with no selectors may still be read by the adapter's legacy collection."""
+    """What core hands an adapter that reads results after a job: the deployment's result limits (never a manifest value)."""
 
     limits: Any
-    legacy_allowed: bool = True

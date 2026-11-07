@@ -21,8 +21,8 @@ Operations (``invoke``): ``graph.submit``, ``graph.history``, ``graph.history_pa
 posts a prompt; ``poll`` reads its history entry; ``cancel`` asks the engine to
 stop it; ``recover`` looks the prompt up in history and queue; ``events``
 follows the engine's push channel; ``fetch_assets`` reads the output files into
-the media store. ``fetch_outputs`` returns the same files as bytes for callers
-that store them themselves.
+the media store. ``fetch_selected`` returns the selected files as bytes for
+callers that store them themselves.
 
 A caller that makes several requests for one job opens one session
 (``adapter.open``) and passes it to the job methods, so the requests share one
@@ -67,11 +67,7 @@ OPERATIONS = (
 # manifest in ``params`` and the typed inputs in ``body``, and the adapter compiles the graph (``compile_workflow``).
 GRAPH_SUBMIT = "graph.submit"
 CONTROL_TIMEOUT_S = 5.0          # the read timeout of a status look or a cancel; callers may pass their own
-IMAGE_KEYS = ("images",)
-VIDEO_KEYS = ("videos", "gifs", "images")
-AUDIO_KEYS = ("audios", "audio", "wav", "mp3")
 OUTPUT_KEYS = ("images", "videos", "gifs", "audios", "audio", "wav", "mp3")
-VIDEO_SUFFIXES = (".mp4", ".webm", ".mov", ".mkv")
 _DEFAULT_LABEL = "the engine"
 
 
@@ -182,60 +178,6 @@ def view_params(info: Mapping[str, Any], *, default_type: str = "output") -> dic
     return params
 
 
-def output_entries(job: Mapping[str, Any] | None, keys: Sequence[str]) -> list[dict[str, Any]]:
-    """Every output entry under ``keys``, in node order, as the history lists them."""
-    out: list[dict[str, Any]] = []
-    outputs = (job or {}).get("outputs", {}) or {}
-    for node_output in outputs.values():
-        for key in keys:
-            if key not in node_output:
-                continue
-            out.extend(node_output[key])
-    return out
-
-
-def first_video_output(job: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    """The first video file a finished prompt produced.
-
-    A save node writes ``videos``; older graphs surface the file under ``gifs`` or ``images``. A load node can echo the
-    uploaded source under ``images``, so the output directory is preferred over history order, which is not stable.
-    """
-    outputs = (job or {}).get("outputs", {}) or {}
-    fallback = None
-    for _node_id, node_output in outputs.items():
-        for key in VIDEO_KEYS:
-            entries = node_output.get(key) or []
-            for entry in entries:
-                filename = entry.get("filename") or ""
-                if filename.lower().endswith(VIDEO_SUFFIXES):
-                    candidate = {
-                        "filename": filename,
-                        "subfolder": entry.get("subfolder", ""),
-                        "type": entry.get("type", "output"),
-                    }
-                    if candidate["type"] == "output":
-                        return candidate
-                    if fallback is None:
-                        fallback = candidate
-    return fallback
-
-
-def first_audio_output(job: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    """The first audio file a finished prompt produced."""
-    outputs = (job or {}).get("outputs", {}) or {}
-    for _node_id, node_output in outputs.items():
-        for key in AUDIO_KEYS:
-            entries = node_output.get(key) or []
-            for entry in entries:
-                if isinstance(entry, dict):
-                    return {
-                        "filename": entry.get("filename"),
-                        "subfolder": entry.get("subfolder", ""),
-                        "type": entry.get("type", "output"),
-                    }
-    return None
-
-
 def build_submit_payload(workflow: dict, ui_for: Callable[[Mapping[str, Any]], dict | None], **extra: Any) -> dict:
     """The JSON body of a prompt, with the UI-format graph embedded in its output metadata when one is known.
 
@@ -339,39 +281,6 @@ def select_outputs(job: Mapping[str, Any] | None, selectors: Mapping[str, Mappin
             raise SelectionRefused("result_ambiguous", f"result {name} is one file, but the engine listed {len(files)}")
         chosen[name] = tuple(files[:1] if selector["take"] in ("first", "single") else files)
     return chosen
-
-
-def legacy_select(job: Mapping[str, Any] | None, outputs: Mapping[str, Any], *, keys: Sequence[str] = OUTPUT_KEYS,
-                  suffixes: Sequence[str] | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
-    """The files of a contract that declares no selectors: the output-directory files under any known output key.
-
-    This is the fallback for a contract older than selectors. It reads the output directory only, and it refuses what it
-    would have to guess: a contract of more than one result, or files that come from more than one place in the answer.
-
-    ``keys`` are the output keys it reads (``OUTPUT_KEYS`` by default). A route with an older collection passes its own
-    ``keys`` and ``suffixes``. With ``suffixes`` set, only a file whose name ends in one of them counts (a preview image
-    beside a clip is not a result), and the first one in node order is the result, so several output nodes are not a guess.
-    """
-    if len(outputs) != 1:
-        raise SelectionRefused("result_ambiguous", f"a contract with {len(outputs)} results needs selectors to tell them apart")
-    (name,) = outputs
-    places: list[list[dict[str, Any]]] = []
-    for node_output in _history_outputs(job).values():
-        if not isinstance(node_output, Mapping):
-            continue
-        for key in keys:
-            files = _output_files(node_output.get(key), "output", result=name)
-            if suffixes is not None:
-                files = [file for file in files if file["filename"].lower().endswith(tuple(suffixes))]
-            if files:
-                places.append(files)
-    if not places:
-        raise SelectionRefused("result_missing", f"result {name} is not in the engine's answer")
-    if suffixes is not None:
-        return {name: (places[0][0],)}
-    if len(places) > 1:
-        raise SelectionRefused("result_ambiguous", f"result {name} could be files from {len(places)} places in the engine's answer")
-    return {name: tuple(places[0])}
 
 
 # ---------------------------------------------------------------------------
@@ -789,40 +698,21 @@ class NodeGraphAdapter:
             return JobStatus(ref, JobState.pending)
         return None
 
-    async def fetch_outputs(self, conn: Connection, status: JobStatus, *, kinds: Sequence[str] = IMAGE_KEYS,
-                            headers: Any = UNSET, session: GraphSession | None = None) -> list[bytes]:
-        """The bytes of every output file of the given kinds, in order. A file that cannot be read is skipped."""
-        out: list[bytes] = []
-        async with self._use(conn, session) as use:
-            for handle in status.assets:
-                info = decode_output(handle)
-                if info.get("kind") not in kinds:
-                    continue
-                try:
-                    reply = await use.view(view_params(info), headers=headers)
-                except TransportFailure:
-                    continue
-                if reply.status == 200 and reply.raw:
-                    out.append(reply.raw)
-        return out
-
     async def fetch_selected(self, conn: Connection, status: JobStatus, block: Mapping[str, Any], outputs: Mapping[str, Any], *,
-                             limits: Any, legacy_allowed: bool, headers: Any = UNSET,
+                             limits: Any, headers: Any = UNSET,
                              session: GraphSession | None = None) -> dict[str, list[bytes]]:
         """The bytes of each named result of a finished prompt, for a route that delivers files itself.
 
         ``status`` is the ``succeeded`` status that ``poll`` returned: the history entry it read is collected by the
         binding's selectors (``collect``), so no second look at the engine is made. The reads go through
         ``output_selectors.FETCH_GATE`` and are bounded while they are read: the number of files, the bytes of one file and
-        the total are the deployment's ``limits`` (D6). A file that cannot be read is left out, as ``fetch_outputs`` leaves it
-        out. A result of kind ``json`` is refused: a route that takes bytes has no place for a value.
+        the total are the deployment's ``limits`` (D6). A file that cannot be read is left out. A result of kind ``json`` is refused: a route that takes bytes has no place for a value.
         Raises ``SelectionRefused`` (a result that is missing, ambiguous, malformed or over a limit, or a fetch that waited too long).
         """
         record = status.record
         if not isinstance(record, FinishedRecord):
             raise SelectionRefused("result_missing", "the status holds no history entry to read the results from")
-        picked = self.collect(record.job, block, outputs, limits=limits, legacy_allowed=legacy_allowed,
-                              history_bytes=record.size)
+        picked = self.collect(record.job, block, outputs, limits=limits, history_bytes=record.size)
         if any(kind != "assets" for kind in self._result_kinds(block, outputs, picked).values()):
             raise SelectionRefused("result_wrong_type", "this route delivers files, and a result of this workflow is a value")
         if sum(len(files) for files in picked.values()) > limits.max_assets:
@@ -885,21 +775,18 @@ class NodeGraphAdapter:
             return None
 
     def collect(self, job: Mapping[str, Any] | None, block: Mapping[str, Any], outputs: Mapping[str, Any], *, limits: Any,
-                legacy_allowed: bool, history_bytes: int | None = None,
-                legacy_keys: Sequence[str] = OUTPUT_KEYS, legacy_suffixes: Sequence[str] | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
-        """The files of each named result of a finished prompt, by the binding's selectors (or the legacy collection).
+                history_bytes: int | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
+        """The files of each named result of a finished prompt, by the binding's selectors.
 
         ``block`` is the binding, ``outputs`` the contract's declared results, ``limits`` the deployment's result limits
-        and ``history_bytes`` the size of the history answer that ``job`` came from. A binding with selectors is read by
-        them. One with none is read by ``legacy_select`` if ``legacy_allowed`` (``legacy_keys`` and ``legacy_suffixes`` say
-        which older collection), and refused if not. Raises ``SelectionRefused``; a refused run delivers nothing.
+        and ``history_bytes`` the size of the history answer that ``job`` came from. A binding with no selectors is
+        refused (``selectors_missing``): the engine's answer is never read by guessing. Raises ``SelectionRefused``; a
+        refused run delivers nothing.
         """
         if history_bytes is not None and history_bytes > limits.max_history_bytes:
             raise SelectionRefused("history_too_large", f"the engine's answer is larger than {limits.max_history_bytes} bytes")
         if "selectors" not in block:
-            if not legacy_allowed:
-                raise SelectionRefused("selectors_missing", "this workflow declares no output selectors, and the legacy collection is off")
-            return legacy_select(job, outputs, keys=legacy_keys, suffixes=legacy_suffixes)
+            raise SelectionRefused("selectors_missing", "this workflow declares no output selectors, so its result cannot be read")
         if self.result_selectors is None:
             raise SelectionRefused("selectors_unsupported", "this engine's description takes no output selectors")
         try:
@@ -969,7 +856,7 @@ class NodeGraphAdapter:
 
     async def results(self, conn: Connection, ref: JobRef, status: JobStatus, request: CanonicalRequest,
                       context: ResultContext) -> ResultBundle:
-        """The named results of a succeeded prompt, as the binding's selectors say (or the legacy collection, if allowed).
+        """The named results of a succeeded prompt, as the binding's selectors say.
 
         The history entry is read once; ``collect`` says which files make each result. A ``json`` result is read as bytes
         under the JSON size limit. An ``assets`` result is streamed into the media store through the limited store, so the
@@ -996,8 +883,7 @@ class NodeGraphAdapter:
                 job = history.get(ref.id) if isinstance(history, Mapping) else None
                 if not isinstance(job, Mapping):
                     raise SelectionRefused("result_missing", "the engine's answer holds no history entry for the job")
-                picked = self.collect(job, block, outputs, limits=limits, legacy_allowed=context.legacy_allowed,
-                                      history_bytes=len(reply.raw or b""))
+                picked = self.collect(job, block, outputs, limits=limits, history_bytes=len(reply.raw or b""))
                 kinds = self._result_kinds(block, outputs, picked)
                 results: dict[str, JsonResult | AssetsResult] = {}
                 for name, files in picked.items():
@@ -1083,6 +969,6 @@ def job_event_from(ref: JobRef, event: Mapping[str, Any]) -> JobEvent | None:
 __all__ = [
     "ADAPTER_ID", "CONTROL_TIMEOUT_S", "GRAPH_SUBMIT", "GraphSession", "InputRefused", "NodeGraphAdapter", "SelectionRefused",
     "build_submit_payload", "compile_workflow", "decode_output", "encode_output", "execution_error_message",
-    "execution_error_node_id", "first_audio_output", "first_video_output", "history_state", "job_event_from",
-    "legacy_select", "output_entries", "queue_position", "queue_prompt_ids", "select_outputs", "view_params",
+    "execution_error_node_id", "history_state", "job_event_from",
+    "queue_position", "queue_prompt_ids", "select_outputs", "view_params",
 ]

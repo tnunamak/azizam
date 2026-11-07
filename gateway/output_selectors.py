@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import weakref
 from collections.abc import AsyncGenerator, Iterable, Mapping
 from dataclasses import dataclass
@@ -48,8 +47,6 @@ MAX_FIELDS = 16
 MAX_ENUM_VALUES = 64
 MAX_TEXT = 128
 DEFAULT_MAX_SELECTORS = 16
-CONFIG_SECTION = "workflow_execution"
-LEGACY_FLAG = "legacy_output_collection"
 _DESCRIPTOR_KEYS = frozenset({"version", "fields", "identity", "template_node", "kind_field"})
 _FIELD_KEYS = frozenset({"type", "required", "default", "values", "kinds"})
 PROTOCOL_DIR = Path(__file__).resolve().parent.parent / "registry" / "protocols"
@@ -362,7 +359,8 @@ def selector_form(binding_key: str, block: Mapping[str, Any]) -> str:
 
 def check_manifest(manifest: Mapping[str, Any], descriptors: Mapping[str, SelectorDescriptor] | None = None) -> None:
     """The load-time check of every binding that declares selectors, against its adapter's descriptor. A binding with
-    none is a legacy contract and loads. Raises ``SelectorError``."""
+    none loads (a stored manifest may predate selectors); ``check_for_save`` refuses it and a run answers
+    ``selectors_missing``. Raises ``SelectorError``."""
     bindings = manifest.get("bindings")
     outputs = manifest.get("outputs")
     if not isinstance(bindings, Mapping) or not isinstance(outputs, Mapping):
@@ -375,24 +373,6 @@ def check_manifest(manifest: Mapping[str, Any], descriptors: Mapping[str, Select
         if descriptor is None:
             raise SelectorError("selector_malformed", f"binding {key} has selectors, but its adapter takes none")
         check_binding(descriptor, outputs, block)
-
-
-# ---------------------------------------------------------------------------------------------- the legacy flag
-
-def legacy_collection_enabled(config: Mapping[str, Any]) -> bool:
-    """Whether a binding with no selectors may still be read by the adapter's legacy collection. On unless the trusted
-    runtime config says ``workflow_execution.legacy_output_collection: false``."""
-    section = config.get(CONFIG_SECTION) if isinstance(config, Mapping) else None
-    value = section.get(LEGACY_FLAG) if isinstance(section, Mapping) else None
-    if value is not None and not isinstance(value, bool) and repr(value) not in _WARNED_FLAGS:
-        # A value that is not true or false (a quoted "false", a 0) does not turn the collection off. Say so once.
-        _WARNED_FLAGS.add(repr(value))
-        logging.getLogger(__name__).warning(
-            "%s.%s is %r, not true or false: the legacy output collection stays on", CONFIG_SECTION, LEGACY_FLAG, value)
-    return value is not False
-
-
-_WARNED_FLAGS: set[str] = set()
 
 
 # ------------------------------------------------------------------------------------------------- the fetch gate

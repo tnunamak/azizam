@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import proxy
 from tests.support.access import auth_identity  # noqa: E402
+from tests.support.graph_selectors import video_manifest
 import httpx
 import pytest
 from gateway import admin_store, media_jobs, me_media, prompt_memory, receipt_store
@@ -200,6 +201,7 @@ def test_video_full_content_checks_creator_on_same_app(tmp_path, monkeypatch):
     # This test isolates authorization from metadata codecs: the retained
     # workflow bytes must never reach the non-creator, even on the same App.
     monkeypatch.setattr(proxy.media_delivery, "attach_provenance", lambda data, *_a: data)
+    monkeypatch.setattr(proxy, "_video_manifest_of_job", lambda _prompt_id: video_manifest("6", "videos"))
     monkeypatch.setattr(prompt_memory, "capture_metadata", lambda *_a: {
         "prompt": "video-full-secret", "workflow": "video-full-workflow-secret",
     })

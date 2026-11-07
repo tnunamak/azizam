@@ -1,8 +1,8 @@
 """The image and video routes read their result through the workflow's selectors (code-to-data S2.5b, D5 and D6).
 
 The rig is the adapter-differential one: the real app and a fake engine. The engine's answer holds a temp preview and an
-echo of an input ahead of the result, which the old collection could take first. The workflows' selectors name the node
-and key of the file that is the result.
+echo of an input ahead of the result, which a reading by key alone would take first. The workflows' selectors name the
+node and key of the file that is the result.
 """
 
 from __future__ import annotations
@@ -191,7 +191,7 @@ def test_a_video_job_names_its_bundle_result_for_the_declared_output_and_lists_i
 
 # ------------------------------------------------------------------------------------------- the identity scene
 
-# The identity graph saves its result at node 10. Before it, the answer holds what the old collection could not tell
+# The identity graph saves its result at node 10. Before it, the answer holds what a key alone cannot tell
 # from a result: a preview, an echo of a reference photo, and a file that a side branch saved.
 NOISY_IDENTITY = history({
     "0": {"images": [entry("peek.png", "temp")]},
@@ -213,46 +213,35 @@ def test_the_identity_scene_takes_the_file_its_selector_names_not_an_earlier_pre
     assert views == [[["filename", "scene_00001_.png"], ["type", "output"]]]
 
 
-def test_the_identity_scene_takes_the_same_file_as_the_old_collection_from_a_plain_answer(tmp_path: Path):
+def test_the_identity_scene_takes_the_file_its_selector_names_from_a_plain_answer(tmp_path: Path):
     image, views = run(tmp_path, PLAIN_IDENTITY, PNG, run_identity)
     assert image == _png()
     assert views == [[["filename", "scene_00001_.png"], ["type", "output"]]]
 
 
-# ------------------------------------------------------------------------------------- the legacy video collection
+# ----------------------------------------------------------------------------------- a workflow with no selectors
 
 def without_selectors(call):
-    """A workflow with no manifest has no selectors: the legacy collection reads its answer, while the flag allows it."""
+    """A workflow with no manifest has no selectors, so there is nothing to read its answer by."""
     async def drive(made: GatewayRig):
         made.set(proxy, "_video_manifest_of_job", lambda _prompt_id: None)
+        made.set(proxy, "_graph_result_source", lambda *_args, **_kwargs: {})
         return await call(made)
     return drive
 
 
 MP4 = (mp4_bytes(), "video/mp4")
-MIXED_LIST = history({"7": {"images": [entry("preview_00001_.png", "output"), entry("clip_00001_.mp4", "output")]}})
-SEVERAL_NODES = history({
-    "3": {"images": [entry("side_00001_.png", "output")]},
-    "5": {"gifs": [entry("first_00001_.mp4", "output")]},
-    "60": {"videos": [entry("second_00001_.mp4", "output")]},
-})
 
 
-def test_the_legacy_video_collection_skips_a_picture_listed_ahead_of_the_clip(tmp_path: Path):
-    response, views = run(tmp_path, MIXED_LIST, MP4, without_selectors(fetch_video))
-    assert response.status_code == 200, response.text
-    assert views == [[["filename", "clip_00001_.mp4"], ["type", "output"]]]
+def test_a_video_workflow_with_no_selectors_is_refused_with_its_reason_and_nothing_is_fetched(tmp_path: Path):
+    response, views = run(tmp_path, NOISY_VIDEO, MP4, without_selectors(fetch_video))
+    assert response.status_code == 502
+    assert json.loads(response.text)["error"]["code"] == "selectors_missing"
+    assert views == []
 
 
-def test_the_legacy_video_collection_takes_the_first_clip_when_several_nodes_have_output(tmp_path: Path):
-    response, views = run(tmp_path, SEVERAL_NODES, MP4, without_selectors(fetch_video))
-    assert response.status_code == 200, response.text
-    assert views == [[["filename", "first_00001_.mp4"], ["type", "output"]]]
-
-
-def test_the_legacy_video_collection_is_off_with_the_flag_and_names_the_reason(tmp_path: Path):
-    response, views = run(tmp_path, MIXED_LIST, MP4, without_selectors(fetch_video),
-                          legacy_output_collection=False)
+def test_an_image_workflow_with_no_selectors_is_refused_with_its_reason_and_nothing_is_fetched(tmp_path: Path):
+    response, views = run(tmp_path, NOISY_IMAGE, PNG, without_selectors(generate_image))
     assert response.status_code == 502
     assert json.loads(response.text)["error"]["code"] == "selectors_missing"
     assert views == []
