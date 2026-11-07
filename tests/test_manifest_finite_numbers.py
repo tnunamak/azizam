@@ -14,6 +14,11 @@ ROOT = Path(__file__).resolve().parent.parent
 NON_FINITE = [float("nan"), float("inf"), float("-inf")]
 
 
+@pytest.mark.parametrize("kind", [["image"], {"type": "image"}], ids=["list", "dict"])
+def test_non_string_input_types_are_refused(kind):
+    assert validate_input_value("photo", "placeholder", {"type": kind}) == f"photo has unsupported type: {kind}"
+
+
 @pytest.mark.parametrize("value", NON_FINITE)
 @pytest.mark.parametrize("spec", [
     {"type": "number"},

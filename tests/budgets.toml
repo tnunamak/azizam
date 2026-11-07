@@ -625,7 +625,9 @@
 # Mesh live manifest review: +1 (one app serves a record adopted after it was built): 21526 + 1 = 21527.
 # Real-test final route guard: +5 cases (an unsafe declared route on a plain address); 21573 + 5 = 21578.
 # Train 23: 21573 (main) + 4 (mesh live record) + 5 (real-test final route guard); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21582.
-pytest = 21582
+# Input type guards: +5 cases (a list or dict input type is refused or is not a media input); 21582 + 5 = 21587.
+# Train 24: 21582 (main) + 5 (input type guards) + 3 (S3.10 audio duration boundary); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21590.
+pytest = 21590
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

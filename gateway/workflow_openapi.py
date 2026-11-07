@@ -246,7 +246,8 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
     inputs = settable_inputs(record.contract)
     intent = record.intent
     out: dict[str, dict[str, Any]] = {}
-    is_asset = {n: (s or {}).get("type") in _MEDIA_INPUT_TYPES for n, s in inputs.items()}
+    is_asset = {n: isinstance((s or {}).get("type"), str) and (s or {}).get("type") in _MEDIA_INPUT_TYPES
+                for n, s in inputs.items()}
 
     if mode == "sync" and gateway_route(record):  # a native route: plain multipart form
         for name in inputs:
