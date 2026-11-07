@@ -600,9 +600,10 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
   await page.goto("/sign-in/#reset=reset-browser-token");
+  // The reset screen waits for three reads (sign-in options, setup state, remembered people); on a loaded host they can outlast the default wait.
   await expect(
     page.getByRole("heading", { name: "Choose a new password" }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
   await page.route("**/auth/api/password-reset", (route) => {
     expect(route.request().postDataJSON()).toEqual({
       token: "reset-browser-token",
