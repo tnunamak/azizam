@@ -882,12 +882,12 @@ def _record_envelope(conn: sqlite3.Connection, job_id: str, envelope: JobEnvelop
 
     A failure is logged and swallowed, or with ``require`` raised as ``EnvelopeNotRecorded`` for the caller to roll the
     whole transaction back."""
-    from gateway import definition_store  # imports this module, so it cannot be imported at the top
+    from gateway import definition_store, generated_defaults  # import this module, so they cannot be imported at the top
 
     conn.execute("SAVEPOINT job_envelope")
     try:
         definition_store.record_envelope_in(
-            conn, job_id, envelope.envelope, generators={}, now=time.time(), blobs=envelope.blobs,
+            conn, job_id, envelope.envelope, generators=generated_defaults.persistence(), now=time.time(), blobs=envelope.blobs,
         )
     except Exception as exc:  # noqa: BLE001 - without ``require`` the job is created as it always was
         if require:
@@ -1205,20 +1205,23 @@ def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = 
             if not rows:
                 break
             ids = []
+            owned = []
             for job_id, payload in rows:
                 data = _safe_loads(payload)
                 if not isinstance(data, Mapping):
                     continue
-                if (not data.get("input_hash") and "request_hash" not in (data.get("metadata") or {})
-                        and not str(data.get("request_id") or "").startswith("imgjob_seeded_")
-                        and not str(data.get("parent_request_id") or "").startswith("imgjob_seeded_")):
-                    continue
                 owner = stored_owner_key(data.get("owner_key_hash"), app_id=data.get("app_id"))
-                if "*" in owner_keys or owner in owner_keys:
+                if "*" not in owner_keys and owner not in owner_keys:
+                    continue
+                owned.append(job_id)
+                if (data.get("input_hash") or "request_hash" in (data.get("metadata") or {})
+                        or str(data.get("request_id") or "").startswith("imgjob_seeded_")
+                        or str(data.get("parent_request_id") or "").startswith("imgjob_seeded_")):
                     ids.append(job_id)
-            if ids:
+            if owned:
                 conn.execute("BEGIN IMMEDIATE")
                 try:
+                    _clear_generated_in(conn, owned)  # the values the gateway made for these jobs go with the body
                     for job_id in ids:
                         # Re-read under the lock to retain concurrent progress.
                         row = conn.execute("SELECT job_json FROM media_jobs WHERE job_id=?", (job_id,)).fetchone()
@@ -1233,6 +1236,17 @@ def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = 
                     raise
             cursor = rows[-1][0]
     return count
+
+
+def _clear_generated_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> None:
+    """Empty each job's envelope ``generated`` block (S3 design, D6), in the caller's transaction. A database that
+    predates the definition tables has none."""
+    from gateway import definition_store  # imports this module, so it cannot be imported at the top
+
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_envelope'").fetchone() is None:
+        return
+    for job_id in job_ids:
+        definition_store.clear_generated_in(conn, job_id)
 
 
 def _erase_results(conn: sqlite3.Connection, owner_keys: set[str], *, before: int) -> None:
