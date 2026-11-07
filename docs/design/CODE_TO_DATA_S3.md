@@ -245,6 +245,38 @@ Grounding: no surveyed system declares a generated default such as a seed as dat
 default factory is the nearest precedent (FA6), but it is code. JSON Schema treats `default` as an annotation only
 (JS2). The tagged form is the plan's own decision (row S3) and the red team's (M3). Otherwise ungrounded.
 
+As built (S3.6): `gateway/generated_defaults.py` holds the reviewed generator registry (`REVIEWED`, one entry:
+`random_integer`, persisted as `value`), `resolve_generated` and the crypto source `secure_source`. The save-time
+refusals (`generator_unknown`, `generator_range_empty`, `generate` with `default`, `settable: false` without `generate`)
+were already in the S3.2 contract; the registry is checked against the contract's `GENERATORS` by a test.
+
+- **When it draws.** At accept, after idempotency resolution and before the envelope is written. A same-key replay
+  returns the existing job and draws nothing. The block `{input: {generator, value}}` is stored in the envelope's
+  `generated` field. A runner sets a context variable (`_JOB_GENERATED`) from the stored envelope, so a retry, a restart
+  and a replay read the value (`stored=`) and never draw. The block is read from the envelope itself, not from the pin,
+  so it also works when compile-from-pin is off.
+- **Routes switched.** Audio (`audio_graph.manifest_inputs`, `audio_graph.generated_block`, `proxy_audio_generate`, the
+  audio job accept) and the image generation and edit routes (`_image_generated_values`,
+  `_bind_generated_image_inputs`, the batching loop with the per-round offset, the OOM retry and the background-removal
+  recursion). `_draw_seed` and the image `random.randint` calls are gone. No function that selects or fills a generated
+  input names `seed`; a test scans them.
+- **Draws that stay** (listed with a reason in `tests/test_generated_defaults.py`, which fails on an unlisted draw): the
+  video routes (two in the graph create route, one in the chain route), `_reseed_image_workflow` (a graph with no
+  contract, and the offset tile base), the tile seam draw, the A1111 frontend `map_payload`, the avatar number, the
+  measurement resampling in `stt_measure`, and the equality tool's reproducible stand-in.
+- **Choices where this text was open.** (1) The value of a caller-settable input the caller gave is not stored (the
+  request already carries it); only a draw is. (2) For an image batch, round `n` uses the stored value plus `n`, as the
+  old loop did with its drawn base; the stored value is the base. (3) A drawn value that fails the input's own
+  validation is a document fault (500, nothing submitted), the same as an empty range. (4) The provenance record keeps its
+  `seed` field name; it is the receipt's public field, not a selection by name. (5) The legacy contract-less graph path
+  keeps its own draw and field name until the roles move. (6) The token test ignores a `seed=` keyword argument for that
+  receipt field.
+- **Erasure.** `erase_prompt_derivatives` empties a non-empty `generated` block for every job it is asked to erase,
+  keeping the pins (closes the S2 matrix 2.3 gap). The privacy matrix test seeds a canary value and checks it is gone
+  and that another person's value stays.
+- **Controls.** Putting a `"seed"` name test back in a route fails the token test; removing the stored-value read in
+  `resolve_generated` fails the stored-value, restart and audio retry tests.
+
 ### D7. Bindings: the key names an adapter; a descriptor closes the block; roles name reviewed implementations
 
 - **Resolution.** A binding key must equal the `binding` field of exactly one protocol description. Today only
