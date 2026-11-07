@@ -72,7 +72,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "11c7cb667d850be0643bea77ad0c0a1af340ecbb125f72c4d243a6378a394c4d",
+      "source_sha256": "12af47bc141f3e021bf89d70a58b5b6fd3865f44898797b8f1714f1516ae335d",
       "call": "append_event",
       "event": "'attempt'",
       "access": "content:job:read"
@@ -160,7 +160,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "11c7cb667d850be0643bea77ad0c0a1af340ecbb125f72c4d243a6378a394c4d",
+      "source_sha256": "12af47bc141f3e021bf89d70a58b5b6fd3865f44898797b8f1714f1516ae335d",
       "call": "append_event",
       "event": "'retry'",
       "access": "content:job:read"
@@ -168,7 +168,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "11c7cb667d850be0643bea77ad0c0a1af340ecbb125f72c4d243a6378a394c4d",
+      "source_sha256": "12af47bc141f3e021bf89d70a58b5b6fd3865f44898797b8f1714f1516ae335d",
       "call": "append_event",
       "event": "'retry'",
       "access": "content:job:read"
@@ -184,7 +184,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "11c7cb667d850be0643bea77ad0c0a1af340ecbb125f72c4d243a6378a394c4d",
+      "source_sha256": "12af47bc141f3e021bf89d70a58b5b6fd3865f44898797b8f1714f1516ae335d",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -224,7 +224,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "11c7cb667d850be0643bea77ad0c0a1af340ecbb125f72c4d243a6378a394c4d",
+      "source_sha256": "12af47bc141f3e021bf89d70a58b5b6fd3865f44898797b8f1714f1516ae335d",
       "call": "append_event",
       "event": "'succeeded'",
       "access": "content:job:read"
