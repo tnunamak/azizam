@@ -572,7 +572,8 @@
 # Sidecar hotfix (2026-11-06): +1 case, the sidecar reads owner patches over the release records: 20527.
 # Train 16 candidate: C9 (20542) plus the sidecar hotfix case: 20543.
 # C10 fix round (2026-11-07): model_metadata, neutral-default fixtures, removed-variable scan, absence and startup-key tests, doctor address; measured 20550.
-pytest = 20550
+# C10 review delta: +2 (IPv6 doctor address, write-is-not-read scan control): 20552.
+pytest = 20552
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
