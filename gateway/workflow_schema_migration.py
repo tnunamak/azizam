@@ -193,7 +193,7 @@ def _failed_entry(entry: Any, failures: list[Failure]) -> Any:
         return {layers.REPLACE_KEY: _failed_entry(entry[layers.REPLACE_KEY], failures)}
     kept = copy.deepcopy(dict(entry))
     # The record keeps the owner's own ``enabled``: the ``migration`` block alone marks the quarantine and keeps it out of the
-    # registry. A bundled id the owner had turned off stays off (``service_registry.workflow_ids_kept_off``).
+    # registry; the bundled version of its id, if any, serves meanwhile.
     kept["migration"] = {"step": STEP, "errors": [
         {"pointer": item.pointer, "code": item.code, "message": item.message} for item in failures[:MAX_STORED_ERRORS]]}
     return kept

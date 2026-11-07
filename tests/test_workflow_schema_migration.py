@@ -1114,7 +1114,7 @@ def test_a_scrub_that_makes_the_text_longer_is_still_capped():
         assert len(item.error) <= 300, pad
 
 
-# -- an override the owner had turned off stays off ------------------------------------------------------------------------
+# -- a quarantined override: the bundled version serves, whatever its enabled value ----------------------------------------
 
 
 def _bundled_override_db(tmp_path, *, enabled: Any) -> Path:
@@ -1126,49 +1126,12 @@ def _bundled_override_db(tmp_path, *, enabled: Any) -> Path:
     return db
 
 
-OFF_VALUES = [False, 0, "false", "off", "no", "0", []]
-ON_VALUES = [True, 1, "true", "yes", "on", None]
-
-
 @pytest.mark.parametrize("enabled", [True, False, "off", 0], ids=repr)
 def test_a_quarantined_record_keeps_the_owners_own_enabled_value(tmp_path, enabled):
     db = _bundled_override_db(tmp_path, enabled=enabled)
     record = json.loads(_row(db)[0])["workflows"][PLAIN_ID]
     assert record["enabled"] == enabled and type(record["enabled"]) is type(enabled)
     assert record["migration"]["step"] == migration.STEP and "was_enabled" not in record["migration"]
-
-
-def _kept_off(*, key: str = PLAIN_ID, record_id: str = PLAIN_ID, **fields) -> set[str]:
-    record = {"id": record_id, "migration": {"step": migration.STEP, "errors": []}, **fields}
-    return service_registry.workflow_ids_kept_off([service_registry.ExcludedRecord("workflows", key, record_id, "m", record)])
-
-
-@pytest.mark.parametrize("enabled", OFF_VALUES, ids=repr)
-def test_every_value_the_normalizer_reads_as_off_keeps_the_bundled_id_off(enabled):
-    assert _kept_off(enabled=enabled) == {PLAIN_ID}
-
-
-@pytest.mark.parametrize("enabled", ON_VALUES, ids=repr)
-def test_every_value_the_normalizer_reads_as_on_does_not_keep_the_bundled_id_off(enabled):
-    assert _kept_off(enabled=enabled) == set()
-    assert _kept_off() == set()  # absent reads as on
-
-
-def test_a_mismatched_key_and_id_never_suppresses_a_bundled_id():
-    assert _kept_off(key="owner.unrelated", record_id=PLAIN_ID, enabled=False) == set()
-    (item,) = service_registry.read_registry(_stored({"owner.unrelated": {
-        **_owner_record(PLAIN_ID, _v1(schema_version=1)), "enabled": False,
-        "migration": {"step": migration.STEP, "errors": []}}}))[1]
-    assert item.key == "owner.unrelated" and "not served either" not in item.error
-    assert _kept_off(key=PLAIN_ID, record_id=PLAIN_ID, enabled=False) == {PLAIN_ID}  # the same record under its own key
-
-
-def test_a_record_without_a_valid_migration_block_never_suppresses_a_bundled_id():
-    record = {"id": PLAIN_ID, "enabled": False}
-    for block in (None, {"step": "another-step"}, "workflow-schema-2", []):
-        stored = {**record, **({} if block is None else {"migration": block})}
-        assert service_registry.workflow_ids_kept_off(
-            [service_registry.ExcludedRecord("workflows", PLAIN_ID, PLAIN_ID, "m", stored)]) == set()
 
 
 _BOOT_SCRIPT = """
@@ -1203,21 +1166,24 @@ def _boot(tmp_path: Path, db: Path, ids: list[str]) -> dict:
     return json.loads(next(line for line in done.stdout.splitlines() if line.startswith("RESULT"))[len("RESULT"):])
 
 
-@pytest.mark.parametrize("enabled", [False, "off"], ids=repr)
-def test_a_disabled_bundled_override_stays_unavailable_at_boot_and_after_a_real_reload(tmp_path, enabled):
+@pytest.mark.parametrize("enabled", [False, "off", True], ids=repr)
+def test_a_quarantined_override_of_a_bundled_id_gets_the_bundled_version_at_boot_and_after_a_real_reload(tmp_path, enabled):
     db = _bundled_override_db(tmp_path, enabled=enabled)
     (item,) = [e for e in service_registry.load_service_registry_exclusions(path=db) if e.id == PLAIN_ID]
-    assert "not served either" in item.error and "is served in the meantime" not in item.error
-    result = _boot(tmp_path, db, [PLAIN_ID])
-    assert result["booted"] == {PLAIN_ID: False} and result["reload_error"] is None and result["reloaded"] == {PLAIN_ID: False}
-
-
-def test_a_bundled_override_the_owner_left_on_gets_the_bundled_version_at_boot_and_after_a_real_reload(tmp_path):
-    db = _bundled_override_db(tmp_path, enabled=True)
-    (item,) = [e for e in service_registry.load_service_registry_exclusions(path=db) if e.id == PLAIN_ID]
-    assert "is served in the meantime" in item.error
+    assert "is served in the meantime" in item.error and "not served either" not in item.error
     result = _boot(tmp_path, db, [PLAIN_ID])
     assert result["booted"] == {PLAIN_ID: True} and result["reload_error"] is None and result["reloaded"] == {PLAIN_ID: True}
+
+
+def test_a_quarantined_record_with_no_bundled_counterpart_is_not_served(tmp_path):
+    bad = _with_stated_capability()
+    bad["inputs"]["x"] = {"type": []}
+    db = _db_with(tmp_path, {"owner.bad": _owner_record("owner.bad", bad)})
+    service_registry.ensure_service_registry(path=db, actor="test")
+    (item,) = [e for e in service_registry.load_service_registry_exclusions(path=db) if e.id == "owner.bad"]
+    assert "bundled version" not in item.error
+    result = _boot(tmp_path, db, ["owner.bad"])
+    assert result["booted"] == {"owner.bad": False} and result["reload_error"] is None and result["reloaded"] == {"owner.bad": False}
 
 
 def _mesh_override_db(tmp_path) -> tuple[Path, str]:
@@ -1231,14 +1197,14 @@ def _mesh_override_db(tmp_path) -> tuple[Path, str]:
     return db, mesh_id
 
 
-def test_a_disabled_mesh_override_does_not_stop_the_gateway_and_the_route_answers_unavailable(tmp_path):
+def test_a_disabled_quarantined_mesh_override_does_not_stop_the_gateway_and_the_bundled_mesh_serves(tmp_path):
     db, mesh_id = _mesh_override_db(tmp_path)
     assert json.loads(_row(db)[0])["workflows"][mesh_id]["migration"]["step"] == migration.STEP  # quarantined, owner-disabled
     result = _boot(tmp_path, db, [mesh_id])
-    assert result["booted"] == {mesh_id: False} and result["reload_error"] is None and result["reloaded"] == {mesh_id: False}
+    assert result["booted"] == {mesh_id: True} and result["reload_error"] is None and result["reloaded"] == {mesh_id: True}
     assert result["mesh"] == mesh_id
     (answer,) = result["evidence"].values()
-    assert answer["available"] is False and answer["enabled"] is False
+    assert answer["available"] is True
 
 
 # -- the registry and its left-out records are one read ---------------------------------------------------------------------
@@ -1247,7 +1213,7 @@ def test_a_disabled_mesh_override_does_not_stop_the_gateway_and_the_route_answer
 def test_the_loader_reads_the_stored_registry_once_so_a_writer_between_reads_cannot_split_it(tmp_path, monkeypatch):
     import proxy
 
-    db = _bundled_override_db(tmp_path, enabled=True)  # quarantined, left on: the bundled version is served meanwhile
+    db = _bundled_override_db(tmp_path, enabled=True)  # quarantined: the bundled version is served meanwhile
     monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
     stored = json.loads(_row(db)[0])
     off = copy.deepcopy(stored)
@@ -1267,7 +1233,7 @@ def test_the_loader_reads_the_stored_registry_once_so_a_writer_between_reads_can
     monkeypatch.setattr(admin_store, "get_service_registry_json_with_generation", read_then_write)
     served = proxy._load_gateway_workflow_registry().get(PLAIN_ID)
     assert len(reads) == 1  # registry and left-out records come from the same read
-    assert served is not None  # the state the one read saw: the override was left on, so the bundled version stands
+    assert served is not None  # the bundled version serves in both states of the writer's race
 
 
 # -- a replacement that does not validate changes nothing ------------------------------------------------------------------
