@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Iterable
 
+from gateway.workflow_view import settable_inputs
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.chat_extensions import (
     CHAT_EXTENSION_NAMESPACE,
@@ -152,7 +153,7 @@ def _workflow_targets(registry: WorkflowRegistry) -> list[dict[str, Any]]:
         by_intent[record.intent]["workflows"].append(
             {
                 "id": record.id,
-                "controls": _workflow_extension_controls(record.manifest),
+                "controls": _workflow_extension_controls(record.contract),
             }
         )
 
@@ -180,9 +181,9 @@ def _targets_for_route(
 
 
 def _workflow_extension_controls(manifest: dict[str, Any]) -> list[str]:
-    inputs = manifest.get("inputs")
+    inputs = settable_inputs(manifest)
     bindings = manifest.get("bindings")
-    if not isinstance(inputs, dict) or not isinstance(bindings, dict):
+    if not inputs or not isinstance(bindings, dict):
         return []
     mapped: set[str] = set()
     for binding in bindings.values():

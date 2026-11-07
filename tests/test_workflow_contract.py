@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import copy
 from fractions import Fraction
-import logging
 import re
 import sys
 from pathlib import Path
@@ -15,8 +14,7 @@ import pytest
 import yaml
 
 from gateway import workflow_call
-from gateway.discovery import WorkflowRegistry
-from gateway.manifests import ContractErrors, bind_backend_request, load_workflow_manifest, validate_input_value, validate_inputs
+from gateway.manifests import ContractErrors, validate_input_value
 from gateway.workflow_contract import (
     GENERATORS,
     SCHEMA_PATH,
@@ -24,20 +22,15 @@ from gateway.workflow_contract import (
     check_contract,
     value_problems,
 )
-from gateway.workflow_convert import convert_1_to_2, convert_and_check, forget_reported
+from gateway.workflow_convert import convert_1_to_2, convert_and_check
 from tests.test_domain_literal_ratchet import vocabulary
 
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLED = sorted((ROOT / "manifests" / "workflows").glob("*.yml"))
+# The 38 bundled files as they were in schema 1, frozen for the converter tests.
+V1_FIXTURES = sorted((ROOT / "tests" / "fixtures" / "workflows_v1").glob("*.yml"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import workflow_contract as command  # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def fresh_reports():
-    forget_reported()
-    yield
-    forget_reported()
 
 
 def base() -> dict:
@@ -503,17 +496,36 @@ def test_the_corpus_is_what_was_counted():
 
 @pytest.mark.parametrize("path", BUNDLED, ids=lambda p: p.stem)
 def test_every_bundled_workflow_converts_with_zero_errors(path):
+    assert check_contract(yaml.safe_load(path.read_text(encoding="utf-8"))).as_list() == []
+
+
+@pytest.mark.parametrize("path", V1_FIXTURES, ids=lambda p: p.stem)
+def test_every_frozen_schema_one_workflow_converts_with_zero_errors(path):
     converted, _notes = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
     assert check_contract(converted).as_list() == []
 
 
-def test_the_bundled_files_are_still_schema_one():
-    assert {yaml.safe_load(path.read_text(encoding="utf-8"))["schema_version"] for path in BUNDLED} == {1}
+def test_the_bundled_files_are_schema_two_and_the_frozen_copies_are_schema_one():
+    assert {yaml.safe_load(path.read_text(encoding="utf-8"))["schema_version"] for path in BUNDLED} == {2}
+    assert {yaml.safe_load(path.read_text(encoding="utf-8"))["schema_version"] for path in V1_FIXTURES} == {1}
+    assert [p.name for p in V1_FIXTURES] == [p.name for p in BUNDLED]
+
+
+def test_the_bundled_files_are_what_the_converter_makes_of_the_frozen_copies_but_for_the_named_edits():
+    named = {"ace-step-1.5-xl-turbo"}
+    for path in V1_FIXTURES:
+        converted, _ = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
+        bundled = yaml.safe_load((ROOT / "manifests" / "workflows" / path.name).read_text(encoding="utf-8"))
+        if path.stem not in named:
+            assert bundled == converted, path.name
+    ace, _ = convert_1_to_2(yaml.safe_load((V1_FIXTURES[0].parent / "ace-step-1.5-xl-turbo.yml").read_text(encoding="utf-8")))
+    bundled = yaml.safe_load((ROOT / "manifests" / "workflows" / "ace-step-1.5-xl-turbo.yml").read_text(encoding="utf-8"))
+    assert set(ace["inputs"]) - set(bundled["inputs"]) == {"prompt"}
 
 
 def test_the_converted_corpus_counts_match_the_design_except_for_the_seed_count():
     counts: dict[str, int] = {}
-    for path in BUNDLED:
+    for path in V1_FIXTURES:
         _doc, notes = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
         for note in notes:
             counts[f"{note.path[-1]}:{note.operation}"] = counts.get(f"{note.path[-1]}:{note.operation}", 0) + 1
@@ -526,7 +538,7 @@ def test_the_converted_corpus_counts_match_the_design_except_for_the_seed_count(
 
 
 def test_the_converted_corpus_has_no_authority_field_and_no_v1_shape():
-    for path in BUNDLED:
+    for path in V1_FIXTURES:
         doc, _ = convert_1_to_2(yaml.safe_load(path.read_text(encoding="utf-8")))
         assert not set(doc) & {"trusted", "source", "requires", "exposure", "trust_tier", "resource_tier", "tags"}, path.name
         assert all(spec["type"] != "image" for spec in doc["inputs"].values())
@@ -537,7 +549,7 @@ def test_the_converted_corpus_has_no_authority_field_and_no_v1_shape():
 
 
 def load(name: str) -> dict:
-    return yaml.safe_load((ROOT / "manifests" / "workflows" / f"{name}.yml").read_text(encoding="utf-8"))
+    return yaml.safe_load((ROOT / "tests" / "fixtures" / "workflows_v1" / f"{name}.yml").read_text(encoding="utf-8"))
 
 
 def test_the_converter_does_not_touch_its_argument_and_is_idempotent():
@@ -555,13 +567,11 @@ def test_a_document_that_is_not_schema_one_passes_through():
     assert convert_1_to_2({"schema_version": 7, "x": 1})[1] == []
 
 
-def test_the_capability_backfill_is_the_catalog_rule_and_is_recorded():
-    from gateway.workflows_catalog import _capability_from_intent
-
-    for path in BUNDLED:
+def test_the_capability_backfill_is_recorded_and_a_declared_capability_is_kept():
+    for path in V1_FIXTURES:
         v1 = yaml.safe_load(path.read_text(encoding="utf-8"))
         doc, notes = convert_1_to_2(v1)
-        assert doc["capability"] == _capability_from_intent(v1["intent"], v1.get("capability")), path.name
+        assert doc["capability"] == v1.get("capability", doc["capability"]), path.name
         backfilled = any(note.operation == "backfill" for note in notes)
         assert backfilled == ("capability" not in v1)
         assert ("azizam.dev/backfill" in doc.get("annotations", {})) == backfilled
@@ -659,53 +669,13 @@ def test_the_contract_names_no_model_engine_service_workflow_or_modality(path):
     assert hits(path.read_text(encoding="utf-8"), forbidden_names() - {"gateway"}) == []
 
 
-# ------------------------------------------------------------------------------------ report only: nothing refused
-
-
-def test_a_bundled_document_with_a_schema_two_error_still_loads_and_runs_and_the_report_is_logged(tmp_path, caplog):
-    v1 = load("flux2-klein")
-    v1["inputs"]["steps"]["maxium"] = 3  # a typo schema 2 refuses and schema 1 ignores
-    v1["trusted_by"] = "nobody"
-    path = tmp_path / "typo.yml"
-    path.write_text(yaml.safe_dump(v1, sort_keys=False), encoding="utf-8")
-    with caplog.at_level(logging.DEBUG, logger="gateway.workflow_convert"):
-        registry = WorkflowRegistry.from_directory(tmp_path)
-        manifest = load_workflow_manifest(path)
-    assert registry.errors == [] and [record.id for record in registry.records()] == [v1["id"]]
-    text = "\n".join(record.getMessage() for record in caplog.records)
-    assert "/inputs/steps/maxium unknown_field" in text and "/trusted_by unknown_field" in text and "report only" in text
-    # and it runs as before: inputs validate and bind
-    inputs = {"prompt": "a lamp", "steps": 4}
-    assert validate_inputs(manifest, inputs).ok
-    nodes = {str(mapping["node"]): {"inputs": {}} for mappings in manifest["bindings"]["comfyui"]["map"].values() for mapping in mappings}
-    bound = bind_backend_request(manifest, "comfyui", nodes, {"steps": 4})
-    assert bound.applied_inputs == ["steps"]
-
-
-def test_a_clean_bundled_document_logs_no_warning(tmp_path, caplog):
-    with caplog.at_level(logging.WARNING, logger="gateway.workflow_convert"):
-        WorkflowRegistry.from_directory(ROOT / "manifests" / "workflows")
-    assert [record for record in caplog.records if record.name == "gateway.workflow_convert"] == []
-
-
-def test_the_report_never_stops_a_load_even_if_it_fails(tmp_path, caplog, monkeypatch):
-    def boom(_doc):
-        raise RuntimeError("report broke")
-
-    monkeypatch.setattr("gateway.workflow_convert.check_contract", boom)
-    with caplog.at_level(logging.ERROR, logger="gateway.workflow_convert"):
-        manifest = load_workflow_manifest(ROOT / "manifests" / "workflows" / "flux2-klein.yml")
-    assert manifest["id"] == "image.generate.flux2-klein"
-    assert "report failed" in caplog.text
-
-
 # ---------------------------------------------------------------------------------------------------------- command
 
 
 def test_the_command_checks_the_bundled_directory(capsys):
     assert command.main(["check", str(ROOT / "manifests" / "workflows")]) == 0
     out = capsys.readouterr().out
-    assert out.count("0 errors") == 38 and "converted from schema 1" in out
+    assert out.count("0 errors") == 38 and "converted from schema 1" not in out
 
 
 def test_the_command_reports_every_error_with_path_and_code(tmp_path, capsys):
@@ -721,7 +691,7 @@ def test_the_command_reports_every_error_with_path_and_code(tmp_path, capsys):
 
 
 def test_the_command_converts_to_a_new_file_and_never_overwrites(tmp_path, capsys):
-    source = ROOT / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
+    source = ROOT / "tests" / "fixtures" / "workflows_v1" / "mesh.generate.trellis-2.yml"
     target = tmp_path / "out.yml"
     assert command.main(["convert", str(source), "-o", str(target)]) == 0
     assert "rename" in capsys.readouterr().err
@@ -731,7 +701,7 @@ def test_the_command_converts_to_a_new_file_and_never_overwrites(tmp_path, capsy
 
 
 def test_the_command_prints_converted_yaml_without_an_output_file(capsys):
-    assert command.main(["convert", str(ROOT / "manifests" / "workflows" / "flux2-klein.yml")]) == 0
+    assert command.main(["convert", str(ROOT / "tests" / "fixtures" / "workflows_v1" / "flux2-klein.yml")]) == 0
     assert yaml.safe_load(capsys.readouterr().out)["schema_version"] == 2
 
 
@@ -922,83 +892,6 @@ def test_structural_errors_and_conflicts_share_one_cap_and_one_marker():
     omitted = int(raw.errors[-1].message.split()[0]) + 2
     assert len(markers) == 1 and len(report.errors) == 101
     assert markers[0].message == f"{omitted} more errors are not listed"
-
-
-def test_two_threads_do_not_both_report_one_document(monkeypatch):
-    import threading
-    from gateway import workflow_convert
-    barrier = threading.Barrier(2)
-
-    class Probe(set):
-        def __contains__(self, item):
-            found = super().__contains__(item)
-            try:
-                barrier.wait(timeout=1)
-            except threading.BrokenBarrierError:
-                pass
-            return found
-
-    monkeypatch.setattr(workflow_convert, "_REPORTED", Probe())
-    results = []
-    threads = [threading.Thread(target=lambda: results.append(workflow_convert._first_report({"id": "x"}))) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    assert sorted(results) == [False, True]
-
-
-def two_loads(tmp_path, caplog, document, times=1, level=logging.WARNING):
-    path = tmp_path / "doc.yml"
-    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-    with caplog.at_level(level, logger="gateway.workflow_convert"):
-        for _ in range(times):
-            load_workflow_manifest(path)
-
-
-def test_a_failing_log_handler_does_not_stop_the_load(tmp_path):
-    class Failing(logging.Handler):
-        def emit(self, record):
-            raise OSError("disk full")
-
-    v1 = load("flux2-klein")
-    v1["inputs"]["steps"]["maxium"] = 3
-    path = tmp_path / "doc.yml"
-    path.write_text(yaml.safe_dump(v1, sort_keys=False), encoding="utf-8")
-    handler = Failing()
-    target = logging.getLogger("gateway.workflow_convert")
-    target.addHandler(handler)
-    try:
-        assert load_workflow_manifest(path)["id"] == v1["id"]
-    finally:
-        target.removeHandler(handler)
-
-
-def test_three_loads_of_one_invalid_document_give_one_report(tmp_path, caplog):
-    v1 = load("flux2-klein")
-    v1["inputs"]["steps"]["maxium"] = 3
-    two_loads(tmp_path, caplog, v1, times=3)
-    assert [r.getMessage() for r in caplog.records].count(
-        f"workflow {v1['id']}: 1 schema 2 contract errors (report only)") == 1
-
-
-def test_a_changed_document_is_reported_again(tmp_path, caplog):
-    v1 = load("flux2-klein")
-    v1["inputs"]["steps"]["maxium"] = 3
-    two_loads(tmp_path, caplog, v1)
-    v1["inputs"]["steps"]["maxium"] = 4
-    two_loads(tmp_path, caplog, v1)
-    assert sum("report only" in r.getMessage() for r in caplog.records) == 2
-
-
-def test_the_repeat_loads_skip_the_conversion_and_the_check(tmp_path, monkeypatch):
-    calls = []
-    real = check_contract
-    monkeypatch.setattr("gateway.workflow_convert.check_contract", lambda doc, **kw: calls.append(1) or real(doc, **kw))
-    path = ROOT / "manifests" / "workflows" / "flux2-klein.yml"
-    for _ in range(3):
-        load_workflow_manifest(path)
-    assert len(calls) == 1
 
 
 def test_a_broken_bound_hides_the_generator_range_error_it_would_cause():

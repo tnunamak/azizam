@@ -27,12 +27,13 @@ from typing import Any, Iterable, Mapping
 
 import jsonschema
 
-from gateway.manifests import ContractError, ContractErrors, ErrorCollector, PathPart, exact_number, validate_input_value
+from gateway.manifests import (
+    SCHEMA_VERSION_MESSAGE, SUPPORTED_SCHEMA_VERSIONS, ContractError, ContractErrors, ErrorCollector, PathPart, exact_number,
+    validate_input_value)
 from gateway.result_bundle import ResultLimits
 from gateway.workflow_call import SNIFFED_MEDIA_TYPES
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "registry" / "workflow.schema.json"
-SUPPORTED_SCHEMA_VERSIONS = (2,)
 CONTRACT_VERSION = 2
 
 MAX_INPUT_DEPTH = 4
@@ -96,7 +97,7 @@ def check_contract(doc: Any, context: ContractContext | None = None, extra_error
     if version not in SUPPORTED_SCHEMA_VERSIONS or isinstance(version, bool):
         # The rest would be read against a grammar this document does not use.
         return report_from([ContractError(("schema_version",), "schema_version_unsupported",
-                                      "this schema version is not supported; convert the document with scripts/workflow_contract.py convert")])
+                                      SCHEMA_VERSION_MESSAGE)])
     structural = _structural_errors(doc)
     errors = ErrorCollector()
     errors.errors.extend(structural)

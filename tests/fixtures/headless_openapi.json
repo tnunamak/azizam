@@ -1431,10 +1431,6 @@
             "minimum": 0,
             "type": "number"
           },
-          "prompt": {
-            "description": "Describe what you want to make.",
-            "type": "string"
-          },
           "sampler": {
             "type": "string"
           },
@@ -35244,10 +35240,6 @@
               "field": "min_p",
               "in": "extension"
             },
-            "prompt": {
-              "field": "prompt",
-              "in": "body"
-            },
             "sampler": {
               "field": "sampler",
               "in": "extension"
@@ -35348,10 +35340,6 @@
             "min_p": {
               "field": "min_p",
               "in": "extension"
-            },
-            "prompt": {
-              "field": "prompt",
-              "in": "body"
             },
             "sampler": {
               "field": "sampler",

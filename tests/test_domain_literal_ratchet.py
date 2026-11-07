@@ -58,12 +58,18 @@ def vocabulary() -> tuple[set[str], set[str]]:
             names.add(workflow_id.lower())
             if workflow_id.startswith(intent + "."):
                 names.add(workflow_id[len(intent) + 1:].lower())
-        for binding in (manifest.get("bindings") or {}):
-            if isinstance(binding, str) and binding not in _NOT_ENGINE_BINDINGS:
-                names.add(binding.lower())
-        for model in ((manifest.get("requires") or {}).get("models") or []):
-            if isinstance(model, dict) and isinstance(model.get("path"), str):
-                names.add(Path(model["path"]).name.lower())
+        bindings = manifest.get("bindings") or {}
+        for key, body in bindings.items():
+            if isinstance(key, str) and key not in _NOT_ENGINE_BINDINGS:
+                names.add(key.lower())
+            if isinstance(body, dict) and isinstance(body.get("service"), str):
+                names.add(body["service"].lower())
+        # Schema 1 kept ``requires`` at the root; schema 2 keeps it inside the one binding.
+        requirements = [manifest.get("requires")] + [body.get("requires") for body in bindings.values() if isinstance(body, dict)]
+        for required in requirements:
+            for model in ((required or {}).get("models") or []):
+                if isinstance(model, dict) and isinstance(model.get("path"), str):
+                    names.add(Path(model["path"]).name.lower())
     for path in _yaml_files(PROTOCOL_DIR):
         description = yaml.safe_load(path.read_text(encoding="utf-8"))
         if isinstance(description, dict) and isinstance(description.get("id"), str):

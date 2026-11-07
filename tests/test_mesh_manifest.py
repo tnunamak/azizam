@@ -19,7 +19,7 @@ from gateway.mesh_manifest import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = ROOT / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
+MANIFEST = ROOT / "tests" / "fixtures" / "workflows_v1" / "mesh.generate.trellis-2.yml"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
 WEBP = b"RIFF\x20\x00\x00\x00WEBPVP8 " + b"\x00" * 16
@@ -205,10 +205,10 @@ def test_image_size_is_bounded() -> None:
 
 
 def test_the_generic_validator_accepts_the_mesh_picture() -> None:
-    # The mesh manifest lives with the other workflow manifests, so the generic validator must read its image type.
+    # The bundled schema 2 mesh document lives with the other workflow manifests, so the generic validator must read its picture input.
     from gateway.manifests import validate_inputs
 
-    manifest = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    manifest = yaml.safe_load((ROOT / "manifests" / "workflows" / "mesh.generate.trellis-2.yml").read_text(encoding="utf-8"))
     result = validate_inputs(manifest, {"image": "data:image/png;base64,AAAA"})
     assert result.rejected == {}
     assert validate_inputs(manifest, {"image": 7}).rejected == {"image": "image must be an asset reference"}

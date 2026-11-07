@@ -1,26 +1,30 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: video.edit.scail-2-replace
 intent: video.edit
+capability: video
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: SCAIL-2 Character Replace
 purpose: Put a reference character into a video
 description: Replace a person in a video with a character from a picture, keeping the original motion and scene.
-source: local
-trusted: true
 typical_seconds: 231
 inputs:
   reference_image:
     label: a new character
     help: A picture of who should appear in the video.
     type: asset
-    media_type: image/*
+    accepts:
+      - image/*
     required: true
   source_video:
     label: a video to change
     help: The video whose character is replaced.
     type: asset
-    media_type: video/*
+    accepts:
+      - video/*
     required: true
   source_subject:
     label: Person to replace
@@ -85,6 +89,10 @@ inputs:
     help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
 outputs:
   video:
     media_type: video/mp4
@@ -126,15 +134,15 @@ bindings:
       seed:
         - node: "30"
           input: value
-requires:
-  models:
-    - role: diffusion_model
-      path: diffusion_models/SCAIL-2-Q4_K_M.gguf
-    - role: lora
-      path: loras/wan2.1_SCAIL_2_DPO_lora_bf16.safetensors
-    - role: lora
-      path: loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors
-    - role: checkpoint
-      path: checkpoints/sam3.1_multiplex_fp16.safetensors
-    - role: clip_vision
-      path: clip_vision/clip_vision_h.safetensors
+    requires:
+      models:
+        - role: diffusion_model
+          path: diffusion_models/SCAIL-2-Q4_K_M.gguf
+        - role: lora
+          path: loras/wan2.1_SCAIL_2_DPO_lora_bf16.safetensors
+        - role: lora
+          path: loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors
+        - role: checkpoint
+          path: checkpoints/sam3.1_multiplex_fp16.safetensors
+        - role: clip_vision
+          path: clip_vision/clip_vision_h.safetensors

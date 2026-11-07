@@ -55,7 +55,7 @@ def test_startup_lost_seed_race_keeps_the_winner_and_audits_one_seed(monkeypatch
 
     result = sr.ensure_service_registry(path=path, actor="test-boot")
 
-    assert len(reads) == 2
+    assert len(reads) == 3  # the stale read, the winner's read, and the workflow-schema-2 step's own read
     durable = admin_store.get_service_registry_with_generation(path=path)
     assert result == durable["value"]
     assert result["services"]["operator-service"]["config"]["operator_value"] == "must survive"

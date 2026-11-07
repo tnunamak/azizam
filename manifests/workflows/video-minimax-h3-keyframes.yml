@@ -1,15 +1,17 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: '0.1'
 version: 0.1.0
 id: video.generate.minimax-h3-keyframes
 license: "MiniMax H3 Community License: not for use in the US, EU, UK or South Korea"
 intent: video.generate
+capability: video
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: MiniMax H3 Keyframes
 purpose: Animate between two pictures, with stereo sound
 prompt_hint: Describe the clip you want
 description: Make a video with stereo sound that starts on one picture and ends on another, following a description.
-source: local
-trusted: true
 typical_seconds: 120
 inputs:
   prompt:
@@ -22,6 +24,10 @@ inputs:
     help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
   steps:
     label: Refinement steps
     help: More steps take longer.
@@ -33,11 +39,15 @@ inputs:
     label: a starting picture
     help: The picture the video starts from.
     type: asset
+    accepts:
+      - image/*
     required: true
   last_frame:
     label: an ending picture
     help: The picture the video ends on.
     type: asset
+    accepts:
+      - image/*
     required: true
   frames:
     label: Length in frames
@@ -57,32 +67,32 @@ bindings:
       video: {node: '18', key: images, from: output_dir, decode: none, take: first}
     map:
       prompt:
-      - node: '9'
-        input: prompt
+        - node: '9'
+          input: prompt
       seed:
-      - node: '10'
-        input: noise_seed
+        - node: '10'
+          input: noise_seed
       steps:
-      - node: '12'
-        input: steps
+        - node: '12'
+          input: steps
       image:
-      - node: '20'
-        input: image
+        - node: '20'
+          input: image
       last_frame:
-      - node: '22'
-        input: image
+        - node: '22'
+          input: image
       frames:
-      - node: '8'
-        input: value
-requires:
-  models:
-  - role: diffusion_model
-    path: diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors
-  - role: text_encoder
-    path: text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
-  - role: vae
-    path: vae/minimax_h3_video_vae_int8_convrot.safetensors
-  - role: vae
-    path: vae/minimax_h3_audio_vae_fp32.safetensors
-  - role: lora
-    path: loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors
+        - node: '8'
+          input: value
+    requires:
+      models:
+        - role: diffusion_model
+          path: diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors
+        - role: text_encoder
+          path: text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+        - role: vae
+          path: vae/minimax_h3_video_vae_int8_convrot.safetensors
+        - role: vae
+          path: vae/minimax_h3_audio_vae_fp32.safetensors
+        - role: lora
+          path: loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors

@@ -24,7 +24,7 @@ import yaml
 
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
-from gateway.manifests import ManifestError, manifest_identity, validate_manifest
+from gateway.manifests import ContractErrors, ManifestError, Provenance, enforce_contract, manifest_identity
 from gateway import frontend_mount, projection, record_carriers, record_integrity, service_registry
 
 
@@ -553,6 +553,31 @@ def package_registry_snapshot(
     }
 
 
+def carry_install_proofs(
+    index: dict[str, Any], kind: str, converted: Mapping[str, tuple[Mapping[str, Any], Mapping[str, Any], str | None]],
+    db_path: Path,
+) -> bool:
+    """Carry each package's keyed install proof over a rewrite of its records (``converted``: record id to the old form,
+    the new form and the id of the package that installed it). A record whose old form still matches its proof gets the
+    proof of its new form, so the package can still tell the record is its own and remove it; one that did not match (the
+    owner had changed it) keeps a proof that matches nothing. Changes ``index`` in place and says whether any proof
+    changed. The install key is read only when a keyed proof is found."""
+    key: bytes | None = None
+    changed = False
+    for record_id, (old, new, package_id) in converted.items():
+        package = index["packages"].get(package_id)
+        entry = (((package or {}).get("installed_records") or {}).get(kind) or {}).get(record_id)
+        if not isinstance(entry, dict) or "mac" not in entry:
+            continue
+        key = key or record_integrity.install_key(db_path)
+        state = ((package.get("disabled_states") or {}).get(kind) or {}).get(record_id)
+        if not _matches_install(old, entry, package, state, key):
+            continue
+        entry["mac"] = installed_record_digest(comparable_record(new, state), key)
+        changed = True
+    return changed
+
+
 def _matches_install(
     record: Mapping[str, Any], expected: Mapping[str, Any] | None, package: Mapping[str, Any],
     disabled_state: bool | None, key: bytes | None = None,
@@ -1045,10 +1070,11 @@ def _normalize_workflow(
     manifest = copy.deepcopy(dict(record))
     manifest.pop("kind", None)
     try:
-        validate_manifest(manifest)
-        identity = manifest_identity(manifest)
+        enforce_contract(manifest)   # a package workflow in schema 1 is refused here with schema_version_unsupported
+        identity = manifest_identity(manifest, Provenance(trusted=False, source="package"))
     except (ManifestError, ValueError) as exc:
-        errors.append(f"{ref}: invalid workflow manifest: {exc}")
+        code = f"{exc.code}: " if isinstance(exc, ContractErrors) else ""
+        errors.append(f"{ref}: invalid workflow manifest: {code}{exc}")
         return None
 
     _hash_workflow_package_artifacts(manifest, ref, root, errors, hash_files)
@@ -1204,7 +1230,7 @@ def _hash_package_uri(
         _hash_code_file(path, root, hash_files, errors)
         return
     if path.is_dir():
-        for child in sorted(item for item in path.rglob("*") if item.is_file()):
+        for child in _package_directory_files(path, root, errors):
             _hash_code_file(child, root, hash_files, errors)
         return
     errors.append(f"{field}: package artifact not found: {uri}")
@@ -1231,7 +1257,7 @@ def _normalize_code_package_path(
         _hash_code_file(path, root, hash_files, errors)
         return raw_path
     if path.is_dir():
-        for child in sorted(item for item in path.rglob("*") if item.is_file()):
+        for child in _package_directory_files(path, root, errors):
             if "__pycache__" in child.parts or child.name.endswith(".pyc"):
                 continue
             _hash_code_file(child, root, hash_files, errors)
@@ -1241,14 +1267,26 @@ def _normalize_code_package_path(
     return ""
 
 
+def _package_directory_files(path: Path, root: Path, errors: list[str]) -> list[Path]:
+    files: list[Path] = []
+    for child in sorted(path.rglob("*")):
+        resolved = _resolve_package_path(root, child.relative_to(root).as_posix(), errors)
+        if resolved is not None and resolved.is_file():
+            files.append(child)
+    return files
+
+
 def _hash_code_file(
     path: Path,
     root: Path,
     hash_files: dict[str, bytes],
     errors: list[str],
 ) -> None:
+    resolved = _resolve_package_path(root, path.relative_to(root).as_posix(), errors)
+    if resolved is None:
+        return
     try:
-        hash_files[_display_path(path, root)] = path.read_bytes()
+        hash_files[_display_path(path, root)] = resolved.read_bytes()
     except OSError as exc:
         errors.append(f"{_display_path(path, root)}: failed to read code file: {exc}")
 

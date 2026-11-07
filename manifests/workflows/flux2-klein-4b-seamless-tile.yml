@@ -1,15 +1,17 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: image.generate.flux2-klein-4b-seamless-tile
 intent: image.generate
+capability: image
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: Flux2 Klein 4B Seamless Tile
 task: texture-tile
 purpose: Create seamless tiling textures
 prompt_hint: Describe the picture you want
 description: Make a texture from a description that repeats smoothly, with no visible seams when tiled.
-source: local
-trusted: true
 inputs:
   prompt:
     label: description
@@ -47,6 +49,10 @@ inputs:
     type: integer
     minimum: 0
     description: Base seed. Each returned image increments by two; the seam inpaint pass uses base seed plus one.
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
   seam_mask_width:
     label: seam repair width
     help: Width in pixels of the area repaired to make the texture repeat.
@@ -128,7 +134,7 @@ bindings:
         - path: seam.denoise
       seam_prompt:
         - path: seam.prompt
-requires:
-  workflows:
-    - image.generate.flux2-klein-4b
-    - image.edit.flux2-klein-4b-inpaint
+    requires:
+      workflows:
+        - image.generate.flux2-klein-4b
+        - image.edit.flux2-klein-4b-inpaint

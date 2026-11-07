@@ -160,10 +160,10 @@ def _workflow_row(
     example = _example_request(record, effective_inputs, preferred or sync_route or async_route, base_url)
     engine_binding = _engine_binding_label(summary.get("supported_backends") or [], capability_rows)
     availability = _availability(capability_rows)
-    capability = _capability_from_intent(record.intent, record.manifest.get("capability"))
+    capability = str(record.contract["capability"])
     manifest_purpose = summary.get("purpose")
     purpose = manifest_purpose.strip() if isinstance(manifest_purpose, str) else ""
-    member_summary = record.manifest.get("summary")
+    member_summary = record.contract.get("summary")
     member_summary = " ".join(member_summary.split()) if isinstance(member_summary, str) else ""
     description = member_summary or purpose or _workflow_description(summary.get("description"), capability)
     technical_notes = None if member_summary else _workflow_technical_notes(summary.get("description"), description)
@@ -210,8 +210,8 @@ def _workflow_row(
             "execution": openapi_row.get("execution") or routes,
         },
     }
-    if "license" in record.manifest:
-        row["license"] = record.manifest["license"]
+    if "license" in record.contract:
+        row["license"] = record.contract["license"]
     if technical_notes:
         row["technical_notes"] = technical_notes
     return row
@@ -262,7 +262,7 @@ def _is_technical_workflow_note(value: str) -> bool:
 def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[str, Any]]:
     schema = workflow_inputs_schema(record)
     props = schema.get("properties") if isinstance(schema.get("properties"), Mapping) else {}
-    manifest_inputs = record.manifest.get("inputs") if isinstance(record.manifest.get("inputs"), Mapping) else {}
+    manifest_inputs = record.contract.get("inputs") if isinstance(record.contract.get("inputs"), Mapping) else {}
     required = set(schema.get("required") or [])
     preferred = routes.get(str(routes.get("recommended") or "sync")) or routes.get("sync") or routes.get("async") or {}
     mode = "async" if preferred == routes.get("async") else "sync"
@@ -712,22 +712,6 @@ def _aliases_for(workflow_id: str, aliases: Mapping[str, Any] | None) -> list[st
                 if isinstance(alias, str) and alias not in out:
                     out.append(alias)
     return out
-
-
-def _capability_from_intent(intent: str, declared: Any = None) -> str:
-    if isinstance(declared, str) and declared in {
-        "image", "video", "speech", "transcribe", "music", "sfx", "audio", "mesh"
-    }:
-        return declared
-    if intent.startswith("image."):
-        return "image"
-    if intent.startswith("video."):
-        return "video"
-    if intent.startswith("mesh."):
-        return "mesh"
-    if intent.startswith("audio.") or intent.startswith("speech."):
-        return "audio"
-    return "workflow"
 
 
 def _availability_reason_code(capabilities: list[Capability]) -> str:

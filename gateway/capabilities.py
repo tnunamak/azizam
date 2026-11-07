@@ -36,6 +36,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
+from gateway.workflow_policy import NEEDS_CONFIGURATION_MESSAGE
+from gateway.workflow_view import settable_inputs
 from gateway.discovery import WorkflowRecord
 from gateway.policy import ALLOWED, DecidingRule, EffectiveAccess, PolicyDecision, PolicyRequest
 
@@ -519,16 +521,19 @@ def capability_from_workflow_record(
             f"backend {chosen_backend!r} not in workflow bindings {supported!r}"
         )
 
-    manifest = record.manifest
-    inputs = manifest.get("inputs") or {}
+    manifest = record.contract
+    facts = record.facts
     outputs = manifest.get("outputs") or {}
-
+    inputs = settable_inputs(manifest)
     input_modalities = _derive_input_modalities(inputs, intent=record.intent)
     output_modalities = _derive_output_modalities(outputs)
 
     caveats: list[str] = list(extra_caveats)
+    if facts is None:
+        # No policy facts, and no defaults: the capability is closed (exposure ``disabled``) until its owner configures it.
+        caveats.append(NEEDS_CONFIGURATION_MESSAGE)
     if not record.identity.trusted:
-        # ``trusted`` is the manifest's own flag; no one is named as its reviewer.
+        # ``trusted`` is the record's own flag; no one is named as its reviewer.
         caveats.append(UNREVIEWED_WORKFLOW_CAVEAT)
 
     return Capability(
@@ -547,18 +552,10 @@ def capability_from_workflow_record(
             intent=record.intent),
         execution=execution,
         streaming=streaming,
-        exposure=_manifest_string(manifest, "exposure", default="default"),
-        trust_tier=_manifest_string(
-            manifest,
-            "trust_tier",
-            default="stable" if record.identity.trusted else "experimental",
-        ),
-        resource_tier=_manifest_string(
-            manifest,
-            "resource_tier",
-            default="batch" if execution == "job" else "interactive",
-        ),
-        tags=_manifest_tags(manifest),
+        exposure=facts.exposure if facts else "disabled",
+        trust_tier=facts.trust_tier if facts else "experimental",
+        resource_tier=facts.resource_tier if facts else "batch",
+        tags=facts.tags if facts else (),
         lifecycle="unknown",
         health="unknown",
         policy_available=True,
@@ -692,26 +689,6 @@ def _intent_asset_modality(intent: str) -> str | None:
     if intent.startswith("video."):
         return "video"
     return None
-
-
-def _manifest_string(
-    manifest: dict[str, Any], key: str, *, default: str
-) -> str:
-    value = manifest.get(key)
-    if isinstance(value, str) and value:
-        return value
-    return default
-
-
-def _manifest_tags(manifest: dict[str, Any]) -> tuple[str, ...]:
-    value = manifest.get("tags")
-    if not isinstance(value, list):
-        return ()
-    tags: list[str] = []
-    for item in value:
-        if isinstance(item, str) and item and item not in tags:
-            tags.append(item)
-    return tuple(tags)
 
 
 def _check_audience(audience: str) -> None:

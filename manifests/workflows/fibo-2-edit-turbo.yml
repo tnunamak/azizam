@@ -1,15 +1,17 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: image.edit.fibo-2-edit-turbo
 license: "CC BY-NC 4.0 (Bria FIBO 2.0; non-commercial use only, commercial use needs a separate agreement with Bria AI)"
 intent: image.edit
+capability: image
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: FIBO 2 Edit Turbo
 purpose: Edit a photo in four steps
 prompt_hint: Describe the change you want
 description: Change a picture by telling it what to do, such as swapping an outfit, changing the light or adding a sign with readable words. It is Bria's FIBO 2.0 editor and is for non-commercial use only.
-source: local
-trusted: true
 typical_seconds: 7
 inputs:
   prompt:
@@ -19,6 +21,8 @@ inputs:
     label: a picture to change
     help: The picture you want to change. The result has the same shape at about one megapixel.
     type: asset
+    accepts:
+      - image/*
     required: true
   steps:
     label: steps
@@ -30,6 +34,10 @@ inputs:
   seed:
     type: integer
     minimum: 0
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
 outputs:
   image:
     media_type: image/png
@@ -51,13 +59,13 @@ bindings:
       seed:
         - node: "7"
           input: seed
-requires:
-  custom_nodes:
-    - RMBG
-  models:
-    - role: diffusion_model
-      path: diffusion_models/fibo2_edit_turbo_int8_convrot.safetensors
-    - role: text_encoder
-      path: text_encoders/qwen3vl_4b_int8_convrot.safetensors
-    - role: vae
-      path: vae/flux2-vae.safetensors
+    requires:
+      custom_nodes:
+        - RMBG
+      models:
+        - role: diffusion_model
+          path: diffusion_models/fibo2_edit_turbo_int8_convrot.safetensors
+        - role: text_encoder
+          path: text_encoders/qwen3vl_4b_int8_convrot.safetensors
+        - role: vae
+          path: vae/flux2-vae.safetensors

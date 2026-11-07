@@ -1,14 +1,16 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: image.edit.qwen-image-2.1-edit-multiref
 intent: image.edit
+capability: image
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: Qwen-Image 2.1 Multi-Reference Edit
 purpose: Combine two reference images into one
 prompt_hint: Describe the change you want
 description: Combine two pictures into one, following your description of how to blend them.
-source: local
-trusted: true
 typical_seconds: 26
 inputs:
   prompt:
@@ -19,11 +21,15 @@ inputs:
     label: a main picture
     help: The picture you want to change.
     type: asset
+    accepts:
+      - image/*
     required: true
   reference_image_2:
     label: a second picture
     help: Another picture to take people, things or style from.
     type: asset
+    accepts:
+      - image/*
     required: true
   negative_prompt:
     type: string
@@ -46,6 +52,10 @@ inputs:
   seed:
     type: integer
     minimum: 0
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
 outputs:
   image:
     media_type: image/png
@@ -81,13 +91,13 @@ bindings:
       seed:
         - node: "8"
           input: seed
-requires:
-  custom_nodes:
-    - RMBG
-  models:
-    - role: diffusion_model
-      path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors
-    - role: text_encoder
-      path: text_encoders/qwen3vl_8b_w4a8.safetensors
-    - role: vae
-      path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors
+    requires:
+      custom_nodes:
+        - RMBG
+      models:
+        - role: diffusion_model
+          path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors
+        - role: text_encoder
+          path: text_encoders/qwen3vl_8b_w4a8.safetensors
+        - role: vae
+          path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors

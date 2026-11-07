@@ -3,9 +3,13 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from gateway import extension_packages
 from gateway.extension_packages import (
     EXTENSION_PACKAGE_INDEX_SETTING_KEY,
     _git_source_url,
+    _hash_workflow_package_artifacts,
     empty_extension_package_index,
     imported_registry_records,
     merge_package_index,
@@ -224,12 +228,11 @@ caveats:
   - review-only package object
 """,
             "objects/workflow.yml": """
-schema_version: 1
+schema_version: 2
 version: 0.1.0
 id: image.generate.demo
 intent: image.generate
-source: package
-trusted: false
+capability: image
 inputs:
   prompt:
     type: string
@@ -281,139 +284,88 @@ bindings:
     }
 
 
+def _hash_workflow_artifacts(root: Path, artifact: str) -> tuple[list[str], dict[str, bytes]]:
+    """What the package review does with a workflow document's binding artifact (a v2 document is checked first by
+    the contract, so the artifact step is driven directly with the document's v2 shape)."""
+    manifest = {
+        "schema_version": 2,
+        "id": "image.generate.artifact",
+        "intent": "image.generate",
+        "capability": "image",
+        "bindings": {"comfyui": {"workflow": artifact, "map": {}}},
+    }
+    errors: list[str] = []
+    hash_files: dict[str, bytes] = {}
+    _hash_workflow_package_artifacts(manifest, "objects/workflow.yml", root, errors, hash_files)
+    return errors, hash_files
+
+
 def test_workflow_package_uri_artifact_must_exist(tmp_path: Path) -> None:
-    package_dir = _write_package(
-        tmp_path,
-        """
-schema_version: 1
-kind: extension_package
-id: missing-artifact-package
-version: 0.1.0
-objects:
-  workflows:
-    - objects/workflow.yml
-""",
-        {
-            "objects/workflow.yml": """
-schema_version: 1
-version: 0.1.0
-id: image.generate.missing-artifact
-intent: image.generate
-inputs:
-  prompt:
-    type: string
-outputs:
-  image:
-    media_type: image/png
-bindings:
-  comfyui:
-    workflow: package://workflows/missing.json
-    map:
-      prompt:
-        - node: "6"
-          input: text
-""",
-        },
-    )
+    errors, _ = _hash_workflow_artifacts(tmp_path, "package://workflows/missing.json")
 
-    review = review_local_directory_package(package_dir)
-
-    assert review["ok"] is False
-    assert review["errors"] == [
+    assert errors == [
         "objects/workflow.yml: bindings.comfyui.workflow: "
         "package artifact not found: package://workflows/missing.json"
     ]
 
 
 def test_workflow_package_uri_artifact_cannot_traverse(tmp_path: Path) -> None:
-    package_dir = _write_package(
-        tmp_path,
-        """
-schema_version: 1
-kind: extension_package
-id: traversal-artifact-package
-version: 0.1.0
-objects:
-  workflows:
-    - objects/workflow.yml
-""",
-        {
-            "objects/workflow.yml": """
-schema_version: 1
-version: 0.1.0
-id: image.generate.traversal-artifact
-intent: image.generate
-inputs:
-  prompt:
-    type: string
-outputs:
-  image:
-    media_type: image/png
-bindings:
-  comfyui:
-    workflow: package://../outside.json
-    map:
-      prompt:
-        - node: "6"
-          input: text
-""",
-        },
-    )
+    (tmp_path / "package").mkdir()
 
-    review = review_local_directory_package(package_dir)
+    errors, _ = _hash_workflow_artifacts(tmp_path / "package", "package://../outside.json")
 
-    assert review["ok"] is False
-    assert "../outside.json: path traversal is not allowed" in review["errors"]
+    assert "../outside.json: path traversal is not allowed" in errors
 
 
 def test_package_hash_includes_workflow_package_uri_artifact(tmp_path: Path) -> None:
-    manifest = """
-schema_version: 1
-kind: extension_package
-id: artifact-hash-package
-version: 0.1.0
-objects:
-  workflows:
-    - objects/workflow.yml
-"""
-    workflow_manifest = """
-schema_version: 1
-version: 0.1.0
-id: image.generate.artifact-hash
-intent: image.generate
-inputs:
-  prompt:
-    type: string
-outputs:
-  image:
-    media_type: image/png
-bindings:
-  comfyui:
-    workflow: package://workflows/demo.json
-    map:
-      prompt:
-        - node: "6"
-          input: text
-"""
-    package_dir = _write_package(
-        tmp_path,
-        manifest,
-        {
-            "objects/workflow.yml": workflow_manifest,
-            "workflows/demo.json": '{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "one"}}}',
-        },
-    )
-    before = review_local_directory_package(package_dir)
+    artifact = tmp_path / "workflows" / "demo.json"
+    artifact.parent.mkdir()
+    artifact.write_text('{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "one"}}}', encoding="utf-8")
+    before_errors, before = _hash_workflow_artifacts(tmp_path, "package://workflows/demo.json")
 
-    (package_dir / "workflows" / "demo.json").write_text(
-        '{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "two"}}}',
-        encoding="utf-8",
-    )
-    after = review_local_directory_package(package_dir)
+    artifact.write_text('{"6": {"class_type": "CLIPTextEncode", "inputs": {"text": "two"}}}', encoding="utf-8")
+    after_errors, after = _hash_workflow_artifacts(tmp_path, "package://workflows/demo.json")
 
-    assert before["ok"] is True
-    assert after["ok"] is True
-    assert before["package_hash"] != after["package_hash"]
+    assert before_errors == after_errors == []
+    assert set(before) == set(after) == {"workflows/demo.json"}
+    assert before != after
+
+
+@pytest.mark.parametrize("kind", ["uri", "code"])
+def test_package_directory_refuses_outside_symlink_without_reading_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    root = tmp_path / "package"
+    directory = root / "artifacts"
+    (directory / "nested").mkdir(parents=True)
+    (directory / "direct.txt").write_bytes(b"direct artifact")
+    (directory / "nested" / "inside.txt").write_bytes(b"nested artifact")
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"must not be read")
+    (directory / "nested" / "outside.txt").symlink_to(outside)
+    original_read = Path.read_bytes
+
+    def checked_read(path: Path) -> bytes:
+        assert path.resolve() != outside.resolve(), "read an artifact outside the package root"
+        return original_read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", checked_read)
+    errors: list[str] = []
+    hashed: dict[str, bytes] = {}
+    if kind == "uri":
+        extension_packages._hash_package_uri(
+            "package://artifacts", "workflow", root, errors, hashed,
+        )
+    else:
+        assert extension_packages._normalize_code_package_path(
+            {"package_path": "artifacts"}, "adapter", root, hashed, errors,
+        ) == "artifacts"
+
+    assert errors == ["artifacts/nested/outside.txt: path traversal is not allowed"]
+    assert hashed == {
+        "artifacts/direct.txt": b"direct artifact",
+        "artifacts/nested/inside.txt": b"nested artifact",
+    }
 
 
 def test_invalid_capability_and_workflow_objects_return_validation_errors(
@@ -441,9 +393,10 @@ backend: comfyui.local
 execution: forever
 """,
             "objects/workflow.yml": """
-schema_version: 1
+schema_version: 2
 id: bad-workflow
 intent: image.generate
+capability: image
 inputs: {}
 outputs: {}
 """,
@@ -467,8 +420,50 @@ outputs: {}
     )
     assert review["errors"][1] == (
         "objects/workflow.yml: invalid workflow manifest: "
-        "manifest missing required field: bindings"
+        "required_field_missing: manifest missing required field: bindings"
     )
+
+
+def test_schema_1_package_workflow_is_refused_not_converted(tmp_path: Path) -> None:
+    package_dir = _write_package(
+        tmp_path,
+        """
+schema_version: 1
+kind: extension_package
+id: old-workflow-package
+version: 0.1.0
+objects:
+  workflows:
+    - objects/workflow.yml
+""",
+        {
+            "objects/workflow.yml": """
+schema_version: 1
+version: 0.1.0
+id: image.generate.old
+intent: image.generate
+inputs:
+  prompt:
+    type: string
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/old.json
+    map:
+      prompt:
+        - node: "6"
+          input: text
+""",
+        },
+    )
+
+    review = review_local_directory_package(package_dir)
+
+    assert review["ok"] is False
+    assert review["workflows"] == []
+    assert "schema_version_unsupported" in review["errors"][0]
 
 
 def test_code_bearing_adapter_is_an_error(tmp_path: Path) -> None:
@@ -793,10 +788,11 @@ resources:
   gpu_required: true
 """,
             "objects/workflow.yml": """
-schema_version: 1
+schema_version: 2
 version: 0.1.0
 id: image.generate.imported
 intent: image.generate
+capability: image
 inputs:
   prompt:
     type: string

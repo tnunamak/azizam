@@ -147,6 +147,7 @@ from gateway import voices_api
 from gateway import a1111_api
 from gateway import mcp_oauth, mcp_oauth_store, mcp_server, session_guard
 from gateway.workflow_call import CallError
+from gateway.workflow_view import requirements_of
 from gateway import binding_descriptors, binding_registry, identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking, stt_measurement
@@ -335,6 +336,8 @@ from gateway.toolcall_detection import (
     ToolcallStreamDetector as _ToolcallStreamDetector,
 )
 from gateway.discovery import WorkflowRegistry
+from gateway.workflow_policy import (
+    NEEDS_CONFIGURATION_CODE, NEEDS_CONFIGURATION_MESSAGE, NeedsConfiguration, PolicyFacts)
 from gateway.video_limits import limits_for_workflow, video_limits
 from gateway.app_key_openapi import augment_app_key_openapi
 from gateway import operation_security
@@ -384,6 +387,7 @@ from gateway.litellm_substrate import (
 from gateway.manifests import (
     ManifestError,
     ManifestIdentity,
+    Provenance,
     bind_backend_request,
     load_workflow_manifest,
     manifest_identity,
@@ -419,6 +423,7 @@ from gateway.openai_media_schemas import (
     VIDEOS_STATUS_OPENAPI,
     VOICES_LIST_OPENAPI,
 )
+from gateway.policy import apply_to_receipt as apply_policy_to_receipt
 from gateway.policy import (
     CANNOT_START_MODEL, DENIED, NO_ACCESS, NO_ACCESS_PLAN, NOT_IN_ACCESS_PLAN, RULE_PROVIDER_UNAVAILABLE,
     DecidingRule, EffectiveAccess, PolicyDecision, evaluate,
@@ -6213,23 +6218,42 @@ def _build_graph_submit_payload(workflow: dict, **extra: Any) -> dict:
     return payload
 
 
-def load_graph_workflow(model_name: str) -> Optional[dict]:
+def load_graph_workflow(model_name: str, *, intent: str | None = None) -> Optional[dict]:
     """Load a ComfyUI workflow template by model name.
 
     Attaches the UI-format twin (`<model>.ui.json`) under the private
     `__ui_workflow__` key when present, so submit sites can include it in
     `extra_data.extra_pnginfo.workflow`. The key survives deepcopy and is
-    popped by `_build_graph_submit_payload`.
+    popped by `_build_graph_submit_payload`. ``intent`` names the route's intent, so the record
+    that loads is the one `_find_image_manifest` selects and the job pins.
     """
-    workflow_path = DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+    return _load_graph_workflow_outcome(model_name, intent)[0]
+
+
+def graph_workflow_refused(model_name: str, *, intent: str | None = None) -> bool:
+    """Whether ``model_name`` names a package workflow whose graph the package resolver refuses (not merely absent)."""
+    return _load_graph_workflow_outcome(model_name, intent)[1]
+
+
+def _load_graph_workflow_outcome(model_name: str, intent: str | None) -> tuple[Optional[dict], bool]:
+    """``(workflow, refused)``: ``refused`` marks a selected package record whose graph is refused, which is not the
+    same as a model with no workflow, so that no caller falls through to another graph."""
+    found = _graph_workflow_artifact_for_model(model_name, intent)
+    if found is not None and found[1].startswith("package://"):
+        # A package's graph is the file its review hashed: never a built-in file of the same name, and a path the
+        # resolver refuses (no package root, or one it leaves) makes the model unavailable, not an error.
+        try:
+            workflow_path = _resolve_workflow_artifact_path(*found)
+        except ValueError as exc:
+            print(f"[proxy] WARNING: graph for {model_name!r} refused: {exc}", flush=True)
+            return None, True
+    else:
+        workflow_path = DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        if not workflow_path.exists() and found is not None:
+            workflow_path = _resolve_workflow_artifact_path(*found)
     if not workflow_path.exists():
-        workflow_path = _graph_workflow_artifact_path_for_model(model_name)
-    if not workflow_path.exists():
-        return None
-    workflow = _load_graph_workflow_file(workflow_path)
-    if workflow is None:
-        return None
-    return workflow
+        return None, False
+    return _load_graph_workflow_file(workflow_path), False
 
 
 
@@ -6273,30 +6297,41 @@ def _load_graph_workflow_file(workflow_path: Path) -> Optional[dict]:
     return workflow
 
 
-def _graph_workflow_artifact_path_for_model(model_name: str) -> Path:
+def _graph_binding_artifact(record: Any) -> str | None:
+    bindings = record.manifest.get("bindings")
+    comfy = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings, Mapping) else None
+    artifact = comfy.get("workflow") if isinstance(comfy, Mapping) else None
+    return artifact if isinstance(artifact, str) and artifact else None
+
+
+def _graph_workflow_artifact_for_model(model_name: str, intent: str | None = None) -> tuple[Any, str] | None:
+    """The record a model loads from, and its graph artifact as written.
+
+    The record is the one the job pins: chosen by model identity (and ``intent`` when given), the way
+    `_find_image_manifest` chooses. A record that only shares the graph file's name is never chosen for a package
+    artifact; it can still supply a non-package artifact when no built-in file exists.
+    """
     try:
         registry = GATEWAY_WORKFLOW_REGISTRY
     except NameError:
-        return DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        return None
+    record = _image_workflow_record(intent, model_name) if intent else next(
+        (r for r in registry.records()
+         if str(r.manifest.get("id") or "").split(".")[-1] == model_name or r.manifest.get("id") == model_name),
+        None,
+    )
+    if record is not None and (artifact := _graph_binding_artifact(record)) is not None:
+        return record, artifact
     for record in registry.records():
-        bindings = record.manifest.get("bindings")
-        if not isinstance(bindings, Mapping):
-            continue
-        comfy = bindings.get(DERIVED._GRAPH_BINDING)
-        if not isinstance(comfy, Mapping):
-            continue
-        artifact = comfy.get("workflow")
-        if not isinstance(artifact, str) or not artifact:
-            continue
-        if Path(artifact.replace("package://", "")).stem != model_name:
-            continue
-        return _resolve_workflow_artifact_path(record, artifact)
-    return DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        artifact = _graph_binding_artifact(record)
+        if artifact and not artifact.startswith("package://") and Path(artifact).stem == model_name:
+            return record, artifact
+    return None
 
 
 def _resolve_workflow_artifact_path(record: Any, artifact: str) -> Path:
     if artifact.startswith("package://"):
-        artifact = artifact.removeprefix("package://").lstrip("/")
+        return _resolve_package_artifact_path(record, artifact.removeprefix("package://").lstrip("/"))
     path = Path(artifact)
     if path.is_absolute():
         return path
@@ -6310,6 +6345,24 @@ def _resolve_workflow_artifact_path(record: Any, artifact: str) -> Path:
         base = source_path if source_path.is_dir() else source_path.parent
         return (base / path).resolve()
     return project_relative
+
+
+def _resolve_package_artifact_path(record: Any, relative: str) -> Path:
+    """A ``package://`` artifact is the file the package review hashed: it resolves only beneath the record's package root
+    (``source_path``, the package folder, or the folder of a manifest file in it), never a same-named project file, and a
+    path that leaves that root (``..``, a symlink) is refused."""
+    source_path = Path(getattr(record, "source_path", "") or "")
+    if not str(source_path) or str(source_path) == "." or not (source_path.is_dir() or source_path.is_file()):
+        # A package folder that is gone is not read as a manifest file: its parent holds other packages.
+        raise ValueError(f"package artifact {relative!r} has no package root")
+    try:
+        root = (source_path if source_path.is_dir() else source_path.parent).resolve()
+        resolved = (root / relative).resolve()
+    except (RuntimeError, OSError) as exc:  # a symlink loop or an unreadable link inside the package
+        raise ValueError(f"package artifact {relative!r} cannot be resolved ({type(exc).__name__})") from exc
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"package artifact {relative!r} is outside its package root")
+    return resolved
 
 
 def _graph_job_envelope(
@@ -9050,7 +9103,7 @@ async def proxy_graph_image_request(
             output_format=output_format, output_compression=output_compression, quality=quality, background=background,
         )
 
-    workflow = load_graph_workflow(model)
+    workflow = load_graph_workflow(model, intent=IMAGE_GENERATE_INTENT)
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -9491,7 +9544,7 @@ async def proxy_graph_image_edit_request(
             request, auth_context, form, form_dict, image_files, str(prompt or ""), response_format,
         )
 
-    workflow = load_graph_workflow(model)
+    workflow = load_graph_workflow(model, intent=IMAGE_EDIT_INTENT)
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -14213,10 +14266,13 @@ def _load_gateway_workflow_registry(*, strict: bool = False) -> WorkflowRegistry
         registry = WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR)
         try:
             # Stored workflows are read record by record; a registry that cannot be read at all costs only them.
+            # One read of the stored document; a quarantined override is left out, so the bundled version serves.
             admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
             if admin_registry is not None:
                 for record in service_registry.workflow_records_from_registry(admin_registry):
-                    registry.add_manifest(record.manifest, source_path=record.source_path, replace=True)
+                    registry.add_manifest(
+                        record.manifest, source_path=record.source_path, replace=True,
+                        provenance=Provenance(record.identity.trusted, record.identity.source), facts=record.facts)
         except Exception as e:  # noqa: BLE001
             if strict:
                 raise
@@ -14859,7 +14915,7 @@ def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[
         if not cap.policy_available or cap.backend != "gateway":
             continue
         record = records.get(cap.workflow or cap.resolved_workflow or "")
-        requirements = record.manifest.get("requires") if record else None
+        requirements = requirements_of(record.contract) if record else None
         if isinstance(requirements, Mapping):
             out.update(str(service) for service in requirements.get("services") or ())
             for workflow_id in requirements.get("workflows") or ():
@@ -16337,9 +16393,17 @@ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a111
 
 # --- Image to 3D: POST /v1/meshes/generate (gateway/mesh_api.py) -------------
 # The manifest is bundled data; the lease manager is one per process (one gateway worker per physical pool).
-MESH_MANIFEST = mesh_manifest.load_mesh_manifest(
-    Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
-)
+_MESH_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
+# The route reads its workflow record from the registry (the schema 2 contract) and runs the mesh frontend profile on it
+# (CODE_TO_DATA_S3, D9). The file names the record; the route holds no copy of its content.
+_MESH_WORKFLOW_ID = str(yaml.safe_load(_MESH_MANIFEST_PATH.read_text(encoding="utf-8"))["id"])
+# The live registry may hold no mesh record (the owner turned an override off, or it is left out): the route then answers
+# unavailable (``MESH_DEPS.workflow_available``). Its identity for the catalog and receipts then comes from the bundled file.
+_MESH_RECORD = (GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID)
+                or WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR).get(_MESH_WORKFLOW_ID))
+if _MESH_RECORD is None:
+    raise mesh_manifest.MeshManifestError(f"workflow {_MESH_WORKFLOW_ID} is not bundled")
+MESH_MANIFEST = mesh_api.mesh_workflow_from_record(_MESH_RECORD)
 MESH_LEASES = exclusive_pool.ExclusivePoolLeaseManager()
 
 
@@ -16426,6 +16490,7 @@ def _upload_as_output_input(upload: Any, data: bytes) -> asset_types.OutputInput
 
 MESH_DEPS = mesh_api.MeshApiDeps(
     manifest=MESH_MANIFEST,
+    workflow_available=lambda: GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) is not None,
     authenticate=lambda request, path: authenticate_request(request, path),
     frontend_records=lambda: route_registry.protocol_frontend_records(
         registry=_live_service_registry(), proxy_config=runtime().config),
@@ -17418,7 +17483,7 @@ def _category_service_catalog() -> list[dict[str, Any]]:
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         if record.supported_backends:
-            add(record.id, record.manifest.get("display_name"), "workflow", record.intent)
+            add(record.id, record.contract.get("display_name"), "workflow", record.intent)
 
     backends = service_registry.runtime_backends(registry)
     # Use the execution catalog's public names, including provider prefixes,
@@ -20812,6 +20877,9 @@ _IMAGE_ROUTE_INTENTS = {
     "/v1/images/edits": "image.edit",
     "/v1/images/variations": "image.variation",
 }
+# The intents of the generation and edit routes, named once here; a route loads its workflow record under its own intent.
+IMAGE_GENERATE_INTENT = _IMAGE_ROUTE_INTENTS["/v1/images/generations"]
+IMAGE_EDIT_INTENT = _IMAGE_ROUTE_INTENTS["/v1/images/edits"]
 
 
 def start_image_route_receipt(
@@ -20860,7 +20928,16 @@ def _apply_image_route_policy(
     workflow: str | None = None,
     manifest: Mapping[str, Any] | None = None,
 ) -> PolicyDecision:
-    metadata = _image_manifest_policy_metadata(manifest)
+    try:
+        metadata = _image_manifest_policy_metadata(manifest)
+    except NeedsConfiguration:
+        # A workflow with no policy facts is closed: the route answers before it sends anything to an engine (D2).
+        access = _access_for_auth_context(auth_context)
+        decision = PolicyDecision(
+            decision=DENIED, sources=("policy:workflow-needs-configuration",),
+            reasons=(NEEDS_CONFIGURATION_MESSAGE,), visibility_level=access.receipt_detail, code=NEEDS_CONFIGURATION_CODE)
+        apply_policy_to_receipt(decision, receipt)
+        return decision
     return evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -20881,38 +20958,24 @@ def _apply_image_route_policy(
 def _image_manifest_policy_metadata(
     manifest: Mapping[str, Any] | None,
 ) -> dict[str, object]:
+    """The route's policy facts for the workflow a manifest names: the facts of its record (CODE_TO_DATA_S3, D2), found by
+    the workflow's id. Nothing is read from the document. A request that names no workflow is a request for a model, which
+    has its own fixed answer; a workflow whose record states no facts raises ``NeedsConfiguration``."""
     if manifest is None:
-        return {
-            "exposure": "default",
-            "trust_tier": "stable",
-            "resource_tier": "batch",
-            "tags": (),
-        }
-
-    trusted = bool(manifest.get("trusted", False))
-    tags_raw = manifest.get("tags")
-    tags: list[str] = []
-    if isinstance(tags_raw, list):
-        tags = [tag for tag in tags_raw if isinstance(tag, str) and tag]
-    return {
-        "exposure": _manifest_string_field(manifest, "exposure", "default"),
-        "trust_tier": _manifest_string_field(
-            manifest, "trust_tier", "stable" if trusted else "experimental"
-        ),
-        "resource_tier": _manifest_string_field(
-            manifest, "resource_tier", "batch"
-        ),
-        "tags": tuple(dict.fromkeys(tags)),
-    }
+        return {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "tags": ()}
+    return _image_policy_metadata(_workflow_policy_facts(manifest.get("id")), workflow_id=manifest.get("id"))
 
 
-def _manifest_string_field(
-    manifest: Mapping[str, Any], key: str, default: str
-) -> str:
-    value = manifest.get(key)
-    if isinstance(value, str) and value:
-        return value
-    return default
+def _workflow_policy_facts(workflow_id: Any) -> PolicyFacts | None:
+    record = GATEWAY_WORKFLOW_REGISTRY.get(str(workflow_id)) if isinstance(workflow_id, str) else None
+    return record.facts if record is not None else None
+
+
+def _image_policy_metadata(facts: PolicyFacts | None, *, workflow_id: Any = None) -> dict[str, object]:
+    """The policy facts of an image route, as the record states them. There is no default: a record with none is refused."""
+    if facts is None:
+        raise NeedsConfiguration(workflow_id if isinstance(workflow_id, str) else None)
+    return {"exposure": facts.exposure, "trust_tier": facts.trust_tier, "resource_tier": facts.resource_tier, "tags": facts.tags}
 
 
 def _policy_workflow_for_receipt(receipt: RouteReceipt | None) -> str | None:
@@ -21489,8 +21552,8 @@ async def _proxy_offset_inpaint_tile_request(
         "inpaint_model",
         fallback="flux2-klein-4b-inpaint",
     )
-    base_workflow = load_graph_workflow(base_model)
-    inpaint_workflow = load_graph_workflow(inpaint_model)
+    base_workflow = load_graph_workflow(base_model, intent=IMAGE_GENERATE_INTENT)
+    inpaint_workflow = load_graph_workflow(inpaint_model, intent=IMAGE_EDIT_INTENT)
     base_manifest = _find_image_manifest("image.generate", base_model)
     inpaint_manifest = _find_image_manifest("image.edit", inpaint_model)
     if not base_workflow or not inpaint_workflow or base_manifest is None or inpaint_manifest is None:
@@ -21773,7 +21836,7 @@ def _prefer_inpaint_workflow_for_mask(model: str) -> str:
         return model
     base = model.removesuffix("-edit")
     candidate = f"{base}-inpaint"
-    return candidate if load_graph_workflow(candidate) else model
+    return candidate if load_graph_workflow(candidate, intent=IMAGE_EDIT_INTENT) else model
 
 
 def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> str:
@@ -21785,7 +21848,11 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
         return selected
 
     if not (selected.endswith("-edit") or selected.endswith("-inpaint")):
-        direct_workflow = load_graph_workflow(selected)
+        # The edit route's own record (intent image.edit) decides, the same one its final load uses: another
+        # intent's record of the same name never supplies metadata or hides this record's refusal.
+        direct_workflow = load_graph_workflow(selected, intent=IMAGE_EDIT_INTENT)
+        if direct_workflow is None and graph_workflow_refused(selected, intent=IMAGE_EDIT_INTENT):
+            return selected  # a refused package model is unavailable; it never becomes its -edit sibling
         direct_meta = direct_workflow.get("_meta", {}) if isinstance(direct_workflow, Mapping) else {}
         if not isinstance(direct_meta, Mapping) or not (direct_meta.get("image_node") or direct_meta.get("image_nodes")):
             selected = f"{selected}-edit"
@@ -21831,7 +21898,8 @@ def _attach_image_manifest_if_available(
             pass
 
 
-def _find_image_manifest(intent: str, resolved_model: str) -> dict[str, Any] | None:
+def _image_workflow_record(intent: str, resolved_model: str) -> Any:
+    """The registry record for ``resolved_model`` under ``intent``: what a route loads from and its job pins."""
     candidate_ids = {
         f"{intent}.{resolved_model}",
         f"{intent}.{resolved_model.removesuffix('-edit')}",
@@ -21842,8 +21910,13 @@ def _find_image_manifest(intent: str, resolved_model: str) -> dict[str, Any] | N
         if manifest.get("intent") != intent:
             continue
         if mid in candidate_ids or mid.endswith(f".{resolved_model}"):
-            return copy.deepcopy(dict(manifest))
+            return record
     return None
+
+
+def _find_image_manifest(intent: str, resolved_model: str) -> dict[str, Any] | None:
+    record = _image_workflow_record(intent, resolved_model)
+    return copy.deepcopy(dict(record.manifest)) if record is not None else None
 
 
 def _record_unknown_image_fields(

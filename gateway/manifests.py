@@ -137,6 +137,26 @@ class InputValidationResult:
 
 
 @dataclass(frozen=True)
+class Provenance:
+    """Where a workflow record came from and whether its owner reviewed it (CODE_TO_DATA_S3, D2). The loader sets it from
+    the origin of the record; a document never says it."""
+
+    trusted: bool
+    source: str | None
+
+
+# What the release's own files are: reviewed, and local.
+BUNDLED_PROVENANCE = Provenance(trusted=True, source="local")
+# A record whose origin is not known is not reviewed.
+UNKNOWN_PROVENANCE = Provenance(trusted=False, source=None)
+
+# The one version of the workflow document the validator reads. A document in any other version is refused.
+SUPPORTED_SCHEMA_VERSIONS = (2,)
+SCHEMA_VERSION_MESSAGE = (
+    "this schema version is not supported; convert the document with scripts/workflow_contract.py convert")
+
+
+@dataclass(frozen=True)
 class ManifestIdentity:
     id: str
     version: str | None
@@ -181,15 +201,19 @@ def load_workflow_manifest(path: str | Path) -> dict[str, Any]:
         manifest = yaml.safe_load(f)
     if not isinstance(manifest, dict):
         raise ManifestError(f"manifest {manifest_path} must be a mapping")
-    validate_manifest(manifest)
-    # Report only (CODE_TO_DATA_S3, S3.2): the schema 2 check is logged, nothing is refused. S3.5 makes it the check.
-    try:
-        from gateway.workflow_convert import log_bundled_report
-
-        log_bundled_report(manifest, manifest_path)
-    except Exception:  # an optional report, even its import or its logging, never stops a load
-        pass
+    enforce_contract(manifest)
     return manifest
+
+
+def enforce_contract(manifest: Any) -> None:
+    """What a loader (and a save) refuses a workflow document for, all in one raise: the manifest checks, the schema 2
+    contract (closed structure, typed inputs, outputs, generators) and the bindings against their adapters' descriptions.
+    A schema 1 document is refused with ``schema_version_unsupported``; nothing converts it here (CODE_TO_DATA_S3, D3)."""
+    from gateway import binding_descriptors
+    from gateway.workflow_contract import check_contract
+
+    validate_manifest(manifest, binding_descriptors=binding_descriptors.cached_shipped_binding_descriptors())
+    check_contract(manifest).raise_if_any()
 
 
 # Wording shown to a person that has no part in what a workflow does. Changing it is not a new workflow, so it stays out
@@ -197,7 +221,8 @@ def load_workflow_manifest(path: str | Path) -> dict[str, Any]:
 _PRESENTATION_ONLY_KEYS = frozenset({"prompt_hint"})
 
 
-def manifest_identity(manifest: dict[str, Any]) -> ManifestIdentity:
+def manifest_identity(manifest: dict[str, Any], provenance: Provenance = UNKNOWN_PROVENANCE) -> ManifestIdentity:
+    """The identity of a document: its hash, and the provenance the caller gives (the document holds none)."""
     validate_manifest(manifest)
     identity_fields = {key: value for key, value in manifest.items() if key not in _PRESENTATION_ONLY_KEYS}
     encoded = json.dumps(identity_fields, sort_keys=True, separators=(",", ":"), default=str).encode(
@@ -207,8 +232,8 @@ def manifest_identity(manifest: dict[str, Any]) -> ManifestIdentity:
         id=str(manifest["id"]),
         version=manifest.get("version"),
         manifest_hash=hashlib.sha256(encoded).hexdigest(),
-        trusted=bool(manifest.get("trusted", False)),
-        source=manifest.get("source"),
+        trusted=provenance.trusted,
+        source=provenance.source,
     )
 
 
@@ -225,7 +250,7 @@ def validate_manifest(
     """Check a manifest. ``descriptors`` are the selector descriptors by binding key to check selectors against; the
     default is the shipped registry. A run from a pin passes the descriptor of the protocol it was started with.
     ``binding_descriptors`` (binding key to ``BindingDescriptor``), when given, also close every binding block against its
-    adapter's description; the loaders pass none until the bundled files are rewritten (CODE_TO_DATA_S3, S3.5).
+    adapter's description; ``enforce_contract`` (the loaders' check) passes the shipped ones.
 
     Every error is collected. The raised ``ContractErrors`` has them all, each with a path and a code; its message is
     the first one found, in the order of the checks below."""
@@ -259,6 +284,12 @@ def collect_manifest_errors(
         else:
             errors.add((missing,), "required_field_missing", f"manifest missing required field: {missing}")
         return
+    if "schema_version" in manifest:
+        version = manifest["schema_version"]
+        if isinstance(version, bool) or version not in SUPPORTED_SCHEMA_VERSIONS:
+            # The rest would be read against a grammar this document does not use.
+            errors.add(("schema_version",), "schema_version_unsupported", SCHEMA_VERSION_MESSAGE)
+            return
     for field_name in ("schema_version", "id", "intent", "inputs", "outputs", "bindings"):
         if field_name not in manifest:
             errors.add((field_name,), "required_field_missing", f"manifest missing required field: {field_name}")

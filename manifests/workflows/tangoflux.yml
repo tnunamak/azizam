@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: audio.generate.tangoflux
@@ -8,8 +8,6 @@ display_name: TangoFlux
 purpose: Create a sound effect from text
 prompt_hint: Describe the sound you want
 description: Create a sound effect from a text prompt.
-source: local
-trusted: true
 typical_seconds: 4
 inputs:
   prompt:
@@ -30,6 +28,10 @@ inputs:
   seed:
     type: integer
     minimum: 0
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
   batch_size:
     type: integer
     minimum: 1

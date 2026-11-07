@@ -18,19 +18,19 @@ from gateway.discovery import (  # noqa: E402
     summarize_workflow,
 )
 from gateway.manifests import ManifestError  # noqa: E402
+from tests.support.workflow_docs import OPEN_POLICY, STANDARD_FACTS  # noqa: E402
 
 
 VALID_MANIFEST_YAML = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     min_gateway_version: "0.1"
     version: "0.1.0"
     id: image.edit.controlnet.example
     intent: image.edit
+    capability: image
     display_name: Example Controlnet Edit
     description: Test workflow used to exercise the registry.
-    source: local
-    trusted: true
     inputs:
       prompt:
         type: string
@@ -64,13 +64,12 @@ VALID_MANIFEST_YAML = textwrap.dedent(
 
 SECOND_MANIFEST_YAML = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     version: "0.2.0"
     id: image.generate.simple.example
     intent: image.generate
+    capability: image
     display_name: Simple Generate
-    source: local
-    trusted: false
     inputs:
       prompt:
         type: string
@@ -85,20 +84,16 @@ SECOND_MANIFEST_YAML = textwrap.dedent(
           prompt:
             - node: "6"
               input: text
-      a1111:
-        endpoint: /sdapi/v1/txt2img
-        map:
-          prompt:
-            - path: prompt
     """
 ).strip()
 
 
 MALFORMED_MANIFEST_YAML = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     id: image.edit.broken
     intent: image.edit
+    capability: image
     inputs: this-is-not-a-mapping
     outputs:
       image:
@@ -115,7 +110,7 @@ class WorkflowRegistryTests(unittest.TestCase):
     def _build_registry(self, tmp: Path) -> WorkflowRegistry:
         (tmp / "controlnet.yml").write_text(VALID_MANIFEST_YAML, encoding="utf-8")
         (tmp / "simple.yaml").write_text(SECOND_MANIFEST_YAML, encoding="utf-8")
-        return WorkflowRegistry.from_directory(tmp)
+        return WorkflowRegistry.from_directory(tmp, policy=OPEN_POLICY)
 
     def test_loads_and_summarizes_valid_manifests(self) -> None:
         import tempfile
@@ -147,7 +142,7 @@ class WorkflowRegistryTests(unittest.TestCase):
             tmp = Path(raw)
             (tmp / "good.yml").write_text(VALID_MANIFEST_YAML, encoding="utf-8")
             (tmp / "broken.yml").write_text(MALFORMED_MANIFEST_YAML, encoding="utf-8")
-            registry = WorkflowRegistry.from_directory(tmp)
+            registry = WorkflowRegistry.from_directory(tmp, policy=OPEN_POLICY)
 
             self.assertEqual(registry.ids(), ["image.edit.controlnet.example"])
             self.assertEqual(len(registry.errors), 1)
@@ -164,9 +159,9 @@ class WorkflowRegistryTests(unittest.TestCase):
         import yaml
 
         manifest = yaml.safe_load(VALID_MANIFEST_YAML)
-        registry.add_manifest(manifest, source_path="a.yml")
+        registry.add_manifest(manifest, source_path="a.yml", facts=STANDARD_FACTS)
         with self.assertRaises(ManifestError):
-            registry.add_manifest(manifest, source_path="b.yml")
+            registry.add_manifest(manifest, source_path="b.yml", facts=STANDARD_FACTS)
 
     def test_client_summary_redacts_provenance_and_backend_internals(self) -> None:
         import tempfile
@@ -287,14 +282,14 @@ class WorkflowRegistryTests(unittest.TestCase):
                     "image.generate.simple.example",
                 ],
             )
-            # Multi-backend manifest reports both backend names but no paths.
+            # A manifest reports its backend name but no paths (schema 2 has one binding).
             simple = next(
                 w
                 for w in catalog["workflows"]
                 if w["id"] == "image.generate.simple.example"
             )
             self.assertEqual(
-                simple["supported_backends"], ["a1111", "comfyui"]
+                simple["supported_backends"], ["comfyui"]
             )
             self.assertNotIn("bindings", simple)
 

@@ -1,14 +1,16 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: image.edit.qwen-image-2.1-inpaint
 intent: image.edit
+capability: image
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: Qwen-Image 2.1 Inpaint (LanPaint)
 purpose: Repaint a marked area in fine detail
 prompt_hint: Describe the change you want
 description: Repaint the area you marked in a picture, following your description, and keep the rest as it is.
-source: local
-trusted: true
 typical_seconds: 33
 inputs:
   prompt:
@@ -18,6 +20,8 @@ inputs:
     label: a partly clear picture
     help: Transparent areas of the picture are redrawn.
     type: asset
+    accepts:
+      - image/*
     required: true
     description: RGBA image. Transparent pixels (alpha=0) mark the region to regenerate.
   negative_prompt:
@@ -36,6 +40,10 @@ inputs:
   seed:
     type: integer
     minimum: 0
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
   mask_expand:
     type: integer
     minimum: -256
@@ -107,16 +115,16 @@ bindings:
       prompt_mode:
         - node: "11"
           input: LanPaint_PromptMode
-requires:
-  custom_nodes:
-    - LanPaint_KSampler
-    - LanPaint_ImageEncode
-    - LanPaint_ImageDecode
-    - RMBG
-  models:
-    - role: diffusion_model
-      path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors
-    - role: text_encoder
-      path: text_encoders/qwen3vl_8b_w4a8.safetensors
-    - role: vae
-      path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors
+    requires:
+      custom_nodes:
+        - LanPaint_KSampler
+        - LanPaint_ImageEncode
+        - LanPaint_ImageDecode
+        - RMBG
+      models:
+        - role: diffusion_model
+          path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors
+        - role: text_encoder
+          path: text_encoders/qwen3vl_8b_w4a8.safetensors
+        - role: vae
+          path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors

@@ -225,22 +225,22 @@
       {
         "body": {
           "kind": "binary",
-          "len": 766,
+          "len": 841,
           "magic": "7b226964223a2269",
-          "sha256": "0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2"
+          "sha256": "0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac"
         },
         "created": "<time>",
-        "sha": "sha256:0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2"
+        "sha": "sha256:0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac"
       },
       {
         "body": {
           "kind": "binary",
-          "len": 399,
+          "len": 673,
           "magic": "7b226d6170223a7b",
-          "sha256": "15e1948b4c061931b370bf9b66c17c2de0f2195312b372139e366c67363e6545"
+          "sha256": "1f80c93384e17844a29fe344e6214349e0cc99fa5c3d835d9591edada16c6487"
         },
         "created": "<time>",
-        "sha": "sha256:15e1948b4c061931b370bf9b66c17c2de0f2195312b372139e366c67363e6545"
+        "sha": "sha256:1f80c93384e17844a29fe344e6214349e0cc99fa5c3d835d9591edada16c6487"
       },
       {
         "body": {
@@ -255,12 +255,12 @@
     ],
     "definition_ref": [
       {
-        "blob_sha": "sha256:0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2",
+        "blob_sha": "sha256:0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac",
         "holder_kind": "job",
         "job_id": "<job:1>"
       },
       {
-        "blob_sha": "sha256:15e1948b4c061931b370bf9b66c17c2de0f2195312b372139e366c67363e6545",
+        "blob_sha": "sha256:1f80c93384e17844a29fe344e6214349e0cc99fa5c3d835d9591edada16c6487",
         "holder_kind": "job",
         "job_id": "<job:1>"
       },
@@ -275,8 +275,8 @@
         "created": "<time>",
         "envelope_json": {
           "definitions": {
-            "binding": "sha256:15e1948b4c061931b370bf9b66c17c2de0f2195312b372139e366c67363e6545",
-            "contract": "sha256:0661303391132dfa84f4570e3ad33eb80485f142adc621c675b1b2934c5b35d2",
+            "binding": "sha256:1f80c93384e17844a29fe344e6214349e0cc99fa5c3d835d9591edada16c6487",
+            "contract": "sha256:0d564f192930d26eb98d15860e42a0309d20528c52fa85e00e1169137a5ed0ac",
             "protocol": {
               "id": "node-graph",
               "revision": "sha256:2a669d6c8e1316c563a268586fc47317daebe5dc73763bef4c3ae413718f3c16"
@@ -295,7 +295,7 @@
           "source": {
             "id": "image.generate.krea2-turbo",
             "kind": "workflow",
-            "revision": "sha256:47b8866959ca8cf7faeb2040f891d2ed5f217314738f7bf1b1f9f46169c513d0"
+            "revision": "sha256:a3d6d0f01a20c911696822bd8cb584d0a5bd909104e0fd4fc4fbf2dfd73452c7"
           },
           "upstream": {
             "origin_digest": "sha256:1e234fab60fcadd9d9362e437c5366d789d810a656c59ce14ecf27b6b48859d2",
@@ -774,7 +774,7 @@
           "intent": "image.generate",
           "job_id": "<job:1>",
           "latency_ms": "<duration>",
-          "manifest_hash": "180ae693b5fca4383bf63e326df4c3c1920cf6bcd680d94c09f2f3f51bd40d24",
+          "manifest_hash": "0ffd2062b897ef8e3075d2733fea1a89e67dca59d78bd98815af08dcee0c5675",
           "manifest_id": "image.generate.krea2-turbo",
           "manifest_version": "0.1.0",
           "metadata": {},
@@ -933,7 +933,7 @@
           "intent": "image.generate",
           "job_id": "<job:1>",
           "latency_ms": "<duration>",
-          "manifest_hash": "180ae693b5fca4383bf63e326df4c3c1920cf6bcd680d94c09f2f3f51bd40d24",
+          "manifest_hash": "0ffd2062b897ef8e3075d2733fea1a89e67dca59d78bd98815af08dcee0c5675",
           "manifest_id": "image.generate.krea2-turbo",
           "manifest_version": "0.1.0",
           "metadata": {},

@@ -24,20 +24,21 @@ from gateway.capabilities import (  # noqa: E402
     unavailable_capability,
 )
 from gateway.discovery import WorkflowRegistry  # noqa: E402
+from gateway.manifests import Provenance  # noqa: E402
+from tests.support.workflow_docs import STANDARD_FACTS  # noqa: E402
 from gateway.receipts import RouteReceipt  # noqa: E402
 
 
 CONTROLNET_MANIFEST_YAML = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     min_gateway_version: "0.1"
     version: "0.1.0"
     id: image.edit.controlnet.example
     intent: image.edit
+    capability: image
     display_name: Example Controlnet Edit
     description: Test workflow used to exercise the router.
-    source: local
-    trusted: true
     inputs:
       prompt:
         type: string
@@ -67,12 +68,11 @@ CONTROLNET_MANIFEST_YAML = textwrap.dedent(
 
 SIMPLE_MANIFEST_YAML = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     version: "0.2.0"
     id: image.generate.simple.example
     intent: image.generate
-    source: local
-    trusted: false
+    capability: image
     inputs:
       prompt:
         type: string
@@ -96,10 +96,14 @@ def _build_registry() -> WorkflowRegistry:
     registry.add_manifest(
         yaml.safe_load(CONTROLNET_MANIFEST_YAML),
         source_path="/srv/azizam/manifests/workflows/controlnet.yml",
+        provenance=Provenance(trusted=True, source="local"),
+        facts=STANDARD_FACTS,
     )
     registry.add_manifest(
         yaml.safe_load(SIMPLE_MANIFEST_YAML),
         source_path="/srv/azizam/manifests/workflows/simple.yml",
+        provenance=Provenance(trusted=False, source="local"),
+        facts=STANDARD_FACTS,
     )
     return registry
 

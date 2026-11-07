@@ -155,7 +155,7 @@ def test_prompt_targets_and_legacy_fallback(intent, mapping, image_round, monkey
         mapping_data['prompt'] = []
     else:
         del mapping_data['prompt']
-    monkeypatch.setattr(proxy, 'load_graph_workflow', lambda model: copy.deepcopy(workflow))
+    monkeypatch.setattr(proxy, 'load_graph_workflow', lambda model, **_kw: copy.deepcopy(workflow))
     monkeypatch.setattr(proxy, '_find_image_manifest', lambda *args: manifest)
     response = run_image(manifest)
     assert response.status_code == 200, response.body

@@ -18,6 +18,7 @@ from gateway import stable_aliases as sa  # noqa: E402
 from gateway.manifests import (  # noqa: E402
     apply_backend_binding,
     load_workflow_manifest,
+    BUNDLED_PROVENANCE,
     manifest_identity,
     validate_inputs,
 )
@@ -42,7 +43,7 @@ class TestKrea2SnofsWorkflow(unittest.TestCase):
         self.workflow = _load(SNOFS_WORKFLOW)
 
     def test_identity(self) -> None:
-        identity = manifest_identity(self.manifest)
+        identity = manifest_identity(self.manifest, BUNDLED_PROVENANCE)
         self.assertEqual(identity.id, "image.generate.krea2-turbo-snofs")
         self.assertEqual(self.manifest["intent"], "image.generate")
         self.assertTrue(identity.trusted)
@@ -66,7 +67,7 @@ class TestKrea2SnofsWorkflow(unittest.TestCase):
         self.assertEqual(snofs, stock)
 
     def test_manifest_requires_all_models(self) -> None:
-        paths = {m["path"] for m in self.manifest["requires"]["models"]}
+        paths = {m["path"] for m in self.manifest["bindings"]["comfyui"]["requires"]["models"]}
         self.assertIn("loras/snofs_krea_v1_4.safetensors", paths)
         self.assertIn("diffusion_models/krea2_turbo_int8_convrot.safetensors", paths)
 
@@ -102,7 +103,7 @@ class TestFlux2KleinSnofsWorkflow(unittest.TestCase):
         self.workflow = _load(KLEIN_SNOFS_WORKFLOW)
 
     def test_identity(self) -> None:
-        identity = manifest_identity(self.manifest)
+        identity = manifest_identity(self.manifest, BUNDLED_PROVENANCE)
         self.assertEqual(identity.id, "image.generate.flux2-klein-snofs")
         self.assertEqual(self.manifest["intent"], "image.generate")
         self.assertTrue(identity.trusted)
@@ -125,7 +126,7 @@ class TestFlux2KleinSnofsWorkflow(unittest.TestCase):
         self.assertEqual(snofs, stock)
 
     def test_manifest_requires_all_models(self) -> None:
-        paths = {m["path"] for m in self.manifest["requires"]["models"]}
+        paths = {m["path"] for m in self.manifest["bindings"]["comfyui"]["requires"]["models"]}
         self.assertEqual(
             paths,
             {"unet/flux-2-klein-9b-Q8_0.gguf",
@@ -133,7 +134,7 @@ class TestFlux2KleinSnofsWorkflow(unittest.TestCase):
              "loras/klein_snofs_v1_4.safetensors",
              "vae/flux2-vae.safetensors"},
         )
-        self.assertEqual(self.manifest["requires"]["custom_nodes"], ["RMBG"])
+        self.assertEqual(self.manifest["bindings"]["comfyui"]["requires"]["custom_nodes"], ["RMBG"])
 
     def test_workflow_loads_models_named_in_manifest(self) -> None:
         self.assertEqual(self.workflow["1"]["inputs"]["unet_name"], "flux-2-klein-9b-Q8_0.gguf")
@@ -173,14 +174,14 @@ class TestAnimaTurboWorkflow(unittest.TestCase):
         self.workflow = _load(ANIMA_WORKFLOW)
 
     def test_identity_and_models(self) -> None:
-        self.assertEqual(manifest_identity(self.manifest).id, "image.generate.anima-turbo")
-        paths = {m["path"] for m in self.manifest["requires"]["models"]}
+        self.assertEqual(manifest_identity(self.manifest, BUNDLED_PROVENANCE).id, "image.generate.anima-turbo")
+        paths = {m["path"] for m in self.manifest["bindings"]["comfyui"]["requires"]["models"]}
         self.assertEqual(
             paths,
             {"diffusion_models/anima-turbo-v1.1.safetensors",
              "text_encoders/qwen_3_06b_base.safetensors", "vae/qwen_image_vae.safetensors"},
         )
-        self.assertEqual(self.manifest["requires"]["custom_nodes"], ["RMBG"])
+        self.assertEqual(self.manifest["bindings"]["comfyui"]["requires"]["custom_nodes"], ["RMBG"])
 
     def test_workflow_loads_models_named_in_manifest(self) -> None:
         self.assertEqual(self.workflow["1"]["inputs"]["unet_name"], "anima-turbo-v1.1.safetensors")

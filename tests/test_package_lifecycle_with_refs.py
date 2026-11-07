@@ -24,7 +24,8 @@ from tests.test_admin_owner_holes_round4 import _git_package
 from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401 - fixtures
 
 OWNER = AdminContext(subject="owner-user", roles=frozenset({"owner"}), actor_kind="user", auth_method="key")
-SHORT = "1234"  # a low-entropy secret: a bare hash of the record that holds it is a guess oracle
+SHORT = "1~34"  # a low-entropy secret: a bare hash of the record that holds it is a guess oracle. The "~" keeps it out of
+# temporary paths and numbers, which a "not in the answer" check would otherwise match by chance.
 PROVENANCE = {"package_id": "pkg", "package_version": "1.0", "package_hash": "hash-1", "source": "imported"}
 
 

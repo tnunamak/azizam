@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 from tests.support.config_snapshot import derived_patch
 from gateway import ownership  # noqa: E402
+from tests.support.workflow_docs import STANDARD_FACTS
 from tests.support.access import access, identity, plan_for, auth_identity  # noqa: E402
 from tests.support.config_snapshot import section_published  # noqa: E402
 from gateway.receipts import RouteReceipt  # noqa: E402
@@ -879,12 +880,12 @@ class TestImageEditMaskSemantics(unittest.TestCase):
         self.assertEqual(body["error"]["code"], "invalid_mask_dimensions")
 
     def test_inpaint_workflow_is_preferred_only_when_it_exists(self) -> None:
-        with patch.object(proxy, "load_graph_workflow", lambda name: {"ok": True} if name.endswith("-inpaint") else None):
+        with patch.object(proxy, "load_graph_workflow", lambda name, **_kw: {"ok": True} if name.endswith("-inpaint") else None):
             self.assertEqual(
                 proxy._prefer_inpaint_workflow_for_mask("flux2-klein-4b-edit"),
                 "flux2-klein-4b-inpaint",
             )
-        with patch.object(proxy, "load_graph_workflow", lambda _name: None):
+        with patch.object(proxy, "load_graph_workflow", lambda _name, **_kw: None):
             self.assertEqual(
                 proxy._prefer_inpaint_workflow_for_mask("flux2-klein-4b-edit"),
                 "flux2-klein-4b-edit",
@@ -1294,9 +1295,10 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         mapping: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "id": "image.edit.flux2-klein-4b",
             "intent": "image.edit",
+            "capability": "image",
             "inputs": inputs
             or {
                 "prompt": {"type": "string", "required": True},
@@ -1383,7 +1385,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             proxy,
             "load_graph_workflow",
-            lambda _model: copy.deepcopy(workflow),
+            lambda _model, **_kw: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
             "_find_image_manifest",
@@ -1464,9 +1466,10 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
     async def test_promptless_workflow_accepts_missing_prompt(self) -> None:
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "id": "image.edit.promptless",
             "intent": "image.edit",
+            "capability": "image",
             "version": "0.1.0",
             "inputs": {
                 "source_image": {"type": "asset", "required": True},
@@ -1515,11 +1518,15 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             proxy,
             "load_graph_workflow",
-            lambda _model: copy.deepcopy(workflow),
+            lambda _model, **_kw: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
             "_find_image_manifest",
             lambda _intent, _model: manifest,
+        ), patch.object(
+            proxy,
+            "_workflow_policy_facts",
+            lambda _workflow_id: STANDARD_FACTS,
         ), patch.object(
             proxy,
             "_generate_images_with_adaptive_batching",
@@ -1986,7 +1993,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             proxy,
             "load_graph_workflow",
-            lambda _model: copy.deepcopy(workflow),
+            lambda _model, **_kw: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
             "_find_image_manifest",
@@ -2008,6 +2015,42 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
         bound_workflow = captured["base_workflow"]
         self.assertEqual(bound_workflow["10"]["inputs"]["image"], "uploaded-1.png")
         self.assertEqual(bound_workflow["42"]["inputs"]["image"], "uploaded-2.png")
+
+    async def test_a_refused_package_model_answers_unavailable_and_runs_no_built_in_edit_graph(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "pkg"
+            package.mkdir()
+            builtin = root / "builtin"
+            builtin.mkdir()
+            graph = self._single_image_workflow()
+            (builtin / "shadowed-edit.json").write_text(json.dumps(graph), encoding="utf-8")
+            (root / "outside.json").write_text(json.dumps(graph), encoding="utf-8")
+            manifest = {"id": "image.edit.shadowed", "intent": "image.edit", "inputs": {}, "outputs": {},
+                        "bindings": {proxy.DERIVED._GRAPH_BINDING: {"workflow": "package://../outside.json"}}}
+            record = SimpleNamespace(source_path=package, manifest=manifest)
+            registry = SimpleNamespace(records=lambda: [record], get=lambda wid: record if wid == manifest["id"] else None)
+            request = _MultipartRequest(
+                [
+                    ("prompt", "edit it"),
+                    ("model", "shadowed"),
+                    ("image", _MultipartUpload("a.png", _png_bytes((255, 0, 0, 255)))),
+                ]
+            )
+            generate = AsyncMock()
+            with derived_patch("COMFY_ENABLED", True), derived_patch("COMFY_WORKFLOWS_DIR", builtin), patch.object(
+                proxy, "GATEWAY_WORKFLOW_REGISTRY", registry
+            ), patch.object(proxy, "validate_workflow_graph", lambda _w: []), patch.object(
+                proxy, "configured_downstream_headers", lambda _a, _s: {}
+            ), patch.object(proxy, "_generate_images_with_adaptive_batching", generate):
+                response = await proxy.proxy_graph_image_edit_request(
+                    request,  # type: ignore[arg-type]
+                    OWNER_CONTEXT,
+                    receipt=proxy.start_image_route_receipt("/v1/images/edits", OWNER_CONTEXT),
+                )
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("'shadowed' is not available", response.body.decode())
+        generate.assert_not_called()
 
     async def test_default_two_image_route_binds_real_multiref_manifest(self) -> None:
         receipt = proxy.start_image_route_receipt(
@@ -2089,7 +2132,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             proxy,
             "load_graph_workflow",
-            lambda _model: copy.deepcopy(workflow),
+            lambda _model, **_kw: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
             "_find_image_manifest",
@@ -2142,7 +2185,7 @@ class TestProxyComfyEditRequestMultiImage(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             proxy,
             "load_graph_workflow",
-            lambda _model: copy.deepcopy(workflow),
+            lambda _model, **_kw: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
             "_find_image_manifest",
@@ -2216,7 +2259,7 @@ class TestJpegBackgroundAutoBypass(unittest.IsolatedAsyncioTestCase):
         with derived_patch("COMFY_ENABLED", True), patch.object(
             proxy, "configured_downstream_headers", lambda _a, _b: {}
         ), patch.object(
-            proxy, "load_graph_workflow", lambda _m: copy.deepcopy(workflow)
+            proxy, "load_graph_workflow", lambda _m, **_kw: copy.deepcopy(workflow)
         ), patch.object(
             proxy, "_find_image_manifest", lambda _i, _m: None
         ), patch.object(
@@ -2248,9 +2291,10 @@ class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
 
     def _manifest(self, *, quality_steps: dict[str, int] | None) -> dict[str, Any]:
         manifest: dict[str, Any] = {
-            "schema_version": 1,
+            "schema_version": 2,
             "id": "image.edit.quality-fixture",
             "intent": "image.edit",
+            "capability": "image",
             "inputs": {
                 "prompt": {"type": "string", "required": True},
                 "source_image": {"type": "asset", "required": True},
@@ -2308,11 +2352,15 @@ class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             proxy,
             "load_graph_workflow",
-            lambda _model: copy.deepcopy(workflow),
+            lambda _model, **_kw: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
             "_find_image_manifest",
             lambda _intent, _model: manifest,
+        ), patch.object(
+            proxy,
+            "_workflow_policy_facts",
+            lambda _workflow_id: STANDARD_FACTS,
         ), patch.object(
             proxy,
             "_generate_images_with_adaptive_batching",
@@ -2421,9 +2469,10 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
             inputs["denoise"] = {"type": "number", "minimum": 0, "maximum": 1}
             mapping["denoise"] = [{"node": "49", "input": "denoise"}]
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "id": "image.edit.flux2-klein-4b",
             "intent": "image.edit",
+            "capability": "image",
             "inputs": inputs,
             "outputs": {"image": {"media_type": "image/png"}},
             "bindings": {"comfyui": {"workflow": "workflows/images/flux2-klein-4b-edit.json", "map": mapping}},
@@ -2461,7 +2510,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
         ), patch.object(
             proxy,
             "load_graph_workflow",
-            lambda _model: copy.deepcopy(workflow),
+            lambda _model, **_kw: copy.deepcopy(workflow),
         ), patch.object(
             proxy,
             "_find_image_manifest",
