@@ -42,7 +42,7 @@ Use Docker Compose, or run without Docker: [bare-metal install](docs/FIRST_RUN_S
 
 3. Create the owner account. Open `http://127.0.0.1:5000/setup/`. Enter an email address, a password, and the password again. This account owns the gateway.
 
-4. Create an App key. Open **Home**, choose your app, and click **Create key for** that app. The key starts with `opk_`. Copy it now. It is shown only once.
+4. Create an App key. Open **Apps & keys**, find your app, and select **Add key** under it (or **New app** to make an app and its key together). The key starts with `opk_`. Copy it now. It is shown only once.
 
 5. Add your engine. Open **Gateway → Engines**, then click **Add engine**.
    - For llama.cpp, vLLM, LM Studio or another OpenAI-compatible server, choose **Any OpenAI-compatible server**. Type an address that ends in `/v1`, such as `http://192.0.2.50:8080/v1`.
