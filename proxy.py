@@ -6401,25 +6401,48 @@ _JOB_GENERATED: contextvars.ContextVar[Mapping[str, Mapping[str, Any]] | None] =
 
 
 def _stored_generated(job_id: str) -> dict[str, dict[str, Any]]:
-    """The generated block the job's envelope holds, or an empty block when the job has none or it cannot be read."""
+    """The generated block the job's envelope holds. A job with no envelope (made before envelopes) has an empty block.
+
+    A stored envelope that cannot be read raises ``GeneratedValueUnavailable``: the job fails and never draws a value in
+    its place. So does an erased entry: the value the job was accepted with is gone, and the job must not run."""
     try:
         envelope = definition_store.DefinitionStore(media_jobs.DB_PATH).envelope(job_id)
     except definition_store.DefinitionUnavailable as exc:
         _MEDIA_JOB_LOG.warning("job %s: the stored generated values were not read: %s", job_id, log_scrub.describe_error(exc))
-        return {}
-    return {name: dict(entry) for name, entry in envelope.generated.items()} if envelope is not None else {}
+        raise generated_defaults.GeneratedValueUnavailable(
+            "the generated values stored for this job cannot be read", erased=False) from exc
+    block = {name: dict(entry) for name, entry in envelope.generated.items()} if envelope is not None else {}
+    if any(entry.get(generated_defaults.ERASED) is True for entry in block.values()):
+        raise generated_defaults.GeneratedValueUnavailable(
+            "the generated values stored for this job were erased", erased=True)
+    return block
 
 
 def _accepted_generated(inputs: Mapping[str, Any], given: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     """The generated block to keep for a job being accepted: each generated input the caller left empty, drawn once.
 
-    A range the document cannot serve is the document's fault, not the caller's: it is logged and the block is empty,
-    so the run reports it as it always has."""
-    try:
-        return generated_defaults.resolve_generated(inputs, given)
-    except ManifestError as exc:
-        _MEDIA_JOB_LOG.warning("generated values were not drawn at accept: %s", log_scrub.describe_error(exc))
-        return {}
+    A generator that cannot serve its input, or a drawn value the input refuses, is the document's fault: the
+    ``ManifestError`` goes to the route, which answers 500 and creates nothing."""
+    return generated_defaults.resolve_generated(inputs, given)
+
+
+_GENERATED_UNAVAILABLE_MESSAGE = {
+    True: "The values the gateway generated for this job were erased, so it was not run.",
+    False: "The values the gateway generated for this job cannot be read, so it was not run.",
+}
+_GENERATED_UNAVAILABLE_INFO = {"error_code": "generated_value_unavailable", "error_category": "internal", "retryable": False}
+
+
+def _generated_value_fault_response(exc: Exception) -> Response:
+    """The 500 for a workflow whose generator cannot give its input a value: the document is at fault, not the caller."""
+    _MEDIA_JOB_LOG.warning("a generated value could not be made: %s", log_scrub.describe_error(exc))
+    return Response(
+        content=json.dumps({"error": {
+            "message": "The workflow could not make a value for one of its generated inputs.",
+            "type": "api_error", "code": "generated_value_unavailable",
+        }}),
+        status_code=500, media_type="application/json",
+    )
 
 
 def _video_job_envelope(workflow_name: str) -> job_envelope.JobEnvelope | None:
@@ -8722,7 +8745,7 @@ async def _generate_images_with_adaptive_batching(
         # produce different images instead of the same image repeated.
         round_workflow = copy.deepcopy(base_workflow)
         round_offset = len(images_collected) if manifest is None else seed_offset
-        round_values = {name: value + round_offset for name, value in (generated_values or {}).items()}
+        round_values = generated_defaults.offset_values((manifest or {}).get("inputs") or {}, generated_values or {}, round_offset)
         try:
             if manifest is None:
                 round_workflow, round_seed = _reseed_image_workflow(
@@ -9237,8 +9260,8 @@ async def proxy_graph_image_request(
         return extension_response
     try:
         generated_values = _image_generated_values(manifest, body)
-    except ManifestError:
-        return _image_workflow_configuration_error(manifest, workflow_name)
+    except ManifestError as exc:
+        return _generated_value_fault_response(exc)
 
     fallback_workflow = copy.deepcopy(workflow)
     set_workflow_background_removal(fallback_workflow, meta, False)
@@ -9941,8 +9964,8 @@ async def proxy_graph_image_edit_request(
                 return admission
             try:
                 generated_values = _image_generated_values(manifest, form_dict)
-            except ManifestError:
-                return _image_workflow_configuration_error(manifest, workflow_name)
+            except ManifestError as exc:
+                return _generated_value_fault_response(exc)
             _mark_backend_started(receipt)
             return await _generate_images_with_adaptive_batching(
                 request=request,
@@ -23933,7 +23956,8 @@ async def _run_image_media_job(job_id: str) -> None:
                 # Retry the same request, including its original retention clock.
                 # Deletion fences must survive copied bodies and worker retries.
                 token = _MEDIA_JOB_PROMPT_STARTED_AT.set(int(payload.get("created_at") or job["created_at"]))
-                generated_token = _JOB_GENERATED.set(await asyncio.to_thread(_stored_generated, job_id))
+                stored_generated = await asyncio.to_thread(_stored_generated, job_id)
+                generated_token = _JOB_GENERATED.set(stored_generated)
                 try:
                     worker_token = _ADMISSION_WORKER.set(True)
                     try:
@@ -23951,6 +23975,12 @@ async def _run_image_media_job(job_id: str) -> None:
             except media_jobs.CancellationPending:
                 await run_receipt_write(finish_image_route_receipt, receipt, None, status="cancelled")
                 raise
+            except generated_defaults.GeneratedValueUnavailable as exc:
+                # The job's stored value is erased or unreadable: it never runs, and no retry draws another.
+                await run_receipt_write(finish_image_route_receipt, receipt, _generated_value_fault_response(exc))
+                _mark_image_media_job_failed(job_id, _GENERATED_UNAVAILABLE_MESSAGE[exc.erased],
+                                             http_status=500, error_info=_GENERATED_UNAVAILABLE_INFO)
+                return
             except Exception as exc:  # noqa: BLE001
                 await run_receipt_write(finish_image_route_receipt,
                     receipt,
@@ -24641,6 +24671,7 @@ async def _run_audio_media_job(job_id: str) -> None:
                 },
                 path=media_jobs.DB_PATH,
             )
+            stored_generated = await asyncio.to_thread(_stored_generated, job_id)  # raises when it cannot be read
             worker_token = _ADMISSION_WORKER.set(True)
             try:
                 from gateway import media_ingestion
@@ -24648,7 +24679,7 @@ async def _run_audio_media_job(job_id: str) -> None:
                     request_shim, auth_context, intent=str(job.get("intent") or "audio.generate"), protocol="openai.audio",
                     request_id=str(job["request_id"]), job_id=job_id, route_path="/gateway/v1/media/jobs",
                 )
-                generated_token = _JOB_GENERATED.set(await asyncio.to_thread(_stored_generated, job_id))
+                generated_token = _JOB_GENERATED.set(stored_generated)
                 try:
                     response = await proxy_audio_generate(
                         request_shim, auth_context, store_full=True, receipt=receipt, **pinned_args)
@@ -24662,6 +24693,11 @@ async def _run_audio_media_job(job_id: str) -> None:
                 _ADMISSION_WORKER.reset(worker_token)
         except asyncio.CancelledError:
             raise
+        except generated_defaults.GeneratedValueUnavailable as exc:
+            # The job's stored value is erased or unreadable: it never runs, and nothing draws another.
+            _mark_audio_media_job_failed(job_id, _GENERATED_UNAVAILABLE_MESSAGE[exc.erased], http_status=500,
+                                         error_info=_GENERATED_UNAVAILABLE_INFO)
+            return
         except Exception as exc:  # noqa: BLE001
             _mark_audio_media_job_failed(
                 job_id,
@@ -24870,11 +24906,14 @@ async def _submit_audio_media_job(
                 manifest, audio_graph.AudioLimits(
                     default_duration=_workflow_cfg.get("default_duration"),
                     min_seconds=_workflow_cfg.get("min_seconds"), max_seconds=_workflow_cfg.get("max_seconds"))))
-        except ManifestError as exc:  # the manifest and the deployment's limits disagree; the run reports it
-            _MEDIA_JOB_LOG.warning("generated values were not drawn at accept: %s", log_scrub.describe_error(exc))
+        except ManifestError as exc:  # the manifest and the deployment's limits disagree, or a generator cannot serve its input
+            return _generated_value_fault_response(exc)
     envelope = _manifest_job_envelope(manifest, _AUDIO_GRAPH_CAPABILITY, generated)
     compiles_from_pin = _compile_from_pin(_AUDIO_GRAPH_CAPABILITY)
-    if envelope is None and compiles_from_pin:
+    # A job that holds a generated value must have it stored before it is scheduled (a retry would draw another), so
+    # the envelope is required for it whether or not the route compiles from its pin.
+    needs_envelope = compiles_from_pin or bool(generated)
+    if envelope is None and needs_envelope:
         # A route that compiles from the pin must not accept a job that pinned nothing: it could never run.
         return _pin_not_recorded_response()
 
@@ -24889,7 +24928,7 @@ async def _submit_audio_media_job(
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(
             job, input_data=body, path=media_jobs.DB_PATH, envelope=envelope,
-            require_envelope=compiles_from_pin,
+            require_envelope=needs_envelope,
         )
     except EphemeralMediaPayloadCapacityError:
         _delete_audio_media_job_payload(job.job_id)
@@ -25789,6 +25828,20 @@ async def gateway_image_generations_media_job(request: Request):
         ),
     )
 
+    # Idempotency was resolved above, so this is the one place a value is drawn for the job: the caller's retry, a restart
+    # and a replay read it from the envelope. It is drawn before the payload is written, so a refusal leaves nothing.
+    # A concurrent request with the same key that passed the check above also draws here, but only the request whose job
+    # row wins keeps its envelope; the loser answers the winner's job below and its value goes nowhere: not into a
+    # receipt, a log, a submission or the response (tests/test_generated_defaults.py, the same-key race test).
+    try:
+        generated = _accepted_generated(
+            (manifest or {}).get("inputs") or {},
+            {name: value for name in generated_defaults.generated_inputs((manifest or {}).get("inputs") or {})
+             if (value := _workflow_extension_integer(body, name)) is not None})
+    except ManifestError as exc:
+        response = _generated_value_fault_response(exc)
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
+        return response
     try:
         _persist_image_media_job_payload(
             job.job_id,
@@ -25798,17 +25851,20 @@ async def gateway_image_generations_media_job(request: Request):
         )
         job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
-        # Idempotency was resolved above, so this is the one place a value is drawn for the job: the caller's retry,
-        # a restart and a replay read it from the envelope.
-        generated = _accepted_generated(
-            (manifest or {}).get("inputs") or {},
-            {name: value for name in generated_defaults.generated_inputs((manifest or {}).get("inputs") or {})
-             if (value := _workflow_extension_integer(body, name)) is not None})
+        # A job that holds a generated value must have it stored before it is scheduled: without it a retry would draw
+        # another. So the envelope is required, whether or not the route compiles from its pin.
         created = media_jobs.create(job, input_data=body, path=media_jobs.DB_PATH,
-                                    envelope=_manifest_job_envelope(manifest, _GRAPH_CAPABILITY, generated))
+                                    envelope=_manifest_job_envelope(manifest, _GRAPH_CAPABILITY, generated),
+                                    require_envelope=bool(generated))
     except EphemeralMediaPayloadCapacityError:
         _delete_image_media_job_payload(job.job_id)
         response = _ephemeral_media_payload_busy_response()
+        await run_receipt_write(finish_image_route_receipt, receipt, response)
+        return response
+    except media_jobs.EnvelopeNotRecorded as exc:
+        _delete_image_media_job_payload(job.job_id)
+        _MEDIA_JOB_LOG.warning("image job %s: the generated value was not recorded: %s", job.job_id, log_scrub.describe_error(exc))
+        response = _pin_not_recorded_response()
         await run_receipt_write(finish_image_route_receipt, receipt, response)
         return response
     except Exception as exc:  # noqa: BLE001

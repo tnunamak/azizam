@@ -110,10 +110,61 @@ def test_a_stored_value_is_read_back_and_never_drawn_again():
     assert block == stored
 
 
-def test_a_stored_value_from_another_generator_is_not_read():
+def test_a_stored_value_from_another_generator_is_refused_not_redrawn():
     stored = {"n": {"generator": "something_else", "value": 41}}
-    source = Recorder(3)
-    assert generated_defaults.resolve_generated(inputs_with(), {}, stored=stored, source=source)["n"]["value"] == 3
+    with pytest.raises(generated_defaults.GeneratedValueUnavailable) as raised:
+        generated_defaults.resolve_generated(inputs_with(), {}, stored=stored, source=refuse_a_draw)
+    assert raised.value.erased is False
+
+
+def test_an_erased_stored_value_is_refused_and_never_drawn_again():
+    stored = {"n": {"generator": "random_integer", "erased": True}}
+    with pytest.raises(generated_defaults.GeneratedValueUnavailable) as raised:
+        generated_defaults.resolve_generated(inputs_with(), {}, stored=stored, source=refuse_a_draw)
+    assert raised.value.erased is True
+
+
+@pytest.mark.parametrize("entry", [{"generator": "random_integer"}, {}, "text", None],
+                         ids=["no-value", "empty", "not-an-object", "null"])
+def test_a_stored_entry_that_cannot_be_read_is_refused_and_never_redrawn(entry):
+    with pytest.raises(generated_defaults.GeneratedValueUnavailable) as raised:
+        generated_defaults.resolve_generated(inputs_with(), {}, stored={"n": entry}, source=refuse_a_draw)
+    assert raised.value.erased is False
+
+
+def test_an_input_with_no_stored_entry_still_draws_for_a_job_made_before_values_were_kept():
+    source = Recorder(17)
+    assert generated_defaults.resolve_generated(inputs_with(), {}, stored={}, source=source)["n"]["value"] == 17
+    assert len(source.asked) == 1
+
+
+@pytest.mark.parametrize(("low", "high", "base", "offset", "expected"), [
+    (0, 9, 9, 1, 0),            # the upper bound wraps to the lower bound
+    (0, 9, 9, 0, 9),            # no offset: the base itself
+    (0, 9, 8, 5, 3),
+    (0, 9, 3, 25, 8),           # more offsets than the range holds
+    (4, 4, 4, 0, 4),            # a range of one has one value
+    (4, 4, 4, 7, 4),
+    (3, 4, 4, 1, 3),            # a range of two alternates
+    (3, 4, 3, 1, 4),
+    (3, 4, 3, 2, 3),
+    (PUBLIC_LOW, PUBLIC_HIGH, PUBLIC_HIGH, 1, PUBLIC_LOW),  # the public maximum no longer reaches 2**32
+    (PUBLIC_LOW, PUBLIC_HIGH, PUBLIC_HIGH - 1, 3, 1),
+], ids=str)
+def test_a_batch_round_wraps_its_value_inside_the_inputs_declared_range(low, high, base, offset, expected):
+    inputs = {"n": {"type": "integer", "minimum": low, "maximum": high, "generate": rule()}}
+    assert generated_defaults.offset_values(inputs, {"n": base}, offset) == {"n": expected}
+
+
+def test_a_batch_round_stays_inside_a_range_the_input_narrows_below_the_rule():
+    inputs = {"n": {"type": "integer", "minimum": 10, "maximum": 12, "generate": rule()}}
+    values = [generated_defaults.offset_values(inputs, {"n": 12}, offset)["n"] for offset in range(7)]
+    assert values == [12, 10, 11, 12, 10, 11, 12]
+
+
+def test_a_batch_round_uses_the_rule_bounds_when_the_input_names_none():
+    inputs = {"n": {"type": "integer", "generate": rule(5, 6)}}
+    assert [generated_defaults.offset_values(inputs, {"n": 5}, offset)["n"] for offset in range(3)] == [5, 6, 5]
 
 
 def test_a_range_with_no_integer_is_a_fault_of_the_document():
@@ -284,21 +335,94 @@ LISTED_DRAWS = {
     ("gateway/workflow_equality.py", "generated_value"): (1, "the equality tool's reproducible stand-in for a generator, seeded by workflow and input"),
 }
 DRAW_CALLS = {"randint", "randrange", "getrandbits", "randbelow"}
+DRAW_MODULES = {"random", "secrets"}
+
+
+def draw_sites(text: str, path: str) -> dict[tuple[str, str], int]:
+    """Where a source text draws a whole number, by (file, function). A site is any of:
+
+    - an attribute named like a draw (``random.randint``, ``r.randint`` after ``import random as r``, ``rng.randrange``),
+      whether it is called or only referred to (``pick = random.randint``);
+    - a name bound by ``from random import randint`` or ``from secrets import randbelow as pick``, under whatever alias,
+      each time it is used;
+    - ``from random import *`` or a dynamic import of ``random``/``secrets``, which hide the names, so they count as
+      sites of their own."""
+    tree = ast.parse(text)
+    drawn_names: set[str] = set()
+    found: dict[tuple[str, str], int] = {}
+
+    def add(owner: str, count: int = 1) -> None:
+        found[(path, owner)] = found.get((path, owner), 0) + count
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] in DRAW_MODULES:
+            for alias in node.names:
+                if alias.name in DRAW_CALLS:
+                    drawn_names.add(alias.asname or alias.name)
+
+    def walk(node: ast.AST, owner: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            scope = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else owner
+            if isinstance(child, ast.Attribute) and child.attr in DRAW_CALLS:
+                add(owner)
+            elif isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load) and child.id in drawn_names:
+                add(owner)
+            elif isinstance(child, ast.ImportFrom) and child.module and child.module.split(".")[0] in DRAW_MODULES \
+                    and any(alias.name == "*" for alias in child.names):
+                add(f"<star import from {child.module}>")
+            elif isinstance(child, ast.Call) and isinstance(child.func, (ast.Name, ast.Attribute)) \
+                    and getattr(child.func, "id", getattr(child.func, "attr", "")) in {"__import__", "import_module"} \
+                    and child.args and isinstance(child.args[0], ast.Constant) and child.args[0].value in DRAW_MODULES:
+                add(f"<dynamic import of {child.args[0].value}>")
+            walk(child, scope)
+
+    walk(tree, "<module>")
+    return found
 
 
 def integer_draws() -> dict[tuple[str, str], int]:
     found: dict[tuple[str, str], int] = {}
     for path in [ROOT / "proxy.py", *sorted((ROOT / "gateway").rglob("*.py"))]:
-        def walk(node: ast.AST, owner: str) -> None:
-            for child in ast.iter_child_nodes(node):
-                scope = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else owner
-                if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.func.attr in DRAW_CALLS:
-                    key = (str(path.relative_to(ROOT)), owner)
-                    found[key] = found.get(key, 0) + 1
-                walk(child, scope)
-
-        walk(ast.parse(path.read_text(encoding="utf-8")), "<module>")
+        found.update(draw_sites(path.read_text(encoding="utf-8"), str(path.relative_to(ROOT))))
     return found
+
+
+# Every way a draw can be written that the ratchet must see (positive controls), and look-alikes it must not (negative).
+EVASIONS = {
+    "attribute call": "import random\ndef f():\n    return random.randint(1, 2)\n",
+    "module alias": "import random as r\ndef f():\n    return r.randint(1, 2)\n",
+    "secrets module alias": "import secrets as s\ndef f():\n    return s.randbelow(5)\n",
+    "from-import": "from random import randint\ndef f():\n    return randint(1, 2)\n",
+    "from-import alias": "from random import randint as draw\ndef f():\n    return draw(1, 2)\n",
+    "secrets from-import alias": "from secrets import randbelow as pick\ndef f():\n    return pick(5)\n",
+    "reference without a call": "import random\ndef f():\n    draw = random.randint\n    return draw(1, 2)\n",
+    "alias used as a value": "from random import randrange as draw\ndef f():\n    return [draw]\n",
+    "an instance": "import random\ndef f():\n    return random.SystemRandom().getrandbits(8)\n",
+    "star import": "from random import *\n",
+    "dynamic import": "def f():\n    return __import__('random').randint(1, 2)\n",
+}
+LOOK_ALIKES = {
+    "unused import": "import random\nfrom random import randint\n",
+    "other function of the module": "import random\nfrom random import seed as reseed\ndef f():\n    random.seed(1)\n    reseed(2)\n",
+    "a local function with the name": "def randint(a, b):\n    return a\ndef f():\n    return randint(1, 2)\n",
+    "another module's name": "from other import randint as draw\ndef f():\n    return draw(1, 2)\n",
+    "a name that is only like an alias": "from random import randint as draw\ndef f(drawn):\n    return drawn\n",
+}
+
+
+@pytest.mark.parametrize("source", EVASIONS.values(), ids=EVASIONS.keys())
+def test_the_draw_ratchet_sees_every_way_to_draw(source):
+    assert sum(draw_sites(source, "x.py").values()) >= 1
+
+
+@pytest.mark.parametrize("source", LOOK_ALIKES.values(), ids=LOOK_ALIKES.keys())
+def test_the_draw_ratchet_does_not_flag_look_alikes(source):
+    assert draw_sites(source, "x.py") == {}
+
+
+def test_the_draw_ratchet_counts_each_site_once_and_names_its_function():
+    source = "from random import randint as draw\nimport random\ndef f():\n    return draw(1, 2) + random.randint(1, 2)\n"
+    assert draw_sites(source, "x.py") == {("x.py", "f"): 2}
 
 
 def test_every_integer_draw_in_the_gateway_is_listed_with_its_reason():
@@ -473,7 +597,7 @@ def test_erasure_empties_a_non_empty_generated_block_and_keeps_the_pins_and_othe
 
     media_jobs.erase_prompt_derivatives({owner}, before=int(__import__("time").time()) + 5, path=db)
 
-    assert kept(db, mine) == {}
+    assert kept(db, mine) == {"n": {"generator": "random_integer", "erased": True}}
     assert DefinitionStore(db).envelope(mine).contract == envelope_with(1).envelope.contract, "its pins are kept"
     assert kept(db, theirs)["n"]["value"] == 655443322, "another person is untouched"
     text = "\n".join(str(row) for row in sqlite_rows(db, "job_envelope"))
@@ -485,7 +609,7 @@ def test_the_kill_switch_wildcard_empties_every_block(tmp_path):
     media_jobs.init_db(db)
     ids = [make_job(db, "app_a", 1111), make_job(db, "app_b", 2222)]
     media_jobs.erase_prompt_derivatives({"*"}, before=int(__import__("time").time()) + 5, path=db)
-    assert [kept(db, job_id) for job_id in ids] == [{}, {}]
+    assert [kept(db, job_id) for job_id in ids] == [{"n": {"generator": "random_integer", "erased": True}}] * 2
 
 
 def sqlite_rows(db: Path, table: str) -> list[tuple]:
@@ -493,3 +617,270 @@ def sqlite_rows(db: Path, table: str) -> list[tuple]:
 
     with sqlite3.connect(db) as conn:
         return conn.execute(f"SELECT * FROM {table}").fetchall()  # noqa: S608 - test table names
+
+
+# ------------------------------------------------------------------------ faults, durability and the three read states
+
+
+def job_rows(db: Path) -> list[tuple]:
+    return sqlite_rows(db, "media_jobs")
+
+
+def spool_files(tmp_path: Path) -> list[Path]:
+    return [path for path in (tmp_path / "payloads").rglob("*") if path.is_file()] if (tmp_path / "payloads").exists() else []
+
+
+def submit_without_checking(route: str, body: Mapping[str, Any]) -> tuple[Any, list[str]]:
+    """Accept one job on the image or audio route. Returns the response and the job ids that were scheduled."""
+    scheduled: list[str] = []
+    schedule = lambda job_id: scheduled.append(job_id) or True  # noqa: E731
+    with patch.object(proxy, "_schedule_image_media_job", schedule), patch.object(proxy, "_schedule_audio_media_job", schedule):
+        if route == "image":
+            response = asyncio.run(proxy.gateway_image_generations_media_job(StubRequest(body)))
+        else:
+            response = asyncio.run(proxy._dispatch_gateway_media_job_submission(
+                request=StubRequest({}), payload={"intent": "audio.generate", "parameters": dict(body)}, audience="client"))
+    return response, scheduled
+
+
+ROUTE_BODIES = {"image": IMAGE_BODY, "audio": AUDIO_BODY}
+
+
+def empty_range_generator(rule, spec, source):
+    raise ManifestError("the generator's range and the input's bounds share no integer")
+
+
+@pytest.mark.parametrize("route", ["image", "audio"])
+@pytest.mark.parametrize("fault", ["value-outside-the-input", "generator-fault"])
+def test_a_generator_fault_at_accept_is_a_500_that_creates_and_submits_nothing(jobs_db, tmp_path, route, fault):
+    broken = generated_defaults.ReviewedGenerator("value", empty_range_generator)
+    with patch.object(generated_defaults, "secure_source", lambda low, high: -5), \
+            patch.dict(generated_defaults.REVIEWED, {"random_integer": broken} if fault == "generator-fault" else {}):
+        response, scheduled = submit_without_checking(route, ROUTE_BODIES[route])
+    assert response is not None and response.status_code == 500, getattr(response, "body", response)
+    assert json.loads(response.body)["error"]["code"] == "generated_value_unavailable"
+    assert scheduled == [], "nothing was submitted"
+    assert job_rows(jobs_db) == [], "no job row"
+    assert spool_files(tmp_path) == [], "no payload left behind"
+    # A later request draws for itself; the failed one cannot be revived by it.
+    with patch.object(generated_defaults, "secure_source", Recorder(9)):
+        job_id = submit_image(IMAGE_BODY) if route == "image" else submit_audio(AUDIO_BODY)
+    assert len(job_rows(jobs_db)) == 1 and job_id
+
+
+@pytest.mark.parametrize("fault", ["value-outside-the-input", "generator-fault"])
+def test_a_generator_fault_on_the_synchronous_image_routes_is_a_500(fault):
+    broken = generated_defaults.ReviewedGenerator("value", empty_range_generator)
+    manifest = proxy._find_image_manifest("image.generate", "flux2-klein-4b")
+    with patch.object(generated_defaults, "secure_source", lambda low, high: -5), \
+            patch.dict(generated_defaults.REVIEWED, {"random_integer": broken} if fault == "generator-fault" else {}):
+        with pytest.raises(ManifestError) as raised:
+            proxy._image_generated_values(manifest, {})
+    assert proxy._generated_value_fault_response(raised.value).status_code == 500
+    # Both synchronous call sites answer that response, not the 503 of an invalid workflow configuration.
+    source = (ROOT / "proxy.py").read_text(encoding="utf-8")
+    calls = re.findall(r"_image_generated_values\(manifest, (?:body|form_dict)\)\n\s+except ManifestError as exc:\n\s+return (\w+)\(", source)
+    assert calls == ["_generated_value_fault_response"] * 2
+
+
+@pytest.mark.parametrize("compile_from_pin", [False, True])
+@pytest.mark.parametrize("route", ["image", "audio"])
+@pytest.mark.parametrize("how", ["no-envelope", "write-fails"])
+def test_a_job_that_cannot_store_its_generated_value_is_not_created_whatever_compile_from_pin_says(
+        jobs_db, tmp_path, route, how, compile_from_pin):
+    def refuse_write(*args, **kwargs):
+        raise OSError("disk full")
+
+    patches = [patch.object(proxy, "_compile_from_pin", lambda capability: compile_from_pin)]
+    if how == "no-envelope":
+        patches.append(patch.object(proxy, "_graph_job_envelope", lambda *args, **kwargs: None))
+    else:
+        patches.append(patch("gateway.definition_store.record_envelope_in", refuse_write))
+    with patch.object(generated_defaults, "secure_source", Recorder(4)):
+        for entered in patches:
+            entered.start()
+        try:
+            response, scheduled = submit_without_checking(route, ROUTE_BODIES[route])
+        finally:
+            for entered in patches:
+                entered.stop()
+    assert response is not None and response.status_code == 503, getattr(response, "body", response)
+    assert scheduled == [] and job_rows(jobs_db) == [] and spool_files(tmp_path) == []
+
+
+def test_a_job_whose_caller_gave_every_value_needs_no_envelope(jobs_db):
+    with patch.object(proxy, "_graph_job_envelope", lambda *args, **kwargs: None), \
+            patch.object(proxy, "_compile_from_pin", lambda capability: False), \
+            patch.object(generated_defaults, "secure_source", refuse_a_draw):
+        response, scheduled = submit_without_checking(
+            "image", {**IMAGE_BODY, "extensions": {proxy.WORKFLOW_EXTENSION_NAMESPACE: {"seed": 9}}})
+    assert response.status_code == 202 and len(scheduled) == 1
+
+
+def read_with_context(job_id: str, manifest_inputs_source=refuse_a_draw):
+    """What the job runner does: read the stored block, set it, and ask the image route for the job's values."""
+    manifest = proxy._find_image_manifest("image.generate", "flux2-klein-4b")
+    token = proxy._JOB_GENERATED.set(proxy._stored_generated(job_id))
+    try:
+        with patch.object(generated_defaults, "secure_source", manifest_inputs_source):
+            return proxy._image_generated_values(manifest, IMAGE_BODY)
+    finally:
+        proxy._JOB_GENERATED.reset(token)
+
+
+def test_a_job_made_before_values_were_kept_still_draws(jobs_db):
+    """(a) legacy: its envelope has an empty block, or it has no envelope at all."""
+    manifest = proxy._find_image_manifest("image.generate", "flux2-klein-4b")
+    with_empty_block = submit_image({**IMAGE_BODY, "extensions": {proxy.WORKFLOW_EXTENSION_NAMESPACE: {"seed": 9}}})
+    assert kept(jobs_db, with_empty_block) == {}
+    without_envelope = media_jobs.create(
+        media_jobs.MediaJob(intent="image.generate", workflow="image.generate.flux2-klein-4b", request_id="legacy-none"),
+        path=jobs_db, maker_from_request=False).job_id
+    assert proxy._stored_generated(without_envelope) == {}
+    for job_id in (with_empty_block, without_envelope):
+        source = Recorder(61)
+        assert read_with_context(job_id, source) == {"seed": 61}
+        assert len(source.asked) == 1, "the legacy draw is kept so an in-flight job survives the deploy"
+    assert manifest is not None
+
+
+def test_a_job_whose_values_were_erased_never_draws_and_never_runs(jobs_db, monkeypatch):
+    """(b) erased."""
+    with patch.object(generated_defaults, "secure_source", Recorder(52)):
+        job_id = submit_image(IMAGE_BODY)
+    DefinitionStore(jobs_db).clear_generated(job_id)
+    with pytest.raises(generated_defaults.GeneratedValueUnavailable) as raised:
+        read_with_context(job_id)
+    assert raised.value.erased is True
+
+    calls: list[str] = []
+
+    async def route(request, auth_context, receipt=None):
+        calls.append("route")
+        return proxy.Response(status_code=500, content=b"{}", media_type="application/json")
+
+    monkeypatch.setattr(proxy, "proxy_image_request", route)
+    monkeypatch.setattr(proxy, "_image_media_job_max_attempts", lambda: 3)
+    monkeypatch.setattr(proxy, "_image_media_job_retry_base_seconds", lambda: 0)
+    with patch.object(generated_defaults, "secure_source", refuse_a_draw):
+        asyncio.run(proxy._run_image_media_job(job_id))
+    job = media_jobs.get(job_id, audience="internal", path=jobs_db)
+    assert job["status"] == media_jobs.STATUS_FAILED and "erased" in job["error"]
+    assert calls == [], "the route never ran, so nothing was submitted"
+
+
+@pytest.mark.parametrize("damage", ["not json", "no-value"])
+def test_a_job_whose_stored_values_cannot_be_read_fails_closed_and_never_redraws(jobs_db, monkeypatch, damage):
+    """(c) unreadable or malformed."""
+    import sqlite3
+
+    with patch.object(generated_defaults, "secure_source", Recorder(53)):
+        job_id = submit_image(IMAGE_BODY)
+    with sqlite3.connect(jobs_db) as conn:
+        if damage == "not json":
+            conn.execute("UPDATE job_envelope SET envelope_json = 'not json' WHERE job_id = ?", (job_id,))
+        else:
+            body = json.loads(conn.execute("SELECT envelope_json FROM job_envelope WHERE job_id = ?", (job_id,)).fetchone()[0])
+            body["generated"]["seed"] = {"generator": "random_integer"}
+            conn.execute("UPDATE job_envelope SET envelope_json = ? WHERE job_id = ?", (json.dumps(body), job_id))
+    with pytest.raises(generated_defaults.GeneratedValueUnavailable) as raised:
+        read_with_context(job_id)
+    assert raised.value.erased is False
+
+    calls: list[str] = []
+
+    async def route(request, auth_context, receipt=None):
+        calls.append("route")
+        return proxy.Response(status_code=500, content=b"{}", media_type="application/json")
+
+    monkeypatch.setattr(proxy, "proxy_image_request", route)
+    monkeypatch.setattr(proxy, "_image_media_job_max_attempts", lambda: 3)
+    monkeypatch.setattr(proxy, "_image_media_job_retry_base_seconds", lambda: 0)
+    with patch.object(generated_defaults, "secure_source", refuse_a_draw):
+        asyncio.run(proxy._run_image_media_job(job_id))
+    job = media_jobs.get(job_id, audience="internal", path=jobs_db)
+    assert job["status"] == media_jobs.STATUS_FAILED and "cannot be read" in job["error"]
+    assert calls == []
+
+
+@pytest.mark.parametrize("state", ["erased", "unreadable"])
+def test_the_audio_runner_fails_a_job_whose_stored_values_are_gone_without_calling_its_route(jobs_db, monkeypatch, state):
+    import sqlite3
+
+    with patch.object(generated_defaults, "secure_source", Recorder(54)):
+        job_id = submit_audio(AUDIO_BODY)
+    if state == "erased":
+        DefinitionStore(jobs_db).clear_generated(job_id)
+    else:
+        with sqlite3.connect(jobs_db) as conn:
+            conn.execute("UPDATE job_envelope SET envelope_json = 'not json' WHERE job_id = ?", (job_id,))
+    calls: list[str] = []
+
+    async def route(*args, **kwargs):
+        calls.append("route")
+        return proxy.Response(status_code=500, content=b"{}", media_type="application/json")
+
+    monkeypatch.setattr(proxy, "proxy_audio_generate", route)
+    with patch.object(generated_defaults, "secure_source", refuse_a_draw):
+        asyncio.run(proxy._run_audio_media_job(job_id))
+    job = media_jobs.get(job_id, audience="internal", path=jobs_db)
+    assert job["status"] == media_jobs.STATUS_FAILED
+    # An unreadable envelope is first met where the audio runner reads the job's pin; it fails closed there.
+    assert ("erased" if state == "erased" else "no longer available") in job["error"]
+    assert calls == []
+
+
+# ----------------------------------------------------------------------------------------------- the same-key race
+
+
+def test_two_concurrent_requests_with_one_key_get_one_job_and_one_stored_value(jobs_db, tmp_path):
+    """Both requests read "no job yet" before either creates one, so both draw. Only the request whose job row wins keeps
+    its envelope; the other answers that job. The value it drew reaches nothing: not the stored envelope, a response,
+    a submission or the job database."""
+    import threading
+
+    barrier = threading.Barrier(2, timeout=30)
+    real_get = media_jobs.get_by_request_id
+    lock = threading.Lock()
+    drawn: list[int] = []
+
+    def both_miss_first(*args, **kwargs):
+        found = real_get(*args, **kwargs)
+        barrier.wait()  # neither request goes on until both have looked
+        return found
+
+    def distinct_values(low: int, high: int) -> int:
+        with lock:
+            drawn.append(918273000 + len(drawn) * 111111)
+            return drawn[-1]
+
+    results: list[tuple[Any, list[str]]] = []
+
+    def one_request() -> None:
+        scheduled: list[str] = []
+        with patch.object(proxy, "_schedule_image_media_job", lambda job_id: scheduled.append(job_id) or True):
+            response = asyncio.run(proxy.gateway_image_generations_media_job(
+                StubRequest(IMAGE_BODY, {"host": "gateway.test", "idempotency-key": "race-key"})))
+        results.append((response, scheduled))
+
+    with patch.object(media_jobs, "get_by_request_id", both_miss_first), \
+            patch.object(generated_defaults, "secure_source", distinct_values):
+        threads = [threading.Thread(target=one_request) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(60)
+
+    assert len(results) == 2 and len(drawn) == 2, "both requests drew"
+    ids = {json.loads(response.body)["job_id"] for response, _ in results}
+    assert len(ids) == 1 and all(response.status_code in (200, 202) for response, _ in results)
+    assert sum(len(scheduled) for _, scheduled in results) == 1, "one submission"
+    (job_id,) = ids
+    stored = kept(jobs_db, job_id)["seed"]["value"]
+    assert stored in drawn
+    loser = next(value for value in drawn if value != stored)
+    surfaces = [response.body.decode() for response, _ in results]
+    surfaces += [str(row) for table in ("media_jobs", "job_envelope", "media_job_events") for row in sqlite_rows(jobs_db, table)]
+    surfaces += [path.read_text(encoding="utf-8", errors="replace") for path in spool_files(tmp_path)]
+    assert not any(str(loser) in text for text in surfaces), "the losing request's value reaches nothing"
+    assert len(job_rows(jobs_db)) == 1

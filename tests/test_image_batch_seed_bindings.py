@@ -224,3 +224,31 @@ def test_manifestless_empty_round_preserves_main_fixed_seed_offset(batch):
     )
     # Main advances fixed seeds by images collected, including zero-image rounds.
     assert [graph["s"]["inputs"]["seed"] for graph in seen] == [41, 41, 42]
+
+
+def ranged_manifest(low, high):
+    manifest = manifest_for("seed")
+    manifest["inputs"]["seed"] = {"type": "integer", "minimum": low, "maximum": high,
+                                  "generate": {"generator": "random_integer", "minimum": low, "maximum": high}}
+    return manifest
+
+
+def bound_values(seen):
+    return [g["a"]["inputs"]["seed"] for g in seen]
+
+
+@pytest.mark.parametrize(("low", "high", "base", "outcomes", "expected"), [
+    (0, 9, 9, [[b"a"], [b"b"]], [9, 0]),                       # the upper bound wraps, it does not reach 10
+    (0, 9, 8, [[b"a", b"b"], [b"c"]], [8, 0]),                  # a round of two images moves the offset by two
+    (0, 9, 9, [[b"a"], [b"b"], [b"c"]], [9, 0, 1]),
+    (4, 4, 4, [[b"a"], [b"b"], [b"c"]], [4, 4, 4]),             # a range of one
+    (3, 4, 4, [[b"a"], [b"b"], [b"c"]], [4, 3, 4]),             # a range of two
+    (0, 4294967295, 4294967295, [[b"a"], [b"b"]], [4294967295, 0]),   # the public maximum does not reach 2**32
+    (0, 9, 9, [[], [b"a"], [b"b"]], [9, 0, 1]),                 # an empty round still moves on
+], ids=["upper-bound", "two-image-round", "three-rounds", "size-one", "size-two", "public-maximum", "empty-round"])
+def test_every_value_bound_to_the_graph_is_inside_the_declared_range(batch, low, high, base, outcomes, expected):
+    workflow = {"a": {"inputs": {"seed": 0}}, "b": {"inputs": {"operator_seed": 0}}}
+    seen = batch(workflow, ranged_manifest(low, high), fixed_seed=base, outcomes=outcomes, n=sum(len(o) for o in outcomes))
+    assert bound_values(seen) == expected
+    assert all(low <= value <= high for value in bound_values(seen))
+    assert [g["b"]["inputs"]["operator_seed"] for g in seen] == expected

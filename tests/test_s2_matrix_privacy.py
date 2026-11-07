@@ -484,7 +484,9 @@ def test_a_privacy_mode_leaves_no_durable_copy_of_the_body(stores, mode: str):
     assert prompt_memory.get(mine["asset"], user["id"], path=jobs) is None
     assert media_jobs.get(mine["job_id"], path=jobs) is not None, "the job itself is kept"
     assert DefinitionStore(jobs).envelope(mine["job_id"]) is not None, "its pins are kept"
-    assert DefinitionStore(jobs).envelope(mine["job_id"]).generated == {}, "its generated block is emptied"
+    left = DefinitionStore(jobs).envelope(mine["job_id"]).generated
+    assert left and all(entry.get("erased") is True and "value" not in entry for entry in left.values()), \
+        "its generated values are erased and say so"
     # A write by a worker that started before the cutoff cannot put the prompt back.
     assert prompt_memory.put(mine["asset"], user["id"], f"mine-{PRIVATE}", kept_until=None, path=jobs,
                              admin_path=admin, created_at=int(time.time()) - 100) is False

@@ -4,13 +4,18 @@ A workflow document may declare ``generate: {generator: <id>, ...}`` on an input
 behind each id and ``resolve_generated``, which fills such an input when the caller gave no value:
 
 - **Once.** A value is drawn only when the caller gave none, and the route that accepts a job draws it once, after
-  idempotency resolution and before the job's envelope is written. The envelope's ``generated`` block keeps it with the
+  idempotency resolution (the image route has one; audio acceptance has none and makes a new job, with a new draw, for
+  each request) and before the job's envelope is written. The envelope's ``generated`` block keeps it with the
   generator id (``gateway/workflow_envelope.py``). A retry, a restart or a replay passes that block back as ``stored``
   and reads the value; it never draws again.
 - **Range.** ``random_integer`` draws from its own required bounds intersected with the input's effective bounds.
 - **Source.** A draw uses ``secrets`` by default. A caller can inject another source, so a test fixes the value.
 - **Persistence.** Each generator says how its value persists (``value``, ``digest`` or ``none``). The envelope
   grammar reads that map from ``persistence``.
+- **Three states of stored state.** A job's ``stored`` block can hold an entry that is readable, one that erasure
+  emptied (``erased``), or one that cannot be read. An input with no entry at all belongs to a job made before values
+  were kept (or one the caller named), and keeps the old draw so that job survives a deploy. An erased or unreadable
+  entry never draws: the job must not run (``GeneratedValueUnavailable``).
 
 The save-time checks (``generator_unknown``, ``generator_range_empty``) live in ``gateway/workflow_contract.py``. This
 module names no input, model, engine, workflow or modality: an input is whatever the document calls it.
@@ -25,6 +30,17 @@ from dataclasses import dataclass
 from typing import Any
 
 from gateway.manifests import ManifestError, validate_input_value
+
+ERASED = "erased"  # the key an erased entry carries in place of ``value``
+
+
+class GeneratedValueUnavailable(Exception):
+    """A job's stored generated value is gone (``erased``) or cannot be read. The job fails; it never draws again."""
+
+    def __init__(self, message: str, *, erased: bool) -> None:
+        super().__init__(message)
+        self.erased = erased
+
 
 # A source of whole numbers: ``source(low, high)`` returns an integer with ``low <= n <= high``.
 Source = Callable[[int, int], int]
@@ -46,6 +62,33 @@ def integer_range(rule: Mapping[str, Any], spec: Mapping[str, Any]) -> tuple[int
     if first > last:
         raise ManifestError("the generator's range and the input's bounds share no integer")
     return first, last
+
+
+def declared_range(rule: Mapping[str, Any], spec: Mapping[str, Any]) -> tuple[int, int]:
+    """The whole numbers the input itself allows: its own bounds, or the rule's where the input names none."""
+    first = math.ceil(spec.get("minimum", rule["minimum"]))
+    last = math.floor(spec.get("maximum", rule["maximum"]))
+    if first > last:
+        raise ManifestError("the input's bounds hold no integer")
+    return first, last
+
+
+def offset_values(inputs: Mapping[str, Any], carried: Mapping[str, int], offset: int) -> dict[str, int]:
+    """The value each generated input takes ``offset`` steps after its stored base, wrapped inside the input's range.
+
+    ``value_n = low + ((base - low + offset) mod (high - low + 1))`` for ``low..high`` the input's declared range. An
+    image batch binds one base for the whole job and offsets it by the images made so far, so every round gets a
+    value the input accepts, however many rounds run."""
+    declared = generated_inputs(inputs)
+    shifted: dict[str, int] = {}
+    for name, value in carried.items():
+        spec = declared.get(name)
+        if spec is None:
+            shifted[name] = value
+            continue
+        low, high = declared_range(spec["generate"], spec)
+        shifted[name] = low + ((value - low + offset) % (high - low + 1))
+    return shifted
 
 
 def _random_integer(rule: Mapping[str, Any], spec: Mapping[str, Any], source: Source) -> int:
@@ -79,6 +122,23 @@ def caller_may_set(spec: Mapping[str, Any]) -> bool:
     return spec.get("settable") is not False
 
 
+def _read_stored(name: str, kept: Any, generator: str) -> dict[str, Any]:
+    """The stored entry for one input, read back as it is, or ``GeneratedValueUnavailable`` when it is erased, was made
+    by another generator or has no value. Nothing is drawn in its place."""
+    if isinstance(kept, Mapping) and kept.get(ERASED) is True:
+        raise GeneratedValueUnavailable(f"input {name}: the value the gateway generated for this job was erased", erased=True)
+    if not isinstance(kept, Mapping) or kept.get("generator") != generator or "value" not in kept:
+        raise GeneratedValueUnavailable(f"input {name}: the stored generated value cannot be read", erased=False)
+    return {"generator": generator, "value": kept["value"]}
+
+
+def erased_block(block: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The block erasure leaves: each entry keeps its generator and loses its value, so a later read can tell an
+    erased value from a job that never kept one."""
+    return {name: {"generator": entry.get("generator") if isinstance(entry, Mapping) else None, ERASED: True}
+            for name, entry in block.items()}
+
+
 def resolve_generated(
     inputs: Mapping[str, Any],
     given: Mapping[str, Any],
@@ -89,8 +149,9 @@ def resolve_generated(
     """The envelope ``generated`` block for one request: an entry for each generated input the caller left empty.
 
     ``given`` holds the values the caller named. A generated input the caller named gets no entry, and a caller cannot
-    name an input marked ``settable: false``. For the others, an entry in ``stored`` made by the same generator is read
-    back as it is; otherwise the generator draws. An entry with a value that does not fit the input is refused with
+    name an input marked ``settable: false``. For the others, an entry in ``stored`` is read back as it is (an erased or
+    unreadable one raises ``GeneratedValueUnavailable``); an input with no entry draws, which is the route that accepts the
+    job, or a job made before values were kept. A drawn value that does not fit the input is refused with
     ``ManifestError``, as is a generator that no reviewed code backs."""
     source = source or secure_source  # looked up per call, so a test replaces ``secure_source``
     block: dict[str, dict[str, Any]] = {}
@@ -101,9 +162,8 @@ def resolve_generated(
         reviewed = REVIEWED.get(rule.get("generator"))
         if reviewed is None:
             raise ManifestError(f"input {name}: no reviewed generator has the id {rule.get('generator')!r}")
-        kept = (stored or {}).get(name)
-        if isinstance(kept, Mapping) and kept.get("generator") == rule["generator"] and "value" in kept:
-            block[name] = {"generator": rule["generator"], "value": kept["value"]}
+        if stored is not None and name in stored:
+            block[name] = _read_stored(name, stored[name], rule["generator"])
             continue
         value = reviewed.draw(rule, spec, source)
         if validate_input_value(name, value, dict(spec)) is not None:
