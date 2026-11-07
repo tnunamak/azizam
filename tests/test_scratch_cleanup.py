@@ -490,3 +490,36 @@ def test_collect_needs_a_real_parent(tmp_path: Path) -> None:
     assert prune_receipts.collect_failures(out, tmp_path / "linked-run" / "e2e-failures") == 0
     assert prune_receipts.collect_failures(out, tmp_path / "missing-run" / "e2e-failures") == 0
     assert list(outside.iterdir()) == [] and not (tmp_path / "missing-run").exists()
+
+
+def test_a_directory_swapped_for_a_link_after_it_is_opened_does_not_redirect_the_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The copy writes through the descriptors it holds, not through path names it would look up again."""
+    source = tmp_path / "trace.zip"
+    source.write_bytes(b"t" * 10)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    outside = tmp_path / "outside"
+    (outside / "b").mkdir(parents=True)
+    real_open_dir = prune_receipts.open_dir
+    swapped: list[str] = []
+
+    def open_dir_then_swap(name, parent=None):
+        descriptor = real_open_dir(name, parent)
+        if name == "a" and not swapped:
+            swapped.append(name)
+            (dest / "a").rename(dest / "a-moved")
+            (dest / "a").symlink_to(outside, target_is_directory=True)
+        return descriptor
+
+    monkeypatch.setattr(prune_receipts, "open_dir", open_dir_then_swap)
+    root = os.open(dest, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        written = prune_receipts.copy_new(source, root, Path("a") / "b" / "trace.zip", allowance=100)
+    finally:
+        os.close(root)
+    assert swapped, "the copy no longer opens its directories one by one"
+    assert list((outside / "b").iterdir()) == [], "the copy wrote through the swapped link"
+    assert written == 10
+    assert (dest / "a-moved" / "b" / "trace.zip").read_bytes() == b"t" * 10
