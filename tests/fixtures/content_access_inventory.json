@@ -72,7 +72,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "12af47bc141f3e021bf89d70a58b5b6fd3865f44898797b8f1714f1516ae335d",
+      "source_sha256": "871604b680bda6eae1462d0e76d6d3b34c3b9757f942123efedea1fd44801f03",
       "call": "append_event",
       "event": "'attempt'",
       "access": "content:job:read"
@@ -80,7 +80,7 @@
     {
       "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "source_sha256": "6d20197b28c3db65a78778a09439370026e34fbb7d8294c7a9a07f70e1e3f3ec",
+      "source_sha256": "ca17e64e88ad731d32afd5d0478154e3ad308aaf6860da104145cf20ba36d96d",
       "call": "append_event",
       "event": "'completed'",
       "access": "content:job:read"
@@ -136,7 +136,7 @@
     {
       "path": "proxy.py",
       "function": "_submit_audio_media_job",
-      "source_sha256": "71869a792ea3e06f333980b5c362a4fff8b8012b62fe79cf3a057af14d25dd2b",
+      "source_sha256": "d1c245c9fdeb657fefde3118067cf87bc2ead1b97521b3e1aab41fa41e8480e0",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -152,7 +152,7 @@
     {
       "path": "proxy.py",
       "function": "gateway_image_generations_media_job",
-      "source_sha256": "b90ff28734fb933b9f574e3f6259726c9b4c2209ab598dd0188fffab4facfdea",
+      "source_sha256": "0a8989134fe626a679e3c7f1760f1d2c2dcb5f64b76c476940869559c7e522d5",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -160,7 +160,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "12af47bc141f3e021bf89d70a58b5b6fd3865f44898797b8f1714f1516ae335d",
+      "source_sha256": "871604b680bda6eae1462d0e76d6d3b34c3b9757f942123efedea1fd44801f03",
       "call": "append_event",
       "event": "'retry'",
       "access": "content:job:read"
@@ -168,7 +168,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "12af47bc141f3e021bf89d70a58b5b6fd3865f44898797b8f1714f1516ae335d",
+      "source_sha256": "871604b680bda6eae1462d0e76d6d3b34c3b9757f942123efedea1fd44801f03",
       "call": "append_event",
       "event": "'retry'",
       "access": "content:job:read"
@@ -176,7 +176,7 @@
     {
       "path": "proxy.py",
       "function": "_run_audio_media_job",
-      "source_sha256": "6d20197b28c3db65a78778a09439370026e34fbb7d8294c7a9a07f70e1e3f3ec",
+      "source_sha256": "ca17e64e88ad731d32afd5d0478154e3ad308aaf6860da104145cf20ba36d96d",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -184,7 +184,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "12af47bc141f3e021bf89d70a58b5b6fd3865f44898797b8f1714f1516ae335d",
+      "source_sha256": "871604b680bda6eae1462d0e76d6d3b34c3b9757f942123efedea1fd44801f03",
       "call": "append_event",
       "event": "'started'",
       "access": "content:job:read"
@@ -224,7 +224,7 @@
     {
       "path": "proxy.py",
       "function": "_run_image_media_job",
-      "source_sha256": "12af47bc141f3e021bf89d70a58b5b6fd3865f44898797b8f1714f1516ae335d",
+      "source_sha256": "871604b680bda6eae1462d0e76d6d3b34c3b9757f942123efedea1fd44801f03",
       "call": "append_event",
       "event": "'succeeded'",
       "access": "content:job:read"
