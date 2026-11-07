@@ -81,19 +81,35 @@ class derived_patch:
     ``publish_config``) must patch after that.
     """
 
+    _ABSENT = object()
+
     def __init__(self, name: str, value: Any) -> None:
         self.name = name
         self.value = value
         self._patch: Any = None
+        self._patched: Any = None
+        self._original: Any = self._ABSENT
 
     def start(self) -> None:
-        self._patch = mock.patch.dict(proxy.runtime().derived, {self.name: self.value})
+        self._patched = proxy.runtime().derived
+        self._original = self._patched.get(self.name, self._ABSENT)
+        self._patch = mock.patch.dict(self._patched, {self.name: self.value})
         self._patch.start()
 
     def stop(self) -> None:
-        if self._patch is not None:
-            self._patch.stop()
-            self._patch = None
+        if self._patch is None:
+            return
+        self._patch.stop()
+        self._patch = None
+        # publish_section carries the running derived values into the snapshot it publishes, so a snapshot published
+        # inside this block holds the patched value too. Put the value back there as well.
+        current = proxy.runtime().derived
+        if current is not self._patched and current.get(self.name, self._ABSENT) == self.value:
+            if self._original is self._ABSENT:
+                current.pop(self.name, None)
+            else:
+                current[self.name] = self._original
+        self._patched = None
 
     def __enter__(self) -> "derived_patch":
         self.start()
