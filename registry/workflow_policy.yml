@@ -3,7 +3,8 @@
 # and runs nothing: there are no defaults. S5 owns what the values mean; S3 only moves them here. The values below are what
 # the readers assumed for every bundled workflow before this file existed. A bundled extension package's workflow has no
 # place for facts in its own files (the document is schema 2, and the package manifest has no policy block), so its row is
-# here too, keyed by its id: the stored-record path reads it with release_facts.
+# here too, keyed by its id and naming the package (`package:`); a row that names a package belongs to the workflows of that
+# package alone, and a package that declares the same workflow id gets nothing from it (release_facts).
 schema_version: 1
 workflows:
   audio.generate.ace-step-1.5-xl-turbo: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
@@ -44,4 +45,4 @@ workflows:
   video.generate.minimax-h3-keyframes-mid: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
   video.generate.minimax-h3-long: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
   video.generate.minimax-h3-t2v: {exposure: default, trust_tier: stable, resource_tier: batch, tags: []}
-  image.generate.test-demo-package: {exposure: opt_in, trust_tier: experimental, resource_tier: batch, tags: [test, demo]}
+  image.generate.test-demo-package: {exposure: opt_in, trust_tier: experimental, resource_tier: batch, tags: [test, demo], package: test-demo-image-extension-package}

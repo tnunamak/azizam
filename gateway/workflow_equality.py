@@ -24,17 +24,19 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import math
 import random
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from gateway.manifests import validate_input_value
+from gateway.manifests import exact_number, validate_input_value
 from gateway.workflow_contract import GENERATORS
 from gateway.workflow_convert import convert_1_to_2
 
@@ -154,6 +156,7 @@ class Rule:
     replace: tuple[tuple[str, str], ...] = ()  # text: the after-value is the before-value with these (from, to) pairs applied
     drops: dict[str, Any] | None = None  # list: the after-value is the before-list without its items that match
     kept_type: str | None = None  # both values are present and of this JSON type (a value that may change but not vanish)
+    kept_pattern: str | None = None  # both values are text that this regular expression matches as a whole
 
     def covers(self, diff: Difference, scope: str) -> bool:
         if diff.check not in self.checks:
@@ -168,6 +171,9 @@ class Rule:
             return False
         if self.kept_type is not None and not all(type(value) is JSON_TYPES[self.kept_type] and value != ABSENT
                                                   for value in (diff.before, diff.after)):
+            return False
+        if self.kept_pattern is not None and not all(isinstance(value, str) and re.fullmatch(self.kept_pattern, value)
+                                                     for value in (diff.before, diff.after)):
             return False
         if self.replace and not _is_replacement(diff.before, diff.after, self.replace):
             return False
@@ -197,7 +203,9 @@ def load_allowed(path: Path = ALLOWED_PATH) -> Allowed:
             workflows=None if workflows == "all" else tuple(workflows), paths=tuple(row["paths"]), reason=row["reason"],
             before=row.get("before"), has_before="before" in row, after=row.get("after"), has_after="after" in row,
             replace=tuple((pair["from"], pair["to"]) for pair in row.get("replace", ())), drops=row.get("drops"),
-            kept_type=row.get("kept_type")))
+            kept_type=row.get("kept_type"), kept_pattern=row.get("kept_pattern")))
+        if rules[-1].kept_pattern is not None:
+            re.compile(rules[-1].kept_pattern)   # a pattern that does not compile fails the load, not a difference
         if rules[-1].kept_type is not None and rules[-1].kept_type not in JSON_TYPES:
             raise ValueError(f"an allowed difference names an unknown kept_type: {row}")
     return Allowed(rules=tuple(rules), binding_edits=tuple(raw.get("binding_edits", [])))
@@ -287,32 +295,51 @@ def build_corpus(documents: dict[str, dict[str, Any]], limit: int = 48) -> dict[
     return corpus
 
 
-def generator_range(workflow_id: str, name: str, spec: dict[str, Any]) -> tuple[int, int] | None:
-    """The values a generate rule can give: its range cut by the input's bounds, or ``None`` when they share no value. The
-    generator must be a reviewed one (``GENERATORS``)."""
+GENERATED_CONSTRAINTS = ("type", "enum", "minimum", "maximum", "step", "offset")  # what the input check reads of a generated input
+
+
+def generator_grid(workflow_id: str, name: str, spec: dict[str, Any]) -> tuple[int, int, int] | None:
+    """The values a generate rule can give that the input check accepts, as (first value, distance between values, how many):
+    the rule's range cut by the input's bounds and laid on the input's grid (``step``, from ``offset``; the check reads the
+    offset only with a step). ``None`` when no value is left. The generator must be a reviewed one (``GENERATORS``)."""
     rule = spec["generate"]
     if rule.get("generator") not in GENERATORS:
         raise ValueError(f"{workflow_id} input {name}: no reviewed generator {rule.get('generator')!r}")
     low = max(int(rule.get("minimum", 0)), int(spec.get("minimum", rule.get("minimum", 0))))
     high = min(int(rule["maximum"]), int(spec.get("maximum", rule["maximum"])))
-    return None if low > high else (low, high)
+    step, offset = Fraction(1), Fraction(0)
+    if spec.get("step") is not None:
+        step, offset = exact_number(spec["step"]), exact_number(spec.get("offset", 0))
+        if step is None or offset is None or step <= 0:
+            return None   # the input check refuses every value of this input
+    first, last = math.ceil((low - offset) / step), math.floor((high - offset) / step)
+    if first > last or (offset + first * step).denominator != 1 or step.denominator != 1:
+        return None
+    return int(offset + first * step), int(step), last - first + 1
+
+
+def generator_range(workflow_id: str, name: str, spec: dict[str, Any]) -> tuple[int, int] | None:
+    """The least and the greatest value a generate rule can give (both on the input's grid), or ``None`` when it can give none."""
+    grid = generator_grid(workflow_id, name, spec)
+    return None if grid is None else (grid[0], grid[0] + grid[1] * (grid[2] - 1))
 
 
 def generated_value(workflow_id: str, name: str, spec: dict[str, Any]) -> Any:
-    """What a generate rule gives: a draw from a random source seeded by the workflow and input, inside the generator's range
-    and the input's bounds. A rule with no valid range gives no value."""
-    bounds = generator_range(workflow_id, name, spec)
-    return None if bounds is None else random.Random(f"{workflow_id}:{name}").randint(*bounds)
+    """What a generate rule gives: a draw from a random source seeded by the workflow and input, on the grid of values the
+    input accepts. A rule with no valid value gives none."""
+    grid = generator_grid(workflow_id, name, spec)
+    return None if grid is None else grid[0] + grid[1] * random.Random(f"{workflow_id}:{name}").randrange(grid[2])
 
 
 def generator_rules(documents: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Per workflow, the generation rule of each generated input with the bounds of that input: the rule itself, which a
-    single draw cannot show (a range of 0..3 and one of 0..4 can draw the same value)."""
+    single draw cannot show (a range of 0..3 and one of 0..4 can draw the same value), and every constraint the input check
+    applies to the drawn value."""
     found: dict[str, dict[str, Any]] = {}
     for workflow_id, document in documents.items():
         for name, spec in _specs(document).items():
             if isinstance(spec.get("generate"), dict):
-                rule = {"generate": spec["generate"], "minimum": spec.get("minimum", ABSENT), "maximum": spec.get("maximum", ABSENT)}
+                rule = {"generate": spec["generate"], **{key: spec.get(key, ABSENT) for key in GENERATED_CONSTRAINTS}}
                 found.setdefault(workflow_id, {})[name] = rule
     return found
 

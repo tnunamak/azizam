@@ -6,8 +6,9 @@
 #   replace          text: the after-text is the before-text with these (from, to) pairs applied and nothing else changed;
 #   drops            list: the after-list is the before-list without the items that match ({value} or {key, value}).
 #   kept_type        both values are present and of that JSON type (string, integer, number, boolean, null);
+#   kept_pattern     both values are text that the regular expression matches as a whole (a value that may change, not its shape);
 # Pins compare JSON values by type as well as by value (true is not 1, 0 is not false). A row that pins no value says so in
-# its reason (a hash, which may change but must stay a text value).
+# its reason (a hash, which may change but must keep its shape).
 schema_version: 1
 allowed:
   - checks: [projections]
@@ -19,8 +20,8 @@ allowed:
   - checks: [projections]
     scopes: ["summary:admin", "summary:internal"]
     paths: ["/manifest_hash"]
-    kept_type: string
-    reason: The hash is of the document, and every bundled document changed by the converter's edits (the binding-content check shows the edits). The value differs for each workflow, so it is not pinned; it must stay a text value on both sides (it may not disappear or change type).
+    kept_pattern: "[0-9a-f]{64}"
+    reason: The hash is the SHA-256 of the document, and every bundled document changed by the converter's edits (the binding-content check shows the edits). The value differs for each workflow, so it is not pinned; it must keep the shape the gateway writes on both sides, 64 lowercase hexadecimal digits (it may not disappear, change type, be empty or be malformed).
   - checks: [projections]
     scopes: [capabilities, projected]
     workflows:

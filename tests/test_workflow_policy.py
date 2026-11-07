@@ -286,3 +286,82 @@ def test_the_loader_no_longer_converts_in_memory():
     import gateway.workflow_convert as convert
 
     assert not hasattr(convert, "normalize") and callable(convert.convert_1_to_2)
+
+
+# --------------------------------------------------------------------------- whose workflow a row belongs to (package provenance)
+
+DEMO_PACKAGE = "test-demo-image-extension-package"
+DEMO_PACKAGE_DIR = ROOT / "extensions" / "bundled" / "demo-image-package"
+
+
+def test_a_row_that_names_a_package_belongs_to_that_package_alone():
+    """The one rule: a package's workflow gets a row only when the row names that package; any other workflow, only a row that names none."""
+    assert release_facts(DEMO, package_id=DEMO_PACKAGE, from_package=True) == PolicyFacts("opt_in", "experimental", "batch", ("test", "demo"))
+    assert release_facts(DEMO, package_id="another-package", from_package=True) is None
+    assert release_facts(DEMO, package_id=None, from_package=True) is None
+    assert release_facts(DEMO) is None   # not a package's workflow: the row is not its
+    assert release_facts(TILE, package_id=DEMO_PACKAGE, from_package=True) is None   # a package cannot take a bundled row
+    assert release_facts(TILE) is not None
+
+
+def test_a_row_may_name_one_package_as_text_and_nothing_else_is_added_to_it():
+    assert parse_policy_text(policy_text({"w": {**GOOD, "package": "p"}}))["w"] == PolicyFacts("default", "stable", "batch", ())
+    for bad in ({**GOOD, "package": ""}, {**GOOD, "package": 7}, {**GOOD, "extra": 1}, {"exposure": "default", "package": "p"}):
+        with pytest.raises(PolicyFileError):
+            parse_policy_text(policy_text({"w": bad}))
+
+
+def _install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, package: Path):
+    """Install ``package`` through the admin store (the production path from package to stored record) and return the db."""
+    from gateway import admin_store
+    from gateway.admin_api import AdminContext
+    from gateway.admin_runtime import AdminSQLiteStore
+
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    store = AdminSQLiteStore(path=db)
+    monkeypatch.setattr(store, "write_litellm_config", lambda registry: None)
+    actor = AdminContext(subject="owner", roles=frozenset({"owner"}))
+    store.enable_extension_package(source={"type": "local_directory", "path": str(package)}, actor=actor,
+                                   expected_generation=store.get_service_registry_snapshot()[1])
+    return db, store, actor
+
+
+def _impostor(tmp_path: Path, package_id: str = "impostor-package") -> Path:
+    """A package of another id that declares the demo's workflow id (and nothing else)."""
+    package = tmp_path / "impostor"
+    shutil.copytree(DEMO_PACKAGE_DIR, package)
+    manifest = yaml.safe_load((package / "extension.yml").read_text(encoding="utf-8"))
+    manifest["id"] = package_id
+    manifest["objects"] = {"workflows": manifest["objects"]["workflows"]}
+    (package / "extension.yml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    return package
+
+
+def _served(db: Path, monkeypatch: pytest.MonkeyPatch):
+    import proxy
+
+    monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
+    return proxy._load_gateway_workflow_registry().get(DEMO)
+
+
+def test_the_installed_demo_package_gets_its_facts_and_a_package_that_declares_its_id_borrows_none(tmp_path, monkeypatch):
+    """The real path: install through the admin store, then load the gateway's workflow registry from the stored records."""
+    demo_db, _, _ = _install(tmp_path / "demo", monkeypatch, DEMO_PACKAGE_DIR)
+    served = _served(demo_db, monkeypatch)
+    assert served is not None and served.facts == PolicyFacts("opt_in", "experimental", "batch", ("test", "demo"))
+    assert not summarize_workflow(served, "client").get(NEEDS_CONFIGURATION_CODE)
+
+    impostor_db, _, _ = _install(tmp_path / "impostor", monkeypatch, _impostor(tmp_path))
+    borrowed = _served(impostor_db, monkeypatch)
+    assert borrowed is not None and borrowed.facts is None   # served, closed: it needs configuration
+    assert summarize_workflow(borrowed, "client")["needs_configuration"] is True
+
+
+def test_a_second_package_that_declares_the_id_of_an_installed_one_is_refused_as_a_duplicate(tmp_path, monkeypatch):
+    from gateway.service_registry import ServiceRegistryConflict
+
+    _, store, actor = _install(tmp_path, monkeypatch, DEMO_PACKAGE_DIR)
+    with pytest.raises(ServiceRegistryConflict):
+        store.enable_extension_package(source={"type": "local_directory", "path": str(_impostor(tmp_path / "x"))}, actor=actor,
+                                       expected_generation=store.get_service_registry_snapshot()[1])

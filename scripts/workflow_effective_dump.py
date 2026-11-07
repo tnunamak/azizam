@@ -112,19 +112,24 @@ def _load_sources() -> Any:
     return module
 
 
-def package_record_arguments(workflow_id: str) -> dict[str, Any]:
-    """What this tree's ``add_manifest`` takes for a package record: the package provenance and the release policy's facts.
-    A tree whose code predates the facts keeps the document's own fields, so nothing is passed."""
+def package_record_arguments(workflow_id: str, package_root: Path) -> dict[str, Any]:
+    """What this tree's ``add_manifest`` takes for a package record: the package provenance and the release policy's facts,
+    by the one rule the gateway uses for a stored package record (``release_facts``: a row that names a package belongs to
+    that package's workflows alone). A tree whose code predates the facts keeps the document's own fields, so nothing is passed."""
     import inspect
+
+    import yaml
 
     from gateway.discovery import WorkflowRegistry
 
     if "facts" not in inspect.signature(WorkflowRegistry.add_manifest).parameters:
         return {}
     from gateway.manifests import Provenance
-    from gateway.workflow_policy import release_policy
+    from gateway.workflow_policy import release_facts
 
-    return {"provenance": Provenance(trusted=False, source="package"), "facts": release_policy().get(workflow_id)}
+    package_id = (yaml.safe_load((package_root / "extension.yml").read_text(encoding="utf-8")) or {}).get("id")
+    return {"provenance": Provenance(trusted=False, source="package"),
+            "facts": release_facts(workflow_id, package_id=package_id, from_package=True)}
 
 
 def main(argv: list[str]) -> int:
@@ -142,7 +147,7 @@ def main(argv: list[str]) -> int:
     for workflow_id, (path, document, package_root) in documents.items():
         if package_root is not None:
             registry.add_manifest({key: value for key, value in document.items() if key != "kind"}, source_path=path,
-                                  **package_record_arguments(workflow_id))
+                                  **package_record_arguments(workflow_id, package_root))
     result: dict[str, Any] = {"errors": plain(registry.errors), "workflows": {}}
     packages = {workflow_id: package_root for workflow_id, (_path, _document, package_root) in documents.items()}
     for record in registry.records():

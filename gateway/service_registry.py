@@ -2542,10 +2542,10 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
         source = "ui"
     identity = manifest_identity(manifest_dict, stored_provenance(source))
     policy = raw.get("policy")
-    facts = facts_from_mapping(policy) or release_facts(identity.id)
     provenance = raw.get("provenance")
     if not isinstance(provenance, Mapping):
         provenance = {}
+    facts = facts_from_mapping(policy) or _release_facts_of(identity.id, source, provenance)
     source_path = str(raw.get("source_path") or "")
     manifest_path = str(raw.get("manifest_path") or "")
     record = WorkflowRecord(
@@ -2576,6 +2576,14 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
         # The record's own facts (an owner's patch over the release's): kept, so a read and a write back keep them.
         normalized["policy"] = {name: list(getattr(stated, name)) if name == "tags" else getattr(stated, name) for name in FACT_NAMES}
     return normalized
+
+
+def _release_facts_of(workflow_id: str, source: str, provenance: Any) -> Any:
+    """The release's facts for a stored workflow. A record an installed package wrote (source ``imported``) gets a row that
+    names the package it came from; any other record gets a row that names none."""
+    package_id = provenance.get("package_id") if isinstance(provenance, Mapping) else None
+    return release_facts(workflow_id, package_id=package_id if isinstance(package_id, str) else None,
+                         from_package=source == "imported")
 
 
 def stored_provenance(source: str) -> Provenance:
@@ -2648,7 +2656,8 @@ def workflow_records_from_registry(registry: Mapping[str, Any]) -> list[Workflow
                 manifest=manifest_dict,
                 identity=identity,
                 source_path=Path(source_path) if source_path else Path("admin.db"),
-                facts=facts_from_mapping(record.get("policy")) or release_facts(identity.id),
+                facts=facts_from_mapping(record.get("policy")) or _release_facts_of(
+                    identity.id, str(record.get("source") or "ui"), record.get("provenance")),
             )
         )
     return records
