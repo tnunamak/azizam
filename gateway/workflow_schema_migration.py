@@ -379,27 +379,15 @@ def _refresh_package_proofs(plan: Plan, path: Path, actor: str):
     the owner changed it. A converted record would stop matching, and the package could no longer remove it, so a record
     that still matched its proof gets the proof of its converted form. One that did not match keeps a proof that matches
     nothing: the owner had changed it, and it stays detached."""
-    from gateway import admin_store, extension_packages, record_integrity
+    from gateway import admin_store, extension_packages
 
     def run(conn, now: int) -> None:
         row = conn.execute("SELECT value_json FROM operator_settings WHERE key=?", (PACKAGE_INDEX_KEY,)).fetchone()
         if row is None or not plan.package_records:
             return
         index = extension_packages.normalize_extension_package_index(json.loads(row[0]))
-        key: bytes | None = None
-        changed = False
-        for record_id, (old, new) in plan.package_records.items():
-            package = index["packages"].get(_package_of(old))
-            entry = (((package or {}).get("installed_records") or {}).get("workflows") or {}).get(record_id)
-            if not isinstance(entry, dict) or "mac" not in entry:
-                continue
-            key = key or record_integrity.install_key(path)
-            state = ((package.get("disabled_states") or {}).get("workflows") or {}).get(record_id)
-            if not extension_packages._matches_install(old, entry, package, state, key):
-                continue
-            entry["mac"] = extension_packages.installed_record_digest(extension_packages.comparable_record(new, state), key)
-            changed = True
-        if changed:
+        converted = {record_id: (old, new, _package_of(old)) for record_id, (old, new) in plan.package_records.items()}
+        if extension_packages.carry_install_proofs(index, "workflows", converted, path):
             admin_store._upsert_setting_in_transaction(
                 conn, PACKAGE_INDEX_KEY, json.dumps(index, ensure_ascii=False, sort_keys=True), now, actor)
 
