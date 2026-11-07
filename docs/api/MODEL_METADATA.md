@@ -57,15 +57,18 @@ Example:
 
 `azizam_availability` is a hint about the engine behind a name. It is not a promise: the list still means
 "names you may use", and every listed name stays callable. The state comes from the cached status snapshot and
-the request receipts, the same evidence the capability and Models pages use. The list never probes an engine
-and never waits for a status build; a missing or old snapshot reads as `unknown`.
+the request receipts, the same evidence the capability and Models pages use. The availability pass reads cached
+evidence only: it starts no probe and waits for no status build. (The context-window annotation in the same
+request can still read an engine when its answer is not cached; that is separate.) A missing or old snapshot reads
+as `unknown`.
 
 - A name maps to its services by the model name a service serves, by the workflow it is (then to the services
-  that workflow needs, all at once), or through the names an alias resolves to. An entry that maps to no service
-  has no field.
+  that workflow needs, all at once), or through the names an alias resolves to. A service that is turned off, or
+  that is a remote provider, still counts for this mapping (a turned-off service reads as `unavailable`). An
+  alias target that maps to no service counts as `unknown`; an entry where nothing maps has no field.
 - Several services: `available` if any is available (ready, busy, degraded, or startable on demand),
   `unavailable` only if all are unavailable, otherwise `unknown`. A workflow that needs several services is
-  `unavailable` if any is.
+  `unavailable` if any is, even when another requirement cannot be resolved; it is `available` only when all are.
 - `GET /v1/models?available=true` leaves out entries whose state is `unavailable`. `unknown` and unmapped
   entries stay (fail open). Any other value, or no parameter, changes nothing. Per-caller profile filtering runs
   first. Routing is unchanged: a left-out name still works if called.

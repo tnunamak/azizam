@@ -169,12 +169,18 @@ def _project_required_dependencies(
     )
 
 
+# A name is servable when its service is ready, startable on demand, busy or degraded.
+MODEL_LIST_SERVING_STATUSES = frozenset({"ready", "idle", "busy", "degraded"})
+
+
 def model_availability(
     service_ids: Iterable[str],
     *,
     service_records: Mapping[str, Any],
     evidence: Mapping[str, Mapping[str, Any]],
     require_all: bool = False,
+    services: Mapping[str, Mapping[str, Any]] | None = None,
+    projected: dict[str, AvailabilityProjection] | None = None,
 ) -> dict[str, str] | None:
     """The model-list availability of a name served by ``service_ids``, or ``None`` when no service is known.
 
@@ -182,22 +188,42 @@ def model_availability(
     when every service is known to be down or turned off, else ``unknown``. Only ``unavailable`` carries a reason.
     With ``require_all`` (a name that needs every service at once) the rule flips: ``unavailable`` when any service is
     down, ``available`` only when all are.
+
+    A caller that judges many names in one request passes ``services`` (``services_mapping`` of the records) and a
+    ``projected`` dict, both built once for that request, so each service is projected once.
     """
 
-    projections = [project_service(service_id, service_records=service_records, evidence=evidence)
-                   for service_id in dict.fromkeys(service_ids)]
+    if services is None:
+        services = _services_mapping(service_records)
+    if projected is None:
+        projected = {}
+    projections = []
+    for service_id in dict.fromkeys(service_ids):
+        if service_id not in projected:
+            projected[service_id] = project_service(service_id, service_records=service_records,
+                                                    evidence=evidence, services=services)
+        projections.append(projected[service_id])
     if not projections:
         return None
+
+    def serves(item: AvailabilityProjection) -> bool:
+        return item.status in MODEL_LIST_SERVING_STATUSES
+
     if require_all:
         down = next((item for item in projections if item.status == "unavailable"), None)
         if down is not None:
             return {"state": "unavailable", "reason": down.reason}
-        return {"state": "available" if all(item.available for item in projections) else "unknown"}
-    if any(item.available for item in projections):
+        return {"state": "available" if all(serves(item) for item in projections) else "unknown"}
+    if any(serves(item) for item in projections):
         return {"state": "available"}
     if all(item.status == "unavailable" for item in projections):
         return {"state": "unavailable", "reason": projections[0].reason}
     return {"state": "unknown"}
+
+
+def services_mapping(service_records: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    """The service records keyed by id, for a caller that projects many services from one registry."""
+    return _services_mapping(service_records)
 
 
 def composed_reason_code(status: str, enabled: bool, configured: bool) -> str:
@@ -238,8 +264,10 @@ def project_service(
     service_records: Mapping[str, Any] | None = None,
     evidence: Mapping[str, Mapping[str, Any]] | None = None,
     fallback_capability: Capability | None = None,
+    services: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> AvailabilityProjection:
-    services = _services_mapping(service_records or {})
+    if services is None:
+        services = _services_mapping(service_records or {})
     has_service = service_id in services
     service = services.get(service_id) if has_service else {}
     enabled = bool(service.get("enabled", True)) if isinstance(service, Mapping) else True

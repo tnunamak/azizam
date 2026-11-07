@@ -237,6 +237,7 @@ from gateway.admin_runtime import (
 from gateway.api import create_gateway_router, create_request_retention_router
 from gateway.request_source import note_connection, note_maker, note_trusted_address
 from gateway.availability import availability_evidence_snapshot, model_availability, project_capabilities
+from gateway.availability import services_mapping as availability_services_mapping
 from gateway.model_presentation import health_base, join_health, service_health_endpoint
 from gateway.models_catalog import (
     auth_contexts_from_user_snapshot,
@@ -27896,7 +27897,9 @@ async def anthropic_models(request: Request):
 def _model_service_ids_index(registry: Mapping[str, Any] | None) -> dict[str, list[str]]:
     """{normalized public model id: [service id, ...]} for every service that serves the name.
 
-    The same names as `_service_model_index`, but every serving service is kept, not only the first."""
+    The same names as `_service_model_index`, but every serving service is kept, not only the first.
+    Disabled and remote-provider declarations are kept too: this index only judges availability, it never
+    decides what is listed or routed."""
     index: dict[str, list[str]] = {}
 
     def add(name: str, service_id: str) -> None:
@@ -27905,14 +27908,14 @@ def _model_service_ids_index(registry: Mapping[str, Any] | None) -> dict[str, li
             index[name].append(service_id)
 
     try:
-        for public_name, service_ids in litellm_public_model_service_ids(registry or {}).items():
+        for public_name, service_ids in litellm_public_model_service_ids(registry or {}, include_disabled=True).items():
             for service_id in service_ids:
                 add(public_name, service_id)
     except Exception:  # noqa: BLE001
         pass
     backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
     for service_id, service_cfg in backends.items():
-        if not isinstance(service_cfg, Mapping) or service_registry.is_remote_provider_config(service_cfg):
+        if not isinstance(service_cfg, Mapping):
             continue
         for record in _service_model_records(service_cfg):
             for key in ("id", "model_group", "public_name"):
@@ -27930,6 +27933,8 @@ def _model_entry_availability(
     service_records: Mapping[str, Any],
     evidence: Mapping[str, Mapping[str, Any]],
     snapshot_fresh: bool,
+    services: Mapping[str, Mapping[str, Any]] | None = None,
+    projected: dict[str, Any] | None = None,
 ) -> dict[str, str] | None:
     """The `azizam_availability` value for one model entry, or None when no service can be mapped to it.
 
@@ -27942,7 +27947,7 @@ def _model_entry_availability(
         if not snapshot_fresh:
             return {"state": "unknown"}
         return model_availability(service_ids, service_records=service_records, evidence=evidence,
-                                  require_all=require_all)
+                                  require_all=require_all, services=services, projected=projected)
 
     def by_workflow(workflow_id: str) -> dict[str, str] | None:
         record = workflows.get(workflow_id)
@@ -27952,12 +27957,18 @@ def _model_entry_availability(
         if not isinstance(requirements, Mapping):
             return judge(list(record.supported_backends))
         needed = [str(service) for service in requirements.get("services") or ()]
+        unresolved = False
         for required_id in requirements.get("workflows") or ():
             required = workflows.get(str(required_id))
             if required is None or len(required.supported_backends) != 1:
-                return {"state": "unknown"}
+                unresolved = True
+                continue
             needed.append(required.supported_backends[0])
-        return judge(needed, require_all=True)
+        # A known-down requirement decides the entry even when another requirement cannot be resolved.
+        judged = judge(needed, require_all=True)
+        if unresolved and (judged is None or judged["state"] != "unavailable"):
+            return {"state": "unknown"}
+        return judged
 
     def by_name_or_workflow(name: str) -> dict[str, str] | None:
         workflow_id = workflow_ids_by_model.get(name)
@@ -27971,10 +27982,12 @@ def _model_entry_availability(
     model_id = str(entry.get("id") or "")
     resolves_to = entry.get("azizam_resolves_to")
     if isinstance(resolves_to, Mapping) and resolves_to:
-        states = [state for target in dict.fromkeys(t for t in resolves_to.values() if isinstance(t, str) and t)
-                  if (state := by_name_or_workflow(target)) is not None]
-        if not states:
+        # A target that maps to no service is one more unknown alternative, not a missing one.
+        judged = [by_name_or_workflow(target)
+                  for target in dict.fromkeys(t for t in resolves_to.values() if isinstance(t, str) and t)]
+        if all(state is None for state in judged):
             return None
+        states = [state or {"state": "unknown"} for state in judged]
         if any(s["state"] == "available" for s in states):
             return {"state": "available"}
         if all(s["state"] == "unavailable" for s in states):
@@ -27984,7 +27997,8 @@ def _model_entry_availability(
 
 
 def _annotate_model_availability(data: list[Any], *, only_available: bool) -> list[Any]:
-    """Add `azizam_availability` to each mappable entry; with `only_available`, drop the `unavailable` ones.
+    """Set `azizam_availability` on each mappable entry and remove a stale one from each entry that maps to no service;
+    with `only_available`, drop the `unavailable` ones.
 
     One cached status snapshot read plus one receipt-store read. It starts no probe and waits for no status build.
     A missing or stale snapshot reads as `unknown`. Blocking (SQLite): call it off the event loop."""
@@ -28003,6 +28017,9 @@ def _annotate_model_availability(data: list[Any], *, only_available: bool) -> li
             # An unreadable receipt store must not fail the list: judge by the status snapshot alone.
             evidence = availability_evidence_snapshot(service_records=service_records, status_payload=status_payload)
     by_name = _model_service_ids_index(registry)
+    # Built once for this request: the service mapping, and each service's projection.
+    services = availability_services_mapping(service_records)
+    projected: dict[str, Any] = {}
     workflows = {record.id: record for record in GATEWAY_WORKFLOW_REGISTRY.records()}
     workflow_ids_by_model: dict[str, str] = {}
     for record in workflows.values():
@@ -28015,8 +28032,11 @@ def _annotate_model_availability(data: list[Any], *, only_available: bool) -> li
             state = _model_entry_availability(
                 item, by_name=by_name, workflows=workflows, workflow_ids_by_model=workflow_ids_by_model,
                 service_records=service_records, evidence=evidence, snapshot_fresh=snapshot_fresh,
+                services=services, projected=projected,
             )
-            if state is not None:
+            if state is None:
+                item.pop("azizam_availability", None)
+            else:
                 item["azizam_availability"] = state
                 if only_available and state["state"] == "unavailable":
                     continue

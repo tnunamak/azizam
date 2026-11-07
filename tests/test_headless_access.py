@@ -506,6 +506,16 @@ def _digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+@pytest.mark.parametrize("path", ["/v1/models", "/openai/v1/models"])
+def test_model_list_declares_the_optional_available_query_parameter(path):
+    """The digest test strips `available` before hashing; this one proves it is there, optional, and a query parameter."""
+    parameters = proxy.app.openapi()["paths"][path]["get"].get("parameters", [])
+    declared = [p for p in parameters if p["name"] == "available"]
+    assert len(declared) == 1, parameters
+    assert declared[0]["in"] == "query"
+    assert declared[0].get("required", False) is False
+
+
 def test_existing_data_plane_schema_is_byte_equivalent():
     """Digests were captured from the unmodified base commit, before the overlay.
 
