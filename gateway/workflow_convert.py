@@ -75,7 +75,7 @@ def _v1_media_facts(manifest: Mapping[str, Any]) -> tuple[tuple[tuple[str, str],
         kind = spec.get("type") if isinstance(spec, Mapping) else None
         if kind == "asset":
             assets.append((str(name), str(spec.get("media_type") or "").strip()))
-        elif kind in MEDIA_INPUT_TYPES:
+        elif isinstance(kind, str) and kind in MEDIA_INPUT_TYPES:
             pictures.append(str(name))
             assets.append((str(name), str(spec.get("media_type") or "").strip()))
     return tuple(assets), tuple(pictures)
@@ -184,7 +184,8 @@ def _backfill_capability(out: dict[str, Any], note: Any) -> None:
 def _convert_input(at: tuple[str, ...], spec: dict[str, Any], note: Any) -> None:
     if spec.pop("modality", None) is not None:
         note(at + ("modality",), "remove", "an asset input lists the media types it accepts")
-    if spec.get("type") in MEDIA_INPUT_TYPES - {"asset"}:  # the mesh-only picture type of schema 1
+    kind = spec.get("type")
+    if isinstance(kind, str) and kind in MEDIA_INPUT_TYPES - {"asset"}:  # the mesh-only picture type of schema 1 (a list is no type)
         spec["type"] = "asset"
         spec["accepts"] = list(OLD_PICTURE_ACCEPTS)
         note(at + ("type",), "set", "the picture type is an asset that accepts the types the old check accepted")

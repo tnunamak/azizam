@@ -286,17 +286,6 @@ def test_the_dry_run_reports_a_done_step_and_an_unstored_registry(tmp_path, caps
     assert "already done" in capsys.readouterr().out
 
 
-def test_the_dry_run_layers_an_old_registry_in_memory_first(tmp_path, capsys):
-    db = tmp_path / "admin.db"
-    admin_store.init_db(db)
-    old = {"schema_version": 1, "services": {}, "protocol_frontends": {}, "capabilities": {}, "updated_at": 1,
-           "workflows": {"owner.flux": _owner_record("owner.flux", _v1())}}
-    write_legacy_registry_for_test(old, path=db)
-    assert workflow_schema_2_report.main([str(db), "--json"]) == 0
-    report = json.loads(capsys.readouterr().out)
-    assert report["counts"]["convert-whole"] == 1 and report["state"] == "would convert"
-
-
 # -- the apply, at start -----------------------------------------------------------------------------------------------------
 
 
@@ -442,3 +431,318 @@ def test_a_converted_package_record_keeps_matching_its_install_proof(tmp_path):
         registry["workflows"]["acme.untouched"], package["installed_records"]["workflows"]["acme.untouched"], package, None, key)
     assert not extension_packages._matches_install(
         registry["workflows"]["acme.edited"], package["installed_records"]["workflows"]["acme.edited"], package, None, key)
+
+
+# -- review findings: the plan is total ----------------------------------------------------------------------------------
+
+
+def _with_stated_capability(**edits) -> dict:
+    document = _v1(**edits)
+    document.setdefault("capability", "image.generate")
+    return document
+
+
+MALFORMED = {
+    "input type is a list": lambda d: d["inputs"].setdefault("x", {}).update(type=[]),
+    "input type is a mapping": lambda d: d["inputs"].setdefault("x", {}).update(type={"a": 1}),
+    "input type is a number": lambda d: d["inputs"].setdefault("x", {}).update(type=7),
+    "input type is null": lambda d: d["inputs"].setdefault("x", {}).update(type=None),
+    "bindings is a list": lambda d: d.update(bindings=[SENTINEL]),
+    "bindings is a number": lambda d: d.update(bindings=5),
+    "bindings is null": lambda d: d.update(bindings=None),
+    "inputs is a list": lambda d: d.update(inputs=[SENTINEL]),
+    "outputs is a string": lambda d: d.update(outputs=SENTINEL),
+    "tags is a mapping": lambda d: d.update(tags={SENTINEL: 1}),
+    "intent is a list": lambda d: d.update(intent=[SENTINEL]),
+}
+
+
+@pytest.mark.parametrize("name", sorted(MALFORMED))
+def test_one_malformed_record_does_not_stop_the_plan(name):
+    bad = _with_stated_capability()
+    MALFORMED[name](bad)
+    plan = _plan({"owner.bad": _owner_record("owner.bad", bad), "owner.fine": _owner_record("owner.fine", _v1())})
+    rows = _rows(plan)
+    assert rows["owner.fine"].action == migration.CONVERT_WHOLE
+    assert plan.stored["workflows"]["owner.fine"]["manifest"]["schema_version"] == 2
+    # a malformed record is never dropped; if it cannot convert it is kept disabled, with codes only in the report
+    kept = plan.stored["workflows"]["owner.bad"]
+    if rows["owner.bad"].action == migration.CANNOT_CONVERT:
+        assert kept["enabled"] is False and kept["manifest"] == _owner_record("owner.bad", bad)["manifest"]
+        assert all(len(code) < 60 for _pointer, code in rows["owner.bad"].errors)
+    assert SENTINEL not in json.dumps(plan.report())
+
+
+def test_a_converter_exception_marks_the_record_cannot_convert_with_a_bounded_code(monkeypatch):
+    real = migration.convert_and_check
+
+    def raising(document):
+        if document.get("display_name") == "boom":
+            raise KeyError(SENTINEL)  # an error text that quotes the record
+        return real(document)
+
+    monkeypatch.setattr(migration, "convert_and_check", raising)
+    plan = _plan({"owner.bad": _owner_record("owner.bad", _v1(display_name="boom")),
+                  "owner.fine": _owner_record("owner.fine", _v1())})
+    row = _rows(plan)["owner.bad"]
+    assert row.action == migration.CANNOT_CONVERT
+    assert row.errors == (("/", "conversion_failed"),)
+    kept = plan.stored["workflows"]["owner.bad"]
+    assert kept["enabled"] is False and SENTINEL not in json.dumps(kept["migration"]) and SENTINEL not in json.dumps(plan.report())
+    assert _rows(plan)["owner.fine"].action == migration.CONVERT_WHOLE
+
+
+def test_a_list_for_an_input_type_is_not_a_converter_crash():
+    document = _with_stated_capability()
+    document["inputs"]["x"] = {"type": []}
+    converted, _notes = convert_1_to_2(document)
+    assert converted["inputs"]["x"]["type"] == []
+
+
+def test_a_malformed_record_does_not_abort_the_start_up_migration(tmp_path):
+    bad = _with_stated_capability()
+    bad["inputs"]["x"] = {"type": []}
+    db = _db_with(tmp_path, {"owner.bad": _owner_record("owner.bad", bad), "owner.fine": _owner_record("owner.fine", _v1())})
+    registry = service_registry.ensure_service_registry(path=db, actor="test")
+    stored = json.loads(_row(db)[0])["workflows"]
+    assert stored["owner.fine"]["manifest"]["schema_version"] == 2
+    assert stored["owner.bad"]["enabled"] is False
+    assert admin_store.migration_step_recorded(migration.STEP, path=db)
+    assert "owner.fine" in registry["workflows"]
+
+
+# -- the no-change race and the stale snapshot -------------------------------------------------------------------------------
+
+
+def _write_stored(db: Path, workflows: dict) -> None:
+    """A write by another process: it bumps the registry generation, as any registry write does."""
+    _, generation = _row(db)
+    admin_store.write_service_registry(
+        _stored(workflows), updated_by="other", expected_generation=generation, path=db, stored_form=True)
+
+
+def _after_first_registry_read(monkeypatch, action):
+    """Run ``action`` once, right after the first registry read of ``ensure``, and hand back what was read before it."""
+    real = admin_store.get_service_registry_json_with_generation
+    state = {"n": 0}
+
+    def hooked(*, path):
+        record = real(path=path)
+        state["n"] += 1
+        if state["n"] == 1:
+            action()
+        return record
+
+    monkeypatch.setattr(admin_store, "get_service_registry_json_with_generation", hooked)
+    return state
+
+
+def test_a_record_written_between_the_read_and_the_no_change_step_is_not_skipped_for_ever(tmp_path, monkeypatch):
+    db = _db_with(tmp_path, {})
+    _after_first_registry_read(monkeypatch, lambda: _write_stored(db, {"owner.flux": _owner_record("owner.flux", _v1())}))
+    migrated = migration.ensure(path=db, actor="test")
+    assert migrated["workflows"]["owner.flux"]["manifest"]["schema_version"] == 2
+    assert json.loads(_row(db)[0])["workflows"]["owner.flux"]["manifest"]["schema_version"] == 2
+    assert admin_store.migration_step_recorded(migration.STEP, path=db)
+
+
+def test_the_no_change_step_is_not_recorded_when_the_generation_moved(tmp_path):
+    db = _db_with(tmp_path, {})
+    _, generation = _row(db)
+    _write_stored(db, {})
+    with pytest.raises(admin_store.OperatorSettingsGenerationConflict):
+        admin_store.record_migration_step_at_registry_generation(migration.STEP, expected_generation=generation, path=db)
+    assert not admin_store.migration_step_recorded(migration.STEP, path=db)
+
+
+def test_a_true_no_op_bumps_no_generation_and_writes_no_audit_entry(tmp_path):
+    db = _db_with(tmp_path, {"owner.flux": migration.plan_workflow_schema_2(
+        _stored({"owner.flux": _owner_record("owner.flux", _v1())}), {"workflows": {}}).stored["workflows"]["owner.flux"]})
+    before = _row(db)
+    migration.ensure(path=db, actor="test")
+    assert _row(db) == before and _audit(db) == []
+    assert admin_store.migration_step_recorded(migration.STEP, path=db)
+
+
+def test_a_snapshot_from_before_a_concurrent_completion_is_not_returned(tmp_path, monkeypatch):
+    db = _db_with(tmp_path, {"owner.flux": _owner_record("owner.flux", _v1())})
+    real_ensure = migration.ensure
+
+    def other_start_finishes():
+        monkeypatch.undo()  # the other start sees the real functions
+        real_ensure(path=db, actor="other")
+
+    _after_first_registry_read(monkeypatch, other_start_finishes)
+    migrated = migration.ensure(path=db, actor="test")
+    assert migrated["workflows"]["owner.flux"]["manifest"]["schema_version"] == 2
+
+
+def test_the_retries_are_bounded_and_exhausting_them_raises(tmp_path, monkeypatch):
+    for workflows in ({"owner.flux": _owner_record("owner.flux", _v1())}, {}):  # a write conflicts; a no-change record conflicts
+        db = _db_with(tmp_path / str(len(workflows)), workflows) if (tmp_path / str(len(workflows))).mkdir() is None else None
+        real = admin_store.get_service_registry_json_with_generation
+        calls = {"n": 0}
+
+        def always_stale(*, path, real=real, calls=calls):
+            calls["n"] += 1
+            record = real(path=path)
+            return {**record, "operator_settings_generation": int(record["operator_settings_generation"]) - 1}
+
+        monkeypatch.setattr(admin_store, "get_service_registry_json_with_generation", always_stale)
+        with pytest.raises(RuntimeError, match="bounded startup retry"):
+            migration.ensure(path=db, actor="test")
+        assert calls["n"] == 3
+        assert not admin_store.migration_step_recorded(migration.STEP, path=db)
+        monkeypatch.undo()
+
+
+# -- null and other non-object records, invalid manifests, failed replacements ---------------------------------------------
+
+
+@pytest.mark.parametrize("value", [None, "text", 7, ["a"]], ids=["null", "string", "number", "list"])
+def test_a_record_that_is_not_an_object_is_kept_as_stored_and_listed(value):
+    plan = _plan({"owner.odd": value, "owner.fine": _owner_record("owner.fine", _v1())})
+    assert "owner.odd" in plan.stored["workflows"] and plan.stored["workflows"]["owner.odd"] == value
+    assert _rows(plan)["owner.odd"].errors == (("/", "record_not_object"),)
+    assert [item["id"] for item in plan.report()["needs_configuration"]] == ["owner.odd"]
+    assert _rows(plan)["owner.fine"].action == migration.CONVERT_WHOLE
+
+
+def test_a_null_record_survives_the_apply_and_a_second_run(tmp_path):
+    db = _db_with(tmp_path, {"owner.null": None, "owner.fine": _owner_record("owner.fine", _v1())})
+    migration.ensure(path=db, actor="test")
+    stored = json.loads(_row(db)[0])["workflows"]
+    assert "owner.null" in stored and stored["owner.null"] is None
+
+
+def test_a_patch_that_now_equals_the_release_record_is_still_dropped():
+    release, v1_release = _release_with(TRUSTED_ID)
+    same = {"manifest": {"typical_seconds": v1_release[TRUSTED_ID]["manifest"]["typical_seconds"]}}
+    plan = _plan({TRUSTED_ID: same}, release, v1_release=v1_release)
+    assert _rows(plan)[TRUSTED_ID].action == migration.CONVERT_PATCH
+    assert TRUSTED_ID not in plan.stored["workflows"]
+
+
+@pytest.mark.parametrize("manifest", [None, "text", 3, ["a"]], ids=["null", "string", "number", "list"])
+def test_a_patch_with_an_invalid_manifest_value_cannot_convert(manifest):
+    release, v1_release = _release_with(TRUSTED_ID)
+    plan = _plan({TRUSTED_ID: {"manifest": manifest}}, release, v1_release=v1_release)
+    row = _rows(plan)[TRUSTED_ID]
+    assert row.action == migration.CANNOT_CONVERT and row.errors == (("/manifest", "manifest_not_object"),)
+    kept = plan.stored["workflows"][TRUSTED_ID]
+    assert kept["enabled"] is False and kept["manifest"] == manifest and kept["migration"]["errors"]
+
+
+def test_a_patch_with_no_manifest_key_is_still_already_v2():
+    release, v1_release = _release_with(TRUSTED_ID)
+    plan = _plan({TRUSTED_ID: {"enabled": False}}, release, v1_release=v1_release)
+    assert _rows(plan)[TRUSTED_ID].action == migration.ALREADY_V2
+
+
+def test_a_failed_replacement_stays_a_replacement_and_is_disabled_inside_it():
+    release, v1_release = _release_with(TRUSTED_ID)
+    broken = _owner_record(TRUSTED_ID, _v1(TRUSTED_ID, typical_seconds=SENTINEL, x_note=SENTINEL))
+    plan = _plan({TRUSTED_ID: {layers.REPLACE_KEY: broken}}, release, v1_release=v1_release)
+    assert _rows(plan)[TRUSTED_ID].action == migration.CANNOT_CONVERT
+    entry = plan.stored["workflows"][TRUSTED_ID]
+    assert set(entry) == {layers.REPLACE_KEY}  # still the sole key, so a read takes it as a replacement
+    replaced = entry[layers.REPLACE_KEY]
+    assert replaced["enabled"] is False and replaced["migration"]["errors"] and replaced["manifest"] == broken["manifest"]
+    # through layering: the effective record is the failed replacement, disabled, not a merge over the release record
+    effective = layers.layer(plan.stored, release)["workflows"][TRUSTED_ID]
+    assert effective == replaced
+    assert "migration" in effective and effective["manifest"] == broken["manifest"]
+    # and the plan over its own result changes nothing
+    again = migration.plan_workflow_schema_2(plan.stored, release, v1_release=v1_release)
+    assert again.stored["workflows"][TRUSTED_ID][layers.REPLACE_KEY]["enabled"] is False
+
+
+def test_a_failed_replacement_survives_the_apply_and_the_readback(tmp_path):
+    release, v1_release = _release_with(TRUSTED_ID)
+    broken = _owner_record(TRUSTED_ID, _v1(TRUSTED_ID, typical_seconds=SENTINEL))
+    db = _db_with(tmp_path, {TRUSTED_ID: {layers.REPLACE_KEY: broken}})
+    migration.ensure(path=db, actor="test", release=release)
+    entry = json.loads(_row(db)[0])["workflows"][TRUSTED_ID]
+    assert set(entry) == {layers.REPLACE_KEY} and entry[layers.REPLACE_KEY]["enabled"] is False
+
+
+# -- the dry run -----------------------------------------------------------------------------------------------------------
+
+
+def _files(db: Path) -> dict[str, bytes | None]:
+    return {suffix: (Path(str(db) + suffix).read_bytes() if Path(str(db) + suffix).exists() else None)
+            for suffix in ("", "-wal", "-shm", "-journal")}
+
+
+def test_the_dry_run_leaves_the_database_and_its_sidecars_as_they_were(tmp_path, capsys):
+    db = _db_with(tmp_path, _sentinel_workflows())
+    before = _files(db)
+    for argv in ([str(db)], [str(db), "--json"]):
+        workflow_schema_2_report.main(argv)
+        capsys.readouterr()
+        assert _files(db) == before
+
+
+def test_the_dry_run_layers_an_old_registry_before_it_plans(tmp_path, capsys, monkeypatch):
+    """A fixture whose answer depends on the layering: against a release that ships the record, the old whole record is a
+    patch once layered (convert-patch), and a whole record if the layering call were skipped (convert-whole)."""
+    release, _v1_release = _release_with(TRUSTED_ID)
+    monkeypatch.setattr(service_registry, "release_registry", lambda: release)
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    old = {"schema_version": 1, "services": {}, "protocol_frontends": {}, "capabilities": {}, "updated_at": 1,
+           "workflows": {TRUSTED_ID: _owner_record(TRUSTED_ID, _v1(TRUSTED_ID, typical_seconds=99))}}
+    write_legacy_registry_for_test(old, path=db)
+    assert not layers.is_layered(service_registry._stored_document(_row(db)[0]))
+    workflow_schema_2_report.main([str(db), "--json"])
+    report = json.loads(capsys.readouterr().out)
+    assert report["counts"]["convert-patch"] == 1 and report["counts"]["convert-whole"] == 0
+
+    calls = []
+    real = workflow_schema_2_report.registry_migration.plan_layering
+    monkeypatch.setattr(workflow_schema_2_report.registry_migration, "plan_layering",
+                        lambda *a, **k: calls.append(1) or real(*a, **k))
+    workflow_schema_2_report.main([str(db), "--json"])
+    capsys.readouterr()
+    assert calls == [1]
+
+
+# -- package proofs --------------------------------------------------------------------------------------------------------
+
+
+def test_a_package_proof_refresh_touches_only_the_records_it_converted(tmp_path):
+    untouched, edited = _package_record("acme.untouched"), _package_record("acme.edited")
+    db = _db_with(tmp_path, {"acme.untouched": untouched, "acme.edited": edited})
+    key = record_integrity.install_key(db)
+    other = {"id": "other", "name": "other", "version": "2.0.0", "enabled": True, "package_hash": "hash-2",
+             **extension_packages.installed_records_proof({"workflows": {"other.gone": _package_record("other.gone")}}, key=key)}
+    index = _install_package(db, {"acme.untouched": untouched, "acme.edited": edited})
+    index["packages"]["other"] = other
+    admin_store.put_operator_setting(extension_packages.EXTENSION_PACKAGE_INDEX_SETTING_KEY, index, path=db)
+    changed = copy.deepcopy(edited)
+    changed["manifest"]["display_name"] = "Changed by the owner"
+    write_legacy_registry_for_test(_stored({"acme.untouched": untouched, "acme.edited": changed}), path=db)
+    before = _read_index(db)
+    service_registry.ensure_service_registry(path=db, actor="test")
+    after = _read_index(db)
+    proofs = lambda document, package, name: document["packages"][package]["installed_records"]["workflows"][name]  # noqa: E731
+    assert json.dumps(proofs(after, "acme", "acme.edited"), sort_keys=True) == json.dumps(
+        proofs(before, "acme", "acme.edited"), sort_keys=True)  # the edited record's proof is byte-identical
+    assert proofs(after, "acme", "acme.untouched") != proofs(before, "acme", "acme.untouched")  # the converted one moved
+    assert json.dumps(after["packages"]["other"], sort_keys=True) == json.dumps(before["packages"]["other"], sort_keys=True)
+
+
+def test_a_failing_proof_refresh_rolls_back_the_registry_write_with_it(tmp_path, monkeypatch):
+    record = _package_record("acme.one")
+    db = _db_with(tmp_path, {"acme.one": record})
+    _install_package(db, {"acme.one": record})
+    registry_before, index_before = _row(db), _read_index(db)
+
+    def failing(conn, key, payload, now, actor):
+        raise RuntimeError("the hook failed")
+
+    monkeypatch.setattr(admin_store, "_upsert_setting_in_transaction", failing)
+    with pytest.raises(RuntimeError, match="the hook failed"):
+        migration.ensure(path=db, actor="test")
+    assert _row(db) == registry_before and _read_index(db) == index_before
+    assert not admin_store.migration_step_recorded(migration.STEP, path=db) and _audit(db) == []

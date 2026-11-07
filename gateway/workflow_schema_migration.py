@@ -133,10 +133,22 @@ def _convert_record(record_id: str, entry: Mapping[str, Any]) -> tuple[dict[str,
     return normalized, [], [*sorted(changed), "policy"]
 
 
+# Returned in place of an entry to store when a record's stored entry is dropped (a patch that now equals the release
+# record). It is distinct from None, which is a stored value: a JSON null record is kept as it is.
+_OMIT: Any = object()
+
+
 def _failed_entry(entry: Any, failures: list[Failure]) -> Any:
-    """What is stored for a record that cannot convert: as it was, disabled, with the reasons."""
+    """What is stored for a record that cannot convert: as it was, disabled, with the reasons.
+
+    A ``$replace`` envelope stays the only key of its entry (a registry read takes an entry as a replacement only then):
+    the flag and the reasons go into the replaced document."""
     if not isinstance(entry, Mapping):
         return copy.deepcopy(entry)
+    if set(entry) == {layers.REPLACE_KEY}:
+        if not isinstance(entry[layers.REPLACE_KEY], Mapping):
+            return copy.deepcopy(dict(entry))
+        return {layers.REPLACE_KEY: _failed_entry(entry[layers.REPLACE_KEY], failures)}
     kept = copy.deepcopy(dict(entry))
     kept["enabled"] = False
     kept["migration"] = {"step": STEP, "errors": [
@@ -219,10 +231,16 @@ def plan_workflow_schema_2(
     for record_id in sorted(owned, key=str):
         entry = owned[record_id]
         base = release_records.get(record_id) if layered else None
-        row, new_entry = _plan_one(str(record_id), entry, base, v1_release.get(record_id), plan)
+        try:
+            row, new_entry = _plan_one(str(record_id), entry, base, v1_release.get(record_id), plan)
+        except Exception as error:  # noqa: BLE001 - one malformed record must not stop the others (or the start)
+            # The code names the kind of failure; the message and the error text may quote the record, so neither is used.
+            failure = [Failure("/", "conversion_failed", f"the record could not be converted ({type(error).__name__})")]
+            plan.package_records.pop(str(record_id), None)
+            row, new_entry = _failed_row(str(record_id), failure), _failed_entry(entry, failure)
         row = Row(row.id, row.action, row.fields, row.errors, str(record_id) in bundled_ids, _package_of(entry))
         plan.rows.append(row)
-        if new_entry is not None:
+        if new_entry is not _OMIT:
             new_owned[record_id] = new_entry
     out["workflows"] = new_owned
     return plan
@@ -237,7 +255,7 @@ def _package_of(entry: Any) -> str | None:
 def _plan_one(
     record_id: str, entry: Any, base: Any, v1_base: Any, plan: Plan,
 ) -> tuple[Row, Any]:
-    """``(row, entry to store)``; an entry of ``None`` leaves nothing stored (the patch now equals the release record)."""
+    """``(row, entry to store)``; ``_OMIT`` leaves nothing stored (the patch now equals the release record)."""
     if not isinstance(entry, Mapping):
         failure = [Failure("/", "record_not_object", "the stored record is not an object")]
         return _failed_row(record_id, failure), copy.deepcopy(entry)
@@ -262,19 +280,24 @@ def _failed_row(record_id: str, failures: list[Failure]) -> Row:
 
 def _is_v2_patch(entry: Mapping[str, Any]) -> bool:
     """Whether a stored entry over a release record needs no conversion: it is a replacement that is schema 2, or it
-    changes no manifest (a record field such as ``enabled`` means the same in both schemas), or its manifest patch says
-    schema 2. A manifest patch that says nothing of the version is a schema 1 patch."""
+    has no ``manifest`` key (a record field such as ``enabled`` means the same in both schemas), or its manifest patch
+    says schema 2. A manifest patch that says nothing of the version is a schema 1 patch. A ``manifest`` that is not an
+    object is not a patch: ``_plan_patch`` refuses it before this is asked."""
     if layers.REPLACE_KEY in entry:
         replaced = entry[layers.REPLACE_KEY]
         return isinstance(replaced, Mapping) and _schema_version(replaced) == 2
     manifest = entry.get("manifest")
-    return not isinstance(manifest, Mapping) or manifest.get("schema_version") == 2
+    return "manifest" not in entry or (isinstance(manifest, Mapping) and manifest.get("schema_version") == 2)
 
 
 def _plan_patch(record_id: str, entry: Mapping[str, Any], base: Mapping[str, Any], v1_base: Any) -> tuple[Row, Any]:
     """A stored entry over the release record ``base`` (schema 2): apply it to the schema 1 release record, convert the
     result, and store the difference from ``base``, so the effective record is the conversion of the whole patched
     schema 1 record."""
+    if layers.REPLACE_KEY not in entry and "manifest" in entry and not isinstance(entry["manifest"], Mapping):
+        # Layered over the release record, a null manifest would delete it and a scalar would replace it.
+        failure = [Failure("/manifest", "manifest_not_object", "the manifest of a patch is not an object")]
+        return _failed_row(record_id, failure), _failed_entry(entry, failure)
     if _is_v2_patch(entry):
         return Row(record_id, ALREADY_V2), copy.deepcopy(dict(entry))
     if not isinstance(v1_base, Mapping):
@@ -294,7 +317,7 @@ def _plan_patch(record_id: str, entry: Mapping[str, Any], base: Mapping[str, Any
         fields = [name for name in fields if name != "policy"]
     new_entry = layers.record_entry(base, record)
     if new_entry is None:
-        return Row(record_id, CONVERT_PATCH, tuple(fields)), None
+        return Row(record_id, CONVERT_PATCH, tuple(fields)), _OMIT
     if layers.REPLACE_KEY not in new_entry:
         for key in layers.IDENTITY_KEYS:
             if key in base and key not in new_entry:
@@ -351,21 +374,28 @@ def ensure(*, path: Path, actor: str = "system", release: Mapping[str, Any] | No
 
     release = service_registry.release_registry() if release is None else release
     for _attempt in range(3):
+        # The marker is read before the registry: a registry read after a marker that says "done" is at least as new as the
+        # step's own write, so a concurrent start that finished first is never answered with a snapshot from before it.
+        done = admin_store.migration_step_recorded(STEP, path=path)
         record = admin_store.get_service_registry_json_with_generation(path=path)
         if record is None or not service_registry._parses_as_object(record["value_json"]):
             return None
         stored = service_registry._stored_document(record["value_json"])
-        if admin_store.migration_step_recorded(STEP, path=path):
+        if done:
             return stored
+        generation = int(record["operator_settings_generation"])
         plan = plan_workflow_schema_2(stored, release, bundled_ids=frozenset(bundled_workflow_manifests()))
         if not plan.changes:
-            admin_store.record_migration_step(STEP, path=path)
+            try:  # recorded only if the registry is still the one planned on: a record written since was never looked at
+                admin_store.record_migration_step_at_registry_generation(STEP, expected_generation=generation, path=path)
+            except admin_store.OperatorSettingsGenerationConflict:
+                continue
             return stored
         counts = plan.report()["counts"]
         try:
             admin_store.write_service_registry_with_audit(
                 plan.stored,
-                expected_generation=int(record["operator_settings_generation"]),
+                expected_generation=generation,
                 updated_by=actor,
                 audit_action=AUDIT_ACTION,
                 audit_actor_kind="admin",

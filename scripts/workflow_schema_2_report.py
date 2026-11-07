@@ -3,7 +3,8 @@
 
     python scripts/workflow_schema_2_report.py COPY_OF_ADMIN_DB [--json]
 
-Opens COPY_OF_ADMIN_DB read-only and plans what a start would do with each stored workflow record: convert a whole record,
+Reads a private snapshot of COPY_OF_ADMIN_DB (the file and its write-ahead log), so the file and its folder are not
+touched, not even by the empty ``-wal`` and ``-shm`` files a read-only open of a write-ahead database creates. Plans what a start would do with each stored workflow record: convert a whole record,
 convert a patch over a release record, leave a schema 2 record alone, or mark a record that cannot convert as needing
 configuration (stored disabled, with its errors, never dropped). A registry stored before the layering step is layered in
 memory first, as a start does. It prints record ids, field names, error pointers and error codes only, never a value of any
@@ -16,8 +17,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -76,12 +79,17 @@ def render(report: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("db", type=Path, help="a COPY of admin.db; opened read-only")
+    parser.add_argument("db", type=Path, help="a COPY of admin.db; never opened itself")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     args = parser.parse_args(argv)
     try:
-        report, status = build_report(args.db)
-    except sqlite3.Error as error:
+        with tempfile.TemporaryDirectory(prefix="workflow-schema-2-") as scratch:
+            snapshot = Path(scratch) / "admin.db"
+            for suffix in ("", "-wal"):
+                if suffix == "" or Path(f"{args.db}{suffix}").exists():
+                    shutil.copyfile(f"{args.db}{suffix}", f"{snapshot}{suffix}")
+            report, status = build_report(snapshot)
+    except (sqlite3.Error, OSError) as error:
         print(f"cannot read {args.db}: {type(error).__name__}", file=sys.stderr)
         return 2
     print(json.dumps(report, indent=2, sort_keys=True) if args.json else render(report))

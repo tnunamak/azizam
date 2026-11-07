@@ -480,6 +480,16 @@ recorded in the same transaction as its registry write.
 - **Package records**: an imported workflow is an ordinary stored record, so it is converted, and the package's keyed
   install proof is refreshed in the same transaction (a record that matched its proof matches the new one; an edited
   record stays detached), so a later package removal still works.
+- **Total plan**: each record is planned alone. A failure of the conversion, the contract check or the normalizer marks that
+  record cannot-convert (code `conversion_failed`, the exception type only, never its text) and the other records go on.
+  A record that is not an object (JSON null included) is kept as stored and listed as needing configuration; a patch whose
+  `manifest` is present but not an object is cannot-convert (`manifest_not_object`), as layering would delete or replace the
+  release manifest. A failed `$replace` keeps its envelope as the only key; the `enabled: false` flag and the errors go
+  inside the replaced document, so it stays a replacement.
+- **Concurrency**: the step marker is read before the registry (a marker that says done is followed by a fresh read). A plan
+  with nothing to write records the step in a transaction that checks the registry generation is the planned one; on a
+  conflict the plan is made again, within the same three attempts. A true no-op bumps no generation and writes no audit entry.
+- **Dry run**: reads a private snapshot of the copy and its write-ahead log, so it leaves the file and its folder untouched.
 
 ### The equality check
 
