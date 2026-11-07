@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -30,7 +29,6 @@ from gateway.manifests import ManifestError, bind_backend_request, load_workflow
 
 
 MANIFESTS_DIR = ROOT / "manifests" / "workflows"
-CONFIG_PATH = ROOT / "proxy_config.yml"
 AUTH_ENV_NAMES = (
     "OPENAI_API_KEY",
     "AZIZAM_API_KEY",
@@ -63,14 +61,6 @@ def warn(name: str, message: str, **details: Any) -> CheckResult:
 
 def fail(name: str, message: str, **details: Any) -> CheckResult:
     return CheckResult(name, "fail", message, details or None)
-
-
-def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    with path.open("r", encoding="utf-8") as f:
-        loaded = yaml.safe_load(f)
-    return loaded if isinstance(loaded, dict) else {}
 
 
 def check_manifest_registry(manifests_dir: Path = MANIFESTS_DIR) -> CheckResult:
@@ -183,17 +173,12 @@ def check_auth_env(env: dict[str, str] | None = None) -> CheckResult:
     return warn("auth_env", "no auth environment variables detected")
 
 
-def default_comfy_url(config: dict[str, Any]) -> str | None:
+def default_comfy_url() -> str | None:
+    """ComfyUI's address when COMFY_HOST names it. The engine's own address is a record in admin.db (Services), not a
+    file key: pass --comfy-url to probe it."""
     if os.environ.get("COMFY_HOST"):
         return os.environ["COMFY_HOST"]
-    if os.environ.get("COMFY_ENABLED", "true").lower() not in ("true", "1", "yes"):
-        return None
-    comfy_cfg = (config.get("backends") or {}).get("comfyui") or {}
-    if not comfy_cfg:
-        return None
-    host = comfy_cfg.get("host", "127.0.0.1")
-    port = comfy_cfg.get("port", 7890)
-    return f"http://{host}:{port}"
+    return None
 
 
 def run_doctor(
@@ -203,8 +188,7 @@ def run_doctor(
     timeout: float = 3.0,
     include_comfy: bool = True,
 ) -> dict[str, Any]:
-    config = load_config()
-    resolved_comfy_url = comfy_url if comfy_url is not None else default_comfy_url(config)
+    resolved_comfy_url = comfy_url if comfy_url is not None else default_comfy_url()
     checks = [
         check_manifest_registry(),
         check_workflow_bindings(),

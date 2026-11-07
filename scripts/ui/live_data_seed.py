@@ -40,6 +40,7 @@ PNG_1X1 = base64.b64decode(
 
 
 def _write_config(state: Path, port: int, engine_port: int) -> Path:
+    """The startup file (startup keys only) and the settings the seeded gateway holds in admin.db."""
     config = state / "config.yml"
     private_io.atomic_write_text(config,
         f"""proxy:
@@ -47,27 +48,30 @@ def _write_config(state: Path, port: int, engine_port: int) -> Path:
   port: {port}
 auth:
   public_paths: [/health]
-backends:
-  kobold: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
-  comfyui: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
-  embeddings: {{enabled: false, host: 127.0.0.1, port: {engine_port}}}
-  litellm: {{enabled: true, base_url: "http://127.0.0.1:{engine_port}", host: 127.0.0.1, port: {engine_port}}}
 admin:
   oidc:
     cookie:
       secure: false
-model_aliases:
-  chat:
-    stable:
-      fast: demo-chat
 images:
   cache_dir: {state / "images"}
-  signed_url_ttl: 3600
   vram_estimates_file: {state / "vram.json"}
 """,
         encoding="utf-8",
     )
     return config
+
+
+def _seed_settings(state: Path, engine_port: int) -> None:
+    """One engine (the fake one) and one chat alias, as the owner's records in admin.db."""
+    sys.path.insert(0, str(REPO / "scripts" / "ui"))
+    import seed_config
+
+    disabled = {name: {"enabled": False, "host": "127.0.0.1", "port": engine_port} for name in ("kobold", "comfyui", "embeddings")}
+    seed_config.seed_admin_db(state / "admin.db", {
+        "backends": {**disabled, "litellm": {"enabled": True, "base_url": f"http://127.0.0.1:{engine_port}",
+                                             "host": "127.0.0.1", "port": engine_port}},
+        "model_aliases": {"chat": {"stable": {"fast": "demo-chat"}}},
+    }, seed_registry=True)
 
 
 def _env(state: Path, port: int, engine_port: int, config: Path) -> dict[str, str]:
@@ -164,6 +168,7 @@ def seed(state: Path, port: int) -> dict[str, object]:
     receipts_path = state / "receipts.db"
     jobs_path = state / "media_jobs.db"
     admin_store.init_db(admin_path)
+    _seed_settings(state, engine_port)
     accounts.initialize(admin_path)
     receipt_store.init_db(receipts_path)
     media_jobs.init_db(jobs_path)

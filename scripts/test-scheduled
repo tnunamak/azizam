@@ -132,9 +132,12 @@ def media_queue_url(repo: Path) -> str:
     else the configured comfyui backend's /queue; else empty (nothing to ask)."""
     if url := os.environ.get("SCHEDULED_MEDIA_QUEUE_URL"):
         return url
-    try:
-        import yaml
-        backend = yaml.safe_load((repo / "proxy_config.yml").read_text(encoding="utf-8"))["backends"]["comfyui"]
+    try:  # the engine's address is a record of the service registry in admin.db (the startup file holds no engines)
+        sys.path.insert(0, str(repo))
+        from gateway import admin_store, bootstrap_config, service_registry
+        stored = admin_store.get_service_registry_json_with_generation(path=bootstrap_config.resolve_admin_db_path())
+        registry, _excluded = service_registry.effective_registry(json.loads(stored["value_json"]))
+        backend = registry["services"]["comfyui"]["config"]
         return f"http://{backend['host']}:{backend['port']}/queue"
     except Exception:  # noqa: BLE001 - no config or no such backend: nothing to ask
         return ""

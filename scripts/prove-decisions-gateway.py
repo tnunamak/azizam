@@ -57,7 +57,6 @@ def main():
     key = secrets.token_urlsafe(24)
     config = {
         "proxy": {"host": "127.0.0.1", "port": args.gateway_port},
-        "auth": {"enabled": True, "keys": []},
         "backends": {"decisions": {"host": "127.0.0.1", "port": args.engine_port,
                      "enabled": True, "default_model": "decider-2b-v11", "capabilities": ["decisions"],
                      "lifecycle": {"driver": "external"}}},
@@ -69,6 +68,10 @@ def main():
     }
     config_path = state / "config.yml"
     config_path.write_text(yaml.safe_dump(config))
+    # Startup keys stay in the file; the engine and its alias become the owner's records in this run's admin.db.
+    subprocess.run([sys.executable, str(repo / "scripts" / "ui" / "seed_config.py"), str(config_path), str(state / "admin.db")],
+                   env={"PATH": os.environ["PATH"], "HOME": str(state), "PYTHONPATH": str(repo), "PYTHONDONTWRITEBYTECODE": "1"},
+                   check=True)
     env = {"PATH": os.environ["PATH"], "HOME": str(state), "PYTHONPATH": str(repo),
            "AZIZAM_CONFIG_PATH": str(config_path), "PYTHONDONTWRITEBYTECODE": "1"}
     for name, filename in (("ADMIN", "admin"), ("METRICS", "metrics"), ("RESPONSES", "responses"),

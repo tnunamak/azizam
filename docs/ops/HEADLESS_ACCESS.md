@@ -333,7 +333,6 @@ Selected successful workflows are exercised separately.
 | `DELETE /admin/api/config/sections/{section_id}/entries` | owner-bearer | denied | `gateway.config_api.reset_entry`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `POST /admin/api/config/changes/{change_id}/revert` | owner-bearer | denied | `gateway.config_api.revert_change`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `POST /admin/api/config/import` | owner-bearer | denied | `gateway.config_api.import_config`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `POST /admin/api/config/sections/{section_id}/legacy-import` | owner-bearer | denied | `gateway.config_api.legacy_import`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/credentials` | owner-bearer | denied | `gateway.admin_api.list_credentials`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `DELETE /admin/api/credentials/{credential_id}` | owner-bearer | denied | `gateway.admin_api.delete_credential`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `POST /admin/api/credentials/{credential_id}/revoke` | owner-bearer | denied | `gateway.admin_api.revoke_credential`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
@@ -407,8 +406,6 @@ Selected successful workflows are exercised separately.
 | `GET /admin/api/session` | owner-bearer | denied | `gateway.admin_api.session`; AdminAuthenticator / _require_admin; owner/admin/superadmin | owner |
 | `GET /admin/api/settings/defaults` | owner-bearer | denied | `gateway.settings_api.get_defaults`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `PUT /admin/api/settings/defaults` | owner-bearer | denied | `gateway.settings_api.put_defaults`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `GET /admin/api/settings/effective` | owner-bearer | denied | `gateway.settings_api.get_effective`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
-| `GET /admin/api/settings/effective/export` | owner-bearer | denied | `gateway.settings_api.export_effective`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/settings/instance` | owner-bearer | denied | `gateway.settings_api.get_instance`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `PUT /admin/api/settings/instance` | owner-bearer | denied | `gateway.settings_api.put_instance`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |
 | `GET /admin/api/settings/prompt-memory` | owner-bearer | denied | `gateway.settings_api.get_prompt_memory`; AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required | owner |

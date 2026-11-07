@@ -114,7 +114,7 @@ echo "[harness] Temp workspace: $TMPDIR_ROOT"
 echo "[harness] Port:           $HARNESS_PORT"
 echo "[harness] Admin DB:       $TMPDIR_ROOT/admin.db"
 
-# -- Minimal proxy_config.yml --------------------------------------------------
+# -- Minimal deployment (old single-file shape; split below) ----------------------
 # Generic backends pointing at localhost ports that won't be up -- the gateway
 # starts fine and reports them as unreachable. This exercises the bootstrap
 # path without any owner-specific service details.
@@ -229,6 +229,11 @@ else
   PYTHON="$(which python3)"
 fi
 echo "[harness] Python: $PYTHON"
+
+# The YAML above is in the old single-file shape. Keep its startup keys in the file and import every other block
+# (engines, aliases, images settings) into this run's admin.db, where the gateway reads them.
+env -i PATH="$PATH" HOME="$TMPDIR_ROOT" PYTHONPATH="$REPO_ROOT" PYTHONDONTWRITEBYTECODE=1 \
+  "$PYTHON" "$REPO_ROOT/scripts/ui/seed_config.py" "$TMPDIR_ROOT/proxy_config.yml" "$TMPDIR_ROOT/admin.db"
 
 if [[ "$FIXTURE_MODE" == 1 ]]; then
   STARTUP_LOG="$TMPDIR_ROOT/startup.log"

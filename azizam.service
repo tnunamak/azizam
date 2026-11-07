@@ -13,8 +13,6 @@ RestartSec=10
 
 # Environment
 Environment="AZIZAM_PORT=5000"
-Environment="TTS_ENABLED=true"
-Environment="TTS_HOST=http://127.0.0.1:8001"
 
 # Graceful stop: SIGTERM goes to start.sh only, which forwards it to the proxy
 # and stops LiteLLM after the proxy exits. uvicorn waits up to

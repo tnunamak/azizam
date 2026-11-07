@@ -80,6 +80,10 @@ class Gateway:
         self.process: subprocess.Popen | None = None
 
     def start(self, timeout: float = 120.0) -> None:
+        seeder = self.repo / "scripts" / "ui" / "seed_config.py"
+        if seeder.exists():  # a checkout from C10 on reads only startup keys from the file: the rest goes into admin.db
+            subprocess.run([self.python, str(seeder), str(self.state / "config.yml"), self.env["AZIZAM_ADMIN_DB"]],
+                           cwd=self.state, env=self.env, check=True)
         subprocess.run([self.python, "-c", SEED, self.env["AZIZAM_ADMIN_DB"], self.key], cwd=self.state, env=self.env, check=True)
         log = (self.state / "gateway.log").open("w")
         self.process = subprocess.Popen(

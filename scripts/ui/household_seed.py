@@ -347,12 +347,11 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
     providers.ensure_ledger(paths["provider_spend"])
     now = int(now or os.environ.get("UI_HOUSEHOLD_NOW") or FIXED_NOW)
     rng = random.Random(RNG_SEED)
-    config_path = state / "config.yml"
-    if config_path.is_file():
-        import yaml
-
-        document = yaml.safe_load(config_path.read_text())
-        document["model_aliases"] = {
+    # The aliases this household holds are section settings, not startup keys: serve.py imports this file into
+    # admin.db after the extra config is merged (scripts/ui/seed_config.py).
+    aliases_path = state / "legacy-sections.json"
+    aliases_path.write_text(json.dumps({
+        "model_aliases": {
             "chat": {
                 "stable": {
                     name: STABLE_TARGETS[name] for name in ("fast", "default", "coder")
@@ -363,9 +362,8 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
                 "stable": {"voice": ["tts-1"]},
                 "engines": {"tts-1": {"service": "household-voice", "model": "tts-1"}},
             },
-        }
-        from gateway import private_io
-        private_io.atomic_write_text(config_path, yaml.safe_dump(document))
+        },
+    }), encoding="utf-8")
     reg = registry(port + 1, scenario)
     admin_store.write_service_registry(
         reg, expected_generation=0, updated_by="household-fixture", path=paths["admin"]

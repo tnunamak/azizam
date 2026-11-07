@@ -1,8 +1,8 @@
 # Version control
 .git/
 
-# Operator-local config and secrets -- never bake into the image
-proxy_config.yml
+# Operator-local secrets -- never bake into the image. proxy_config.yml is the startup file: it holds no secret
+# (keys come from the environment), and the image needs its first-run values.
 proxy_api_keys.yml
 .env
 .env.*

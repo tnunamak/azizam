@@ -53,19 +53,25 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
     private_io.ensure_private_dir(home)
     private_io.ensure_private_dir(state / 'images')
     config = state / 'config.yml'
+    sys.path.insert(0, str(REPO / 'scripts' / 'ui'))
+    import seed_config  # noqa: E402
+    import yaml  # noqa: E402
     if FIRST_RUN:
-        import yaml
-        document = yaml.safe_load((REPO / 'first-run.yml').read_text())
+        # The tracked startup file is the first-run file: no engines, no owner, nothing in admin.db.
+        document = yaml.safe_load((REPO / 'proxy_config.yml').read_text())
         document['proxy']['port'] = PORT
         private_io.atomic_write_text(config, yaml.safe_dump(document))
+        legacy = {}
     else:
-        # Backend definitions are seed data, not engine-specific implementation.
-        disabled = '\n'.join(f'  {name}: {{enabled: false, host: 127.0.0.1, port: {ENGINE_PORT}}}'
-                             for name in ('kobold', 'comfyui', 'embeddings'))
-        private_io.atomic_write_text(config, f'proxy:\n  host: 127.0.0.1\n  port: {PORT}\nbackends:\n{disabled}\n  litellm: {{enabled: true, base_url: "http://127.0.0.1:{ENGINE_PORT}", host: 127.0.0.1, port: {ENGINE_PORT}}}\n'
-                          'admin:\n  oidc:\n    cookie:\n      secure: false\n'
-                          'model_aliases:\n  chat:\n    stable:\n      fast: demo-chat\n'
-                          f'images:\n  cache_dir: {state / "images"}\n  vram_estimates_file: {state / "vram.json"}\n')
+        # What this server holds beyond its startup file, in the old single-file shape (seeded into admin.db below).
+        disabled = {name: {'enabled': False, 'host': '127.0.0.1', 'port': ENGINE_PORT}
+                    for name in ('kobold', 'comfyui', 'embeddings')}
+        legacy = {'backends': {**disabled, 'litellm': {'enabled': True, 'base_url': f'http://127.0.0.1:{ENGINE_PORT}',
+                                                       'host': '127.0.0.1', 'port': ENGINE_PORT}},
+                  'model_aliases': {'chat': {'stable': {'fast': 'demo-chat'}}}}
+        startup = {'proxy': {'host': '127.0.0.1', 'port': PORT}, 'admin': {'oidc': {'cookie': {'secure': False}}},
+                   'images': {'cache_dir': str(state / 'images'), 'vram_estimates_file': str(state / 'vram.json')}}
+        private_io.atomic_write_text(config, yaml.safe_dump(startup))
     env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(home),
            'PYTHONPATH': str(REPO), 'PYTHONDONTWRITEBYTECODE': '1',
            'AZIZAM_CONFIG_PATH': str(config), 'AZIZAM_GRACEFUL_SHUTDOWN_S': '1',
@@ -94,8 +100,6 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         env['UI_HOUSEHOLD_PROVIDER_KEY'] = 'isolated-household-provider'
         env['AZIZAM_ADMIN_SESSION_KEY'] = 'household-fixture-session-not-production'
         env['AZIZAM_PROVIDER_LEDGER_DB'] = str(state / 'provider_spend.db')
-        # A household shows the address its members would use, not the loopback test port.
-        env['AZIZAM_PUBLIC_URL'] = 'https://ai.household.example'
         if os.environ.get('UI_HOUSEHOLD_PROTOCOL_FRONTENDS'):
             env['UI_HOUSEHOLD_PROTOCOL_FRONTENDS'] = os.environ['UI_HOUSEHOLD_PROTOCOL_FRONTENDS']
         if os.environ.get('UI_HOUSEHOLD_MANIFEST_PATH'):
@@ -107,22 +111,22 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         manifest['fixture_state'] = state.name
         # web/test-results is a link to the run's scratch; private_io refuses a linked final directory.
         private_io.atomic_write_text(os.path.realpath(manifest_path), json.dumps(manifest))
-    # Extra top-level configuration for a disposable server that needs more than
-    # the browser seed: JSON data merged into config.yml (web/e2e/fixtures/oracle.ts
-    # adds a video workflow and a transcription alias), after any household seed.
+    # Extra top-level configuration for a disposable server that needs more than the browser seed: JSON data in the
+    # old single-file shape (web/e2e/fixtures/oracle.ts adds a video workflow and a transcription alias), merged over
+    # the seed. Startup keys go to the startup file; every other block is imported into admin.db.
     if os.environ.get('UI_E2E_EXTRA_CONFIG'):
-        import yaml
-
-        def merge(into, extra):
-            for key, value in extra.items():
-                if isinstance(value, dict) and isinstance(into.get(key), dict):
-                    merge(into[key], value)
-                else:
-                    into[key] = value
-
-        document = yaml.safe_load(config.read_text())
-        merge(document, json.loads(Path(os.environ['UI_E2E_EXTRA_CONFIG']).read_text()))
-        private_io.atomic_write_text(config, yaml.safe_dump(document))
+        seed_config.merge(legacy, json.loads(Path(os.environ['UI_E2E_EXTRA_CONFIG']).read_text()))
+    if SEED_PROFILE == 'household':
+        aliases = state / 'legacy-sections.json'
+        seed_config.merge(legacy, json.loads(aliases.read_text()))
+        # A household shows the address its members would use, not the loopback test port.
+        seed_config.merge(legacy, {'instance': {'base_url': 'https://ai.household.example'}})
+    extra_startup, legacy = seed_config.split_startup(legacy)
+    if extra_startup:
+        document = yaml.safe_load(config.read_text()) or {}
+        private_io.atomic_write_text(config, yaml.safe_dump(seed_config.merge(document, extra_startup)))
+    if legacy:
+        seed_config.seed_admin_db(state / 'admin.db', legacy, seed_registry=SEED_PROFILE != 'household')
     try:
         servers = [('scripts.ui.fake_engine:app', ENGINE_PORT, {}), ('proxy:app', PORT, {})]
         if FIRST_RUN:

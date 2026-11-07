@@ -40,7 +40,7 @@ def prepare(state: Path):
     for model in ("bench-image", "bench-image-heldout"):
         (state / "workflows" / f"{model}.json").write_text(json.dumps(workflow))
     config = {
-        "proxy": {"host": "127.0.0.1", "port": 18991}, "auth": {"enabled": True},
+        "proxy": {"host": "127.0.0.1", "port": 18991},
         "registry": {"catalog_dir": str(state / "catalog")},
         "backends": {
             **{name: {"enabled": False, "host": "127.0.0.1", "port": 18990}
@@ -57,18 +57,22 @@ def prepare(state: Path):
         },
         "model_aliases": {
             "speech": {"engines": {"bench-tts": {"service": "tts", "model": "bench-tts",
-                                                      "voice_map": {"alloy": "alloy", "nova": "nova"}}}, "stable": {"tts": "bench-tts"}},
-            "transcriptions": {"engines": {"bench-stt": {"service": "stt", "model": "bench-stt"}}, "stable": {"stt": "bench-stt"}},
+                                                      "voice_map": {"alloy": "alloy", "nova": "nova"}}}, "stable": {"tts": ["bench-tts"]}},
+            "transcriptions": {"engines": {"bench-stt": {"service": "stt", "model": "bench-stt"}}, "stable": {"stt": ["bench-stt"]}},
         },
         "images": {"cache_dir": str(state / "images"), "vram_estimates_file": str(state / "vram.json"),
                    "background_removal": {"enabled": False}},
         "voices": {"dir": str(state / "voices")},
-        "model_routing": {"model_dir": str(state / "models"), "gguf_dir": str(state / "models")},
+        "model_routing": {"gguf_dir": str(state / "models")},
     }
     for backend in config["backends"].values():
         if backend.get("enabled"):
             backend["health_endpoint"] = "/health"
     (state / "config.yml").write_text(yaml.safe_dump(config))
+    # Startup keys stay in the file; every other block becomes the owner's records in this run's admin.db.
+    subprocess.run([sys.executable, str(ROOT / "scripts" / "ui" / "seed_config.py"), str(state / "config.yml"), str(state / "admin.db")],
+                   env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(state / "home"), "PYTHONPATH": str(ROOT),
+                        "PYTHONDONTWRITEBYTECODE": "1"}, check=True)
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(state / "home"),
            "PYTHONPATH": str(ROOT), "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
            "TMPDIR": str(state / "tmp"), "XDG_CACHE_HOME": str(state / "home" / ".cache"),
