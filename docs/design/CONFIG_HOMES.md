@@ -957,15 +957,16 @@ write a startup file and put engines, aliases and section settings into admin.db
 
 1. Met. A test checks the tracked file; `first-run.yml` is gone.
 2. Met (C1 to C9 tests, unchanged).
-3. Met for host paths and IP addresses (`tests/test_config_defaults_neutral.py`). No test checks service or workflow ids.
+3. Met (`tests/test_config_defaults_neutral.py`). The defaults are parsed as data: each address (IPv4 and IPv6) is judged on its own, and each service, workflow and model id is checked against what the release ships.
 4. The ratchet keys are unchanged by C10.
 5. Met by the removed-variable scan; section blocks in the file are refused by the startup check.
 6. Met (unchanged).
 7. Met by the fresh-install journey (`tests/e2e/fresh_instance.py`): no admin.db, the tracked file, first-run setup.
 8. Not run against live data. The synthetic equivalent holds: the C0 goldens and the conftest seeding give the same
    effective digest before and after C10.
-9. Deviation. No test derives the key list from the code. The startup schema is closed, the section schemas are closed,
-   and the import-time read scan of C0 covers the code side.
+9. Met (`tests/test_startup_config.py`, `startup_keys_read`). An AST scan of the literal key reads on the loaded startup
+   file (`_bootstrap_config`, `config`, `runtime().config`) gives the top-level keys the code reads. They must equal the
+   keys of `registry/startup.schema.json`. The scan does not see a key built at run time.
 10. Unchanged: `gateway/bootstrap_config.py` is the one reader.
 11. Pending: independent review by the lead.
 

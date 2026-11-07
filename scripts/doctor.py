@@ -173,12 +173,25 @@ def check_auth_env(env: dict[str, str] | None = None) -> CheckResult:
     return warn("auth_env", "no auth environment variables detected")
 
 
-def default_comfy_url() -> str | None:
-    """ComfyUI's address when COMFY_HOST names it. The engine's own address is a record in admin.db (Services), not a
-    file key: pass --comfy-url to probe it."""
-    if os.environ.get("COMFY_HOST"):
-        return os.environ["COMFY_HOST"]
-    return None
+def default_comfy_url(admin_db: Path | None = None) -> str | None:
+    """ComfyUI's address from the service registry, read as the gateway reads it (the owner's patches in admin.db over
+    the release records). None when there is no admin.db, no ComfyUI service or no address. Read-only: it never
+    creates a database."""
+    from gateway import admin_store, service_registry
+
+    path = Path(admin_db or os.environ.get("AZIZAM_ADMIN_DB") or admin_store.DB_PATH)
+    if not path.is_file():
+        return None
+    try:
+        record = admin_store.get_service_registry_json_with_generation(path=path)
+        stored = service_registry._stored_document(record["value_json"]) if record else {}
+        registry, _excluded = service_registry.effective_registry(stored)
+        backend = service_registry.runtime_backends(registry).get("comfyui") or {}
+    except Exception:  # noqa: BLE001 - a doctor report must not die on a damaged store; the probe is skipped
+        return None
+    if not backend.get("host") or not backend.get("port"):
+        return None
+    return f"http://{backend['host']}:{backend['port']}"
 
 
 def run_doctor(

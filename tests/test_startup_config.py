@@ -176,17 +176,18 @@ REMOVED_ENV_OVERRIDES = (
     "UPSTREAM_READ_TIMEOUT", "EMBEDDINGS_TIMEOUT", "AZIZAM_MODEL_COMPAT_ENABLED", "OPENAI_MODEL_ALIASES_FILE",
     "OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE", "IMAGE_MEDIA_JOB_RESUME_ON_START", "AZIZAM_PUBLIC_URL", "AZIZAM_BRAND",
     "COMFY_ENABLED", "COMFY_HOST", "AZIZAM_USER_SELF_SERVICE", "AZIZAM_AUTO_CREATE_PERSONAL_APP",
+    "TTS_ENABLED", "TTS_HOST",
 )
 
 
 def test_no_gateway_code_reads_an_environment_override_of_a_setting_that_lives_in_admin_db():
     """F4 (docs/design/CONFIG_HOMES.md): an env var that overrides an owner setting is a second writable home. The
-    variables listed in docs/CONFIG.md as removed must stay out of the gateway. (``scripts/safe-restart`` still reads
-    ``AZIZAM_PUBLIC_URL`` from the operator's shell; it is not gateway code.)"""
+    variables listed in docs/CONFIG.md as removed must stay out of the gateway and out of scripts/*.py. (The shell script
+    ``scripts/safe-restart`` still reads ``AZIZAM_PUBLIC_URL`` from the operator's shell; it is not scanned.)"""
     from pathlib import Path
 
     root = Path(__file__).resolve().parent.parent
-    sources = [root / "proxy.py", *sorted((root / "gateway").glob("*.py"))]
+    sources = [root / "proxy.py", *sorted((root / "gateway").glob("*.py")), *sorted((root / "scripts").glob("*.py"))]
     found = []
     for path in sources:
         text = path.read_text(encoding="utf-8")
@@ -198,3 +199,77 @@ def test_no_gateway_code_reads_an_environment_override_of_a_setting_that_lives_i
     assert found == []
     documented = (root / "docs" / "CONFIG.md").read_text(encoding="utf-8")
     assert [name for name in REMOVED_ENV_OVERRIDES if f"`{name}`" not in documented] == [], "list each removed variable in docs/CONFIG.md"
+
+
+def test_no_unit_file_or_shell_script_sets_a_removed_environment_variable():
+    """A unit file or script that still sets a removed variable tells an operator it does something. ``scripts/safe-restart``
+    reads ``AZIZAM_PUBLIC_URL`` from the operator's shell on purpose and is left out."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    files = [root / "azizam.service", *sorted((root / "scripts").glob("*.sh")), *sorted((root / "docs" / "ops").glob("*.service"))]
+    setter = re.compile(r"(?<![\w])(?:" + "|".join(REMOVED_ENV_OVERRIDES) + r")=")
+    found = [f"{path.name}: {match.group(0)}" for path in files if path.is_file()
+             for match in setter.finditer(path.read_text(encoding="utf-8"))]
+    assert found == []
+
+
+# --- done gate item 9: the schema's top-level keys are the keys the code reads -------------------------------------------
+
+def startup_keys_read(sources: dict[str, str], section_ids: set[str]) -> set[str]:
+    """Top-level keys that code reads from the loaded startup file.
+
+    Three objects hold it: ``_bootstrap_config`` (the raw file), ``config`` and ``runtime().config`` (the file merged with
+    the sections and the registry's ``backends``). Every literal key read (``x.get("k")`` or ``x["k"]``, a module-level
+    string constant counts as literal) is collected. A key that is a section id, or ``backends``, is read from the merged
+    config unless the read is on ``_bootstrap_config``: a section id that the schema also lists (``images``) is a startup
+    key only through its raw reads. Limits: a key built at run time is not seen (the scan reports any it meets), and a
+    local variable that is also called ``config`` and is not the loaded file would add a key; the test then names it.
+    """
+    import ast
+
+    found: set[str] = set()
+    for source in sources.values():
+        tree = ast.parse(source)
+        constants = {node.targets[0].id: node.value.value for node in tree.body
+                     if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+                     and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" and node.args:
+                key_node, receiver = node.args[0], ast.unparse(node.func.value)
+            elif isinstance(node, ast.Subscript):
+                key_node, receiver = node.slice, ast.unparse(node.value)
+            else:
+                continue
+            if receiver not in ("config", "_bootstrap_config", "runtime().config"):
+                continue
+            key = key_node.value if isinstance(key_node, ast.Constant) else constants.get(getattr(key_node, "id", ""))
+            if not isinstance(key, str):
+                continue
+            if receiver == "_bootstrap_config" or (key not in section_ids and key != "backends"):
+                found.add(key)
+    return found
+
+
+def test_the_top_level_keys_of_the_startup_schema_are_the_keys_the_code_reads():
+    """Both ways: a key the schema lists that nothing reads is dead, a key the code reads that the schema lacks is refused
+    at start (the closed schema) and would break the gateway."""
+    from pathlib import Path
+
+    from gateway import startup_config
+
+    root = Path(__file__).resolve().parent.parent
+    sources = {name: (root / name).read_text(encoding="utf-8")
+               for name in ("proxy.py", "gateway/bootstrap_config.py", "gateway/request_body_limits.py")}
+    sections = {path.name.removesuffix(".schema.json") for path in (root / "registry" / "defaults").glob("*.schema.json")}
+    read = startup_keys_read(sources, sections)
+    declared = set(startup_config.load_schema()["properties"])
+    assert read - declared == set(), f"the code reads startup keys the schema does not list: {sorted(read - declared)}"
+    assert declared - read == set(), f"the schema lists startup keys no code reads: {sorted(declared - read)}"
+
+
+def test_the_startup_key_scan_sees_a_new_read_and_ignores_a_section_read():
+    source = ('SECTION = "audio"\n_bootstrap_config.get(SECTION)\nconfig.get("zzz")\nruntime().config["images"]\n'
+              'config["backends"]\nother.get("nope")\n')
+    assert startup_keys_read({"x.py": source}, {"images", "audio"}) == {"audio", "zzz"}
