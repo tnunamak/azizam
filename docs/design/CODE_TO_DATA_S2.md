@@ -275,10 +275,12 @@ This is the resolver half. The upload capability is the next step, after S2.4 ow
 **Decisions the design did not settle**
 
 - Disclosure rule: local passes, remote needs a plan grant, unknown is refused (above).
-- `created` detection. An ingest writes a duty row `(asset_id, owner_key)` when the planned asset id did not exist, or
-  when another ingest's row for the same asset is still waiting for the sweep (the file is temporary for this owner
-  too). The check runs inside the write transaction that writes the ingest marker, and the sweep removes files inside
-  its own write transaction, so a file the ingest saw cannot be removed before the marker holds it. The planned id is
+- `created` detection. An ingest writes a duty row `(asset_id, owner_key)` only for a claim it adds: when this owner
+  held no claim on the planned asset id before (a file that is not there has no claim). A claim the owner already
+  held, such as a file in their library, never gets a removal duty, whatever other owners owe; an earlier rule that
+  also owed a removal whenever another owner's row was pending would have removed such a claim. The check runs inside
+  the write transaction that writes the ingest marker, and the sweep removes files inside its own write transaction,
+  so a claim the ingest saw cannot be removed before the marker holds it. The planned id is
   the sha256 of the metadata-stripped bytes, which the store computes. Residual: a type whose stripper is not
   idempotent could plan an id that differs from the stored one. The row would then name a file that does not exist,
   and the discard would find nothing. No bundled type does this.

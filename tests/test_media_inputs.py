@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import contextlib
 import hashlib
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -18,6 +20,7 @@ from typing import Any
 import pytest
 
 from gateway import media_inputs, media_jobs
+from gateway.media_input_assets import CacheAssetPort
 from gateway.media_input_leases import MediaInputLedger
 from gateway.media_inputs import (
     DISCLOSURE_REFUSED, EMPTY, FETCH_FAILED, FORBIDDEN, MISSING, TOO_LARGE, UNSUPPORTED, Destination, Holder,
@@ -52,6 +55,9 @@ class FakeAssets:
 
     def exists(self, asset_id):
         return asset_id in self.files
+
+    def has_claim(self, asset_id, owner_key):
+        return asset_id in self.files and (not owner_key or owner_key in self.owners.get(asset_id, set()))
 
     def size(self, asset_id):
         return len(self.files[asset_id])
@@ -517,7 +523,7 @@ def test_the_sweep_never_removes_a_file_that_existed_before_the_ingest(db, clock
 
 def test_a_marker_inside_the_grace_period_survives_the_sweep(db, clock):
     resolver, assets, _ = build(db, clock)
-    resolver._ledger.begin_effect("mie_live", owner_key="alice", asset_id="img_" + "1" * 64, asset_exists=lambda: False)
+    resolver._ledger.begin_effect("mie_live", owner_key="alice", asset_id="img_" + "1" * 64, already_claimed=lambda: False)
     assets.files["img_" + "1" * 64] = PNG
     clock.now += 60
     assert resolver.sweep() == 0 and rows(db, "media_input_effect") == 1
@@ -594,7 +600,7 @@ def test_an_ingest_marker_written_after_the_scan_keeps_its_file(db, clock):
     found = ledger.sweep_scan()
     assert [item.asset_id for item in found] == [asset]
     # A second ingest of the same bytes starts after the scan: it writes its marker, then the lease.
-    ledger.begin_effect("mie_late", owner_key="alice", asset_id=asset, asset_exists=lambda: True)
+    ledger.begin_effect("mie_late", owner_key="alice", asset_id=asset, already_claimed=lambda: True)
     assert ledger.discard_unheld(found, assets.discard) == 0
     assert asset in assets.files
     holder = Holder("request", "r_late")
@@ -657,28 +663,56 @@ def test_a_removal_cannot_run_between_the_existence_check_and_the_marker(db, clo
     resolver, assets, asset = released_upload(db, clock)
     ledger = resolver._ledger
     found = ledger.sweep_scan()
-    racer = threading.Thread(target=lambda: ledger.discard_unheld(found, assets.discard))
-    real_exists = assets.exists
+    errors: list[BaseException] = []
+
+    def race():
+        try:
+            ledger.discard_unheld(found, assets.discard)
+        except BaseException as exc:  # noqa: BLE001 - the test reports it below
+            errors.append(exc)
+
+    racer = threading.Thread(target=race)
+    real_has_claim = assets.has_claim
     fired: list[bool] = []
 
-    def exists_then_race(asset_id):
-        result = real_exists(asset_id)
+    def check_then_race(asset_id, owner_key):
+        result = real_has_claim(asset_id, owner_key)
         if not fired:
             fired.append(True)
+            # The check runs inside the ledger's write transaction: no other writer can start one now.
+            probe = sqlite3.connect(db, timeout=0)
+            try:
+                with pytest.raises(sqlite3.OperationalError):
+                    probe.execute("BEGIN IMMEDIATE")
+            finally:
+                probe.close()
             # The sweep's removal starts right after the check. It finishes before the marker if nothing orders them.
             racer.start()
             racer.join(0.5)
         return result
 
-    assets.exists = exists_then_race
+    assets.has_claim = check_then_race
     bob = Holder("request", "r_bob")
     resolver.resolve_upload(person("alice"), PNG, holder=bob, destination=LOCAL, accepts=IMAGES)
     racer.join()
-    assets.exists = real_exists
+    assets.has_claim = real_has_claim
+    assert not errors, errors
     assert fired and asset in assets.files, "the ingest's file is held"
     resolver.release(bob)
     resolver.sweep()
     assert assets.files == {} and assets.owners == {}, "nothing is left"
+
+
+# Revert: ``begin_effect_in`` owes a removal whenever another owner's removal is pending.
+def test_an_ingest_never_owes_the_removal_of_a_claim_the_owner_already_held(db, clock):
+    resolver, assets, asset = released_upload(db, clock)  # alice's upload, released, its removal pending
+    assert assets.add(PNG, "bob") == asset  # bob keeps the same bytes in his own library
+    bob = Holder("request", "r_bob")
+    resolver.resolve_upload(person("bob"), PNG, holder=bob, destination=LOCAL, accepts=IMAGES)
+    resolver.release(bob)
+    resolver.sweep()
+    assert asset in assets.files and assets.owners[asset] == {"bob"}, "bob's own claim stays; alice's upload goes"
+    assert rows(db, "media_input_created") == 0
 
 
 def test_an_erased_owners_upload_is_removed_by_the_sweep(db, clock):
@@ -701,3 +735,21 @@ def test_a_failed_removal_keeps_its_duty_for_the_next_pass(db, clock):
         resolver._ledger.sweep(fail)
     assert resolved.ref.asset_id in assets.files and rows(db, "media_input_created") == 1
     assert resolver._ledger.sweep(real) == 1 and resolved.ref.asset_id not in assets.files
+
+
+def test_the_store_port_names_a_claim_only_for_an_owner_its_sidecar_lists(tmp_path: Path):
+    files = {"img_" + "a" * 64: tmp_path / "a.png"}
+    sidecars = {key: path.with_suffix(".json") for key, path in files.items()}
+    asset = next(iter(files))
+    port = CacheAssetPort(
+        parse=lambda a: None, path_for=files.get, may_read=lambda a, auth: True, deliver=lambda p: p.read_bytes(),
+        owner_key=lambda auth: None, strip=lambda data, suffix: data, store=lambda *a, **k: asset,
+        read_metadata=lambda a: json.loads(sidecars[a].read_text()) if sidecars[a].exists() else {},
+        write_metadata=lambda a, m: sidecars[a].write_text(json.dumps(m)), metadata_path=sidecars.get,
+        lock=contextlib.nullcontext(),
+    )
+    assert not port.has_claim(asset, "alice") and not port.has_claim(asset, ""), "no file, no claim"
+    files[asset].write_bytes(PNG)
+    sidecars[asset].write_text(json.dumps({"owner_key_hashes": ["bob"]}))
+    assert port.has_claim(asset, "bob") and not port.has_claim(asset, "alice")
+    assert port.has_claim(asset, ""), "with no owner key, a stored file counts"

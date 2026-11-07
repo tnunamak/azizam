@@ -71,18 +71,16 @@ def _has_tables(conn: sqlite3.Connection) -> bool:
 
 
 def begin_effect_in(conn: sqlite3.Connection, effect_id: str, *, owner_key: str, asset_id: str,
-                    asset_exists: Callable[[], bool], now: float) -> bool:
+                    already_claimed: Callable[[], bool], now: float) -> bool:
     """The marker for one ingest, written before the file is stored. ``asset_id`` is the id the store will give.
 
-    The ingest owes the file's removal when ``asset_exists()`` says the file is not there, or when a row for the same
-    file is still waiting for the sweep. The answer comes from inside this write transaction, and the sweep removes
-    files inside its own, so the two cannot interleave: a file seen here stays until this marker is gone. Returns
-    whether this owner now owes the removal."""
+    The ingest owes the removal of the claim it adds: it owes it when ``already_claimed()`` says this owner had no
+    claim on the file before (a file that is not there has no claim). A claim the owner already held, such as a file
+    kept in their library, is never put under a removal duty, whatever other owners owe. The answer comes from inside
+    this write transaction, and the sweep removes files inside its own, so the two cannot interleave: a claim seen here
+    stays until this marker is gone. Returns whether this owner now owes the removal."""
     _require_transaction(conn)
-    present = asset_exists()
-    owed = not present or conn.execute(
-        "SELECT 1 FROM media_input_created WHERE asset_id = ? LIMIT 1", (asset_id,)
-    ).fetchone() is not None
+    owed = not already_claimed()
     if owed:
         conn.execute(
             "INSERT OR IGNORE INTO media_input_created (asset_id, owner_key, created) VALUES (?, ?, ?)",
@@ -222,12 +220,12 @@ class MediaInputLedger:
             conn.commit()
 
     def begin_effect(self, effect_id: str, *, owner_key: str, asset_id: str,
-                     asset_exists: Callable[[], bool]) -> bool:
-        """Write the marker, and the owner's removal duty when the file is not there, in one write transaction.
-        ``asset_exists`` is called inside it. Returns whether the owner owes the removal."""
+                     already_claimed: Callable[[], bool]) -> bool:
+        """Write the marker, and the owner's removal duty when the ingest adds the owner's claim, in one write
+        transaction. ``already_claimed`` is called inside it. Returns whether the owner owes the removal."""
         with self._write() as conn:
             return begin_effect_in(conn, effect_id, owner_key=owner_key, asset_id=asset_id,
-                                   asset_exists=asset_exists, now=self._clock())
+                                   already_claimed=already_claimed, now=self._clock())
 
     def lease(self, lease_id: str, *, asset_id: str, owner_key: str, holder_kind: str, holder_id: str,
               effect_id: str | None = None) -> None:
