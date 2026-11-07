@@ -210,7 +210,8 @@ def world(fake_upstreams, monkeypatch, tmp_path):
             return httpx.Response(200, json={"prompt_id": "matrix-job"})
         if request.url.path == "/history/matrix-job":
             return httpx.Response(200, json={"matrix-job": {"status": {"completed": True}, "outputs": {
-                "6": {"videos" if video else "images": [{"filename": filename, "type": "output"}]}}}})
+                # The save node of the workflow each shape runs: the rife video one, the qwen image edit one.
+                "6" if video else "10": {"images": [{"filename": filename, "type": "output"}]}}}})
         if request.url.path == "/view":
             return httpx.Response(200, content=b"rendered-video" if video else comfy_png(),
                                   headers={"content-type": "video/mp4" if video else "image/png"})

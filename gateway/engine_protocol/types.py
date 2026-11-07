@@ -107,6 +107,9 @@ class JobStatus:
     state: JobState
     detail: str | None = None
     assets: tuple[str, ...] = ()   # the engine's handles for finished artifacts; ``fetch_assets`` turns them into AssetRefs
+    # What the adapter looked at to say ``succeeded``, for the same adapter to read the named results from without a second
+    # look at the engine. Core never reads it, and it takes no part in equality.
+    record: Any = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)

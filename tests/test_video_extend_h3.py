@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from _fake_comfy_video import succeeded_history  # noqa: E402
 from gateway import media_jobs, video_extend as ve, video_extend_h3 as h3, video_inputs  # noqa: E402
 from test_video_remix_replace import (  # noqa: E402
     NEW_ID,
@@ -314,6 +315,8 @@ class H3RouteBase(RemixReplaceBase):
         self.stack.enter_context(patch.object(media_jobs, "DB_PATH", Path(self._tmp.name) / "m.db"))
         proxy._video_job_records[SOURCE_PROMPT_ID].update(
             {"model": "minimax-h3", "resolved_model": "video-minimax-h3-t2v", "size": "960x544"})
+        # The source was made by that workflow, so its history holds the file on the node the workflow's selector names.
+        self.comfy.history[SOURCE_PROMPT_ID] = succeeded_history(node="18")
 
     def _extend(self, **body):
         body.setdefault("video", {"id": SOURCE_ID})

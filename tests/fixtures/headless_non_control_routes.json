@@ -48,6 +48,7 @@
   ["GET", "/gateway/v1/media/jobs/{job_id}", "gateway.api.get_media_job"],
   ["GET", "/gateway/v1/media/jobs/{job_id}/content", "proxy.gateway_media_job_content"],
   ["GET", "/gateway/v1/media/jobs/{job_id}/events", "gateway.api.list_media_job_events"],
+  ["GET", "/gateway/v1/media/jobs/{job_id}/results/{name:path}", "gateway.api.get_media_job_result"],
   ["GET", "/gateway/v1/models/{model}/capabilities", "gateway.api.get_model_capabilities"],
   ["GET", "/gateway/v1/providers", "proxy.provider_native_list"],
   ["GET", "/gateway/v1/providers/{provider}", "proxy.provider_native_detail"],

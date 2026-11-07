@@ -19531,6 +19531,67 @@
         ]
       }
     },
+    "/gateway/v1/media/jobs/{job_id}/results/{name}": {
+      "get": {
+        "description": "One published JSON result of a job. Every refusal is the same 404: no such job or result, a result that is not\npublished (a failed or running job's stage is never readable), an erased or expired value, another maker.",
+        "operationId": "get_media_job_result_gateway_v1_media_jobs__job_id__results__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Get Media Job Result",
+        "tags": [
+          "gateway-discovery"
+        ]
+      }
+    },
     "/gateway/v1/models/{model}/capabilities": {
       "get": {
         "operationId": "get_model_capabilities_gateway_v1_models__model__capabilities_get",

@@ -1136,7 +1136,6 @@ _GRAPH_CAPABILITY = "images"
 _VIDEO_GRAPH_CAPABILITY = "videos"
 _AUDIO_GRAPH_CAPABILITY = "audio.generate"
 # What a finished prompt names, read by the adapter that knows the engine's answers.
-_first_video_output = node_graph.first_video_output
 _queue_prompt_ids = node_graph.queue_prompt_ids
 
 
@@ -8121,6 +8120,67 @@ async def _request_is_disconnected(request: Request | None) -> bool:
         return False
 
 
+class _SelectedImages(list):
+    """The image bytes of one round, with the name of the result they came from (the contract's output)."""
+
+    result_name: str | None = None
+
+
+def _graph_result_source(manifest: Mapping[str, Any] | None, capability: str = "images") -> dict[str, Any]:
+    """What a round reads its results by: the graph binding of the workflow's manifest, and the contract's outputs.
+
+    A workflow with no manifest, or a binding with no selectors, is read by the legacy collection while
+    ``workflow_execution.legacy_output_collection`` allows it (CODE_TO_DATA_S2, D5).
+    """
+    if not isinstance(manifest, Mapping):
+        return {}
+    binding = (manifest.get("bindings") or {}).get(_graph_adapter(capability).binding)
+    return {"binding": binding if isinstance(binding, Mapping) else None, "contract_outputs": manifest.get("outputs")}
+
+
+def _video_manifest_of_job(prompt_id: str) -> dict | None:
+    """The manifest of the workflow a tracked video job was made from, or None (an untracked job, or a workflow with none)."""
+    name = (_video_job_records.get(prompt_id) or {}).get("resolved_model")
+    _, workflow_cfg = _resolve_video_workflow(name) if isinstance(name, str) else (None, None)
+    if not isinstance(workflow_cfg, Mapping):
+        return None
+    try:
+        return _find_video_manifest(str(name), dict(workflow_cfg))
+    except ManifestError:
+        return None
+
+
+def _select_video_file(job: Mapping[str, Any], manifest: Mapping[str, Any] | None) -> tuple[str | None, dict[str, Any] | None, Response | None]:
+    """The video file of a finished prompt, by the selector of the workflow's binding (CODE_TO_DATA_S2, D5).
+
+    Returns ``(result name, file, refusal)``. No file is ``(None, None, None)``, so a caller answers as it always has when
+    the prompt produced no video. A refused result is a response that names a code and no value. The file is read within
+    the fetch gate by the caller."""
+    adapter = _graph_adapter(_VIDEO_GRAPH_CAPABILITY)
+    source = _graph_result_source(manifest, _VIDEO_GRAPH_CAPABILITY)
+    try:
+        picked = adapter.collect(
+            job, source.get("binding") or {}, source.get("contract_outputs") or {result_bundle.DEFAULT_NAME: {}},
+            limits=result_bundle.limits_from_config(runtime().config),
+            legacy_allowed=output_selectors.legacy_collection_enabled(runtime().config),
+            history_bytes=len(json.dumps(job, default=str).encode("utf-8")),
+            legacy_kind="video",
+        )
+    except node_graph.SelectionRefused as refusal:
+        if refusal.code == "result_missing":
+            return None, None, None
+        return None, None, _result_refusal_response(refusal.code, 502)
+    name, files = next(iter(picked.items()), (None, ()))
+    file = files[0] if files else None
+    if file is not None and not str(file["filename"]).lower().endswith(node_graph.VIDEO_SUFFIXES):
+        file = None
+    return name, dict(file) if file else None, None
+
+
+def _refused_result_status(code: str) -> int:
+    return 504 if code == "fetch_timeout" else 502
+
+
 async def _graph_run_round(
     client: httpx.AsyncClient,
     workflow: dict,
@@ -8130,6 +8190,8 @@ async def _graph_run_round(
     vram_probe: Optional[_VramProbe] = None,
     request: Request | None = None,
     max_wait_s: int | None = None,
+    binding: Mapping[str, Any] | None = None,
+    contract_outputs: Mapping[str, Any] | None = None,
 ) -> tuple[Optional[Response], list[bytes]]:
     """Submit a single prompt to the graph engine and harvest the resulting image bytes.
 
@@ -8244,7 +8306,21 @@ async def _graph_run_round(
             await _graph_cancel(client, prompt_id, headers, reason="image timeout")
             return _image_generation_timeout_response(queue_position), []
 
-        images = await adapter.fetch_outputs(graph.conn, finished, headers=headers, session=graph)
+        # The files are the ones the binding's selectors name (D5), fetched inside the fetch gate and within the D6
+        # limits. A run with no file for the selector answers as an empty round always has; any other refusal says so.
+        try:
+            picked = await adapter.fetch_selected(
+                graph.conn, finished, binding or {}, contract_outputs or {result_bundle.DEFAULT_NAME: {}},
+                limits=result_bundle.limits_from_config(runtime().config),
+                legacy_allowed=output_selectors.legacy_collection_enabled(runtime().config),
+                headers=headers, session=graph,
+            )
+        except node_graph.SelectionRefused as refusal:
+            if refusal.code != "result_missing":
+                return _result_refusal_response(refusal.code, _refused_result_status(refusal.code)), []
+            picked = {}
+        images = _SelectedImages(raw for files in picked.values() for raw in files)
+        images.result_name = next(iter(picked)) if len(picked) == 1 else None
         return None, images
     except asyncio.CancelledError:
         if prompt_id:
@@ -8459,6 +8535,8 @@ async def _generate_images_with_adaptive_batching(
         )
 
     images_collected: list[bytes] = []
+    # The contract's output the images came from; the job's bundle names its result by it.
+    result_name: str | None = None
     images_remaining = images_total
     rounds_run = 0
     seed_offset = 0
@@ -8542,6 +8620,7 @@ async def _generate_images_with_adaptive_batching(
             label=f"image round {rounds_run}/{max_rounds} (target={batch_target})",
             vram_probe=probe,
             request=request,
+            **_graph_result_source(manifest),
         )
         if err is not None and not models_freed and _image_free_vram_on_exhaustion():
             try:
@@ -8562,6 +8641,7 @@ async def _generate_images_with_adaptive_batching(
                         client, round_workflow, headers,
                         label=f"image round {rounds_run}/{max_rounds} after model unload",
                         request=request,
+                        **_graph_result_source(manifest),
                     )
         if models_freed:
             response_headers["X-ComfyUI-Models-Freed"] = "true"
@@ -8640,6 +8720,7 @@ async def _generate_images_with_adaptive_batching(
 
         images_collected.extend(round_images)
         images_remaining -= len(round_images)
+        result_name = getattr(round_images, "result_name", None) or result_name
 
         # VRAM measurement after the first successful round.
         # Preferred: in-run per-process probe measures flux's MARGINAL
@@ -8771,7 +8852,7 @@ async def _generate_images_with_adaptive_batching(
         flush=True,
     )
 
-    return await asyncio.to_thread(_build_image_response_payload,
+    delivered = await asyncio.to_thread(_build_image_response_payload,
         request,
         images_collected,
         response_format,
@@ -8785,6 +8866,9 @@ async def _generate_images_with_adaptive_batching(
         workflow_name=_workflow_display_name(manifest),
         made_from=made_from,
     )
+    # A job that runs this route names its bundle result by the output the selector read.
+    delivered.selected_result = result_name
+    return delivered
 
 
 async def proxy_image_request(request, auth_context, receipt=None):
@@ -11214,7 +11298,9 @@ async def _load_completed_video_bytes(
                 f"Source video is not completed (status={_openai_video_status(status)})",
                 param=param, code="video_not_ready",
             )
-        file_info = _first_video_output(job)
+        _, file_info, refusal = _select_video_file(job, _video_manifest_of_job(prompt_id))
+        if refusal is not None:
+            raise _VideoAssetError("Source video result could not be read", param=param, status=refusal.status_code)
         if not file_info:
             raise _VideoAssetError("Source video has no output", param=param, status=404)
         params = {"filename": file_info["filename"], "type": file_info["type"]}
@@ -11222,7 +11308,8 @@ async def _load_completed_video_bytes(
             params["subfolder"] = file_info["subfolder"]
         graph = _graph(client, "videos")
         try:
-            async with graph.view_stream(params, headers={**headers, "accept-encoding": "identity"}) as view:
+            async with output_selectors.FETCH_GATE.slot(result_bundle.limits_from_config(runtime().config)), \
+                    graph.view_stream(params, headers={**headers, "accept-encoding": "identity"}) as view:
                 if view.status_code != 200:
                     raise _VideoAssetError(f"{_graph_adapter('videos').label} /view error: {view.status_code}",
                                            param=param, status=502)
@@ -11231,6 +11318,9 @@ async def _load_completed_video_bytes(
                 except media_fetch.MediaFetchError as exc:
                     raise _VideoAssetError(str(exc), param=param) from exc
                 return data, Path(file_info["filename"]).name
+        except output_selectors.FetchRefused as refused:
+            raise _VideoAssetError("Source video result could not be read", param=param,
+                                   status=_refused_result_status(refused.code), code=refused.code) from refused
         except TransportFailure as error:
             # A transport failure of this read has always reached the callers as the client's own error (a media
             # job records its type name), so the original error is raised again, not the adapter's typed failure.
@@ -12968,7 +13058,9 @@ async def proxy_graph_video_content(
                     media_type="application/json"
                 )
 
-            file_info = _first_video_output(job)
+            selected_name, file_info, refusal = _select_video_file(job, _video_manifest_of_job(prompt_id))
+            if refusal is not None:
+                return refusal
             if not file_info:
                 return Response(
                     content=json.dumps({"error": {"message": "No video output found in job", "type": "api_error"}}),
@@ -12976,13 +13068,16 @@ async def proxy_graph_video_content(
                     media_type="application/json"
                 )
 
-            params = {"filename": file_info["filename"], "type": file_info["type"]}
-            if file_info["subfolder"]:
-                params["subfolder"] = file_info["subfolder"]
-            view_resp = await _graph(client, "videos").view(params, headers=headers)
-            if view_resp.status != 200:
+            video_graph = _graph(client, "videos")
+            try:
+                video_bytes = await _graph_adapter("videos").fetch_file(
+                    video_graph.conn, file_info, limits=result_bundle.limits_from_config(runtime().config),
+                    headers=headers, session=video_graph)
+            except node_graph.SelectionRefused as refused:
+                return _result_refusal_response(refused.code, _refused_result_status(refused.code))
+            except ProtocolUpstreamError as error:
                 return Response(
-                    content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} /view error: {view_resp.status}",
+                    content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} /view error: {error.status}",
                                                   "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json"
@@ -12996,7 +13091,6 @@ async def proxy_graph_video_content(
                 ".mkv": "video/x-matroska",
             }.get(ext, "application/octet-stream")
 
-            video_bytes = view_resp.raw
             record = _video_job_records.get(prompt_id) or {}
             if record.get("audio") is False:
                 # The request asked for a video-only asset: remove the track
@@ -13075,7 +13169,7 @@ async def proxy_graph_video_content(
                     media_type="application/json",
                 )
 
-            return Response(
+            delivered = Response(
                 content=video_bytes,
                 status_code=200,
                 media_type=content_type,
@@ -13083,6 +13177,9 @@ async def proxy_graph_video_content(
                     "Content-Disposition": f'inline; filename="{file_info["filename"]}"',
                 },
             )
+            # A job that runs this route names its bundle result by the output the selector read.
+            delivered.selected_result = selected_name
+            return delivered
     except Exception as e:
         if isinstance(e, TransportFailure) and e.kind == "unreachable":
             return _graph_video_unavailable_response()
@@ -15214,6 +15311,23 @@ def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str,
     return owns_record(kind, record, viewer=viewer_from_auth(auth_context, owner_keys=()), apps=apps)
 
 
+def _gateway_result_reader(request: Request) -> result_bundle.Reader | None:
+    """Who is reading a job result: the App's owner scope and the person, credential or MCP connection the request ran
+    as. A request that resolved no identity reads nothing."""
+    from gateway.ownership import stored_owner_key
+    identity = _auth_context_from_scope(request).identity
+    if identity is None:
+        return None
+    scope = stored_owner_key(getattr(identity, "key_hash", None), app_id=getattr(identity, "app_id", None),
+                             path=ADMIN_STORE.path)
+    if not scope:
+        return None
+    return result_bundle.Reader(
+        owner_scope=scope, person_id=getattr(identity, "person_id", None) or None,
+        credential_id=getattr(identity, "credential_id", None) or None,
+        connection_id=getattr(identity, "connection_id", None) or None)
+
+
 async def _gateway_media_job_submitter(
     *,
     request: Request,
@@ -15426,6 +15540,7 @@ app.include_router(
         media_job_canceler=lambda job_id, **kwargs: _cancel_media_job(job_id, **kwargs),
         record_authorizer=_gateway_record_authorizer,
         record_scope_provider=_gateway_record_scope,
+        result_reader_resolver=_gateway_result_reader,
     )
 )
 
@@ -21260,6 +21375,7 @@ async def _run_single_graph_image(
         dict(headers),
         label,
         request=request,
+        **_graph_result_source(manifest),
     )
     if err is not None:
         return err, None
@@ -23677,18 +23793,24 @@ async def _run_image_media_job(job_id: str) -> None:
                         http_status=status_code,
                     )
                     return
-                media_jobs.update_status(
-                    job_id,
-                    media_jobs.STATUS_SUCCEEDED,
-                    progress=100,
-                    add_assets=assets,
-                    metadata_patch={
-                        "attempts": attempt,
-                        "last_http_status": status_code,
-                        "completed_at": int(time.time()),
-                    },
-                    path=media_jobs.DB_PATH,
-                )
+                # The job lists its assets as before; its result bundle mirrors that list under the output the
+                # selector read (CODE_TO_DATA_S2, D4). The sizes come from the stored files, so the list is unchanged.
+                try:
+                    result_bundle.mirror_assets(
+                        job_id, assets, limits=result_bundle.limits_from_config(runtime().config),
+                        name=getattr(response, "selected_result", None) or result_bundle.DEFAULT_NAME,
+                        stored=_stored_asset_facts(assets),
+                        progress=100,
+                        metadata_patch={
+                            "attempts": attempt,
+                            "last_http_status": status_code,
+                            "completed_at": int(time.time()),
+                        },
+                        path=media_jobs.DB_PATH,
+                    )
+                except result_bundle.ResultRefused as exc:
+                    _fail_refused_result(job_id, exc, status_code, mark_failed=_mark_image_media_job_failed)
+                    return
                 media_jobs.append_event(
                     job_id,
                     "succeeded",
@@ -24219,11 +24341,28 @@ def _mark_audio_media_job_failed(
 _RESULT_REFUSED = "The result was larger or other than the gateway allows, so it was not delivered."
 
 
-def _fail_refused_result(job_id: str, refused: result_bundle.ResultRefused, http_status: int) -> None:
-    """End a job whose result broke a limit (CODE_TO_DATA_S2, D6). The message and the code name no value."""
+def _fail_refused_result(job_id: str, refused: result_bundle.ResultRefused, http_status: int, *,
+                         mark_failed: Callable[..., None] = _mark_audio_media_job_failed) -> None:
+    """End a job whose result broke a limit (CODE_TO_DATA_S2, D6). The message and the code name no value.
+    ``mark_failed`` is the route's own way to fail a job (it also clears the route's saved request)."""
     _MEDIA_JOB_LOG.warning("job %s: a result was refused: %s", job_id, refused.code)
-    _mark_audio_media_job_failed(job_id, _RESULT_REFUSED, http_status=http_status, error_info={
+    mark_failed(job_id, _RESULT_REFUSED, http_status=http_status, error_info={
         "error_code": "result_refused", "error_category": "upstream", "retryable": False})
+
+
+def _stored_asset_facts(assets: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """The bytes and media type of each stored file in a job's asset list, by asset id (a file that is gone counts as 0)."""
+    facts: dict[str, dict[str, Any]] = {}
+    for asset in assets:
+        asset_id = asset.get("asset_id")
+        if isinstance(asset_id, str):
+            path = asset_cache_path(asset_id)
+            try:
+                size = path.stat().st_size if path is not None else 0
+            except OSError:
+                size = 0
+            facts[asset_id] = {"size_bytes": size, "media_type": asset_media_type(asset_id)}
+    return facts
 
 
 def _result_refusal_response(code: str, status_code: int) -> Response:
@@ -24974,18 +25113,24 @@ async def _run_video_media_job(job_id: str) -> None:
                 content_url=build_signed_asset_url(request_shim, asset_id),
                 media_type=asset_media_type(asset_id),
             )
-            media_jobs.update_status(
-                job_id,
-                media_jobs.STATUS_SUCCEEDED,
-                progress=100,
-                add_assets=[asset],
-                metadata_patch={
-                    "completed_at": int(time.time()),
-                    "upstream_video_id": video_id,
-                    **_job_metadata_mode_patch(),
-                },
-                path=media_jobs.DB_PATH,
-            )
+            # The job lists its asset as before; its result bundle mirrors that list under the output the selector
+            # read (CODE_TO_DATA_S2, D4). The size comes from the stored file, so the list is unchanged.
+            try:
+                result_bundle.mirror_assets(
+                    job_id, [asset], limits=result_bundle.limits_from_config(runtime().config),
+                    name=getattr(content_response, "selected_result", None) or result_bundle.DEFAULT_NAME,
+                    stored=_stored_asset_facts([asset]),
+                    progress=100,
+                    metadata_patch={
+                        "completed_at": int(time.time()),
+                        "upstream_video_id": video_id,
+                        **_job_metadata_mode_patch(),
+                    },
+                    path=media_jobs.DB_PATH,
+                )
+            except result_bundle.ResultRefused as exc:
+                _fail_refused_result(job_id, exc, content_status, mark_failed=_mark_video_media_job_failed)
+                return
             media_jobs.append_event(
                 job_id,
                 "completed",
@@ -26097,24 +26242,26 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
                     job, error = await submit_and_collect()
         if error is not None:
             return error
-        file_info = _first_video_output(job or {})
+        _, file_info, refusal = _select_video_file(job or {}, record.manifest)
+        if refusal is not None:
+            return refusal
         if not file_info:
             return Response(
                 content=json.dumps({"error": {"message": "Workflow returned no video output", "type": "api_error"}}),
                 status_code=502, media_type="application/json",
             )
-        params = {"filename": file_info["filename"], "type": file_info["type"]}
-        if file_info.get("subfolder"):
-            params["subfolder"] = file_info["subfolder"]
-        rendered = await graph.view(params, headers=headers)
-        if rendered.status != 200:
+        try:
+            rendered_bytes = await adapter.fetch_file(
+                graph.conn, file_info, limits=result_bundle.limits_from_config(runtime().config), headers=headers, session=graph)
+        except node_graph.SelectionRefused as refused:
+            return _result_refusal_response(refused.code, _refused_result_status(refused.code))
+        except ProtocolUpstreamError:
             return Response(
                 content=json.dumps({"error": {"message": f"{adapter.label} could not read the rendered video", "type": "api_error"}}),
                 status_code=502, media_type="application/json",
             )
         suffix = Path(file_info["filename"]).suffix.lower()
         media_type = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska"}.get(suffix, "application/octet-stream")
-        rendered_bytes = rendered.raw
         try:
             if media_delivery.current_mode() == provenance.METADATA_NONE:
                 rendered_bytes = await asyncio.to_thread(

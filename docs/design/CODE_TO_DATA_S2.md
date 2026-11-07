@@ -206,7 +206,7 @@ Every step is additive and keeps the current route path as the default. Each ste
 | S2.3 | The result bundle, staging and publication, the private JSON store, receipts, limits. The routes keep `assets`. | Existing routes publish a bundle that mirrors their assets. Client output is unchanged. |
 | S2.4 | Selectors and adapter descriptors; selector migration of the bundled workflows (golden-checked); the legacy fallback flag; refusal at save. | The legacy fallback stays on until every bundled workflow has selectors. |
 | S2.5a | The v2 `start` outcome in the runner, an http-v1 selector descriptor, the pinned runtime, and the data-only and pin tests (acceptance 1 and 4). | v1 adapters are unchanged. No route calls the runner yet. |
-| S2.5b | The image and video routes collect through `adapter.collect`; the `results` job-view field and the JSON read route; the legacy collection goes off. | Route goldens move on purpose. |
+| S2.5b | The image and video routes collect through `adapter.collect`; the `results` job-view field and the JSON read route; the legacy collection goes off. | Route goldens move on purpose. S2.5b did the first two; the legacy flag stays on (four bundled workflows have no selectors; see "S2.5b as built"). |
 | S2.6 | The asset resolver, the disclosure check, the upload capability. | The image routes keep their current ingestion until their goldens pass on the resolver. |
 
 ### S2.2 as built
@@ -633,6 +633,94 @@ Decisions the design did not settle:
   history only, so it has nothing to read here.
 - **Left for S2.5b:** the items listed above, plus choosing the graph engine's JSON `key` values when a bundled engine
   needs one.
+
+### S2.5b as built
+
+What changed:
+- **Image and video routes collect by selector.** The graph round takes the binding and the contract outputs of the
+  workflow's manifest. For an image job the poll carries the history entry it already read (`JobStatus.record`, a
+  `FinishedRecord` with the entry and its size), and `NodeGraphAdapter.fetch_selected` collects from it with the binding's
+  selectors, so no second history call is made. The file reads go through `output_selectors.FETCH_GATE` and are bounded
+  while they are read: the number of files, the bytes of one file and the total are the deployment's result limits, and a
+  file is refused at the first byte past a limit. The video content route collects with `adapter.collect` on the finished
+  entry (`_select_video_file`) and reads the one file inside the fetch gate. The old `_first_video_output` alias is gone.
+- **A bundle is named by output.** `response.selected_result` carries the output name the selector chose, and the three
+  `mirror_assets` call sites (image, video, and the audio route from S2.4) pass it as the bundle result name, so an image
+  job publishes a result `image`, a video job `video`. A workflow with no selector keeps the default name. The job's
+  `assets` entries are unchanged: `mirror_assets(stored=)` takes the size and media type of a saved asset from a separate
+  map (`_stored_asset_facts`) when the entry does not carry them, so the client view and the OpenAPI schema do not move.
+- **The streaming JSON reader.** A JSON result file is read as it arrives and refused at the first byte over the limit
+  (`json_too_large`), not after the file is held.
+- **`results` in the job view.** A published result is listed by name with its kind and count; a JSON result also carries
+  `href`, the route that reads it. An asset result has no `href`: its files are already in `assets` and fetched by their
+  own route. No value is ever in the view. The field is added at every audience (the gateway's own owner view reads at the
+  internal audience), for a job, the job list and the batch read, from `result_bundle.results_view`. A job that published
+  nothing, or a failed job whose results are only staged, has no `results` field.
+- **`GET /gateway/v1/media/jobs/{job_id}/results/{name}`.** It reads one published JSON result through
+  `result_bundle.read_json` (the streaming reader with the result limits, the owner check and erasure handling that S2.3
+  built). The reader (`owner_scope`, person, credential, connection) is built from the authenticated identity by
+  `_gateway_result_reader`, the way the job's own authorization is. The record authorizer runs first on the job. Every
+  refusal is the same 404 body (`media_job_result_not_found`): no such job or result, another maker or another App's
+  credential, a staged result of a failed run, an erased or expired value, an asset result, no identity. A caller cannot
+  tell them apart. The answer is the stored bytes with `Cache-Control: private, no-store` and `X-Content-Type-Options:
+  nosniff`.
+
+Tests and evidence:
+- `tests/test_media_job_results.py` (16 cases, the real router on a temporary jobs database) and
+  `tests/test_image_video_route_selectors.py` (13 cases on the adapter-differential rig: a selector beats a temp preview,
+  an input echo and a saved file of a side branch; the history, asset and fetch-gate limits refuse before or while the file
+  is read, for images and for videos; the legacy video collection skips a picture and takes the first clip; the bundle is
+  named by output and listed in the view).
+- Revert-checks (each mutation made the named tests fail, and was reverted): `fetch_selected` given an empty binding (four
+  image cases), `_select_video_file` given an empty binding (three video cases), `with_results` returning no results (view,
+  list and asset-result cases), and the record authorizer removed from the read route (the authorizer case).
+- Moved goldens, on purpose (`tests/fixtures/adapter_differential/`): `image_job_succeeds.json`, `video_job_succeeds.json`,
+  `image_job_oom_then_complete.json` and `audio_generate_job.json`. Paths that moved: the `media_jobs.job_envelope` row's
+  `results.bundle` (null to a bundle id) and the new `result_bundle` and `result_stage` tables for image and video; the
+  `result_bundle` summary in the receipt and job `metadata` for image and video; `results` (and `content-length`) in the
+  client job view of all four. The audio view gained the field only; its bundle was S2.4's. The wire request to the client
+  and the engine requests did not change (the goldens' request lines are identical).
+- Route fixtures regenerated with the repo's tool (`scripts/generate_headless_fixtures.py` through the hermetic runner):
+  `headless_openapi.json` gained the one new path and nothing else (a structural diff confirmed it), then
+  `route_graph_frozen.json`, `headless_non_control_routes.json`, `route_policy_known_gaps.txt` (the new route is a 404 for the
+  probe, as its sibling `.../events` is, in both sections) and `content_access_inventory.json` (the route row, and the new
+  `source_sha256` of the event writers whose bodies changed). Two audio writers (`_run_audio_media_job`, `completed` and
+  `started`) already had stale hashes on the S2.5a base; they were refreshed with the rest.
+- Test fakes corrected to match each workflow's own selector, since the old collection took any file: video fakes use the
+  key `images` and the save node of their manifest (node 60 for the ltx workflows, 18 for minimax, 6 for rife), image fakes
+  use node 9, 10 or 13 as the workflow saves. These fakes were wrong about the engine, not the gateway.
+
+Review fixes (round 2):
+- **A result name is one path segment.** The read route takes `{name:path}`, so a path-shaped name never falls out of the
+  handler: it gets the same 404 body as any missing name. A published name could not be read back if it held a `/`, so the
+  store refuses such a name when it is staged (`bad_name`), and a manifest whose output has one is refused when it is
+  checked (`RESULT_NAME_RULE` in `gateway/manifests.py`): a letter or digit first, then letters, digits, `.`, `_` and `-`,
+  at most 128. Every bundled output name already fits.
+- **The legacy video collection keeps its old reading** while the flag is on (`legacy_select(..., kind="video")`): only
+  video files count, so a preview picture ahead of the clip is skipped, and the first clip in node order is the result, so
+  several output nodes are not `result_ambiguous`. It still reads the output directory only. The legacy image collection is
+  unchanged.
+- **Video reads are bounded.** `NodeGraphAdapter.fetch_file` reads one chosen file inside the fetch gate and refuses at the
+  first byte past `max_asset_bytes` (`asset_too_large`), as the image read does. Both video routes use it. The source-video
+  helper for workflow inputs now takes the fetch gate too; it keeps its own byte bound (`media_fetch`).
+
+Decisions the design did not settle:
+- **The legacy flag stays on.** Four bundled workflows have no selectors: `face-likeness`, `flux2-klein-4b-seamless-tile`,
+  `image-identity` (a gateway binding; it runs a graph) and `mesh.generate.trellis-2`. Turning it off would fail them. The
+  legacy code is not deleted. The flag goes off when those four declare selectors.
+- **The view carries a summary, never a value;** a JSON value is read only on its own route, so a list of jobs can never
+  carry a canary.
+- **One 404 for every refusal** on the read route, in line with the job route's uniform "not found" for other makers.
+- **No history read per round.** The poll's entry is reused, so an image job makes the same engine calls as before.
+
+Left:
+- Selectors for the four workflows above, then the flag off by default and the legacy code deleted.
+- The `check_for_save` call from the registration route (S4).
+- S2.6 (the asset resolver, disclosure check and upload capability).
+- Base failures seen, not chased here: `tests/test_store_write_locks.py::test_prompt_erasure_locks_each_batch_and_rolls_a_failed_batch_back`,
+  `tests/test_config_keys_are_classified.py` (`asset_ref`), and
+  `tests/test_no_upstream_text_in_client_errors.py::test_no_error_response_takes_text_an_upstream_wrote`
+  (`NodeGraphAdapter.results`, which this slice did not change); all fail on the S2.5a base.
 
 ## Done when: the S2 acceptance matrix
 

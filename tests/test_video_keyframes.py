@@ -836,7 +836,7 @@ class KeyframeJobRecordTests(KeyframeRouteBase):
 
         self._create()
         mp4 = mp4_bytes()
-        self.comfy.history[NEW_PROMPT_ID] = succeeded_history("kf_00001_.mp4")
+        self.comfy.history[NEW_PROMPT_ID] = succeeded_history("kf_00001_.mp4", node="18")
         self.comfy.view_bytes["kf_00001_.mp4"] = mp4
 
         async def fetch():
@@ -913,7 +913,7 @@ class VideoAudioControlTests(KeyframeRouteBase):
         return response.json()
 
     def _finished(self, mp4: bytes) -> bytes:
-        self.comfy.history[NEW_PROMPT_ID] = succeeded_history("aud_00001_.mp4")
+        self.comfy.history[NEW_PROMPT_ID] = succeeded_history("aud_00001_.mp4", node="18")
         self.comfy.view_bytes["aud_00001_.mp4"] = mp4
 
         async def fetch():

@@ -37,8 +37,10 @@ from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from gateway import media_jobs
+from gateway.manifests import RESULT_NAME_RE, RESULT_NAME_RULE
 
 BUNDLE_VERSION = 1
 KINDS = ("json", "assets")
@@ -240,8 +242,8 @@ def _stage_ref(job_id: str, attempt: int, name: str) -> str:
 
 
 def _require_name(name: Any) -> str:
-    if not isinstance(name, str) or not name or len(name) > 128:
-        raise ResultRefused("bad_name", "a result name is a non-empty string of at most 128 characters")
+    if not isinstance(name, str) or not RESULT_NAME_RE.fullmatch(name):
+        raise ResultRefused("bad_name", RESULT_NAME_RULE)
     return name
 
 
@@ -483,13 +485,19 @@ def complete_job(
 
 def mirror_assets(
     job_id: str, assets: Iterable[Mapping[str, Any]], *, limits: ResultLimits, name: str = DEFAULT_NAME,
-    **status_args: Any,
+    stored: Mapping[str, Mapping[str, Any]] | None = None, **status_args: Any,
 ) -> dict[str, Any] | None:
     """``complete_job`` for a route that lists its files in the job's ``assets`` already: the bundle mirrors that list
-    under one name. The job view does not change. ``status_args`` go to ``media_jobs.update_status``."""
+    under one name. The job view does not change. ``stored`` gives the ``size_bytes`` and ``media_type`` of a file (by
+    asset id) whose entry in the list does not carry them, so a route need not add a field to the job's list.
+    ``status_args`` go to ``media_jobs.update_status``."""
     listed = [dict(asset) for asset in assets]
-    items = [{"asset_ref": asset.get("asset_id"), "media_type": asset.get("media_type"),
-              "size_bytes": asset.get("size_bytes")} for asset in listed]
+    known = stored or {}
+    items = []
+    for asset in listed:
+        facts = known.get(str(asset.get("asset_id"))) or {}
+        items.append({"asset_ref": asset.get("asset_id"), "media_type": asset.get("media_type", facts.get("media_type")),
+                      "size_bytes": asset.get("size_bytes", facts.get("size_bytes"))})
 
     def stage(conn: sqlite3.Connection, attempt: int) -> None:
         stage_assets_in(conn, job_id, attempt, name, items, limits=limits)
@@ -624,6 +632,44 @@ def read_json(job_id: str, name: str, reader: Reader, *, path: Path = media_jobs
     if row is None or not _may_read(reader, row[:4]):
         return None
     return JsonRead(body=bytes(row[4]))
+
+
+def result_href(job_id: str, name: str) -> str:
+    """Where the authenticated read of a JSON result is, on the gateway's job routes."""
+    return f"/gateway/v1/media/jobs/{quote(job_id, safe='')}/results/{quote(name, safe='')}"
+
+
+def results_view(job_ids: Iterable[str], *, path: Path = media_jobs.DB_PATH) -> dict[str, dict[str, dict[str, Any]]]:
+    """The named results the client job view shows, by job: ``{name: {kind, count, href?}}``.
+
+    Only published results are shown, so a job whose run failed, was canceled or is still running has none: a staged
+    result is not readable and is not listed. A ``json`` result is listed with the ``href`` of its read route while its
+    value is still stored (erasure and retention delete the value, and the result leaves the view with it). An
+    ``assets`` result is listed with its count and no ``href``: its files are the job's ``assets``. The view holds no
+    value, hash or size. A job with no published result is absent from the answer."""
+    ids = sorted({job_id for job_id in job_ids if job_id})
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    if not ids:
+        return out
+    with media_jobs.connection(path) as conn:
+        if not _has_tables(conn):
+            return out
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            rows = conn.execute(
+                "SELECT s.job_id, s.name, s.kind, s.count, j.ref IS NOT NULL FROM result_stage s "
+                "LEFT JOIN result_json j ON j.ref = s.ref "
+                f"WHERE s.state = 'published' AND s.job_id IN ({','.join('?' for _ in chunk)}) "  # noqa: S608
+                "ORDER BY s.job_id, s.name", chunk,
+            ).fetchall()
+            for job_id, name, kind, count, stored in rows:
+                if kind == "json" and not stored:
+                    continue
+                entry: dict[str, Any] = {"kind": kind, "count": count}
+                if kind == "json":
+                    entry["href"] = result_href(job_id, name)
+                out.setdefault(job_id, {})[name] = entry
+    return out
 
 
 def bundle_summary(job_id: str, *, path: Path = media_jobs.DB_PATH) -> dict[str, Any] | None:

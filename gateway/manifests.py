@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -100,6 +101,12 @@ def manifest_identity(manifest: dict[str, Any]) -> ManifestIdentity:
     )
 
 
+# A result's name is one URL path segment of the job's result route, so it holds only characters that survive a round
+# trip through a path unchanged: no "/", no "%", no dot segment. The result store applies the same rule.
+RESULT_NAME_RULE = "a result name starts with a letter or digit and holds only letters, digits, '.', '_' and '-' (at most 128)"
+RESULT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
 def validate_manifest(manifest: dict[str, Any], descriptors: Mapping[str, Any] | None = None) -> None:
     """Check a manifest. ``descriptors`` are the selector descriptors by binding key to check selectors against; the
     default is the shipped registry. A run from a pin passes the descriptor of the protocol it was started with."""
@@ -110,6 +117,10 @@ def validate_manifest(manifest: dict[str, Any], descriptors: Mapping[str, Any] |
         raise ManifestError("manifest inputs must be a mapping")
     if not isinstance(manifest["bindings"], dict):
         raise ManifestError("manifest bindings must be a mapping")
+    if isinstance(manifest["outputs"], dict):
+        for name in manifest["outputs"]:
+            if not isinstance(name, str) or not RESULT_NAME_RE.fullmatch(name):
+                raise ManifestError(f"output {name!r}: {RESULT_NAME_RULE}")
     if "purpose" in manifest:
         purpose = manifest["purpose"]
         if not isinstance(purpose, str) or not purpose.strip():
