@@ -762,6 +762,40 @@ Tests that ran a made-up workflow without a binding were changed to carry a sele
 the `smell-graph` fixture. The tests of the legacy readers were deleted. The bundled-workflow proof now compares the
 selectors with the files the graph's own save node wrote instead of with the old collection.
 
+### Crash tests around each media input upload
+
+Acceptance item 3.1 "around each upload" had no test, because the ledger and the engine upload were not driven together.
+`tests/test_s2_matrix_replay.py` now runs the image workflow extension upload (`_upload_image_workflow_extension_assets`)
+on the real resolver, media input ledger and asset store, in the order a route runs: the receipt is begun, the input is
+resolved and sent to the engine, the job is created, the receipt is finished. The engine's upload call is a fake that counts
+what it received.
+
+A crash is a dedicated `BaseException` raised at one named point. Python runs `finally` blocks while it unwinds, and a dead
+process runs none. So the three durable stores (the jobs database with the ledger, the receipts database and the asset
+directory) are copied at the crash instant and put back after the unwind. What the restart sees is what a killed process
+left. The retry is the same request, with the same request id. Every effect is counted: uploads the engine received, ledger
+rows (markers, removal duties, leases, live leases), files in the store, jobs and receipts.
+
+The cuts for an uploaded file are: before the marker, after the marker, a file stored but no lease, the lease written,
+before the engine send, after the engine holds the file (the reply is lost), after the reply before the release, after the
+release, and before and after the sweep removes the file. The cuts for a stored asset are the lease, the engine and the
+release ones.
+
+What the tests pin:
+- After every cut, the dead process left exactly the rows and files the ledger rules allow (a table in the test file), no
+  job, and one unfinished receipt.
+- The retry makes one job and one succeeded receipt, and uploads the same bytes. The engine has no memory of the first try,
+  so an upload that it had already received is sent once more (the engine's count is the count at the cut, plus one). Nothing in the gateway can
+  know the engine kept the first file, so this is the honest count.
+- Two hours on, the retry's own sweep leaves no marker, duty, lease or file from the crashed attempt. Within the hour, a
+  marker with no lease still holds the file it names, and the next round after the hour removes it.
+- Swept before the retry, a crash leaves nothing behind, and the retry then makes one job and one upload.
+- The owner's own library file is never removed: it has no removal duty, in the crash, in the sweep or after the retry.
+
+Positive control: with `release_holder_in` changed to release nothing, 28 of the 55 cases in the file failed: all ten
+cuts of the main test, both cases of the within-the-hour test, all ten cuts of the sweep-first test and all six of the
+asset test. The change was reverted.
+
 ## Done when: the S2 acceptance matrix
 
 1. **Data only.**
@@ -815,7 +849,7 @@ that was already in the tree.
 | 2.3 Forget, member-off, kill switch, erasure, stale worker rewrite | `test_a_privacy_mode_leaves_no_durable_copy_of_the_body` (member-off, kill, person erasure: spool, saved prompt, job fingerprint, events and envelope tables; a stale prompt write is refused; another person is untouched under member-off and person erasure, while the kill switch purges prompt memory for everyone by design); `test_forget_keeps_the_body_in_memory_only_and_it_dies_with_the_process`; `test_a_stale_worker_rewrite_cannot_restore_what_erasure_removed` (a worker paused before its write while erasure commits). | covered for the spool, the saved prompt, the job fingerprint and the seeded request IDs. The envelope's `generated` block is always empty today, so clearing a non-empty one is untested. |
 | 2.4 The normal spool keeps working | Existing: `test_prompt_memory_lifecycle.py::test_normal_async_spool_survives_memory_loss`, `::test_old_active_disk_payload_survives_cleanup`. New control in the privacy-mode test: the other person's spool still loads after the erasure. | covered |
 | 3.1 Crash before and after the envelope commit | `test_a_crash_around_the_envelope_commit_replays_to_one_job` (before and after the commit, then a retry with a different envelope); `test_a_crash_after_the_job_row_but_before_the_envelope_leaves_nothing`. | covered |
-| 3.1 Around each upload | None. The media input ledger and the engine upload are not on this base (S2.6 is a separate branch). | not covered |
+| 3.1 Around each upload | `test_a_crash_around_an_uploaded_input_leaves_what_the_ledger_allows_and_the_retry_runs_once` (ten cuts), `test_the_restart_sweep_before_the_retry_removes_what_the_crash_left_without_touching_the_job` (the same ten cuts, swept before the retry), `test_a_retry_within_the_hour_of_a_crash_before_the_lease_leaves_the_file_until_the_hour_is_up` and `test_a_crash_around_the_upload_of_a_stored_asset_never_removes_the_callers_file` (six cuts). The real extension upload runs on the real resolver, ledger and asset store; the engine upload is a counting fake. | covered for the image-extension upload (below). The other upload routes use the same resolver and ledger; they are not driven here. |
 | 3.1 Around the attempt marker; after send but before the id is saved; during fetch | `test_a_crash_at_each_point_of_a_protocol_run_resends_only_when_nothing_could_have_been_sent` (before the marker, after the marker before the send, after the send before the id, after the id, during the fetch; sends and fetches counted at the engine). | covered for the protocol runner. The audio, image and video job runners in `proxy.py` are not driven here. |
 | 3.1 During the final commit | `test_a_crash_in_the_final_job_commit_leaves_the_prior_state` (a crash in the `before_commit` hook, and at the commit). | covered for the job state and what the hook writes. Result-bundle publication is judged under item 5. |
 | 3.2 Concurrent same-key retries | `test_concurrent_same_key_creates_record_one_job_and_one_envelope` (the second create waits on the write lock, then replays). | covered at the store; not a scheduler test |
