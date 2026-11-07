@@ -481,6 +481,25 @@ def join_url(base: str, path: str) -> str:
     return base.rstrip("/") + (path if path.startswith("/") else f"/{path}")
 
 
+def _plain_route(url: str) -> bool:
+    """True when ``url`` has no query or fragment and a path the HTTP client sends as written (``safe_probe_path``)."""
+    parts = urlsplit(url)
+    return not parts.query and not parts.fragment and safe_probe_path(parts.path or "/") is not None
+
+
+def check_base(address: str, prefix: str) -> str:
+    """The URL the check builds its routes on: the normalised ``address`` with the draft's path prefix.
+
+    A dot segment, encoded separator, query or fragment in the address or the prefix would let the HTTP client send a
+    route other than the one shown, so such a base is refused, as the readiness poll refuses such a ``base_path``.
+    """
+    base = join_url(address, prefix) if prefix else address
+    if _plain_route(base):
+        return base
+    field = "address" if not _plain_route(address) else "path_prefix"
+    raise DraftError("Use a plain path, with no '.' or '..' part, encoded slash, query or fragment.", field=field)
+
+
 def comparable_address(address: str) -> str:
     """One spelling per address, so a duplicate is found whatever the case or default port."""
     parts = urlsplit(address.strip())
@@ -679,23 +698,26 @@ def _route_url(ctx: _Ctx, path: str, frm: str = "address") -> str:
 
 def _primary_url(ctx: _Ctx) -> tuple[str, str]:
     probe = ctx.definition["probes"]["primary"]
-    if safe_probe_path(probe["path"]) is None:
+    url = _route_url(ctx, probe["path"], probe["from"])
+    if safe_probe_path(probe["path"]) is None or not _plain_route(url):
         raise DraftError("The engine definition declares a readiness path that cannot be checked safely.", field="address")
-    return probe["method"], _route_url(ctx, probe["path"], probe["from"])
+    return probe["method"], url
 
 
 def call_line(definition: Mapping[str, Any], values: Mapping[str, Any]) -> str:
     """The request the check makes first, as the dialog shows it: "GET http://…/models"."""
     try:
         address = normalize_address(values.get("address"))
+        check_base(address, str(values.get("path_prefix") or "").strip())
     except DraftError:
         return ""
     probe = definition["probes"]["primary"]
     if safe_probe_path(probe["path"]) is None:
         return ""
     base = origin_of(address) if probe["from"] == "origin" else address
-    prefix = str(values.get("path_prefix") or "")
-    return f"{probe['method']} {join_url(join_url(base, prefix) if prefix else base, probe['path'])}"
+    prefix = str(values.get("path_prefix") or "").strip()
+    url = join_url(join_url(base, prefix) if prefix else base, probe["path"])
+    return f"{probe['method']} {url}" if _plain_route(url) else ""
 
 
 MODEL_LIST_CAP_BYTES = 1024 * 1024
@@ -928,7 +950,7 @@ async def _run_check(
     fields = {f["key"]: f for f in definition["fields"]}
     address = normalize_address(values.get("address"), placeholder=fields["address"].get("placeholder", ""))
     prefix = str(values.get("path_prefix") or "").strip()
-    check_address = join_url(address, prefix) if prefix else address
+    check_address = check_base(address, prefix)
     timeout_s = definition.get("timeouts", {}).get("probe_s", DEFAULT_TIMEOUT_S)
     fetch = guarded_fetch(fetch, key, viewer_role=viewer_role)
     ctx = _Ctx(
@@ -1257,7 +1279,7 @@ async def run_real_test(
     test = catalog.data["real_tests"][cap["real_test"]]
     headers = _auth_headers(key.value, values)
     prefix = str(values.get("path_prefix") or "").strip()
-    base = join_url(address, prefix) if prefix else address
+    base = check_base(address, prefix)
     if definition["probes"].get("route_base"):
         route_base = join_url(origin_of(address), definition["probes"]["route_base"])
         url = join_url(join_url(route_base, prefix), cap["route"]["path"])

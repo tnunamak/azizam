@@ -401,3 +401,37 @@ def test_the_add_engine_check_builds_no_url_from_an_unsafe_probe_path():
         engine_check._primary_url(ctx)
     safe = {"probes": {"primary": {"method": "GET", "path": "/models", "from": "address"}}}
     assert engine_check.call_line(safe, {"address": "http://h.test:8080/v1"}) == "GET http://h.test:8080/v1/models"
+
+
+@pytest.mark.parametrize(("address", "prefix", "field"), [
+    ("http://h.test:8080/v1/../admin", "", "address"),
+    ("http://h.test:8080/v1/%2e%2e/admin", "", "address"),
+    ("http://h.test:8080//admin", "", "address"),
+    ("http://h.test:8080", "/../admin", "path_prefix"),
+    ("http://h.test:8080/v1", "/./admin", "path_prefix"),
+    ("http://h.test:8080/v1", "%2fadmin", "path_prefix"),
+    ("http://h.test:8080/v1", "/x?y=1", "path_prefix"),
+    ("http://h.test:8080/v1", "/x#y", "path_prefix"),
+])
+def test_the_add_engine_check_refuses_an_address_or_prefix_the_client_would_normalise(address, prefix, field):
+    from gateway import engine_check
+
+    safe = {"probes": {"primary": {"method": "GET", "path": "/models", "from": "address"}}}
+    with pytest.raises(engine_check.DraftError) as refused:
+        engine_check.check_base(address, prefix)
+    assert refused.value.field == field
+    assert engine_check.call_line(safe, {"address": address, "path_prefix": prefix}) == ""
+    ctx = type("Ctx", (), {"definition": safe, "address": address + prefix, "origin": "http://h.test:8080"})()
+    with pytest.raises(engine_check.DraftError):
+        engine_check._primary_url(ctx)
+
+
+def test_the_add_engine_check_keeps_a_plain_address_and_prefix():
+    from gateway import engine_check
+
+    safe = {"probes": {"primary": {"method": "GET", "path": "/models", "from": "address"}}}
+    assert engine_check.check_base("http://h.test:8080", "/v1") == "http://h.test:8080/v1"
+    assert engine_check.check_base("http://h.test:8080/api", "v1") == "http://h.test:8080/api/v1"
+    assert engine_check.check_base("http://h.test:8080", "") == "http://h.test:8080"
+    line = engine_check.call_line(safe, {"address": "http://h.test:8080/api", "path_prefix": "/v1"})
+    assert line == "GET http://h.test:8080/api/v1/models"
