@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gateway import identity_api  # noqa: E402
 
 TEMPLATE = json.loads((ROOT / "workflows/identity/qwen-image-2.1-identity.json").read_text())
-BINDING = {"image_nodes": [f"L{i}" for i in range(1, 11)], "prompt_node": "7", "seed_node": "8"}
+BINDING = {"compose": "identity_scene", "image_nodes": [f"L{i}" for i in range(1, 11)], "prompt_node": "7", "seed_node": "8"}
 
 
 def png(color: tuple[int, int, int]) -> bytes:

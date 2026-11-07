@@ -11,7 +11,7 @@ A binding key names an adapter. The adapter's protocol description closes the bi
 A save is refused for an unknown binding key (``binding_unknown``), an unknown field (``binding_field_unknown``) or a
 role the descriptor does not list (``role_unknown``), each with its path. What an engine-side reference points at is
 checked by the adapter's reviewed ``check_targets`` hook (``binding_registry``). At run, a role the descriptor lists but
-no code registered is ``binding_unavailable`` (``unavailable_role``).
+no code registered is ``binding_unavailable`` (``resolve_role`` finds nothing).
 
 The module names no workflow, engine, model, intent or modality.
 """
@@ -139,7 +139,7 @@ def parse_binding_descriptor(
                 raise _bad(f"role id {role_id!r} is not a plain name")
             if not isinstance(body, Mapping):
                 raise _bad(f"role {role_id} must be a mapping")
-            raw_fields = body.get("fields") or {}
+            raw_fields = body.get("fields", {})
             if not isinstance(raw_fields, Mapping):
                 raise _bad(f"role {role_id} fields must be a mapping")
             own = {name: _parse_field(name, raw, f"role {role_id}", in_role=True) for name, raw in raw_fields.items()}
@@ -172,12 +172,18 @@ def descriptor_from_document(doc: Mapping[str, Any]) -> BindingDescriptor | None
 
 
 def shipped_binding_descriptors(directory: Path | None = None) -> dict[str, BindingDescriptor]:
-    """The binding descriptor of every shipped protocol description, by the binding key the description names. A binding
-    key must be named by exactly one description; a repeat raises ``BindingDescriptorError``."""
+    """The binding descriptor of every shipped protocol description, by the binding key the description names. Each file
+    goes through the same validated reader the registry loader uses (the schema and the strict YAML reader), so a body the
+    schema refuses is not read as an empty one. A binding key must be named by exactly one description; a repeat, or a file
+    that does not load, raises ``BindingDescriptorError``."""
+    from gateway.engine_protocol import description   # the loader imports this module
+
     found: dict[str, BindingDescriptor] = {}
     for path in sorted((directory or PROTOCOL_DIR).glob("*.yml")):
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        parsed = descriptor_from_document(doc) if isinstance(doc, Mapping) else None
+        try:
+            parsed = description.parse_description_text(path.read_text(encoding="utf-8"), source=path.name).binding_descriptor
+        except description.DescriptionError as exc:
+            raise _bad(f"{path.name} does not load: {exc}") from exc
         if parsed is None:
             continue
         if parsed.binding in found:
@@ -335,21 +341,30 @@ def _check_list(kind: str, value: Any, at: tuple[PathPart, ...], inputs: Mapping
 
 # ------------------------------------------------------------------------------------------------------------- run
 
-def unavailable_role(
-    binding_key: str, binding: Mapping[str, Any], descriptors: Mapping[str, BindingDescriptor] | None = None,
-    serves: binding_registry.Entry | None = None,
-) -> str | None:
-    """The role a binding names that no registered code can run, or ``None``. A role the description does not list never
-    runs either. A binding whose description has no roles, or that names none, has nothing to be unavailable."""
+def resolve_role(
+    binding_key: str, binding: Mapping[str, Any], serves: binding_registry.Entry | None,
+    descriptors: Mapping[str, BindingDescriptor] | None = None,
+) -> binding_registry.RoleImplementation | None:
+    """The code a binding's role runs for the entry ``serves``, or ``None``. Every dispatcher asks this and nothing else:
+    the binding's description must list a role field, the binding must hold a non-empty text role the description lists,
+    and code registered for that role must serve this entry (``None`` asks for any entry). Anything else is
+    ``binding_unavailable`` before any effect."""
     known = _cached_shipped() if descriptors is None else descriptors
     descriptor = known.get(binding_key)
     role_field = descriptor.role_field if descriptor is not None else None
-    chosen = binding.get(role_field) if role_field is not None else None
-    if not isinstance(chosen, str) or not chosen:
+    if descriptor is None or role_field is None or not isinstance(binding, Mapping):
         return None
-    if chosen not in descriptor.roles or binding_registry.role_implementation(chosen, serves) is None:   # type: ignore[union-attr]
-        return chosen
-    return None
+    chosen = binding.get(role_field)
+    if not isinstance(chosen, str) or chosen not in descriptor.roles:
+        return None
+    return binding_registry.role_implementation(chosen, serves)
+
+
+def binding_has_roles(binding_key: str, descriptors: Mapping[str, BindingDescriptor] | None = None) -> bool:
+    """Whether the description of ``binding_key`` selects a role, so a binding of it must resolve one to run."""
+    known = _cached_shipped() if descriptors is None else descriptors
+    descriptor = known.get(binding_key)
+    return descriptor is not None and descriptor.role_field is not None
 
 
 def listed_roles(descriptors: Mapping[str, BindingDescriptor] | None = None) -> Iterable[tuple[str, str]]:

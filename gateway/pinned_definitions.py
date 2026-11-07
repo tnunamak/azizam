@@ -63,8 +63,8 @@ class PinnedDefinitions:
         except ManifestError as exc:
             raise DefinitionUnavailable(f"job {self.envelope.source_id}: the pinned contract is not a manifest: {exc}") from exc
         # A role the binding names must still have code behind it: a pin keeps the document, not the code (D7).
-        role = binding_descriptors.unavailable_role(binding_key, self.binding)
-        if role is not None:
+        if binding_descriptors.binding_has_roles(binding_key) \
+                and binding_descriptors.resolve_role(binding_key, self.binding, None) is None:
             raise DefinitionUnavailable(f"job {self.envelope.source_id}: no registered code runs the pinned role")
         return manifest
 

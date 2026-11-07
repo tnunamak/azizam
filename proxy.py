@@ -147,7 +147,7 @@ from gateway import voices_api
 from gateway import a1111_api
 from gateway import mcp_oauth, mcp_oauth_store, mcp_server, session_guard
 from gateway.workflow_call import CallError
-from gateway import binding_registry, identity_api, identity_scene
+from gateway import binding_descriptors, binding_registry, identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking, stt_measurement
 from gateway.lifecycle_drivers import SwapRecoveryFailed
@@ -9021,10 +9021,10 @@ async def proxy_graph_image_request(
     _record_image_input(receipt, "prompt")
 
     manifest = _find_image_manifest("image.generate", str(model))
-    gateway_compose = _gateway_image_generate_compose(manifest)
-    if gateway_compose is not None:
-        # The role registry is the only list of compositions this route runs; a role nothing registered never runs.
-        role = binding_registry.role_implementation(gateway_compose, binding_registry.Entry.GENERATION)
+    gateway_binding = _gateway_image_generate_binding(manifest)
+    if gateway_binding is not None:
+        # The description lists the roles and the role registry holds their code; a role missing from either never runs.
+        role = binding_descriptors.resolve_role("gateway", gateway_binding, binding_registry.Entry.GENERATION)
         if role is None:
             return _binding_unavailable_response()
         return await role.run(
@@ -21194,14 +21194,13 @@ async def _upload_graph_image_bytes(
     return str(uploaded_filename), None
 
 
-def _gateway_image_generate_compose(manifest: Mapping[str, Any] | None) -> str | None:
+def _gateway_image_generate_binding(manifest: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """The manifest's gateway binding block, or ``None`` when the manifest has no such block (it runs the graph path)."""
     if not isinstance(manifest, Mapping):
         return None
-    binding = (manifest.get("bindings") or {}).get("gateway")
-    if not isinstance(binding, Mapping):
-        return None
-    compose = binding.get("compose")
-    return str(compose) if isinstance(compose, str) and compose else None
+    bindings = manifest.get("bindings")
+    binding = bindings.get("gateway") if isinstance(bindings, Mapping) else None
+    return binding if isinstance(binding, Mapping) else None
 
 
 def _gateway_image_model_id(record_manifest: Mapping[str, Any]) -> str | None:

@@ -574,7 +574,8 @@
 # S3.1 contract errors (2026-11-07): +231 cases (tests/test_contract_errors.py over the corpus in tests/contract_error_corpus.py); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20774.
 # S3.1 review fixes: +13 (six reviewed corpus cases in two parametrized tests, one crash-guard test): 20787.
 # S3.3 binding descriptors (2026-11-07): +40 cases (tests/test_binding_descriptors.py); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20827.
-pytest = 20827
+# S3.3 review fixes: +38 cases (one resolver, strict graph targets, validated shipped reader); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20865.
+pytest = 20865
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

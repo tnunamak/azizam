@@ -426,13 +426,17 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
                 thresholds=parse_thresholds(_json_field(form, "thresholds")),
                 pooling=_enum(form, "pooling", likeness.POOLINGS, "best"),
             )
+            analysis = binding_descriptors.resolve_role(
+                "gateway", {"compose": "face_likeness"}, binding_registry.Entry.ANALYSIS)
+            if analysis is None:
+                return _binding_unavailable()
             not_ready = await deps.ensure_face_service()
             if not_ready is not None:
                 return not_ready
             fdeps = face_deps()
             people = await ids.resolve_people(req, fdeps, with_heads=False)
             candidate_faces = await ids._faces(fdeps, candidates[0])
-            report = likeness.check_likeness(
+            report = analysis.run(
                 [p.person for p in people], candidate_faces, models=deps.models, thresholds=req.thresholds,
                 pooling=req.pooling,
             )
@@ -470,11 +474,19 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
         except (httpx.HTTPError, RuntimeError):
             return error(502, "identity_backend_error", "identity workflow failed.")
 
+    def preflight() -> tuple[dict[str, Any], Mapping[str, Any], binding_registry.RoleImplementation] | Response:
+        """The template, its binding and the code its role runs; or the 503 that refuses the work before any effect. The
+        synchronous and the asynchronous path both ask this first."""
+        graph, binding = deps.template()
+        scene = binding_descriptors.resolve_role("gateway", binding, binding_registry.Entry.EDIT)
+        return _binding_unavailable() if scene is None else (graph, binding, scene)
+
     async def execute(auth: Any, req: SceneRequest) -> ids.SceneResult:
         """Run the pipeline. Raises IdentityUnavailable when the face sidecar cannot start."""
-        graph, binding = deps.template()
-        if binding_descriptors.unavailable_role("gateway", binding, serves=binding_registry.Entry.EDIT) is not None:
-            raise IdentityUnavailable(error(503, "binding_unavailable", "This workflow needs code that is not installed."))
+        ready = preflight()
+        if isinstance(ready, Response):
+            raise IdentityUnavailable(ready)
+        graph, binding, scene = ready
         not_ready = await deps.ensure_face_service()
         if not_ready is not None:
             raise IdentityUnavailable(not_ready)
@@ -484,7 +496,7 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
 
         fdeps = face_deps()
         fdeps.run_workflow = run_workflow
-        return await ids.run_identity_scene(
+        return await scene.run(
             req, fdeps, template=graph,
             image_nodes=list(binding["image_nodes"]), prompt_node=str(binding["prompt_node"]), seed_node=str(binding["seed_node"]),
         )
@@ -500,6 +512,9 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
 
     async def submit(request: Request, auth: Any, req: SceneRequest, response_format: str) -> Response:
         assert deps.submit_job is not None
+        refused = preflight()
+        if isinstance(refused, Response):
+            return refused
         # Fail a bad people list now (400 with the detected faces), not minutes later inside the job.
         not_ready = await deps.ensure_face_service()
         if not_ready is not None:
@@ -514,6 +529,11 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
     app.state.identity_run_scene = run_scene
     app.state.identity_execute = execute
     app.state.identity_submit = submit
+
+
+def _binding_unavailable() -> Response:
+    """The workflow's role has no registered code, or its description does not list the role. Nothing has run."""
+    return error(503, "binding_unavailable", "This workflow needs code that is not installed.")
 
 
 async def _unused_workflow(graph: dict[str, Any], uploads: dict[str, bytes]) -> bytes:  # pragma: no cover
