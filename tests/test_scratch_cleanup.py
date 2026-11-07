@@ -254,6 +254,7 @@ def test_collect_keeps_only_a_failed_tests_files(tmp_path: Path) -> None:
     (out / "artifacts-18210").mkdir()
     (out / "report.json").write_text("{}")
     dest = tmp_path / "receipt" / "e2e-failures"
+    dest.parent.mkdir()
     subprocess.run([sys.executable, str(PRUNE), "--collect", str(out), str(dest)], check=True, capture_output=True)
     copied = sorted(str(path.relative_to(dest)) for path in dest.rglob("*") if path.is_file())
     assert copied == [f"artifacts-18200/b-spec-case-chromium/{name}" for name in ("error-context.md", "test-failed-1.png", "trace.zip")]
@@ -283,6 +284,7 @@ def test_collect_copies_contexts_first_and_stops_at_the_cap(tmp_path: Path) -> N
     (case / "test-failed-1.png").write_bytes(b"p" * 200)
     (case / "trace.zip").write_bytes(b"t" * 300)
     dest = tmp_path / "receipt" / "e2e-failures"
+    dest.parent.mkdir()
     assert prune_receipts.collect_failures(out, dest, cap=350) == 2
     copied = sorted(path.name for path in dest.rglob("*") if path.is_file())
     assert copied == ["OMITTED.txt", "error-context.md", "test-failed-1.png"]
@@ -388,3 +390,103 @@ def test_bounding_never_writes_or_counts_through_a_symlink(tmp_path: Path) -> No
     assert (outside / "big.zip").stat().st_size == 1000
     assert not (evidence / "OMITTED.txt").is_symlink()
     assert (evidence / "OMITTED.txt").read_text() == "g-case/trace.zip\n"
+
+
+@pytest.mark.parametrize("cap", [0, 100])
+def test_a_symlinked_note_is_removed_even_when_nothing_is_dropped(tmp_path: Path, cap: int) -> None:
+    outside = tmp_path / "outside"
+    outside.write_text("keep me")
+    evidence = tmp_path / "e2e-failures"
+    (evidence / "h-case").mkdir(parents=True)
+    if cap == 0:
+        (evidence / "h-case" / "trace.zip").write_bytes(b"t" * 10)
+    (evidence / "OMITTED.txt").symlink_to(outside)
+    prune_receipts.bound_artifacts(evidence, cap=cap)
+    assert outside.read_text() == "keep me"
+    assert not (evidence / "OMITTED.txt").is_symlink()
+
+
+def test_a_copy_never_passes_the_allowance_it_was_given(tmp_path: Path) -> None:
+    source = tmp_path / "trace.zip"
+    source.write_bytes(b"t" * 100)
+    (tmp_path / "dest").mkdir()
+    root = os.open(tmp_path / "dest", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        assert prune_receipts.copy_new(source, root, Path("a") / "trace.zip", allowance=99) is None
+        assert prune_receipts.copy_new(source, root, Path("a") / "trace.zip", allowance=100) == 100
+    finally:
+        os.close(root)
+    assert (tmp_path / "dest" / "a" / "trace.zip").stat().st_size == 100
+
+
+def test_a_source_that_grows_after_it_is_opened_is_copied_at_its_opened_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "trace.zip"
+    source.write_bytes(b"t" * 100)
+    (tmp_path / "dest").mkdir()
+    real_fstat = os.fstat
+    grown = []
+
+    def fstat_then_grow(fd: int) -> os.stat_result:
+        result = real_fstat(fd)
+        if not grown:
+            grown.append(True)
+            with source.open("ab") as out:
+                out.write(b"g" * 1000)
+        return result
+
+    monkeypatch.setattr(prune_receipts.os, "fstat", fstat_then_grow)
+    root = os.open(tmp_path / "dest", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        assert prune_receipts.copy_new(source, root, Path("trace.zip"), allowance=100) == 100
+    finally:
+        os.close(root)
+    assert grown
+    assert source.stat().st_size == 1100
+    assert (tmp_path / "dest" / "trace.zip").read_bytes() == b"t" * 100
+
+
+@pytest.mark.parametrize(("paths", "room"), [([], 100), (["i-case/trace.zip"], 0)])
+def test_the_note_writer_removes_a_symlinked_note_before_it_returns(
+    tmp_path: Path, paths: list[str], room: int
+) -> None:
+    outside = tmp_path / "outside"
+    outside.write_text("keep me")
+    evidence = tmp_path / "e2e-failures"
+    evidence.mkdir()
+    (evidence / "OMITTED.txt").symlink_to(outside)
+    prune_receipts.note_omitted(evidence, [evidence / path for path in paths], room)
+    assert outside.read_text() == "keep me"
+    assert not (evidence / "OMITTED.txt").exists()
+    assert not (evidence / "OMITTED.txt").is_symlink()
+
+
+def test_collect_never_writes_through_a_linked_directory_below_the_destination(tmp_path: Path) -> None:
+    out = tmp_path / "browser-results"
+    (out / "i-case").mkdir(parents=True)
+    (out / "i-case" / "error-context.md").write_text("context")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    dest = tmp_path / "e2e-failures"
+    dest.mkdir()
+    (dest / "i-case").symlink_to(outside, target_is_directory=True)
+    root = os.open(dest, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        with pytest.raises(OSError):
+            prune_receipts.copy_new(out / "i-case" / "error-context.md", root, Path("i-case") / "error-context.md", 1000)
+    finally:
+        os.close(root)
+    assert list(outside.iterdir()) == []
+
+
+def test_collect_needs_a_real_parent(tmp_path: Path) -> None:
+    out = tmp_path / "browser-results"
+    (out / "j-case").mkdir(parents=True)
+    (out / "j-case" / "error-context.md").write_text("context")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "linked-run").symlink_to(outside, target_is_directory=True)
+    assert prune_receipts.collect_failures(out, tmp_path / "linked-run" / "e2e-failures") == 0
+    assert prune_receipts.collect_failures(out, tmp_path / "missing-run" / "e2e-failures") == 0
+    assert list(outside.iterdir()) == [] and not (tmp_path / "missing-run").exists()

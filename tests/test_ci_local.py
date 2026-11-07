@@ -734,7 +734,9 @@ def test_cost_json_has_totals_and_the_critical_path(world: World) -> None:
 
 
 def test_the_critical_path_follows_pytest_when_it_is_slowest(world: World) -> None:
-    result = world.run(FAKE_PYTEST_SECONDS="2.5", FAKE_WEB_BUILD="sleep 0.5", FAKE_BROWSER_GATE="sleep 0.3")
+    # The web chain is several short fake steps; under a heavy host load their start-up costs add up
+    # to more than a second, so pytest leads by several seconds, not one.
+    result = world.run(FAKE_PYTEST_SECONDS="5", FAKE_WEB_BUILD="sleep 0.5", FAKE_BROWSER_GATE="sleep 0.3")
     assert result.returncode == 0, result.stdout + result.stderr
     path = json.loads((world.receipts / "cost.json").read_text())["critical_path"]["steps"]
     assert path == ["python-hermetic", "e2e-tree-unchanged", "journey-clock", "cases", "policy"]

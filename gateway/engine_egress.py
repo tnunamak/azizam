@@ -167,14 +167,26 @@ def observer_paths_declared_by(services: Mapping[str, Any]) -> dict[str, set[str
 
 
 def declared_probe_paths(record: Mapping[str, Any]) -> set[str]:
+    """Every path a service record declares as a health, metadata or observer read: ``relative | server-root``.
+
+    See ``split_declared_probe_paths`` for the two kinds; ``project`` expands only the first under a path prefix.
+    """
+    relative, rooted = split_declared_probe_paths(record)
+    return relative | rooted
+
+
+def split_declared_probe_paths(record: Mapping[str, Any]) -> tuple[set[str], set[str]]:
     """The paths a service record declares as health, metadata or observer reads (the only paths a probe mark covers).
 
-    These are the record's ``health_endpoint`` (and the default health path), its ``context_window_probe`` endpoint,
+    These are the record's ``health_endpoint`` (and the default health path), the readiness read its definition declares, its ``context_window_probe`` endpoint,
     the path of each declared observation, the ``verify_endpoint`` of its lifecycle driver, and the same fields of
     each offering. (The observer path another record names for this service is added by ``project``.)
-    ``project`` allows each path as written and under the path prefix of the record's own URL.
+    The first set holds paths written relative to the record's URL, which ``project`` allows as written and under the
+    path prefix of the record's own URL. The second set holds the definition's readiness path, written from the
+    server root: ``project`` allows it exactly as written, never under a prefix.
     """
     found: set[str] = {DEFAULT_HEALTH_PATH}
+    rooted: set[str] = set()
     scopes: list[Mapping[str, Any]] = [record]
     if isinstance(record.get("config"), Mapping):
         scopes.append(record["config"])
@@ -182,6 +194,13 @@ def declared_probe_paths(record: Mapping[str, Any]) -> set[str]:
         offerings = scope.get("offerings")
         if isinstance(offerings, list):
             scopes.extend(item for item in offerings if isinstance(item, Mapping))
+    if isinstance(record.get("config"), Mapping):
+        # The readiness read the record's definition declares: an older record with no health endpoint falls back to it.
+        from gateway.engine_readiness import record_readiness_path
+
+        declared = record_readiness_path(record["config"])
+        if declared:
+            rooted.add(declared)
     for scope in scopes:
         for value in (scope.get("health_endpoint"),
                       (scope.get("context_window_probe") or {}).get("endpoint") if isinstance(scope.get("context_window_probe"), Mapping) else None):
@@ -202,7 +221,7 @@ def declared_probe_paths(record: Mapping[str, Any]) -> set[str]:
                 path = _path_of(driver_config.get(key))
                 if path:
                     found.add(path)
-    return found
+    return found - rooted, rooted
 
 
 class Projection:
@@ -246,13 +265,15 @@ def project(services: Mapping[str, Any] | None, *, extra_probe_paths: Callable[[
         policy = policy_for(str(service_id), services)
         if not policy.enabled:
             continue
-        declared = declared_probe_paths(record) | observer_paths.get(str(service_id), set())
+        declared, rooted = split_declared_probe_paths(record)
+        declared = declared | observer_paths.get(str(service_id), set())
         if extra_probe_paths is not None:
             declared.update(path for path in map(_path_of, extra_probe_paths(record)) if path)
         for key, prefixes in _destination_prefixes(record).items():
             if policy.domain not in built.setdefault(key, []):
                 built[key].append(policy.domain)
             paths.setdefault(key, set()).update(prefix + path for prefix in prefixes | {""} for path in declared)
+            paths[key].update(rooted)
     return Projection(MappingProxyType({key: tuple(domains) for key, domains in built.items()}),
                       MappingProxyType({key: frozenset(value) for key, value in paths.items()}))
 

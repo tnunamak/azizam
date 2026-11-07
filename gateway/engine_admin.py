@@ -580,6 +580,11 @@ def build_raw(
         raw["api_key_secret_id"] = secret_id
     elif values.get("api_key_env"):
         raw["api_key_env"] = values["api_key_env"]
+    readiness = (check or {}).get("readiness") if isinstance(check, Mapping) else None
+    if isinstance(readiness, Mapping) and readiness.get("ok") is True and readiness.get("method") == "GET" and readiness.get("path"):
+        # The check read this path as the request path will, and it answered: later requests wait on it, not on a
+        # route the check never tried.
+        raw["health_endpoint"] = readiness["path"]
     lifecycle = lifecycle_block(values, definition)
     if lifecycle is not None:
         raw["lifecycle"] = lifecycle
@@ -916,6 +921,7 @@ def _check_summary(check: Mapping[str, Any] | None, *, address: str, disabled: b
         "capabilities": [{key: row[key] for key in ("id", "level", "evidence", "why") if key in row}
                          for row in check.get("capabilities") or ()],
         "model_use": {row["id"]: row.get("use", "") for row in check.get("models") or ()},
+        "readiness": {key: (check.get("readiness") or {}).get(key) for key in ("method", "path", "ok")} if check.get("readiness") else None,
     }
 
 
@@ -1282,6 +1288,8 @@ class EngineService:
             raise DraftError("capabilities must be a list of ids.", field="capabilities")
         if disabled and body.get("capabilities") is None:
             capabilities = []
+        if not disabled and not capabilities:
+            raise DraftError("Choose at least one thing this engine does, or add it turned off.", field="capabilities")
         models = body.get("models")
         if models is None and check is not None:
             models = check.get("models") or []
