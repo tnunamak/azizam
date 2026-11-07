@@ -130,7 +130,7 @@ GATEWAY_CODES = frozenset({
     "litellm_content_unverified",
     "access_plan_editor_unavailable", "account_disabled", "adapter_not_registered", "adapter_required", "adapter_version_mismatch",
     "address_invalid", "admin_action_header_required", "admin_csrf_required", "admin_forbidden", "alias_policy_unavailable",
-    "ambiguous_faces", "asset_missing", "backend_error", "backend_not_found", "backend_recovery_failed", "both_methods_off",
+    "ambiguous_faces", "asset_missing", "backend_error", "backend_not_found", "backend_recovery_failed", "binding_unavailable", "both_methods_off",
     "builtin_disabled", "canceled", "cannot_start_model", "client_disconnected", "csrf_required", "current_model_unavailable",
     "cursor_not_found", "custom_voice_engine_unsupported", "decision_backend_error", "definition_unavailable", "engine_address_needs_confirmation",
     "engine_credential_origin_mismatch", "engine_credential_unavailable", "engine_protocol_unavailable", "export_failed",
