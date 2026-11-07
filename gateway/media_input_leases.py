@@ -12,8 +12,8 @@ lease. This is the pattern of the definition store (``gateway/definition_store.p
 idempotent sweep after.
 
 The duty to remove a file is its own record: a row ``(asset_id, owner_key)`` in ``media_input_created``. The ingest
-writes it, in the transaction that writes its marker, when the file did not exist or when another ingest's row for the
-same file is still there (the file is then temporary for this owner too). The sweep removes the owner's claim on the
+writes it, in the transaction that writes its marker, only for a claim it adds: when this owner held no claim on the
+file before (a file that is not there has no claim). A claim the owner already held is never put under the duty. The sweep removes the owner's claim on the
 file and deletes the row in one write transaction, and only when no unreleased lease and no pending marker holds the
 file. A row stays until that happens, so a late holder, a crash, an erasure or a failed removal never loses the duty.
 
