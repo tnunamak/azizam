@@ -16430,9 +16430,11 @@ def _live_service_registry() -> dict | None:
         return None
 
 
-def _mesh_open_receipt(auth: AuthContext, request_id: str, path: str) -> ReceiptLifecycleOwner:
+def _mesh_open_receipt(
+    auth: AuthContext, request_id: str, path: str, manifest: mesh_api.MeshWorkflow,
+) -> ReceiptLifecycleOwner:
+    """The receipt of one mesh request, naming the record that request read (not a newer one adopted since)."""
     identity = auth.identity
-    manifest = current_mesh_workflow()
     receipt = RouteReceipt(
         protocol="openai.mesh", intent=mesh_api.MESH_INTENT, path=path, request_id=request_id,
         app_profile=plan_ref(identity),
@@ -16445,10 +16447,10 @@ def _mesh_open_receipt(auth: AuthContext, request_id: str, path: str) -> Receipt
     return ReceiptLifecycleOwner(receipt)
 
 
-def _mesh_route_policy(auth: AuthContext, row: Mapping[str, Any]) -> PolicyDecision:
-    """The same plan evaluation the other Try workflows run, from the route's own frontend tiers. Reads no receipt."""
+def _mesh_route_policy(auth: AuthContext, row: Mapping[str, Any], manifest: mesh_api.MeshWorkflow) -> PolicyDecision:
+    """The same plan evaluation the other Try workflows run, from the route's own frontend tiers and the record the
+    request read. Reads no receipt."""
     tiers = row["runtime_policy"]
-    manifest = current_mesh_workflow()
     return evaluate_and_apply(auth.identity, make_policy_request(
         protocol=mesh_api.MESH_PROTOCOL, intent=mesh_api.MESH_INTENT, workflow=manifest.id,
         backend=manifest.service_id,

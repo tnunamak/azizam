@@ -43,7 +43,7 @@ def test_an_adopted_mesh_record_reaches_the_receipt_the_policy_and_the_discovery
     version = _adopt_changed_record()
 
     auth = SimpleNamespace(identity=None)
-    receipt = proxy._mesh_open_receipt(auth, "req-live", "/v1/meshes/generate").receipt
+    receipt = proxy._mesh_open_receipt(auth, "req-live", "/v1/meshes/generate", proxy.current_mesh_workflow()).receipt
     assert (receipt.manifest_version, receipt.manifest_hash) == (version, proxy.current_mesh_workflow().manifest_hash)
     assert receipt.manifest_hash != before.manifest_hash
 
@@ -51,7 +51,8 @@ def test_an_adopted_mesh_record_reaches_the_receipt_the_policy_and_the_discovery
     monkeypatch.setattr(proxy, "evaluate_and_apply", lambda identity, request: seen.setdefault("request", request))
     monkeypatch.setattr(proxy, "make_policy_request", lambda **kwargs: SimpleNamespace(**kwargs))
     proxy._mesh_route_policy(auth, {"runtime_policy": {
-        "capability_exposure": "default", "capability_trust_tier": "stable", "capability_resource_tier": "batch"}})
+        "capability_exposure": "default", "capability_trust_tier": "stable", "capability_resource_tier": "batch"}},
+        proxy.current_mesh_workflow())
     assert (seen["request"].workflow, seen["request"].backend) == (before.id, before.service_id)
 
     assert proxy.MESH_DEPS.current_manifest().version == version
@@ -72,7 +73,8 @@ def test_an_adopted_mesh_record_with_another_service_reaches_the_facts_and_the_p
 
     assert proxy.current_mesh_workflow().service_id == "swapped-engine"
     assert proxy._mesh_facts({}).backend == "swapped-engine"
-    receipt = proxy._mesh_open_receipt(SimpleNamespace(identity=None), "req-live-2", "/v1/meshes/generate").receipt
+    receipt = proxy._mesh_open_receipt(
+        SimpleNamespace(identity=None), "req-live-2", "/v1/meshes/generate", proxy.current_mesh_workflow()).receipt
     assert receipt.backend == "swapped-engine"
 
 

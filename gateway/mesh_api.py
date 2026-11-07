@@ -295,15 +295,17 @@ class MeshApiDeps:
     frontend_records: Callable[[], list[Mapping[str, Any]]]
     # Service ID -> normalized service record (live registry).
     services: Callable[[], Mapping[str, Mapping[str, Any]]]
-    # open_receipt(auth, request_id, path) -> an async context manager with report(status=, reason=).
-    open_receipt: Callable[[Any, str, str], Any]
+    # open_receipt(auth, request_id, path, manifest) -> an async context manager with report(status=, reason=). It
+    # names the record this request read (``current_manifest``), so the receipt cannot name a later one.
+    open_receipt: Callable[[Any, str, str, Any], Any]
     leases: ExclusivePoolLeaseManager
     # A fresh client per request, closed when the request's work ends or is cancelled.
     client_factory: Callable[[], httpx.AsyncClient]
     new_request_id: Callable[[], str]
-    # route_policy(auth, frontend_row) -> a policy decision for this caller on this route (the same evaluator the
-    # other Try workflows use). A decision with ``denied`` true refuses the request with 403 before the body is read.
-    route_policy: Callable[[Any, Mapping[str, Any]], Any]
+    # route_policy(auth, frontend_row, manifest) -> a policy decision for this caller on this route and this request's
+    # record (the same evaluator the other Try workflows use). A decision with ``denied`` true refuses the request with
+    # 403 before the body is read.
+    route_policy: Callable[[Any, Mapping[str, Any], Any], Any]
     # Answers of the availability probe only (pool_evidence); the request path always probes live.
     probe_cache: PoolProbeCache = field(default_factory=PoolProbeCache)
     # store_output(auth, output) -> the library asset id the finished model was stored under, or None to store nothing.
@@ -481,7 +483,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         if problem is not None or spec is None or service is None:
             LOG.warning("mesh route refused: %s", problem)
             return _unavailable(request_id)
-        decision = deps.route_policy(gate, row)
+        decision = deps.route_policy(gate, row, manifest)
         if decision is not None and decision.denied:
             return _policy_refusal(decision, request_id)
         observer = _observer_problem(facts, spec)
@@ -491,7 +493,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         # The async form needs the media-job store and a Library to keep the model in; without both, it is the sync form.
         wants_async = (deps.jobs is not None and deps.store_output is not None
                        and prefers_async(request.headers.get("prefer")))
-        async with deps.open_receipt(gate, request_id, MESH_PATH) as owner:
+        async with deps.open_receipt(gate, request_id, MESH_PATH, manifest) as owner:
             parsed = await _read_request(request, request_id, owner, manifest)
             if isinstance(parsed, Response):
                 return parsed

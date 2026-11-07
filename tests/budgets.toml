@@ -616,7 +616,8 @@
 # S3.5 integration fix 8 (2026-11-07): +3 huge-integer enum members; 21429 + 3, to confirm with scripts/run-hermetic-pytest.sh --collect-only -q.
 # Train 21: 21210 (main) + 16 (package artifact root) + 297 (S3.5 integration) + 0 (lifecycle sentinel); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21523.
 # Mesh live manifest (2026-11-07): +2 (receipt, policy and facts follow an adopted record; a changed service id); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21525.
-pytest = 21525
+# Mesh live manifest follow-up: +1 (one request reads its record once; its policy and receipt name that record): 21525 + 1 = 21526.
+pytest = 21526
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
