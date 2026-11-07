@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gateway import media_jobs
+from gateway import binding_descriptors, media_jobs
 from gateway.definition_store import DefinitionUnavailable, envelope_in, read_blob_in
 from gateway.manifests import ManifestError, validate_manifest
 from gateway.workflow_envelope import Envelope
@@ -62,6 +62,10 @@ class PinnedDefinitions:
             validate_manifest(manifest, descriptors)
         except ManifestError as exc:
             raise DefinitionUnavailable(f"job {self.envelope.source_id}: the pinned contract is not a manifest: {exc}") from exc
+        # A role the binding names must still have code behind it: a pin keeps the document, not the code (D7).
+        role = binding_descriptors.unavailable_role(binding_key, self.binding)
+        if role is not None:
+            raise DefinitionUnavailable(f"job {self.envelope.source_id}: no registered code runs the pinned role")
         return manifest
 
     def graph(self) -> dict[str, Any]:

@@ -573,7 +573,8 @@
 # Train 16 candidate: C9 (20542) plus the sidecar hotfix case: 20543.
 # S3.1 contract errors (2026-11-07): +231 cases (tests/test_contract_errors.py over the corpus in tests/contract_error_corpus.py); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20774.
 # S3.1 review fixes: +13 (six reviewed corpus cases in two parametrized tests, one crash-guard test): 20787.
-pytest = 20787
+# S3.3 binding descriptors (2026-11-07): +40 cases (tests/test_binding_descriptors.py); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20827.
+pytest = 20827
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -813,7 +814,8 @@ ad_hoc_upstream_fake_files = 46
 # 826 on 2026-11-06 (S2.2 pinned-workflow check): the audio route names its resolved workflow once instead of five times.
 # 825 on 2026-11-06 (feat/config-homes-c4): -1 where the mesh upgrade step names left with the engine backfill.
 # 824 on 2026-11-06 (feat/config-homes-c9): -1 where the TTS/STT/COMFY constant blocks left proxy.py for the derive function.
-domain_literals = 824
+# 822 on 2026-11-07 (S3.3): the two new protocol ids add 2 sites (the mesh binding key, a catalog pattern); 4 fall where proxy.py reads the graph binding and backend by constant, not by spelling; the new code adds none.
+domain_literals = 822
 # Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
 # scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
 # a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through

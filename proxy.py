@@ -147,7 +147,7 @@ from gateway import voices_api
 from gateway import a1111_api
 from gateway import mcp_oauth, mcp_oauth_store, mcp_server, session_guard
 from gateway.workflow_call import CallError
-from gateway import identity_api, identity_scene
+from gateway import binding_registry, identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking, stt_measurement
 from gateway.lifecycle_drivers import SwapRecoveryFailed
@@ -1396,7 +1396,7 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
     tts_c = backends.get("tts") or {}
     stt_c = backends.get("stt") or {}
     emb_c = backends.get("embeddings") or {}
-    cfy_c = backends.get("comfyui") or {}
+    cfy_c = backends.get(_GRAPH_BACKEND_ID) or {}
     protocol_registry = registry or service_registry.release_registry()
     route_args = {"registry": protocol_registry, "proxy_config": effective_cfg}
 
@@ -9022,40 +9022,15 @@ async def proxy_graph_image_request(
 
     manifest = _find_image_manifest("image.generate", str(model))
     gateway_compose = _gateway_image_generate_compose(manifest)
-    if gateway_compose == "offset_inpaint_tile":
-        if background == "transparent":
-            _record_image_input(
-                receipt,
-                "background",
-                rejected_reason="unsupported_for_gateway_composition",
-            )
-            return Response(
-                content=json.dumps({
-                    "error": {
-                        "message": "background=transparent is not supported for offset-inpaint tile generation",
-                        "type": "invalid_request_error",
-                        "param": "background",
-                        "code": "unsupported_value",
-                    }
-                }),
-                status_code=400,
-                media_type="application/json",
-            )
-        return await _proxy_offset_inpaint_tile_request(
-            request=request,
-            body=body,
-            auth_context=auth_context,
-            receipt=receipt,
-            manifest=manifest,
-            prompt=prompt,
-            model=str(model),
-            size=str(size),
-            n=n,
-            response_format=response_format,
-            headers=headers,
-            output_format=output_format,
-            output_compression=output_compression,
-            quality=quality,
+    if gateway_compose is not None:
+        # The role registry is the only list of compositions this route runs; a role nothing registered never runs.
+        role = binding_registry.role_implementation(gateway_compose, binding_registry.Entry.GENERATION)
+        if role is None:
+            return _binding_unavailable_response()
+        return await role.run(
+            request=request, body=body, auth_context=auth_context, receipt=receipt, manifest=manifest, prompt=prompt,
+            model=str(model), size=str(size), n=n, response_format=response_format, headers=headers,
+            output_format=output_format, output_compression=output_compression, quality=quality, background=background,
         )
 
     workflow = load_graph_workflow(model)
@@ -21396,6 +21371,48 @@ def _tile_seam_prompt(prompt: str, seam_prompt: Any) -> str:
     )
 
 
+
+def _binding_unavailable_response() -> Response:
+    """A workflow names a role that no registered code runs (``binding_unavailable``). Nothing was sent to any engine."""
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": "This workflow needs code that is not installed.",
+                "type": "api_error",
+                "code": "binding_unavailable",
+            }
+        }),
+        status_code=503,
+        media_type="application/json",
+    )
+
+
+async def _run_offset_inpaint_tile_role(*, background: str, receipt: RouteReceipt | None, **route: Any) -> Response:
+    """The reviewed code of the ``offset_inpaint_tile`` role, as the image generate route calls it."""
+    if background == "transparent":
+        _record_image_input(
+            receipt,
+            "background",
+            rejected_reason="unsupported_for_gateway_composition",
+        )
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": "background=transparent is not supported for offset-inpaint tile generation",
+                    "type": "invalid_request_error",
+                    "param": "background",
+                    "code": "unsupported_value",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
+    return await _proxy_offset_inpaint_tile_request(receipt=receipt, **route)
+
+
+binding_registry.register_role("offset_inpaint_tile", binding_registry.Entry.GENERATION, _run_offset_inpaint_tile_role)
+
+
 async def _proxy_offset_inpaint_tile_request(
     *,
     request: Request,
@@ -21662,8 +21679,8 @@ def _manifest_uses_source_alpha_mask(manifest: Mapping[str, Any] | None) -> bool
     if not isinstance(manifest, Mapping):
         return False
     bindings = manifest.get("bindings")
-    comfyui = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings, Mapping) else None
-    return bool(comfyui.get("mask_to_source_alpha")) if isinstance(comfyui, Mapping) else False
+    graph_binding = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings, Mapping) else None
+    return bool(graph_binding.get("mask_to_source_alpha")) if isinstance(graph_binding, Mapping) else False
 
 
 def _manifest_route_managed_mask_input(manifest: Mapping[str, Any] | None) -> str | None:

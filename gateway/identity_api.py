@@ -21,6 +21,7 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+from gateway import binding_descriptors, binding_registry
 from gateway import identity_scene as ids
 from gateway import likeness, request_forms
 from gateway.identity_scene import IdentityDeps, IdentityError, PersonSpec, SceneRequest
@@ -32,6 +33,11 @@ LIKENESS_PATH = "/gateway/v1/faces/likeness"
 IDENTITY_PATH = "/gateway/v1/images/identity"
 MAX_PART_BYTES = 64 * 1024 * 1024
 MAX_PHOTOS = 12
+
+# The reviewed code behind the roles of the workflows these routes serve. A workflow names a role by id; a role nothing
+# registered never runs (CODE_TO_DATA_S3, D7).
+binding_registry.register_role("identity_scene", binding_registry.Entry.EDIT, ids.run_identity_scene)
+binding_registry.register_role("face_likeness", binding_registry.Entry.ANALYSIS, likeness.check_likeness)
 
 
 class FaceServiceClient:
@@ -466,10 +472,12 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
 
     async def execute(auth: Any, req: SceneRequest) -> ids.SceneResult:
         """Run the pipeline. Raises IdentityUnavailable when the face sidecar cannot start."""
+        graph, binding = deps.template()
+        if binding_descriptors.unavailable_role("gateway", binding, serves=binding_registry.Entry.EDIT) is not None:
+            raise IdentityUnavailable(error(503, "binding_unavailable", "This workflow needs code that is not installed."))
         not_ready = await deps.ensure_face_service()
         if not_ready is not None:
             raise IdentityUnavailable(not_ready)
-        graph, binding = deps.template()
 
         async def run_workflow(workflow: dict[str, Any], uploads: dict[str, bytes]) -> bytes:
             return await deps.run_workflow(auth, workflow, uploads)

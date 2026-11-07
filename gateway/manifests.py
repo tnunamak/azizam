@@ -209,9 +209,14 @@ RESULT_NAME_RULE = "a result name starts with a letter or digit and holds only l
 RESULT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
-def validate_manifest(manifest: dict[str, Any], descriptors: Mapping[str, Any] | None = None) -> None:
+def validate_manifest(
+    manifest: dict[str, Any], descriptors: Mapping[str, Any] | None = None, *,
+    binding_descriptors: Mapping[str, Any] | None = None,
+) -> None:
     """Check a manifest. ``descriptors`` are the selector descriptors by binding key to check selectors against; the
     default is the shipped registry. A run from a pin passes the descriptor of the protocol it was started with.
+    ``binding_descriptors`` (binding key to ``BindingDescriptor``), when given, also close every binding block against its
+    adapter's description; the loaders pass none until the bundled files are rewritten (CODE_TO_DATA_S3, S3.5).
 
     Every error is collected. The raised ``ContractErrors`` has them all, each with a path and a code; its message is
     the first one found, in the order of the checks below."""
@@ -220,9 +225,9 @@ def validate_manifest(manifest: dict[str, Any], descriptors: Mapping[str, Any] |
     errors = ErrorCollector()
     selector_start: list[int] = []
     with errors.stop_at_a_crash_after_an_error():
-        collect_manifest_errors(manifest, errors, descriptors, selector_start)
+        collect_manifest_errors(manifest, errors, descriptors, selector_start, binding_descriptors)
     # A manifest whose first problem is a selector is still refused with a ``SelectorError``, as it was.
-    first_is_selector = selector_start == [0] and len(errors) > 0
+    first_is_selector = selector_start[:1] == [0] and (len(selector_start) == 1 or selector_start[1] > 0) and len(errors) > 0
     errors.raise_if_any(output_selectors.SelectorErrors if first_is_selector else ContractErrors)
 
 
@@ -231,9 +236,10 @@ def collect_manifest_errors(
     errors: ErrorCollector,
     descriptors: Mapping[str, Any] | None = None,
     selector_start: list[int] | None = None,
+    binding_descriptors: Mapping[str, Any] | None = None,
 ) -> None:
     """Add every error of the manifest to ``errors``. ``selector_start``, when given, receives how many errors there were
-    before the selector check began."""
+    before the selector check began, then how many there were after it. ``binding_descriptors``, when given, adds the binding closure errors after all others."""
     if not isinstance(manifest, Mapping):
         # As before: a root that is not a mapping is refused for its first missing field (or, if it holds every field
         # name, for its type). Nothing below can read it.
@@ -300,6 +306,12 @@ def collect_manifest_errors(
     if selector_start is not None:
         selector_start.append(len(errors))
     output_selectors.collect_manifest_errors(manifest, errors, descriptors)
+    if selector_start is not None:
+        selector_start.append(len(errors))   # with the entry above: how many errors the selector check added
+    if binding_descriptors is not None:
+        from gateway import binding_descriptors as bindings_module
+
+        bindings_module.collect_binding_errors(manifest, errors, binding_descriptors)
 
 
 def _holds(value: Any, name: str) -> bool:
