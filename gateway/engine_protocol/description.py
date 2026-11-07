@@ -23,6 +23,7 @@ from typing import Any, Mapping
 import jsonschema
 import yaml
 
+from gateway.binding_descriptors import BindingDescriptor, BindingDescriptorError, descriptor_from_document
 from gateway.engine_protocol import mapping, pointer
 from gateway.engine_protocol.budgets import DEFAULT_BUDGETS, Budgets
 from gateway.engine_protocol.errors import DescriptionError
@@ -176,6 +177,8 @@ class ProtocolDescription:
     binding: str = ""
     retention_facts: tuple[Mapping[str, Any], ...] = ()
     result_selectors: SelectorDescriptor | None = None
+    # What a binding of this adapter may hold: its fields, roles and how inputs reach the engine (gateway/binding_descriptors.py).
+    binding_descriptor: BindingDescriptor | None = None
     # The digest of the parsed file, so a job can pin the exact description it was accepted with (S2 design, D9). Comments
     # and spacing do not change it; any other edit does.
     revision: str = ""
@@ -367,6 +370,11 @@ class _Compiler:
                     problem = http_selector_problem(selectors) if executor == "http-v1" else None
                     if problem:
                         self.bad("result_selectors", problem)
+        binding_descriptor = None
+        try:
+            binding_descriptor = descriptor_from_document(doc)
+        except BindingDescriptorError as exc:
+            self.bad("binding_fields", str(exc))
         if self.problems:
             raise DescriptionError(self.source, self.problems)
         return ProtocolDescription(
@@ -375,7 +383,7 @@ class _Compiler:
             serves=tuple(doc.get("serves") or ()), label=str(doc.get("label") or ""),
             binding=str(doc.get("binding") or ""),
             retention_facts=tuple(copy.deepcopy(doc.get("retention_facts") or ())),
-            result_selectors=selectors,
+            result_selectors=selectors, binding_descriptor=binding_descriptor,
             revision="sha256:" + hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest(),
         )
 
