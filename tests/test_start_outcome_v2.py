@@ -78,7 +78,7 @@ def contract(names: Names, shape: str) -> dict[str, Any]:
     outputs: dict[str, Any] = {names.json_result: {"media_type": "application/json"}}
     if shape == "mixed":
         outputs[names.file_result] = {"media_type": "audio/wav"}
-    return {"schema_version": 1, "id": names.workflow, "intent": names.op,
+    return {"schema_version": 2, "id": names.workflow, "intent": names.op, "capability": "probe",
             "inputs": {names.input: {"type": "string", "required": True}}, "outputs": outputs}
 
 

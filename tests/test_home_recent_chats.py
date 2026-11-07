@@ -13,7 +13,7 @@ import pytest
 from gateway import request_history, request_history_api
 from gateway.capabilities import Capability
 from gateway.home_api import _action_label, _cost_hint, _required_input_modalities, _typical_seconds
-from gateway.workflow_convert import PolicyFacts
+from tests.support.workflow_docs import STANDARD_FACTS
 
 MAKER = "usr_robin"
 OTHER = "usr_other"
@@ -119,10 +119,10 @@ def test_cost_hint_is_free_for_local_paid_for_remote_and_unknown_otherwise():
 
 def test_required_input_modalities_come_from_the_manifest_else_from_what_the_capability_takes():
     edit = Capability(intent="image.edit", backend="engine", workflow="edit", input_modalities=("text", "image"))
-    records = (SimpleNamespace(id="edit", facts=PolicyFacts(), contract={"inputs": {
+    records = (SimpleNamespace(id="edit", facts=STANDARD_FACTS, contract={"inputs": {
         "prompt": {"type": "string"}, "source_image": {"type": "asset", "required": True}, "mask": {"type": "asset"}}}),)
     assert _required_input_modalities(edit, records) == ["image"]
-    records = (SimpleNamespace(id="edit", facts=PolicyFacts(), contract={"inputs": {
+    records = (SimpleNamespace(id="edit", facts=STANDARD_FACTS, contract={"inputs": {
         "prompt": {"type": "string", "required": True}, "source_image": {"type": "asset", "required": True}}}),)
     assert _required_input_modalities(edit, records) == ["text", "image"]
     # No manifest: a vision model needs words, and a picture only helps; a capability with no text needs what it takes.
@@ -148,7 +148,7 @@ def test_the_start_word_is_the_capabilitys_own_else_read_from_what_it_takes_and_
 def test_a_manifest_declares_the_start_word_and_which_inputs_can_be_recorded():
     from gateway.capabilities import capability_from_workflow_record as capability_from_workflow
     record = SimpleNamespace(
-        id="listen", intent="audio.transcriptions", supported_backends=("engine",), identity=SimpleNamespace(trusted=True), facts=PolicyFacts(),
+        id="listen", intent="audio.transcriptions", supported_backends=("engine",), identity=SimpleNamespace(trusted=True), facts=STANDARD_FACTS,
         contract={"action_label": "  Transcribe ", "inputs": {"clip": {"type": "asset", "recordable": True},
                                                               "note": {"type": "string"}},
                   "outputs": {"text": {"modality": "text"}}})
@@ -162,7 +162,7 @@ def test_a_manifest_declares_the_start_word_and_which_inputs_can_be_recorded():
 def test_a_manifest_declares_the_hint_its_composer_shows_and_an_alias_takes_its_workflows():
     from gateway.capabilities import capability_from_workflow_record as capability_from_workflow
     record = SimpleNamespace(
-        id="edit", intent="image.edit", supported_backends=("engine",), identity=SimpleNamespace(trusted=True), facts=PolicyFacts(),
+        id="edit", intent="image.edit", supported_backends=("engine",), identity=SimpleNamespace(trusted=True), facts=STANDARD_FACTS,
         contract={"prompt_hint": "  Describe the change you want ", "inputs": {}, "outputs": {}})
     assert capability_from_workflow(record).prompt_hint == "Describe the change you want"
     bare = SimpleNamespace(**{**record.__dict__, "contract": {"inputs": {}, "outputs": {}}})
@@ -171,7 +171,7 @@ def test_a_manifest_declares_the_hint_its_composer_shows_and_an_alias_takes_its_
 
 def test_the_hint_is_wording_and_not_part_of_the_workflow_identity():
     from gateway.manifests import manifest_identity
-    base = {"schema_version": 1, "id": "image.edit.x", "intent": "image.edit", "version": "1", "inputs": {}, "outputs": {},
+    base = {"schema_version": 2, "id": "image.edit.x", "intent": "image.edit", "capability": "image", "version": "1", "inputs": {}, "outputs": {},
             "bindings": {}}
     assert manifest_identity({**base, "prompt_hint": "Describe the change"}).manifest_hash == manifest_identity(base).manifest_hash
     assert manifest_identity({**base, "purpose": "changed"}).manifest_hash != manifest_identity(base).manifest_hash
@@ -180,7 +180,7 @@ def test_the_hint_is_wording_and_not_part_of_the_workflow_identity():
 def test_a_hint_must_be_words():
     import pytest
     from gateway.manifests import ManifestError, validate_manifest
-    base = {"schema_version": 1, "id": "image.edit.x", "intent": "image.edit", "inputs": {}, "outputs": {}, "bindings": {}}
+    base = {"schema_version": 2, "id": "image.edit.x", "intent": "image.edit", "capability": "image", "inputs": {}, "outputs": {}, "bindings": {}}
     validate_manifest({**base, "prompt_hint": "Describe the change you want"})
     with pytest.raises(ManifestError):
         validate_manifest({**base, "prompt_hint": "  "})

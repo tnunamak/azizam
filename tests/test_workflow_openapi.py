@@ -37,7 +37,8 @@ from gateway.mesh_manifest import (  # noqa: E402
 from tests.support.mesh_pool import fake_mesh_pool  # noqa: E402
 
 MANIFESTS = ROOT / "manifests" / "workflows"
-MESH_MANIFEST = MANIFESTS / "mesh.generate.trellis-2.yml"
+# The mesh validator reads schema 1 only; the route itself builds from the registry record.
+MESH_MANIFEST = ROOT / "tests" / "fixtures" / "workflows_v1" / "mesh.generate.trellis-2.yml"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 MIB = 1 << 20
 
@@ -74,8 +75,8 @@ class WorkflowOpenApiTests(unittest.TestCase):
                 self.assertIn(record.id, self.catalog)
                 schema = self.schema_of(record.id)
                 owned = self.owned_by_routes(record.id)
-                settable = {n: s for n, s in record.manifest["inputs"].items() if n not in owned}
-                # A route-set input is never advertised; every other manifest input is.
+                settable = {n: s for n, s in record.manifest["inputs"].items() if n not in owned and s.get("settable") is not False}
+                # A route-set input and a generated (non-settable) input are never advertised; every other manifest input is.
                 self.assertEqual(sorted(schema["properties"]), sorted(settable))
                 self.assertIs(schema["additionalProperties"], False)
                 wanted = sorted(n for n, s in settable.items() if s.get("required"))

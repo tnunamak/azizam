@@ -1,6 +1,6 @@
 # Criterion 5 fixture (D1): a made-up, graph-bound offering. It exists only as data: a manifest and a node graph template.
 # The node-graph adapter compiles it through the same path as every other manifest-backed offering.
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: smell.infer.graph-fixture
@@ -9,8 +9,6 @@ capability: chemistry
 display_name: Smell fixture
 purpose: Fixture offering for the graph path
 description: A test-only graph offering used to prove that data alone adds an offering.
-source: local
-trusted: true
 inputs:
   smiles:
     type: string

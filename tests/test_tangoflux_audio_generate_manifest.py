@@ -28,6 +28,7 @@ from gateway.manifests import (  # noqa: E402
     ManifestError,
     apply_backend_binding,
     load_workflow_manifest,
+    BUNDLED_PROVENANCE,
     manifest_identity,
     validate_inputs,
 )
@@ -141,7 +142,7 @@ class TestManifestShape(unittest.TestCase):
         self.manifest = load_workflow_manifest(MANIFEST_PATH)
 
     def test_identity(self) -> None:
-        identity = manifest_identity(self.manifest)
+        identity = manifest_identity(self.manifest, BUNDLED_PROVENANCE)
         self.assertEqual(identity.id, "audio.generate.tangoflux")
         self.assertEqual(identity.version, "0.1.0")
         self.assertTrue(identity.trusted)
@@ -437,7 +438,7 @@ class TestAceStepAudioGenerateManifest(unittest.TestCase):
         self.manifest = load_workflow_manifest(ACE_XL_MANIFEST_PATH)
 
     def test_manifest_identity(self) -> None:
-        identity = manifest_identity(self.manifest)
+        identity = manifest_identity(self.manifest, BUNDLED_PROVENANCE)
         self.assertEqual(identity.id, "audio.generate.ace-step-1.5-xl-turbo")
         self.assertTrue(identity.trusted)
 

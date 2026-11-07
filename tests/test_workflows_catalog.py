@@ -19,6 +19,7 @@ from gateway.capabilities import Capability, unavailable_capability
 from gateway.discovery import WorkflowRegistry
 from gateway.user_runtime import UserPortalError
 from gateway.workflow_openapi import augment_openapi
+from tests.support.workflow_docs import STANDARD_FACTS
 from gateway.workflows_catalog import (
     _workflow_description,
     build_workflows_catalog,
@@ -28,14 +29,13 @@ from gateway.workflows_catalog import (
 
 IMAGE_MANIFEST = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     version: "0.1.0"
     id: image.generate.simple
     intent: image.generate
+    capability: image
     display_name: Simple Image
     description: Test image workflow.
-    source: local
-    trusted: true
     typical_seconds: 9
     inputs:
       prompt:
@@ -65,13 +65,12 @@ IMAGE_MANIFEST = textwrap.dedent(
 
 IMAGE_EXTENSION_MANIFEST = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     version: "0.1.0"
     id: image.generate.extension
     intent: image.generate
+    capability: image
     display_name: Extension Image
-    source: local
-    trusted: true
     typical_seconds: 9
     inputs:
       prompt:
@@ -111,13 +110,12 @@ IMAGE_EXTENSION_MANIFEST = textwrap.dedent(
 
 SLOW_IMAGE_MANIFEST = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     version: "0.1.0"
     id: image.generate.slow
     intent: image.generate
+    capability: image
     display_name: Slow Image
-    source: local
-    trusted: true
     typical_seconds: 60
     inputs:
       prompt:
@@ -136,13 +134,12 @@ SLOW_IMAGE_MANIFEST = textwrap.dedent(
 
 IMAGE_EDIT_MANIFEST = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     version: "0.1.0"
     id: image.edit.photo
     intent: image.edit
+    capability: image
     display_name: Photo Edit
-    source: local
-    trusted: true
     typical_seconds: 8
     inputs:
       prompt:
@@ -150,6 +147,7 @@ IMAGE_EDIT_MANIFEST = textwrap.dedent(
         required: true
       source_image:
         type: asset
+        accepts: ["image/*"]
         required: true
       strength:
         type: number
@@ -169,15 +167,13 @@ IMAGE_EDIT_MANIFEST = textwrap.dedent(
 
 AUDIO_MANIFEST = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     version: "0.1.0"
     id: audio.generate.sfx
     intent: audio.generate
     capability: sfx
     display_name: SFX
     description: Test audio workflow.
-    source: local
-    trusted: true
     typical_seconds: 2
     inputs:
       prompt:
@@ -201,14 +197,13 @@ AUDIO_MANIFEST = textwrap.dedent(
 
 VIDEO_MANIFEST = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     version: "0.1.0"
     id: video.generate.simple
     intent: video.generate
+    capability: video
     display_name: Simple Video
     description: Test video workflow.
-    source: local
-    trusted: true
     typical_seconds: 45
     inputs:
       prompt:
@@ -230,12 +225,12 @@ VIDEO_MANIFEST = textwrap.dedent(
 
 def _registry() -> WorkflowRegistry:
     registry = WorkflowRegistry()
-    registry.add_manifest(yaml.safe_load(IMAGE_MANIFEST), source_path="image.yml")
-    registry.add_manifest(yaml.safe_load(IMAGE_EXTENSION_MANIFEST), source_path="extension.yml")
-    registry.add_manifest(yaml.safe_load(SLOW_IMAGE_MANIFEST), source_path="slow.yml")
-    registry.add_manifest(yaml.safe_load(IMAGE_EDIT_MANIFEST), source_path="edit.yml")
-    registry.add_manifest(yaml.safe_load(AUDIO_MANIFEST), source_path="audio.yml")
-    registry.add_manifest(yaml.safe_load(VIDEO_MANIFEST), source_path="video.yml")
+    registry.add_manifest(yaml.safe_load(IMAGE_MANIFEST), source_path="image.yml", facts=STANDARD_FACTS)
+    registry.add_manifest(yaml.safe_load(IMAGE_EXTENSION_MANIFEST), source_path="extension.yml", facts=STANDARD_FACTS)
+    registry.add_manifest(yaml.safe_load(SLOW_IMAGE_MANIFEST), source_path="slow.yml", facts=STANDARD_FACTS)
+    registry.add_manifest(yaml.safe_load(IMAGE_EDIT_MANIFEST), source_path="edit.yml", facts=STANDARD_FACTS)
+    registry.add_manifest(yaml.safe_load(AUDIO_MANIFEST), source_path="audio.yml", facts=STANDARD_FACTS)
+    registry.add_manifest(yaml.safe_load(VIDEO_MANIFEST), source_path="video.yml", facts=STANDARD_FACTS)
     return registry
 
 
@@ -251,7 +246,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
         manifest = yaml.safe_load(IMAGE_MANIFEST)
         manifest["license"] = "Community terms: Not For Use in restricted regions"
         registry = WorkflowRegistry()
-        registry.add_manifest(manifest, source_path="licensed.yml")
+        registry.add_manifest(manifest, source_path="licensed.yml", facts=STANDARD_FACTS)
         payload = build_workflows_catalog(
             records=registry.records(),
             capabilities=[Capability(intent="image.generate", backend="comfyui", workflow=manifest["id"])],
@@ -273,7 +268,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
             description="Reddit community research and a long bake-off.",
         )
         registry = WorkflowRegistry()
-        registry.add_manifest(manifest, source_path="summary.yml")
+        registry.add_manifest(manifest, source_path="summary.yml", facts=STANDARD_FACTS)
         payload = build_workflows_catalog(
             records=registry.records(),
             capabilities=[Capability(intent="image.generate", backend="comfyui", workflow=manifest["id"])],
@@ -288,7 +283,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
         manifest.update(id="video.edit.summary", intent="video.edit",
                         summary="Edit a video.", description="Reddit research must remain private.")
         registry = WorkflowRegistry()
-        registry.add_manifest(manifest, source_path="summary.yml")
+        registry.add_manifest(manifest, source_path="summary.yml", facts=STANDARD_FACTS)
         spec = augment_openapi({}, registry.records())
         self.assertEqual(spec["x-azizam-workflows"][0]["description"], manifest["summary"])
         descriptions = [
@@ -305,7 +300,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
     def test_openapi_keeps_description_when_summary_is_absent(self) -> None:
         registry = WorkflowRegistry()
         manifest = yaml.safe_load(IMAGE_MANIFEST)
-        registry.add_manifest(manifest, source_path="legacy.yml")
+        registry.add_manifest(manifest, source_path="legacy.yml", facts=STANDARD_FACTS)
         spec = augment_openapi({}, registry.records())
         self.assertEqual(spec["x-azizam-workflows"][0]["description"], manifest["description"])
 

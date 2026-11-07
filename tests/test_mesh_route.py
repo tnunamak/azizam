@@ -26,7 +26,7 @@ from gateway.mesh_api import MESH_PATH, MeshApiDeps, MeshJobDeps, register_mesh_
 from gateway.mesh_manifest import load_mesh_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = load_mesh_manifest(ROOT / "manifests" / "workflows" / "mesh.generate.trellis-2.yml")
+MANIFEST = load_mesh_manifest(ROOT / "tests" / "fixtures" / "workflows_v1" / "mesh.generate.trellis-2.yml")
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 128
 GLB = b"glTF\x02\x00\x00\x00" + b"model-bytes" * 8
 MIB = 1 << 20

@@ -21,7 +21,10 @@ from gateway.receipts import RouteReceipt
 from gateway.runtime_auth import evaluate_and_apply, make_policy_request
 from tests.support.access import identity, plan_for
 from tests.test_engine_contract_v2 import _service
-from tests.test_gateway_api import _build_registry, _sample_capabilities
+from gateway.discovery import WorkflowRegistry
+from gateway.manifests import Provenance
+from tests.support.workflow_docs import STANDARD_FACTS, facts
+from tests.test_gateway_api import _sample_capabilities
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "engine_contract_live_shapes.json"
@@ -83,6 +86,29 @@ def test_frontend_route_graph_is_frozen() -> None:
     # Only addition since the freeze: POST /v1/meshes/generate (source-defined mesh frontend). Without that one row
     # the digest is still 5d23367340519397b1cfa0c82fb4b4f6fac6f0e98059e6ab642dc879824b66ca.
     assert _digest(graph) == "963290051e2e622bd481c6a0c380f91e93878d051c9301d4006d41c2a1926162"
+
+
+def _build_registry() -> WorkflowRegistry:
+    """Two schema 2 workflows, one reviewed (stable) and one not (experimental). The frozen digest below holds what the router lists for them, so the
+    registry is built here and cannot move with another test module's fixtures."""
+    registry = WorkflowRegistry()
+    documents = (
+        ("image.edit.controlnet.example", "image.edit", "0.1.0", "workflows/images/example-controlnet.json", True,
+         {"prompt": {"type": "string", "required": True},
+          "denoise": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5}},
+         {"prompt": [{"node": "6", "input": "text"}], "denoise": [{"node": "31", "input": "denoise"}]}),
+        ("image.generate.simple.example", "image.generate", "0.2.0", "workflows/images/simple.json", False,
+         {"prompt": {"type": "string", "required": True}}, {"prompt": [{"node": "6", "input": "text"}]}),
+    )
+    for workflow_id, intent, version, template, trusted, inputs, mapping in documents:
+        registry.add_manifest(
+            {"schema_version": 2, "version": version, "id": workflow_id, "intent": intent, "capability": "image",
+             "inputs": inputs, "outputs": {"image": {"media_type": "image/png"}},
+             "bindings": {"comfyui": {"workflow": template, "map": mapping}}},
+            source_path=f"/srv/azizam/manifests/workflows/{workflow_id}.yml",
+            provenance=Provenance(trusted=trusted, source="local"),
+            facts=STANDARD_FACTS if trusted else facts(trust_tier="experimental"))
+    return registry
 
 
 def test_public_catalog_surfaces_are_frozen(tmp_path: Path) -> None:

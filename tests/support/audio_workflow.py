@@ -26,13 +26,13 @@ def audio_manifest(name: str, targets: Mapping[str, Sequence[tuple[str, str]]], 
                    workflow: str | None = None, result: tuple[str, str] | None = None) -> dict[str, Any]:
     """``workflow`` is the template file the binding names; the route loads it from there."""
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "min_gateway_version": "0.1",
         "version": "0.1.0",
         "id": f"audio.generate.{name}",
         "intent": "audio.generate",
+        "capability": "audio",
         "display_name": name,
-        "source": "local",
         "inputs": {input_name: dict(INPUT_SPECS[input_name]) for input_name in targets},
         "outputs": {"audio": {"media_type": "audio/wav"}},
         "bindings": {binding: {

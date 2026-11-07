@@ -42,12 +42,8 @@ def places(manifest: dict[str, Any], **keywords: Any) -> list[tuple[tuple[Any, .
 
 
 def converted_mesh() -> dict[str, Any]:
-    """The mesh manifest in the shape the schema 1 to 2 converter makes: the key names the adapter, the engine is a
-    service reference, and the transport block is flat. Written here by hand, so this step does not need that branch."""
-    manifest = manifest_of("mesh.generate.trellis-2")
-    old_key, block = next(iter(manifest["bindings"].items()))
-    manifest["bindings"] = {"http-multipart": {"service": old_key, "path": block["transport"]["path"], "map": block["map"]}}
-    return manifest
+    """The mesh manifest: schema 2 since S3.5a, so the key names the adapter and the engine is a service reference."""
+    return manifest_of("mesh.generate.trellis-2")
 
 
 # ----------------------------------------------------------------------------------------------- the descriptions
@@ -187,15 +183,6 @@ def test_a_target_list_is_bounded() -> None:
 
 # ------------------------------------------------------------------------------------------------- bundled bindings
 
-# Where a bundled document does not pass yet, and why. S3.5 rewrites these files; this list names the differences.
-NAMED_DIFFERENCES = {
-    "flux2-klein-4b-edit": [(("bindings", "comfyui", "map", "seed"), "reference_unknown")],   # maps a `seed` it does not declare
-    "flux2-klein-edit": [(("bindings", "comfyui", "map", "seed"), "reference_unknown")],
-    "ace-step-1.5-xl-turbo": [(("bindings", "comfyui", "map", "tags", 0), "target_duplicate")],   # `prompt` and `tags` both write node 5
-    "mesh.generate.trellis-2": [(("bindings", "trellis"), "binding_unknown")],   # the key is a service id until S3.5
-}
-
-
 def bundled_templates(manifest: dict[str, Any]) -> dict[str, Any]:
     out = {}
     for key, block in manifest["bindings"].items():
@@ -204,14 +191,16 @@ def bundled_templates(manifest: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def test_every_bundled_binding_passes_but_the_named_differences() -> None:
+def test_every_bundled_binding_passes() -> None:
+    """S3.5a made this check enforce: the two seed and tags defects in the bundled files were fixed, and the mesh file
+    is schema 2, so no document is named as a difference any more."""
     seen = {}
     for path in sorted(glob.glob(str(WORKFLOWS / "*.yml"))):
         manifest = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         found = places(manifest, templates=bundled_templates(manifest))
         if found:
             seen[Path(path).stem] = found
-    assert seen == NAMED_DIFFERENCES
+    assert seen == {}
 
 
 def test_the_converted_mesh_binding_passes() -> None:

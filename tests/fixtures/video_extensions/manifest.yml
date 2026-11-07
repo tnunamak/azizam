@@ -1,12 +1,15 @@
-schema_version: 1
-min_gateway_version: "0.1"
-version: "0.1.0"
+schema_version: 2
+min_gateway_version: '0.1'
+version: 0.1.0
 id: video.generate.test-extensions
 intent: video.generate
+capability: video
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: Test fixture with workflow controls
-description: Test fixture. Exercises steps/stage1_cfg/stage2_cfg workflow controls; not a shipped workflow.
-source: local
-trusted: true
+description: Test fixture. Exercises steps/stage1_cfg/stage2_cfg workflow controls;
+  not a shipped workflow.
 inputs:
   prompt:
     type: string
@@ -30,6 +33,10 @@ inputs:
   seed:
     type: integer
     minimum: 0
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
   image_strength:
     type: number
     minimum: 0
@@ -57,39 +64,39 @@ bindings:
     workflow: tests/fixtures/video_extensions/workflow.json
     map:
       prompt:
-        - node: "5"
-          input: text
+      - node: '5'
+        input: text
       negative_prompt:
-        - node: "6"
-          input: text
+      - node: '6'
+        input: text
       width:
-        - node: "9005"
-          input: value
+      - node: '9005'
+        input: value
       height:
-        - node: "9006"
-          input: value
+      - node: '9006'
+        input: value
       length:
-        - node: "10"
-          input: value
+      - node: '10'
+        input: value
       frame_rate:
-        - node: "11"
-          input: value
-        - node: "12"
-          input: value
+      - node: '11'
+        input: value
+      - node: '12'
+        input: value
       seed:
-        - node: "16"
-          input: noise_seed
-        - node: "32"
-          input: noise_seed
+      - node: '16'
+        input: noise_seed
+      - node: '32'
+        input: noise_seed
       image_strength:
-        - node: "9003"
-          input: value
+      - node: '9003'
+        input: value
       steps:
-        - node: "22"
-          input: steps
+      - node: '22'
+        input: steps
       stage1_cfg:
-        - node: "18"
-          input: cfg
+      - node: '18'
+        input: cfg
       stage2_cfg:
-        - node: "31"
-          input: cfg
+      - node: '31'
+        input: cfg

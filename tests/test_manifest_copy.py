@@ -122,14 +122,14 @@ class ManifestCopyTest(unittest.TestCase):
                     self.assertTrue(copy_problems({"brand-new-workflow.yml": manifest}, self.terms))
 
     def test_validator_accepts_optional_summary_and_license(self) -> None:
-        base = {"schema_version": 1, "id": "x", "intent": "image.generate",
+        base = {"schema_version": 2, "id": "x", "intent": "image.generate", "capability": "image",
                 "inputs": {}, "outputs": {}, "bindings": {}}
         validate_manifest(base)
         validate_manifest({**base, "summary": "Make a picture.", "license": "Apache-2.0"})
         validate_manifest({**base, "summary": " ".join(["word"] * 40)})
 
     def test_validator_rejects_invalid_summary_and_license(self) -> None:
-        base = {"schema_version": 1, "id": "x", "intent": "image.generate",
+        base = {"schema_version": 2, "id": "x", "intent": "image.generate", "capability": "image",
                 "inputs": {}, "outputs": {}, "bindings": {}}
         for key in ("summary", "license"):
             for value in (None, False, 1, [], {}, "", " "):
@@ -182,7 +182,7 @@ class ManifestCopyTest(unittest.TestCase):
         self.assertFalse(research_terms_in("More steps add detail but take longer.", self.terms))
 
     def test_validator_rejects_empty_label_or_help(self) -> None:
-        base = {"schema_version": 1, "id": "x", "intent": "image.generate", "outputs": {}, "bindings": {}}
+        base = {"schema_version": 2, "id": "x", "intent": "image.generate", "capability": "image", "outputs": {}, "bindings": {}}
         for key in ("label", "help"):
             with self.subTest(key=key), self.assertRaises(ManifestError):
                 validate_manifest({**base, "inputs": {"steps": {"type": "integer", key: " "}}})

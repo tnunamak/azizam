@@ -26,17 +26,18 @@ from gateway.capabilities import (  # noqa: E402
 
 
 from gateway.discovery import WorkflowRegistry  # noqa: E402
+from gateway.manifests import Provenance  # noqa: E402
+from tests.support.workflow_docs import STANDARD_FACTS  # noqa: E402
 from gateway.policy import ALLOWED, DENIED, PolicyDecision, PolicyRequest, evaluate
 
 
 CHAT_WORKFLOW_YAML = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     version: "0.1.0"
     id: image.edit.controlnet.example
     intent: image.edit
-    source: local
-    trusted: true
+    capability: image
     inputs:
       prompt:
         type: string
@@ -64,12 +65,11 @@ CHAT_WORKFLOW_YAML = textwrap.dedent(
 
 UNTRUSTED_WORKFLOW_YAML = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     version: "0.1.0"
     id: image.generate.untrusted.example
     intent: image.generate
-    source: community
-    trusted: false
+    capability: image
     inputs:
       prompt:
         type: string
@@ -93,10 +93,11 @@ UNTRUSTED_WORKFLOW_YAML = textwrap.dedent(
 ).strip()
 
 
-def _record(yaml_text: str):
+def _record(yaml_text: str, *, trusted: bool = True, source: str = "local"):
+    """Provenance and facts are the record's, never the document's (CODE_TO_DATA_S3, S3.5a)."""
     manifest = yaml.safe_load(yaml_text)
     registry = WorkflowRegistry()
-    return registry.add_manifest(manifest, source_path="fixture.yml")
+    return registry.add_manifest(manifest, source_path="fixture.yml", provenance=Provenance(trusted, source), facts=STANDARD_FACTS)
 
 
 class CapabilityConstructionTests(unittest.TestCase):
@@ -333,12 +334,12 @@ class WorkflowDerivedCapabilityTests(unittest.TestCase):
         self.assertEqual(cap.caveats, ())
 
     def test_untrusted_manifest_adds_caveat(self) -> None:
-        record = _record(UNTRUSTED_WORKFLOW_YAML)
+        record = _record(UNTRUSTED_WORKFLOW_YAML, trusted=False, source="community")
         cap = capability_from_workflow_record(record, backend="a1111")
 
         self.assertEqual(cap.backend, "a1111")
         self.assertIn(UNREVIEWED_WORKFLOW_CAVEAT, cap.caveats)
-        # The flag is the manifest's own claim, so the caveat names no reviewer
+        # The flag is the record's own claim, so the caveat names no reviewer
         # and no implementation noun, and gives one action.
         self.assertEqual(UNREVIEWED_WORKFLOW_CAVEAT,
                          "This workflow isn't marked as reviewed. Test it before you rely on it.")
@@ -349,7 +350,7 @@ class WorkflowDerivedCapabilityTests(unittest.TestCase):
             capability_from_workflow_record(record, backend="not-a-backend")
 
     def test_default_backend_is_first_sorted(self) -> None:
-        record = _record(UNTRUSTED_WORKFLOW_YAML)
+        record = _record(UNTRUSTED_WORKFLOW_YAML, trusted=False, source="community")
         cap = capability_from_workflow_record(record)
         self.assertEqual(cap.backend, "a1111")  # sorts before comfyui
 

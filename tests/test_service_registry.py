@@ -558,10 +558,11 @@ def test_registry_normalizes_workflows_and_capabilities() -> None:
                         "package_hash": "sha256:test",
                     },
                     "manifest": {
-                        "schema_version": 1,
+                        "schema_version": 2,
+                        "version": "0.1.0",
                         "id": "image.generate.demo",
                         "intent": "image.generate",
-                        "trusted": True,
+                        "capability": "image",
                         "inputs": {"prompt": {"type": "string", "required": True}},
                         "outputs": {"image": {"media_type": "image/png"}},
                         "bindings": {
@@ -598,7 +599,9 @@ def test_registry_normalizes_workflows_and_capabilities() -> None:
 
     assert workflow["source"] == "imported"
     assert workflow["summary"]["supported_backends"] == ["comfyui"]
-    assert workflow["identity"]["trusted"] is True
+    # Trust is the record's provenance, never the document's: a stored record is not the release's own reviewed file.
+    assert workflow["identity"]["trusted"] is False
+    assert workflow["identity"]["source"] == "imported"
     assert capability["source"] == "imported"
     assert capability["resources"]["vram_gb_estimate"] == 8
 
@@ -611,9 +614,11 @@ def test_registry_projects_workflow_and_capability_records() -> None:
             "workflows": {
                 "image.generate.demo": {
                     "manifest": {
-                        "schema_version": 1,
+                        "schema_version": 2,
+                        "version": "0.1.0",
                         "id": "image.generate.demo",
                         "intent": "image.generate",
+                        "capability": "image",
                         "inputs": {"prompt": {"type": "string"}},
                         "outputs": {"image": {"media_type": "image/png"}},
                         "bindings": {
@@ -655,9 +660,11 @@ def test_merge_imported_records_includes_workflows_and_capabilities() -> None:
         "source": "imported",
         "provenance": provenance,
         "manifest": {
-            "schema_version": 1,
+            "schema_version": 2,
+            "version": "0.1.0",
             "id": "image.generate.demo",
             "intent": "image.generate",
+            "capability": "image",
             "inputs": {"prompt": {"type": "string"}},
             "outputs": {"image": {"media_type": "image/png"}},
             "bindings": {

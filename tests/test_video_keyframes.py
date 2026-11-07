@@ -127,8 +127,9 @@ class KeyframeDataTests(unittest.TestCase):
     def test_license_requirements_and_timing_come_from_the_parent(self) -> None:
         for model, (parent, _pictures) in KEYFRAME_MODELS.items():
             ours, theirs = _manifest(model), _manifest(parent)
-            for key in ("license", "requires", "intent", "outputs", "trusted"):
+            for key in ("license", "intent", "outputs"):
                 self.assertEqual(ours[key], theirs[key], (model, key))
+            self.assertEqual(ours["bindings"]["comfyui"]["requires"], theirs["bindings"]["comfyui"]["requires"], model)
 
     def test_config_entries_point_at_the_graphs_and_need_both_inputs(self) -> None:
         workflows = proxy.config["videos"]["workflows"]

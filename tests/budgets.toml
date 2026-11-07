@@ -589,7 +589,8 @@
 # S3.3 template-root fix: +7 cases (a template that is not a mapping of nodes); 20872.
 # Train 18 with S3.3: 21050 + (85) = 21135.
 # S3.5 base (2026-11-07): main plus S3.4; measured with scripts/run-hermetic-pytest.sh --collect-only -q.
-pytest = 21184
+# S3.5a (2026-11-07): +68 cases (tests/test_workflow_policy.py, tests/test_workflow_equality.py, corpus and pin/package refusal cases, minus the report-only cases); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21252.
+pytest = 21252
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -832,7 +833,7 @@ ad_hoc_upstream_fake_files = 46
 # 822 on 2026-11-07 (S3.3): the two new protocol ids add 2 sites (the mesh binding key, a catalog pattern); 4 fall where proxy.py reads the graph binding and backend by constant, not by spelling; the new code adds none.
 # Train 18 with S3.3: 818 + (-2) = 816.
 # S3.5 base (2026-11-07): main plus S3.4; measured with scripts/run-hermetic-pytest.sh --collect-only -q.
-domain_literals = 815
+domain_literals = 812
 # Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
 # scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
 # a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through

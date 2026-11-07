@@ -5,10 +5,21 @@ entry point (``tests/workflow_reader_outputs.py``) for every bundled workflow, c
 the readers switched. The new output must equal it, so a change that both sides of a comparison share (the old test's
 flaw) is seen.
 
-How the test can fail for real. Each consumer also runs on a "v2-only" record whose stored document (``manifest``)
-refuses every access and whose contract is a mapping that records each key read. A consumer that reads the stored
-document, or needs a v1 shape inside the contract (the picture type ``image``, a top-level ``requires``, ``transport``),
-raises or differs. The recorded reads are kept per consumer: none holds a v1-only key, and each reads what it must.
+How the test can fail for real. Each consumer also runs on a record whose document is a mapping that records each key read.
+The recorded reads are kept per consumer: none holds a key the schema 2 document does not have (the picture type, a
+top-level ``requires``, ``transport``), none holds a policy fact (exposure, trust_tier, resource_tier, tags, trusted; those
+are record data, read from ``record.facts`` and ``record.identity``), and each reads what it must.
+
+The golden moved at S3.5a, when the bundled files became schema 2. Only the entries below moved; every other entry is
+byte for byte what the readers gave before the switch:
+
+- ``schema_version`` 1 to 2 and the new ``manifest_hash`` in the three summaries of all 38 workflows (the file changed);
+- the capability of the 33 workflows that did not declare one (``capabilities`` and ``projected``): the converter wrote
+  the inferred capability into the file, so it is declared now;
+- the mesh workflow: its picture input is an ``asset`` accepting three types (design open question 6), so its summary
+  input type, input modalities (``text`` to ``asset`` and ``text``), home modalities and catalog media type changed;
+- ace-step: its ``prompt`` input is gone (it and ``tags`` wrote the same node input); the route sends the prompt to
+  ``tags`` as before, so only the catalog, schema, mapping and example entries lose ``prompt``.
 """
 
 from __future__ import annotations
@@ -17,7 +28,6 @@ import copy
 import dataclasses
 import gzip
 import json
-import sys
 import types
 from collections.abc import Mapping
 from pathlib import Path
@@ -28,13 +38,14 @@ import pytest
 from gateway import capabilities, mesh_api, mesh_manifest
 from gateway.availability import project_capabilities
 from gateway.discovery import BUNDLED_WORKFLOWS_DIR, WorkflowRecord, WorkflowRegistry
-from gateway.workflow_convert import PolicyFacts, normalize
 from gateway.workflow_view import requirements_of
 from tests.workflow_reader_outputs import CONSUMERS, plain, read_one
 
 OLD_OUTPUT = Path(__file__).parent / "fixtures" / "workflow_reader_outputs.json.gz"
 # What only the old shape had. ``requires`` is v1-only at the top of the document: in v2 it lives in a binding.
 V1_KEYS_ANYWHERE = {"trusted", "source", "transport", "modality"}
+# Record data, not document data: a reader that reads one of these at the top of the document reads the wrong place.
+POLICY_KEYS_AT_TOP = {"exposure", "trust_tier", "resource_tier", "tags", "trusted", "source"}
 MESH_ID = "mesh.generate.trellis-2"
 
 
@@ -67,28 +78,9 @@ def _wrap(value: Any, reads: list[tuple[bool, str]]) -> Any:
     return value
 
 
-class Refusing(dict):
-    """The stored document of a v2-only record: any read of it is a reader that has not switched. The one exception is
-    named: the discovery summary lists inputs from the stored document, because the mesh picture type is ``image`` on the
-    wire (``image`` in the summaries golden) and ``asset`` in the contract."""
-
-    def _refuse(self, *_a: Any, **_k: Any) -> Any:
-        raise AssertionError("a reader read the stored document; it must read the contract")
-
-    def get(self, key: Any, default: Any = None) -> Any:
-        caller = sys._getframe(1)
-        if key == "inputs" and caller.f_globals["__name__"] == "gateway.discovery" and caller.f_code.co_name == "summarize_workflow":
-            return {}
-        return self._refuse()
-
-    __getitem__ = __contains__ = __iter__ = items = keys = values = __len__ = _refuse
-
-
-def v2_only(record: WorkflowRecord, reads: list[tuple[bool, str]]) -> WorkflowRecord:
-    contract, facts = normalize(record.manifest)
-    return WorkflowRecord(
-        manifest=Refusing(), identity=record.identity, source_path=record.source_path,
-        contract=Recording(contract, reads), facts=facts, stored_schema_version=record.stored_schema_version)
+def recorded(record: WorkflowRecord, reads: list[tuple[bool, str]]) -> WorkflowRecord:
+    """The record with its document replaced by one that notes every key read."""
+    return dataclasses.replace(record, manifest=Recording(record.manifest, reads))
 
 
 @pytest.fixture(scope="module")
@@ -99,13 +91,6 @@ def registry() -> WorkflowRegistry:
 def _old_output() -> dict[str, dict[str, Any]]:
     with gzip.open(OLD_OUTPUT, "rt", encoding="utf-8") as handle:
         return json.load(handle)
-
-
-def _without_stored_inputs(name: str, output: Any) -> Any:
-    """The summaries list inputs from the stored document (see ``Refusing``); the v2-only run cannot, so both drop them."""
-    if name.startswith("summary:"):
-        return {key: value for key, value in output.items() if key != "inputs"}
-    return output
 
 
 def test_every_consumer_gives_the_output_it_gave_before_the_switch(registry: WorkflowRegistry) -> None:
@@ -135,44 +120,49 @@ MUST_READ = {
 }
 
 
-def test_every_consumer_reads_only_the_v2_contract(registry: WorkflowRegistry) -> None:
+def test_every_consumer_reads_only_the_v2_contract_and_no_policy_fact(registry: WorkflowRegistry) -> None:
     per_consumer: dict[str, list[tuple[bool, str]]] = {name: [] for name in CONSUMERS}
     old = _old_output()
     for record in registry.records():
         for name, consumer in CONSUMERS.items():
             reads = per_consumer[name]
-            probe = v2_only(record, reads)
-            got = _without_stored_inputs(name, plain(consumer(probe)))
-            assert got == _without_stored_inputs(name, old[record.id][name]), (record.id, name)
+            got = plain(consumer(recorded(record, reads)))
+            assert got == old[record.id][name], (record.id, name)
     for name, reads in per_consumer.items():
         seen = {key for _, key in reads}
         assert not seen & V1_KEYS_ANYWHERE, (name, sorted(seen & V1_KEYS_ANYWHERE))
+        assert not {key for top, key in reads if top} & POLICY_KEYS_AT_TOP, (name, "read a policy fact from the document")
         assert "requires" not in {key for top, key in reads if top}, f"{name} read a top-level requires"
         assert MUST_READ.get(name, set()) <= seen, (name, sorted(MUST_READ.get(name, set()) - seen))
 
 
 def test_composed_workflows_still_declare_what_they_need(registry: WorkflowRegistry) -> None:
     # Enumerated from what the stored documents say, not from the reader under test: a record the reader drops is seen.
-    composed = [record for record in registry.records() if record.manifest.get("requires")]
+    composed = [record for record in registry.records() if any(b.get("requires") for b in record.manifest["bindings"].values())]
     assert len(composed) >= 20
     for record in composed:
         assert "requires" not in record.contract  # in the v2 contract it lives in a binding
-        assert requirements_of(record.contract) == record.manifest["requires"], record.id
+        (binding,) = record.contract["bindings"].values()
+        assert requirements_of(record.contract) == binding["requires"], record.id
 
 
-def _with_stored_document(record: WorkflowRecord, manifest: dict[str, Any]) -> WorkflowRecord:
-    return dataclasses.replace(record, manifest=manifest, contract=None, facts=None, stored_schema_version=None)
+V1_MESH = Path(__file__).parent / "fixtures" / "workflows_v1" / "mesh.generate.trellis-2.yml"
+
+
+def _old_mesh(record: WorkflowRecord) -> mesh_manifest.MeshManifest:
+    """The old validator's reading of the frozen schema 1 file. Its hash is the file's, so it takes the record's."""
+    return dataclasses.replace(mesh_manifest.load_mesh_manifest(V1_MESH), manifest_hash=record.identity.manifest_hash)
 
 
 @pytest.mark.parametrize("bindings", [("gateway", "comfyui"), ("comfyui", "gateway"), ("comfyui", "other"), ("gateway", "comfyui", "other")])
 def test_requirements_survive_every_binding_shape_the_validator_accepts(registry: WorkflowRegistry, bindings: tuple[str, ...]) -> None:
     base = registry.get("image.analyze.face-likeness")
     manifest = copy.deepcopy(base.manifest)
-    assert manifest["requires"] == {"services": ["faces"]}
     only = next(iter(manifest["bindings"].values()))
+    assert only["requires"] == {"services": ["faces"]}
     manifest["bindings"] = {key: copy.deepcopy(only) for key in bindings}
-    record = _with_stored_document(base, manifest)
-    assert requirements_of(record.contract) == manifest["requires"]
+    record = dataclasses.replace(base, manifest=manifest)
+    assert requirements_of(record.contract) == only["requires"]
     assert "requires" not in record.contract
     if "gateway" not in bindings:
         return  # the gateway's requirements apply to a workflow the gateway runs; the others are shown by the reader above
@@ -184,8 +174,8 @@ def test_requirements_survive_every_binding_shape_the_validator_accepts(registry
 
 def test_mesh_route_reads_its_contract_for_the_picture_input(registry: WorkflowRegistry) -> None:
     reads: list[tuple[bool, str]] = []
-    record = v2_only(registry.get(MESH_ID), reads)
-    old = mesh_manifest.load_mesh_manifest(BUNDLED_WORKFLOWS_DIR / "mesh.generate.trellis-2.yml")
+    record = recorded(registry.get(MESH_ID), reads)
+    old = _old_mesh(record)
     workflow = mesh_api.mesh_workflow_from_record(record, checked_against=old)
     assert workflow.image_input == old.image_input == "image"
     assert workflow.inputs[workflow.image_input]["type"] == "asset"  # the contract's name for the old picture type
@@ -200,7 +190,7 @@ def test_mesh_route_reads_its_contract_for_the_picture_input(registry: WorkflowR
 
 
 def test_mesh_profile_refuses_a_workflow_the_wire_cannot_carry(registry: WorkflowRegistry) -> None:
-    contract = normalize(registry.get(MESH_ID).manifest)[0]
+    contract = registry.get(MESH_ID).contract
     assert mesh_api.mesh_profile_errors(contract) == []
     two = copy.deepcopy(contract)
     two["inputs"]["second"] = {"type": "asset", "accepts": ["image/png"], "required": True}
@@ -212,7 +202,7 @@ def test_mesh_profile_refuses_a_workflow_the_wire_cannot_carry(registry: Workflo
 
 
 def _mesh_contract(registry: WorkflowRegistry) -> dict[str, Any]:
-    return copy.deepcopy(normalize(registry.get(MESH_ID).manifest)[0])
+    return copy.deepcopy(registry.get(MESH_ID).contract)
 
 
 def _drop(key: str):
@@ -249,7 +239,7 @@ def test_mesh_refuses_a_malformed_contract_as_a_manifest_error(registry: Workflo
     assert mesh_api.mesh_profile_errors(contract)  # an answer, never an exception
     with pytest.raises(mesh_manifest.MeshManifestError):
         mesh_api.mesh_workflow(contract, "hash")
-    record = dataclasses.replace(registry.get(MESH_ID), contract=contract)
+    record = dataclasses.replace(registry.get(MESH_ID), manifest=contract)
     with pytest.raises(mesh_manifest.MeshManifestError):
         mesh_api.mesh_workflow_from_record(record)
 
@@ -271,26 +261,14 @@ DRIFT = {
 
 @pytest.mark.parametrize("name", sorted(DRIFT))
 def test_mesh_cross_check_compares_the_scalars_the_route_binds(registry: WorkflowRegistry, name: str) -> None:
-    old = mesh_manifest.load_mesh_manifest(BUNDLED_WORKFLOWS_DIR / "mesh.generate.trellis-2.yml")
     record = registry.get(MESH_ID)
+    old = _old_mesh(record)
     mesh_api.mesh_workflow_from_record(record, checked_against=old)  # the untouched record agrees
     contract = _mesh_contract(registry)
     DRIFT[name](contract)
     assert mesh_api.mesh_profile_errors(contract) == [], "the profile alone accepts this; only the cross-check can refuse it"
     with pytest.raises(mesh_manifest.MeshManifestError, match="disagree"):
-        mesh_api.mesh_workflow_from_record(dataclasses.replace(record, contract=contract), checked_against=old)
-
-
-def test_facts_are_record_data_with_the_old_defaults_filled_in() -> None:
-    facts = PolicyFacts(exposure="hidden", trust_tier="experimental", resource_tier="interactive", tags=("a",))
-    assert PolicyFacts() == PolicyFacts(None, None, None, ())
-    from proxy import _image_policy_metadata  # noqa: PLC0415 - proxy is heavy; this test needs only this function
-
-    assert _image_policy_metadata(PolicyFacts(), trusted=False) == {
-        "exposure": "default", "trust_tier": "experimental", "resource_tier": "batch", "tags": ()}
-    assert _image_policy_metadata(PolicyFacts(), trusted=True)["trust_tier"] == "stable"
-    assert _image_policy_metadata(facts, trusted=True) == {
-        "exposure": "hidden", "trust_tier": "experimental", "resource_tier": "interactive", "tags": ("a",)}
+        mesh_api.mesh_workflow_from_record(dataclasses.replace(record, manifest=contract), checked_against=old)
 
 
 # --- second fix round ---------------------------------------------------------------------------------------------------
@@ -310,63 +288,10 @@ def test_mesh_refuses_a_contract_root_that_is_not_a_mapping(registry: WorkflowRe
         mesh_api.mesh_workflow_from_record(record)
 
 
-def _explicit_capability_manifest(registry: WorkflowRegistry, annotations: Any) -> dict[str, Any]:
-    manifest = copy.deepcopy(registry.get(MESH_ID).manifest)
-    manifest["capability"] = "declared-capability"
-    manifest["annotations"] = {"azizam.dev/backfill": annotations}
-    return manifest
-
-
-@pytest.mark.parametrize("annotation", [None, 7, {"capability": "x"}, {"other": 1}, "text", []])
-def test_a_declared_capability_is_shown_whatever_the_annotations_hold(registry: WorkflowRegistry, annotation: Any) -> None:
-    base = registry.get(MESH_ID)
-    record = _with_stored_document(base, _explicit_capability_manifest(registry, annotation))
-    assert not record.facts.capability_backfilled
-    (cap,) = _caps_of(record)
-    assert cap.capability == "declared-capability"
-
-
-def test_a_capability_the_converter_inferred_is_not_shown_as_declared(registry: WorkflowRegistry) -> None:
-    base = registry.get(MESH_ID)
-    manifest = copy.deepcopy(base.manifest)
-    manifest.pop("capability", None)
-    record = _with_stored_document(base, manifest)
-    assert record.facts.capability_backfilled
-    (cap,) = _caps_of(record)
-    assert cap.capability is None
-
-
-def _caps_of(record: WorkflowRecord) -> list[Any]:
-    return [capabilities.capability_from_workflow_record(record, backend=b) for b in record.supported_backends]
-
-
-def _image_row(record: WorkflowRecord) -> dict[str, Any]:
-    out = read_one(record, "member_catalog")
-    rows = [row for row in _walk_rows(out) if row.get("name") == "image" and row.get("asset")]
-    assert len(rows) == 1
-    return rows[0]
-
-
-def _walk_rows(value: Any) -> Any:
-    if isinstance(value, dict):
-        yield value
-        for item in value.values():
-            yield from _walk_rows(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _walk_rows(item)
-
-
-def test_a_picture_input_keeps_the_media_type_it_declared(registry: WorkflowRegistry) -> None:
-    base = registry.get(MESH_ID)
-    manifest = copy.deepcopy(base.manifest)
-    assert manifest["inputs"]["image"]["type"] == "image"
-    manifest["inputs"]["image"]["media_type"] = "image/png"
-    record = _with_stored_document(base, manifest)
-    # What the old helper answered for the stored spec: the declared type, else the intent's default.
-    assert str(manifest["inputs"]["image"]["media_type"]).strip() == "image/png"
-    assert record.facts.declared_media("image") == "image/png"
-    assert _image_row(record)["media_type"] == "image/png"
-    undeclared = _with_stored_document(base, base.manifest)
-    assert undeclared.facts.declared_media("image") == ""
-    assert "media_type" not in _image_row(undeclared)  # the intent has no default picture type: the old output left it out
+@pytest.mark.parametrize("key", sorted(POLICY_KEYS_AT_TOP))
+def test_control_a_policy_fact_read_from_the_document_is_seen(registry: WorkflowRegistry, key: str) -> None:
+    """The key-read check above fails for a reader that takes one of the record's facts from the document."""
+    reads: list[tuple[bool, str]] = []
+    record = recorded(registry.get(MESH_ID), reads)
+    record.manifest.get(key)
+    assert {name for top, name in reads if top} & POLICY_KEYS_AT_TOP == {key}

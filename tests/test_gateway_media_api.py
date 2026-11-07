@@ -20,16 +20,17 @@ sys.path.insert(0, str(ROOT))
 from gateway import media_jobs  # noqa: E402
 from gateway.api import create_gateway_router  # noqa: E402
 from gateway.discovery import WorkflowRegistry  # noqa: E402
+from gateway.manifests import Provenance  # noqa: E402
+from tests.support.workflow_docs import STANDARD_FACTS  # noqa: E402
 
 
 SIMPLE_MANIFEST_YAML = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
     version: "0.1.0"
     id: image.generate.simple.example
     intent: image.generate
-    source: local
-    trusted: false
+    capability: image
     inputs:
       prompt:
         type: string
@@ -53,6 +54,8 @@ def _build_registry() -> WorkflowRegistry:
     registry.add_manifest(
         yaml.safe_load(SIMPLE_MANIFEST_YAML),
         source_path="/srv/azizam/manifests/workflows/simple.yml",
+        provenance=Provenance(trusted=False, source="local"),
+        facts=STANDARD_FACTS,
     )
     return registry
 

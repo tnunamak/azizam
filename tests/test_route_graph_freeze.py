@@ -209,7 +209,11 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-07 for config homes C10: GET /admin/api/settings/effective and its export left (see
         # REMOVED_PATHS), and so did POST /admin/api/config/sections/{section_id}/legacy-import, which an earlier
         # config homes slice had added. Before it the digest was ed99ec17dded4d89353e7f6aaebe74d3271f26ca923f5bedab83211514254518.
-        assert route_graph.openapi_digest(proxy.app) == "2b97a3fb9cf8d5b3f2f00b03b90cd8b5420b422d1d569ed85c4623239d711272"
+        # Re-captured 2026-11-07 for S3.5a (the bundled workflows are schema 2): only ace-step-1.5-xl-turbo lost its
+        # ``prompt`` input (the route sends the prompt to ``tags`` when no tags are given), so its input schema and its
+        # sync and async field maps lost ``prompt``; nothing else in the document moved (tests/fixtures/headless_openapi.json
+        # shows the same three removals). Before it the digest was 2b97a3fb9cf8d5b3f2f00b03b90cd8b5420b422d1d569ed85c4623239d711272.
+        assert route_graph.openapi_digest(proxy.app) == "7477383af059713a1d122d88f92404d7d99fd15096a742415ac3ebf954dfce77"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -236,4 +240,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # the frozen digest was 2ce206e55ec717e2626ac7f109a35ecf224b9be54c1dddbc677778be9208b415.
     # Re-captured 2026-11-07 for config homes C10 (see the same note above): the two effective-view paths and the
     # legacy-import path left. Before it the frozen digest was adbd04be5b8d22f93a3ba68925b5f7716b17268dcb8066cae31bf0fcf80c8202.
+    # Re-captured 2026-11-07 for S3.5a: the same three ace-step prompt removals. Before it the frozen digest was
+    # e782277147ec386ed5430f191856ffd940638666bc1e32d1a1a0cc0451d9ef46.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

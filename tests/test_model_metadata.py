@@ -97,7 +97,8 @@ class DerivationTableTests(unittest.TestCase):
                 self.assertEqual(list(derived.input_modalities), inputs)
                 for name, spec in manifest["inputs"].items():
                     if spec.get("type") == "asset":
-                        self.assertIn("media_type", spec, f"{workflow_id}.{name}")
+                        # Schema 2 asset inputs declare the types they take in `accepts`.
+                        self.assertIn("accepts", spec, f"{workflow_id}.{name}")
 
     def test_audio_generate(self) -> None:
         fields = self._workflow_fields("audio.generate", {"inputs": {}, "outputs": {"audio": {"media_type": "audio/wav"}}})
