@@ -92,7 +92,9 @@ def load_mesh_manifest(path: str | Path) -> MeshManifest:
 
 def validate_mesh_manifest(raw: Any) -> MeshManifest:
     errors = ErrorCollector()
-    parsed = _validate_manifest_into(raw, errors)
+    parsed = None
+    with errors.stop_at_a_crash_after_an_error():
+        parsed = _validate_manifest_into(raw, errors)
     errors.raise_if_any(MeshContractErrors)
     assert parsed is not None
     return parsed
@@ -169,7 +171,7 @@ def _validate_input(name: Any, spec: Any, errors: ErrorCollector) -> dict[str, A
     if len(errors) != before:
         return None
     kind = spec["type"]
-    if kind not in _INPUT_TYPES:
+    if not isinstance(kind, str) or kind not in _INPUT_TYPES:
         errors.add(at + ("type",), "type_unsupported", f"input {name} type must be one of {sorted(_INPUT_TYPES)}")
         return None
     checked = _plain(dict(spec))

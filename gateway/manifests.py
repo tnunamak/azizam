@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
@@ -9,7 +10,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 import yaml
 
@@ -101,6 +102,17 @@ class ErrorCollector:
     def raise_if_any(self, factory: Callable[[list[ContractError]], ContractErrors] = ContractErrors) -> None:
         if self.errors:
             raise factory(self.errors)
+
+    @contextlib.contextmanager
+    def stop_at_a_crash_after_an_error(self) -> Iterator[None]:
+        """A check that keeps going after an error can reach a value that the error already refused, and crash on it.
+        The check used to stop at its first error, so that crash is an effect of an error already listed: the errors
+        collected so far stand, and the crash is dropped. A crash with no error before it is a real bug and is raised."""
+        try:
+            yield
+        except (TypeError, AttributeError, KeyError, IndexError):
+            if not self.errors:
+                raise
 
 
 def refusal(path: Iterable[PathPart], code: str, message: str) -> ContractErrors:
@@ -206,16 +218,32 @@ def validate_manifest(manifest: dict[str, Any], descriptors: Mapping[str, Any] |
     from gateway import output_selectors
 
     errors = ErrorCollector()
-    before_selectors = collect_manifest_errors(manifest, errors, descriptors)
+    selector_start: list[int] = []
+    with errors.stop_at_a_crash_after_an_error():
+        collect_manifest_errors(manifest, errors, descriptors, selector_start)
     # A manifest whose first problem is a selector is still refused with a ``SelectorError``, as it was.
-    first_is_selector = before_selectors == 0 and len(errors) > 0
+    first_is_selector = selector_start == [0] and len(errors) > 0
     errors.raise_if_any(output_selectors.SelectorErrors if first_is_selector else ContractErrors)
 
 
 def collect_manifest_errors(
-    manifest: dict[str, Any], errors: ErrorCollector, descriptors: Mapping[str, Any] | None = None
-) -> int:
-    """Add every error of the manifest to ``errors``. Returns how many there were before the selector check began."""
+    manifest: dict[str, Any],
+    errors: ErrorCollector,
+    descriptors: Mapping[str, Any] | None = None,
+    selector_start: list[int] | None = None,
+) -> None:
+    """Add every error of the manifest to ``errors``. ``selector_start``, when given, receives how many errors there were
+    before the selector check began."""
+    if not isinstance(manifest, Mapping):
+        # As before: a root that is not a mapping is refused for its first missing field (or, if it holds every field
+        # name, for its type). Nothing below can read it.
+        missing = next((name for name in ("schema_version", "id", "intent", "inputs", "outputs", "bindings")
+                        if not _holds(manifest, name)), None)
+        if missing is None:
+            errors.add((), "type_mismatch", "manifest must be a mapping")
+        else:
+            errors.add((missing,), "required_field_missing", f"manifest missing required field: {missing}")
+        return
     for field_name in ("schema_version", "id", "intent", "inputs", "outputs", "bindings"):
         if field_name not in manifest:
             errors.add((field_name,), "required_field_missing", f"manifest missing required field: {field_name}")
@@ -241,8 +269,10 @@ def collect_manifest_errors(
             value = manifest[field_name]
             if not isinstance(value, str) or not value.strip():
                 errors.add((field_name,), "value_empty", f"manifest {field_name} must be a non-empty string")
-            elif field_name == "summary" and len(value.split()) > 40:
-                errors.add((field_name,), "too_many_words", "manifest summary must contain at most 40 words")
+    # The length rule comes after all three text checks, in the order the check has always used.
+    summary = manifest.get("summary")
+    if isinstance(summary, str) and summary.strip() and len(summary.split()) > 40:
+        errors.add(("summary",), "too_many_words", "manifest summary must contain at most 40 words")
     if isinstance(inputs, dict):
         for name, spec in inputs.items():
             if not isinstance(spec, dict):
@@ -267,9 +297,17 @@ def collect_manifest_errors(
     # A binding that declares output selectors is checked against its adapter's descriptor (CODE_TO_DATA_S2, D8).
     from gateway import output_selectors
 
-    before_selectors = len(errors)
+    if selector_start is not None:
+        selector_start.append(len(errors))
     output_selectors.collect_manifest_errors(manifest, errors, descriptors)
-    return before_selectors
+
+
+def _holds(value: Any, name: str) -> bool:
+    """``name in value`` for any value; a value that cannot answer does not hold it."""
+    try:
+        return name in value
+    except TypeError:
+        return False
 
 
 def validate_inputs(
@@ -312,8 +350,9 @@ def apply_deployment_inputs(manifest: dict[str, Any], narrowing: Mapping[str, Ma
     validate_manifest(manifest)
     inputs = copy.deepcopy(manifest["inputs"])
     errors = ErrorCollector()
-    for name, limits in narrowing.items():
-        _narrow_input(name, limits, inputs, errors)
+    with errors.stop_at_a_crash_after_an_error():
+        for name, limits in narrowing.items():
+            _narrow_input(name, limits, inputs, errors)
     errors.raise_if_any()
     effective = copy.deepcopy(manifest)
     effective["inputs"] = inputs
@@ -329,6 +368,9 @@ def _narrow_input(name: str, limits: Mapping[str, Any], inputs: dict[str, Any], 
         return
     if spec.get("type") not in ("number", "integer"):
         errors.add(at, "input_not_numeric", f"deployment narrows input {name}, which is not a number")
+        return
+    if not isinstance(limits, Mapping):
+        errors.add(at, "type_mismatch", f"deployment narrowing for input {name} must be a mapping")
         return
     unknown = sorted(set(limits) - set(DEPLOYMENT_INPUT_KEYS))
     if unknown:

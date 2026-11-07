@@ -117,3 +117,17 @@ def test_a_caller_that_catches_the_old_classes_still_catches():
     assert [item.path for item in caught.value.errors] == [
         ("selectors", "first", "from"), ("selectors", "first", "key"),
     ]
+
+
+def test_a_crash_after_a_collected_error_leaves_that_error_and_a_crash_alone_is_raised():
+    from gateway.manifests import ErrorCollector
+
+    errors = ErrorCollector()
+    with errors.stop_at_a_crash_after_an_error():
+        errors.add(("inputs", "a"), "type_mismatch", "input a is broken")
+        set([[]])  # the effect of the broken input
+    assert [item.code for item in errors.errors] == ["type_mismatch"]
+
+    with pytest.raises(TypeError):
+        with ErrorCollector().stop_at_a_crash_after_an_error():
+            set([[]])
