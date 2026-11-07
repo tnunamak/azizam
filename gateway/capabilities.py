@@ -36,7 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
-from gateway.workflow_view import settable_inputs
+from gateway.workflow_view import declared_capability, inputs_without_pictures, settable_inputs
 from gateway.discovery import WorkflowRecord
 from gateway.policy import ALLOWED, DecidingRule, EffectiveAccess, PolicyDecision, PolicyRequest
 
@@ -522,9 +522,8 @@ def capability_from_workflow_record(
 
     manifest = record.contract
     facts = record.facts
-    inputs = settable_inputs(manifest)
     outputs = manifest.get("outputs") or {}
-
+    inputs = inputs_without_pictures(settable_inputs(manifest), facts)
     input_modalities = _derive_input_modalities(inputs, intent=record.intent)
     output_modalities = _derive_output_modalities(outputs)
 
@@ -537,7 +536,7 @@ def capability_from_workflow_record(
         intent=record.intent,
         title=manifest.get("display_name") or manifest.get("name") or manifest.get("title"),
         description=manifest.get("description"),
-        capability=manifest.get("capability"),
+        capability=declared_capability(manifest),
         backend=chosen_backend,
         workflow=record.id,
         input_modalities=input_modalities,

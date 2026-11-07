@@ -42,3 +42,20 @@ def settable_inputs(contract: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(inputs, Mapping):
         return {}
     return {name: spec for name, spec in inputs.items() if not (isinstance(spec, Mapping) and spec.get("settable") is False)}
+
+
+def inputs_without_pictures(inputs: Mapping[str, Any], facts: Any) -> dict[str, Any]:
+    """The inputs a modality is read from: the old mesh picture type, which no modality reader counted, stays out."""
+    pictures = set(getattr(facts, "pictures", ()) or ())
+    return {name: spec for name, spec in inputs.items() if name not in pictures}
+
+
+def declared_capability(contract: Mapping[str, Any]) -> Any:
+    """The capability the document declared. One the converter inferred from the intent (it says so in an annotation) is not
+    a declaration: the readers that show a declared capability showed nothing for it, and fill the intent's rule themselves."""
+    from gateway.workflow_convert import BACKFILL_KEY  # noqa: PLC0415 - the converter imports readers of this module
+
+    annotations = contract.get("annotations")
+    if isinstance(annotations, Mapping) and BACKFILL_KEY in annotations and "capability" in annotations[BACKFILL_KEY]:
+        return None
+    return contract.get("capability")

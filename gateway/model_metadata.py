@@ -442,15 +442,19 @@ def _asset_input_modality(spec: Mapping[str, Any], *, default: str | None) -> st
     return major if major in INPUT_MODALITIES else default
 
 
-def asset_media_type(intent: str | None, spec: Mapping[str, Any]) -> str | None:
-    """Media kind of one asset input of a contract: what it accepts (one type as it is; several as their shared kind,
-    ``image/*``), else its intent's default."""
-    accepted = [str(item).strip() for item in spec.get("accepts") or () if str(item).strip()]
-    if len(accepted) == 1:
-        return accepted[0]
-    majors = {item.split("/", 1)[0].lower() for item in accepted}
-    if len(majors) == 1 and next(iter(majors)) in INPUT_MODALITIES:
-        return f"{next(iter(majors))}/*"
+def asset_media_type(intent: str | None, spec: Mapping[str, Any], declared: str | None = None) -> str | None:
+    """Media kind of one asset input, as ``image/*``. A schema 1 document says what it declared (``declared``, empty for
+    nothing): that, else its intent's default. A document written as schema 2 says it by what the input accepts: one type as
+    it is, several as their shared kind."""
+    if declared is None:
+        accepted = [str(item).strip() for item in spec.get("accepts") or () if str(item).strip()]
+        if len(accepted) == 1:
+            return accepted[0]
+        majors = {item.split("/", 1)[0].lower() for item in accepted}
+        if len(majors) == 1 and next(iter(majors)) in INPUT_MODALITIES:
+            return f"{next(iter(majors))}/*"
+    elif declared:
+        return declared
     major = _INTENT_ASSET_MODALITY.get(str(intent or ""))
     return f"{major}/*" if major else None
 

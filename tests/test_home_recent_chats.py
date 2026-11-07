@@ -119,10 +119,10 @@ def test_cost_hint_is_free_for_local_paid_for_remote_and_unknown_otherwise():
 
 def test_required_input_modalities_come_from_the_manifest_else_from_what_the_capability_takes():
     edit = Capability(intent="image.edit", backend="engine", workflow="edit", input_modalities=("text", "image"))
-    records = (SimpleNamespace(id="edit", contract={"inputs": {
+    records = (SimpleNamespace(id="edit", facts=PolicyFacts(), contract={"inputs": {
         "prompt": {"type": "string"}, "source_image": {"type": "asset", "required": True}, "mask": {"type": "asset"}}}),)
     assert _required_input_modalities(edit, records) == ["image"]
-    records = (SimpleNamespace(id="edit", contract={"inputs": {
+    records = (SimpleNamespace(id="edit", facts=PolicyFacts(), contract={"inputs": {
         "prompt": {"type": "string", "required": True}, "source_image": {"type": "asset", "required": True}}}),)
     assert _required_input_modalities(edit, records) == ["text", "image"]
     # No manifest: a vision model needs words, and a picture only helps; a capability with no text needs what it takes.

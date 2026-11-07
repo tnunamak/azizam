@@ -148,13 +148,66 @@ class MeshWorkflow:
         return tuple(self.mapping)
 
 
+_ROUTE_TYPES = frozenset({"asset", "integer", "string", "object"})
+# The picture types the route sniffs (``sniff_image``): the contract's list of accepted types must cover each.
+_SNIFFED_PICTURES = ("image/png", "image/jpeg", "image/webp")
+# What ``bind_request`` reads of a scalar input: the route's type, default, range and allowed values.
+_ROUTE_SCALAR_KEYS = ("type", "default", "minimum", "maximum", "enum")
+
+
+def _accepts_picture(accepts: Any, media_type: str) -> bool:
+    if not isinstance(accepts, list):
+        return False
+    major = media_type.split("/", 1)[0]
+    return any(isinstance(item, str) and item.strip().lower() in (media_type, f"{major}/*", "*/*") for item in accepts)
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _input_problems(name: Any, spec: Any, mapped: bool) -> list[str]:
+    """What ``bind_request`` would trip on in one input: a spec that is not a mapping, a scalar of a type the route cannot
+    coerce, a range or default of the wrong type."""
+    if not isinstance(name, str) or not name:
+        return [f"input name {name!r} is not text"]
+    if not isinstance(spec, Mapping):
+        return [f"input {name} must be a mapping"]
+    kind = spec.get("type")
+    if kind not in _ROUTE_TYPES:
+        return [f"input {name} has a type the route cannot read"]
+    if kind == "asset":
+        return []  # the picture's acceptance is checked by the profile, for the one required picture
+    problems: list[str] = []
+    if kind == "object" and mapped:
+        problems.append(f"input {name} is an object and cannot be mapped to a form field")
+    if kind == "integer":
+        for key in ("minimum", "maximum", "default"):
+            if spec.get(key) is not None and not _is_int(spec[key]):
+                problems.append(f"input {name} {key} must be an integer")
+    if kind == "string" and "default" in spec and spec["default"] is not None and not isinstance(spec["default"], str):
+        problems.append(f"input {name} default must be text")
+    enum = spec.get("enum")
+    if enum is not None and (not isinstance(enum, list) or not enum):
+        problems.append(f"input {name} enum must be a non-empty list")
+    return problems
+
+
 def mesh_profile_errors(contract: Mapping[str, Any]) -> list[str]:
     """Why the mesh frontend cannot serve this workflow, from the contract only: the wire carries one file part and calls
-    one engine over one multipart POST, and answers with one GLB body. Empty when it can."""
+    one engine over one multipart POST, and answers with one GLB body. Empty when it can. A contract of any shape gets an
+    answer here, never an exception."""
     problems: list[str] = []
     if contract.get("intent") != MESH_INTENT:
         problems.append(f"intent must be {MESH_INTENT!r}")
-    inputs = contract.get("inputs") if isinstance(contract.get("inputs"), Mapping) else {}
+    for key in ("id", "version"):
+        value = contract.get(key)
+        if not isinstance(value, str) or not value.strip():
+            problems.append(f"{key} must be a non-empty string")
+    raw_inputs = contract.get("inputs")
+    inputs = raw_inputs if isinstance(raw_inputs, Mapping) else {}
+    if not inputs:
+        problems.append("inputs must be a non-empty mapping")
     pictures = [name for name, spec in inputs.items() if isinstance(spec, Mapping) and spec.get("type") == "asset"]
     required = [name for name in pictures if inputs[name].get("required") is True]
     if len(pictures) != 1 or len(required) != 1:
@@ -167,6 +220,18 @@ def mesh_profile_errors(contract: Mapping[str, Any]) -> list[str]:
                                or not isinstance(binding.get("service"), str) or not isinstance(binding.get("path"), str)
                                or not isinstance(binding.get("map"), Mapping)):
         problems.append(f"the binding must be a {_MESH_ADAPTER} binding with a service, a path and a map")
+    mapping = binding.get("map") if isinstance(binding, Mapping) and isinstance(binding.get("map"), Mapping) else {}
+    for name, spec in inputs.items():
+        problems.extend(_input_problems(name, spec, name in mapping))
+    for logical, target in mapping.items():
+        if logical not in inputs:
+            problems.append(f"map names {logical!r}, which is not an input")
+        if not isinstance(target, str) or not target:
+            problems.append(f"map target for {logical} must be a form field name")
+    if len(bindings) == 1 and len(required) == 1 and required[0] not in mapping:
+        problems.append("the picture input must be mapped")
+    if len(required) == 1 and not all(_accepts_picture(inputs[required[0]].get("accepts"), media) for media in _SNIFFED_PICTURES):
+        problems.append(f"the picture input must accept {', '.join(_SNIFFED_PICTURES)}")
     outputs = contract.get("outputs") if isinstance(contract.get("outputs"), Mapping) else {}
     media = [spec.get("media_type") for spec in outputs.values() if isinstance(spec, Mapping)]
     if len(outputs) != 1 or media != [MESH_MEDIA_TYPE]:
@@ -187,6 +252,13 @@ def mesh_workflow(contract: Mapping[str, Any], manifest_hash: str) -> MeshWorkfl
         mapping=dict(binding["map"]), output_media_type=output["media_type"], data=contract)
 
 
+def _route_view(inputs: Mapping[str, Mapping[str, Any]], picture: str) -> dict[str, tuple[Any, ...]]:
+    """Each input as what the route reads of it. The picture is its name alone: the old validator and the contract name its
+    type differently, and the profile checks what it accepts."""
+    return {name: ("picture",) if name == picture else tuple(spec.get(key) for key in _ROUTE_SCALAR_KEYS)
+            for name, spec in inputs.items()}
+
+
 def mesh_workflow_from_record(record: Any, checked_against: MeshManifest | None = None) -> MeshWorkflow:
     """The mesh route's workflow from its registry record. The old validator's reading, when given, must agree on every
     fact the route uses: it runs beside the profile as a check, and a disagreement refuses the route."""
@@ -194,9 +266,10 @@ def mesh_workflow_from_record(record: Any, checked_against: MeshManifest | None 
     if checked_against is not None:
         old = (checked_against.id, checked_against.service_id, checked_against.transport_path, dict(checked_against.mapping),
                checked_against.output_media_type, checked_against.version, checked_against.manifest_hash,
-               checked_against.image_input)
+               checked_against.image_input, _route_view(checked_against.inputs, checked_against.image_input))
         new = (workflow.id, workflow.service_id, workflow.transport_path, dict(workflow.mapping),
-               workflow.output_media_type, workflow.version, workflow.manifest_hash, workflow.image_input)
+               workflow.output_media_type, workflow.version, workflow.manifest_hash, workflow.image_input,
+               _route_view(workflow.inputs, workflow.image_input))
         if old != new:
             raise MeshManifestError("the mesh contract and the mesh manifest check disagree")
     return workflow

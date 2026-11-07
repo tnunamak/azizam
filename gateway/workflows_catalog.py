@@ -293,7 +293,7 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
         # keep what it really is, so a page can tell a picture input from a text one.
         if declared.get("type") == "asset" or spec.get("x-azizam-asset"):
             row["asset"] = True
-            media_type = asset_media_type(record.intent, declared)
+            media_type = asset_media_type(record.intent, declared, record.facts.declared_media(str(name)))
             if media_type:
                 row["media_type"] = media_type
         if isinstance(declared.get("label"), str) and declared["label"].strip():
