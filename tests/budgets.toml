@@ -602,7 +602,8 @@
 # S3.5 integration fixes 5 (2026-11-07): +23 cases (quarantine keeps enabled, kept-off values, key/id, one snapshot, mesh unavailable boot and route, schema 2 replacement); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21409.
 # S3.5a equality-gate fourth review (2026-11-07): +24 cases (exact generated-value lattice 19, shipped-package hash and bundled-loader rows 5); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21433.
 # S3.5 integration fix 6 (2026-11-07): -18 kept-off cases, +4 (bundled version serves for a quarantined override at either enabled value; none without a bundled counterpart); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21419.
-pytest = 21419
+# S3.5 integration fix 7 (2026-11-07): +10 (3 enum members, 3 big-range draws, 1 unchanged small draw, 2 unlistable package folders, 1 shipped-hash cache); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21429.
+pytest = 21429
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
