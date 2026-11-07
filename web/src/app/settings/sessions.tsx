@@ -114,7 +114,6 @@ function SessionsForm({ initial }: { initial: SessionsResponse }) {
       }),
     onSuccess: (data) => {
       client.setQueryData(sessionsKey, data);
-      void client.invalidateQueries({ queryKey: ["settings", "effective"] });
       toast.success("Sign-in session settings saved");
     },
   });

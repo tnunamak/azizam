@@ -321,12 +321,12 @@ def test_a_provider_that_omits_auth_time_does_not_confirm_a_step_up(sg):
     """The review's input: /login?reauth=1, then a valid provider response with no auth_time."""
     client = owner_client(sg)
     forge(sg, client, OWNER, issued_ago=DAY)
-    assert asks_again(client.get("/admin/api/settings/effective/export"))
+    assert asks_again(client.get("/admin/api/config/export"))
 
     _, callback = through_provider(sg, client, reauth=True, auth_time=None)
 
     assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=no_sign_in_time")
-    assert asks_again(client.get("/admin/api/settings/effective/export"))
+    assert asks_again(client.get("/admin/api/config/export"))
 
 
 def test_a_provider_that_reports_a_fresh_auth_time_still_confirms(sg):
@@ -336,7 +336,7 @@ def test_a_provider_that_reports_a_fresh_auth_time_still_confirms(sg):
     _, callback = through_provider(sg, client, reauth=True, auth_time=int(time.time()))
 
     assert callback.status_code == 302
-    assert not asks_again(client.get("/admin/api/settings/effective/export"))
+    assert not asks_again(client.get("/admin/api/config/export"))
 
 
 # -- MED 4: confirming without a password ----------------------------------------------------------
@@ -355,19 +355,6 @@ def test_confirming_a_password_for_a_person_who_has_none_is_throttled_and_never_
     assert sg.rows("SELECT * FROM account_login_limits") != []
 
 
-# -- LOW: the inline view is the export ------------------------------------------------------------
-
-def test_the_inline_effective_configuration_is_gated_like_its_export(sg):
-    """The review's input: GET /admin/api/settings/effective returned what the gated export returns."""
-    stale, fresh = stale_owner(sg), owner_client(sg)
-
-    denied = stale.get("/admin/api/settings/effective")
-
-    assert asks_again(denied)
-    exported = fresh.get("/admin/api/settings/effective/export")
-    assert exported.status_code == 200 and fresh.get("/admin/api/settings/effective").json() == exported.json()
-
-
 # -- the spellings the review tried and found sound ---------------------------------------------------
 
 @pytest.mark.parametrize("method, path", [
@@ -378,7 +365,6 @@ def test_the_inline_effective_configuration_is_gated_like_its_export(sg):
     ("GET", "/ADMIN/api/config/export"),
     ("GET", "/native/admin/api/config/export"),
     ("GET", "/gateway/v1/admin/api/config/export"),
-    ("GET", "/admin/api/settings/effective/"),
 ])
 def test_other_spellings_of_a_gated_route_do_not_give_an_old_session_the_export(sg, method, path):
     client = owner_client(sg)

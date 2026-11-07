@@ -1,10 +1,15 @@
-"""Shared bootstrap YAML and admin-store path resolution for gateway processes."""
+"""Shared startup-file and admin-store path resolution for gateway processes.
+
+The startup file holds only the keys ``registry/startup.schema.json`` lists (docs/design/CONFIG_HOMES.md, C10). Loading
+refuses any other key and says where the setting lives now.
+"""
 
 from pathlib import Path
 from typing import Any, Mapping
 
 import yaml
 
+from gateway import startup_config
 from gateway.compat import get_env
 
 
@@ -17,10 +22,13 @@ def bootstrap_config_path() -> Path:
 
 
 def load_bootstrap_config(path: Path) -> dict:
-    if path.exists():
-        with path.open() as source:
-            return yaml.safe_load(source)
-    return {}
+    """The startup file as a mapping; ``{}`` when there is no file. Raises ``StartupConfigError`` for a key it may not hold."""
+    if not path.exists():
+        return {}
+    with path.open() as source:
+        raw = yaml.safe_load(source)
+    startup_config.check(raw, source=str(path))
+    return raw or {}
 
 
 def configured_admin_db_path(admin_config: Mapping[str, Any] | None = None) -> Path:

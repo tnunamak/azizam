@@ -336,6 +336,42 @@ class EntryIndex:
                 return candidate
         return None
 
+    def declared(self) -> list[tuple[str, EntryRule]]:
+        """Every entry the schema declares, as a pointer template and its rule, in schema order.
+
+        A member of a ``collection`` is one template ending in ``/*``. Unlike ``entries_in`` this reads the schema
+        alone, so an entry the release data does not set yet is still listed.
+        """
+        found: list[tuple[str, EntryRule]] = []
+        self._declare(self._resolve(self._root), [], _Inherited(), found)
+        return found
+
+    def _declare(self, node: Mapping[str, Any], segments: list[str], state: _Inherited,
+                 found: list[tuple[str, EntryRule]]) -> None:
+        state = state.over(node)
+        kind = node.get(ENTRY_KEY)
+        if kind == "collection":
+            extra = node.get("additionalProperties")
+            patterns = node.get("patternProperties")
+            member = (self._resolve(extra) if isinstance(extra, Mapping)
+                      else self._resolve(next(iter(patterns.values()))) if isinstance(patterns, Mapping) and patterns else {})
+            found.append((join_pointer([*segments, "*"]), state.over(member).rule("member")))
+        elif kind == "atomic":
+            found.append((join_pointer(segments), state.rule("atomic")))
+        elif _is_list(node):
+            found.append((join_pointer(segments), state.rule("list")))
+        elif not _is_object(node):
+            found.append((join_pointer(segments), state.rule("scalar")))
+        else:
+            for name, child in (node.get("properties") or {}).items():
+                self._declare(self._resolve(child), [*segments, name], state, found)
+            # Keys the schema does not name (an operation id, an engine id) stand for ``*``.
+            open_keys = [*(node.get("patternProperties") or {}).values()]
+            if isinstance(node.get("additionalProperties"), Mapping):
+                open_keys.append(node["additionalProperties"])
+            for child in open_keys:
+                self._declare(self._resolve(child), [*segments, "*"], state, found)
+
     def entries_in(self, document: Any) -> list[str]:
         """Every entry pointer present in ``document``, sorted."""
         found: list[str] = []

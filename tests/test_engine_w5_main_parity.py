@@ -25,7 +25,7 @@ MAIN_PROBES = json.loads((FIXTURES / 'main-probes.json').read_text())
 @pytest.mark.parametrize('shape', ['seed', 'live'])
 def test_unedited_registry_compiles_to_the_main_bytes(shape):
     registry = LIVE if shape == 'live' else seed_registry_document(
-        yaml.safe_load((Path(__file__).parents[1] / 'proxy_config.yml').read_text()))
+        yaml.safe_load((Path(__file__).parents[1] / "tests/fixtures/config_homes/deployment_config.yml").read_text()))
     compiled = compile_litellm_config_from_registry(registry)
     from gateway.litellm_content import profile
     assert compiled.pop('router_settings') == profile()['router_settings']

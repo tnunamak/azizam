@@ -16,6 +16,7 @@ import yaml
 import proxy
 from gateway import admin_store, config_legacy_import
 from tests.config_homes_golden import effective_config, raw_config
+from tests.registry_test_helpers import import_blocks
 from tests.support.config_snapshot import section_published
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,9 +42,7 @@ def _owner_set(db: Path, section: str, pointer: str, value, base) -> None:
 
 def _import(db: Path, startup: dict) -> dict[str, str]:
     admin_store.init_db(db)
-    found = config_legacy_import.import_at_boot(proxy.CONFIG_HOME, copy.deepcopy(startup), path=db, registry=None,
-                                                log=lambda line: None)
-    return {name: outcome.status for name, outcome in found.outcomes.items()}
+    return {name: outcome.status for name, outcome in import_blocks(db, startup).items()}
 
 
 # -- the release files -----------------------------------------------------------------------------------------------
@@ -85,18 +84,17 @@ def test_the_generated_model_list_lives_under_registry_and_nowhere_else():
     assert not (ROOT / "openai_model_aliases.generated.yml").exists()
 
 
-def test_the_generated_list_path_is_the_release_file_unless_the_environment_names_one(monkeypatch):
-    monkeypatch.delenv("OPENAI_MODEL_ALIASES_FILE", raising=False)
+def test_the_generated_list_path_is_the_release_file_and_the_environment_does_not_move_it(monkeypatch):
+    """C10 (F4): the path was an environment override of a non-startup key; it is release data and is fixed."""
     assert proxy.openai_model_aliases_file() == ROOT / "registry" / "openai_model_aliases.generated.yml"
     monkeypatch.setenv("OPENAI_MODEL_ALIASES_FILE", "/does/not/exist.yml")
-    assert proxy.openai_model_aliases_file() == Path("/does/not/exist.yml")
+    assert proxy.openai_model_aliases_file() == ROOT / "registry" / "openai_model_aliases.generated.yml"
 
 
 def test_the_reader_and_the_generator_use_the_release_file(monkeypatch, tmp_path):
-    monkeypatch.delenv("OPENAI_MODEL_ALIASES_FILE", raising=False)
     assert proxy.load_generated_openai_model_aliases(), "the release list is read from registry/"
     out = tmp_path / "list.yml"
-    monkeypatch.setenv("OPENAI_MODEL_ALIASES_FILE", str(out))
+    monkeypatch.setattr(proxy, "GENERATED_OPENAI_MODEL_ALIASES_FILE", out)
     monkeypatch.setenv("OPENAI_API_KEY", "k")
 
     class _Reply:
@@ -160,15 +158,14 @@ def test_the_moved_constants_are_gone_from_the_module():
         assert not hasattr(proxy, name), name
 
 
-def test_the_compat_switch_follows_the_snapshot_and_the_environment_still_wins(monkeypatch):
-    monkeypatch.delenv("AZIZAM_MODEL_COMPAT_ENABLED", raising=False)
+def test_the_compat_switch_follows_the_snapshot_and_the_environment_does_not_move_it(monkeypatch):
     with section_published("model_compatibility", {"enabled": False}):
         assert proxy.model_compat_enabled() is False
     with section_published("model_compatibility", {"enabled": True}):
         assert proxy.model_compat_enabled() is True
-    monkeypatch.setenv("AZIZAM_MODEL_COMPAT_ENABLED", "false")
+    monkeypatch.setenv("AZIZAM_MODEL_COMPAT_ENABLED", "false")  # C10 (F4): no longer read
     with section_published("model_compatibility", {"enabled": True}):
-        assert proxy.model_compat_enabled() is False
+        assert proxy.model_compat_enabled() is True
 
 
 def test_the_default_models_follow_the_snapshot():
@@ -228,12 +225,9 @@ def test_an_unconfigured_face_service_answers_not_configured():
     assert "not configured" in json.loads(response.body)["error"]["message"]
 
 
-def test_the_status_page_reads_the_generated_model_list_where_the_gateway_does(monkeypatch, tmp_path):
+def test_the_status_page_reads_the_generated_model_list_where_the_gateway_does():
     import proxy
     import status_endpoint
 
-    monkeypatch.delenv("OPENAI_MODEL_ALIASES_FILE", raising=False)
     assert status_endpoint.openai_aliases_file() == proxy.openai_model_aliases_file()
     assert status_endpoint.openai_aliases_file().is_file()
-    monkeypatch.setenv("OPENAI_MODEL_ALIASES_FILE", str(tmp_path / "list.yml"))
-    assert status_endpoint.openai_aliases_file() == proxy.openai_model_aliases_file() == tmp_path / "list.yml"

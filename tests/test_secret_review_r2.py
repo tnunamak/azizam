@@ -301,30 +301,6 @@ def test_a_registry_read_and_written_back_unchanged_keeps_every_hidden_setting(g
     assert [name for name, marker in kept.items() if marker not in after] == []
 
 
-# --- M1: the effective configuration (the YAML the operator keeps) ------------------------------------------------
-
-def test_the_effective_configuration_shows_only_classified_keys_of_each_yaml_section(gateway, host_isolated):
-    owner, *_ = owner_and_admin(gateway)
-    config = gateway.proxy.config
-    planted = {}
-    for section, key, value in (
-        ("llm", "api_key", "ZYAML-llm-1"), ("llm", "master_key", "ZYAML-llm-2"), ("proxy", "api_key", "ZYAML-proxy-3"),
-        ("admin", "session_secret", "ZYAML-admin-4"), ("auth", "bootstrap_password", "ZYAML-auth-5"), ("audio", "api_key", "ZYAML-audio-6"),
-        ("identity", "token", "ZYAML-ident-7"), ("videos", "secret", "ZYAML-vid-8"), ("images", "other_secret", "ZYAML-img-10"),
-        ("images", "signed_url_secret", "ZYAML-img-11"),
-    ):
-        config.setdefault(section, {})[key] = value
-        planted[f"{section}.{key}"] = value
-    for route in ("/admin/api/settings/effective", "/admin/api/settings/effective/export"):
-        reply = owner.get(route)
-        assert reply.status_code == 200
-        shown = [name for name, value in planted.items() if value in reply.text]
-        assert shown == [], (route, shown)
-        body = reply.json()["config"]
-        assert body["llm"]["hidden_settings"] == 2 and body["images"]["signed_url_secret"] == {"configured": True}
-        assert body["images"]["hidden_settings"] == 1 and "max_batch_size" in body["images"]  # a classified key is still shown
-
-
 # --- M2: the package index and the source of a package -------------------------------------------------------------
 
 SOURCE_SECRETS = {"token": "ZPKGtoken-1", "password": "ZPKGpass-2", "auth": "ZPKGauth-3", "headers": {"Authorization": "Bearer ZPKGhdr-4"},
@@ -351,9 +327,9 @@ def test_a_package_source_keeps_no_credential_field_inline_and_no_output_shows_o
     values = ["ZPKGtoken-1", "ZPKGpass-2", "ZPKGauth-3", "ZPKGhdr-4", "ZPKGuser-5", "ZPKGidx-6", "ZPKGssh-7"]
     dump = _store_dump(gateway.path)
     assert [value for value in values if value in dump] == []
-    outputs = [enabled, *(client.get(path) for path in ("/admin/api/extensions", "/admin/api/operator/overrides", "/admin/api/settings/effective",
+    outputs = [enabled, *(client.get(path) for path in ("/admin/api/extensions", "/admin/api/operator/overrides",
                                                         "/admin/api/operator/service-registry", "/admin/api/config/export")
-                          for client in (owner, admin) if not (client is admin and path in ("/admin/api/settings/effective", "/admin/api/config/export")))]
+                          for client in (owner, admin) if not (client is admin and path == "/admin/api/config/export"))]
     for reply in outputs:
         assert [value for value in values if value in reply.text] == []
         assert "sref_" not in reply.text, "a reference id of the secret store is shown"

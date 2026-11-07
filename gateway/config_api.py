@@ -2,8 +2,7 @@
 
 ``gateway/config_layers.py`` and ``gateway/config_runtime.py`` own what an override means. This module only turns
 HTTP into calls on them: read the effective sections with their sources, write a change of overrides, reset an entry to
-inherit, revert, export and import, and the one-time legacy import of a startup-file block. Every write goes through
-``admin_store.apply_config_change`` (one transaction: session, revisions, validation, rows, audit) and is followed by
+inherit, revert, and export and import. Every write goes through ``admin_store.apply_config_change`` (one transaction: session, revisions, validation, rows, audit) and is followed by
 the gateway's own reload, so a request that starts after the response sees the new snapshot. There is no cache here.
 
 The service registry's owner layer (the records the owner added, the patches of release records, the tombstones) is a
@@ -154,14 +153,12 @@ def create_config_router(
     home: Callable[[], config_runtime.ConfigHome],
     registry: Callable[[], Mapping[str, Any] | None],
     reload: Callable[[], Any],
-    startup_block: Callable[[str], Mapping[str, Any] | None],
 ) -> APIRouter:
     """The routes under ``/admin/api/config``. Every dependency is a callable, so a test swaps any of them.
 
     ``admin_path`` is the admin.db path, or a callable that answers it now (a test swaps the database).
     ``home`` answers the ``ConfigHome`` (the module's own, looked up per request), ``registry`` the service registry
-    that cross-section rules see, ``reload`` the gateway's reload (publishes the snapshot), and ``startup_block`` the
-    startup file's block for a section id, for the legacy import.
+    that cross-section rules see, and ``reload`` the gateway's reload (publishes the snapshot).
     """
     router = APIRouter(prefix=PREFIX, tags=["admin"])
 
@@ -629,55 +626,6 @@ def create_config_router(
             if writes_registry:
                 payload["revisions"] = {**payload.get("revisions", {}), "registry": f"os-{wanted_registry.generation + (0 if dry_run else 1)}"}
             return _ok({**payload, **report}, status=response.status_code)
-
-        return await asyncio.to_thread(build)
-
-    @router.post("/sections/{section_id}/legacy-import")
-    async def legacy_import(section_id: str, request: Request):
-        ctx = await guard(request)
-        if isinstance(ctx, JSONResponse):
-            return ctx
-        body = await read_body(request)
-        if isinstance(body, JSONResponse):
-            return body
-        note = read_note(body)
-        if isinstance(note, JSONResponse):
-            return note
-        dry_run = request.query_params.get("dry_run") in ("1", "true")
-        revision = request.headers.get("if-match")
-
-        def build() -> JSONResponse:
-            h = home()
-            if section_id not in h.sections:
-                return unknown_section(section_id)
-            block = startup_block(section_id)
-            if block is None:
-                return _error(409, "no_startup_block", f"The startup file has no block for {section_id!r}.")
-            reg = registry()
-            state = _State(h, db())
-            plan = config_legacy_import.plan_import(h, section_id, block, state.rows, reg)
-            if plan.blocked:
-                found = plan.blocked_view()
-                if dry_run:
-                    return _ok({"dry_run": True, "applicable": False, "blocked": found})
-                return _error(422, "legacy_import_blocked", "The startup block does not fit the section.", problems=found)
-            existing = {o.pointer: o for o in state.rows[section_id]}
-            items = plan.items(state.rows[section_id])
-            resets = sorted(existing.keys() - {override.pointer for override in plan.overrides})
-            items += [admin_store.ConfigItem(section_id, pointer, "reset") for pointer in resets]
-            report = plan.report(resets)
-            if not items:
-                return _ok({**report, "dry_run": dry_run, "applicable": True, "change_id": None, "entry_count": 0,
-                            "diff": [], "valid": True, "problems": []})
-            if not dry_run and not revision:
-                return _error(428, "revision_required", f"Send If-Match with the revision of {section_id}.", sections=[section_id])
-            response = run_change(
-                ctx, items, if_match={section_id: _revision_text(revision)} if revision else {}, kind="legacy-import",
-                origin="legacy-import", note=note, dry_run=dry_run)
-            payload = json.loads(response.body)
-            if "error" in payload:
-                return response
-            return _ok({**report, "applicable": True, **payload}, status=response.status_code)
 
         return await asyncio.to_thread(build)
 

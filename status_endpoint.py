@@ -3692,14 +3692,13 @@ def _status_auth_key_names(db_path: Path | None) -> tuple[list[str], dict[str, s
     return sorted(names), app_ids_by_label
 
 
-# The generated OpenAI model list: the release file unless the environment names another, as proxy.py's
-# openai_model_aliases_file reads it (a test holds the two equal). The path is not a config setting.
+# The generated OpenAI model list: the release file, as proxy.py's openai_model_aliases_file reads it (a test holds the
+# two equal). The path is not a config setting.
 _GENERATED_OPENAI_MODEL_ALIASES_FILE = "registry/openai_model_aliases.generated.yml"
 
 
 def openai_aliases_file() -> Path:
-    path = Path(os.environ.get("OPENAI_MODEL_ALIASES_FILE") or _GENERATED_OPENAI_MODEL_ALIASES_FILE)
-    return path if path.is_absolute() else Path(__file__).parent / path
+    return Path(__file__).parent / _GENERATED_OPENAI_MODEL_ALIASES_FILE
 
 
 def _status_config_snapshot(config: dict) -> dict:
@@ -3708,11 +3707,10 @@ def _status_config_snapshot(config: dict) -> dict:
         "llm": config.get("llm") or {},
         "images": config.get("images") or {},
         "videos_default_workflow": (config.get("videos") or {}).get("default_workflow"),
-        "routing": config.get("routing") or {},
         "auth_enabled": (config.get("auth") or {}).get("enabled"),
         "auth_public_paths": (config.get("auth") or {}).get("public_paths"),
         "model_compatibility": config.get("model_compatibility") or {},
-        "openai_aliases_file": os.environ.get("OPENAI_MODEL_ALIASES_FILE") or _GENERATED_OPENAI_MODEL_ALIASES_FILE,
+        "openai_aliases_file": _GENERATED_OPENAI_MODEL_ALIASES_FILE,
     }
     # Augment with mtime + size of the generated aliases file.
     try:

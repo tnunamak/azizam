@@ -114,7 +114,7 @@ echo "[harness] Temp workspace: $TMPDIR_ROOT"
 echo "[harness] Port:           $HARNESS_PORT"
 echo "[harness] Admin DB:       $TMPDIR_ROOT/admin.db"
 
-# -- Minimal proxy_config.yml --------------------------------------------------
+# -- Minimal deployment (old single-file shape; split below) ----------------------
 # Generic backends pointing at localhost ports that won't be up -- the gateway
 # starts fine and reports them as unreachable. This exercises the bootstrap
 # path without any owner-specific service details.
@@ -230,6 +230,11 @@ else
 fi
 echo "[harness] Python: $PYTHON"
 
+# The YAML above is in the old single-file shape. Keep its startup keys in the file and import every other block
+# (engines, aliases, images settings) into this run's admin.db, where the gateway reads them.
+env -i PATH="$PATH" HOME="$TMPDIR_ROOT" PYTHONPATH="$REPO_ROOT" PYTHONDONTWRITEBYTECODE=1 \
+  "$PYTHON" "$REPO_ROOT/scripts/ui/seed_config.py" "$TMPDIR_ROOT/proxy_config.yml" "$TMPDIR_ROOT/admin.db"
+
 if [[ "$FIXTURE_MODE" == 1 ]]; then
   STARTUP_LOG="$TMPDIR_ROOT/startup.log"
   mkdir -p "$TMPDIR_ROOT/home"
@@ -264,7 +269,7 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
     "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --assert-os-containment --state-root "$TMPDIR_ROOT" --readonly-root "$REPO_ROOT"
   echo "[harness] Launching authenticated fixture ($FIXTURE_SCENARIO)..."
   setsid strace -f -qq -o "$TMPDIR_ROOT/network-trace.log" -e trace=network bwrap "${fixture_sandbox_args[@]}" -- env -i PATH="$PATH" HOME="$TMPDIR_ROOT/home" TMPDIR="$TMPDIR" LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}" PYTHONPATH="$REPO_ROOT" PYTHONUNBUFFERED=1 PYTHONPYCACHEPREFIX="$PYTHONPYCACHEPREFIX" \
-    AZIZAM_ADMIN_DB="$AZIZAM_ADMIN_DB" AZIZAM_METRICS_DB="$AZIZAM_METRICS_DB" AZIZAM_RESPONSES_DB="$AZIZAM_RESPONSES_DB" AZIZAM_RECEIPTS_DB="$AZIZAM_RECEIPTS_DB" AZIZAM_MEDIA_JOBS_DB="$AZIZAM_MEDIA_JOBS_DB" AZIZAM_CONFIG_PATH="$AZIZAM_CONFIG_PATH" AZIZAM_ADMIN_SESSION_KEY="$AZIZAM_ADMIN_SESSION_KEY" AZIZAM_LITELLM_BASE_URL=http://127.0.0.1:9 AZIZAM_LITELLM_API_KEY= TTS_ENABLED=false AZIZAM_HOST_TELEMETRY_DISABLED=1 P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AZIZAM_IMAGE_CACHE_DIR="$AZIZAM_IMAGE_CACHE_DIR" AZIZAM_VRAM_ESTIMATES_PATH="$AZIZAM_VRAM_ESTIMATES_PATH" AZIZAM_DRIFT_REPORT_PATH="$AZIZAM_DRIFT_REPORT_PATH" AZIZAM_KEY_ACTIVITY_LOG="$AZIZAM_KEY_ACTIVITY_LOG" \
+    AZIZAM_ADMIN_DB="$AZIZAM_ADMIN_DB" AZIZAM_METRICS_DB="$AZIZAM_METRICS_DB" AZIZAM_RESPONSES_DB="$AZIZAM_RESPONSES_DB" AZIZAM_RECEIPTS_DB="$AZIZAM_RECEIPTS_DB" AZIZAM_MEDIA_JOBS_DB="$AZIZAM_MEDIA_JOBS_DB" AZIZAM_CONFIG_PATH="$AZIZAM_CONFIG_PATH" AZIZAM_ADMIN_SESSION_KEY="$AZIZAM_ADMIN_SESSION_KEY" AZIZAM_LITELLM_BASE_URL=http://127.0.0.1:9 AZIZAM_LITELLM_API_KEY= AZIZAM_HOST_TELEMETRY_DISABLED=1 P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AZIZAM_IMAGE_CACHE_DIR="$AZIZAM_IMAGE_CACHE_DIR" AZIZAM_VRAM_ESTIMATES_PATH="$AZIZAM_VRAM_ESTIMATES_PATH" AZIZAM_DRIFT_REPORT_PATH="$AZIZAM_DRIFT_REPORT_PATH" AZIZAM_KEY_ACTIVITY_LOG="$AZIZAM_KEY_ACTIVITY_LOG" \
     "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --serve --state-root "$TMPDIR_ROOT" --scenario "$FIXTURE_SCENARIO" >"$STARTUP_LOG" 2>&1 &
   PROXY_PID=$!
   for _ in $(seq 1 200); do [[ -f "$TMPDIR_ROOT/fixture-ready.json" ]] && break; kill -0 "$PROXY_PID" 2>/dev/null || break; sleep 0.1; done
@@ -298,7 +303,6 @@ export AZIZAM_ADMIN_SESSION_KEY="harness-test-session-key-not-for-production"
 # Keep LiteLLM deliberately unreachable unless a test opts in explicitly.
 export AZIZAM_LITELLM_BASE_URL="${AZIZAM_LITELLM_BASE_URL:-http://127.0.0.1:15999}"
 export AZIZAM_LITELLM_API_KEY="${AZIZAM_LITELLM_API_KEY:-}"
-export TTS_ENABLED=false
 # This is someone's real desktop/dev box, not the fresh-operator's machine --
 # never leak its disk/thermal state into the isolated instance's health.
 export AZIZAM_HOST_TELEMETRY_DISABLED=1

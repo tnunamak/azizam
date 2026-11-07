@@ -10,11 +10,10 @@ touching the live gateway:
   which the caller deletes when the run ends. The source files are never
   written. The provider secrets key is NOT copied: the copy cannot read
   provider API keys, so Providers may say a key is unreadable.
-* ``proxy_config.yml`` is copied and every backend address is rewritten to
-  the deterministic fake engine, so no real engine, provider or host service
-  is ever contacted. The gateway itself runs under ``fixture_gateway``, whose
-  audit hook blocks any socket outside the declared loopback ports and any
-  child process.
+* The copy runs on a fresh startup file of its own (loopback listener, the copy's databases and storage), never the
+  source's: the source's engines and settings are records in the copied admin.db, not file keys. The gateway itself
+  runs under ``fixture_gateway``, whose audit hook blocks any socket outside the declared loopback ports and any
+  child process, so no real engine, provider or host service is ever contacted.
 * Sessions are created in the COPY only: the copy's owner and its first
   member without an admin role get a known local password verifier.
 * default (warm): the copied request history is moved forward so the newest
@@ -67,51 +66,20 @@ def copy_data(source: Path, state: Path) -> None:
         if (data / name).exists():
             _backup(data / name, state / name)
     private_io.ensure_private_dir(state)
-    private_io.atomic_copy_file(source / "proxy_config.yml", state / "source_proxy_config.yml")
     for name in COPIED_SOURCE_FILES:
         if (source / name).exists():
             private_io.atomic_copy_file(source / name, state / Path(name).name)
 
 
-def _retarget(node, engine_port: int, engine_url: str):
-    """Point every address in the copied config at the fake engine."""
-    if isinstance(node, dict):
-        out = {}
-        for key, value in node.items():
-            if key == "host" and isinstance(value, str):
-                out[key] = "127.0.0.1"
-            elif key in {"port", "backend_port"} and isinstance(value, int):
-                out[key] = engine_port
-            elif isinstance(value, str) and value.startswith(("http://", "https://")):
-                out[key] = engine_url
-            else:
-                out[key] = _retarget(value, engine_port, engine_url)
-        return out
-    if isinstance(node, list):
-        return [_retarget(item, engine_port, engine_url) for item in node]
-    return node
-
-
 def write_config(state: Path, port: int, engine_port: int) -> Path:
-    config = yaml.safe_load((state / "source_proxy_config.yml").read_text(encoding="utf-8"))
-    engine_url = f"http://127.0.0.1:{engine_port}"
-    backends = _retarget(config.get("backends") or {}, engine_port, engine_url)
-    config["backends"] = backends
-    for name in ("identity",):
-        if name in config:
-            config[name] = _retarget(config[name], engine_port, engine_url)
-    config["proxy"] = {"host": "127.0.0.1", "port": port}
-    config["auth"] = {"public_paths": ["/health"]}
-    admin = dict(config.get("admin") or {})
-    admin["db_path"] = str(state / "admin.db")
-    admin["oidc"] = {"cookie": {"secure": False}}
-    config["admin"] = admin
-    images = dict(config.get("images") or {})
-    images.update(cache_dir=str(state / "images"), vram_estimates_file=str(state / "vram.json"))
-    config["images"] = images
-    voices = dict(config.get("voices") or {})
-    voices["dir"] = str(state / "voices")
-    config["voices"] = voices
+    """The copy's startup file: only startup keys (gateway/startup_config.py)."""
+    config = {
+        "proxy": {"host": "127.0.0.1", "port": port},
+        "auth": {"public_paths": ["/health"]},
+        "admin": {"db_path": str(state / "admin.db"), "oidc": {"cookie": {"secure": False}}},
+        "images": {"cache_dir": str(state / "images"), "vram_estimates_file": str(state / "vram.json")},
+        "voices": {"dir": str(state / "voices")},
+    }
     path = state / "config.yml"
     private_io.atomic_write_text(path, yaml.safe_dump(config, sort_keys=False, allow_unicode=True))
     return path

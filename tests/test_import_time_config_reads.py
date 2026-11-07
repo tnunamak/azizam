@@ -10,8 +10,7 @@ named values they build from the config, with three hand-listed ones the scan ca
 The count must equal the key (the rule of tests/test_domain_literal_ratchet.py): a rise fails, and a fall fails until
 the key is lowered in the same change. ``python scripts/config_import_reads.py`` prints every name.
 
-Startup-file readers. A second test pins the modules that read the startup file (``proxy_config.yml`` /
-``first-run.yml``) or take its contents as ``proxy_config``. The final design has one: ``gateway/bootstrap_config.py``
+Startup-file readers. A second test pins the modules that read the startup file (``proxy_config.yml``) or take its contents as ``proxy_config``. The final design has one: ``gateway/bootstrap_config.py``
 (done-gate item 10). The list may shrink; a new reader fails until a reviewer adds it on purpose.
 """
 from __future__ import annotations
@@ -194,7 +193,7 @@ def test_a_name_that_sees_several_sections_belongs_to_the_first_in_order():
 
 _SKIP_DIRS = {"tests", "web", "node_modules", "venv", "cache", "data", "e2e", "docs", "__pycache__"}
 _STARTUP_NAMES = {"load_bootstrap_config", "bootstrap_config_path", "resolve_admin_db_path", "proxy_config"}
-_STARTUP_STRINGS = ("proxy_config.yml", "AZIZAM_CONFIG_PATH", "first-run.yml")
+_STARTUP_STRINGS = ("proxy_config.yml", "AZIZAM_CONFIG_PATH")
 
 # Modules that read the startup file or receive its contents today, and why. The final design keeps only
 # gateway/bootstrap_config.py. A module may leave this list; a new one needs a reviewer's decision.
@@ -202,12 +201,10 @@ STARTUP_FILE_READERS = {
     "bench/run.py": "names AZIZAM_CONFIG_PATH for its benchmark gateway",
     "gateway/admin_catalog.py": "takes proxy_config to find the catalog directory",
     "gateway/bootstrap_config.py": "the loader: the one module that should read the file",
-    "gateway/config_sources.py": "hand-kept ownership table; names proxy_config.yml",
     "gateway/provider_sidecar.py": "resolve_admin_db_path reads the file for the admin db path",
     "gateway/route_registry.py": "takes proxy_config to seed protocol frontends",
     "gateway/service_registry.py": "takes proxy_config to seed and backfill the registry from backends",
     "proxy.py": "loads the startup file at import",
-    "scripts/doctor.py": "operator diagnostic names proxy_config.yml",
     "scripts/local/register_service_from_config.py": "one-off operator script",
     "scripts/local/sync_model_metadata_from_config.py": "one-off operator script",
     "scripts/perf/serve.py": "perf harness sets AZIZAM_CONFIG_PATH",
@@ -215,7 +212,7 @@ STARTUP_FILE_READERS = {
     "scripts/stt_seam_check/gateway.py": "seam check sets AZIZAM_CONFIG_PATH",
     "scripts/ui/live_data_copy.py": "UI fixture copies the startup file",
     "scripts/ui/live_data_seed.py": "UI fixture sets AZIZAM_CONFIG_PATH",
-    "scripts/ui/serve.py": "UI fixture serves first-run.yml",
+    "scripts/ui/serve.py": "UI fixture writes the startup file it serves",
 }
 
 

@@ -54,6 +54,9 @@ baseline's paths and its own. Only these differences are allowed:
 * POST /admin/api/categories/plan-reach is new (the access plan editor's before-Save preview of who a category change
   reaches; tests/test_category_audience.py covers it): POST is the route itself, and every other method answers as
   /admin/api/categories/preview-as does, the route it was registered beside;
+* GET /admin/api/settings/effective and /admin/api/settings/effective/export are deleted (config homes C10; the
+  sections routes under /admin/api/config replace them): each falls to the catch-all or a 405, like the other
+  deleted paths;
 * GET and HEAD with an HTML Accept on a first segment no route registers get
   the web app's 404 page (503 here: the sandbox has no web build). The same
   requests without HTML in Accept keep their r18 answer.
@@ -80,6 +83,8 @@ ADMIN_SECTIONS = ("services", "status", "apps", "profiles", "users", "audit", "s
 DELETED_PATHS = {
     "/admin", "/admin/", "/admin/login", "/admin/logout", "/me", "/me/", "/me/login", "/me/logout",
     "/logout", *(f"/admin/{name}{slash}" for name in ADMIN_SECTIONS for slash in ("", "/")),
+    # C10 removed the effective configuration view and its export; the config sections routes replace them.
+    "/admin/api/settings/effective", "/admin/api/settings/effective/export",
 }
 NEW_PATHS = {"/setup/console"}
 SESSION_END_TOKEN_PATH = "/me/api/session/end-token"

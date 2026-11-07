@@ -364,8 +364,9 @@ truth without revalidation:
   `tests/compat/matrix/long_tail_targets.json`, run
   `python -m unittest tests.test_compat_long_tail_matrix -v`, then sync
   `docs/COMPATIBILITY_TARGET_MATRIX.md`.
-- Source-of-truth/config changes: update `docs/CONFIG_SOURCE_OF_TRUTH.md`,
-  `gateway/config_sources.py`, and `tests/test_config_sources.py` together.
+- Source-of-truth/config changes: update `docs/CONFIG_SOURCE_OF_TRUTH.md`. The
+  inventory (`gateway/config_sources.py`) is generated from the section schemas and
+  `registry/startup.schema.json`; a new key in either needs no inventory edit.
 - Extension model changes: update `docs/EXTENSION_ARCHITECTURE.md` and the
   relevant package validation tests.
 - SDK probe changes: update `docs/SDK_COMPATIBILITY_HARNESS.md`; Python probes

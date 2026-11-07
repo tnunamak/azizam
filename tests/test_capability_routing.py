@@ -414,7 +414,7 @@ class TestSeedCapabilityPinning(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cfg_path = ROOT / "proxy_config.yml"
+        cfg_path = ROOT / "tests/fixtures/config_homes/deployment_config.yml"
         with open(cfg_path, encoding="utf-8") as f:
             pconf = yaml.safe_load(f)
         registry = seed_registry_document(pconf)

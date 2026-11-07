@@ -285,7 +285,7 @@ def test_errors_and_nonchat_match_old_code(tmp_path, request_path, extra):
 
 def test_fresh_seed_declares_opt_in_as_data():
     import yaml
-    config = yaml.safe_load((Path(__file__).parents[1] / "proxy_config.yml").read_text())
+    config = yaml.safe_load((Path(__file__).parents[1] / "tests/fixtures/config_homes/deployment_config.yml").read_text())
     seed = seed_registry_document(config)
     for service_id in ("kobold",):
         assert "reasoning-effort-final-chat" in seed["services"][service_id]["config"]["transforms"]

@@ -224,7 +224,7 @@ def test_persisted_receipt_client_reads_cost_and_usage(tmp_path):
 def test_default_bootstrap_aliases_use_cpu_on_demand():
     from pathlib import Path
     import yaml
-    cfg = yaml.safe_load((Path(__file__).resolve().parents[1] / "proxy_config.yml").read_text())
+    cfg = yaml.safe_load((Path(__file__).resolve().parents[1] / "tests/fixtures/config_homes/deployment_config.yml").read_text())
     assert validate_aliases(cfg["model_aliases"]) == []
     for alias in ("decide", "decide-quality", "jev-latest"):
         resolved = resolve_alias(cfg["model_aliases"], "decisions", alias)

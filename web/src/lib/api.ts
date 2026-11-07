@@ -825,30 +825,6 @@ export async function adminFetch<T>(
   return answer.payload as T;
 }
 
-/** Save a file the gateway serves behind a sign-in check (an export). A plain
- * link would show the raw JSON of a `reauth_required` answer; this asks for
- * the confirm prompt, retries, then saves the bytes. */
-export async function adminDownload(
-  path: string,
-  fallbackName: string,
-): Promise<void> {
-  const answer = await sendWithReauth(path, {}, false);
-  if (!answer.response.ok) throw toApiError(answer, "GET", path);
-  const disposition = answer.response.headers.get("content-disposition") ?? "";
-  const name =
-    /filename="?([^";]+)"?/i.exec(disposition)?.[1]?.trim() || fallbackName;
-  const url = URL.createObjectURL(await answer.response.blob());
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = name;
-  link.hidden = true;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  // The browser has the bytes once the click returns; free the blob after.
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-}
-
 /** The CSRF token of the person's own sign-in. Any signed-in person has one
  * on `/me/api/session`; `/admin/api/session` refuses members and is the
  * fallback for an owner whose snapshot has none. Read fresh each time: these

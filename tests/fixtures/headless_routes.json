@@ -345,14 +345,6 @@
   },
   {
     "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.config_api.legacy_import",
-    "method": "POST",
-    "path": "/admin/api/config/sections/{section_id}/legacy-import",
-    "schema": true
-  },
-  {
-    "auth": "owner-bearer",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
     "handler": "gateway.admin_api.list_credentials",
     "method": "GET",
@@ -989,22 +981,6 @@
     "handler": "gateway.settings_api.put_defaults",
     "method": "PUT",
     "path": "/admin/api/settings/defaults",
-    "schema": true
-  },
-  {
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.get_effective",
-    "method": "GET",
-    "path": "/admin/api/settings/effective",
-    "schema": true
-  },
-  {
-    "auth": "owner-bearer",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "handler": "gateway.settings_api.export_effective",
-    "method": "GET",
-    "path": "/admin/api/settings/effective/export",
     "schema": true
   },
   {

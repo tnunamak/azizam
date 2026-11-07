@@ -189,7 +189,7 @@ def _forward_current_to_fake_upstream(
 
 def test_bootstrap_seed_keeps_the_default_model_output_policy_as_data() -> None:
     root = Path(__file__).resolve().parent.parent
-    bootstrap = yaml.safe_load((root / "proxy_config.yml").read_text(encoding="utf-8"))
+    bootstrap = yaml.safe_load((root / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"))
     registry = seed_registry_document(bootstrap)
     models = registry["services"]["kobold"]["config"]["models"]
     default = next(model for model in models if model["id"] == "default")

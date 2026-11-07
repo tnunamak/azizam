@@ -11,9 +11,10 @@ responses stay what they were:
 - ``put_instance`` / ``put_media_job_admission`` / ``put_service_availability`` write one change through
   ``admin_store.apply_config_change``, keep each route's own audit action (``operator.instance.update`` and so on) and
   count a save of the same value as a new revision, as the old store did.
-- ``migrate`` imports the old ``operator_settings`` documents (and, for instance and media admission, the startup
-  file and environment values that used to sit under them) as override rows, once per section. The old keys stay
+- ``migrate`` imports the old ``operator_settings`` documents as override rows, once per section. The old keys stay
   where they are, unread, until a later slice deletes them, so a rollback to the commit before this one still finds them.
+  Before C10 the import also took the startup file's values and two environment variables as the base under those
+  documents; the file no longer holds them and the variables are gone (docs/design/CONFIG_HOMES.md, F4).
 
 Rows are sparse. An instance field equal to the release default has no row. A media admission document is written
 whole (a key the owner saved, even an empty list, is a row, because the saved document used to override the file for
@@ -29,7 +30,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from gateway import admin_store, config_layers as layers, config_runtime
-from gateway.compat import get_env
 
 INSTANCE = "instance"
 ADMISSION = "resource_admission"
@@ -48,8 +48,8 @@ AUDIT_ACTIONS = {
     ADMISSION: "operator.media_job_admission.update",
     AVAILABILITY: "operator.service_availability.update",
 }
-# Its own step name: ``config-homes-import:<section>`` is the startup-file import of every section
-# (gateway/config_legacy_import.py), which records "nothing to import" for these sections when the file has no block.
+# Its own step name: ``config-homes-import:<section>`` is the step of the startup-block import
+# (gateway/config_legacy_import.py), which a deployment that ran it before C10 may have recorded for these sections.
 # Sharing the name would let that record stop this import after a boot on which this import failed.
 STEP_PREFIX = "config-homes-fold:"
 
@@ -229,41 +229,17 @@ def put_service_availability(
 # The one-time import of the old stores
 # ---------------------------------------------------------------------------------------------------------------------
 
-def startup_instance(raw_config: Mapping[str, Any], environ: Mapping[str, str] | None = None) -> dict[str, str]:
-    """The instance values the startup file and environment gave before this slice (the old route's defaults)."""
-    admin_block = raw_config.get("admin")
-    brand = admin_block.get("brand") if isinstance(admin_block, Mapping) else None
-    proxy_block = raw_config.get("proxy")
-    brand = brand if isinstance(brand, Mapping) else {}
-    proxy_block = proxy_block if isinstance(proxy_block, Mapping) else {}
-    defaults = home().sections[INSTANCE].defaults
-    return {
-        "name": str(get_env("AZIZAM_BRAND", environ=environ) or brand.get("product") or defaults["name"]),
-        "base_url": str(get_env("AZIZAM_PUBLIC_URL", environ=environ) or proxy_block.get("public_url") or defaults["base_url"]),
-        "theme_default": defaults["theme_default"],
-    }
-
-
-def _startup_media_jobs(raw_config: Mapping[str, Any]) -> dict[str, Any]:
-    gateway = raw_config.get("gateway")
-    admission = gateway.get("resource_admission") if isinstance(gateway, Mapping) else None
-    media = admission.get("media_jobs") if isinstance(admission, Mapping) else None
-    return dict(media) if isinstance(media, Mapping) else {}
-
-
 def _stored_document(path: Path, section: str) -> dict[str, Any]:
     record = admin_store.get_operator_setting(LEGACY_KEYS[section], path=path)
     value = record["value"] if record else None
     return dict(value) if isinstance(value, Mapping) else {}
 
 
-def _legacy_target(section: str, path: Path, raw_config: Mapping[str, Any], environ: Mapping[str, str] | None) -> dict[str, Any]:
+def _legacy_target(section: str, path: Path) -> dict[str, Any]:
     """What the section's effective value was before this slice, as one document."""
     stored = _stored_document(path, section)
-    if section == INSTANCE:
-        return {**startup_instance(raw_config, environ), **stored}
     if section == ADMISSION:
-        return {"media_jobs": {**_startup_media_jobs(raw_config), **{k: v for k, v in stored.items() if k in MEDIA_FIELDS}}}
+        return {"media_jobs": {k: v for k, v in stored.items() if k in MEDIA_FIELDS}}
     return stored
 
 
@@ -307,7 +283,7 @@ def _fit(section: layers.Section, target: Mapping[str, Any]) -> tuple[list[layer
     return [], [*dropped, "/"]
 
 
-def migrate(path: Path, raw_config: Mapping[str, Any], *, environ: Mapping[str, str] | None = None) -> list[dict[str, Any]]:
+def migrate(path: Path) -> list[dict[str, Any]]:
     """Import the old stores as override rows, once per section, and say what was done (one record per section).
 
     A section whose step is recorded is left alone. A section that already has override rows (the owner set them
@@ -327,7 +303,7 @@ def migrate(path: Path, raw_config: Mapping[str, Any], *, environ: Mapping[str, 
             admin_store.mark_migration_step(step, path=path)
             report.append({"section": name, "step": step, "rows": 0, "dropped": [], "note": "the section already has rows"})
             continue
-        overrides, dropped = _fit(section, _legacy_target(name, path, raw_config, environ))
+        overrides, dropped = _fit(section, _legacy_target(name, path))
         if overrides:
             items = [
                 admin_store.ConfigItem(
@@ -340,7 +316,7 @@ def migrate(path: Path, raw_config: Mapping[str, Any], *, environ: Mapping[str, 
             try:
                 admin_store.apply_config_change(
                     items, if_match={name: state["revision"]}, kind="legacy-import", origin=layers.ORIGIN_LEGACY,
-                    note=f"imported from {LEGACY_KEYS[name]} and the startup values", actor_kind="system",
+                    note=f"imported from {LEGACY_KEYS[name]}", actor_kind="system",
                     actor_id="startup", actor_label="startup import", validate=None, migration_step=step, path=path)
             except admin_store.ConfigRevisionMismatch:
                 continue  # another writer got in first; the next boot looks again

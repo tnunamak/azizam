@@ -12,7 +12,6 @@ from fastapi.responses import JSONResponse
 
 from gateway import admin_store, config_fold, prompt_memory, receipt_store, retention, session_policy
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
-from gateway import egress
 from gateway.projection import public_json
 
 # The prompts group's view of the household policy (gateway/retention.py): the resource the owner's screen edits.
@@ -43,7 +42,6 @@ def _has_pending_purge(value: Any) -> bool:
 
 def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                            config_provider: Callable[[], Mapping[str, Any]],
-                           overrides_provider: Callable[[], Mapping[str, Any]] | None = None,
                            prompt_memory_path: Path | None = None,
                            receipts_path: Path | None = None,
                            fact_store_path: Path | None = None,
@@ -59,9 +57,6 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         if "owner" not in ctx.roles:
             return JSONResponse({"error": {"code": "owner_required", "message": "Owner role required"}}, status_code=403)
         return ctx
-
-    def instance() -> dict[str, Any]:
-        return instance_settings(admin_path)
 
     def instance_response() -> JSONResponse:
         value, revision = config_fold.instance_with_revision(admin_path)
@@ -372,24 +367,5 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             audit_metadata={"plan_id": plan_id}, path=admin_path,
         )
         return defaults_response()
-
-    def effective() -> dict[str, Any]:
-        snapshot = dict(config_provider())
-        snapshot["instance"] = instance()
-        snapshot["receipt_retention"] = {"retention_days": receipt_store.retention_days(admin_path)}
-        snapshot["operator_overrides"] = dict(overrides_provider() if overrides_provider else {})
-        return {"config": snapshot, "read_only": True, "redacted": True,
-                "export_url": "/admin/api/settings/effective/export"}
-
-    @router.get("/effective")
-    def get_effective(request: Request):
-        ctx = guard(request)
-        return ctx if isinstance(ctx, JSONResponse) else egress.projected_response(effective(), headers={"Cache-Control": "no-store"})
-
-    @router.get("/effective/export")
-    def export_effective(request: Request):
-        ctx = guard(request)
-        return ctx if isinstance(ctx, JSONResponse) else egress.projected_response(effective(), headers={
-            "Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="gateway-effective-config.json"'})
 
     return router

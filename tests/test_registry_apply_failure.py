@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import copy
 import threading
+from pathlib import Path
 import time
 
 import pytest
+import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -164,6 +166,9 @@ GOOD = _service("good-engine")
 BAD = _service("bad-engine", models=["this is not a model record"])
 
 
+DEPLOYMENT = Path(__file__).resolve().parent / "fixtures/config_homes/deployment_config.yml"
+
+
 def _boot(live):
     return proxy._boot_effective_runtime_config(proxy._bootstrap_config)
 
@@ -208,11 +213,13 @@ def test_a_boot_after_a_refused_migration_serves_the_other_services_and_names_th
 
 
 def test_a_boot_never_serves_the_bootstrap_yaml_backends_in_place_of_the_registry(live):
-    yaml_backends = set(proxy._bootstrap_config.get("backends") or {})
+    # A startup file that still held engines (start-up refuses it now): the deployment fixture is such a file.
+    stale = {**proxy._bootstrap_config, **{"backends": yaml.safe_load(DEPLOYMENT.read_text(encoding="utf-8"))["backends"]}}
+    yaml_backends = set(stale["backends"])
     assert yaml_backends, "the fixture needs bootstrap backends for this to prove anything"
     _store_raw(live, {"good-engine": GOOD, "bad-engine": BAD})
 
-    config, _problem = _boot(live)
+    config, _problem = proxy._boot_effective_runtime_config(stale)
 
     assert not yaml_backends & set(config["backends"])
 

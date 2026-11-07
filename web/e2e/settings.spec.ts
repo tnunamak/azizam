@@ -106,14 +106,7 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
                     ? {}
                     : { chat: { stable: { fast: "local-chat" } } },
               }
-            : {
-                config: {
-                  proxy: { port: 18000 },
-                  secret: "<redacted>",
-                  example_endpoint: `https://gateway.example.test/${"recorded-path/".repeat(25)}`,
-                },
-                export_url: "/admin/api/settings/effective/export",
-              };
+            : {};
     return fulfilJson(route, body, { status: state === "error" ? 503 : 200 });
   });
   await page.route("**/admin/api/signin", (route) =>
@@ -239,16 +232,14 @@ for (const [state, theme, width] of [
           "Receipts",
           "Media admission",
           "Extensions",
-          "Advanced",
         ]) {
           await expect(
             page.getByRole("heading", { name, exact: true }),
           ).toBeVisible();
         }
-        await editSection(page, "Advanced");
-        await page
-          .getByText("Effective configuration and export", { exact: true })
-          .click();
+        await expect(
+          page.getByRole("heading", { name: "Advanced", exact: true }),
+        ).toHaveCount(0);
         if (state === "error") {
           await expect(
             page
@@ -257,7 +248,7 @@ for (const [state, theme, width] of [
           ).toBeVisible();
           await expect(
             page.getByRole("button", { name: "Try again" }),
-          ).toHaveCount(9);
+          ).toHaveCount(8);
           for (const name of ["People and access"]) {
             const retry = page
               .getByRole("region", { name, exact: true })
@@ -287,9 +278,6 @@ for (const [state, theme, width] of [
             await expect(
               signIn.getByRole("switch", { name: "Example identity" }),
             ).toBeChecked();
-          await expect(
-            page.getByRole("link", { name: "Export redacted snapshot" }),
-          ).toBeVisible();
           if (state === "empty") {
             await expect(
               page.getByRole("region", { name: "Extensions", exact: true }),
@@ -406,20 +394,9 @@ async function settingsJourney(page: Page) {
   ).toBeChecked();
   await expect(signIn.getByText("Not set up", { exact: true })).toBeVisible();
   await expect(signIn.getByLabel("Client secret", { exact: true })).toHaveValue("");
-  await editSection(page, "Advanced");
-  await page
-    .getByText("Effective configuration and export", { exact: true })
-    .click();
-  await expect(
-    page.getByRole("link", { name: "Export redacted snapshot" }),
-  ).toBeVisible();
   await expect(page.locator("main")).not.toContainText(
     "browser-fixture-secret",
   );
-  const download = page.waitForEvent("download");
-  await page.getByRole("link", { name: "Export redacted snapshot" }).click();
-  const file = await download;
-  expect(file.suggestedFilename()).toBe("gateway-effective-config.json");
 }
 
 test("new visitors use the saved default theme and personal choices persist", async ({

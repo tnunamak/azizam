@@ -71,40 +71,37 @@ async function staleOwnerPage(
   return context.newPage();
 }
 
-async function openAdvanced(page: Page) {
+// The gateway holds the sign-in session policy behind a recent sign-in, as it does the export of the configuration
+// (gateway/step_up.py, decision D36). The page loads without asking; saving the policy is what does.
+async function openSessions(page: Page) {
   await page.goto("/settings/");
-  const section = page.getByRole("region", { name: "Advanced", exact: true });
-  await section.getByRole("button", { name: "Edit Advanced", exact: true }).click();
-  return section;
+  const card = page.getByRole("region", { name: "Sign-in sessions", exact: true });
+  const idle = card.getByLabel("Sign out after this many days without use");
+  const save = card.getByRole("button", { name: "Save sign-in session settings" });
+  return { card, idle, save };
 }
-
-// The gateway holds the effective configuration behind a recent sign-in, as it does the export of the same
-// document (gateway/step_up.py, decision D36). The page loads and Advanced opens without asking; showing
-// the configuration is the first thing that does.
-const effectiveToggle = (page: Page) =>
-  page.getByText("Effective configuration and export", { exact: true });
 
 const prompt = (page: Page) => page.getByRole("dialog", { name: /Confirm it.s you/ });
 
 for (const width of [1440, 390]) {
-  test(`a stale owner confirms with a password and the export completes at ${width}px`, async ({
+  test(`a stale owner confirms with a password and the save completes at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({
     browser,
     baseURL,
     request,
   }) => {
     const page = await staleOwnerPage(browser, baseURL!, request, width);
     try {
-      // The page itself loads and Advanced opens: only the risky action asks.
-      await openAdvanced(page);
+      // The page itself loads: only the risky action asks.
+      const { idle, save } = await openSessions(page);
       const dialog = prompt(page);
       await expect(dialog).toBeHidden();
-      const exportLink = page.getByRole("link", { name: "Export redacted snapshot" });
+      await expect(idle).toHaveValue("30");
 
-      // Showing the configuration is that action.
-      await effectiveToggle(page).click();
+      // Saving the policy is that action.
+      await idle.fill("31");
+      await save.click();
       await expect(dialog).toBeVisible();
       await expect(dialog).toContainText("This action needs a recent sign-in.");
-      await expect(exportLink).toBeHidden();
       const password = dialog.getByLabel("Password");
       await expect(password).toBeFocused();
       await expect(password).toHaveAttribute("autocomplete", "current-password");
@@ -125,27 +122,26 @@ for (const width of [1440, 390]) {
       await expect(password).toHaveValue("");
       await expect(password).toBeFocused();
 
-      // The right password finishes the original action with no second click: the configuration shows.
+      // The right password finishes the original action with no second click: the policy is saved.
       await password.fill(OWNER_PASSWORD);
       await password.press("Enter");
       await expect(dialog).toBeHidden();
-      await expect(exportLink).toBeVisible();
-      await expect(page.getByLabel("Effective configuration JSON")).toBeVisible();
-      // Focus goes back to the control that started the action.
-      await expect(effectiveToggle(page)).toBeFocused();
+      await expect(page.getByText("Sign-in session settings saved")).toBeVisible();
+      await expect(idle).toHaveValue("31");
 
-      // The session is now fresh: the export does not ask again.
-      const file = page.waitForEvent("download");
-      await exportLink.click();
-      expect((await file).suggestedFilename()).toBe("gateway-effective-config.json");
+      // The session is now fresh: the next save does not ask again.
+      await idle.fill("32");
+      await save.click();
       await expect(dialog).toBeHidden();
+      await expect(page.getByText("Sign-in session settings saved")).toBeVisible();
+      await expect(idle).toHaveValue("32");
+      // The fixture guard puts the setting back.
     } finally {
       await page.context().close();
     }
   });
 }
 
-// A person's own key is routine: an old sign-in makes it without a prompt (docs/ops/SIGN_IN_SESSIONS.md).
 for (const width of [1440, 390]) {
   test(`a stale owner makes a key for their own App with no prompt at ${width}px`, { tag: GLOBAL_STATE_TAG }, async ({
     browser,
@@ -171,31 +167,29 @@ for (const width of [1440, 390]) {
   });
 }
 
-test("cancelling the prompt leaves the configuration hidden and the page usable", async ({
+test("cancelling the prompt leaves the draft unsaved and the page usable", { tag: GLOBAL_STATE_TAG }, async ({
   browser,
   baseURL,
   request,
 }) => {
   const page = await staleOwnerPage(browser, baseURL!, request, 1440);
   try {
-    await openAdvanced(page);
-    const exportLink = page.getByRole("link", { name: "Export redacted snapshot" });
-    let downloads = 0;
-    page.on("download", () => (downloads += 1));
-    await effectiveToggle(page).click();
+    const { idle, save } = await openSessions(page);
+    await idle.fill("33");
+    await save.click();
     const dialog = prompt(page);
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Cancel" }).click();
     await expect(dialog).toBeHidden();
-    await expect(effectiveToggle(page)).toBeFocused();
-    // The configuration stays hidden and the page stays usable: the failure is in plain words, with a retry.
-    await expect(exportLink).toBeHidden();
-    await expect(page.getByText("Effective configuration could not be loaded.")).toBeVisible();
-    expect(downloads).toBe(0);
-    await page.getByRole("button", { name: "Try again" }).click();
+    // Nothing was saved and the draft is kept; the same action asks again.
+    await expect(page.getByText("Sign-in session settings saved")).toBeHidden();
+    await expect(idle).toHaveValue("33");
+    await save.click();
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Cancel" }).click();
     await expect(dialog).toBeHidden();
+    const stored = await (await request.get("/admin/api/settings/sessions")).json();
+    expect(stored.sessions.idle_timeout_days).toBe(30);
   } finally {
     await page.context().close();
   }
@@ -316,8 +310,8 @@ test("the confirm prompt offers a way out when a password cannot be used", async
 }) => {
   // The gateway names the methods; a sign-in that has neither a password nor a
   // provider can only be renewed by signing in again.
-  await page.route("**/admin/api/settings/effective/export", (route) =>
-    fulfilJson(
+  await page.route("**/admin/api/settings/sessions", (route) =>
+    route.request().method() !== "PUT" ? route.fallback() : fulfilJson(
       route,
       {
         error: {
@@ -329,10 +323,9 @@ test("the confirm prompt offers a way out when a password cannot be used", async
       { status: 401 },
     ),
   );
-  await page.goto("/settings/");
-  await page.getByRole("button", { name: "Edit Advanced", exact: true }).click();
-  await page.getByText("Effective configuration and export", { exact: true }).click();
-  await page.getByRole("link", { name: "Export redacted snapshot" }).click();
+  const { idle, save } = await openSessions(page);
+  await idle.fill("31");
+  await save.click();
   const dialog = prompt(page);
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel("Password")).toHaveCount(0);

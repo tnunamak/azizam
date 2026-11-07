@@ -59,7 +59,7 @@ def _swap_backends(*ids: str) -> dict:
     return out
 
 
-def _normalize(raw_models: list[dict], backends: dict | None = None) -> dict:
+def _normalize(raw_models: dict, backends: dict | None = None) -> dict:
     """Call _normalize_models_catalog under a patched config["backends"]."""
     with patch.dict(proxy.config, {"backends": backends or {}}):
         return proxy._normalize_models_catalog(raw_models)
@@ -87,7 +87,7 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
 
     def test_kobold_entry_with_path_accepted(self) -> None:
         """kobold entry with a path parses exactly as before."""
-        raw = [{"id": "my-kobold", "backend": "kobold", "path": "/models/q4.gguf"}]
+        raw = {"my-kobold": {"backend": "kobold", "path": "/models/q4.gguf"}}
         result = _normalize(raw, backends=_swap_backends("kobold"))
         self.assertIn("my-kobold", result)
         entry = result["my-kobold"]
@@ -97,18 +97,17 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
 
     def test_backend_absent_from_registry_is_skipped_whatever_its_name(self) -> None:
         """No backend name is special: one absent from config["backends"] is skipped."""
-        raw = [{"id": "bare-kobold", "backend": "kobold", "path": "/models/q5.gguf"}]
+        raw = {"bare-kobold": {"backend": "kobold", "path": "/models/q5.gguf"}}
         self.assertNotIn("bare-kobold", _normalize(raw, backends={}))
 
     def test_kobold_mmproj_preserved(self) -> None:
-        raw = [
-            {
-                "id": "vision-kobold",
+        raw = {
+            "vision-kobold": {
                 "backend": "kobold",
                 "path": "/models/vis.gguf",
                 "mmproj": "/models/clip.gguf",
             }
-        ]
+        }
         result = _normalize(raw, backends=_swap_backends("kobold"))
         self.assertEqual(result["vision-kobold"]["mmproj"], "/models/clip.gguf")
 
@@ -116,7 +115,7 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
 
     def test_new_enabled_backend_with_path_accepted(self) -> None:
         """A new enabled registry backend (e.g. vllm) now parses — was dropped before."""
-        raw = [{"id": "coder", "backend": "my-vllm", "path": "/models/coder.gguf"}]
+        raw = {"coder": {"backend": "my-vllm", "path": "/models/coder.gguf"}}
         backends = _backends_with("my-vllm")
         result = _normalize(raw, backends=backends)
         self.assertIn("coder", result)
@@ -126,12 +125,12 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
 
     def test_unknown_backend_skipped(self) -> None:
         """A backend not in config["backends"] is skipped."""
-        raw = [{"id": "ghost", "backend": "ghost-backend", "path": "/models/ghost.gguf"}]
+        raw = {"ghost": {"backend": "ghost-backend", "path": "/models/ghost.gguf"}}
         result = _normalize(raw, backends={})  # ghost-backend not registered
         self.assertNotIn("ghost", result)
 
     def test_empty_id_skipped(self) -> None:
-        raw = [{"id": "", "backend": "kobold", "path": "/models/q4.gguf"}]
+        raw = {"": {"backend": "kobold", "path": "/models/q4.gguf"}}
         result = _normalize(raw, backends={})
         self.assertEqual(result, {})
 
@@ -139,22 +138,23 @@ class TestNormalizeModelsCatalog(unittest.TestCase):
 
     def test_kobold_without_path_skipped(self) -> None:
         """kobold entry with no path is still skipped (path is mandatory)."""
-        raw = [{"id": "pathless", "backend": "kobold"}]
+        raw = {"pathless": {"backend": "kobold"}}
         result = _normalize(raw, backends={})
         self.assertNotIn("pathless", result)
 
     def test_new_backend_without_path_skipped(self) -> None:
         """New backend with no path: still skipped (GGUF catalog requires path)."""
-        raw = [{"id": "remote-no-path", "backend": "my-vllm"}]
+        raw = {"remote-no-path": {"backend": "my-vllm"}}
         result = _normalize(raw, backends=_backends_with("my-vllm"))
         self.assertNotIn("remote-no-path", result)
 
-    def test_non_list_input_returns_empty(self) -> None:
+    def test_non_mapping_input_returns_empty(self) -> None:
         self.assertEqual(_normalize(None), {})  # type: ignore[arg-type]
-        self.assertEqual(_normalize({}), {})    # type: ignore[arg-type]
+        self.assertEqual(_normalize({}), {})
+        self.assertEqual(_normalize([{"id": "listed", "backend": "kobold", "path": "/m.gguf"}], backends=_swap_backends("kobold")), {})  # type: ignore[arg-type]
 
     def test_id_normalized_to_lowercase(self) -> None:
-        raw = [{"id": "My-Kobold", "backend": "kobold", "path": "/models/q4.gguf"}]
+        raw = {"My-Kobold": {"backend": "kobold", "path": "/models/q4.gguf"}}
         result = _normalize(raw, backends=_swap_backends("kobold"))
         self.assertIn("my-kobold", result)
 

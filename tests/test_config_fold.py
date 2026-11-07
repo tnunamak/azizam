@@ -19,13 +19,6 @@ from gateway.admin_runtime import AdminSQLiteStore
 from gateway.settings_api import create_settings_router
 
 OWNER = SimpleNamespace(subject="owner", actor_kind="user", audit_actor_id="owner", actor_label="owner")
-STARTUP = {
-    "admin": {"brand": {"product": "Startup brand"}},
-    "proxy": {"public_url": "https://startup.example.test"},
-    "gateway": {"resource_admission": {"media_jobs": {"max_queue_depth": 4, "scan_limit": 50, "reserved_tokens": ["file-token"]}}},
-}
-
-
 @pytest.fixture
 def db(tmp_path) -> Path:
     path = tmp_path / "admin.db"
@@ -179,53 +172,35 @@ def test_an_override_the_section_refuses_is_not_served(db):
 
 # -- the one-time import --------------------------------------------------------------------------------------------
 
-def test_the_import_turns_the_old_documents_and_startup_values_into_rows_once(db):
+def test_the_import_turns_the_old_documents_into_rows_once(db):
     legacy(db, "instance_presentation", {"name": "Saved", "base_url": "https://saved.example.test", "theme_default": "dark"})
     legacy(db, "media_job_admission_overrides", {"max_queue_depth": 2, "disabled_intents": ["a"]})
     legacy(db, "service_availability_overrides", {"engine-a": {"state": "maintenance", "reason": "x", "retry_after_seconds": None}})
-    report = config_fold.migrate(db, STARTUP, environ={})
+    report = config_fold.migrate(db)
     assert {item["section"]: item["rows"] for item in report} == {
-        "instance": 3, "resource_admission": 4, "service_availability": 1}
+        "instance": 3, "resource_admission": 2, "service_availability": 1}
     assert config_fold.instance(db) == {"name": "Saved", "base_url": "https://saved.example.test", "theme_default": "dark"}
-    # The saved document wins over the file for each key it holds; the file still gives the keys it does not.
-    assert config_fold.media_job_admission(db)[0] == {
-        "max_queue_depth": 2, "disabled_intents": ["a"], "scan_limit": 50, "reserved_tokens": ["file-token"]}
+    assert config_fold.media_job_admission(db)[0]["max_queue_depth"] == 2
+    assert config_fold.media_job_admission(db)[0]["disabled_intents"] == ["a"]
     assert config_fold.service_availability(db) == {"engine-a": {"state": "maintenance", "reason": "x", "retry_after_seconds": None}}
     stored = admin_store.list_config_overrides(path=db)
     assert {row["origin"] for row in stored} == {"legacy-import"}
     for name in config_fold.SECTIONS:
         assert admin_store.migration_step_done(config_fold.STEP_PREFIX + name, path=db)
-    assert config_fold.migrate(db, STARTUP, environ={}) == []  # once
+    assert config_fold.migrate(db) == []  # once
 
 
-def test_a_failed_import_is_retried_after_the_startup_file_import_ran(db):
-    """Boot order: this import runs first. If it fails, the startup-file import of every section still runs and records
-    that the file has no block for these sections. The next boot must still import the old documents."""
-    legacy(db, "instance_presentation", {"name": "Saved", "base_url": "https://saved.example.test", "theme_default": "dark"})
-    config_rules.config_home().layer({}, path=db, registry=None, legacy_import=True, log=lambda line: None)
-    report = config_fold.migrate(db, STARTUP, environ={})
-    assert {item["section"]: item["rows"] for item in report}["instance"] == 3
-    assert config_fold.instance(db)["name"] == "Saved"
 
 
-def test_the_import_reads_the_startup_values_when_nothing_was_saved(db):
-    config_fold.migrate(db, STARTUP, environ={})
-    assert config_fold.instance(db) == {"name": "Startup brand", "base_url": "https://startup.example.test", "theme_default": "system"}
-    assert config_fold.media_job_admission(db)[0] == {"max_queue_depth": 4, "scan_limit": 50, "reserved_tokens": ["file-token"]}
-    assert config_fold.service_availability(db) == {}
 
 
-def test_the_environment_beats_the_startup_file_in_the_import_as_it_did_before(db):
-    config_fold.migrate(db, STARTUP, environ={"AZIZAM_BRAND": "Env brand", "AZIZAM_PUBLIC_URL": "https://env.example.test"})
-    assert config_fold.instance(db)["name"] == "Env brand"
-    assert config_fold.instance(db)["base_url"] == "https://env.example.test"
 
 
 def test_an_import_with_nothing_to_write_still_records_its_step(db):
-    assert [item["rows"] for item in config_fold.migrate(db, {}, environ={})] == [0, 0, 0]
+    assert [item["rows"] for item in config_fold.migrate(db)] == [0, 0, 0]
     assert rows(db, "instance") == {}
     legacy(db, "instance_presentation", {"name": "Late"})
-    assert config_fold.migrate(db, {}, environ={}) == []
+    assert config_fold.migrate(db) == []
     assert config_fold.instance(db)["name"] == "Azizam"  # the old document is not read after the import
 
 
@@ -233,7 +208,7 @@ def test_the_import_leaves_the_old_keys_exactly_as_they_were(db):
     legacy(db, "instance_presentation", {"name": "Saved", "base_url": "", "theme_default": "dark"})
     legacy(db, "media_job_admission_overrides", {"max_queue_depth": 2})
     before = {row["key"]: row for row in admin_store.list_operator_settings(path=db)}
-    config_fold.migrate(db, STARTUP, environ={})
+    config_fold.migrate(db)
     config_fold.put_instance(db, {"name": "Changed", "base_url": "", "theme_default": "light"}, OWNER,
                              expected_revision=admin_store.read_config_section("instance", path=db)["revision"])
     after = {row["key"]: row for row in admin_store.list_operator_settings(path=db)}
@@ -242,7 +217,7 @@ def test_the_import_leaves_the_old_keys_exactly_as_they_were(db):
 
 def test_a_value_a_section_refuses_is_left_out_and_named_and_the_rest_is_kept(db):
     legacy(db, "instance_presentation", {"name": "Fine", "theme_default": "sepia", "unknown": "x"})
-    report = config_fold.migrate(db, {}, environ={})
+    report = config_fold.migrate(db)
     instance = next(item for item in report if item["section"] == "instance")
     assert sorted(instance["dropped"]) == ["/theme_default", "/unknown"]
     assert config_fold.instance(db) == {"name": "Fine", "base_url": "", "theme_default": "system"}
@@ -253,7 +228,7 @@ def test_a_section_that_already_has_rows_is_not_overwritten_by_the_import(db):
         [admin_store.ConfigItem("instance", "/name", "set", json.dumps("From the API"))],
         if_match={"instance": "0"}, validate=None, path=db)
     legacy(db, "instance_presentation", {"name": "Stale"})
-    config_fold.migrate(db, {}, environ={})
+    config_fold.migrate(db)
     assert config_fold.instance(db)["name"] == "From the API"
 
 

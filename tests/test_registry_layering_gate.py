@@ -34,7 +34,7 @@ STEP = registry_layers.LAYERING_STEP
 
 def _live_shaped_registry() -> dict:
     """A whole registry document as an install of the previous release stored it."""
-    raw = yaml.safe_load((ROOT / "proxy_config.yml").read_text(encoding="utf-8"))
+    raw = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"))
     document = seed_registry_document(raw)  # provisioned engines + the release records, as the old seed built them
     document["services"].pop("openrouter", None)  # never backfilled
     litellm = document["services"]["litellm"]
@@ -56,7 +56,7 @@ def _live_shaped_registry() -> dict:
 
 
 def _boot(db: Path, stored_registry=None) -> dict:
-    raw = yaml.safe_load((ROOT / "proxy_config.yml").read_text(encoding="utf-8"))
+    raw = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"))
     with patch.object(proxy, "ADMIN_DB_PATH", db):
         if stored_registry is None:
             return proxy._load_effective_runtime_config(copy.deepcopy(raw), boot=True)

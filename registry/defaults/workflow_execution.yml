@@ -1,0 +1,4 @@
+# Release defaults of the workflow_execution section (docs/design/CONFIG_HOMES.md, C10). Read-only; an owner's value is
+# an override. Empty on purpose: no route compiles from its pinned definitions, the old output collection stays on, and
+# every result limit keeps the ceiling in gateway/result_bundle.py (ResultLimits).
+{}

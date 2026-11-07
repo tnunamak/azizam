@@ -30,7 +30,7 @@ OPENAI_VOICES = {
     "alloy", "ash", "ballad", "cedar", "coral", "echo", "fable",
     "marin", "nova", "onyx", "sage", "shimmer", "verse",
 }
-SPEECH = yaml.safe_load((ROOT / "proxy_config.yml").read_text(encoding="utf-8"))["model_aliases"]["speech"]
+SPEECH = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"))["model_aliases"]["speech"]
 OMNIVOICE = SPEECH["engines"]["omnivoice"]
 ALIASES = SPEECH["voice_aliases"]
 

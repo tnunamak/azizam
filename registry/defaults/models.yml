@@ -1,0 +1,3 @@
+# Release defaults of the models section (docs/design/CONFIG_HOMES.md, C10). Read-only. A release ships no entry: each
+# entry names a backend and a model file of this install, so the catalog comes from the owner's overrides.
+{}
