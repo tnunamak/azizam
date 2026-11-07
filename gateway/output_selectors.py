@@ -39,7 +39,7 @@ from typing import Any
 
 import yaml
 
-from gateway.manifests import MEDIA_INPUT_TYPES, ManifestError
+from gateway.manifests import MEDIA_INPUT_TYPES, ContractErrors, ErrorCollector, ManifestError, PathPart
 
 DESCRIPTOR_VERSION = 1
 FIELD_TYPES = ("text", "enum")
@@ -65,6 +65,11 @@ class SelectorError(ManifestError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+class SelectorErrors(ContractErrors, SelectorError):
+    """Every selector error of one check, each with a path. It is a ``SelectorError`` too: ``code`` and ``str()`` are the
+    first error's, as before."""
 
 
 # ------------------------------------------------------------------------------------------------- the descriptor
@@ -210,23 +215,36 @@ def _cached_shipped() -> dict[str, SelectorDescriptor]:
 
 def normalize(descriptor: SelectorDescriptor, name: str, raw: Any) -> dict[str, str]:
     """One selector, checked against the descriptor, with defaults filled. Raises ``SelectorError``."""
+    errors = ErrorCollector()
+    out = _normalize_into(descriptor, name, raw, ("selectors", name), errors)
+    errors.raise_if_any(SelectorErrors)
+    return out
+
+
+def _normalize_into(descriptor: SelectorDescriptor, name: str, raw: Any, at: tuple[PathPart, ...],
+                    errors: ErrorCollector) -> dict[str, str]:
+    """Like ``normalize``, but the errors go to ``errors``; a field with an error is left out of the result."""
     if not isinstance(raw, Mapping):
-        raise SelectorError("selector_malformed", f"the selector of result {name} must be a mapping")
+        errors.add(at, "selector_malformed", f"the selector of result {name} must be a mapping")
+        return {}
     unknown = sorted(str(key) for key in raw if key not in descriptor.fields)
     if unknown:
-        raise SelectorError("selector_malformed", f"the selector of result {name} has fields its adapter does not take: {unknown}")
+        errors.add(at, "selector_malformed", f"the selector of result {name} has fields its adapter does not take: {unknown}")
     out: dict[str, str] = {}
     for field_name, spec in descriptor.fields.items():
         value = raw.get(field_name)
         if value is None:
             if spec.required:
-                raise SelectorError("selector_malformed", f"the selector of result {name} needs {field_name}")
+                errors.add(at + (field_name,), "selector_malformed", f"the selector of result {name} needs {field_name}")
+                continue
             out[field_name] = spec.default  # type: ignore[assignment]
             continue
         if not isinstance(value, str) or not value or len(value) > MAX_TEXT:
-            raise SelectorError("selector_malformed", f"{field_name} of result {name} must be a short non-empty string")
+            errors.add(at + (field_name,), "selector_malformed", f"{field_name} of result {name} must be a short non-empty string")
+            continue
         if spec.type == "enum" and value not in spec.values:
-            raise SelectorError("selector_malformed", f"{field_name} of result {name} must be one of {list(spec.values)}")
+            errors.add(at + (field_name,), "selector_malformed", f"{field_name} of result {name} must be one of {list(spec.values)}")
+            continue
         out[field_name] = value
     return out
 
@@ -236,32 +254,51 @@ def _identity(descriptor: SelectorDescriptor, selector: Mapping[str, str]) -> tu
 
 
 def check_binding(descriptor: SelectorDescriptor, outputs: Mapping[str, Any], block: Mapping[str, Any], *,
-                  max_selectors: int = DEFAULT_MAX_SELECTORS) -> dict[str, dict[str, str]]:
+                  max_selectors: int = DEFAULT_MAX_SELECTORS, at: tuple[PathPart, ...] = ()) -> dict[str, dict[str, str]]:
     """The normalized selectors of one binding, by result name, or ``{}`` if the binding declares none.
 
     Declared selectors must name declared outputs, cover every output, stay within ``max_selectors`` and not repeat an
-    identity. Raises ``SelectorError``. This is the shape check that runs at load and at save.
+    identity. Raises ``SelectorErrors``, a ``SelectorError``, with every error found; ``at`` is the path of the binding.
+    This is the shape check that runs at load and at save.
     """
+    errors = ErrorCollector()
+    selectors = _check_binding_into(descriptor, outputs, block, max_selectors, at, errors)
+    errors.raise_if_any(SelectorErrors)
+    return selectors
+
+
+def _check_binding_into(descriptor: SelectorDescriptor, outputs: Mapping[str, Any], block: Mapping[str, Any],
+                        max_selectors: int, at: tuple[PathPart, ...], errors: ErrorCollector) -> dict[str, dict[str, str]]:
     raw = block.get("selectors")
     if raw is None:
         return {}
+    here = at + ("selectors",)
     if not isinstance(raw, Mapping) or not raw:
-        raise SelectorError("selector_malformed", "selectors must be a non-empty mapping of result name to selector")
+        errors.add(here, "selector_malformed", "selectors must be a non-empty mapping of result name to selector")
+        return {}
     if len(raw) > max_selectors:
-        raise SelectorError("selector_count", f"a binding has {len(raw)} selectors; the limit is {max_selectors}")
+        errors.add(here, "selector_count", f"a binding has {len(raw)} selectors; the limit is {max_selectors}")
     for name in raw:
         if name not in outputs:
-            raise SelectorError("selector_unknown_result", f"selectors name result {name}, which the contract does not declare")
-    missing = [name for name in outputs if name not in raw]
-    if missing:
-        raise SelectorError("selector_missing_result", f"result {missing[0]} has no selector; give every declared result one")
-    selectors = {str(name): normalize(descriptor, str(name), spec) for name, spec in raw.items()}
+            errors.add(here + (str(name),), "selector_unknown_result",
+                       f"selectors name result {name}, which the contract does not declare")
+    for name in outputs:
+        if name not in raw:
+            errors.add(here + (str(name),), "selector_missing_result",
+                       f"result {name} has no selector; give every declared result one")
+    selectors: dict[str, dict[str, str]] = {}
+    for name, spec in raw.items():
+        before = len(errors)
+        chosen = _normalize_into(descriptor, str(name), spec, here + (str(name),), errors)
+        if len(errors) == before:
+            selectors[str(name)] = chosen
     seen: dict[tuple[str, ...], str] = {}
     for name, selector in selectors.items():
         place = _identity(descriptor, selector)
         if place in seen:
-            raise SelectorError("selector_duplicate", f"results {seen[place]} and {name} read the same place; "
-                                                      "each result needs its own selector")
+            errors.add(here + (name,), "selector_duplicate",
+                       f"results {seen[place]} and {name} read the same place; each result needs its own selector")
+            continue
         seen[place] = name
     return selectors
 
@@ -297,9 +334,18 @@ def _mapped_node(mapping: Any) -> str | None:
 
 
 def check_echo(descriptor: SelectorDescriptor, selectors: Mapping[str, Mapping[str, str]], *, template: Mapping[str, Any],
-               block: Mapping[str, Any], inputs: Mapping[str, Any]) -> None:
+               block: Mapping[str, Any], inputs: Mapping[str, Any], at: tuple[PathPart, ...] = ()) -> None:
     """Refuse a selector whose node is not a producer: absent from the template, with no edge into it (it holds only its
-    own settings), or written from an input that carries media (it would hand the source back as a result)."""
+    own settings), or written from an input that carries media (it would hand the source back as a result). Raises
+    ``SelectorErrors``; ``at`` is the path of the binding."""
+    errors = ErrorCollector()
+    _check_echo_into(descriptor, selectors, template, block, inputs, at, errors)
+    errors.raise_if_any(SelectorErrors)
+
+
+def _check_echo_into(descriptor: SelectorDescriptor, selectors: Mapping[str, Mapping[str, str]], template: Mapping[str, Any],
+                     block: Mapping[str, Any], inputs: Mapping[str, Any], at: tuple[PathPart, ...],
+                     errors: ErrorCollector) -> None:
     if descriptor.template_node is None:
         return
     source_nodes: set[str] = set()
@@ -311,48 +357,73 @@ def check_echo(descriptor: SelectorDescriptor, selectors: Mapping[str, Mapping[s
                 source_nodes.update(node for node in map(_mapped_node, mappings) if node is not None)
     for name, selector in selectors.items():
         node_id = selector[descriptor.template_node]
+        here = at + ("selectors", name, descriptor.template_node)
         node = template.get(node_id)
         if not isinstance(node, Mapping):
-            raise SelectorError("selector_unknown_node", f"the selector of result {name} names a node the template does not have")
-        if node_id in source_nodes or not _links(node.get("inputs")):
-            raise SelectorError("selector_echoes_source", f"the selector of result {name} reads a node that holds a source, "
-                                                          "not one that makes a result")
+            errors.add(here, "selector_unknown_node", f"the selector of result {name} names a node the template does not have")
+        elif node_id in source_nodes or not _links(node.get("inputs")):
+            errors.add(here, "selector_echoes_source", f"the selector of result {name} reads a node that holds a source, "
+                                                       "not one that makes a result")
 
 
 def check_for_save(descriptor: SelectorDescriptor | None, manifest: Mapping[str, Any], binding_key: str, *,
                    template: Mapping[str, Any] | None = None, max_selectors: int = DEFAULT_MAX_SELECTORS,
                    ) -> dict[str, dict[str, str]]:
-    """The contract rules for a new or changed binding (D5). Raises ``SelectorError`` with a clear reason.
+    """The contract rules for a new or changed binding (D5). Raises ``SelectorErrors`` (a ``SelectorError``) with every
+    error found, each with a clear reason.
 
     ``descriptor`` is the selector form of the binding's adapter, ``None`` if the adapter takes none: then the binding
     must declare none. Otherwise the binding must declare selectors, the shape check passes, and, when the template is
     given, no selector reads a node that is not a producer. Outputs that share a media type and cannot be told apart are
     refused with their own reason.
     """
+    errors = ErrorCollector()
+    selectors = _check_for_save_into(descriptor, manifest, binding_key, template, max_selectors, errors)
+    errors.raise_if_any(SelectorErrors)
+    return selectors
+
+
+def _check_for_save_into(descriptor: SelectorDescriptor | None, manifest: Mapping[str, Any], binding_key: str,
+                         template: Mapping[str, Any] | None, max_selectors: int,
+                         errors: ErrorCollector) -> dict[str, dict[str, str]]:
+    at = ("bindings", binding_key)
     block = (manifest.get("bindings") or {}).get(binding_key)
     if not isinstance(block, Mapping):
-        raise SelectorError("selector_malformed", f"the manifest has no binding {binding_key}")
+        errors.add(at, "selector_malformed", f"the manifest has no binding {binding_key}")
+        return {}
     if descriptor is None:
         if "selectors" in block:
-            raise SelectorError("selector_malformed", f"binding {binding_key} has selectors, but its adapter takes none")
+            errors.add(at + ("selectors",), "selector_malformed", f"binding {binding_key} has selectors, but its adapter takes none")
         return {}
     outputs = manifest.get("outputs") or {}
     if "selectors" not in block:
         ambiguous = ambiguous_outputs(outputs)
         if ambiguous:
-            raise SelectorError("results_ambiguous", f"results {ambiguous} have the same type and nothing tells them apart; "
-                                                     f"give binding {binding_key} a selector for each")
-        raise SelectorError("selectors_missing", f"binding {binding_key} declares no output selectors; a new contract must say "
-                                                 "where each result comes from")
-    selectors = check_binding(descriptor, outputs, block, max_selectors=max_selectors)
-    if template is not None:
-        check_echo(descriptor, selectors, template=template, block=block, inputs=manifest.get("inputs") or {})
+            errors.add(at, "results_ambiguous", f"results {ambiguous} have the same type and nothing tells them apart; "
+                                                f"give binding {binding_key} a selector for each")
+        else:
+            errors.add(at, "selectors_missing", f"binding {binding_key} declares no output selectors; a new contract must say "
+                                                "where each result comes from")
+        return {}
+    before = len(errors)
+    selectors = _check_binding_into(descriptor, outputs, block, max_selectors, at, errors)
+    # The echo check reads the selectors; with a broken selector there is nothing sound to read.
+    if template is not None and len(errors) == before:
+        _check_echo_into(descriptor, selectors, template, block, manifest.get("inputs") or {}, at, errors)
     return selectors
 
 
 def check_manifest(manifest: Mapping[str, Any], descriptors: Mapping[str, SelectorDescriptor] | None = None) -> None:
     """The load-time check of every binding that declares selectors, against its adapter's descriptor. A binding with
-    none is a legacy contract and loads. Raises ``SelectorError``."""
+    none is a legacy contract and loads. Raises ``SelectorErrors``, a ``SelectorError``, with every error found."""
+    errors = ErrorCollector()
+    collect_manifest_errors(manifest, errors, descriptors)
+    errors.raise_if_any(SelectorErrors)
+
+
+def collect_manifest_errors(manifest: Mapping[str, Any], errors: ErrorCollector,
+                            descriptors: Mapping[str, SelectorDescriptor] | None = None) -> None:
+    """``check_manifest`` with the errors added to ``errors``."""
     bindings = manifest.get("bindings")
     outputs = manifest.get("outputs")
     if not isinstance(bindings, Mapping) or not isinstance(outputs, Mapping):
@@ -363,8 +434,9 @@ def check_manifest(manifest: Mapping[str, Any], descriptors: Mapping[str, Select
             continue
         descriptor = known.get(key)
         if descriptor is None:
-            raise SelectorError("selector_malformed", f"binding {key} has selectors, but its adapter takes none")
-        check_binding(descriptor, outputs, block)
+            errors.add(("bindings", key, "selectors"), "selector_malformed", f"binding {key} has selectors, but its adapter takes none")
+            continue
+        _check_binding_into(descriptor, outputs, block, DEFAULT_MAX_SELECTORS, ("bindings", key), errors)
 
 
 # ---------------------------------------------------------------------------------------------- the legacy flag

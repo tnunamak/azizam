@@ -9,13 +9,103 @@ import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 import yaml
 
 
 class ManifestError(ValueError):
     """Raised when a manifest or backend binding is invalid."""
+
+
+# ------------------------------------------------------------------------------------------------ contract errors
+# Every refusal of a contract document carries a place (a path of keys and indexes) and a stable code. A check collects
+# all its errors and raises them together (CODE_TO_DATA_S3, D8). ``str()`` of the raised error is still the message a
+# check would have raised first, so a caller that catches ``ManifestError`` sees what it saw before.
+
+MAX_CONTRACT_ERRORS = 100
+TOO_MANY_ERRORS = "too_many_errors"
+
+PathPart = str | int
+
+
+def _pointer_part(part: PathPart) -> str:
+    return str(part).replace("~", "~0").replace("/", "~1")
+
+
+@dataclass(frozen=True)
+class ContractError:
+    """One refusal: where (``path``), which rule (``code``) and a short sentence (``message``)."""
+
+    path: tuple[PathPart, ...]
+    code: str
+    message: str
+
+    @property
+    def pointer(self) -> str:
+        """The path as a JSON Pointer, for display."""
+        return "".join("/" + _pointer_part(part) for part in self.path)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"path": list(self.path), "pointer": self.pointer, "code": self.code, "message": self.message}
+
+
+def _sort_key(error: ContractError) -> tuple[tuple[int, int, str], ...]:
+    # Indexes sort by number and keys by text; the two never compare with each other.
+    return tuple((0, part, "") if isinstance(part, int) else (1, 0, str(part)) for part in error.path)
+
+
+class ContractErrors(ManifestError):
+    """All the errors of one check. ``errors`` is sorted by path and holds at most ``MAX_CONTRACT_ERRORS`` entries and a
+    final ``too_many_errors`` entry. ``primary`` is the error the check found first, in the order of its checks; the
+    message of the exception, and so its ``str()``, is the message of ``primary``."""
+
+    def __init__(self, errors: Iterable[ContractError], primary: ContractError | None = None) -> None:
+        found = list(errors)
+        if not found:
+            raise ValueError("ContractErrors needs at least one error")
+        self.primary = primary if primary is not None else found[0]
+        ordered = sorted(found, key=_sort_key)
+        if len(ordered) > MAX_CONTRACT_ERRORS:
+            dropped = len(ordered) - MAX_CONTRACT_ERRORS
+            ordered = ordered[:MAX_CONTRACT_ERRORS]
+            ordered.append(ContractError((), TOO_MANY_ERRORS, f"{dropped} more errors are not listed"))
+        self.errors = ordered
+        # Not ``super().__init__``: a subclass may also inherit an exception that takes other arguments.
+        ValueError.__init__(self, self.primary.message)
+
+    @property
+    def code(self) -> str:
+        return self.primary.code
+
+    @property
+    def path(self) -> tuple[PathPart, ...]:
+        return self.primary.path
+
+    def as_list(self) -> list[dict[str, Any]]:
+        return [error.as_dict() for error in self.errors]
+
+
+class ErrorCollector:
+    """Gathers the errors of a check, in the order the check finds them."""
+
+    def __init__(self) -> None:
+        self.errors: list[ContractError] = []
+
+    def add(self, path: Iterable[PathPart], code: str, message: str) -> None:
+        self.errors.append(ContractError(tuple(path), code, message))
+
+    def __len__(self) -> int:
+        return len(self.errors)
+
+    def raise_if_any(self, factory: Callable[[list[ContractError]], ContractErrors] = ContractErrors) -> None:
+        if self.errors:
+            raise factory(self.errors)
+
+
+def refusal(path: Iterable[PathPart], code: str, message: str) -> ContractErrors:
+    """A single-error ``ContractErrors``, for a check that has nothing to gather."""
+    return ContractErrors([ContractError(tuple(path), code, message)])
 
 
 # The input types that carry media: a value that names a stored or supplied file, not a plain value.
@@ -109,52 +199,77 @@ RESULT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 def validate_manifest(manifest: dict[str, Any], descriptors: Mapping[str, Any] | None = None) -> None:
     """Check a manifest. ``descriptors`` are the selector descriptors by binding key to check selectors against; the
-    default is the shipped registry. A run from a pin passes the descriptor of the protocol it was started with."""
+    default is the shipped registry. A run from a pin passes the descriptor of the protocol it was started with.
+
+    Every error is collected. The raised ``ContractErrors`` has them all, each with a path and a code; its message is
+    the first one found, in the order of the checks below."""
+    from gateway import output_selectors
+
+    errors = ErrorCollector()
+    before_selectors = collect_manifest_errors(manifest, errors, descriptors)
+    # A manifest whose first problem is a selector is still refused with a ``SelectorError``, as it was.
+    first_is_selector = before_selectors == 0 and len(errors) > 0
+    errors.raise_if_any(output_selectors.SelectorErrors if first_is_selector else ContractErrors)
+
+
+def collect_manifest_errors(
+    manifest: dict[str, Any], errors: ErrorCollector, descriptors: Mapping[str, Any] | None = None
+) -> int:
+    """Add every error of the manifest to ``errors``. Returns how many there were before the selector check began."""
     for field_name in ("schema_version", "id", "intent", "inputs", "outputs", "bindings"):
         if field_name not in manifest:
-            raise ManifestError(f"manifest missing required field: {field_name}")
-    if not isinstance(manifest["inputs"], dict):
-        raise ManifestError("manifest inputs must be a mapping")
-    if not isinstance(manifest["bindings"], dict):
-        raise ManifestError("manifest bindings must be a mapping")
-    if isinstance(manifest["outputs"], dict):
-        for name in manifest["outputs"]:
+            errors.add((field_name,), "required_field_missing", f"manifest missing required field: {field_name}")
+    inputs = manifest.get("inputs")
+    bindings = manifest.get("bindings")
+    outputs = manifest.get("outputs")
+    if "inputs" in manifest and not isinstance(inputs, dict):
+        errors.add(("inputs",), "type_mismatch", "manifest inputs must be a mapping")
+    if "bindings" in manifest and not isinstance(bindings, dict):
+        errors.add(("bindings",), "type_mismatch", "manifest bindings must be a mapping")
+    if isinstance(outputs, dict):
+        for name in outputs:
             if not isinstance(name, str) or not RESULT_NAME_RE.fullmatch(name):
-                raise ManifestError(f"output {name!r}: {RESULT_NAME_RULE}")
+                errors.add(("outputs", str(name)), "result_name_invalid", f"output {name!r}: {RESULT_NAME_RULE}")
     if "purpose" in manifest:
         purpose = manifest["purpose"]
         if not isinstance(purpose, str) or not purpose.strip():
-            raise ManifestError("manifest purpose must be a non-empty string")
-        if len(purpose.split()) > 8:
-            raise ManifestError("manifest purpose must contain at most 8 words")
+            errors.add(("purpose",), "value_empty", "manifest purpose must be a non-empty string")
+        elif len(purpose.split()) > 8:
+            errors.add(("purpose",), "too_many_words", "manifest purpose must contain at most 8 words")
     for field_name in ("summary", "license", "prompt_hint"):
         if field_name in manifest:
             value = manifest[field_name]
             if not isinstance(value, str) or not value.strip():
-                raise ManifestError(f"manifest {field_name} must be a non-empty string")
-    if "summary" in manifest and len(manifest["summary"].split()) > 40:
-        raise ManifestError("manifest summary must contain at most 40 words")
-    for name, spec in manifest["inputs"].items():
-        if not isinstance(spec, dict):
-            continue
-        for key in ("label", "help"):
-            if key in spec and (not isinstance(spec[key], str) or not spec[key].strip()):
-                raise ManifestError(f"input {name} {key} must be a non-empty string")
-        if spec.get("type") in ("number", "integer") and "default" in spec:
-            if isinstance(spec["default"], float) and not math.isfinite(spec["default"]):
-                raise ManifestError(f"input {name} default must be a finite number")
-    for backend, block in manifest["bindings"].items():
-        if not isinstance(block, dict) or "edge_only_inputs" not in block:
-            continue
-        edge_only = block["edge_only_inputs"]
-        if not isinstance(edge_only, list) or not all(
-            isinstance(name, str) and name in manifest["inputs"] for name in edge_only
-        ):
-            raise ManifestError(f"binding {backend} edge_only_inputs must name declared inputs")
+                errors.add((field_name,), "value_empty", f"manifest {field_name} must be a non-empty string")
+            elif field_name == "summary" and len(value.split()) > 40:
+                errors.add((field_name,), "too_many_words", "manifest summary must contain at most 40 words")
+    if isinstance(inputs, dict):
+        for name, spec in inputs.items():
+            if not isinstance(spec, dict):
+                continue
+            for key in ("label", "help"):
+                if key in spec and (not isinstance(spec[key], str) or not spec[key].strip()):
+                    errors.add(("inputs", name, key), "value_empty", f"input {name} {key} must be a non-empty string")
+            if spec.get("type") in ("number", "integer") and "default" in spec:
+                if isinstance(spec["default"], float) and not math.isfinite(spec["default"]):
+                    errors.add(("inputs", name, "default"), "number_not_finite", f"input {name} default must be a finite number")
+    if isinstance(bindings, dict):
+        for backend, block in bindings.items():
+            if not isinstance(block, dict) or "edge_only_inputs" not in block:
+                continue
+            edge_only = block["edge_only_inputs"]
+            # With broken inputs there is nothing to name; that error is already listed.
+            if not isinstance(edge_only, list) or (
+                isinstance(inputs, dict) and not all(isinstance(name, str) and name in inputs for name in edge_only)
+            ):
+                errors.add(("bindings", backend, "edge_only_inputs"), "reference_unknown",
+                           f"binding {backend} edge_only_inputs must name declared inputs")
     # A binding that declares output selectors is checked against its adapter's descriptor (CODE_TO_DATA_S2, D8).
     from gateway import output_selectors
 
-    output_selectors.check_manifest(manifest, descriptors)
+    before_selectors = len(errors)
+    output_selectors.collect_manifest_errors(manifest, errors, descriptors)
+    return before_selectors
 
 
 def validate_inputs(
@@ -196,38 +311,53 @@ def apply_deployment_inputs(manifest: dict[str, Any], narrowing: Mapping[str, Ma
     """
     validate_manifest(manifest)
     inputs = copy.deepcopy(manifest["inputs"])
+    errors = ErrorCollector()
     for name, limits in narrowing.items():
-        spec = inputs.get(name)
-        if not isinstance(spec, dict):
-            raise ManifestError(f"deployment narrows input {name}, which the manifest does not declare")
-        if spec.get("type") not in ("number", "integer"):
-            raise ManifestError(f"deployment narrows input {name}, which is not a number")
-        unknown = sorted(set(limits) - set(DEPLOYMENT_INPUT_KEYS))
-        if unknown:
-            raise ManifestError(f"deployment sets {unknown} for input {name}; only {list(DEPLOYMENT_INPUT_KEYS)} apply")
-        for key, value in limits.items():
-            # Python ints are exact and finite; only a float can be NaN or infinite (an int too large for a float is fine).
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not math.isfinite(value)):
-                raise ManifestError(f"deployment value {key} for input {name} must be a finite number")
-        if "minimum" in limits:
-            if "minimum" in spec and limits["minimum"] < spec["minimum"]:
-                raise ManifestError(f"deployment minimum for {name} is below the manifest's {spec['minimum']}")
-            spec["minimum"] = limits["minimum"]
-        if "maximum" in limits:
-            if "maximum" in spec and limits["maximum"] > spec["maximum"]:
-                raise ManifestError(f"deployment maximum for {name} is above the manifest's {spec['maximum']}")
-            spec["maximum"] = limits["maximum"]
-        if "default" in limits:
-            spec["default"] = limits["default"]
-        if "minimum" in spec and "maximum" in spec and spec["minimum"] > spec["maximum"]:
-            raise ManifestError(f"effective bounds for {name} are empty: {spec['minimum']} > {spec['maximum']}")
-        if "default" in spec:
-            reason = _validate_value(name, spec["default"], spec)
-            if reason is not None:
-                raise ManifestError(f"default for {name} is outside its effective bounds: {reason}")
+        _narrow_input(name, limits, inputs, errors)
+    errors.raise_if_any()
     effective = copy.deepcopy(manifest)
     effective["inputs"] = inputs
     return effective
+
+
+def _narrow_input(name: str, limits: Mapping[str, Any], inputs: dict[str, Any], errors: ErrorCollector) -> None:
+    """Apply one input's narrowing to ``inputs``. The first problem of an input is its error; the next input is still checked."""
+    at = ("inputs", name)
+    spec = inputs.get(name)
+    if not isinstance(spec, dict):
+        errors.add(at, "input_unknown", f"deployment narrows input {name}, which the manifest does not declare")
+        return
+    if spec.get("type") not in ("number", "integer"):
+        errors.add(at, "input_not_numeric", f"deployment narrows input {name}, which is not a number")
+        return
+    unknown = sorted(set(limits) - set(DEPLOYMENT_INPUT_KEYS))
+    if unknown:
+        errors.add(at, "limit_unknown", f"deployment sets {unknown} for input {name}; only {list(DEPLOYMENT_INPUT_KEYS)} apply")
+        return
+    for key, value in limits.items():
+        # Python ints are exact and finite; only a float can be NaN or infinite (an int too large for a float is fine).
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not math.isfinite(value)):
+            errors.add(at + (key,), "number_not_finite", f"deployment value {key} for input {name} must be a finite number")
+            return
+    if "minimum" in limits:
+        if "minimum" in spec and limits["minimum"] < spec["minimum"]:
+            errors.add(at + ("minimum",), "bound_widened", f"deployment minimum for {name} is below the manifest's {spec['minimum']}")
+            return
+        spec["minimum"] = limits["minimum"]
+    if "maximum" in limits:
+        if "maximum" in spec and limits["maximum"] > spec["maximum"]:
+            errors.add(at + ("maximum",), "bound_widened", f"deployment maximum for {name} is above the manifest's {spec['maximum']}")
+            return
+        spec["maximum"] = limits["maximum"]
+    if "default" in limits:
+        spec["default"] = limits["default"]
+    if "minimum" in spec and "maximum" in spec and spec["minimum"] > spec["maximum"]:
+        errors.add(at, "bounds_empty", f"effective bounds for {name} are empty: {spec['minimum']} > {spec['maximum']}")
+        return
+    if "default" in spec:
+        reason = _validate_value(name, spec["default"], spec)
+        if reason is not None:
+            errors.add(at + ("default",), "default_out_of_bounds", f"default for {name} is outside its effective bounds: {reason}")
 
 
 def apply_backend_binding(
@@ -260,11 +390,11 @@ def bind_backend_request(
     identity = identity if identity is not None else manifest_identity(manifest)
     backend_binding = manifest["bindings"].get(backend)
     if not isinstance(backend_binding, dict):
-        raise ManifestError(f"manifest has no binding for backend: {backend}")
+        raise refusal(("bindings", backend), "binding_missing", f"manifest has no binding for backend: {backend}")
 
     binding_map = backend_binding.get("map", {})
     if not isinstance(binding_map, dict):
-        raise ManifestError(f"manifest binding for {backend} has invalid map")
+        raise refusal(("bindings", backend, "map"), "type_mismatch", f"manifest binding for {backend} has invalid map")
 
     request = copy.deepcopy(backend_request)
     applied: list[str] = []
@@ -278,12 +408,12 @@ def bind_backend_request(
             continue
         mappings = binding_map[input_name]
         if not isinstance(mappings, list):
-            raise ManifestError(f"binding map for {input_name} must be a list")
+            raise refusal(("bindings", backend, "map", input_name), "type_mismatch", f"binding map for {input_name} must be a list")
         if not mappings:
             ignored[input_name] = f"empty mapping for input under backend {backend}"
             continue
-        for mapping in mappings:
-            _apply_mapping(request, mapping, value)
+        for index, mapping in enumerate(mappings):
+            _apply_mapping(request, mapping, value, ("bindings", backend, "map", input_name, index))
         applied.append(input_name)
 
     backend_metadata = _backend_metadata(backend_binding)
@@ -376,14 +506,14 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     return None
 
 
-def _apply_mapping(request: dict[str, Any], mapping: dict[str, Any], value: Any) -> None:
+def _apply_mapping(request: dict[str, Any], mapping: dict[str, Any], value: Any, at: tuple[PathPart, ...]) -> None:
     if not isinstance(mapping, dict):
-        raise ManifestError("binding mapping must be a mapping")
+        raise refusal(at, "type_mismatch", "binding mapping must be a mapping")
 
     has_node = "node" in mapping
     has_input = "input" in mapping
     if has_node ^ has_input:
-        raise ManifestError("binding mapping needs both node and input, or path")
+        raise refusal(at, "mapping_incomplete", "binding mapping needs both node and input, or path")
 
     if has_node and has_input:
         node_id = str(mapping["node"])
@@ -391,30 +521,28 @@ def _apply_mapping(request: dict[str, Any], mapping: dict[str, Any], value: Any)
         try:
             request[node_id]["inputs"][input_name] = value
         except KeyError as exc:
-            raise ManifestError(
-                f"ComfyUI binding target missing: node {node_id} input {input_name}"
-            ) from exc
+            raise refusal(at, "target_missing", f"ComfyUI binding target missing: node {node_id} input {input_name}") from exc
         return
 
     path = mapping.get("path")
     if path:
         if not isinstance(path, str):
-            raise ManifestError("binding mapping path must be a dotted string")
-        _set_path(request, path.split("."), value)
+            raise refusal(at + ("path",), "type_mismatch", "binding mapping path must be a dotted string")
+        _set_path(request, path.split("."), value, at + ("path",))
         return
 
-    raise ManifestError("binding mapping needs node/input or path")
+    raise refusal(at, "mapping_incomplete", "binding mapping needs node/input or path")
 
 
-def _set_path(target: dict[str, Any], parts: list[str], value: Any) -> None:
+def _set_path(target: dict[str, Any], parts: list[str], value: Any, at: tuple[PathPart, ...]) -> None:
     if not parts:
-        raise ManifestError("binding path cannot be empty")
+        raise refusal(at, "path_invalid", "binding path cannot be empty")
     cursor: Any = target
     for part in parts[:-1]:
         if isinstance(cursor, dict):
             cursor = cursor.setdefault(part, {})
         else:
-            raise ManifestError(f"binding path crosses non-mapping value at {part}")
+            raise refusal(at, "path_invalid", f"binding path crosses non-mapping value at {part}")
     if not isinstance(cursor, dict):
-        raise ManifestError("binding path target is not a mapping")
+        raise refusal(at, "path_invalid", "binding path target is not a mapping")
     cursor[parts[-1]] = value

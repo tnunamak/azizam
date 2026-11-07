@@ -19,6 +19,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from gateway.manifests import ContractErrors, ErrorCollector, PathPart
+
 MESH_INTENT = "mesh.generate"
 MESH_MEDIA_TYPE = "model/gltf-binary"
 TRANSPORT_KIND = "http-multipart"
@@ -41,6 +43,11 @@ _JPEG = b"\xff\xd8\xff"
 
 class MeshManifestError(ValueError):
     """The bundled manifest is malformed. The gateway refuses to serve the route."""
+
+
+class MeshContractErrors(ContractErrors, MeshManifestError):
+    """Every error of one manifest, each with a path and a code. It is a ``MeshManifestError`` too, with the first
+    error's message, so the caller that refuses the route on a ``MeshManifestError`` sees what it saw before."""
 
 
 class MeshInputError(ValueError):
@@ -84,19 +91,34 @@ def load_mesh_manifest(path: str | Path) -> MeshManifest:
 
 
 def validate_mesh_manifest(raw: Any) -> MeshManifest:
-    if not isinstance(raw, Mapping):
-        raise MeshManifestError("mesh manifest must be a mapping")
-    _closed(raw, _TOP_LEVEL_REQUIRED, _TOP_LEVEL_OPTIONAL, "manifest")
-    if raw["schema_version"] != 1:
-        raise MeshManifestError("mesh manifest schema_version must be 1")
-    if raw["intent"] != MESH_INTENT:
-        raise MeshManifestError(f"mesh manifest intent must be {MESH_INTENT!r}")
-    manifest_id = _text(raw["id"], "id")
-    version = _text(raw["version"], "version")
+    errors = ErrorCollector()
+    parsed = _validate_manifest_into(raw, errors)
+    errors.raise_if_any(MeshContractErrors)
+    assert parsed is not None
+    return parsed
 
-    inputs = _validate_inputs(raw["inputs"])
-    output_media_type = _validate_outputs(raw["outputs"])
-    service_id, transport_path, mapping = _validate_bindings(raw["bindings"], inputs)
+
+def _validate_manifest_into(raw: Any, errors: ErrorCollector) -> MeshManifest | None:
+    """Check the manifest, adding every error to ``errors``. A part that depends on a broken part is not checked, so one
+    cause does not give a list of effects. Returns the manifest when there is no error."""
+    if not isinstance(raw, Mapping):
+        errors.add((), "type_mismatch", "mesh manifest must be a mapping")
+        return None
+    _closed(raw, _TOP_LEVEL_REQUIRED, _TOP_LEVEL_OPTIONAL, "manifest", (), errors)
+    if "schema_version" in raw and raw["schema_version"] != 1:
+        errors.add(("schema_version",), "version_unsupported", "mesh manifest schema_version must be 1")
+    if "intent" in raw and raw["intent"] != MESH_INTENT:
+        errors.add(("intent",), "intent_mismatch", f"mesh manifest intent must be {MESH_INTENT!r}")
+    manifest_id = _text(raw["id"], "id", ("id",), errors) if "id" in raw else None
+    version = _text(raw["version"], "version", ("version",), errors) if "version" in raw else None
+    inputs = _validate_inputs(raw["inputs"], errors) if "inputs" in raw else None
+    output_media_type = _validate_outputs(raw["outputs"], errors) if "outputs" in raw else None
+    bindings = _validate_bindings(raw["bindings"], inputs, errors) if "bindings" in raw else None
+    if errors.errors:
+        return None
+    assert manifest_id is not None and version is not None and inputs is not None
+    assert output_media_type is not None and bindings is not None
+    service_id, transport_path, mapping = bindings
 
     canonical = json.dumps(_plain(raw), sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return MeshManifest(
@@ -113,126 +135,191 @@ def validate_mesh_manifest(raw: Any) -> MeshManifest:
     )
 
 
-def _validate_inputs(raw: Any) -> dict[str, dict[str, Any]]:
+def _validate_inputs(raw: Any, errors: ErrorCollector) -> dict[str, dict[str, Any]] | None:
+    """The checked inputs, or ``None`` when any input has an error (they are all checked)."""
     if not isinstance(raw, Mapping) or not raw:
-        raise MeshManifestError("mesh manifest inputs must be a non-empty mapping")
+        errors.add(("inputs",), "type_mismatch", "mesh manifest inputs must be a non-empty mapping")
+        return None
+    before = len(errors)
     inputs: dict[str, dict[str, Any]] = {}
     for name, spec in raw.items():
-        if not isinstance(name, str) or not _FIELD_NAME.fullmatch(name):
-            raise MeshManifestError(f"input name {name!r} is not a plain field name")
-        if not isinstance(spec, Mapping):
-            raise MeshManifestError(f"input {name} must be a mapping")
-        _closed(spec, ("type",), tuple(sorted(_INPUT_KEYS - {"type"})), f"input {name}")
-        kind = spec["type"]
-        if kind not in _INPUT_TYPES:
-            raise MeshManifestError(f"input {name} type must be one of {sorted(_INPUT_TYPES)}")
-        checked = _plain(dict(spec))
-        if kind == "image":
-            if checked.get("modality") != "image":
-                raise MeshManifestError(f"input {name} of type image must declare modality image")
-        elif "modality" in checked:
-            raise MeshManifestError(f"input {name} may declare a modality only when it is an image")
-        if kind == "integer":
-            _check_integer_spec(name, checked)
-        if kind == "string" and checked.get("enum") is not None:
-            _check_enum(name, checked["enum"], str)
-        if "default" in checked:
-            _check_value(name, checked, checked["default"])
-        inputs[name] = checked
+        checked = _validate_input(name, spec, errors)
+        if checked is not None:
+            inputs[name] = checked
+    if len(errors) != before:
+        return None
     images = [name for name, spec in inputs.items() if spec["type"] == "image"]
     if len(images) != 1 or inputs[images[0]].get("required") is not True:
-        raise MeshManifestError("mesh manifest needs exactly one required image input")
+        errors.add(("inputs",), "image_input_count", "mesh manifest needs exactly one required image input")
+        return None
     return inputs
 
 
-def _validate_outputs(raw: Any) -> str:
+def _validate_input(name: Any, spec: Any, errors: ErrorCollector) -> dict[str, Any] | None:
+    """One input, or ``None`` after the first error it has (the later rules read what the first one checks)."""
+    at = ("inputs", str(name))
+    if not isinstance(name, str) or not _FIELD_NAME.fullmatch(name):
+        errors.add(at, "name_invalid", f"input name {name!r} is not a plain field name")
+        return None
+    if not isinstance(spec, Mapping):
+        errors.add(at, "type_mismatch", f"input {name} must be a mapping")
+        return None
+    before = len(errors)
+    _closed(spec, ("type",), tuple(sorted(_INPUT_KEYS - {"type"})), f"input {name}", at, errors)
+    if len(errors) != before:
+        return None
+    kind = spec["type"]
+    if kind not in _INPUT_TYPES:
+        errors.add(at + ("type",), "type_unsupported", f"input {name} type must be one of {sorted(_INPUT_TYPES)}")
+        return None
+    checked = _plain(dict(spec))
+    if kind == "image":
+        if checked.get("modality") != "image":
+            errors.add(at + ("modality",), "modality_invalid", f"input {name} of type image must declare modality image")
+            return None
+    elif "modality" in checked:
+        errors.add(at + ("modality",), "modality_invalid", f"input {name} may declare a modality only when it is an image")
+        return None
+    if kind == "integer" and not _check_integer_spec(name, checked, at, errors):
+        return None
+    if kind == "string" and checked.get("enum") is not None and not _check_enum(name, checked["enum"], str, at, errors):
+        return None
+    if "default" in checked and not _check_value(name, checked, checked["default"], at, errors):
+        return None
+    return checked
+
+
+def _validate_outputs(raw: Any, errors: ErrorCollector) -> str | None:
     if not isinstance(raw, Mapping) or len(raw) != 1:
-        raise MeshManifestError("mesh manifest outputs must name exactly one output")
+        errors.add(("outputs",), "output_count", "mesh manifest outputs must name exactly one output")
+        return None
     (name, spec), = raw.items()
+    at = ("outputs", str(name))
     if not isinstance(spec, Mapping) or set(spec) != {"modality", "media_type"}:
-        raise MeshManifestError(f"output {name} must declare modality and media_type only")
+        errors.add(at, "unknown_field", f"output {name} must declare modality and media_type only")
+        return None
     if spec["modality"] != "mesh" or spec["media_type"] != MESH_MEDIA_TYPE:
-        raise MeshManifestError(f"output {name} must be modality mesh with media type {MESH_MEDIA_TYPE}")
+        errors.add(at, "output_type_invalid", f"output {name} must be modality mesh with media type {MESH_MEDIA_TYPE}")
+        return None
     return MESH_MEDIA_TYPE
 
 
-def _validate_bindings(raw: Any, inputs: Mapping[str, Any]) -> tuple[str, str, dict[str, str]]:
+def _validate_bindings(raw: Any, inputs: Mapping[str, Any] | None,
+                       errors: ErrorCollector) -> tuple[str, str, dict[str, str]] | None:
+    """The service id, transport path and form-field map. ``inputs`` is ``None`` when the inputs have an error: the rules
+    that read an input are then not checked."""
     if not isinstance(raw, Mapping) or len(raw) != 1:
-        raise MeshManifestError("mesh manifest must hold exactly one binding")
+        errors.add(("bindings",), "binding_count", "mesh manifest must hold exactly one binding")
+        return None
+    before = len(errors)
     (service_id, binding), = raw.items()
+    at = ("bindings", str(service_id))
     if not isinstance(service_id, str) or not _SERVICE_ID.fullmatch(service_id):
-        raise MeshManifestError(f"binding key {service_id!r} is not a service id")
+        errors.add(at, "name_invalid", f"binding key {service_id!r} is not a service id")
     if not isinstance(binding, Mapping):
-        raise MeshManifestError("binding must be a mapping")
-    _closed(binding, ("transport", "map"), (), f"binding {service_id}")
+        errors.add(at, "type_mismatch", "binding must be a mapping")
+        return None
+    _closed(binding, ("transport", "map"), (), f"binding {service_id}", at, errors)
 
-    transport = binding["transport"]
-    if not isinstance(transport, Mapping):
-        raise MeshManifestError("transport must be a mapping")
-    _closed(transport, ("kind", "path"), (), "transport")
-    if transport["kind"] != TRANSPORT_KIND:
-        raise MeshManifestError(f"transport kind must be {TRANSPORT_KIND!r}")
-    path = transport["path"]
-    if not isinstance(path, str) or not _TRANSPORT_PATH.fullmatch(path) or {".", ".."} & set(path.split("/")):
-        raise MeshManifestError("transport path must be a canonical slash-prefixed relative path")
-
-    mapping = binding["map"]
-    if not isinstance(mapping, Mapping) or not mapping:
-        raise MeshManifestError("binding map must be a non-empty mapping")
-    targets: dict[str, str] = {}
-    for logical, field_name in mapping.items():
-        if logical not in inputs:
-            raise MeshManifestError(f"map names {logical!r}, which is not an input")
-        if inputs[logical]["type"] == "object":
-            raise MeshManifestError(f"input {logical} is an object and cannot be mapped to a form field")
-        if not isinstance(field_name, str) or not _FIELD_NAME.fullmatch(field_name):
-            raise MeshManifestError(f"map target for {logical} must be a plain form field name")
-        if field_name in targets.values():
-            raise MeshManifestError(f"map target {field_name!r} is used twice")
-        targets[logical] = field_name
-    image = next(name for name, spec in inputs.items() if spec["type"] == "image")
-    if image not in targets:
-        raise MeshManifestError("the image input must be mapped")
+    path = None
+    if "transport" in binding:
+        path = _validate_transport(binding["transport"], at + ("transport",), errors)
+    targets = _validate_map(binding["map"], inputs, at + ("map",), errors) if "map" in binding else None
+    if len(errors) != before or path is None or targets is None:
+        return None
     return service_id, path, targets
 
 
-def _check_integer_spec(name: str, spec: Mapping[str, Any]) -> None:
+def _validate_transport(transport: Any, at: tuple[PathPart, ...], errors: ErrorCollector) -> str | None:
+    if not isinstance(transport, Mapping):
+        errors.add(at, "type_mismatch", "transport must be a mapping")
+        return None
+    before = len(errors)
+    _closed(transport, ("kind", "path"), (), "transport", at, errors)
+    if "kind" in transport and transport["kind"] != TRANSPORT_KIND:
+        errors.add(at + ("kind",), "transport_kind_invalid", f"transport kind must be {TRANSPORT_KIND!r}")
+    path = transport.get("path")
+    if "path" in transport and (
+        not isinstance(path, str) or not _TRANSPORT_PATH.fullmatch(path) or {".", ".."} & set(path.split("/"))
+    ):
+        errors.add(at + ("path",), "transport_path_invalid", "transport path must be a canonical slash-prefixed relative path")
+    return path if len(errors) == before else None
+
+
+def _validate_map(mapping: Any, inputs: Mapping[str, Any] | None, at: tuple[PathPart, ...],
+                  errors: ErrorCollector) -> dict[str, str] | None:
+    if not isinstance(mapping, Mapping) or not mapping:
+        errors.add(at, "type_mismatch", "binding map must be a non-empty mapping")
+        return None
+    before = len(errors)
+    targets: dict[str, str] = {}
+    for logical, field_name in mapping.items():
+        here = at + (str(logical),)
+        if inputs is not None and logical not in inputs:
+            errors.add(here, "reference_unknown", f"map names {logical!r}, which is not an input")
+            continue
+        if inputs is not None and inputs[logical]["type"] == "object":
+            errors.add(here, "input_not_mappable", f"input {logical} is an object and cannot be mapped to a form field")
+            continue
+        if not isinstance(field_name, str) or not _FIELD_NAME.fullmatch(field_name):
+            errors.add(here, "name_invalid", f"map target for {logical} must be a plain form field name")
+            continue
+        if field_name in targets.values():
+            errors.add(here, "target_duplicate", f"map target {field_name!r} is used twice")
+            continue
+        targets[logical] = field_name
+    if inputs is not None:
+        image = next(name for name, spec in inputs.items() if spec["type"] == "image")
+        # An image that is mapped to a bad target has its own error above; it is not "unmapped" as well.
+        if image not in mapping:
+            errors.add(at, "image_unmapped", "the image input must be mapped")
+    return targets if len(errors) == before else None
+
+
+def _check_integer_spec(name: str, spec: Mapping[str, Any], at: tuple[PathPart, ...], errors: ErrorCollector) -> bool:
     for key in ("minimum", "maximum", "default"):
         value = spec.get(key)
         if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
-            raise MeshManifestError(f"input {name} {key} must be an integer")
-    if spec.get("enum") is not None:
-        _check_enum(name, spec["enum"], int)
+            errors.add(at + (key,), "type_mismatch", f"input {name} {key} must be an integer")
+            return False
+    return spec.get("enum") is None or _check_enum(name, spec["enum"], int, at, errors)
 
 
-def _check_enum(name: str, values: Any, kind: type) -> None:
+def _check_enum(name: str, values: Any, kind: type, at: tuple[PathPart, ...], errors: ErrorCollector) -> bool:
     if not isinstance(values, list) or not values:
-        raise MeshManifestError(f"input {name} enum must be a non-empty list")
-    for value in values:
+        errors.add(at + ("enum",), "enum_invalid", f"input {name} enum must be a non-empty list")
+        return False
+    for index, value in enumerate(values):
         if isinstance(value, bool) or not isinstance(value, kind):
-            raise MeshManifestError(f"input {name} enum holds a value of the wrong type")
+            errors.add(at + ("enum", index), "type_mismatch", f"input {name} enum holds a value of the wrong type")
+            return False
+    return True
 
 
-def _check_value(name: str, spec: Mapping[str, Any], value: Any) -> None:
+def _check_value(name: str, spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...], errors: ErrorCollector) -> bool:
     # A default must satisfy the same rules a caller's value does.
     try:
         _coerce(name, spec, value)
     except MeshInputError as error:
-        raise MeshManifestError(f"input {name} default is invalid: {error}") from error
+        errors.add(at + ("default",), "default_invalid", f"input {name} default is invalid: {error}")
+        return False
+    return True
 
 
-def _closed(mapping: Mapping[str, Any], required: tuple[str, ...], optional: tuple[str, ...], where: str) -> None:
+def _closed(mapping: Mapping[str, Any], required: tuple[str, ...], optional: tuple[str, ...], where: str,
+            at: tuple[PathPart, ...], errors: ErrorCollector) -> None:
     unknown = set(mapping) - set(required) - set(optional)
     if unknown:
-        raise MeshManifestError(f"{where} has unknown keys {sorted(unknown)}")
+        errors.add(at, "unknown_field", f"{where} has unknown keys {sorted(unknown)}")
     missing = [key for key in required if key not in mapping]
     if missing:
-        raise MeshManifestError(f"{where} is missing {missing}")
+        errors.add(at, "required_field_missing", f"{where} is missing {missing}")
 
 
-def _text(value: Any, where: str) -> str:
+def _text(value: Any, where: str, at: tuple[PathPart, ...], errors: ErrorCollector) -> str | None:
     if not isinstance(value, str) or not value.strip():
-        raise MeshManifestError(f"{where} must be a non-empty string")
+        errors.add(at, "value_empty", f"{where} must be a non-empty string")
+        return None
     return value.strip()
 
 
