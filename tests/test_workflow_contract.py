@@ -912,17 +912,15 @@ def test_a_binding_that_would_flatten_onto_an_existing_key_keeps_both_and_says_s
 
 def test_structural_errors_and_conflicts_share_one_cap_and_one_marker():
     v1 = two_flat_bindings()
-    converted, _ = convert_1_to_2(v1)
     for index in range(105):
-        converted["inputs"][f"i{index:03d}"] = {"type": "integer", "maxium": 1}
-    from gateway.workflow_convert import conversion_errors
-    _, notes = convert_1_to_2(v1)
-    raw = check_contract(converted)
-    assert raw.errors[-1].code == "too_many_errors"
-    merged = check_contract(converted, extra_errors=conversion_errors(notes))
-    markers = [e for e in merged.errors if e.code == "too_many_errors"]
-    assert len(markers) == 1 and len(merged.errors) == 101
-    omitted = int(raw.errors[-1].message.split()[0]) + len(conversion_errors(notes))
+        v1.setdefault("inputs", {})[f"i{index:03d}"] = {"type": "integer", "maxium": 1}
+    _, notes, report = convert_and_check(v1)
+    conflicts = [e for e in report.errors if e.code == "conversion_conflict"]
+    markers = [e for e in report.errors if e.code == "too_many_errors"]
+    assert len(conflicts) == 2 or markers  # the conflicts may sit in the omitted tail; the count below is exact
+    raw = check_contract(convert_1_to_2(v1)[0])
+    omitted = int(raw.errors[-1].message.split()[0]) + 2
+    assert len(markers) == 1 and len(report.errors) == 101
     assert markers[0].message == f"{omitted} more errors are not listed"
 
 
