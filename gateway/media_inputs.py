@@ -214,6 +214,11 @@ class MediaInputResolver:
         measured = self._check_bytes(data, accepts, capped=False)
         owner = self._assets.owner_key(auth) or ""
         lease_id = self._lease(asset_id, owner, holder, created=False, effect_id=None)
+        # A sweep that found the file unheld may have removed it between the read and the lease. Once the lease is in,
+        # the sweep keeps the file (``discard_unheld`` checks again), so one look now settles it. The lease stays with
+        # the holder and ends when the holder does.
+        if not self._assets.exists(asset_id):
+            raise MediaInputError(MISSING, "asset_id not found (may have been evicted)")
         return ResolvedInput(StoredInput(asset_id, measured.media_type, measured.size_bytes, measured.sha256, lease_id), data)
 
     def resolve_upload(self, auth: Any, body: bytes, *, holder: Holder, destination: Destination,

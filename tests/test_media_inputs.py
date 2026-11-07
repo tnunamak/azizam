@@ -576,6 +576,25 @@ def test_an_ingest_marker_written_after_the_scan_keeps_its_file(db, clock):
     assert resolver.sweep() == 1 and asset not in assets.files
 
 
+# Revert: ``resolve_asset`` returns without looking for the file again after its lease.
+def test_a_file_the_sweep_removed_before_the_lease_is_refused_as_missing(db, clock):
+    resolver, assets, asset = released_upload(db, clock)
+    ledger = resolver._ledger
+    found = ledger.sweep_scan()
+    lease = ledger.lease
+
+    def sweep_wins_then_lease(*args, **kwargs):
+        # The sweep's discard runs after the resolver read the bytes and before its lease lands.
+        assert ledger.discard_unheld(found, assets.discard) == 1
+        lease(*args, **kwargs)
+
+    ledger.lease = sweep_wins_then_lease
+    with pytest.raises(MediaInputError) as refused:
+        resolver.resolve_asset(person("alice"), asset, holder=Holder("request", "r_late"), destination=LOCAL, accepts=IMAGES)
+    assert refused.value.code == MISSING
+    assert asset not in assets.files
+
+
 def test_a_file_nothing_holds_at_discard_time_is_removed(db, clock):
     resolver, assets, asset = released_upload(db, clock)
     found = resolver._ledger.sweep_scan()
