@@ -1,30 +1,27 @@
 # Config Source of Truth
 
-Date: 2026-05-21
+Date: 2026-05-21. Revised 2026-11-07 for config homes C10.
 
-Self-hosted operators currently see *many* config sources surfaced through the
-admin "Sources of Truth" panel — proxy YAML, env, workflow manifests, the admin
-database, and the service registry. The
-`gateway/config_sources.py` inventory already classifies every domain with
-explicit lifecycle facts (`authored_via`, `stored_in`, `writable`,
-`provisioning`, `apply_mode`). This note pins down the *policy* behind those
-facts so future work has a target, and so no setting silently drifts between
-file and dashboard ownership.
+Each setting has one durable home. Settings the owner may change live in the admin database (`admin.db`), as sparse
+overrides of release defaults that ship read-only in `registry/defaults/`. What the gateway needs before it can open
+that database, or cannot change while it runs, lives in a small startup file whose keys are a closed list
+(`registry/startup.schema.json`). The design is `docs/design/CONFIG_HOMES.md`; this note states the policy that
+follows from it.
 
-The principle is Rich-Hickey-shaped: each setting has exactly one durable
-home. For services/providers, the product source of truth is the DB/UI service
-registry, not live reads from `proxy_config.yml`.
+The inventory of every file-borne setting, `gateway/config_sources.py`, is generated from the section schemas and the
+startup schema. It holds no hand-kept table. A new key in either schema is a new row, and
+`tests/test_config_sources.py` fails if a row is missing.
 
 For the operator-facing first-run story this model implies, see
 [`FIRST_RUN_SETUP.md`](FIRST_RUN_SETUP.md). In short:
 
-- **`.env` / Docker secrets / `proxy_config.yml`** own bootstrap, seed, and
-  provisioning input only — the things the gateway needs to start safely or
-  import initial service records.
-- **`admin.db` and the dashboard** own runtime product state — owner/admin
-  roles, Apps, Access plans, App API keys, role/model
-  bindings, admission caps, runtime routing toggles, OIDC provider settings,
-  and the service/provider registry.
+- **The startup file (`proxy_config.yml`), `.env` and Docker secrets** own what the gateway needs to start safely: the
+  listener, storage roots, login boot rules and secrets. Start-up refuses a key that is not in
+  `registry/startup.schema.json`, and its message names where the setting lives now.
+- **`admin.db` and the dashboard** own runtime product state: owner/admin roles, Apps, Access plans, App API keys,
+  every config section (model aliases, roles, models, `llm`, images, videos, audio, voices, model compatibility,
+  workflow execution, admission caps, instance presentation, service availability), OIDC provider settings, and the
+  service/provider registry.
 - **A read-only service-registry export is shipped.** Authenticated
   `GET /admin/api/config/export` serializes the current registry's service
   records and omits ephemeral runtime state. It is an operator download, not an
@@ -33,22 +30,22 @@ For the operator-facing first-run story this model implies, see
   while every view an administrator reads hides those values.
 - **Instance presentation is dashboard-owned.** The owner settings API stores
   the instance name, public base URL and default theme in the existing
-  `admin.db` operator settings table. Bootstrap branding and public URL values
-  provide defaults until the first save. Saving does not change listener or
+  `admin.db` operator settings table. The release default is neutral until the first save; no environment variable
+  or startup key sets the public URL. Saving does not change listener or
   TLS configuration. The former universal `all_users` runtime mapping is not
   a current access-default mechanism: schema 7 drops the runtime mapping table.
-  Model aliases remain read-only bootstrap data.
-- **Advanced export is a redacted snapshot.** Owner-only
-  `GET /admin/api/settings/effective/export` exports the current configuration,
-  resolved OIDC provider, registry and runtime overrides. It is for inspection,
-  does not restore a gateway, and cannot write bootstrap configuration.
+  Model aliases are a config section: the release ships the defaults and the owner's overrides live in `admin.db`.
+- **The effective view is per section.** `GET /admin/api/config/sections/<section>` shows each value and the source
+  that won (release or owner override). The whole-configuration snapshot routes
+  (`GET /admin/api/settings/effective` and its `/export`) are removed: a snapshot of settings that live in several homes
+  hid which home to edit. The owner's export is the config API's export, which round-trips.
 - **Trusted addresses belong to Apps.** An owner adds them under
   **Apps & keys → app menu → Trusted addresses**. A matching request without
   a key uses that App and its access plan. Otherwise, a missing key returns
   `401 key_required`. A sent key always wins. Placeholder keys such as
   `loopback` return `401 key_invalid`; there is no placeholder-key list or
   global LAN bypass. `X-Forwarded-For` counts only from proxies configured in
-  `auth.trusted_proxies`, which remains bootstrap-owned.
+  `auth.trusted_proxies`, which stays in the startup file.
 - **OIDC uses the configured public origin.** When Settings has a public base
   URL, browser sign-in replaces the OIDC `redirect_uri` origin with that URL
   and keeps the callback path. For example, a login started on
@@ -85,13 +82,14 @@ For the operator-facing first-run story this model implies, see
 
 ## Ownership planes
 
-There are four planes. Every domain in `CONFIG_SPECS` belongs to exactly one.
+There are four planes. Every setting in the generated inventory belongs to exactly one.
 Concretely:
 
-1. **Bootstrap plane** — `proxy_config.yml`, service environment variables,
-   and referenced secret stores. Everything the gateway needs to *start*: the
-   listener, TLS, optional explicit session signing keys, trust roots,
-   secret references, and on-disk model directories. Never dashboard-writable.
+1. **Bootstrap plane** — the startup file (`proxy_config.yml`), the environment
+   variables of its keys, and referenced secret stores. Everything the gateway needs to *start*: the
+   listener, optional explicit session signing keys, trust roots, the sign-in
+   provider of a first boot, secret references, and storage roots (model, image, voice and
+   audio directories). Never dashboard-writable.
    Restart to apply, with `scripts/safe-restart`. Provisioning bundles never
    carry secrets.
 2. **Dashboard plane** — `admin.db`, edited through the web app (and the
@@ -107,7 +105,7 @@ Concretely:
    `admin.db` holds only the owner's data (records the owner made, field-level
    patches of release records, tombstones), and a release change to a field the
    owner did not touch reaches every install. `proxy_config.yml` `backends` is
-   not read.
+   not read, and start-up refuses it.
 4. **Secret/bootstrap plane** — env, Docker secrets, and secret references for
    bootstrap secrets. Remote provider keys have a deliberate product exception:
    owners can submit a write-only key through the Providers UI. Its ciphertext
@@ -128,27 +126,25 @@ tombstone, so later boots do not bring it back:
 
 ## Per-domain ownership policy
 
-This table is the single source of truth that the inventory in
-`gateway/config_sources.py` must agree with. `tests/test_config_sources.py`
-pins the mapping; if you change one side you must change the other.
+The generated inventory (`gateway.config_sources.inventory()`) is the single list of file-borne settings, one row per
+section entry and one per startup key, each with its home and how to change it. The table below is the summary.
 
-| Domain               | Plane       | Dashboard-editable                              | Stays in YAML/env                                |
-|----------------------|-------------|-------------------------------------------------|--------------------------------------------------|
-| `proxy/network`      | bootstrap   | nothing                                         | listener host/port, TLS, deployment shape        |
-| `services/providers` | dashboard   | DB-owned service records and enablement, health/test actions, routing metadata (`source` is provenance) | seed/provisioning input and immutable package/source artifacts, secret refs, irreducible bootstrap |
-| `model routing`      | dashboard   | runtime overrides and role policy               | model directories, compat tables                 |
-| `roles/models`       | dashboard   | role definitions, role→model grants             | nothing                                          |
-| `media jobs`         | dashboard   | admission, queue policy, cache limits           | URL signing secrets, storage roots               |
-| `resource admission` | dashboard   | caps, throttles, reserved tokens                | nothing                                          |
-| `workflow manifests` | provisioned | nothing                                         | the manifest files themselves                    |
-| `model compatibility`| bootstrap   | nothing                                         | the compatibility table file                     |
-| `auth/admin`         | dashboard   | instance presentation, OIDC provider settings, App trusted addresses, admin user list, roles, Access plans, Apps, App keys | explicit session keys, trust roots, optional OIDC bootstrap fallback |
+| Domain               | Home                         | Change path                                                            |
+|----------------------|------------------------------|------------------------------------------------------------------------|
+| listener, storage roots, login boot rules, secrets | startup file (`registry/startup.schema.json`), env for some keys and for every secret | edit the file or set the variable; restart |
+| `services/providers` | `admin.db` service registry  | Services in the admin UI, or `POST /admin/api/config/import`           |
+| model aliases, roles, models, `llm`, `reasoning`, `model_routing` (owner parts) | `admin.db` config sections | `PATCH /admin/api/config/changes` |
+| images, videos, audio, voices, `model_compatibility` (owner parts) | `admin.db` config sections | `PATCH /admin/api/config/changes` |
+| `resource_admission`, `service_availability`, `instance` | `admin.db` config sections | their settings routes, or the config API |
+| `workflow_execution`, `models` | `admin.db` config sections | `PATCH /admin/api/config/changes`                                      |
+| workflow manifests   | repo (provisioned)           | the manifest files themselves                                          |
+| `auth/admin` runtime | `admin.db`                   | instance presentation, OIDC provider settings, trusted addresses, admin list, roles, Access plans, Apps, App keys |
 
 Implications:
 
-- The dashboard never writes a value that lives in YAML or env. If an
+- The dashboard never writes a value that lives in the startup file or env. If an
   operator wants such a value to change, the change path is "edit the file
-  and restart with `scripts/safe-restart`" — surfaced in `change_path` and `apply_mode`.
+  and restart with `scripts/safe-restart`" — surfaced in `change_path` and `apply`.
 - The dashboard writes all non-managed service/provider records regardless of
   `source`; source remains provenance. The managed
   LiteLLM substrate has the limited fields described above.
@@ -204,10 +200,10 @@ the dashboard as the only edit surface for runtime policy.
 
 ## Things to deliberately *not* build yet
 
-- A database-backed config plane that absorbs `proxy_config.yml`. The
+- A database-backed config plane that absorbs the startup file. The
   bootstrap plane exists for a reason (early-startup, secrets, deployment
   shape); collapsing it into `admin.db` would add a chicken-and-egg loader
-  problem with no operator benefit.
+  problem with no operator benefit. C10 shrank it to the keys that need it.
 - A second policy editor inside Services or APIs. Policy stays on Access plans
   (see `docs/ADMIN_ACCESS_UX_RESEARCH.md`).
 - A second service-registry ownership mode. The dashboard makes provenance
@@ -219,7 +215,8 @@ the dashboard as the only edit surface for runtime policy.
 
 ## How this stays honest
 
-`tests/test_config_sources.py::test_doc_and_inventory_agree_on_domains`
-asserts that every `CONFIG_SPECS.domain` appears in the table above and
-vice versa. The table is the operator-facing source; the inventory is the
-machine-facing source; the test prevents either from drifting silently.
+`tests/test_config_sources.py` generates the inventory and checks that it covers every entry the section schemas
+declare and every key the startup schema lists, with unique, sorted ids, the environment variable of each startup key,
+and no values. `tests/test_startup_config.py` checks the startup schema, its moved-key map, and that the tracked
+`proxy_config.yml` is a valid first-run file. Nothing in a table here can drift from the code without one of them
+failing.

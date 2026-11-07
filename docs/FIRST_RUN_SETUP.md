@@ -41,13 +41,14 @@ variable for Ollama, llama.cpp, vLLM, or another user engine.
 Add user engines as Services records instead.
 
 Compose publishes the gateway as `127.0.0.1:${AZIZAM_PORT:-5000}:5000`
-and sets `AZIZAM_CONFIG_PATH=/app/first-run.yml`. That file is a minimal
-fresh-install config:
+and starts from the tracked `proxy_config.yml`. That file is the startup file of
+a fresh install, and it holds only startup keys:
 
 - `proxy.host: 127.0.0.1`, so bare Python stays local by default;
 - `admin.oidc.cookie.secure: false`, so localhost HTTP setup clients can store
   the browser admin session cookie;
-- no engine records.
+- no sign-in provider and no engine records. Engines, aliases and every other
+  setting live in the admin database and are added in the web app.
 
 Compose overrides only the container listener with
 `python3 -m uvicorn proxy:app --host 0.0.0.0 --port 5000`, then publishes that
@@ -55,7 +56,7 @@ container port only on host loopback.
 
 `cookie.secure: false` is only for localhost HTTP first-run. Before exposing
 the gateway over HTTPS, set `admin.oidc.cookie.secure: true` in
-`first-run.yml`, then run `docker compose up -d --build`. The image copies that
+`proxy_config.yml`, then run `docker compose up -d --build`. The image copies that
 file in at build time, and no environment variable overrides this setting.
 Then publish the gateway behind TLS.
 
@@ -133,7 +134,6 @@ Then follow these steps. Each step has one command or one action.
 3. Start the gateway. Leave this terminal open:
 
    ```bash
-   AZIZAM_CONFIG_PATH=first-run.yml \
    AZIZAM_REQUIREMENTS_FILE=tests/requirements-hermetic.lock \
    AZIZAM_REQUIREMENTS_HASHES=true \
    ./start.sh
@@ -143,11 +143,11 @@ Then follow these steps. Each step has one command or one action.
    This can take several minutes. `start.sh` also starts the LiteLLM chat
    sidecar on `127.0.0.1:4011`.
 
-   Keep `AZIZAM_CONFIG_PATH=first-run.yml` on the first start. That file
-   makes the gateway listen only on this computer. Without it, the default
-   config listens on all network interfaces. Its setup rule then allows
-   claiming the owner account from any `192.168.x.x`, `10.x.x.x` or
-   `100.64.0.0/10` address.
+   The tracked `proxy_config.yml` makes the gateway listen only on this
+   computer, and only this computer may claim the owner account. To claim it
+   from another machine, add that machine's network to
+   `auth.setup_allowed_cidrs` (or set `AZIZAM_SETUP_ALLOWED_CIDRS`) before the
+   first start.
 
 4. Check that the gateway answers. In a second terminal:
 
@@ -302,7 +302,7 @@ A client connects to the gateway, not to an engine. Use your App key and the
   reachable from that device. Put an HTTPS reverse proxy on the gateway
   computer that forwards to `http://127.0.0.1:5000`. See
   [reverse proxy setup](REVERSE_PROXY.md). Before you use HTTPS, set
-  `admin.oidc.cookie.secure: true` in `first-run.yml`. With Compose, then run
+  `admin.oidc.cookie.secure: true` in `proxy_config.yml`. With Compose, then run
   `docker compose up -d --build`. On bare metal, restart with
   `scripts/safe-restart`. This step makes the gateway reachable beyond your computer, so read the security
   section of the [README](../README.md#security-model) first. Then use the base
@@ -416,35 +416,36 @@ Run the Compose variant, when Docker is available, with:
 scripts/e2e/fresh_instance.sh --compose
 ```
 
-## Bootstrap Config
+## Startup File
 
 Before opening the page, the service needs only the things required to start
-safely:
+safely. They are the keys of `registry/startup.schema.json`, held in
+`proxy_config.yml`:
 
-- listener host/port and deployment shape,
+- listener host/port,
 - optional `admin.session_signing_key` (or
   `AZIZAM_ADMIN_SESSION_KEY`) when you want to externalize the browser
   session secret. If omitted, the gateway creates a persistent
   `data/admin_session_key` file next to `admin.db`,
-- optional bootstrap `admin.oidc` issuer/client/trust configuration when you
+- optional `admin.oidc` issuer/client/trust configuration when you
   want OIDC before the first local owner login. Otherwise configure OIDC from
   the web app after setup,
-- service/provider seed or provisioning input, model directories, and
-  provider secret references,
-- optional `admin.user_defaults` or user-access env flags as a one-time
-  bootstrap seed for self-service defaults and identity/Profile mappings.
+- login boot rules (`auth.trusted_proxies`, `auth.setup_allowed_cidrs`),
+- storage roots (model, image, voice and audio directories) and the image URL
+  signing secret.
 
-Everything that can change after boot belongs in `admin.db` and the dashboard.
-The DB/UI service registry is the product source of truth for providers and
-services. `proxy_config.yml` can seed or provision records, but it is not the
-normal live operator surface. After the one-time seed, every non-managed
-registry service can be edited, enabled or disabled, and removed in the web app
-regardless of its `source`; source is provenance, not permission. The managed
-LiteLLM substrate separately locks its endpoint/protocol fields and removal,
-while allowing its name, enabled state, and note to be changed.
-On startup, bootstrap user defaults are imported into `admin.db`; after that,
-dashboard/API state is authoritative. See
-[CONFIG_SOURCE_OF_TRUTH.md](CONFIG_SOURCE_OF_TRUTH.md).
+Start-up refuses any other key and names where that setting lives now, so an
+old `backends:` or `model_aliases:` block never looks live. Engines and
+providers are records of the service registry; every other setting is a config
+section in `admin.db`, edited in the web app or with `PATCH
+/admin/api/config/changes`. Release defaults ship read-only in
+`registry/defaults/`. After the first start, every non-managed registry service
+can be edited, enabled or disabled, and removed in the web app regardless of its
+`source`; source is provenance, not permission. The managed LiteLLM substrate
+separately locks its endpoint/protocol fields and removal, while allowing its
+name, enabled state, and note to be changed. Dashboard/API state is
+authoritative. See [CONFIG_SOURCE_OF_TRUTH.md](CONFIG_SOURCE_OF_TRUTH.md) and
+[CONFIG.md](CONFIG.md).
 
 If no `db_path` is set, the gateway uses `data/admin.db` next to `proxy.py`.
 That directory is host-local runtime state — gitignored, but durable across
@@ -515,10 +516,10 @@ Admin keys are never runtime keys. Use `oak_...` only for
 
 | Concern                                             | Edited via       | Restart? |
 |-----------------------------------------------------|------------------|----------|
-| Listener, TLS, session signing key                  | `proxy_config.yml` / env / generated `data/admin_session_key` | yes for explicit changes, with `scripts/safe-restart` |
-| OIDC provider settings                              | the web app (optional bootstrap fallback in `proxy_config.yml`) | no |
+| Listener, session signing key, login boot rules     | `proxy_config.yml` / env / generated `data/admin_session_key` | yes for explicit changes, with `scripts/safe-restart` |
+| OIDC provider settings                              | the web app (optional first-boot fallback in `proxy_config.yml`) | no |
 | Service/provider registry                           | the web app; `source` (`ui`, `provisioned`, `builtin`, `discovered`) is provenance | no for non-managed records |
-| Provider seed/provisioning input, model directories, secret references | `proxy_config.yml` / env / Docker secrets | yes |
+| Storage roots, secret references                    | `proxy_config.yml` / env / Docker secrets | yes |
 | Owner/admin roles, Apps, Profiles, App API keys     | `/setup/`, `/apps/`, `/people/`           | no  |
 | Identity → Profile mappings, role/model bindings    | the web app                                 | no  |
 | Admission caps, throttles, runtime routing toggles  | the web app                                 | no  |
