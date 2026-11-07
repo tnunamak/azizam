@@ -578,7 +578,7 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     elif expected_type == "boolean":
         if not isinstance(value, bool):
             return f"{name} must be a boolean"
-    elif expected_type in MEDIA_INPUT_TYPES:
+    elif isinstance(expected_type, str) and expected_type in MEDIA_INPUT_TYPES:
         # An image input is a media reference, like an asset: a data URI, URL or gateway reference.
         if not isinstance(value, (str, dict)):
             return f"{name} must be an asset reference"
