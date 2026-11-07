@@ -6212,9 +6212,19 @@ def load_graph_workflow(model_name: str) -> Optional[dict]:
     `extra_data.extra_pnginfo.workflow`. The key survives deepcopy and is
     popped by `_build_graph_submit_payload`.
     """
-    workflow_path = DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
-    if not workflow_path.exists():
-        workflow_path = _graph_workflow_artifact_path_for_model(model_name)
+    found = _graph_workflow_artifact_for_model(model_name)
+    if found is not None and found[1].startswith("package://"):
+        # A package's graph is the file its review hashed: never a built-in file of the same name, and a path the
+        # resolver refuses (no package root, or one it leaves) makes the model unavailable, not an error.
+        try:
+            workflow_path = _resolve_workflow_artifact_path(*found)
+        except ValueError as exc:
+            print(f"[proxy] WARNING: graph for {model_name!r} refused: {exc}", flush=True)
+            return None
+    else:
+        workflow_path = DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        if not workflow_path.exists() and found is not None:
+            workflow_path = _resolve_workflow_artifact_path(*found)
     if not workflow_path.exists():
         return None
     workflow = _load_graph_workflow_file(workflow_path)
@@ -6264,11 +6274,12 @@ def _load_graph_workflow_file(workflow_path: Path) -> Optional[dict]:
     return workflow
 
 
-def _graph_workflow_artifact_path_for_model(model_name: str) -> Path:
+def _graph_workflow_artifact_for_model(model_name: str) -> tuple[Any, str] | None:
+    """The registry record whose graph binding names ``<model_name>.json``, and that artifact as written."""
     try:
         registry = GATEWAY_WORKFLOW_REGISTRY
     except NameError:
-        return DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        return None
     for record in registry.records():
         bindings = record.manifest.get("bindings")
         if not isinstance(bindings, Mapping):
@@ -6281,8 +6292,8 @@ def _graph_workflow_artifact_path_for_model(model_name: str) -> Path:
             continue
         if Path(artifact.replace("package://", "")).stem != model_name:
             continue
-        return _resolve_workflow_artifact_path(record, artifact)
-    return DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        return record, artifact
+    return None
 
 
 def _resolve_workflow_artifact_path(record: Any, artifact: str) -> Path:
@@ -6308,7 +6319,8 @@ def _resolve_package_artifact_path(record: Any, relative: str) -> Path:
     (``source_path``, the package folder, or the folder of a manifest file in it), never a same-named project file, and a
     path that leaves that root (``..``, a symlink) is refused."""
     source_path = Path(getattr(record, "source_path", "") or "")
-    if not str(source_path) or str(source_path) == ".":
+    if not str(source_path) or str(source_path) == "." or not (source_path.is_dir() or source_path.is_file()):
+        # A package folder that is gone is not read as a manifest file: its parent holds other packages.
         raise ValueError(f"package artifact {relative!r} has no package root")
     root = (source_path if source_path.is_dir() else source_path.parent).resolve()
     resolved = (root / relative).resolve()
