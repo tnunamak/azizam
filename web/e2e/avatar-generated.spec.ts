@@ -66,8 +66,10 @@ for (const view of views) {
         if (body.user) body.user.avatar = { ...state.avatar, person_id: body.user.id };
         await fulfilJson(route, body, { response });
       });
-      if (state.route)
-        await page.route("**/me/api/profile/avatar/generator", (route) => fulfilJson(route, { available: true }));
+      // Every state answers the generator read itself, so the no-route state never depends on what the live gateway offers.
+      await page.route("**/me/api/profile/avatar/generator", (route) =>
+        fulfilJson(route, { available: Boolean(state.route) }),
+      );
       // The page reads the avatar while a picture is made. Refusing that read keeps the state the capture shows.
       if (state.avatar.generating) await page.route("**/me/api/profile/avatar", (route) => route.abort());
       await page.route("**/me/api/profile/avatar/picture*", (route) =>
