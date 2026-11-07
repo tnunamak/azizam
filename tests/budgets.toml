@@ -575,7 +575,8 @@
 # S3.1 review fixes: +13 (six reviewed corpus cases in two parametrized tests, one crash-guard test): 20787.
 # S3.2 workflow contract (2026-11-07): +150 cases (tests/test_workflow_contract.py: rules, 38 bundled conversions, controls, converter, command); expected 20937, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
 # S3.2 review round (2026-11-07): +25 cases in tests/test_workflow_contract.py; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20962.
-pytest = 20962
+# S3.2 second review round (2026-11-07): +21 cases in tests/test_workflow_contract.py (exact lattice, arithmetic reports, binding key conflict, one cap, locked report-once); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20983.
+pytest = 20983
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
