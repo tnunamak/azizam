@@ -546,7 +546,9 @@
 # feat/config-homes-c4 (2026-11-06): registry layering, migration step, export/import and rollback tests; measured 19849 (+28 net of the seed and backfill tests it removed).
 # C4 review fixes: a damaged stored registry is never overwritten (+3); measured 19852.
 # Train 14 (2026-11-06): C4 registry layering (+31) on train 13; summed 20272.
-pytest = 20272
+# feat/config-homes-c5 (2026-11-06): stored workflows win over bundled ones, the workflow registry follows a registry save, the pre-deploy report (+13); measured 19865.
+# C5 review fix: repairing a left-out workflow under a bundled id needs the overrides claim (+2); measured 19867.
+pytest = 20287
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

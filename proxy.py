@@ -1517,6 +1517,8 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     # anything: a bad config must raise here and leave the old config and
     # constants serving, never a new config paired with old constants.
     updates = _derive_backend_constants(new_cfg)
+    # The workflow registry is built whole here too, so a failure leaves the old one serving; ``adopt`` below swaps it in.
+    workflow_registry = _load_gateway_workflow_registry(strict=True)
     # The send-time lease check's map is projected here too: a config the projection cannot read never goes live.
     egress = _project_egress(new_cfg.get("backends"))
     # The snapshot is built here too, before anything is published, so a failure leaves the old one serving.
@@ -1554,6 +1556,8 @@ def _publish_runtime_config(new_cfg: dict[str, Any], *, registry_problem: Mappin
     _g["config"] = snapshot.config
     for name, value in updates.items():
         _g[name] = value
+    # Swapped in place, not assigned: a router and a bound method hold the registry from import (8.4).
+    GATEWAY_WORKFLOW_REGISTRY.adopt(workflow_registry)
     _g["CONFIG_PROBLEMS"] = dict(snapshot.problems.get("config") or {})
 
     print(
@@ -13965,7 +13969,12 @@ CANONICAL_PROTOCOL_ROUTE_ALIASES: tuple[dict[str, object], ...] = (
 _MANIFEST_WORKFLOWS_DIR = Path(__file__).resolve().parent / "manifests" / "workflows"
 
 
-def _load_gateway_workflow_registry() -> WorkflowRegistry:
+def _load_gateway_workflow_registry(*, strict: bool = False) -> WorkflowRegistry:
+    """The bundled workflows under the owner's stored ones: a stored manifest with a bundled id serves instead of it (8.4).
+
+    A boot keeps the bundled workflows when the stored ones cannot be read. A reload (``strict``) raises instead, so the
+    registry that is serving stays.
+    """
     try:
         registry = WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR)
         try:
@@ -13973,10 +13982,10 @@ def _load_gateway_workflow_registry() -> WorkflowRegistry:
             admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
             if admin_registry is not None:
                 for record in service_registry.workflow_records_from_registry(admin_registry):
-                    if registry.get(record.id) is not None:
-                        continue
-                    registry.add_manifest(record.manifest, source_path=record.source_path)
+                    registry.add_manifest(record.manifest, source_path=record.source_path, replace=True)
         except Exception as e:  # noqa: BLE001
+            if strict:
+                raise
             print(f"[proxy] Stored workflows unavailable; the bundled ones are kept: {e}", flush=True)
         if registry.errors:
             print(
@@ -13985,6 +13994,8 @@ def _load_gateway_workflow_registry() -> WorkflowRegistry:
             )
         return registry
     except Exception as e:  # noqa: BLE001
+        if strict:
+            raise
         print(f"[proxy] Gateway workflow registry unavailable: {e}", flush=True)
         return WorkflowRegistry()
 
