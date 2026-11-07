@@ -84,6 +84,7 @@ EXEMPT = {
 NO_BROWSER = {
     "gateway/admin_runtime.py::create_admin_service_account_key": "the operator's CLI",
     "gateway/service_registry.py::ensure_service_registry": "the gateway seeding or backfilling its own registry at start",
+    "gateway/workflow_schema_migration.py::ensure": "the gateway converting its own stored workflow records at start (it moves no credential)",
 }
 
 # The guarded writers by the name callers use, and the keyword that carries the sign-in.

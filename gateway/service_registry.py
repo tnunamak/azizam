@@ -101,7 +101,7 @@ def ensure_service_registry(*, path: Path = admin_store.DB_PATH, actor: str = "s
             if registry_layers.is_layered(stored):
                 if not admin_store.migration_step_recorded(registry_layers.LAYERING_STEP, path=path):
                     admin_store.record_migration_step(registry_layers.LAYERING_STEP, path=path)
-                return normalize_service_registry(registry_layers.layer(stored, release))
+                return normalize_service_registry(registry_layers.layer(_with_workflow_schema_2(stored, path, actor, release), release))
             from gateway import registry_migration
 
             plan = registry_migration.plan_layering(
@@ -134,9 +134,18 @@ def ensure_service_registry(*, path: Path = admin_store.DB_PATH, actor: str = "s
             )
         except admin_store.OperatorSettingsGenerationConflict:
             continue
-        return normalize_service_registry(registry_layers.layer(stored, release))
+        return normalize_service_registry(registry_layers.layer(_with_workflow_schema_2(stored, path, actor, release), release))
 
     raise RuntimeError("service registry changed during bounded startup retry")
+
+
+def _with_workflow_schema_2(stored: dict[str, Any], path: Path, actor: str, release: Mapping[str, Any]) -> dict[str, Any]:
+    """``stored`` after the one-time ``workflow-schema-2`` step (CODE_TO_DATA_S3, D3), which runs once, after layering and
+    before anything normalizes the workflow records: a schema 1 record would not load."""
+    from gateway import workflow_schema_migration
+
+    migrated = workflow_schema_migration.ensure(path=path, actor=actor, release=release)
+    return stored if migrated is None else migrated
 
 
 def _parses_as_object(document: str) -> bool:

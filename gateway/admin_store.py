@@ -4344,6 +4344,7 @@ def write_service_registry_with_audit(
     path: Path = DB_PATH,
     migration_step: str | None = None,
     stored_form: bool = False,
+    also_in_transaction: Callable[[sqlite3.Connection, int], None] | None = None,
 ) -> dict[str, Any]:
     """Commit one registry revision, generation, and audit fact atomically.
 
@@ -4360,6 +4361,9 @@ def write_service_registry_with_audit(
 
     ``migration_step`` names a one-time upgrade whose result this write is. Its name is recorded in the same
     transaction, so a step is recorded exactly when its registry revision is.
+
+    ``also_in_transaction(conn, now)`` runs inside the same transaction, after the registry write, for a step that must
+    change another stored value together with the registry (a rollback leaves both as they were).
     """
     if not isinstance(value, Mapping):
         raise ValueError("service registry value must be a mapping")
@@ -4387,6 +4391,8 @@ def write_service_registry_with_audit(
                 metadata=audit_metadata,
                 now=ts,
             )
+            if also_in_transaction is not None:
+                also_in_transaction(conn, ts)
             if migration_step is not None:
                 conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (migration_step,))
             conn.commit()

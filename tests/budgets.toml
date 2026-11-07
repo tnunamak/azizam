@@ -589,7 +589,8 @@
 # S3.3 template-root fix: +7 cases (a template that is not a mapping of nodes); 20872.
 # Train 18 with S3.3: 21050 + (85) = 21135.
 # S3.5 base (2026-11-07): main plus S3.4; measured with scripts/run-hermetic-pytest.sh --collect-only -q.
-pytest = 21184
+# S3.5b workflow-schema-2 migration (2026-11-07): +32 cases (tests/test_workflow_schema_migration.py: plan rules, patch equivalence, report and dry run without values, apply once, package proofs); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21216.
+pytest = 21216
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

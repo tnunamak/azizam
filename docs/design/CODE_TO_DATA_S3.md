@@ -461,6 +461,26 @@ exactly where a route draws today (and not on the mesh workflow, whose route sen
 A one-time migration, `workflow-schema-2`, converts stored workflow records and patches (D3). It has a dry run that
 reports ids and field names, never values. A record that cannot convert is stored disabled with its errors.
 
+As built (S3.5b): `gateway/workflow_schema_migration.py` (pure plan, report, apply), the dry run
+`scripts/workflow_schema_2_report.py COPY_OF_ADMIN_DB`, and the frozen schema 1 release records
+`gateway/migration_data/workflow_schema_1_release.json` (the 38 bundled documents at S3.5's base; deleted with the
+migration). The step runs inside `ensure_service_registry`, after layering and before the registry is normalized, and is
+recorded in the same transaction as its registry write.
+
+- **Whole record** (an owner record, a package's imported record, or an override of a bundled id): converted, with the
+  four policy facts written to the record as the old readers served them (the document's value, else `default`,
+  `stable` if `trusted` else `experimental`, `batch`, no tags).
+- **Patch over a release record**: applied to the frozen schema 1 record, converted, stored as the difference from the
+  schema 2 release record. A patch does not commute with the converter (binding rename, `requires` move, seed rule), so
+  the frozen copy is needed. Today the release `workflows` collection is empty (the bundled files are a separate layer),
+  so a stored patch exists only if a deployer's catalog ships `workflows.yml`; a patch with no known schema 1 release
+  record is kept as cannot-convert.
+- **Cannot convert**: the record stays as stored, with `enabled: false` and `migration.errors`. A registry load refuses
+  a record that fails the contract and leaves it out (the start then shows the registry's left-out notice); it is never served. Its report line is "needs configuration".
+- **Package records**: an imported workflow is an ordinary stored record, so it is converted, and the package's keyed
+  install proof is refreshed in the same transaction (a record that matched its proof matches the new one; an edited
+  record stays detached), so a later package removal still works.
+
 ### The equality check
 
 `scripts/workflow_contract.py diff-effective --before <git ref> --after <work tree>` builds the effective registry on
