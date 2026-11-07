@@ -1,6 +1,6 @@
 # Workflow schema and validator (code-to-data S3)
 
-Status: design, revision 1, 2026-11-07. Base: main at d53c78c38. No production code changes on this branch.
+Status: design, revision 2, 2026-11-07. Base: main at d53c78c38. No production code changes on this branch.
 Appendix: [CODE_TO_DATA_S3_workflow.schema.json](CODE_TO_DATA_S3_workflow.schema.json), a draft of the structural
 schema.
 
@@ -86,8 +86,15 @@ so references cannot point outside it.
 - **Authority does not live in the document.** The v2 schema has no `trusted`, `source`, `exposure`, `trust_tier`,
   `resource_tier` or `tags`. `trusted` and `source` move to the registry record's provenance, which the loader sets
   from where the record came from. The values for every bundled record do not change (all 38 are `trusted: true`,
-  `source: local`). The image route stops reading the four policy fields from the manifest. No bundled manifest sets
-  them, so the effective values do not change. S5 projects them from owner-set registry facts.
+  `source: local`). The image route stops reading the four policy fields from the manifest.
+- **Policy facts are record data, and absence fails closed.** `exposure`, `trust_tier`, `resource_tier` and `tags`
+  become record-level policy facts of the registry record, beside provenance, never in the workflow document. Release
+  values live in a reviewed release file (`registry/workflow_policy.yml`, keyed by workflow id); owner changes are
+  registry patches, as for any record. The migration writes each bundled workflow's current effective values there
+  (today all are the reader's defaults: `default`, `stable`, `batch`, no tags), so behaviour does not change. After
+  S3.5 the reader has no defaults: a workflow without its policy facts is "needs configuration" and runs nothing. This
+  is the plan's rule that a missing authorization or resource declaration never means free admission. S5 owns the
+  meaning of the values; S3 only moves them and removes the defaults.
 
 Grounding: CWL strict validation refuses unknown fields that are not namespaced (CW1). That is the precedent we follow.
 We depart from Kubernetes, which prunes (KU1), from GitHub Actions, which warns (GA2), from MLflow, which ignores
@@ -103,7 +110,7 @@ the plan's own rule ("Data extensibility is not authority extensibility"); no su
   2. `version`: the author's version of this workflow. Free text, shown to people.
   3. The registry revision (S4) and the contract digest (S2 D1): what a job pins.
 - **Migration.** One storage version, v2. A pure converter, `convert_1_to_2(doc) -> (doc, notes)`, runs in two places:
-  - a repository rewrite of the 38 bundled files (S3.4), reviewed as a diff;
+  - a repository rewrite of the 38 bundled files (S3.5), reviewed as a diff;
   - a one-time migration of stored owner records in the admin database, with a dry run, in the form of the config-homes
     registry migration (`gateway/registry_migration.py`: a pure plan, a report with ids and field names only, then an
     apply). A stored record is either a whole document or a patch over a release record (registry layering). A patch
@@ -112,7 +119,7 @@ the plan's own rule ("Data extensibility is not authority extensibility"); no su
 - **No v1 reader after the migration.** The validator refuses `schema_version: 1` with the code
   `schema_version_unsupported` and a pointer to the converter. A job pinned with a v1 contract fails with
   `definition_unavailable`. This is the S2.2 precedent: Azizam is unreleased, so there is no reader for an old shape.
-  Deploy S3.4 when the job queue is idle; `safe-restart` already waits for idle.
+  Deploy S3.5 when the job queue is idle; `safe-restart` already waits for idle.
 - **A document that cannot convert** is stored disabled with its error list, and shown as "needs configuration". It
   never runs. The migration never drops it.
 - **Packages.** An extension package with a v1 workflow is refused at install with the same code. The converter is a
@@ -153,6 +160,11 @@ Rules:
 - **`type: image` is removed.** It was mesh-only. The mesh input becomes
   `asset` with `accepts: [image/png, image/jpeg, image/webp]`, which is what `mesh_manifest.sniff_image` accepts today.
 - **Caller-claimed media type is ignored**, as in S2.6.
+- **Media-bearing inputs are found recursively.** An input is media-bearing when its spec is `asset`, or an `array` or
+  `object` whose spec contains an `asset` at any depth. Every rule that today asks "is this input media" (S2.4's
+  source-echo check in `output_selectors.check_echo`, which tests only `spec.type in MEDIA_INPUT_TYPES`; the resolver;
+  OpenAPI) uses one core function, `media_bearing(spec)`. Without it, an array of assets mapped to a node with an
+  incoming link could be selected as a result and hand a source back, which S2 D5 forbids.
 - **A required input that the binding never applies is refused at save** (`input_unbound`), when the adapter descriptor
   says inputs reach the engine only through its map (`inputs_via: map`, D7). An optional unmapped input stays legal;
   supplying it at run is refused, as `compile_workflow` and the mesh route already do.
@@ -180,6 +192,11 @@ An output spec (v2): `media_type` (required), `count: {min, max}`, `schema` (onl
 - **Count.** Absent `count` means `{min: 1, max: <deployment max_assets>}`. That is today's behaviour: zero files is
   already `result_missing`, and the asset limit is S2.3's. The validator writes the filled `count` into the normalized
   contract, so the pinned contract states it.
+- **Count must be possible at save.** Each adapter gives a reviewed hook, `selector_cardinality(selector) -> (min, max)`
+  (for the graph adapter, `take: first` and `take: single` give at most one item). Core checks only that the declared
+  `count` interval meets the selector's interval; if they do not meet, the save is refused (`count_unreachable`).
+  Core does not know why a selector yields what it yields. A workflow that declares `count: {min: 2}` on a `take:
+  single` selector is refused at save, not after a run.
 - **JSON shape.** `schema` uses the D4 input grammar (without `asset`). A JSON result is checked against it after the
   adapter selects it.
 - **Where.** The adapter's `collect` and `results` call one core function, `check_result(spec, kind, items)`, beside
@@ -247,6 +264,8 @@ default factory is the nearest precedent (FA6), but it is code. JSON Schema trea
   | `template` | A template reference (a path today; inline in S4). The template must load and fit its adapter's structural bounds. |
   | `input_map` | Keys are declared inputs. Each target is checked by the adapter's reviewed `check_targets` hook. |
   | `input_list` | Every item is a declared input. |
+  | `target`, `target_list` | One engine-side reference, or a bounded list of them (for example graph node ids in `image_nodes`, `prompt_node`, `seed_node`). Checked by the adapter's reviewed `check_targets` hook against the template; core checks only the type and the bound. |
+  | `relative_path` | A canonical relative URL path: no scheme, host, query, `..`, empty or `.` segment (the mesh transport check today). |
   | `selectors` | S2.4's selector check, unchanged. |
   | `requirements` | The node-graph `requires` grammar (`workflow_requirements.py`), unchanged. It moves into the binding. |
   | `service` | Names an engine record in the effective registry. |
@@ -267,6 +286,10 @@ default factory is the nearest precedent (FA6), but it is code. JSON Schema trea
     the workflow as "needs configuration".
   - The `proxy.py` dispatch on `compose` becomes a lookup in the role registry. A test reads the dispatch and fails if
     it has a fallback branch.
+- **The mesh transport block is flattened.** Today it is `transport: {kind: http-multipart, path: /generate}`. The
+  kind repeats the adapter, so the converter drops it, and `path` becomes a top-level `relative_path` field of the
+  `http-multipart` binding. The descriptor closes the binding, so the closure that `mesh_manifest.py` applies to the
+  transport block is kept. Binding fields are flat: the kind set has no nested object kind.
 - **Route hints stay closed fields for now.** `edge_only_inputs`, `route_bound_inputs` and `mask_to_source_alpha` are
   route hints on node-graph bindings. They become declared `input_list` and `boolean` fields of the node-graph
   descriptor. S7 moves them to frontend profiles.
@@ -290,8 +313,10 @@ descriptor grammar.
 - **All errors are collected**, structural first, then semantic, then binding, sorted by path. The list is capped at
   100, with a final `too_many_errors` entry. A semantic check that depends on a broken part is skipped, so one root
   cause does not produce a cascade.
-- **Compatibility.** `ContractErrors` subclasses `ManifestError`. Its `str()` is the first error's message, so existing
-  callers and their tests see one message. The member-request input check also collects every error, but each
+- **Compatibility.** `ContractErrors` subclasses `ManifestError`. It keeps a separate `primary` error: the error
+  today's validator would raise first, chosen in today's check order (for example, a bad input before a bad binding,
+  as `validate_manifest` checks them). Its `str()` is the primary's message, so existing callers and their tests see
+  the same message. Sorting by path applies to the detailed list only. The member-request input check also collects every error, but each
   frontend keeps reporting the first one, in today's order, with today's `param`. The wire does not change. The generic
   run route (S6) returns the list.
 
@@ -318,7 +343,7 @@ workflow record from the registry, like any route. Each current mesh check goes 
 | Map keys are declared inputs | Semantic validator, `input_map` kind (D7) | Generic. |
 | A required image input must be mapped | Semantic validator, `input_unbound` (D4) | Generic: any required input. |
 | An object input cannot map to a form field; form field name pattern; a target used twice | Adapter `http-multipart`, `check_targets` hook (D7) | These are rules of the multipart wire, not of workflows. |
-| Transport kind is `http-multipart`; path is a canonical relative path | Adapter descriptor `http-multipart` (D7) | Transport grammar. |
+| Transport kind is `http-multipart`; path is a canonical relative path | Adapter descriptor `http-multipart` (D7): the key names the kind; `path` is a `relative_path` field | Transport grammar. The block is flattened (D7). |
 | Binding key is a service id | Removed | The key names the adapter; `service` names the engine (D7). |
 | Intent must be `mesh.generate` | Mesh frontend | The frontend row already names the intent and workflow (`mesh_api`, the frontend check near line 242). A workflow does not pick its route. |
 | Exactly one required image input; exactly one binding | Mesh frontend profile | The `/v1/meshes/generate` wire carries one file part and calls one engine. |
@@ -415,10 +440,11 @@ schema in the appendix gave 38 files, 0 structural or semantic errors. The chang
 | `requires` moves into the binding (`comfyui` or `gateway`) | 30 |
 | `accepts` added to asset inputs: `image/*` where no type was declared (27), the declared `media_type` otherwise (3) | 30 |
 | `generate: random_integer` on `seed` (31 declared and mapped; 2 declared as `settable: false`) | 33 |
-| Mesh: `type: image` becomes `asset` with three accepted types; `modality` keys removed; `extensions` becomes `opaque: true`; binding `trellis` becomes `http-multipart` with `service: trellis` | 1 |
+| Mesh: `type: image` becomes `asset` with three accepted types; `modality` keys removed; `extensions` becomes `opaque: true`; binding `trellis` becomes `http-multipart` with `service: trellis`; `transport` is flattened to `path` | 1 |
+| Policy facts written to the release policy file with today's effective values (not a document change) | 38 records |
 
 The converter's seed rule is keyed by the name `seed`. That is acceptable in a one-time tool, not in core. Its output is
-not trusted on its own: S3.5's differential test proves, per workflow and per route, that a generator is declared
+not trusted on its own: S3.6's differential test proves, per workflow and per route, that a generator is declared
 exactly where a route draws today (and not on the mesh workflow, whose route sends no seed when none is given).
 
 ### Service records and protocol descriptions
@@ -445,19 +471,27 @@ both sides (bundled plus a stored-records fixture, including a patch and a whole
 2. **Behaviour:** for each workflow with a template, the compiled engine request for a fixed input corpus (declared
    defaults; each numeric bound; each enum value; each optional input absent), byte for byte, with generated values
    fixed by an injected source. For the multipart binding, the form fields sent.
-3. **Services and protocol descriptions**, record by record.
+3. **Binding content.** Each binding, canonicalized, must equal the before-binding with the converter's declared edits
+   applied, and nothing else. The converter returns its edits as a list of (path, operation) per document; the check
+   replays them on the before side. This covers bindings that have no template, such as the three compositions: a
+   swap of two map targets in a composition changes no projection and no template request, but it fails here.
+4. **Services and protocol descriptions**, record by record.
 
 Every difference must match a named, intended change with a reason. The allowed list is:
 
 - `schema_version`, `trusted`, `source`, `capability`, `requires` location, `accepts`, `generate`, `settable`,
   `annotations`, and the mesh binding key, as in the table above;
-- every manifest hash (receipts in internal stores) and every pinned contract and binding digest;
+- every manifest hash (receipts in internal stores) and every pinned contract and binding digest, but only because
+  the document and binding content changed by the edits above (item 3 checks the content itself);
+- policy facts move from reader defaults to the release policy file, with the same values (D2);
 - the node-graph description revision;
 - the mesh workflow's input modalities: its picture input was an uncounted `image` type and becomes an `asset`, so the
   catalog lists an asset input for it. This is the one projection change a client can see. Open question 6.
 
-A difference outside the list fails the check. Comparing compiled requests, not only projections, prevents a migration
-that changes what runs while every listed field looks equal.
+A difference outside the list fails the check. Comparing compiled requests and binding content, not only
+projections, prevents a migration that changes what runs while every listed field looks equal. The check's own
+positive control: swap the `steps` and `seam_steps` map targets of the tile composition in the after tree; the check
+must fail.
 
 ## Build order inside S3
 
@@ -468,35 +502,38 @@ Every step is additive. Each step has the S2 gate:
 
 | Step | Content | Default behaviour after the step | Tests and positive controls |
 |---|---|---|---|
-| S3.1 | The error type (D8): `ContractError`, `ContractErrors(ManifestError)`, path and code on every existing refusal in `manifests.py`, `output_selectors.py`, `workflow_requirements.py` and `mesh_manifest.py`. Collect, do not raise at first. | Unchanged: `str()` is the old first message. | A corpus of bad documents gives the same first message as before, and now a full list with paths. Control: make the collector stop at the first error; the multi-error test fails. |
+| S3.1 | The error type (D8): `ContractError`, `ContractErrors(ManifestError)`, path and code on every existing refusal in `manifests.py`, `output_selectors.py`, `workflow_requirements.py` and `mesh_manifest.py`. Collect, do not raise at first. | Unchanged: `str()` is the old first message. | A corpus of bad documents gives the same first message as before, and now a full list with paths. The corpus includes a document with both a bad input and a bad binding, whose first message must stay the input's. Controls: make the collector stop at the first error (the multi-error test fails); choose the primary by sorted path (the two-error test fails). |
 | S3.2 | The v2 schema file, `workflow_contract.py` (structural and semantic layers, the D4 type grammar, D5 output checks at save), `convert_1_to_2`, the `scripts/workflow_contract.py` command. Report-only: the loader converts and checks every document and logs the report. | Unchanged: nothing is refused yet. | All 38 bundled files convert with zero errors. Each D4 rule has a refusal test with its path. Controls: put back `maxium`, a `default: "random"` seed, an `exposure` key and a `trusted` key; each is refused at its exact path. Token test on the new module. |
 | S3.3 | Binding descriptors (D7): `binding_fields`, `roles` and `inputs_via` in `protocol.schema.json`; `node-graph.yml` extended; `gateway-compose.yml` and `http-multipart.yml` added; the role registry; the `check_targets` hooks; `binding_unavailable` at run. The `compose` dispatch in `proxy.py` reads the role registry. | Unchanged for every bundled binding. | Unknown key, field and role are refused at save. A listed but unregistered role fails `binding_unavailable` with zero engine calls. A pinned job whose role is removed fails `definition_unavailable`. Control: give the compose dispatch a fallback branch; the dispatch test fails. |
-| S3.4 | Migration (D3, D10): rewrite the bundled files; the stored-record migration with dry run; the loader enforces v2 and refuses v1; `trusted` and `source` move to provenance; the image route stops reading the policy fields from the manifest; `_capability_from_intent` is deleted. | Enforced. Wire unchanged. Internal goldens move by the named list only. | `diff-effective` passes with only named differences. A stored v1 record converts; a broken one is stored disabled and listed. Controls: remove `capability` from a manifest (refused, not inferred); put back the policy-field read and set `trust_tier` in a package manifest (refused at install). Deploy at idle. |
-| S3.5 | Generated defaults (D6): the generator registry, `resolve_generated` after idempotency, the envelope `generated` block, the audio and image routes switch to it. The video draws, the tile seam draw and the A1111 frontend draw stay, listed in the ratchet with their reason. | Same ranges as today. The envelope's `generated` block is filled. | Per route, a differential test shows a draw exactly where one was drawn before. A retry and a restart read the stored value. Erasure clears a non-empty `generated` block (closes the S2 matrix 2.3 gap). Controls: put back `if name == "seed"` in a route (the token test fails); remove the stored value read (the replay test fails). |
-| S3.6 | Runtime types (D4): recursive input checking with paths for object, array and asset; the routes pass `accepts` from the contract to the resolver; the OpenAPI projection follows the grammar. | Unchanged for bundled workflows: the routes passed `image/*`, and the converted contracts say `image/*`. | Nested refusal paths (for example `inputs.people[2].box`). OpenAPI snapshots unchanged. Control: pass a constant `accepts` again; a test with a `video/*` input fails. |
-| S3.7 | Output checks (D5): `check_result` for count and JSON shape, called by both adapters. | Unchanged for bundled workflows: the default count is today's behaviour. | S2 matrix item 5 extended: too few, too many, a JSON value that breaks its `schema`. Nothing published after a refusal. Control: skip `check_result`; the count tests fail. |
-| S3.8 | Mesh fold (D9): delete the mesh validator; the route reads the registry record; the mesh frontend profile. | Mesh wire byte-identical, GLB included. | The mesh route goldens. A second mesh-shaped workflow registered as data passes the profile. Every former mesh refusal has a test in its new home. Control: register a mesh-shaped workflow with two image inputs; the profile refuses it. |
-| S3.9 | Audio profile boundary (D11): the generic-compile test for `duration`; the audio route keeps its profile. | Unchanged. | Control: apply the 30 s default inside the generic compile; the test fails. |
+| S3.4 | Readers switch (D3, D9): every consumer reads the normalized v2 contract that S3.2's loader makes in memory from the v1 files: the catalog, OpenAPI, capabilities, requirements, the compositions and the mesh route. The mesh route reads its record from the registry and runs the mesh frontend profile; the old mesh validator still runs beside it as a check. The policy reader reads the record-level facts (D2), with the old defaults still filled in. | Unchanged. The files are still v1. | All route goldens, mesh included. A test proves no consumer reads a v1-only field (`trusted`, `source`, `type: image`, top-level `requires`, `transport`). Control: make the mesh route read the old `MeshManifest` again for its image input; the v1-field test fails. |
+| S3.5 | Migration and enforcement (D2, D3, D10): rewrite the bundled files; write the release policy file; the stored-record migration with dry run; the loader enforces v2, refuses v1 and drops the in-memory converter; `trusted` and `source` move to provenance; the policy reader loses its defaults; `_capability_from_intent` is deleted. | Enforced. Wire unchanged. Internal goldens move by the named list only. | `diff-effective` passes with only named differences, and fails on the tile swap control. A stored v1 record converts; a broken one is stored disabled and listed. Controls: remove `capability` from a manifest (refused, not inferred). Remove one workflow's policy facts: it shows "needs configuration" and a run makes zero engine calls. Policy reader: a test runs the image route's policy build on a valid v2 contract wrapped in a mapping that records key reads, and fails if any of `exposure`, `trust_tier`, `resource_tier`, `tags`, `trusted` is read from the contract; putting back the manifest read makes it fail. Deploy at idle. |
+| S3.6 | Generated defaults (D6): the generator registry, `resolve_generated` after idempotency, the envelope `generated` block, the audio and image routes switch to it. The video draws, the tile seam draw and the A1111 frontend draw stay, listed in the ratchet with their reason. | Same ranges as today. The envelope's `generated` block is filled. | Per route, a differential test shows a draw exactly where one was drawn before. A retry and a restart read the stored value. Erasure clears a non-empty `generated` block (closes the S2 matrix 2.3 gap). Controls: put back `if name == "seed"` in a route (the token test fails); remove the stored value read (the replay test fails). |
+| S3.7 | Runtime types (D4): recursive input checking with paths for object, array and asset; `media_bearing` used by the echo check, the resolver and OpenAPI; the routes pass `accepts` from the contract to the resolver; the OpenAPI projection follows the grammar. | Unchanged for bundled workflows: the routes passed `image/*`, and the converted contracts say `image/*`. | Nested refusal paths (for example `inputs.people[2].box`). OpenAPI snapshots unchanged. Controls: pass a constant `accepts` again (a test with a `video/*` input fails); make `media_bearing` look at the top level only (a test with an array of assets mapped to a linked node that is also selected fails to be refused). |
+| S3.8 | Output checks (D5): `check_result` for count and JSON shape, called by both adapters; `selector_cardinality` hooks and the `count_unreachable` save check. | Unchanged for bundled workflows: the default count is today's behaviour, and every bundled selector meets it. | S2 matrix item 5 extended: too few, too many, a JSON value that breaks its `schema`. Nothing published after a refusal. Controls: skip `check_result` (the count tests fail); remove the cardinality check (a `count: {min: 2}` on a `take: single` selector is saved, and its test fails). |
+| S3.9 | Mesh validator deleted (D9): `mesh_manifest.py` keeps only frontend code (form decoding, wire codes, scalar encoding). | Mesh wire byte-identical, GLB included. | The mesh route goldens. A second mesh-shaped workflow registered as data passes the profile. Every former mesh refusal has a test in its new home. Control: register a mesh-shaped workflow with two image inputs; the profile refuses it. |
+| S3.10 | Audio profile boundary (D11): the generic-compile test for `duration`; the audio route keeps its profile. | Unchanged. | Control: apply the 30 s default inside the generic compile; the test fails. |
 
 S3.1 to S3.3 can be built in parallel after the error type is agreed: S3.2 and S3.3 touch different files. S3.4 needs
-S3.2 and S3.3. S3.5 to S3.9 need S3.4 and are independent of each other.
+S3.2 and S3.3. S3.5 needs S3.4: no file changes shape before every reader reads the v2 contract. S3.6 to S3.10 need
+S3.5 and are independent of each other.
 
 ## Done when
 
 1. Every bundled and stored workflow is v2 and passes `check_contract`. The loader refuses v1.
+   Every workflow has its policy facts, and the policy reader has no defaults.
 2. `diff-effective` passes with only named changes.
 3. The positive controls listed per step each fail when the defect is put back.
 4. The data-first check passes with names made after start.
 5. The mesh validator is gone, and the mesh route goldens hold.
 6. No core module names `seed`. The remaining code draws (video, tile seam, A1111 frontend) are listed with their reason.
-7. Independent review passes.
+7. Independent review of the built steps passes. (Revision 1 of this design had one; see Objections.)
 
 ## Open questions
 
-1. **Policy fields with free defaults.** The image route will no longer read `exposure`, `trust_tier`, `resource_tier`
-   and `tags` from the manifest, but their defaults (`default`, `stable`, `batch`) stay. The plan says a missing
-   resource declaration means "needs configuration". **Recommendation:** leave the defaults in S3 (no bundled manifest
-   set them, so behaviour holds) and make absence fail closed in S5, where these facts become owner-set registry data.
+1. **Where the release policy facts live.** D2 puts them in a release file keyed by workflow id. An alternative is a
+   `policy` block on the registry record that the loader builds from the release records. **Recommendation:** the
+   release file, so the workflow document stays free of authority, and config-homes has one home for each fact.
+   Revisit when S5 defines the facts' meaning.
 2. **Unknown capability.** S3 checks only the token syntax. **Recommendation:** S5 makes a capability unknown to the
    effective registry "needs configuration", with a positive control. Do not put a closed list back in the validator.
 3. **Describe generators in OpenAPI.** **Recommendation:** not in S3, so the OpenAPI snapshots do not move. Add an
@@ -509,11 +546,12 @@ S3.2 and S3.3. S3.5 to S3.9 need S3.4 and are independent of each other.
 6. **The mesh input modality change.** **Recommendation:** accept it as the one named visible change. S5 derives input
    modalities from `accepts` for every workflow, which also corrects the video rows.
 7. **`requires` placement.** Moving it into the binding is cleaner (pattern 2) but touches 30 files and the
-   requirements check. **Recommendation:** move it in S3.4, in the same rewrite, so the document shape changes once.
+   requirements check. **Recommendation:** move it in S3.5, in the same rewrite, so the document shape changes once.
 
 ## Objections
 
-An independent critique of this design, written before finishing. Each objection has an answer.
+Objections 1 to 15 are a self-critique, written before the independent review. The independent review's findings are
+in the table that follows them.
 
 1. **"This is a type system, a binding grammar, a role registry and a generator registry for 38 files. Over-engineered."**
    Each piece replaces code that exists: the loose validator, the mesh validator, the `compose` branch, six seed draws,
@@ -533,7 +571,7 @@ An independent critique of this design, written before finishing. Each objection
 5. **"Changing every manifest hash churns every receipt golden."** The hashes are in internal stores. S2.4 moved the same
    paths for the same reason. The client wire does not move. The effective-registry check names the change.
 6. **"The converter infers capability from the intent prefix, which is the inference the plan wants gone."** It runs once,
-   its output is reviewed as a diff, and it is recorded in an annotation and in the report. After S3.4 nothing infers it.
+   its output is reviewed as a diff, and it is recorded in an annotation and in the report. After S3.5 nothing infers it.
 7. **"Annotations are a smuggling channel."** Core never reads them, a test enforces that, they cannot appear in a
    binding, they are bounded, and they do not change the contract digest. They hold notes, not settings.
 8. **"Aggregated errors leak caller values in member answers."** Messages never hold a caller value. Frontends report one
@@ -548,13 +586,29 @@ An independent critique of this design, written before finishing. Each objection
     no longer constrain what a mesh workflow may be; S7 turns the profile into a frontend row.
 12. **"The equality check compares projections, which a migration can game."** It also compares compiled engine
     requests and form fields for a fixed input corpus, with generated values fixed. A behaviour change shows up as bytes.
-13. **"Keeping the policy-field defaults is a free-admission default."** Yes, for now (open question 1). S3 removes the
-    channel by which a document could raise them, which is the larger risk. Failing closed on absence belongs with the
-    owner-set facts in S5, so the bundled routes do not go dark in S3.
+13. **"Keeping the policy-field defaults is a free-admission default."** Accepted (independent review, finding 1).
+    Revision 1 kept them until S5. Now the migration writes each bundled workflow's current values as record facts, and
+    S3.5 deletes the defaults: absence is "needs configuration" (D2).
 14. **"Missing case: a stored owner record that is a patch over a bundled record."** Covered: the patch is converted
     through the release record and stored as a new difference (D3), and the fixture in the equality check includes one.
 15. **"Missing case: deployment narrowing that makes a generator range empty."** Covered: the range is checked at
     deployment load, as `apply_deployment_inputs` already checks defaults (D6).
+
+### Independent review
+
+A different model reviewed revision 1 at commit 8ff07ac0e, with the code. It reported eight findings. Each was checked
+against the cited code and accepted. Revision 2 answers them:
+
+| # | Finding | Answer |
+|---|---|---|
+| 1 | D2 kept free-admission policy defaults, against the plan's rule. | Policy facts become record data; S3.5 deletes the defaults (D2; objection 13). |
+| 2 | Nested assets escape the source-echo check: `check_echo` marks only inputs whose top-level type is media. | `media_bearing(spec)` is recursive and shared (D4); S3.7 has the control. |
+| 3 | The equality check compares requests only for template workflows; a target swap inside a composition is not seen. | The check also compares binding content against the converter's declared edits; the tile swap is its control. |
+| 4 | Converting the mesh file in S3.4 broke the mesh route, which still loaded through the v1 validator. | New S3.4 switches every reader to the v2 contract first; the file rewrite moves to S3.5. No reader for v1 stays after S3.5. |
+| 5 | The binding kinds could not express graph node id lists or the nested mesh transport block. | Kinds `target`, `target_list` and `relative_path`; the transport block is flattened (D7). |
+| 6 | A count that a selector can never yield passes save and fails only after a run. | `selector_cardinality` hook and `count_unreachable` at save (D5). |
+| 7 | The S3.4 policy control could not fail: the schema refuses the key before any reader runs. | The control now records key reads on a valid contract (S3.5). |
+| 8 | Sorting by path changes which error is first, against the promise that messages stay the same. | A separate `primary` error in today's order (D8); a two-error test and its control (S3.1). |
 
 ## Not settled here
 
