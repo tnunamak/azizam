@@ -583,7 +583,8 @@
 # S3.2 + S3.3 merged: 20787 + 201 + 85 = 21073.
 # S3.4 readers switch (2026-11-07): +5 cases (tests/test_workflow_readers_v2.py); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21078.
 # S3.4 fix round: the reader test grows to 35 cases (an old-output oracle, mesh negatives, binding shapes): 21108.
-pytest = 21108
+# S3.4 fix round 2: +14 cases (non-mapping roots, list and dict scalar types, a default of null, declared capability beside odd annotations, an explicit picture media type); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21122.
+pytest = 21122
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
