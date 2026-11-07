@@ -532,7 +532,8 @@
 # C8c review fix: the status page reads the generated model list where the gateway does (+1); measured 19839.
 # Train 11 (2026-11-06): engine address guard (+4), C8c model_compatibility and identity sections (+18); measured 19848.
 # S2.6 (2026-11-06): media input resolver, leases and markers (+36 in tests/test_media_inputs.py), image route extension inputs on the resolver (+13 in tests/test_media_inputs_image_route.py); measured 19897.
-pytest = 19897
+# S2.6 review fixes (2026-11-06): the sweep re-check, the download cap and the raised upload (+4 in test_media_inputs.py, +2 in test_media_inputs_image_route.py); measured 19903.
+pytest = 19903
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
