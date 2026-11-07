@@ -8,7 +8,9 @@ owner, no marker or a symlink is left alone, and so is the one path named in SCR
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -182,3 +184,132 @@ def test_old_receipts_keep_only_their_verdicts(tmp_path: Path) -> None:
 def test_pruning_a_missing_or_empty_root_is_harmless(tmp_path: Path) -> None:
     _prune(tmp_path / "absent")
     _prune(tmp_path)
+
+
+# -- failed runs keep their evidence -------------------------------------------
+
+_spec = importlib.util.spec_from_file_location("prune_receipts", PRUNE)
+assert _spec and _spec.loader
+prune_receipts = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(prune_receipts)
+
+
+def _failed_run(root: Path, name: str, age_days: float, trace_bytes: int = 10, screenshot_bytes: int = 10) -> Path:
+    run = _receipt(root, name, age_days=age_days)
+    (run / "PASS").unlink()
+    (run / "FAIL").write_text("x")
+    case = run / "e2e-failures" / "artifacts-18200" / "a-spec-case-chromium"
+    case.mkdir(parents=True)
+    (case / "error-context.md").write_text("context")
+    (case / "test-failed-1.png").write_bytes(b"p" * screenshot_bytes)
+    (case / "trace.zip").write_bytes(b"t" * trace_bytes)
+    stamp = time.time() - age_days * 86400
+    os.utime(run / "run.tsv", (stamp, stamp))
+    return run
+
+
+def _names(run: Path) -> list[str]:
+    return sorted(path.name for path in run.iterdir())
+
+
+def test_a_failed_run_keeps_logs_and_artifacts_for_three_days(tmp_path: Path) -> None:
+    newer = [_receipt(tmp_path, f"r{index:02d}", age_days=index / 100) for index in range(20)]
+    fresh = _failed_run(tmp_path, "failed-fresh", age_days=2.5)
+    stale = _failed_run(tmp_path, "failed-stale", age_days=3.5)
+    passed = _receipt(tmp_path, "passed-old", age_days=2.6)
+    _prune(tmp_path)
+    assert _names(fresh) == ["FAIL", "e2e-failures", "logs", "run.tsv"]
+    assert (fresh / "logs" / "a.log").is_file()
+    kept = fresh / "e2e-failures" / "artifacts-18200" / "a-spec-case-chromium"
+    assert sorted(path.name for path in kept.iterdir()) == ["error-context.md", "test-failed-1.png", "trace.zip"]
+    assert _names(stale) == ["FAIL", "run.tsv"]
+    assert _names(passed) == ["PASS", "run.tsv"]
+    assert all((run / "cases.jsonl").is_file() for run in newer)
+
+
+def test_a_failed_runs_artifacts_lose_traces_then_screenshots_over_the_cap(tmp_path: Path) -> None:
+    cap = prune_receipts.ARTIFACT_CAP
+    padding = [_receipt(tmp_path, f"r{index:02d}", age_days=index / 100) for index in range(20)]
+    heavy = _failed_run(tmp_path, "heavy", age_days=1, trace_bytes=cap, screenshot_bytes=1000)
+    huge = _failed_run(tmp_path, "huge", age_days=1.1, trace_bytes=10, screenshot_bytes=cap + 1)
+    light = _failed_run(tmp_path, "light", age_days=1.2, trace_bytes=cap - 1000, screenshot_bytes=500)
+    assert padding
+    _prune(tmp_path)
+
+    def left(run: Path) -> list[str]:
+        return sorted(path.name for path in (run / "e2e-failures").rglob("*") if path.is_file())
+
+    assert left(heavy) == ["error-context.md", "test-failed-1.png"]
+    assert left(huge) == ["error-context.md"]
+    assert left(light) == ["error-context.md", "test-failed-1.png", "trace.zip"]
+
+
+def test_collect_keeps_only_a_failed_tests_files(tmp_path: Path) -> None:
+    out = tmp_path / "browser-results"
+    case = out / "artifacts-18200" / "b-spec-case-chromium"
+    case.mkdir(parents=True)
+    for name in ("error-context.md", "test-failed-1.png", "trace.zip", "video.webm", "notes.txt"):
+        (case / name).write_text("x")
+    (out / "artifacts-18210").mkdir()
+    (out / "report.json").write_text("{}")
+    dest = tmp_path / "receipt" / "e2e-failures"
+    subprocess.run([sys.executable, str(PRUNE), "--collect", str(out), str(dest)], check=True, capture_output=True)
+    copied = sorted(str(path.relative_to(dest)) for path in dest.rglob("*") if path.is_file())
+    assert copied == [f"artifacts-18200/b-spec-case-chromium/{name}" for name in ("error-context.md", "test-failed-1.png", "trace.zip")]
+    subprocess.run([sys.executable, str(PRUNE), "--collect", str(tmp_path / "absent"), str(tmp_path / "none")], check=True, capture_output=True)
+    assert not (tmp_path / "none").exists()
+
+
+def test_the_cap_also_bounds_error_contexts_and_names_what_it_dropped(tmp_path: Path) -> None:
+    case = tmp_path / "e2e-failures" / "artifacts-18200" / "c-spec-case-chromium"
+    case.mkdir(parents=True)
+    (case / "error-context.md").write_text("x" * 600)
+    (case / "test-failed-1.png").write_bytes(b"p" * 300)
+    (case / "trace.zip").write_bytes(b"t" * 300)
+    prune_receipts.bound_artifacts(tmp_path / "e2e-failures", cap=500)
+    left = sorted(path.name for path in (tmp_path / "e2e-failures").rglob("*") if path.is_file())
+    assert left == ["OMITTED.txt"]
+    assert "c-spec-case-chromium/error-context.md" in (tmp_path / "e2e-failures" / "OMITTED.txt").read_text()
+
+
+def test_collect_copies_contexts_first_and_stops_at_the_cap(tmp_path: Path) -> None:
+    out = tmp_path / "browser-results"
+    case = out / "artifacts-18200" / "d-spec-case-chromium"
+    case.mkdir(parents=True)
+    (case / "error-context.md").write_text("x" * 100)
+    (case / "test-failed-1.png").write_bytes(b"p" * 200)
+    (case / "trace.zip").write_bytes(b"t" * 300)
+    dest = tmp_path / "receipt" / "e2e-failures"
+    assert prune_receipts.collect_failures(out, dest, cap=350) == 2
+    copied = sorted(path.name for path in dest.rglob("*") if path.is_file())
+    assert copied == ["OMITTED.txt", "error-context.md", "test-failed-1.png"]
+    assert (dest / "OMITTED.txt").read_text() == "artifacts-18200/d-spec-case-chromium/trace.zip\n"
+
+
+def test_no_symlink_leads_pruning_or_collection_outside_the_receipts(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "trace.zip"
+    sentinel.write_bytes(b"t" * 1000)
+    receipts = tmp_path / "receipts"
+    receipts.mkdir()
+    padding = [_receipt(receipts, f"r{index:02d}", age_days=index / 100) for index in range(20)]
+    assert padding
+    run = _failed_run(receipts, "linked", age_days=1)
+    shutil.rmtree(run / "e2e-failures")
+    (run / "e2e-failures").symlink_to(outside, target_is_directory=True)
+    _prune(receipts)
+    assert sentinel.is_file()
+    assert not (run / "e2e-failures").exists() and not (run / "e2e-failures").is_symlink()
+    prune_receipts.bound_artifacts(tmp_path / "link-root", cap=0)
+    (tmp_path / "link-root").symlink_to(outside, target_is_directory=True)
+    prune_receipts.bound_artifacts(tmp_path / "link-root", cap=0)
+    assert sentinel.is_file()
+
+    src = tmp_path / "browser-results"
+    src.mkdir()
+    (src / "artifacts-18200").symlink_to(outside, target_is_directory=True)
+    dest = tmp_path / "receipt" / "e2e-failures"
+    assert prune_receipts.collect_failures(src, dest) == 0
+    assert prune_receipts.collect_failures(tmp_path / "link-root", dest) == 0
+    assert not dest.exists()

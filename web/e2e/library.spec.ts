@@ -351,6 +351,18 @@ for (const lifecycle of ["first load", "reload", "kind filter", "deep link"] as 
 
 test("empty owner Library says creations and prompts are private", async ({ page }) => {
   await page.route("**/me/api/media?**", (route) => fulfilJson(route, { assets: [], models: [], next_cursor: null }));
+  // The empty state gives way to a running tile when Home lists a running media request, and the fixture
+  // gateway is shared with other specs' requests. Home answers with no receipts and no running work.
+  await page.route("**/me/api/home", (route) =>
+    fulfilJson(route, {
+      authenticated: true,
+      user: { id: "owner", email: "owner@example.test", name: "Owner", role: "owner" },
+      has_access_plan: true,
+      recent_chats: [],
+      receipts: [],
+      capabilities: [],
+    }),
+  );
   await page.goto("/library/");
   const empty = page.getByRole("region", { name: "No creations yet" });
   await expect(empty).toHaveAccessibleDescription("Images, videos and audio you create appear here.");
