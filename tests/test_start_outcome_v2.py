@@ -990,6 +990,17 @@ def test_a_count_refusal_publishes_nothing_even_after_a_good_json_result(fake_up
     assert result_bundle.read_json(job_id, rig.names.json_result, rig.reader(), path=rig.db) is None
 
 
+def test_a_file_of_the_wrong_family_stays_wrong_type_when_its_count_is_also_short(fake_upstreams, jobs_db, tmp_path):
+    rig = graph_rig(fake_upstreams, jobs_db, tmp_path, shape="mixed")
+    # The fixture returns one audio file; the contract asks for at least two images. The family is the first fault.
+    declare(rig, rig.names.file_result, media_type="image/png", count={"min": 2, "max": 3})
+    job_id = rig.accept()
+    with pytest.raises(SelectionRefused) as refused:
+        rig.run(job_id)
+    assert refused.value.code == "result_wrong_type"
+    assert result_bundle.bundle_summary(job_id, path=rig.db) is None
+
+
 def test_the_graph_results_boundary_checks_count_even_if_selection_was_precomputed(fake_upstreams, jobs_db, tmp_path, monkeypatch):
     rig = graph_rig(fake_upstreams, jobs_db, tmp_path, shape="mixed")
     declare(rig, rig.names.file_result, count={"min": 1, "max": 1})

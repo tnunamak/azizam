@@ -784,13 +784,15 @@ class NodeGraphAdapter:
             return None
 
     def collect(self, job: Mapping[str, Any] | None, block: Mapping[str, Any], outputs: Mapping[str, Any], *, limits: Any,
-                history_bytes: int | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
+                history_bytes: int | None = None, count: bool = True) -> dict[str, tuple[dict[str, Any], ...]]:
         """The files of each named result of a finished prompt, by the binding's selectors.
 
         ``block`` is the binding, ``outputs`` the contract's declared results, ``limits`` the deployment's result limits
         and ``history_bytes`` the size of the history answer that ``job`` came from. A binding with no selectors is
-        refused (``selectors_missing``): the engine's answer is never read by guessing. Raises ``SelectionRefused``; a
-        refused run delivers nothing.
+        refused (``selectors_missing``): the engine's answer is never read by guessing. With ``count`` (the default)
+        each result's selected files are checked against its declared count (``result_count``); ``results`` passes
+        ``count=False`` and checks the count after the media family. Raises ``SelectionRefused``; a refused run delivers
+        nothing.
         """
         if history_bytes is not None and history_bytes > limits.max_history_bytes:
             raise SelectionRefused("history_too_large", f"the engine's answer is larger than {limits.max_history_bytes} bytes")
@@ -803,6 +805,10 @@ class NodeGraphAdapter:
         except output_selectors.SelectorError as exc:
             raise SelectionRefused(exc.code, str(exc)) from exc
         chosen = select_outputs(job, selectors)
+        if not count:
+            # ``results`` checks the count itself, after the media family, so a file of the wrong family stays
+            # ``result_wrong_type`` and is not reported as a short count.
+            return chosen
         for name, files in chosen.items():
             # A JSON result is one document, however many files were listed: two files stay ``result_ambiguous`` in
             # ``results``. The count of an ``assets`` result is the files kept after filtering, de-duplication and ``take``.
@@ -903,7 +909,7 @@ class NodeGraphAdapter:
                 job = history.get(ref.id) if isinstance(history, Mapping) else None
                 if not isinstance(job, Mapping):
                     raise SelectionRefused("result_missing", "the engine's answer holds no history entry for the job")
-                picked = self.collect(job, block, outputs, limits=limits, history_bytes=len(reply.raw or b""))
+                picked = self.collect(job, block, outputs, limits=limits, history_bytes=len(reply.raw or b""), count=False)
                 kinds = self._result_kinds(block, outputs, picked)
                 results: dict[str, JsonResult | AssetsResult] = {}
                 for name, files in picked.items():
