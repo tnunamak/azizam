@@ -133,6 +133,9 @@ for (const view of views) {
     await page.route("**/me/api/profile/avatar/picture*", (route) =>
       fulfilBytes(route, { contentType: "image/png", body: PNG }),
     );
+    // A "Generated" option shows when the generator is available. The live gateway decides that, so pin it off
+    // (avatar-generated.spec.ts owns the available case).
+    await page.route("**/me/api/profile/avatar/generator", (route) => fulfilJson(route, { available: false }));
     const dialog = await openPicker(page);
     // The sign-in picture and Initials are the sources; the colours show only under Initials, so not here.
     await expect(dialog.getByRole("radio")).toHaveCount(2);

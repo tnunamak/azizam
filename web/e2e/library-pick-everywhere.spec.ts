@@ -273,27 +273,22 @@ function solidPng(size: number, [red, green, blue]: [number, number, number]) {
 /** The Transcription page with a model that takes audio, and the Library stubbed. */
 async function openTranscribe(page: Page, viewport: { width: number; height: number }) {
   await page.setViewportSize(viewport);
-  await page.route("**/me/api/models/catalog*", async (route) => {
-    const response = await route.fetch();
-    const body = await response.json();
-    await fulfilJson(
-      route,
-      {
-        ...body,
-        models: [
-          ...(body.models ?? []),
-          {
-            id: "demo-transcribe",
-            name: "demo-transcribe",
-            capability: "transcribe",
-            capabilities: [{ intent: "speech.transcription", input_modalities: ["audio"] }],
-            locality: "local",
-          },
-        ],
-      },
-      { response },
-    );
-  });
+  // A catalog of one model, answered without a call to the gateway, so a slow gateway cannot hold the page on
+  // "Loading models…". fulfilJson checks the shape against the real catalog.
+  await page.route("**/me/api/models/catalog*", (route) =>
+    fulfilJson(route, {
+      aliases: [],
+      models: [
+        {
+          id: "demo-transcribe",
+          name: "demo-transcribe",
+          capability: "transcribe",
+          capabilities: [{ intent: "speech.transcription", input_modalities: ["audio"] }],
+          locality: "local",
+        },
+      ],
+    }),
+  );
   const listed = await routeLibrary(page);
   await page.route("**/audio/transcriptions", (route) => fulfilJson(route, { text: "hello there" }));
   await page.goto("/try/?capability=transcribe");
