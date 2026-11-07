@@ -590,7 +590,10 @@
 # Train 18 with S3.3: 21050 + (85) = 21135.
 # S3.5 base (2026-11-07): main plus S3.4; measured with scripts/run-hermetic-pytest.sh --collect-only -q.
 # S3.5a (2026-11-07): +68 cases (tests/test_workflow_policy.py, tests/test_workflow_equality.py, corpus and pin/package refusal cases, minus the report-only cases); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21252.
-pytest = 21252
+# S3.5b workflow-schema-2 migration (2026-11-07): +32 cases (tests/test_workflow_schema_migration.py: plan rules, patch equivalence, report and dry run without values, apply once, package proofs); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21216.
+# S3.5b review fixes: +35 cases (total plan, no-change race, stale snapshot, null records, invalid manifest, failed replacement, dry-run files, proofs); measured: 21251.
+# S3.5 integration (S3.5a + S3.5b): 21184 + 68 + 69 = 21321.
+pytest = 21321
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
