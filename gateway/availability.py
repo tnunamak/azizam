@@ -169,6 +169,37 @@ def _project_required_dependencies(
     )
 
 
+def model_availability(
+    service_ids: Iterable[str],
+    *,
+    service_records: Mapping[str, Any],
+    evidence: Mapping[str, Mapping[str, Any]],
+    require_all: bool = False,
+) -> dict[str, str] | None:
+    """The model-list availability of a name served by ``service_ids``, or ``None`` when no service is known.
+
+    ``available`` when any service can serve it (ready, busy, degraded or startable on demand), ``unavailable`` only
+    when every service is known to be down or turned off, else ``unknown``. Only ``unavailable`` carries a reason.
+    With ``require_all`` (a name that needs every service at once) the rule flips: ``unavailable`` when any service is
+    down, ``available`` only when all are.
+    """
+
+    projections = [project_service(service_id, service_records=service_records, evidence=evidence)
+                   for service_id in dict.fromkeys(service_ids)]
+    if not projections:
+        return None
+    if require_all:
+        down = next((item for item in projections if item.status == "unavailable"), None)
+        if down is not None:
+            return {"state": "unavailable", "reason": down.reason}
+        return {"state": "available" if all(item.available for item in projections) else "unknown"}
+    if any(item.available for item in projections):
+        return {"state": "available"}
+    if all(item.status == "unavailable" for item in projections):
+        return {"state": "unavailable", "reason": projections[0].reason}
+    return {"state": "unknown"}
+
+
 def composed_reason_code(status: str, enabled: bool, configured: bool) -> str:
     """Reason code for a composed workflow: an engine turned off or not set up is Off, not Down."""
 

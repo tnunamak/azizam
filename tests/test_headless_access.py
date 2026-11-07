@@ -537,6 +537,12 @@ def test_existing_data_plane_schema_is_byte_equivalent():
             # every other part of the original operation remain unchanged.
             operation["get"]["parameters"] = [p for p in operation["get"]["parameters"]
                                                  if p["name"] != "after_sequence"]
+        if path in {"/v1/models", "/openai/v1/models"}:
+            # ?available=true is an additive opt-in (2026-11-07); the model list itself is unchanged.
+            operation["get"]["parameters"] = [p for p in operation["get"].get("parameters", [])
+                                              if p["name"] != "available"]
+            if not operation["get"]["parameters"]:
+                del operation["get"]["parameters"]
         assert _digest(operation) == expected, path
     for name, expected in baseline["schemas"].items():
         assert _digest(schema["components"]["schemas"][name]) == expected, name

@@ -24,6 +24,7 @@ The new fields are additive; OpenAI clients ignore unknown keys (checked against
 | `context_window` | int | total tokens | Already emitted before this contract; unchanged. Omitted if unknown. |
 | `max_tokens` | int | max output tokens per request | Only when an operator declares it. Never guessed. |
 | `tags` | string[] | subset of `tool-use`, `reasoning`, `vision`, `file-input` | `language` entries only, and only declared or derivable facts. Omitted when empty. |
+| `azizam_availability` | object | `{"state": "available" \| "unavailable" \| "unknown", "reason"?: string}` | Every entry the gateway can map to the service or services that serve it. `reason` only when `unavailable`. |
 
 Semantics:
 
@@ -51,6 +52,23 @@ Example:
  "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]},
  "tags": ["tool-use", "reasoning", "vision"]}
 ```
+
+## Availability
+
+`azizam_availability` is a hint about the engine behind a name. It is not a promise: the list still means
+"names you may use", and every listed name stays callable. The state comes from the cached status snapshot and
+the request receipts, the same evidence the capability and Models pages use. The list never probes an engine
+and never waits for a status build; a missing or old snapshot reads as `unknown`.
+
+- A name maps to its services by the model name a service serves, by the workflow it is (then to the services
+  that workflow needs, all at once), or through the names an alias resolves to. An entry that maps to no service
+  has no field.
+- Several services: `available` if any is available (ready, busy, degraded, or startable on demand),
+  `unavailable` only if all are unavailable, otherwise `unknown`. A workflow that needs several services is
+  `unavailable` if any is.
+- `GET /v1/models?available=true` leaves out entries whose state is `unavailable`. `unknown` and unmapped
+  entries stay (fail open). Any other value, or no parameter, changes nothing. Per-caller profile filtering runs
+  first. Routing is unchanged: a left-out name still works if called.
 
 ## How values are derived
 
