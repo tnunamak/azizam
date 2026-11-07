@@ -23,13 +23,20 @@ from gateway.workflow_contract import (
     check_contract,
     value_problems,
 )
-from gateway.workflow_convert import convert_1_to_2
+from gateway.workflow_convert import convert_1_to_2, convert_and_check, forget_reported
 from tests.test_domain_literal_ratchet import vocabulary
 
 ROOT = Path(__file__).resolve().parent.parent
 BUNDLED = sorted((ROOT / "manifests" / "workflows").glob("*.yml"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import workflow_contract as command  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def fresh_reports():
+    forget_reported()
+    yield
+    forget_reported()
 
 
 def base() -> dict:
@@ -725,3 +732,163 @@ def test_the_command_converts_to_a_new_file_and_never_overwrites(tmp_path, capsy
 def test_the_command_prints_converted_yaml_without_an_output_file(capsys):
     assert command.main(["convert", str(ROOT / "manifests" / "workflows" / "flux2-klein.yml")]) == 0
     assert yaml.safe_load(capsys.readouterr().out)["schema_version"] == 2
+
+
+# ------------------------------------------------------------------------------------------------------ review round 1
+
+
+def with_result_schema(schema: dict) -> dict:
+    doc = base()
+    doc["outputs"]["facts"]["schema"] = schema
+    return doc
+
+
+@pytest.mark.parametrize("schema, path", [
+    ({"type": "object", "properties": ["bad"]}, ("outputs", "facts", "schema", "properties")),
+    ({"type": "integer", "properties": "bad"}, ("outputs", "facts", "schema", "properties")),
+    ({"type": "object", "properties": {"a": {"type": "object", "properties": ["bad"]}}},
+     ("outputs", "facts", "schema", "properties", "a", "properties")),
+    ({"type": "array", "items": {"type": "object", "properties": 5}}, ("outputs", "facts", "schema", "items", "properties")),
+])
+def test_a_malformed_result_schema_is_reported_not_a_crash(schema, path):
+    errors = check_contract(with_result_schema(schema)).errors
+    assert [e.path for e in errors] == [path]
+
+
+def test_the_command_reports_a_malformed_result_schema(tmp_path, capsys):
+    doc = with_result_schema({"type": "object", "properties": ["bad"]})
+    path = tmp_path / "bad.yml"
+    path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    assert command.main(["check", str(path)]) == 1
+    assert "/outputs/facts/schema/properties" in capsys.readouterr().out
+
+
+def test_the_raised_errors_are_the_reports_errors_when_the_report_is_over_the_limit():
+    doc = base()
+    for index in range(105):
+        doc[f"extra{index:03d}"] = 1
+    report = check_contract(doc)
+    assert len(report.errors) == 101 and report.errors[-1].code == "too_many_errors"
+    with pytest.raises(ContractErrors) as raised:
+        report.raise_if_any()
+    assert list(raised.value.errors) == list(report.errors)
+    assert [e.code for e in raised.value.errors].count("too_many_errors") == 1
+
+
+def two_flat_bindings() -> dict:
+    v1 = load("mesh.generate.trellis-2")
+    v1["bindings"] = {
+        "alpha": {"transport": {"kind": "http-multipart", "path": "/a"}, "map": {}},
+        "beta": {"transport": {"kind": "http-multipart", "path": "/b"}, "map": {}},
+    }
+    return v1
+
+
+def test_two_bindings_that_flatten_to_one_key_both_stay_and_the_check_says_so():
+    converted, notes, report = convert_and_check(two_flat_bindings())
+    assert converted["bindings"]["alpha"]["transport"]["path"] == "/a"
+    assert converted["bindings"]["beta"]["transport"]["path"] == "/b"
+    assert "http-multipart" not in converted["bindings"]
+    assert sorted(n.path for n in notes if n.operation == "conflict") == [("bindings", "alpha"), ("bindings", "beta")]
+    assert [(e.path, e.code) for e in report.errors if e.code == "conversion_conflict"] == [
+        (("bindings", "alpha"), "conversion_conflict"), (("bindings", "beta"), "conversion_conflict")]
+    assert not report.ok
+
+
+def test_one_flat_binding_still_converts():
+    v1 = two_flat_bindings()
+    del v1["bindings"]["beta"]
+    converted, notes, report = convert_and_check(v1)
+    assert list(converted["bindings"]) == ["http-multipart"] and not [n for n in notes if n.operation == "conflict"]
+
+
+@pytest.mark.parametrize("count", [{"min": 3.0, "max": 2.0}, {"min": 1, "max": 17.0}, {"min": 17.0, "max": 20}])
+def test_an_integral_float_count_gets_the_same_meaning_as_an_integer(count):
+    doc = base()
+    doc["outputs"]["picture"]["count"] = count
+    context = ContractContext(max_assets=16)
+    assert {code for _, code in pairs(doc, context)} & {"count_invalid", "count_over_limit"}
+
+
+def test_a_float_count_with_a_fraction_is_left_to_the_schema():
+    doc = base()
+    doc["outputs"]["picture"]["count"] = {"min": 1.5, "max": 2}
+    assert pairs(doc) == [(("outputs", "picture", "count", "min"), "type_mismatch")]
+
+
+def generated(spec_extra: dict, low: int, high: int) -> dict:
+    return with_input("n", {"type": "integer", "generate": {"generator": "random_integer", "minimum": low, "maximum": high}, **spec_extra})
+
+
+@pytest.mark.parametrize("extra, low, high", [
+    ({"enum": [1]}, 2, 2),
+    ({"step": 2, "offset": 1}, 2, 2),
+    ({"step": 5}, 6, 9),
+    ({"enum": [1, 9]}, 2, 8),
+])
+def test_a_generator_whose_values_the_input_would_all_refuse_is_refused(extra, low, high):
+    assert pairs(generated(extra, low, high)) == [(("inputs", "n", "generate"), "generator_range_empty")]
+
+
+@pytest.mark.parametrize("extra, low, high", [
+    ({"enum": [2]}, 2, 2),
+    ({"step": 2, "offset": 1}, 3, 3),
+    ({"step": 5}, 5, 9),
+    ({"enum": [1, 9]}, 2, 9),
+    ({}, 2, 2),
+])
+def test_a_generator_with_one_value_the_input_accepts_is_valid(extra, low, high):
+    assert pairs(generated(extra, low, high)) == []
+
+
+def two_loads(tmp_path, caplog, document, times=1, level=logging.WARNING):
+    path = tmp_path / "doc.yml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    with caplog.at_level(level, logger="gateway.workflow_convert"):
+        for _ in range(times):
+            load_workflow_manifest(path)
+
+
+def test_a_failing_log_handler_does_not_stop_the_load(tmp_path):
+    class Failing(logging.Handler):
+        def emit(self, record):
+            raise OSError("disk full")
+
+    v1 = load("flux2-klein")
+    v1["inputs"]["steps"]["maxium"] = 3
+    path = tmp_path / "doc.yml"
+    path.write_text(yaml.safe_dump(v1, sort_keys=False), encoding="utf-8")
+    handler = Failing()
+    target = logging.getLogger("gateway.workflow_convert")
+    target.addHandler(handler)
+    try:
+        assert load_workflow_manifest(path)["id"] == v1["id"]
+    finally:
+        target.removeHandler(handler)
+
+
+def test_three_loads_of_one_invalid_document_give_one_report(tmp_path, caplog):
+    v1 = load("flux2-klein")
+    v1["inputs"]["steps"]["maxium"] = 3
+    two_loads(tmp_path, caplog, v1, times=3)
+    assert [r.getMessage() for r in caplog.records].count(
+        f"workflow {v1['id']}: 1 schema 2 contract errors (report only)") == 1
+
+
+def test_a_changed_document_is_reported_again(tmp_path, caplog):
+    v1 = load("flux2-klein")
+    v1["inputs"]["steps"]["maxium"] = 3
+    two_loads(tmp_path, caplog, v1)
+    v1["inputs"]["steps"]["maxium"] = 4
+    two_loads(tmp_path, caplog, v1)
+    assert sum("report only" in r.getMessage() for r in caplog.records) == 2
+
+
+def test_the_repeat_loads_skip_the_conversion_and_the_check(tmp_path, monkeypatch):
+    calls = []
+    real = check_contract
+    monkeypatch.setattr("gateway.workflow_convert.check_contract", lambda doc: calls.append(1) or real(doc))
+    path = ROOT / "manifests" / "workflows" / "flux2-klein.yml"
+    for _ in range(3):
+        load_workflow_manifest(path)
+    assert len(calls) == 1

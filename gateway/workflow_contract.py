@@ -32,6 +32,7 @@ from gateway.workflow_call import SNIFFED_MEDIA_TYPES
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "registry" / "workflow.schema.json"
 SUPPORTED_SCHEMA_VERSIONS = (2,)
+CONTRACT_VERSION = 2
 
 MAX_INPUT_DEPTH = 4
 ANNOTATION_BYTES = 8 * 1024
@@ -80,27 +81,29 @@ class Report:
 
     def raise_if_any(self) -> None:
         if self.errors:
-            raise ContractErrors(self.errors, self.primary)
+            # The list is final (sorted, capped, marker included): raise it as it is, never through the cap again.
+            raise ContractErrors(self.errors, self.primary, final=True)
 
 
 def check_contract(doc: Any, context: ContractContext | None = None) -> Report:
     """Check a workflow document of schema version 2. Never raises for a bad document; read the report."""
     context = context or ContractContext()
     if not isinstance(doc, Mapping):
-        return _report([ContractError((), "type_mismatch", "a workflow document must be a mapping")])
+        return report_from([ContractError((), "type_mismatch", "a workflow document must be a mapping")])
     version = doc.get("schema_version")
     if version not in SUPPORTED_SCHEMA_VERSIONS or isinstance(version, bool):
         # The rest would be read against a grammar this document does not use.
-        return _report([ContractError(("schema_version",), "schema_version_unsupported",
+        return report_from([ContractError(("schema_version",), "schema_version_unsupported",
                                       "this schema version is not supported; convert the document with scripts/workflow_contract.py convert")])
     structural = _structural_errors(doc)
     errors = ErrorCollector()
     errors.errors.extend(structural)
     _Semantic(context, [error.path for error in structural], errors).run(doc)
-    return _report(errors.errors)
+    return report_from(errors.errors)
 
 
-def _report(found: list[ContractError]) -> Report:
+def report_from(found: list[ContractError]) -> Report:
+    """The report of a list of errors, sorted and capped as ``ContractErrors`` does it."""
     if not found:
         return Report()
     listed = ContractErrors(found)
@@ -297,7 +300,7 @@ class _Semantic:
             return
         low = max(rule["minimum"], spec.get("minimum", rule["minimum"]))
         high = min(rule["maximum"], spec.get("maximum", rule["maximum"]))
-        if low > high:
+        if not _generates_a_value(spec, low, high):
             self.errors.add(at + ("generate",), "generator_range_empty", "the generator's range and the input's bounds share no value")
 
     def _accepts(self, at: tuple[PathPart, ...], spec: Mapping[str, Any]) -> None:
@@ -322,12 +325,13 @@ class _Semantic:
         self._annotations(output.get("annotations"))
         count = output.get("count")
         if isinstance(count, Mapping):
-            low, high, limit = count.get("min"), count.get("max"), self.context.max_assets
-            if isinstance(low, int) and isinstance(high, int) and low > high:
+            # The schema accepts an integral float (3.0) as an integer, so the meaning is checked on that too.
+            low, high, limit = _whole(count.get("min")), _whole(count.get("max")), self.context.max_assets
+            if low is not None and high is not None and low > high:
                 self.errors.add(at + ("count",), "count_invalid", "count min is above count max")
             for bound in ("min", "max"):
-                value = count.get(bound)
-                if isinstance(value, int) and value > limit:
+                value = _whole(count.get(bound))
+                if value is not None and value > limit:
                     self.errors.add(at + ("count", bound), "count_over_limit", f"count {bound} is above the deployment limit of {limit}")
         schema = output.get("schema")
         if isinstance(schema, Mapping):
@@ -336,10 +340,59 @@ class _Semantic:
                 self.errors.add(at + ("schema",), "asset_in_result_schema", "a result schema describes data, not media")
 
 
+_LATTICE_LOOKS = 4096
+
+
+def _generates_a_value(spec: Mapping[str, Any], low: Any, high: Any) -> bool:
+    """True when some integer in ``low..high`` is also a value the input accepts (its enum, its step and offset). When the
+    answer is not found in a bounded search of a long grid, it is taken as yes: only a proven empty domain is refused."""
+    if low > high:
+        return False
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (low, high)):
+        return True
+    first, last = math.ceil(low), math.floor(high)
+    if first > last:
+        return False
+
+    def fits(n: int) -> bool:
+        return validate_input_value("value", n, spec) is None
+
+    enum = spec.get("enum")
+    if isinstance(enum, list):
+        return any(isinstance(v, int) and not isinstance(v, bool) and first <= v <= last and fits(v) for v in enum)
+    step = spec.get("step")
+    if not isinstance(step, (int, float)) or isinstance(step, bool) or step <= 0:
+        return True
+    offset = spec.get("offset", 0)
+    if not isinstance(offset, (int, float)) or isinstance(offset, bool) or not math.isfinite(offset):
+        return True
+    start, end = math.ceil((first - offset) / step), math.floor((last - offset) / step)
+    if start > end:
+        return False
+    for k in range(start, min(end, start + _LATTICE_LOOKS) + 1):
+        point = offset + k * step
+        if point == round(point) and first <= round(point) <= last and fits(round(point)):
+            return True
+    return end - start >= _LATTICE_LOOKS
+
+
+def _whole(value: Any) -> int | None:
+    """The integer a JSON Schema integer is: an int, or a float with no fraction. Anything else is not one."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    return None
+
+
 def _holds_asset(spec: Mapping[str, Any]) -> bool:
     if spec.get("type") == "asset":
         return True
-    children = list((spec.get("properties") or {}).values()) + [spec.get("items")]
+    # A broken document is checked too, so a subtree of the wrong shape is skipped here; the schema layer reports it.
+    properties = spec.get("properties")
+    children = (list(properties.values()) if isinstance(properties, Mapping) else []) + [spec.get("items")]
     return any(isinstance(child, Mapping) and _holds_asset(child) for child in children)
 
 

@@ -61,13 +61,14 @@ class ContractErrors(ManifestError):
     final ``too_many_errors`` entry. ``primary`` is the error the check found first, in the order of its checks; the
     message of the exception, and so its ``str()``, is the message of ``primary``."""
 
-    def __init__(self, errors: Iterable[ContractError], primary: ContractError | None = None) -> None:
+    def __init__(self, errors: Iterable[ContractError], primary: ContractError | None = None, *, final: bool = False) -> None:
+        """``final`` says the list is already sorted and capped (a report's): it is kept as it is."""
         found = list(errors)
         if not found:
             raise ValueError("ContractErrors needs at least one error")
         self.primary = primary if primary is not None else found[0]
-        ordered = sorted(found, key=_sort_key)
-        if len(ordered) > MAX_CONTRACT_ERRORS:
+        ordered = found if final else sorted(found, key=_sort_key)
+        if len(ordered) > MAX_CONTRACT_ERRORS and not final:
             dropped = len(ordered) - MAX_CONTRACT_ERRORS
             ordered = ordered[:MAX_CONTRACT_ERRORS]
             ordered.append(ContractError((), TOO_MANY_ERRORS, f"{dropped} more errors are not listed"))
@@ -181,9 +182,12 @@ def load_workflow_manifest(path: str | Path) -> dict[str, Any]:
         raise ManifestError(f"manifest {manifest_path} must be a mapping")
     validate_manifest(manifest)
     # Report only (CODE_TO_DATA_S3, S3.2): the schema 2 check is logged, nothing is refused. S3.5 makes it the check.
-    from gateway.workflow_convert import log_bundled_report
+    try:
+        from gateway.workflow_convert import log_bundled_report
 
-    log_bundled_report(manifest, manifest_path)
+        log_bundled_report(manifest, manifest_path)
+    except Exception:  # an optional report, even its import or its logging, never stops a load
+        pass
     return manifest
 
 

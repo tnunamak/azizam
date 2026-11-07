@@ -11,12 +11,14 @@ is valid; ``check_contract`` does. A document it cannot improve passes through u
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from gateway.manifests import MEDIA_INPUT_TYPES
-from gateway.workflow_contract import check_contract
+from gateway.manifests import MEDIA_INPUT_TYPES, ContractError
+from gateway.workflow_contract import CONTRACT_VERSION, Report, check_contract, report_from
 
 log = logging.getLogger(__name__)
 
@@ -102,15 +104,46 @@ def _convert_input(at: tuple[str, ...], spec: dict[str, Any], note: Any) -> None
         note(at + ("opaque",), "add", "an object with no declared properties is opaque")
 
 
+CONFLICT = "conflict"
+
+
+def _flat_kind(out: Mapping[str, Any], block: Any) -> str | None:
+    """The key a binding with a transport block flattens to, or None when it is not flattened."""
+    transport = block.get("transport") if isinstance(block, dict) else None
+    if isinstance(transport, dict) and isinstance(transport.get("kind"), str) and transport["kind"] not in out["bindings"]:
+        return transport["kind"]
+    return None
+
+
+def conversion_errors(notes: list[ConversionNote]) -> list[ContractError]:
+    """The edits the converter refused to make. The checker cannot see them (a binding is opaque to it), so they are errors."""
+    return [ContractError(note.path, "conversion_conflict", note.reason) for note in notes if note.operation == CONFLICT]
+
+
+def convert_and_check(doc: Mapping[str, Any]) -> tuple[dict[str, Any], list[ConversionNote], Report]:
+    """Convert a document, check the result, and add the conversion conflicts to the report."""
+    converted, notes = convert_1_to_2(doc)
+    report = check_contract(converted)
+    extra = conversion_errors(notes)
+    if extra:
+        report = report_from([*report.errors, *extra])
+    return converted, notes, report
+
+
 def _convert_bindings(out: dict[str, Any], note: Any) -> tuple[dict[str, Any], set[str]]:
     """The new bindings, and the keys of those that had a transport block (a form POST to a service)."""
     bindings: dict[str, Any] = {}
     flattened: set[str] = set()
+    kinds = [_flat_kind(out, block) for block in out["bindings"].values()]
+    clashing = {kind for kind in kinds if kind is not None and kinds.count(kind) > 1}
     for key, block in out["bindings"].items():
-        transport = block.get("transport") if isinstance(block, dict) else None
-        if isinstance(transport, dict) and isinstance(transport.get("kind"), str) and transport["kind"] not in out["bindings"]:
+        kind = _flat_kind(out, block)
+        if kind in clashing:
+            # Two bindings would flatten to one key and one would be lost. Both stay as written, and the note says so.
+            note(("bindings", key), CONFLICT, f"another binding also flattens to {kind}; both stay unconverted")
+        elif kind is not None:
+            transport = block["transport"]
             block = {name: value for name, value in block.items() if name != "transport"}
-            kind = transport["kind"]
             block["service"] = key
             block.update({name: value for name, value in transport.items() if name != "kind"})
             note(("bindings", kind), "rename", "the key names the adapter; the engine is a service reference")
@@ -148,20 +181,43 @@ def _generate_seeds(out: dict[str, Any], flattened: set[str], note: Any) -> None
 # ------------------------------------------------------------------------------------------------ report-only check
 
 MAX_LOGGED_ERRORS = 10
+_REPORTED: set[tuple[str, int]] = set()
+_REPORTED_LIMIT = 4096
+
+
+def forget_reported() -> None:
+    """Forget which documents were reported (a test wants a fresh report)."""
+    _REPORTED.clear()
+
+
+def _first_report(manifest: Mapping[str, Any]) -> bool:
+    """True once per (document digest, contract version) for the process; the later loads skip the work."""
+    digest = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
+    key = (digest, CONTRACT_VERSION)
+    if key in _REPORTED:
+        return False
+    if len(_REPORTED) >= _REPORTED_LIMIT:
+        _REPORTED.clear()
+    _REPORTED.add(key)
+    return True
 
 
 def log_bundled_report(manifest: Mapping[str, Any], source: object = None) -> None:
-    """Convert a loaded v1 document, check it as v2 and log the report. Nothing is refused and nothing is raised."""
+    """Convert a loaded v1 document, check it as v2 and log the report once. Nothing is refused and nothing is raised,
+    not even by a logging handler."""
     try:
-        converted, _notes = convert_1_to_2(manifest)
-        report = check_contract(converted)
+        if not _first_report(manifest):
+            return
+        _, _, report = convert_and_check(manifest)
+        name = manifest.get("id") or source
+        if report.ok:
+            log.debug("workflow %s: no schema 2 contract errors", name)
+            return
+        log.warning("workflow %s: %d schema 2 contract errors (report only)", name, len(report.errors))
+        for error in report.errors[:MAX_LOGGED_ERRORS]:
+            log.warning("workflow %s: %s %s: %s", name, error.pointer or "/", error.code, error.message)
     except Exception:  # the report must never stop a load
-        log.exception("workflow contract report failed for %s", source or manifest.get("id"))
-        return
-    name = manifest.get("id") or source
-    if report.ok:
-        log.debug("workflow %s: no schema 2 contract errors", name)
-        return
-    log.warning("workflow %s: %d schema 2 contract errors (report only)", name, len(report.errors))
-    for error in report.errors[:MAX_LOGGED_ERRORS]:
-        log.warning("workflow %s: %s %s: %s", name, error.pointer or "/", error.code, error.message)
+        try:
+            log.exception("workflow contract report failed for %s", source)
+        except Exception:  # the handler that failed may be the one that logs this
+            pass

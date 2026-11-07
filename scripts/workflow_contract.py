@@ -22,8 +22,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from gateway.workflow_contract import check_contract  # noqa: E402
-from gateway.workflow_convert import convert_1_to_2  # noqa: E402
+from gateway.workflow_convert import convert_1_to_2, convert_and_check  # noqa: E402
 
 
 def _files(paths: list[str]) -> list[Path]:
@@ -50,8 +49,7 @@ def run_check(paths: list[str], as_json: bool) -> int:
         except (OSError, ValueError, yaml.YAMLError) as error:
             print(f"{path}: cannot read: {error}", file=sys.stderr)
             return 2
-        converted, notes = convert_1_to_2(document)
-        report = check_contract(converted)
+        converted, notes, report = convert_and_check(document)
         results.append({"file": str(path), "converted": bool(notes), "errors": report.as_list()})
         if not report.ok:
             status = 1
