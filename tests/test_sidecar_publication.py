@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def write_registry(path, model="model-a"):
     registry = {"services": {"local": {
         "id": "local", "kind": "llm", "capabilities": ["openai"],
-        "config": {"base_url": "http://127.0.0.1:9999/v1", "models": [model]},
+        "config": {"base_url": "http://127.0.0.1:9999/v1", "models": [{"id": model}]},
     }}}
     with sqlite3.connect(path) as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS operator_settings (key TEXT PRIMARY KEY, value_json TEXT)")
@@ -52,7 +52,7 @@ def test_sidecar_resolves_yaml_admin_db_like_gateway(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("failure", [
     "missing-db", "missing-table", "missing-row", "invalid-json",
-    "invalid-shape", "empty-document", "invalid-services", "unreadable",
+    "invalid-shape", "unreadable",
 ])
 def test_unavailable_registry_preserves_artifact(tmp_path, monkeypatch, failure):
     db = tmp_path / "admin.db"
@@ -63,7 +63,7 @@ def test_unavailable_registry_preserves_artifact(tmp_path, monkeypatch, failure)
             if failure != "missing-table":
                 conn.execute("CREATE TABLE operator_settings (key TEXT PRIMARY KEY, value_json TEXT)")
                 if failure != "missing-row":
-                    payload = {"invalid-json": "{", "empty-document": "{}", "invalid-services": '{"services": null}'}.get(failure, "[]")
+                    payload = {"invalid-json": "{"}.get(failure, "[]")
                     conn.execute("INSERT INTO operator_settings VALUES ('service_registry', ?)",
                                  (payload,))
     artifact = tmp_path / "selected.yaml"
@@ -75,6 +75,28 @@ def test_unavailable_registry_preserves_artifact(tmp_path, monkeypatch, failure)
     assert artifact.read_bytes() == original
     if failure == "missing-db":
         assert not db.exists()
+
+
+@pytest.mark.parametrize("stored", ["{}", '{"services": null}'], ids=["empty-document", "no-services"])
+def test_stored_document_without_owner_services_publishes_the_release_records(tmp_path, monkeypatch, stored):
+    """A stored row with no owner services means the owner changed nothing: the gateway reads the release records,
+    so the sidecar must publish them too, not refuse and keep serving a stale artifact."""
+    from gateway.litellm_substrate import compile_litellm_config_from_registry
+    from gateway.service_registry import release_registry
+
+    db = tmp_path / "admin.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE operator_settings (key TEXT PRIMARY KEY, value_json TEXT)")
+        conn.execute("INSERT INTO operator_settings VALUES ('service_registry', ?)", (stored,))
+    artifact = tmp_path / "selected.yaml"
+    artifact.write_bytes(b"model_list:\n- model_name: retained\n")
+    stop_exec(monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        provider_sidecar.main(["run", "--db", str(db), "--config", str(artifact), "--", "litellm"])
+    assert exc.value.code == 23
+    assert "retained" not in artifact.read_text()
+    published = yaml.safe_load(artifact.read_text())
+    assert published["model_list"] == compile_litellm_config_from_registry(release_registry())["model_list"]
 
 
 @pytest.mark.parametrize("journal_mode", ["delete", "wal"])
@@ -98,7 +120,7 @@ def test_registry_writer_cannot_commit_between_sidecar_snapshot_and_publish(tmp_
             else:
                 # Original race: B commits and publishes before sidecar writes A.
                 snapshot_b = {"services": {"local": {"id": "local", "kind": "llm", "capabilities": ["openai"],
-                    "config": {"base_url": "http://127.0.0.1:9999/v1", "models": ["model-b"]}}}}
+                    "config": {"base_url": "http://127.0.0.1:9999/v1", "models": [{"id": "model-b"}]}}}}
                 writer.execute("UPDATE operator_settings SET value_json=?", (json.dumps(snapshot_b),))
                 writer.commit()
                 provider_sidecar.write_litellm_config_artifact(snapshot_b, base_dir=tmp_path, path=artifact)
