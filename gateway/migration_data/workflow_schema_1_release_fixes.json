@@ -1,0 +1,11 @@
+{
+  "captured_from": "Defect fixes S3.5a made to bundled files while it rewrote them to schema 2 (named in scripts/workflow_equality_allowed.yml). Per workflow id: the paths it removed from the schema 1 release document. The migration removes a path from a stored record only where the record still holds the frozen release value there.",
+  "fixes": {
+    "audio.generate.ace-step-1.5-xl-turbo": {
+      "remove": [
+        ["inputs", "prompt"],
+        ["bindings", "comfyui", "map", "prompt"]
+      ]
+    }
+  }
+}

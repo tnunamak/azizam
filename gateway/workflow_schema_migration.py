@@ -41,8 +41,9 @@ from gateway import registry_layers as layers
 from gateway import service_registry
 from gateway.workflow_convert import POLICY_KEYS, convert_and_check
 
-STEP = "workflow-schema-2"
+STEP = service_registry.WORKFLOW_SCHEMA_2_STEP
 FROZEN_RELEASE_PATH = Path(__file__).resolve().parent / "migration_data" / "workflow_schema_1_release.json"
+FROZEN_FIXES_PATH = Path(__file__).resolve().parent / "migration_data" / "workflow_schema_1_release_fixes.json"
 MAX_STORED_ERRORS = 20
 
 CONVERT_WHOLE = "convert-whole"
@@ -70,6 +71,35 @@ def frozen_release_records() -> dict[str, dict[str, Any]]:
     """The schema 1 release records by id, in the shape of a release record (``id`` and ``manifest``). A fresh copy."""
     return {record_id: {"id": record_id, "manifest": copy.deepcopy(document)}
             for record_id, document in _frozen_documents().items()}
+
+
+@lru_cache(maxsize=1)
+def _frozen_fixes() -> dict[str, list[list[str]]]:
+    document = json.loads(FROZEN_FIXES_PATH.read_text(encoding="utf-8"))["fixes"]
+    return {record_id: [list(path) for path in fix["remove"]] for record_id, fix in document.items()}
+
+
+def _at(document: Any, path: list[str]) -> Any:
+    """The value of ``document`` at ``path`` (keys of nested objects), or ``_OMIT`` where there is none."""
+    for key in path:
+        if not isinstance(document, Mapping) or key not in document:
+            return _OMIT
+        document = document[key]
+    return document
+
+
+def apply_release_fixes(record_id: str, manifest: dict[str, Any]) -> None:
+    """Remove from a schema 1 ``manifest`` what S3.5a's defect fixes removed from the release document of ``record_id``.
+
+    The paths are data (``workflow_schema_1_release_fixes.json``). The paths go only if the record still holds the frozen
+    release value at every one: an owner who changed one keeps all, and the record then fails the checks as it would have."""
+    frozen = _frozen_documents().get(record_id)
+    paths = _frozen_fixes().get(record_id, ()) if frozen is not None else ()
+    # The fix is one change: if the owner edited any part of it, none is made, and the record fails the checks as it was.
+    if not paths or any(_at(frozen, path) is _OMIT or _at(manifest, path) != _at(frozen, path) for path in paths):
+        return
+    for path in paths:
+        del _at(manifest, path[:-1])[path[-1]]
 
 
 # -- one record --------------------------------------------------------------------------------------------------------
@@ -115,6 +145,7 @@ def _convert_record(record_id: str, entry: Mapping[str, Any]) -> tuple[dict[str,
 
     The third value names the fields the conversion changed (manifest keys, and ``policy``)."""
     manifest, beside = _split(entry)
+    apply_release_fixes(record_id, manifest)
     facts = v1_effective_facts(manifest)
     stated = {key: manifest.pop(key) for key in POLICY_KEYS if key in manifest}  # a v2 document holds none of these
     converted, notes, report = convert_and_check(manifest)

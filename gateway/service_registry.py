@@ -40,7 +40,7 @@ from gateway.capabilities import Capability, ResourceEstimate, summarize_capabil
 from gateway.capability_ids import MODEL_KIND_LABELS, capabilities_without_inner_endpoint, offered_model_kinds
 from gateway.discovery import WorkflowRecord, bundled_workflow_manifests, summarize_workflow
 from gateway.manifests import Provenance, enforce_contract, manifest_identity
-from gateway.workflow_policy import FACT_NAMES, facts_from_mapping, release_facts
+from gateway.workflow_policy import FACT_NAMES, NEEDS_CONFIGURATION_CODE, facts_from_mapping, release_facts
 from gateway.transition_gate import ServicePaths, domain_violations
 from gateway import transition_profiles
 
@@ -294,6 +294,22 @@ class ExcludedRecord:
         return self.id if self.section == "services" else f"{kind}:{self.id}"
 
 
+WORKFLOW_SCHEMA_2_STEP = "workflow-schema-2"
+
+
+def _left_by_workflow_migration(raw: Any) -> list[str] | None:
+    """The error codes of a stored workflow record the schema 2 migration marked (stored disabled, with a ``migration``
+    block that names the step), or ``None`` for any other record. The codes only: the stored messages may quote a value."""
+    if not isinstance(raw, Mapping) or raw.get("enabled") is not False:
+        return None
+    block = raw.get("migration")
+    if not isinstance(block, Mapping) or block.get("step") != WORKFLOW_SCHEMA_2_STEP:
+        return None
+    errors = block.get("errors")
+    codes = [str(item.get("code")) for item in errors if isinstance(item, Mapping) and item.get("code")] if isinstance(errors, list) else []
+    return list(dict.fromkeys(codes))[:5]
+
+
 def read_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], list[ExcludedRecord]]:
     """The records of a stored registry that validate, and each one that does not, with why.
 
@@ -427,6 +443,14 @@ def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str,
                 if key in kept:
                     raise ValueError(f"{kind} {key!r} is defined twice")
             except Exception as error:  # noqa: BLE001 - one record's refusal never decides the others
+                codes = _left_by_workflow_migration(raw) if section == "workflows" else None
+                if codes is not None:
+                    # The migration kept a record it could not convert, disabled, so the owner can fix it. It is not an
+                    # error of the read, even a strict one: it is left out of the registry and listed as needing configuration.
+                    message = (f"{NEEDS_CONFIGURATION_CODE}: the schema 2 migration could not convert this workflow "
+                               f"({', '.join(codes) or 'no reason stored'}); it stays disabled until you save a schema 2 document for it.")
+                    excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message, copy.deepcopy(raw)))
+                    continue
                 if strict:
                     raise
                 message = str(error) if isinstance(error, ValueError) else f"{type(error).__name__}: {error}"
@@ -2471,6 +2495,7 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
                 "enabled",
                 "identity",
                 "manifest_hash",
+                "migration",
                 "overrides",
                 "policy",
                 "provenance",

@@ -786,3 +786,155 @@ def test_a_failing_proof_refresh_rolls_back_the_registry_write_with_it(tmp_path,
         migration.ensure(path=db, actor="test")
     assert _row(db) == registry_before and _read_index(db) == index_before
     assert not admin_store.migration_step_recorded(migration.STEP, path=db) and _audit(db) == []
+
+
+# -- integration: the release's named defect fix, the marked record, the policy facts --------------------------------------
+
+ACE_ID = "audio.generate.ace-step-1.5-xl-turbo"
+
+
+def _ace_release() -> tuple[dict, dict]:
+    """The real release (schema 2) record of the ACE workflow, and its frozen schema 1 record."""
+    from gateway.discovery import bundled_workflow_manifests
+    from gateway.workflow_policy import release_facts
+
+    facts = release_facts(ACE_ID)
+    record = service_registry.normalize_workflow_record(ACE_ID, {
+        "id": ACE_ID, "source": "builtin", "manifest": bundled_workflow_manifests()[ACE_ID],
+        "policy": {name: list(getattr(facts, name)) if name == "tags" else getattr(facts, name) for name in facts.__dataclass_fields__}})
+    return {"workflows": {ACE_ID: record}}, {ACE_ID: migration.frozen_release_records()[ACE_ID]}
+
+
+def test_every_frozen_release_document_converts_to_the_bundled_schema_2_file():
+    from gateway.discovery import bundled_workflow_manifests
+
+    bundled = bundled_workflow_manifests()
+    frozen = migration.frozen_release_records()
+    assert set(frozen) <= set(bundled)
+    for record_id, record in frozen.items():
+        plan = _plan({record_id: _owner_record(record_id, record["manifest"])})
+        assert _rows(plan)[record_id].action == migration.CONVERT_WHOLE, record_id
+        assert plan.stored["workflows"][record_id]["manifest"] == bundled[record_id], record_id
+
+
+def test_the_ace_fix_is_data_and_removes_only_a_value_the_record_still_holds_from_the_release():
+    fixes = json.loads(migration.FROZEN_FIXES_PATH.read_text(encoding="utf-8"))["fixes"]
+    assert ACE_ID in fixes
+    document = _v1(ACE_ID)
+    migration.apply_release_fixes(ACE_ID, document)
+    assert "prompt" not in document["inputs"] and "prompt" not in document["bindings"]["comfyui"]["map"]
+    untouched = _v1(PLAIN_ID)
+    migration.apply_release_fixes(PLAIN_ID, untouched)
+    assert untouched == _v1(PLAIN_ID)
+
+
+def test_an_owner_patch_over_ace_on_another_input_converts():
+    release, v1_release = _ace_release()
+    entry = {"manifest": {"inputs": {"bpm": {"default": 120}}}}
+    plan = _plan({ACE_ID: entry}, release, v1_release=v1_release)
+    assert _rows(plan)[ACE_ID].action == migration.CONVERT_PATCH
+    effective = layers.layer(plan.stored, release)["workflows"][ACE_ID]
+    assert effective["manifest"]["inputs"]["bpm"]["default"] == 120
+    assert "prompt" not in effective["manifest"]["inputs"]
+
+
+def test_an_owner_who_edited_the_ace_prompt_cannot_convert():
+    release, v1_release = _ace_release()
+    patch = {"manifest": {"inputs": {"prompt": {"default": "mine"}}}}
+    plan = _plan({ACE_ID: patch}, release, v1_release=v1_release)
+    assert _rows(plan)[ACE_ID].action == migration.CANNOT_CONVERT
+    assert plan.stored["workflows"][ACE_ID]["enabled"] is False
+    whole = _v1(ACE_ID)
+    whole["inputs"]["prompt"]["label"] = "mine"
+    plan = _plan({ACE_ID: _owner_record(ACE_ID, whole)})
+    assert _rows(plan)[ACE_ID].action == migration.CANNOT_CONVERT
+
+
+# -- a record the migration marked does not abort the start ---------------------------------------------------------------
+
+
+def _marked_db(tmp_path) -> Path:
+    bad = _with_stated_capability()
+    bad["inputs"]["x"] = {"type": []}
+    db = _db_with(tmp_path, {"owner.bad": _owner_record("owner.bad", bad), "owner.fine": _owner_record("owner.fine", _v1())})
+    service_registry.ensure_service_registry(path=db, actor="test")
+    return db
+
+
+def test_a_marked_record_is_listed_as_needing_configuration_and_never_served(tmp_path):
+    db = _marked_db(tmp_path)
+    stored_before = json.loads(_row(db)[0])["workflows"]["owner.bad"]
+    assert stored_before["manifest"]["schema_version"] == 1 and stored_before["migration"]["step"] == migration.STEP
+    registry = service_registry.ensure_service_registry(path=db, actor="test")  # a second start reads it again
+    assert "owner.bad" not in registry["workflows"] and "owner.fine" in registry["workflows"]
+    assert "owner.bad" not in [r.id for r in service_registry.workflow_records_from_registry(registry)]
+    excluded = service_registry.load_service_registry_exclusions(path=db)
+    (item,) = [e for e in excluded if e.id == "owner.bad"]
+    assert item.section == "workflows" and item.error.startswith("needs_configuration")
+    assert item.record["migration"] == stored_before["migration"]
+    assert json.loads(_row(db)[0])["workflows"]["owner.bad"] == stored_before
+
+
+def test_a_marked_record_keeps_its_block_through_a_normal_write(tmp_path):
+    from gateway import admin_runtime
+
+    db = _marked_db(tmp_path)
+    stored_before = json.loads(_row(db)[0])["workflows"]["owner.bad"]
+    store = admin_runtime.AdminSQLiteStore(db)
+    value = store.get_service_registry()
+    document, kept = store._with_excluded_records(value)
+    assert [item.id for item in kept] == ["owner.bad"]
+    assert document["workflows"]["owner.bad"] == stored_before
+
+
+def test_an_owner_save_of_a_valid_schema_2_manifest_clears_the_block(tmp_path):
+    db = _marked_db(tmp_path)
+    fine = json.loads(_row(db)[0])["workflows"]["owner.fine"]
+    fixed = {**copy.deepcopy(fine), "id": "owner.bad", "enabled": True, "manifest": {**copy.deepcopy(fine["manifest"]), "id": "owner.bad"}}
+    registry = json.loads(_row(db)[0])
+    registry["workflows"]["owner.bad"] = fixed
+    value = service_registry.normalize_service_registry(registry)
+    assert "migration" not in value["workflows"]["owner.bad"] and value["workflows"]["owner.bad"]["enabled"] is True
+    assert "owner.bad" in [r.id for r in service_registry.workflow_records_from_registry(value)]
+    assert not [e for e in service_registry.read_registry(registry)[1] if e.id == "owner.bad"]
+
+
+def test_a_record_that_fails_the_contract_without_the_mark_still_fails_the_strict_read():
+    registry = _stored({"owner.bad": _owner_record("owner.bad", _v1(schema_version=1))})
+    with pytest.raises(ValueError):
+        service_registry.normalize_service_registry(registry)
+    marked = _owner_record("owner.bad", _v1(schema_version=1), migration={"step": "another-step", "errors": []}, enabled=False)
+    with pytest.raises(ValueError):
+        service_registry.normalize_service_registry(_stored({"owner.bad": marked}))
+    marked["migration"]["step"] = migration.STEP
+    marked["enabled"] = True  # a mark on an enabled record is not the migration's
+    with pytest.raises(ValueError):
+        service_registry.normalize_service_registry(_stored({"owner.bad": marked}))
+
+
+# -- the policy facts survive the migration -------------------------------------------------------------------------------
+
+
+def test_policy_facts_that_differ_from_the_defaults_survive_ensure_a_readback_and_a_write_cycle(tmp_path):
+    facts = {"exposure": "hidden", "trust_tier": "stable", "resource_tier": "heavy", "tags": ["mine"]}
+    release, _ = _release_with(TRUSTED_ID)
+    release_facts = dict(release["workflows"][TRUSTED_ID]["policy"])
+    assert release_facts != facts
+    owner = _owner_record("owner.flux", _v1(**facts))
+    patch = {"manifest": {"exposure": "hidden", "resource_tier": "heavy", "tags": ["mine"], "trust_tier": "stable"}}
+    db = _db_with(tmp_path, {"owner.flux": owner})
+    migrated = migration.ensure(path=db, actor="test", release={"workflows": {}})
+    assert migrated["workflows"]["owner.flux"]["policy"] == facts
+    stored = json.loads(_row(db)[0])["workflows"]["owner.flux"]
+    assert stored["policy"] == facts
+    reread = service_registry.normalize_workflow_record("owner.flux", stored)
+    assert reread["policy"] == facts
+    rewritten = service_registry.normalize_workflow_record("owner.flux", {k: v for k, v in reread.items() if k not in ("identity", "summary")})
+    assert rewritten["policy"] == facts
+    # a patch over a release record whose stated facts differ from the release's
+    v1_release = {TRUSTED_ID: migration.frozen_release_records()[TRUSTED_ID]}
+    plan = _plan({TRUSTED_ID: patch}, release, v1_release=v1_release)
+    effective = layers.layer(plan.stored, release)["workflows"][TRUSTED_ID]
+    assert effective["policy"] == facts
+    again = service_registry.normalize_workflow_record(TRUSTED_ID, {k: v for k, v in effective.items() if k not in ("identity", "summary")})
+    assert again["policy"] == facts
