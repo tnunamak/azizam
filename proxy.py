@@ -14862,7 +14862,7 @@ def _gateway_catalog_finish(
     capabilities = [*base, *remote]
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
-        if record.id == MESH_MANIFEST.id:
+        if record.id == _MESH_WORKFLOW_ID:
             continue  # The mesh route's manifest lists once, with the route's own facts (_mesh_facts, below).
         for backend in record.supported_backends:
             try:
@@ -16399,11 +16399,27 @@ _MESH_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "workflows
 _MESH_WORKFLOW_ID = str(yaml.safe_load(_MESH_MANIFEST_PATH.read_text(encoding="utf-8"))["id"])
 # The live registry may hold no mesh record (the owner turned an override off, or it is left out): the route then answers
 # unavailable (``MESH_DEPS.workflow_available``). Its identity for the catalog and receipts then comes from the bundled file.
-_MESH_RECORD = (GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID)
-                or WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR).get(_MESH_WORKFLOW_ID))
-if _MESH_RECORD is None:
+_BUNDLED_MESH_RECORD = WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR).get(_MESH_WORKFLOW_ID)
+if _BUNDLED_MESH_RECORD is None:
     raise mesh_manifest.MeshManifestError(f"workflow {_MESH_WORKFLOW_ID} is not bundled")
-MESH_MANIFEST = mesh_api.mesh_workflow_from_record(_MESH_RECORD)
+# The last record converted, with the record it came from. A listing or request that meets the same record object again
+# reuses the conversion; an adopted change brings a new record object and converts once.
+_mesh_workflow_cache: tuple[Any, Any] | None = None
+
+
+def current_mesh_workflow() -> "mesh_api.MeshWorkflow":
+    """The mesh workflow for the registry's record now, else for the bundled record. Called on every request and listing
+    (never captured at import), so a record the owner changes is used by the next one."""
+    global _mesh_workflow_cache
+    record = GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) or _BUNDLED_MESH_RECORD
+    cached = _mesh_workflow_cache
+    if cached is not None and cached[0] is record:
+        return cached[1]
+    workflow = mesh_api.mesh_workflow_from_record(record)
+    _mesh_workflow_cache = (record, workflow)
+    return workflow
+
+
 MESH_LEASES = exclusive_pool.ExclusivePoolLeaseManager()
 
 
@@ -16414,26 +16430,30 @@ def _live_service_registry() -> dict | None:
         return None
 
 
-def _mesh_open_receipt(auth: AuthContext, request_id: str, path: str) -> ReceiptLifecycleOwner:
+def _mesh_open_receipt(
+    auth: AuthContext, request_id: str, path: str, manifest: mesh_api.MeshWorkflow,
+) -> ReceiptLifecycleOwner:
+    """The receipt of one mesh request, naming the record that request read (not a newer one adopted since)."""
     identity = auth.identity
     receipt = RouteReceipt(
         protocol="openai.mesh", intent=mesh_api.MESH_INTENT, path=path, request_id=request_id,
         app_profile=plan_ref(identity),
         app_id=identity.app_id if identity else None,
         api_key_name=identity.name if identity else None,
-        backend=MESH_MANIFEST.service_id, resolved_workflow=MESH_MANIFEST.id,
-        manifest_id=MESH_MANIFEST.id, manifest_version=MESH_MANIFEST.version,
-        manifest_hash=MESH_MANIFEST.manifest_hash,
+        backend=manifest.service_id, resolved_workflow=manifest.id,
+        manifest_id=manifest.id, manifest_version=manifest.version,
+        manifest_hash=manifest.manifest_hash,
     )
     return ReceiptLifecycleOwner(receipt)
 
 
-def _mesh_route_policy(auth: AuthContext, row: Mapping[str, Any]) -> PolicyDecision:
-    """The same plan evaluation the other Try workflows run, from the route's own frontend tiers. Reads no receipt."""
+def _mesh_route_policy(auth: AuthContext, row: Mapping[str, Any], manifest: mesh_api.MeshWorkflow) -> PolicyDecision:
+    """The same plan evaluation the other Try workflows run, from the route's own frontend tiers and the record the
+    request read. Reads no receipt."""
     tiers = row["runtime_policy"]
     return evaluate_and_apply(auth.identity, make_policy_request(
-        protocol=mesh_api.MESH_PROTOCOL, intent=mesh_api.MESH_INTENT, workflow=MESH_MANIFEST.id,
-        backend=MESH_MANIFEST.service_id,
+        protocol=mesh_api.MESH_PROTOCOL, intent=mesh_api.MESH_INTENT, workflow=manifest.id,
+        backend=manifest.service_id,
         capability_exposure=tiers["capability_exposure"],
         capability_trust_tier=tiers["capability_trust_tier"],
         capability_resource_tier=tiers["capability_resource_tier"],
@@ -16489,7 +16509,7 @@ def _upload_as_output_input(upload: Any, data: bytes) -> asset_types.OutputInput
 
 
 MESH_DEPS = mesh_api.MeshApiDeps(
-    manifest=MESH_MANIFEST,
+    current_manifest=current_mesh_workflow,
     workflow_available=lambda: GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) is not None,
     authenticate=lambda request, path: authenticate_request(request, path),
     frontend_records=lambda: route_registry.protocol_frontend_records(
@@ -16515,7 +16535,7 @@ FRONTEND_TRANSLATORS.register_owned("mesh", lambda app: mesh_api.register_mesh_r
 
 def _mesh_facts(live_registry: Mapping[str, Any] | None) -> Capability:
     """The mesh row's facts, read from the same registry snapshot as the catalog around it (the route's own tiers)."""
-    return mesh_api.discovery_facts(MESH_MANIFEST, route_registry.protocol_frontend_records(
+    return mesh_api.discovery_facts(current_mesh_workflow(), route_registry.protocol_frontend_records(
         registry=live_registry, proxy_config=config))
 
 

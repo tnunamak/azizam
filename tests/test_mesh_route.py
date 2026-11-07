@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import dataclasses
 import inspect
 import json
 from pathlib import Path
@@ -106,6 +107,10 @@ class Harness:
         self.events: list[str] = []
         # Route policy for the caller: None allows; a callable returns a decision-like object to deny.
         self.route_policy: Any = None
+        self.receipt_manifests: list[Any] = []
+        self.policy_manifests: list[Any] = []
+        # The route's current record; a test may swap it mid-request to show the request keeps the one it read.
+        self.current_manifest: Any = lambda: MANIFEST
         # store_output(auth, output) for the library; None stores nothing.
         self.store_output: Any = None
         # The media-job store for ``Prefer: respond-async``; None leaves the async form off.
@@ -127,7 +132,8 @@ class Harness:
                 return JSONResponse({"error": {"message": "Missing or invalid API key.", "code": "unauthorized"}}, status_code=401)
             return _Auth()
 
-        def open_receipt(auth: Any, rid: str, path: str) -> Owner:
+        def open_receipt(auth: Any, rid: str, path: str, manifest: Any) -> Owner:
+            self.receipt_manifests.append(manifest)
             return Owner(self.receipts, rid)
 
         def new_request_id() -> str:
@@ -145,7 +151,7 @@ class Harness:
             )
 
         return MeshApiDeps(
-            manifest=MANIFEST,
+            current_manifest=lambda: self.current_manifest(),
             authenticate=authenticate,
             frontend_records=lambda: self.frontends,
             services=lambda: self.services,
@@ -153,7 +159,8 @@ class Harness:
             leases=self.leases,
             client_factory=lambda: httpx.AsyncClient(transport=_Upstream(self.handler, self.hook)),
             new_request_id=new_request_id,
-            route_policy=lambda auth, row: self.route_policy(auth) if self.route_policy else None,
+            route_policy=lambda auth, row, manifest: (
+                self.policy_manifests.append(manifest) or (self.route_policy(auth) if self.route_policy else None)),
             store_output=self.store_output,
             jobs=jobs,
             register_job_counter=self.register_job_counter,
@@ -747,3 +754,34 @@ def test_route_policy_allow_keeps_the_success_path() -> None:
 
     assert response.status_code == 200
     assert response.content == GLB
+
+
+def test_one_request_reads_the_route_record_once_and_its_policy_and_receipt_name_that_record() -> None:
+    harness = Harness()
+    later = dataclasses.replace(MANIFEST, version="adopted-mid-request")
+    reads: list[Any] = []
+
+    def current() -> Any:
+        reads.append(None)
+        return MANIFEST if len(reads) == 1 else later  # a refresh lands after the request's first read
+
+    harness.current_manifest = current
+    response = _post(_client(harness), **_multipart())
+
+    assert response.status_code == 200
+    assert len(reads) == 1
+    assert harness.policy_manifests == [MANIFEST]
+    assert harness.receipt_manifests == [MANIFEST]
+
+
+def test_one_app_serves_a_record_adopted_after_it_was_built() -> None:
+    harness = Harness()
+    later = dataclasses.replace(MANIFEST, version="adopted-after-start")
+    client = _client(harness)  # one app for both requests: the route must not keep the record it was built with
+
+    assert _post(client, **_multipart()).status_code == 200
+    harness.current_manifest = lambda: later
+    assert _post(client, **_multipart()).status_code == 200
+
+    assert harness.policy_manifests == [MANIFEST, later]
+    assert harness.receipt_manifests == [MANIFEST, later]
