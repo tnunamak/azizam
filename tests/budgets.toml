@@ -558,7 +558,8 @@
 # S2.6b merged with the S2.6 review fixes: 19936 + 7; summed 19943.
 # S2.6b merged with the S2.6 removal-duty fix: 19943 + 4; summed 19947.
 # S2.6b merged with the S2.6 claim rule: 19947 + 2; summed 19949.
-pytest = 20366
+# Train 15 (2026-11-06): C5 workflow overrides, S2 privacy and replay matrix, S2.6 media input resolver, S2.6b uploads and references, on train 14; measured 20422.
+pytest = 20422
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
