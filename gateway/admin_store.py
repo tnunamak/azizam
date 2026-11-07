@@ -4344,6 +4344,7 @@ def write_service_registry_with_audit(
     path: Path = DB_PATH,
     migration_step: str | None = None,
     stored_form: bool = False,
+    also_in_transaction: Callable[[sqlite3.Connection, int], None] | None = None,
 ) -> dict[str, Any]:
     """Commit one registry revision, generation, and audit fact atomically.
 
@@ -4360,6 +4361,9 @@ def write_service_registry_with_audit(
 
     ``migration_step`` names a one-time upgrade whose result this write is. Its name is recorded in the same
     transaction, so a step is recorded exactly when its registry revision is.
+
+    ``also_in_transaction(conn, now)`` runs inside the same transaction, after the registry write, for a step that must
+    change another stored value together with the registry (a rollback leaves both as they were).
     """
     if not isinstance(value, Mapping):
         raise ValueError("service registry value must be a mapping")
@@ -4387,6 +4391,8 @@ def write_service_registry_with_audit(
                 metadata=audit_metadata,
                 now=ts,
             )
+            if also_in_transaction is not None:
+                also_in_transaction(conn, ts)
             if migration_step is not None:
                 conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (migration_step,))
             conn.commit()
@@ -4413,6 +4419,28 @@ def record_migration_step(name: str, *, path: Path = DB_PATH) -> None:
     with _conn(path) as conn:
         conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (name,))
         conn.commit()
+
+
+def record_migration_step_at_registry_generation(name: str, *, expected_generation: int, path: Path = DB_PATH) -> None:
+    """Record the one-time step ``name`` only if the registry is still at ``expected_generation``.
+
+    For a step whose plan found nothing to write: the plan was made on that generation, so a registry written since may
+    hold records the plan never saw. Raises ``OperatorSettingsGenerationConflict`` then, and records nothing. A true no-op
+    bumps no generation and writes no audit entry. Idempotent."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key = 'service_registry'"
+            ).fetchone()
+            generation = int(row[0]) if row else 0
+            if generation != expected_generation:
+                raise OperatorSettingsGenerationConflict(f"operator settings generation mismatch: current={generation}")
+            conn.execute("INSERT OR IGNORE INTO schema_migration_steps(name) VALUES (?)", (name,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 def write_service_registry_in_transaction(

@@ -1,15 +1,17 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.1"
 id: image.edit.flux2-klein-4b-inpaint
 license: "Apache-2.0"
 intent: image.edit
+capability: image
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: Flux2 Klein 4B Inpaint
 purpose: Repaint a marked area of an image
 prompt_hint: Describe the change you want
 description: Mask-bound FLUX.2 Klein edit workflow. The OpenAI image edit mask is normalized by the gateway and applied inside ComfyUI with SetLatentNoiseMask.
-source: local
-trusted: true
 inputs:
   prompt:
     label: description
@@ -20,11 +22,15 @@ inputs:
     label: a picture to change
     help: The picture you want to change.
     type: asset
+    accepts:
+      - image/*
     required: true
   mask:
     label: a mask
     help: White areas are redrawn; black areas stay as they are.
     type: asset
+    accepts:
+      - image/*
     required: true
     description: OpenAI image-edit mask. Transparent alpha or white pixels are regenerated; opaque alpha or black pixels are preserved.
   width:
@@ -66,6 +72,10 @@ inputs:
     type: integer
     minimum: 0
     description: Noise seed for the masked edit sampler.
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
   mask_expand:
     label: mask expansion
     help: Grow or shrink the marked area by this many pixels.
@@ -138,16 +148,16 @@ bindings:
           input: right
         - node: "19"
           input: bottom
-requires:
-  custom_nodes:
-    - UnetLoaderGGUF
-    - ReferenceLatent
-    - Flux2Scheduler
-    - SplitSigmasDenoise
-  models:
-    - role: diffusion_model
-      path: unet/flux-2-klein-4b-Q6_K.gguf
-    - role: text_encoder
-      path: text_encoders/qwen_3_4b.safetensors
-    - role: vae
-      path: vae/flux2-vae.safetensors
+    requires:
+      custom_nodes:
+        - UnetLoaderGGUF
+        - ReferenceLatent
+        - Flux2Scheduler
+        - SplitSigmasDenoise
+      models:
+        - role: diffusion_model
+          path: unet/flux-2-klein-4b-Q6_K.gguf
+        - role: text_encoder
+          path: text_encoders/qwen_3_4b.safetensors
+        - role: vae
+          path: vae/flux2-vae.safetensors

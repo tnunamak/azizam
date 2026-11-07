@@ -35,9 +35,10 @@ NS = WORKFLOW_EXTENSION_NAMESPACE
 # workflow exposes denoise, but not ControlNet, so tests that need ControlNet
 # use this manifest rather than pretending the real workflow has those nodes.
 CONTROLNET_EDIT_MANIFEST = {
-    "schema_version": 1,
+    "schema_version": 2,
     "id": "image.edit.controlnet.fixture",
     "intent": "image.edit",
+    "capability": "image",
     "inputs": {
         "prompt": {"type": "string", "required": True},
         "denoise": {"type": "number", "minimum": 0, "maximum": 1},

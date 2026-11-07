@@ -26,17 +26,22 @@ Audiences:
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
+from gateway.workflow_view import backend_ids, settable_inputs
 from gateway.manifests import (
+    BUNDLED_PROVENANCE,
+    UNKNOWN_PROVENANCE,
     ManifestError,
     ManifestIdentity,
+    Provenance,
     load_workflow_manifest,
     manifest_identity,
 )
+from gateway.workflow_policy import PolicyFacts, release_policy
 
 VALID_AUDIENCES = ("client", "admin", "internal")
 MANIFEST_GLOBS = ("*.yml", "*.yaml")
@@ -47,11 +52,25 @@ BUNDLED_WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "manifests" / "
 
 @dataclass(frozen=True)
 class WorkflowRecord:
-    """A validated workflow manifest plus its on-disk provenance."""
+    """A validated workflow manifest, where it came from, and the facts about it that are not in the document.
+
+    ``manifest`` is the schema 2 contract (CODE_TO_DATA_S3): the document as stored, never converted on load. The identity
+    carries the provenance (``trusted``, ``source``), which the loader sets from the origin of the record. ``facts`` are the
+    record's policy facts; ``None`` means the record states none, so it needs configuration and runs nothing (D2)."""
 
     manifest: dict[str, Any]
     identity: ManifestIdentity
     source_path: Path
+    facts: PolicyFacts | None = field(default=None, compare=False, repr=False)
+
+    @property
+    def contract(self) -> dict[str, Any]:
+        """What readers read: the stored document is the contract."""
+        return self.manifest
+
+    @property
+    def needs_configuration(self) -> bool:
+        return self.facts is None
 
     @property
     def id(self) -> str:
@@ -59,12 +78,11 @@ class WorkflowRecord:
 
     @property
     def intent(self) -> str:
-        return str(self.manifest["intent"])
+        return str(self.contract["intent"])
 
     @property
     def supported_backends(self) -> list[str]:
-        bindings = self.manifest.get("bindings") or {}
-        return sorted(bindings.keys())
+        return sorted(backend_ids(self.contract))
 
 
 @dataclass(frozen=True)
@@ -90,17 +108,28 @@ class WorkflowRegistry:
         self._errors: list[RegistryLoadError] = []
 
     @classmethod
-    def from_directory(cls, directory: str | Path) -> "WorkflowRegistry":
+    def from_directory(cls, directory: str | Path, *, policy: Mapping[str, PolicyFacts] | None = None) -> "WorkflowRegistry":
         registry = cls()
-        registry.load_directory(directory)
+        registry.load_directory(directory, policy=policy)
         return registry
 
-    def load_directory(self, directory: str | Path) -> None:
+    def load_directory(
+        self, directory: str | Path, *, provenance: Provenance = BUNDLED_PROVENANCE,
+        policy: Mapping[str, PolicyFacts] | None = None,
+    ) -> None:
         """Load every ``*.yml`` / ``*.yaml`` manifest in ``directory``.
 
         Malformed manifests are collected in :attr:`errors` so callers can
-        decide whether to fail hard or proceed with healthy entries.
+        decide whether to fail hard or proceed with healthy entries. The directory is the release's own, so each record has
+        the given provenance (reviewed and local by default) and the facts that ``policy`` (the release policy file by
+        default) holds for its id; an id the policy does not list needs configuration.
         """
+        if policy is None:
+            try:
+                policy = release_policy()
+            except ValueError as exc:   # a policy file that cannot be read states nothing
+                self._errors.append(RegistryLoadError(source_path=Path(directory), message=str(exc)))
+                policy = {}
         root = Path(directory)
         if not root.is_dir():
             raise ManifestError(f"manifest directory not found: {root}")
@@ -108,7 +137,7 @@ class WorkflowRegistry:
         for path in sorted(_iter_manifest_files(root)):
             try:
                 manifest = load_workflow_manifest(path)
-                self.add_manifest(manifest, source_path=path)
+                self.add_manifest(manifest, source_path=path, provenance=provenance, facts=policy.get(str(manifest["id"])))
             except (ManifestError, OSError, ValueError) as exc:
                 self._errors.append(
                     RegistryLoadError(source_path=path, message=str(exc))
@@ -120,9 +149,13 @@ class WorkflowRegistry:
         *,
         source_path: Path | str | None = None,
         replace: bool = False,
+        provenance: Provenance = UNKNOWN_PROVENANCE,
+        facts: PolicyFacts | None = None,
     ) -> WorkflowRecord:
-        """Add a manifest. A second one with the same id is refused, unless ``replace`` says it takes the place of the first."""
-        identity = manifest_identity(manifest)
+        """Add a manifest. A second one with the same id is refused, unless ``replace`` says it takes the place of the first.
+        The provenance and the facts are the record's, set by whoever knows where it came from; none means not reviewed and
+        needs configuration."""
+        identity = manifest_identity(manifest, provenance)
         if identity.id in self._records and not replace:
             raise ManifestError(
                 f"duplicate workflow manifest id: {identity.id}"
@@ -131,6 +164,7 @@ class WorkflowRegistry:
             manifest=copy.deepcopy(manifest),
             identity=identity,
             source_path=Path(source_path) if source_path else Path(""),
+            facts=facts,
         )
         self._records[identity.id] = record
         return record
@@ -195,31 +229,30 @@ def summarize_workflow(record: WorkflowRecord, audience: str) -> dict[str, Any]:
     summaries layer on provenance and backend binding detail.
     """
     _check_audience(audience)
-    manifest = record.manifest
+    contract = record.contract
+    facts = record.facts
 
     summary: dict[str, Any] = {
         "id": record.id,
         "intent": record.intent,
-        "version": manifest.get("version"),
-        "schema_version": manifest.get("schema_version"),
-        "display_name": manifest.get("display_name"),
-        "purpose": manifest.get("purpose"),
-        "description": manifest.get("description"),
-        "exposure": _manifest_string(manifest, "exposure", default="default"),
-        "trust_tier": _manifest_string(
-            manifest,
-            "trust_tier",
-            default="stable" if record.identity.trusted else "experimental",
-        ),
-        "resource_tier": _manifest_string(
-            manifest, "resource_tier", default="batch"
-        ),
-        "tags": _manifest_tags(manifest),
-        "typical_seconds": _manifest_number(manifest, "typical_seconds"),
-        "inputs": _portable_inputs(manifest.get("inputs") or {}),
-        "outputs": _portable_outputs(manifest.get("outputs") or {}),
+        "version": contract.get("version"),
+        "schema_version": contract.get("schema_version"),
+        "display_name": contract.get("display_name"),
+        "purpose": contract.get("purpose"),
+        "description": contract.get("description"),
+        "exposure": facts.exposure if facts else None,
+        "trust_tier": facts.trust_tier if facts else None,
+        "resource_tier": facts.resource_tier if facts else None,
+        "tags": list(facts.tags) if facts else [],
+        "typical_seconds": _manifest_number(contract, "typical_seconds"),
+        "inputs": _portable_inputs(settable_inputs(contract)),
+        "outputs": _portable_outputs(contract.get("outputs") or {}),
         "supported_backends": record.supported_backends,
     }
+
+    if facts is None:
+        # No policy facts: the record is closed until its owner configures it (CODE_TO_DATA_S3, D2).
+        summary["needs_configuration"] = True
 
     if audience == "client":
         return summary
@@ -227,12 +260,12 @@ def summarize_workflow(record: WorkflowRecord, audience: str) -> dict[str, Any]:
     summary["manifest_hash"] = record.identity.manifest_hash
     summary["source"] = record.identity.source
     summary["trusted"] = record.identity.trusted
-    summary["min_gateway_version"] = manifest.get("min_gateway_version")
+    summary["min_gateway_version"] = contract.get("min_gateway_version")
     summary["source_path"] = (
         str(record.source_path) if str(record.source_path) else None
     )
     summary["bindings"] = _binding_summaries(
-        manifest.get("bindings") or {}, audience=audience
+        contract.get("bindings") or {}, audience=audience
     )
     return summary
 
@@ -317,7 +350,7 @@ def _binding_summaries(
     for backend, spec in bindings.items():
         if not isinstance(spec, dict):
             continue
-        entry: dict[str, Any] = {"backend": backend}
+        entry: dict[str, Any] = {"backend": str(spec.get("service") or backend)}
         if "workflow" in spec:
             entry["workflow_artifact"] = spec["workflow"]
         if "endpoint" in spec:
@@ -331,29 +364,11 @@ def _binding_summaries(
     return summaries
 
 
-def _manifest_string(manifest: dict[str, Any], key: str, *, default: str) -> str:
-    value = manifest.get(key)
-    if isinstance(value, str) and value:
-        return value
-    return default
-
-
 def _manifest_number(manifest: dict[str, Any], key: str) -> float | int | None:
     value = manifest.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return value
-
-
-def _manifest_tags(manifest: dict[str, Any]) -> list[str]:
-    value = manifest.get("tags")
-    if not isinstance(value, list):
-        return []
-    tags: list[str] = []
-    for item in value:
-        if isinstance(item, str) and item and item not in tags:
-            tags.append(item)
-    return tags
 
 
 def _check_audience(audience: str) -> None:

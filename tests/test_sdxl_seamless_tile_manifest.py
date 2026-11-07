@@ -23,6 +23,7 @@ from gateway.image_extensions import (  # noqa: E402
     resolve_workflow_extensions,
 )
 from gateway.manifests import (  # noqa: E402
+    BUNDLED_PROVENANCE,
     apply_backend_binding,
     load_workflow_manifest,
     manifest_identity,
@@ -55,7 +56,7 @@ class TestSdxlSeamlessTileManifest(unittest.TestCase):
         self.manifest = load_workflow_manifest(MANIFEST_PATH)
 
     def test_identity_and_declared_inputs(self) -> None:
-        identity = manifest_identity(self.manifest)
+        identity = manifest_identity(self.manifest, BUNDLED_PROVENANCE)
 
         self.assertEqual(identity.id, "image.generate.sdxl-seamless-tile")
         self.assertEqual(identity.version, "0.1.1")

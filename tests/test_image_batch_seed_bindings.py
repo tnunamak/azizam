@@ -46,7 +46,7 @@ def batch(monkeypatch):
 
 
 def manifest_for(field):
-    return {"schema_version": 1, "id": "image.generate.seed-fixture", "intent": "image.generate",
+    return {"schema_version": 2, "id": "image.generate.seed-fixture", "intent": "image.generate", "capability": "image",
             "inputs": {"seed": {"type": "integer"}}, "outputs": {},
             "bindings": {"comfyui": {"map": {"seed": [
                 {"node": "a", "input": field}, {"node": "b", "input": "operator_seed"},

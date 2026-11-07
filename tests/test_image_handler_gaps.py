@@ -65,9 +65,10 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
             "s": {"inputs": {"noise_seed": 0}},
         }
         self.manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "id": "image.edit.fixture",
             "intent": "image.edit",
+            "capability": "image",
             "inputs": {
                 "prompt": {"type": "string"},
                 "source_image": {"type": "asset"},

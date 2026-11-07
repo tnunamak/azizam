@@ -64,6 +64,7 @@ from gateway.mesh_manifest import (
     MESH_MEDIA_TYPE,
     MeshInputError,
     MeshManifest,
+    MeshManifestError,
     bind_request,
     downstream_form,
     sniff_image,
@@ -99,10 +100,12 @@ FRONTEND_ABSENT = "frontend record is absent"
 FRONTEND_DISABLED = "frontend record is disabled"
 SERVICE_ABSENT = "service is absent"
 SERVICE_DISABLED = "service is disabled"
+WORKFLOW_ABSENT = "workflow record is absent or disabled"
 # A route that is not set up, or that the owner turned off, is Off on every surface, not a fault: its evidence says so
 # in the availability vocabulary (availability.project_service).
 _SETUP_STATES = {FRONTEND_ABSENT: {"configured": False}, SERVICE_ABSENT: {"configured": False},
-                 FRONTEND_DISABLED: {"enabled": False}, SERVICE_DISABLED: {"enabled": False}}
+                 FRONTEND_DISABLED: {"enabled": False}, SERVICE_DISABLED: {"enabled": False},
+                 WORKFLOW_ABSENT: {"enabled": False}}
 
 
 @dataclass
@@ -116,11 +119,174 @@ class PoolProbeCache:
     inflight: dict[tuple[str, str], asyncio.Task] = field(default_factory=dict)
 
 
+_MESH_ADAPTER = "http-multipart"
+
+
+@dataclass(frozen=True)
+class MeshWorkflow:
+    """The mesh route's view of its workflow record: read from the schema 2 contract (CODE_TO_DATA_S3, S3.4, D9) after the
+    mesh frontend profile accepted it. It answers the same questions as ``MeshManifest``, which the old validator makes."""
+
+    id: str
+    intent: str
+    version: str
+    manifest_hash: str
+    inputs: Mapping[str, Mapping[str, Any]]
+    service_id: str
+    transport_path: str
+    mapping: Mapping[str, str]
+    output_media_type: str
+    data: Mapping[str, Any] = field(default_factory=dict, repr=False)
+
+    @property
+    def image_input(self) -> str:
+        return next(name for name, spec in self.inputs.items() if spec.get("type") == "asset")
+
+    @property
+    def takes_text(self) -> bool:
+        return False  # the route takes one picture and scalar options; a text prompt is not one of them
+
+    def mapped_inputs(self) -> tuple[str, ...]:
+        return tuple(self.mapping)
+
+
+_ROUTE_TYPES = frozenset({"asset", "integer", "string", "object"})
+# The picture types the route sniffs (``sniff_image``): the contract's list of accepted types must cover each.
+_SNIFFED_PICTURES = ("image/png", "image/jpeg", "image/webp")
+# What ``bind_request`` reads of a scalar input: the route's type, default, range and allowed values.
+_ROUTE_SCALAR_KEYS = ("type", "default", "minimum", "maximum", "enum")
+
+
+def _accepts_picture(accepts: Any, media_type: str) -> bool:
+    if not isinstance(accepts, list):
+        return False
+    major = media_type.split("/", 1)[0]
+    return any(isinstance(item, str) and item.strip().lower() in (media_type, f"{major}/*", "*/*") for item in accepts)
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _input_problems(name: Any, spec: Any, mapped: bool) -> list[str]:
+    """What ``bind_request`` would trip on in one input: a spec that is not a mapping, a scalar of a type the route cannot
+    coerce, a range or default of the wrong type."""
+    if not isinstance(name, str) or not name:
+        return [f"input name {name!r} is not text"]
+    if not isinstance(spec, Mapping):
+        return [f"input {name} must be a mapping"]
+    kind = spec.get("type")
+    if not isinstance(kind, str) or kind not in _ROUTE_TYPES:
+        return [f"input {name} has a type the route cannot read"]
+    if kind == "asset":
+        return []  # the picture's acceptance is checked by the profile, for the one required picture
+    problems: list[str] = []
+    if kind == "object" and mapped:
+        problems.append(f"input {name} is an object and cannot be mapped to a form field")
+    if kind == "integer":
+        for key in ("minimum", "maximum", "default"):
+            if spec.get(key) is not None and not _is_int(spec[key]):
+                problems.append(f"input {name} {key} must be an integer")
+    if kind == "string" and "default" in spec and spec["default"] is not None and not isinstance(spec["default"], str):
+        problems.append(f"input {name} default must be text")
+    enum = spec.get("enum")
+    if enum is not None and (not isinstance(enum, list) or not enum):
+        problems.append(f"input {name} enum must be a non-empty list")
+    return problems
+
+
+def mesh_profile_errors(contract: Mapping[str, Any]) -> list[str]:
+    """Why the mesh frontend cannot serve this workflow, from the contract only: the wire carries one file part and calls
+    one engine over one multipart POST, and answers with one GLB body. Empty when it can. A contract of any shape gets an
+    answer here, never an exception."""
+    if not isinstance(contract, Mapping):
+        return ["the contract must be a mapping"]
+    problems: list[str] = []
+    if contract.get("intent") != MESH_INTENT:
+        problems.append(f"intent must be {MESH_INTENT!r}")
+    for key in ("id", "version"):
+        value = contract.get(key)
+        if not isinstance(value, str) or not value.strip():
+            problems.append(f"{key} must be a non-empty string")
+    raw_inputs = contract.get("inputs")
+    inputs = raw_inputs if isinstance(raw_inputs, Mapping) else {}
+    if not inputs:
+        problems.append("inputs must be a non-empty mapping")
+    pictures = [name for name, spec in inputs.items() if isinstance(spec, Mapping) and spec.get("type") == "asset"]
+    required = [name for name in pictures if inputs[name].get("required") is True]
+    if len(pictures) != 1 or len(required) != 1:
+        problems.append("exactly one required picture input")
+    bindings = contract.get("bindings") if isinstance(contract.get("bindings"), Mapping) else {}
+    if len(bindings) != 1:
+        problems.append("exactly one binding")
+    binding = next(iter(bindings.values()), None) if len(bindings) == 1 else None
+    if len(bindings) == 1 and (next(iter(bindings)) != _MESH_ADAPTER or not isinstance(binding, Mapping)
+                               or not isinstance(binding.get("service"), str) or not isinstance(binding.get("path"), str)
+                               or not isinstance(binding.get("map"), Mapping)):
+        problems.append(f"the binding must be a {_MESH_ADAPTER} binding with a service, a path and a map")
+    mapping = binding.get("map") if isinstance(binding, Mapping) and isinstance(binding.get("map"), Mapping) else {}
+    for name, spec in inputs.items():
+        problems.extend(_input_problems(name, spec, name in mapping))
+    for logical, target in mapping.items():
+        if logical not in inputs:
+            problems.append(f"map names {logical!r}, which is not an input")
+        if not isinstance(target, str) or not target:
+            problems.append(f"map target for {logical} must be a form field name")
+    if len(bindings) == 1 and len(required) == 1 and required[0] not in mapping:
+        problems.append("the picture input must be mapped")
+    if len(required) == 1 and not all(_accepts_picture(inputs[required[0]].get("accepts"), media) for media in _SNIFFED_PICTURES):
+        problems.append(f"the picture input must accept {', '.join(_SNIFFED_PICTURES)}")
+    outputs = contract.get("outputs") if isinstance(contract.get("outputs"), Mapping) else {}
+    media = [spec.get("media_type") for spec in outputs.values() if isinstance(spec, Mapping)]
+    if len(outputs) != 1 or media != [MESH_MEDIA_TYPE]:
+        problems.append(f"exactly one output, {MESH_MEDIA_TYPE}")
+    return problems
+
+
+def mesh_workflow(contract: Mapping[str, Any], manifest_hash: str) -> MeshWorkflow:
+    """The route's workflow from a registry record's contract. Raises ``MeshManifestError`` when the profile refuses it."""
+    problems = mesh_profile_errors(contract)
+    if problems:
+        raise MeshManifestError("mesh workflow does not fit the mesh frontend: " + "; ".join(problems))
+    binding = next(iter(contract["bindings"].values()))
+    (output,) = contract["outputs"].values()
+    return MeshWorkflow(
+        id=str(contract["id"]), intent=MESH_INTENT, version=str(contract["version"]), manifest_hash=manifest_hash,
+        inputs=contract["inputs"], service_id=binding["service"], transport_path=binding["path"],
+        mapping=dict(binding["map"]), output_media_type=output["media_type"], data=contract)
+
+
+def _route_view(inputs: Mapping[str, Mapping[str, Any]], picture: str) -> dict[str, tuple[Any, ...]]:
+    """Each input as what the route reads of it. The picture is its name alone: the old validator and the contract name its
+    type differently, and the profile checks what it accepts. A default that is absent differs from one that is ``None``:
+    ``bind_request`` sends the second and leaves the first out."""
+    def read(spec: Mapping[str, Any]) -> tuple[Any, ...]:
+        return tuple(("default" in spec, spec.get("default")) if key == "default" else spec.get(key) for key in _ROUTE_SCALAR_KEYS)
+
+    return {name: ("picture",) if name == picture else read(spec) for name, spec in inputs.items()}
+
+
+def mesh_workflow_from_record(record: Any, checked_against: MeshManifest | None = None) -> MeshWorkflow:
+    """The mesh route's workflow from its registry record. The old validator's reading, when given, must agree on every
+    fact the route uses: it runs beside the profile as a check, and a disagreement refuses the route."""
+    workflow = mesh_workflow(record.contract, record.identity.manifest_hash)
+    if checked_against is not None:
+        old = (checked_against.id, checked_against.service_id, checked_against.transport_path, dict(checked_against.mapping),
+               checked_against.output_media_type, checked_against.version, checked_against.manifest_hash,
+               checked_against.image_input, _route_view(checked_against.inputs, checked_against.image_input))
+        new = (workflow.id, workflow.service_id, workflow.transport_path, dict(workflow.mapping),
+               workflow.output_media_type, workflow.version, workflow.manifest_hash, workflow.image_input,
+               _route_view(workflow.inputs, workflow.image_input))
+        if old != new:
+            raise MeshManifestError("the mesh contract and the mesh manifest check disagree")
+    return workflow
+
+
 @dataclass(frozen=True)
 class MeshApiDeps:
     """Everything the handler reads from the gateway. Tests inject fakes for each of them."""
 
-    manifest: MeshManifest
+    manifest: MeshManifest | MeshWorkflow
     # Synchronous: the gateway's authenticator. Returns the caller's context, or the refusal to send.
     authenticate: Callable[[Request, str], Any]
     # The normalized frontend records (live registry, else seed).
@@ -152,6 +318,9 @@ class MeshApiDeps:
     # egress_refusal(service_id) -> a Response that refuses the send, or None; called just before the request is sent to the
     # engine (never for the health read). The gateway uses it to keep an unleased path out of a transition-enabled domain.
     egress_refusal: Callable[[str], Response | None] | None = None
+    # workflow_available() -> whether the live registry holds the route's workflow record now. A route whose record is
+    # absent or disabled answers unavailable; it is a state of the route, never a failure to start. None means always.
+    workflow_available: Callable[[], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -224,7 +393,7 @@ def _unavailable(request_id: str) -> JSONResponse:
     return _error(503, "service_unavailable", "This route is not available.", request_id=request_id)
 
 
-def route_row(records: Sequence[Mapping[str, Any]], manifest: MeshManifest) -> tuple[Mapping[str, Any] | None, str | None]:
+def route_row(records: Sequence[Mapping[str, Any]], manifest: MeshManifest | MeshWorkflow) -> tuple[Mapping[str, Any] | None, str | None]:
     """The frontend row for this route and why it is not usable, or (None, reason). Reads no default."""
     record = next((item for item in records if item.get("id") == FRONTEND_ID), None)
     if record is None:
@@ -251,7 +420,7 @@ def route_row(records: Sequence[Mapping[str, Any]], manifest: MeshManifest) -> t
     return row, None
 
 
-def service_problem(services: Mapping[str, Mapping[str, Any]], manifest: MeshManifest) -> tuple[str | None, ExclusivePoolSpec | None, Mapping[str, Any] | None]:
+def service_problem(services: Mapping[str, Mapping[str, Any]], manifest: MeshManifest | MeshWorkflow) -> tuple[str | None, ExclusivePoolSpec | None, Mapping[str, Any] | None]:
     """The selected service's policy, before the body is read: (problem, exclusive pool spec, service)."""
     service = services.get(manifest.service_id)
     if not isinstance(service, Mapping):
@@ -298,6 +467,9 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         gate = await asyncio.to_thread(deps.authenticate, request, MESH_PATH)
         if isinstance(gate, Response):
             return gate
+        if deps.workflow_available is not None and not deps.workflow_available():
+            LOG.warning("mesh route refused: %s", WORKFLOW_ABSENT)
+            return _unavailable(request_id)
         facts = await registry_snapshot(deps)
         row, record_problem = route_row(facts.frontend_records(), manifest)
         if row is None:
@@ -461,7 +633,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         return asset_types.WorkflowOutput(
             data=glb, suffix=".glb", workflow_name=manifest.data.get("display_name"), request_id=request_id,
             inputs=(asset_types.OutputInput(image.data, source_name, image.content_type),),
-            takes_text=any(spec.get("modality") == "text" for spec in manifest.inputs.values()))
+            takes_text=manifest.takes_text)
 
     async def _finish(work: asyncio.Future, owner: Any, request_id: str, spec: ExclusivePoolSpec, gate: Any,
                       image: Any, run: dict[str, Any], source_name: str) -> Response:
@@ -709,7 +881,7 @@ def _observer_problem(deps: MeshApiDeps, spec: ExclusivePoolSpec) -> tuple[str |
     return None, url
 
 
-def discovery_facts(manifest: MeshManifest, frontend_records: Sequence[Mapping[str, Any]]) -> Capability:
+def discovery_facts(manifest: MeshManifest | MeshWorkflow, frontend_records: Sequence[Mapping[str, Any]]) -> Capability:
     """The mesh row's facts for the shared capability catalog: what the route is, and the tiers its frontend row sets
     (or the defaults, when that row is not usable). It reads nothing and holds no state. The state is the pool's probe,
     which joins as evidence (pool_evidence), so a route whose frontend or service is missing still lists, as Off."""
@@ -739,8 +911,11 @@ async def pool_evidence(deps: MeshApiDeps) -> dict[str, dict[str, Any]]:
     turned off says so (``configured`` or ``enabled`` false). It acquires no capacity, dispatches nothing, and reports
     a reason rather than raising."""
     manifest = deps.manifest
+    workflow_present = deps.workflow_available is None or deps.workflow_available()
     deps = await registry_snapshot(deps)
     _, problem = route_row(deps.frontend_records(), manifest)
+    if not workflow_present:
+        problem = WORKFLOW_ABSENT
     observed_s = int(time.time())
     if problem is None:
         problem, spec, service = service_problem(deps.services(), manifest)
@@ -838,7 +1013,7 @@ async def _probe_pool(deps: MeshApiDeps, spec: ExclusivePoolSpec, service: Mappi
     return None
 
 
-def _split_form(form: Any, manifest: MeshManifest) -> tuple[dict[str, str], UploadFile | None]:
+def _split_form(form: Any, manifest: MeshManifest | MeshWorkflow) -> tuple[dict[str, str], UploadFile | None]:
     """Separate the single image part from the text fields. Any other file part is refused."""
     supplied: dict[str, str] = {}
     image: UploadFile | None = None

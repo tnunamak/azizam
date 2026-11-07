@@ -202,12 +202,12 @@
       {
         "body": {
           "kind": "binary",
-          "len": 434,
+          "len": 509,
           "magic": "7b226964223a2261",
-          "sha256": "17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8"
+          "sha256": "0912c4bd51b3170a14e8278e665185f6bd3e580aa858d578e77198159b42c2dc"
         },
         "created": "<time>",
-        "sha": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8"
+        "sha": "sha256:0912c4bd51b3170a14e8278e665185f6bd3e580aa858d578e77198159b42c2dc"
       },
       {
         "body": {
@@ -232,12 +232,12 @@
     ],
     "definition_ref": [
       {
-        "blob_sha": "sha256:09a920503b389268c94a2d52c00f7a33445e09459552a9990c7a7657c1689aa7",
+        "blob_sha": "sha256:0912c4bd51b3170a14e8278e665185f6bd3e580aa858d578e77198159b42c2dc",
         "holder_kind": "job",
         "job_id": "<job:1>"
       },
       {
-        "blob_sha": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
+        "blob_sha": "sha256:09a920503b389268c94a2d52c00f7a33445e09459552a9990c7a7657c1689aa7",
         "holder_kind": "job",
         "job_id": "<job:1>"
       },
@@ -253,7 +253,7 @@
         "envelope_json": {
           "definitions": {
             "binding": "sha256:09a920503b389268c94a2d52c00f7a33445e09459552a9990c7a7657c1689aa7",
-            "contract": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
+            "contract": "sha256:0912c4bd51b3170a14e8278e665185f6bd3e580aa858d578e77198159b42c2dc",
             "protocol": {
               "id": "node-graph",
               "revision": "sha256:2a669d6c8e1316c563a268586fc47317daebe5dc73763bef4c3ae413718f3c16"
@@ -272,7 +272,7 @@
           "source": {
             "id": "audio.generate.tangoflux",
             "kind": "workflow",
-            "revision": "sha256:e924018abad5fa93d59a449d637e1d7e1f23cc509d53551639d26427d357d491"
+            "revision": "sha256:46137a258d809cbaf6a8fa10d8251d5d50f05d95cf4589cb9b9817e1b435e3af"
           },
           "upstream": {
             "origin_digest": "sha256:1e234fab60fcadd9d9362e437c5366d789d810a656c59ce14ecf27b6b48859d2",
@@ -426,11 +426,11 @@
           "envelope": {
             "adapter_id": "node-graph",
             "binding": "sha256:09a920503b389268c94a2d52c00f7a33445e09459552a9990c7a7657c1689aa7",
-            "contract": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
+            "contract": "sha256:0912c4bd51b3170a14e8278e665185f6bd3e580aa858d578e77198159b42c2dc",
             "interface_version": 2,
             "source_id": "audio.generate.tangoflux",
             "source_kind": "workflow",
-            "source_revision": "sha256:e924018abad5fa93d59a449d637e1d7e1f23cc509d53551639d26427d357d491",
+            "source_revision": "sha256:46137a258d809cbaf6a8fa10d8251d5d50f05d95cf4589cb9b9817e1b435e3af",
             "template": "sha256:e242aea7be6a7c821d5db8bc2d000417e256a0d15284805e10a4cb96accdd363"
           },
           "results": [
@@ -733,11 +733,11 @@
               "envelope": {
                 "adapter_id": "node-graph",
                 "binding": "sha256:09a920503b389268c94a2d52c00f7a33445e09459552a9990c7a7657c1689aa7",
-                "contract": "sha256:17a4b471f5f2b9e26169f66bf7fd7ee552a2054ff81863f344aa02ae6c23a1f8",
+                "contract": "sha256:0912c4bd51b3170a14e8278e665185f6bd3e580aa858d578e77198159b42c2dc",
                 "interface_version": 2,
                 "source_id": "audio.generate.tangoflux",
                 "source_kind": "workflow",
-                "source_revision": "sha256:e924018abad5fa93d59a449d637e1d7e1f23cc509d53551639d26427d357d491",
+                "source_revision": "sha256:46137a258d809cbaf6a8fa10d8251d5d50f05d95cf4589cb9b9817e1b435e3af",
                 "template": "sha256:e242aea7be6a7c821d5db8bc2d000417e256a0d15284805e10a4cb96accdd363"
               },
               "results": [

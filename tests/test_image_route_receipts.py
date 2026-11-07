@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402
 from tests.support.config_snapshot import derived_patch
 from gateway import ownership  # noqa: E402
+from tests.support.workflow_docs import STANDARD_FACTS
 from tests.support.access import access, identity, plan_for, auth_identity  # noqa: E402
 from tests.support.config_snapshot import section_published  # noqa: E402
 from gateway.receipts import RouteReceipt  # noqa: E402
@@ -1294,9 +1295,10 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         mapping: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "id": "image.edit.flux2-klein-4b",
             "intent": "image.edit",
+            "capability": "image",
             "inputs": inputs
             or {
                 "prompt": {"type": "string", "required": True},
@@ -1464,9 +1466,10 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 
     async def test_promptless_workflow_accepts_missing_prompt(self) -> None:
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "id": "image.edit.promptless",
             "intent": "image.edit",
+            "capability": "image",
             "version": "0.1.0",
             "inputs": {
                 "source_image": {"type": "asset", "required": True},
@@ -1520,6 +1523,10 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             proxy,
             "_find_image_manifest",
             lambda _intent, _model: manifest,
+        ), patch.object(
+            proxy,
+            "_workflow_policy_facts",
+            lambda _workflow_id: STANDARD_FACTS,
         ), patch.object(
             proxy,
             "_generate_images_with_adaptive_batching",
@@ -2284,9 +2291,10 @@ class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
 
     def _manifest(self, *, quality_steps: dict[str, int] | None) -> dict[str, Any]:
         manifest: dict[str, Any] = {
-            "schema_version": 1,
+            "schema_version": 2,
             "id": "image.edit.quality-fixture",
             "intent": "image.edit",
+            "capability": "image",
             "inputs": {
                 "prompt": {"type": "string", "required": True},
                 "source_image": {"type": "asset", "required": True},
@@ -2349,6 +2357,10 @@ class TestQualityStepsWiring(unittest.IsolatedAsyncioTestCase):
             proxy,
             "_find_image_manifest",
             lambda _intent, _model: manifest,
+        ), patch.object(
+            proxy,
+            "_workflow_policy_facts",
+            lambda _workflow_id: STANDARD_FACTS,
         ), patch.object(
             proxy,
             "_generate_images_with_adaptive_batching",
@@ -2457,9 +2469,10 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
             inputs["denoise"] = {"type": "number", "minimum": 0, "maximum": 1}
             mapping["denoise"] = [{"node": "49", "input": "denoise"}]
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "id": "image.edit.flux2-klein-4b",
             "intent": "image.edit",
+            "capability": "image",
             "inputs": inputs,
             "outputs": {"image": {"media_type": "image/png"}},
             "bindings": {"comfyui": {"workflow": "workflows/images/flux2-klein-4b-edit.json", "map": mapping}},

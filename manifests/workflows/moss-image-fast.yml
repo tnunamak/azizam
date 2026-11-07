@@ -2,17 +2,19 @@
 # https://huggingface.co/Comfy-Org/MOSS-Image
 # https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT
 # https://huggingface.co/lodestones/Kromoss
-schema_version: 1
+schema_version: 2
 min_gateway_version: '0.1'
 version: 0.1.0
 id: image.generate.moss-image-fast
 intent: image.generate
+capability: image
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: MOSS Image Fast
 purpose: Fast images with less memory
 prompt_hint: Describe the picture you want
 description: Make a picture quickly with less memory. Uses about 9.6 GB of memory.
-source: local
-trusted: true
 typical_seconds: 5
 inputs:
   prompt:
@@ -39,6 +41,10 @@ inputs:
     minimum: 0
     label: variation number
     help: Reuse this number and the same settings for a similar result.
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
   batch_size:
     label: number of pictures
     help: How many pictures to make at once.
@@ -56,30 +62,30 @@ bindings:
       image: {node: '14', key: images, from: output_dir, decode: none, take: all}
     map:
       prompt:
-      - node: '5'
-        input: text
+        - node: '5'
+          input: text
       width:
-      - node: '10'
-        input: width
+        - node: '10'
+          input: width
       height:
-      - node: '10'
-        input: height
+        - node: '10'
+          input: height
       seed:
-      - node: '9'
-        input: noise_seed
+        - node: '9'
+          input: noise_seed
       batch_size:
-      - node: '10'
-        input: batch_size
-requires:
-  custom_nodes:
-  - RMBG
-  models:
-  - role: diffusion_model
-    path: diffusion_models/kromoss_int8_convrot.safetensors
-  - role: text_encoder
-    path: text_encoders/qwen3.5_9b_int8_convrot.safetensors
-  - role: vae
-    path: vae/flux2-vae.safetensors
-  - role: lora
-    path: loras/kromoss-8steps-dmd-lora.safetensors
+        - node: '10'
+          input: batch_size
+    requires:
+      custom_nodes:
+        - RMBG
+      models:
+        - role: diffusion_model
+          path: diffusion_models/kromoss_int8_convrot.safetensors
+        - role: text_encoder
+          path: text_encoders/qwen3.5_9b_int8_convrot.safetensors
+        - role: vae
+          path: vae/flux2-vae.safetensors
+        - role: lora
+          path: loras/kromoss-8steps-dmd-lora.safetensors
 license: Apache-2.0

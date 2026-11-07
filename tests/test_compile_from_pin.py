@@ -351,7 +351,7 @@ def db(tmp_path: Path) -> Path:
     return path
 
 
-MANIFEST = {"schema_version": 1, "id": "wf", "intent": "x.make", "inputs": {"a": {"type": "string"}}, "outputs": {}}
+MANIFEST = {"schema_version": 2, "capability": "image", "id": "wf", "intent": "x.make", "inputs": {"a": {"type": "string"}}, "outputs": {}}
 
 
 def pin(db: Path, *, contract: dict[str, Any] = MANIFEST, template: bytes | None = b'{"1": {"class_type": "N", "inputs": {}}}'):
@@ -366,6 +366,13 @@ def test_the_reader_returns_what_was_pinned(db: Path):
     pinned = pinned_definitions.load(pin(db), db)
     assert pinned.manifest("graph") == {**MANIFEST, "bindings": {"graph": {"map": {}}}}
     assert pinned.graph() == {"1": {"class_type": "N", "inputs": {}}}
+
+
+def test_a_job_that_pinned_a_schema_1_contract_is_unavailable(db: Path):
+    job_id = pin(db, contract={**MANIFEST, "schema_version": 1})
+    pinned = pinned_definitions.load(job_id, db)
+    with pytest.raises(DefinitionUnavailable, match="schema version is not supported"):
+        pinned.manifest("graph")
 
 
 def test_a_job_without_an_envelope_is_unavailable(db: Path):

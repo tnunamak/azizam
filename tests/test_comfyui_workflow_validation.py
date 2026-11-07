@@ -18,6 +18,7 @@ from gateway.engine_protocol.node_validation import (  # noqa: E402
     validate_workflow_graph,
 )
 from gateway.discovery import WorkflowRegistry  # noqa: E402
+from tests.support.workflow_docs import STANDARD_FACTS  # noqa: E402
 
 
 class TestComfyUIWorkflowValidation(unittest.TestCase):
@@ -98,9 +99,10 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
             registry = WorkflowRegistry()
             registry.add_manifest(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "id": "image.generate.demo",
                     "intent": "image.generate",
+                    "capability": "image",
                     "inputs": {"prompt": {"type": "string"}},
                     "outputs": {"image": {"media_type": "image/png"}},
                     "bindings": {
@@ -113,6 +115,7 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
                     },
                 },
                 source_path=package_dir,
+                facts=STANDARD_FACTS,
             )
 
             with patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry), derived_patch("COMFY_WORKFLOWS_DIR", package_dir / "empty",

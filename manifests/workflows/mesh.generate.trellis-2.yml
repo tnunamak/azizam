@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: mesh.generate.trellis-2
@@ -9,14 +9,15 @@ purpose: One image to a textured 3D model
 description: Turns one image into a textured 3D model in GLB format.
 technical_description: Fixed mesh route bound to the trellis service over one multipart POST. The service returns raw GLB bytes.
 summary: Send one picture; receive one textured 3D model (model/gltf-binary).
-source: local
-trusted: true
 inputs:
   image:
     label: picture
     help: The picture to turn into a 3D model. PNG, JPEG or WebP.
-    type: image
-    modality: image
+    type: asset
+    accepts:
+      - image/png
+      - image/jpeg
+      - image/webp
     required: true
   seed:
     label: variation number
@@ -39,17 +40,16 @@ inputs:
     label: extensions
     help: Reserved. Supplying it is refused until a service option is mapped to it.
     type: object
+    opaque: true
 outputs:
   mesh:
-    modality: mesh
     media_type: model/gltf-binary
 bindings:
-  trellis:
-    transport:
-      kind: http-multipart
-      path: /generate
+  http-multipart:
     map:
       image: image
       seed: seed
       resolution: resolution
       bg_removal: bg_removal
+    service: trellis
+    path: /generate

@@ -1,13 +1,15 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: image.edit.image-identity
 intent: image.edit
+capability: image
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: Identity Scene (real people into a new scene)
 purpose: Place real people in a new scene
 description: Put the people from your photos into a new scene you describe, and keep the best result.
-source: local
-trusted: true
 typical_seconds: 100
 inputs:
   prompt:
@@ -20,6 +22,8 @@ inputs:
     label: a reference photo
     help: A clear photo of the people, at full size.
     type: asset
+    accepts:
+      - image/*
     required: true
     description: Reference photo at full resolution. Send more photos as extra image parts.
   people:
@@ -132,14 +136,14 @@ bindings:
     image_nodes: ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10"]
     prompt_node: "7"
     seed_node: "8"
-requires:
-  services:
-    - faces
-    - comfyui
-  models:
-    - role: diffusion_model
-      path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors
-    - role: text_encoder
-      path: text_encoders/qwen3vl_8b_w4a8.safetensors
-    - role: vae
-      path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors
+    requires:
+      services:
+        - faces
+        - comfyui
+      models:
+        - role: diffusion_model
+          path: diffusion_models/qwen_image_2.1_int8_convrot.safetensors
+        - role: text_encoder
+          path: text_encoders/qwen3vl_8b_w4a8.safetensors
+        - role: vae
+          path: vae/texture_fix_vae_for_qwen_image_2.1_bf16.safetensors

@@ -15,9 +15,11 @@ from scripts import doctor  # noqa: E402
 
 VALID_MANIFEST = textwrap.dedent(
     """
-    schema_version: 1
+    schema_version: 2
+    version: 0.1.0
     id: image.generate.doctor
     intent: image.generate
+    capability: image
     inputs:
       prompt:
         type: string

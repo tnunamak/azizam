@@ -18,7 +18,7 @@ from gateway.mesh_manifest import validate_mesh_manifest
 from gateway.workflow_requirements import validate_workflow_requirements
 
 ROOT = Path(__file__).resolve().parent.parent
-MESH_MANIFEST = ROOT / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
+MESH_MANIFEST = ROOT / "tests" / "fixtures" / "workflows_v1" / "mesh.generate.trellis-2.yml"
 
 DESCRIPTOR_DOC: dict[str, Any] = {
     "version": 1,
@@ -46,7 +46,7 @@ def selector(**changes: Any) -> dict[str, str]:
 
 def base_manifest() -> dict[str, Any]:
     return {
-        "schema_version": 1, "id": "x.y", "intent": "x.y",
+        "schema_version": 2, "capability": "image", "id": "x.y", "intent": "x.y",
         "inputs": {"prompt": {"type": "string", "required": True}, "count": {"type": "integer", "default": 1}},
         "outputs": {"first": {"media_type": "a/b"}},
         "bindings": {"eng": {"workflow": "w.json", "map": {"prompt": [{"path": "a.b"}]}, "selectors": {"first": selector()}}},
@@ -91,13 +91,13 @@ def check_mesh(doc: Any) -> Callable[[], Any]:
 
 def check_narrowing(narrowing: Any) -> Callable[[], Any]:
     return lambda: apply_deployment_inputs(
-        {"schema_version": 1, "id": "x.y", "intent": "x.y",
+        {"schema_version": 2, "capability": "image", "id": "x.y", "intent": "x.y",
          "inputs": {"count": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5}, "prompt": {"type": "string"}},
          "outputs": {}, "bindings": {}}, narrowing)
 
 
 def check_bind(binding: Any, backend: str = "eng", request: Any = None) -> Callable[[], Any]:
-    doc = {"schema_version": 1, "id": "x.y", "intent": "x.y", "inputs": {"prompt": {"type": "string"}},
+    doc = {"schema_version": 2, "capability": "image", "id": "x.y", "intent": "x.y", "inputs": {"prompt": {"type": "string"}},
            "outputs": {}, "bindings": {"eng": binding}}
     return lambda: bind_backend_request(doc, backend, request or {}, {"prompt": "hi"})
 

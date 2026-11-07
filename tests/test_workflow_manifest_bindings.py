@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway.manifests import (  # noqa: E402
+    BUNDLED_PROVENANCE,
     BackendBindingResult,
     ManifestError,
     apply_backend_binding,
@@ -24,9 +25,10 @@ from gateway.receipts import RouteReceipt, record_validation_result  # noqa: E40
 
 
 CONTROLNET_MANIFEST = {
-    "schema_version": 1,
+    "schema_version": 2,
     "id": "image.edit.controlnet.example",
     "intent": "image.edit",
+    "capability": "image",
     "inputs": {
         "prompt": {"type": "string", "required": True},
         "denoise": {"type": "number", "minimum": 0, "maximum": 1},
@@ -102,7 +104,7 @@ class TestWorkflowManifestBindings(unittest.TestCase):
         manifest = load_workflow_manifest(
             ROOT / "manifests/workflows/flux2-klein-4b-edit.yml"
         )
-        identity = manifest_identity(manifest)
+        identity = manifest_identity(manifest, BUNDLED_PROVENANCE)
         self.assertEqual(identity.id, "image.edit.flux2-klein-4b")
         self.assertEqual(identity.version, "0.3.0")
         self.assertTrue(identity.trusted)
@@ -247,9 +249,10 @@ class TestBackendBindingResult(unittest.TestCase):
 
     def test_generic_dotted_path_mapping(self) -> None:
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "id": "chat.generate.example",
             "intent": "chat.generate",
+            "capability": "chat",
             "inputs": {
                 "temperature": {"type": "number", "minimum": 0, "maximum": 2},
                 "model": {"type": "string"},

@@ -598,6 +598,22 @@
 # Package artifact root fix (2026-11-07): +9 cases (package shadow, root escape, directory symlink, loader and pin, missing root); measured: 21163.
 # Package artifact review round 2 (2026-11-07): +6 cases (cross-intent and colliding-name selection, refused-not-absent, symlink loop, edit route); measured: 21169.
 # Edit selection reads the image.edit record (2026-11-07): +1 case.
+# S3.5 base (2026-11-07): main plus S3.4; measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+# S3.5a (2026-11-07): +68 cases (tests/test_workflow_policy.py, tests/test_workflow_equality.py, corpus and pin/package refusal cases, minus the report-only cases); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21252.
+# S3.5b workflow-schema-2 migration (2026-11-07): +32 cases (tests/test_workflow_schema_migration.py: plan rules, patch equivalence, report and dry run without values, apply once, package proofs); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21216.
+# S3.5b review fixes: +35 cases (total plan, no-change race, stale snapshot, null records, invalid manifest, failed replacement, dry-run files, proofs); measured: 21251.
+# S3.5 integration (S3.5a + S3.5b): 21184 + 68 + 69 = 21321.
+# S3.5 integration fixes (2026-11-07): +9 cases (frozen release oracle, ace fix as data, marked record, policy facts); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21330.
+# S3.5a equality-gate fixes (2026-11-07): +17 cases (tests/test_workflow_equality.py: empty checks, enumeration, one-sided workflows, exact allow-list, input preparation, scratch); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21347.
+# S3.5 integration fixes 3 (2026-11-07): +10 cases (forged codes, record-level policy, owner save and write for real, JSON equality, bundled-id quarantine); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21357.
+# S3.5a equality-gate second review (2026-11-07): +10 cases (JSON-typed pins, generator rule and boundary draws, package roots, pinned hash and capability, demo facts); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21367.
+# S3.5 integration fixes 4 (2026-11-07): +8 cases (override enabled state, cap after scrub, invalid replacement, type-edited fix path); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21375.
+# S3.5a equality-gate third review (2026-11-07): +11 cases (grid extrema, step and offset, hash shape, numeric and boolean drops, package-scoped policy rows through the production install); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21386.
+# S3.5 integration fixes 5 (2026-11-07): +23 cases (quarantine keeps enabled, kept-off values, key/id, one snapshot, mesh unavailable boot and route, schema 2 replacement); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21409.
+# S3.5a equality-gate fourth review (2026-11-07): +24 cases (exact generated-value lattice 19, shipped-package hash and bundled-loader rows 5); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21433.
+# S3.5 integration fix 6 (2026-11-07): -18 kept-off cases, +4 (bundled version serves for a quarantined override at either enabled value; none without a bundled counterpart); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21419.
+# S3.5 integration fix 7 (2026-11-07): +10 (3 enum members, 3 big-range draws, 1 unchanged small draw, 2 unlistable package folders, 1 shipped-hash cache); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21429.
+# S3.5 integration fix 8 (2026-11-07): +3 huge-integer enum members; 21429 + 3, to confirm with scripts/run-hermetic-pytest.sh --collect-only -q.
 pytest = 0  # TRAIN21-MEASURE
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
@@ -841,7 +857,8 @@ ad_hoc_upstream_fake_files = 46
 # 824 on 2026-11-06 (feat/config-homes-c9): -1 where the TTS/STT/COMFY constant blocks left proxy.py for the derive function.
 # 822 on 2026-11-07 (S3.3): the two new protocol ids add 2 sites (the mesh binding key, a catalog pattern); 4 fall where proxy.py reads the graph binding and backend by constant, not by spelling; the new code adds none.
 # Train 18 with S3.3: 818 + (-2) = 816.
-domain_literals = 816
+# S3.5 base (2026-11-07): main plus S3.4; measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+domain_literals = 812
 # Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
 # scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
 # a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through

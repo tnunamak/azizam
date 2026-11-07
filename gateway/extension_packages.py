@@ -24,7 +24,7 @@ import yaml
 
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
-from gateway.manifests import ManifestError, manifest_identity, validate_manifest
+from gateway.manifests import ContractErrors, ManifestError, Provenance, enforce_contract, manifest_identity
 from gateway import frontend_mount, projection, record_carriers, record_integrity, service_registry
 
 
@@ -553,6 +553,31 @@ def package_registry_snapshot(
     }
 
 
+def carry_install_proofs(
+    index: dict[str, Any], kind: str, converted: Mapping[str, tuple[Mapping[str, Any], Mapping[str, Any], str | None]],
+    db_path: Path,
+) -> bool:
+    """Carry each package's keyed install proof over a rewrite of its records (``converted``: record id to the old form,
+    the new form and the id of the package that installed it). A record whose old form still matches its proof gets the
+    proof of its new form, so the package can still tell the record is its own and remove it; one that did not match (the
+    owner had changed it) keeps a proof that matches nothing. Changes ``index`` in place and says whether any proof
+    changed. The install key is read only when a keyed proof is found."""
+    key: bytes | None = None
+    changed = False
+    for record_id, (old, new, package_id) in converted.items():
+        package = index["packages"].get(package_id)
+        entry = (((package or {}).get("installed_records") or {}).get(kind) or {}).get(record_id)
+        if not isinstance(entry, dict) or "mac" not in entry:
+            continue
+        key = key or record_integrity.install_key(db_path)
+        state = ((package.get("disabled_states") or {}).get(kind) or {}).get(record_id)
+        if not _matches_install(old, entry, package, state, key):
+            continue
+        entry["mac"] = installed_record_digest(comparable_record(new, state), key)
+        changed = True
+    return changed
+
+
 def _matches_install(
     record: Mapping[str, Any], expected: Mapping[str, Any] | None, package: Mapping[str, Any],
     disabled_state: bool | None, key: bytes | None = None,
@@ -1045,10 +1070,11 @@ def _normalize_workflow(
     manifest = copy.deepcopy(dict(record))
     manifest.pop("kind", None)
     try:
-        validate_manifest(manifest)
-        identity = manifest_identity(manifest)
+        enforce_contract(manifest)   # a package workflow in schema 1 is refused here with schema_version_unsupported
+        identity = manifest_identity(manifest, Provenance(trusted=False, source="package"))
     except (ManifestError, ValueError) as exc:
-        errors.append(f"{ref}: invalid workflow manifest: {exc}")
+        code = f"{exc.code}: " if isinstance(exc, ContractErrors) else ""
+        errors.append(f"{ref}: invalid workflow manifest: {code}{exc}")
         return None
 
     _hash_workflow_package_artifacts(manifest, ref, root, errors, hash_files)

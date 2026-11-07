@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from gateway import media_jobs
 from gateway.api import create_gateway_router
-from tests.test_gateway_api import _build_registry
+from gateway.discovery import WorkflowRegistry
 
 
 def test_job_api_reports_missing_outputs_and_does_not_issue_broken_links(tmp_path):
@@ -22,7 +22,7 @@ def test_job_api_reports_missing_outputs_and_does_not_issue_broken_links(tmp_pat
     ]}
     app = FastAPI()
     app.include_router(create_gateway_router(
-        _build_registry(), media_job_getter=lambda *_a, **_k: job,
+        WorkflowRegistry(), media_job_getter=lambda *_a, **_k: job,
         media_job_lister=lambda **_k: [job],
         asset_path_resolver=lambda aid: present if aid.endswith("a" * 64) else tmp_path / "gone.png"))
     with TestClient(app) as client:

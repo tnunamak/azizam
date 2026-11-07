@@ -689,9 +689,11 @@ config:
         )
         (package_dir / "objects" / "workflow.yml").write_text(
             """
-schema_version: 1
+schema_version: 2
+version: 0.1.0
 id: image.generate.runtime
 intent: image.generate
+capability: image
 inputs:
   prompt:
     type: string

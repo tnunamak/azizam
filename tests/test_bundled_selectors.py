@@ -197,6 +197,7 @@ def test_a_workflow_with_no_engine_history_has_no_graph_binding_and_its_adapter_
 
 def test_the_seamless_tile_is_made_from_two_workflows_that_have_selectors():
     manifest = load(MANIFESTS[0].parent / "flux2-klein-4b-seamless-tile.yml")
-    for needed in manifest["requires"]["workflows"]:
+    (binding,) = manifest["bindings"].values()   # since schema 2 ``requires`` sits inside the single binding
+    for needed in binding["requires"]["workflows"]:
         stem = needed.rsplit(".", 1)[1]
         assert "selectors" in load(MANIFESTS[0].parent / f"{stem}.yml")["bindings"][BINDING], needed

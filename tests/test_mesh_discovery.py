@@ -260,3 +260,13 @@ def test_capabilities_without_the_new_fields_keep_their_summary_shape() -> None:
 
     assert "protocol" not in summary
     assert "output_media_types" not in summary
+
+
+def test_a_route_whose_workflow_record_is_absent_is_listed_unavailable_without_a_probe() -> None:
+    harness = Harness()
+    harness.workflow_present = False
+    harness.health_status = 200
+    answer = _evidence(harness)["trellis"]
+    assert answer["available"] is False and answer["status"] == "unavailable" and answer["enabled"] is False
+    assert answer["reason"] == mesh_api.WORKFLOW_ABSENT
+    assert harness.downstream == []

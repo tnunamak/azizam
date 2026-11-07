@@ -76,6 +76,10 @@ class MeshManifest:
     def image_input(self) -> str:
         return next(name for name, spec in self.inputs.items() if spec.get("type") == "image")
 
+    @property
+    def takes_text(self) -> bool:
+        return any(spec.get("modality") == "text" for spec in self.inputs.values())
+
     def mapped_inputs(self) -> tuple[str, ...]:
         return tuple(self.mapping)
 
@@ -361,7 +365,7 @@ def bind_request(manifest: MeshManifest, supplied: Mapping[str, Any], image: Ima
         raise MeshInputError("missing_image", "the image part is required", param=manifest.image_input)
     values: dict[str, Any] = {}
     for name, spec in manifest.inputs.items():
-        if spec["type"] == "image":
+        if name == manifest.image_input:
             continue
         if name in supplied:
             if name not in manifest.mapping:

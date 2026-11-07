@@ -1,0 +1,153 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.1"
+id: image.edit.flux2-klein-4b-inpaint
+license: "Apache-2.0"
+intent: image.edit
+display_name: Flux2 Klein 4B Inpaint
+purpose: Repaint a marked area of an image
+prompt_hint: Describe the change you want
+description: Mask-bound FLUX.2 Klein edit workflow. The OpenAI image edit mask is normalized by the gateway and applied inside ComfyUI with SetLatentNoiseMask.
+source: local
+trusted: true
+inputs:
+  prompt:
+    label: description
+    help: Describe what you want to make.
+    type: string
+    required: true
+  source_image:
+    label: a picture to change
+    help: The picture you want to change.
+    type: asset
+    required: true
+  mask:
+    label: a mask
+    help: White areas are redrawn; black areas stay as they are.
+    type: asset
+    required: true
+    description: OpenAI image-edit mask. Transparent alpha or white pixels are regenerated; opaque alpha or black pixels are preserved.
+  width:
+    label: width
+    help: Picture width in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+  height:
+    label: height
+    help: Picture height in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+  steps:
+    label: steps
+    help: More steps take longer.
+    type: integer
+    minimum: 1
+    maximum: 100
+    default: 8
+  guidance:
+    label: prompt guidance
+    type: number
+    minimum: 0
+    maximum: 20
+    default: 4
+  denoise:
+    label: change strength
+    help: Lower values preserve more of the original.
+    type: number
+    minimum: 0
+    maximum: 1
+    default: 0.75
+    description: Sampling strength for the masked edit. Lower values preserve more of the source image.
+  seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
+    type: integer
+    minimum: 0
+    description: Noise seed for the masked edit sampler.
+  mask_expand:
+    label: mask expansion
+    help: Grow or shrink the marked area by this many pixels.
+    type: integer
+    minimum: -256
+    maximum: 256
+    default: 0
+    description: Pixels to grow or shrink the edit mask before sampling.
+  mask_feather:
+    label: mask edge softness
+    help: Soften each edge of the marked area by this many pixels.
+    type: integer
+    minimum: 0
+    maximum: 256
+    default: 0
+    description: Pixels to feather each edge of the edit mask before sampling.
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/flux2-klein-4b-inpaint.json
+    selectors:
+      image: {node: '9', key: images, from: output_dir, decode: none, take: all}
+    map:
+      prompt:
+        - node: "6"
+          input: text
+      source_image:
+        - node: "10"
+          input: image
+      mask:
+        - node: "12"
+          input: image
+      width:
+        - node: "11"
+          input: width
+        - node: "14"
+          input: width
+        - node: "48"
+          input: width
+      height:
+        - node: "11"
+          input: height
+        - node: "14"
+          input: height
+        - node: "48"
+          input: height
+      steps:
+        - node: "48"
+          input: steps
+      guidance:
+        - node: "26"
+          input: guidance
+      denoise:
+        - node: "49"
+          input: denoise
+      seed:
+        - node: "25"
+          input: noise_seed
+      mask_expand:
+        - node: "18"
+          input: expand
+      mask_feather:
+        - node: "19"
+          input: left
+        - node: "19"
+          input: top
+        - node: "19"
+          input: right
+        - node: "19"
+          input: bottom
+requires:
+  custom_nodes:
+    - UnetLoaderGGUF
+    - ReferenceLatent
+    - Flux2Scheduler
+    - SplitSigmasDenoise
+  models:
+    - role: diffusion_model
+      path: unet/flux-2-klein-4b-Q6_K.gguf
+    - role: text_encoder
+      path: text_encoders/qwen_3_4b.safetensors
+    - role: vae
+      path: vae/flux2-vae.safetensors

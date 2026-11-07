@@ -17,6 +17,7 @@ from typing import Any
 from gateway import receipt_store, service_registry
 from gateway.capabilities import Capability, resolve_capability_targets
 from gateway.discovery import WorkflowRecord
+from gateway.workflow_view import requirements_of
 from gateway.model_presentation import starts_on_demand
 
 READY_STATUSES = frozenset({"ready", "up", "ok", "healthy", "available"})
@@ -95,7 +96,7 @@ def project_capabilities(
             ))
             continue
         record = records.get(capability.workflow or capability.resolved_workflow or "")
-        requirements = record.manifest.get("requires") if record else None
+        requirements = requirements_of(record.contract) if record else None
         if capability.backend == "gateway" and isinstance(requirements, Mapping):
             projection = _project_required_dependencies(
                 capability, requirements, records, service_records, evidence,

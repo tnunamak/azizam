@@ -39,7 +39,8 @@ from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.capability_ids import MODEL_KIND_LABELS, capabilities_without_inner_endpoint, offered_model_kinds
 from gateway.discovery import WorkflowRecord, bundled_workflow_manifests, summarize_workflow
-from gateway.manifests import manifest_identity, validate_manifest
+from gateway.manifests import Provenance, enforce_contract, manifest_identity
+from gateway.workflow_policy import FACT_NAMES, NEEDS_CONFIGURATION_CODE, facts_from_mapping, release_facts
 from gateway.transition_gate import ServicePaths, domain_violations
 from gateway import transition_profiles
 
@@ -101,7 +102,7 @@ def ensure_service_registry(*, path: Path = admin_store.DB_PATH, actor: str = "s
             if registry_layers.is_layered(stored):
                 if not admin_store.migration_step_recorded(registry_layers.LAYERING_STEP, path=path):
                     admin_store.record_migration_step(registry_layers.LAYERING_STEP, path=path)
-                return normalize_service_registry(registry_layers.layer(stored, release))
+                return normalize_service_registry(registry_layers.layer(_with_workflow_schema_2(stored, path, actor, release), release))
             from gateway import registry_migration
 
             plan = registry_migration.plan_layering(
@@ -134,9 +135,18 @@ def ensure_service_registry(*, path: Path = admin_store.DB_PATH, actor: str = "s
             )
         except admin_store.OperatorSettingsGenerationConflict:
             continue
-        return normalize_service_registry(registry_layers.layer(stored, release))
+        return normalize_service_registry(registry_layers.layer(_with_workflow_schema_2(stored, path, actor, release), release))
 
     raise RuntimeError("service registry changed during bounded startup retry")
+
+
+def _with_workflow_schema_2(stored: dict[str, Any], path: Path, actor: str, release: Mapping[str, Any]) -> dict[str, Any]:
+    """``stored`` after the one-time ``workflow-schema-2`` step (CODE_TO_DATA_S3, D3), which runs once, after layering and
+    before anything normalizes the workflow records: a schema 1 record would not load."""
+    from gateway import workflow_schema_migration
+
+    migrated = workflow_schema_migration.ensure(path=path, actor=actor, release=release)
+    return stored if migrated is None else migrated
 
 
 def _parses_as_object(document: str) -> bool:
@@ -284,6 +294,32 @@ class ExcludedRecord:
         return self.id if self.section == "services" else f"{kind}:{self.id}"
 
 
+WORKFLOW_SCHEMA_2_STEP = "workflow-schema-2"
+_ERROR_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")  # a stored code is accepted only as a short identifier
+
+
+def _left_by_workflow_migration(raw: Any) -> list[str] | None:
+    """The error codes of a stored workflow record the schema 2 migration marked (a ``migration`` block that names the
+    step; the record keeps the owner's own ``enabled``), or ``None`` for any other record. The codes only: the stored
+    messages may quote a value."""
+    if not isinstance(raw, Mapping):
+        return None
+    block = raw.get("migration")
+    if not isinstance(block, Mapping) or block.get("step") != WORKFLOW_SCHEMA_2_STEP:
+        return None
+    errors = block.get("errors")
+    codes = [item["code"] for item in errors
+             if isinstance(item, Mapping) and isinstance(item.get("code"), str) and _ERROR_CODE.fullmatch(item["code"])] if isinstance(errors, list) else []
+    return list(dict.fromkeys(codes))[:5]
+
+
+def _bounded_scrubbed(message: str, record: Mapping[str, Any]) -> str:
+    """The message with every value the record holds redacted, then cut to 300 characters. The scrub runs on the whole
+    text, so a cut can never leave the start of a value the scrub would have redacted."""
+    scrubbed = projection.scrub_text(message, [*record_carriers.legacy_secret_texts(record), *record_carriers.typed_value_texts(record)])
+    return scrubbed[:300]
+
+
 def read_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], list[ExcludedRecord]]:
     """The records of a stored registry that validate, and each one that does not, with why.
 
@@ -417,11 +453,24 @@ def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str,
                 if key in kept:
                     raise ValueError(f"{kind} {key!r} is defined twice")
             except Exception as error:  # noqa: BLE001 - one record's refusal never decides the others
+                codes = _left_by_workflow_migration(raw) if section == "workflows" else None
+                if codes is not None:
+                    # The migration kept a record it could not convert, disabled, so the owner can fix it. It is not an
+                    # error of the read, even a strict one: it is left out of the registry and listed as needing configuration.
+                    bundled = record_id in bundled_workflow_manifests()
+                    message = (f"{NEEDS_CONFIGURATION_CODE}: the schema 2 migration could not convert this workflow; it stays "
+                               "out of use until you save a schema 2 document for it."
+                               + (" The bundled version of this workflow is served in the meantime." if bundled else "")
+                               + f" Reasons: {', '.join(codes) or 'none stored'}.")
+                    # The scrub reads the record without its migration block: the codes are the block's own, already bounded
+                    # above; a code that equals any other value of the record is still redacted.
+                    message = _bounded_scrubbed(message, {key: value for key, value in raw.items() if key != "migration"})
+                    excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message, copy.deepcopy(raw)))
+                    continue
                 if strict:
                     raise
                 message = str(error) if isinstance(error, ValueError) else f"{type(error).__name__}: {error}"
-                message = projection.scrub_text(
-                    message[:300], [*record_carriers.legacy_secret_texts(raw), *record_carriers.typed_value_texts(raw)])
+                message = _bounded_scrubbed(message, raw)
                 excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message, copy.deepcopy(raw)))
                 continue
             kept[key] = record
@@ -2461,7 +2510,9 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
                 "enabled",
                 "identity",
                 "manifest_hash",
+                "migration",
                 "overrides",
+                "policy",
                 "provenance",
                 "registry_source",
                 "source_path",
@@ -2469,22 +2520,25 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
             }
         }
     manifest_dict = copy.deepcopy(dict(manifest))
-    validate_manifest(manifest_dict)
-    identity = manifest_identity(manifest_dict)
+    enforce_contract(manifest_dict)   # a save refuses what a load refuses; schema 1 is refused, not converted
     source = str(raw.get("registry_source") or raw.get("source") or "ui")
     if source not in DATA_OBJECT_SOURCES:
         source = "ui"
+    identity = manifest_identity(manifest_dict, stored_provenance(source))
+    policy = raw.get("policy")
     provenance = raw.get("provenance")
     if not isinstance(provenance, Mapping):
         provenance = {}
+    facts = facts_from_mapping(policy) or _release_facts_of(identity.id, source, provenance)
     source_path = str(raw.get("source_path") or "")
     manifest_path = str(raw.get("manifest_path") or "")
     record = WorkflowRecord(
         manifest=manifest_dict,
         identity=identity,
         source_path=Path(source_path) if source_path else Path(""),
+        facts=facts,
     )
-    return {
+    normalized = {
         "id": identity.id or workflow_id,
         "source": source,
         "editable": bool_from_config(raw.get("editable"), source == "ui"),
@@ -2501,6 +2555,26 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
         "manifest_path": manifest_path,
         "provenance": copy.deepcopy(dict(provenance)),
     }
+    stated = facts_from_mapping(policy)
+    if stated is not None:
+        # The record's own facts (an owner's patch over the release's): kept, so a read and a write back keep them.
+        normalized["policy"] = {name: list(getattr(stated, name)) if name == "tags" else getattr(stated, name) for name in FACT_NAMES}
+    return normalized
+
+
+def _release_facts_of(workflow_id: str, source: str, provenance: Any) -> Any:
+    """The release's facts for a stored workflow. A record an installed package wrote (source ``imported``) gets a row that
+    names the package it came from; any other record gets a row that names none."""
+    stated = provenance if isinstance(provenance, Mapping) else {}
+    package_id, package_hash = stated.get("package_id"), stated.get("package_hash")
+    return release_facts(workflow_id, package_id=package_id if isinstance(package_id, str) else None,
+                         package_hash=package_hash if isinstance(package_hash, str) else None,
+                         from_package=source == "imported")
+
+
+def stored_provenance(source: str) -> Provenance:
+    """A stored record is not the release's own file: it is not reviewed, and its source is where it was stored from."""
+    return Provenance(trusted=False, source=source)
 
 
 def normalize_capability_record(capability_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
@@ -2561,13 +2635,15 @@ def workflow_records_from_registry(registry: Mapping[str, Any]) -> list[Workflow
         if not isinstance(manifest, Mapping):
             continue
         manifest_dict = copy.deepcopy(dict(manifest))
-        identity = manifest_identity(manifest_dict)
+        identity = manifest_identity(manifest_dict, stored_provenance(str(record.get("source") or "ui")))
         source_path = str(record.get("source_path") or "")
         records.append(
             WorkflowRecord(
                 manifest=manifest_dict,
                 identity=identity,
                 source_path=Path(source_path) if source_path else Path("admin.db"),
+                facts=facts_from_mapping(record.get("policy")) or _release_facts_of(
+                    identity.id, str(record.get("source") or "ui"), record.get("provenance")),
             )
         )
     return records
