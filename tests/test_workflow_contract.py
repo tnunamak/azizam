@@ -748,7 +748,7 @@ def with_result_schema(schema: dict) -> dict:
     ({"type": "integer", "properties": "bad"}, ("outputs", "facts", "schema", "properties")),
     ({"type": "object", "properties": {"a": {"type": "object", "properties": ["bad"]}}},
      ("outputs", "facts", "schema", "properties", "a", "properties")),
-    ({"type": "array", "items": {"type": "object", "properties": 5}}, ("outputs", "facts", "schema", "items", "properties")),
+    ({"type": "array", "max_items": 2, "items": {"type": "object", "properties": 5}}, ("outputs", "facts", "schema", "items", "properties")),
 ])
 def test_a_malformed_result_schema_is_reported_not_a_crash(schema, path):
     errors = check_contract(with_result_schema(schema)).errors
