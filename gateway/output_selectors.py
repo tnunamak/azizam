@@ -324,8 +324,8 @@ def check_for_save(descriptor: SelectorDescriptor | None, manifest: Mapping[str,
                    ) -> dict[str, dict[str, str]]:
     """The contract rules for a new or changed binding (D5). Raises ``SelectorError`` with a clear reason.
 
-    ``descriptor`` is the selector form of the binding's adapter, ``None`` if the adapter takes none: then the binding
-    must declare none. Otherwise the binding must declare selectors, the shape check passes, and, when the template is
+    ``descriptor`` is the selector form of the binding's adapter (found with ``selector_form``), ``None`` if the adapter
+    takes none: then the binding must declare none. Otherwise the binding must declare selectors, the shape check passes, and, when the template is
     given, no selector reads a node that is not a producer. Outputs that share a media type and cannot be told apart are
     refused with their own reason.
     """
@@ -350,6 +350,16 @@ def check_for_save(descriptor: SelectorDescriptor | None, manifest: Mapping[str,
     return selectors
 
 
+def selector_form(binding_key: str, block: Mapping[str, Any]) -> str:
+    """The binding key of the adapter whose selector form a binding's selectors use.
+
+    A binding of an adapter that takes selectors is that adapter's own key. A binding that another adapter runs, such as
+    a route that composes its answer and runs one graph, names the adapter's key in ``selectors_for``. The caller of
+    ``check_for_save`` finds the descriptor with this key."""
+    form = block.get("selectors_for")
+    return form if isinstance(form, str) else binding_key
+
+
 def check_manifest(manifest: Mapping[str, Any], descriptors: Mapping[str, SelectorDescriptor] | None = None) -> None:
     """The load-time check of every binding that declares selectors, against its adapter's descriptor. A binding with
     none is a legacy contract and loads. Raises ``SelectorError``."""
@@ -361,7 +371,7 @@ def check_manifest(manifest: Mapping[str, Any], descriptors: Mapping[str, Select
     for key, block in bindings.items():
         if not isinstance(block, Mapping) or "selectors" not in block:
             continue
-        descriptor = known.get(key)
+        descriptor = known.get(selector_form(key, block))
         if descriptor is None:
             raise SelectorError("selector_malformed", f"binding {key} has selectors, but its adapter takes none")
         check_binding(descriptor, outputs, block)

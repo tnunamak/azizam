@@ -189,6 +189,36 @@ def test_a_video_job_names_its_bundle_result_for_the_declared_output_and_lists_i
     assert views == [[["filename", "clip_00001_.mp4"], ["type", "output"]]]
 
 
+# ------------------------------------------------------------------------------------------- the identity scene
+
+# The identity graph saves its result at node 10. Before it, the answer holds what the old collection could not tell
+# from a result: a preview, an echo of a reference photo, and a file that a side branch saved.
+NOISY_IDENTITY = history({
+    "0": {"images": [entry("peek.png", "temp")]},
+    "L1": {"images": [entry("reference.png", "input")]},
+    "3": {"images": [entry("side_00001_.png", "output")]},
+    "10": {"images": [entry("scene_00001_.png", "output")]},
+})
+PLAIN_IDENTITY = history({"10": {"images": [entry("scene_00001_.png", "output")]}})
+
+
+def run_identity(made: GatewayRig):
+    graph, _ = proxy._identity_template()
+    return proxy._identity_run_workflow(proxy.NO_AUTH_CONTEXT, json.loads(json.dumps(graph)), {})
+
+
+def test_the_identity_scene_takes_the_file_its_selector_names_not_an_earlier_preview_echo_or_side_file(tmp_path: Path):
+    image, views = run(tmp_path, NOISY_IDENTITY, PNG, run_identity)
+    assert image == _png()
+    assert views == [[["filename", "scene_00001_.png"], ["type", "output"]]]
+
+
+def test_the_identity_scene_takes_the_same_file_as_the_old_collection_from_a_plain_answer(tmp_path: Path):
+    image, views = run(tmp_path, PLAIN_IDENTITY, PNG, run_identity)
+    assert image == _png()
+    assert views == [[["filename", "scene_00001_.png"], ["type", "output"]]]
+
+
 # ------------------------------------------------------------------------------------- the legacy video collection
 
 def without_selectors(call):

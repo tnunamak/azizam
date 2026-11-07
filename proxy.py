@@ -16591,9 +16591,13 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
         )
         if admission is not None:
             raise identity_api.IdentityUnavailable(admission)
+        identity_record = GATEWAY_WORKFLOW_REGISTRY.get(IDENTITY_MANIFEST_ID)
         error, images = await _graph_run_round(
             client, graph, dict(headers), "identity scene",
             max_wait_s=int(_identity_cfg().get("max_wait_s", 3600)),
+            # The result is the file its manifest's selector names (CODE_TO_DATA_S2, D5).
+            binding=_identity_template()[1],
+            contract_outputs=identity_record.manifest.get("outputs") if identity_record else None,
         )
     if error is not None:
         try:

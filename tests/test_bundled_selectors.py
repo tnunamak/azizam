@@ -40,8 +40,8 @@ def graph_manifests() -> list[Path]:
     return [path for path in MANIFESTS if "workflow" in (load(path)["bindings"].get(BINDING) or {})]
 
 
-def template_of(manifest: dict[str, Any]) -> dict[str, Any]:
-    return json.loads((ROOT / manifest["bindings"][BINDING]["workflow"]).read_text(encoding="utf-8"))
+def template_of(manifest: dict[str, Any], binding: str = BINDING) -> dict[str, Any]:
+    return json.loads((ROOT / manifest["bindings"][binding]["workflow"]).read_text(encoding="utf-8"))
 
 
 def producers(template: dict[str, Any]) -> dict[str, str]:
@@ -61,8 +61,8 @@ def files(name: str, count: int, kind: str) -> list[dict[str, str]]:
     return [{"filename": f"{name}_{i:05d}.{SUFFIX[kind]}", "subfolder": "sub", "type": "output"} for i in range(count)]
 
 
-def history_of(manifest: dict[str, Any], *, with_noise: bool) -> dict[str, Any]:
-    template = template_of(manifest)
+def history_of(manifest: dict[str, Any], *, with_noise: bool, binding: str = BINDING) -> dict[str, Any]:
+    template = template_of(manifest, binding)
     count = 3 if family(manifest) == "image" else 1
     outputs: dict[str, Any] = {}
     if with_noise:
@@ -146,7 +146,7 @@ def test_the_old_collection_could_not_tell_an_echo_from_a_result():
 def test_a_bundled_binding_of_an_adapter_with_no_selector_form_declares_none():
     for path in MANIFESTS:
         for key, block in load(path)["bindings"].items():
-            if key not in DESCRIPTORS:
+            if output_selectors.selector_form(key, block) not in DESCRIPTORS:
                 assert "selectors" not in block, (path.name, key)
 
 
@@ -155,3 +155,68 @@ def test_every_bundled_manifest_loads_through_validate_manifest():
 
     for path in MANIFESTS:
         load_workflow_manifest(path)
+
+
+# ------------------------------------------------------------------------------- the four that had no selectors (S2 close-out)
+#
+# Of the four bundled workflows that were left without selectors, only the identity scene reads an engine's answer for
+# a result: its route runs one graph and takes a file from it. Its binding is the route's own (``gateway``), so it
+# names the graph adapter's selector form with ``selectors_for``. The other three never read a graph's history: the
+# likeness check answers from the face service, the seamless tile is made by the gateway from two other workflows (each
+# of which has selectors), and the 3D model is the body of one HTTP reply. Their adapters take no selectors, and a save
+# refuses selectors on a binding whose adapter takes none.
+
+IDENTITY = ROOT / "manifests" / "workflows" / "image-identity.yml"
+NO_ENGINE_HISTORY = {"face-likeness", "flux2-klein-4b-seamless-tile", "mesh.generate.trellis-2"}
+
+
+def test_the_identity_scene_selector_names_the_node_its_graph_saves_with_and_passes_the_save_rules():
+    manifest = load(IDENTITY)
+    block = manifest["bindings"]["gateway"]
+    template = template_of(manifest, "gateway")
+    ((node_id, key),) = producers(template).items()
+    assert block["selectors"] == {"image": {"node": node_id, "key": key, "from": "output_dir", "decode": "none", "take": "all"}}
+    descriptor = DESCRIPTORS[output_selectors.selector_form("gateway", block)]
+    assert set(output_selectors.check_for_save(descriptor, manifest, "gateway", template=template)) == {"image"}
+    output_selectors.check_manifest(manifest)
+
+
+def test_the_identity_scene_selector_reads_what_the_old_collection_read():
+    manifest = load(IDENTITY)
+    block = manifest["bindings"]["gateway"]
+    plain = history_of(manifest, with_noise=False, binding="gateway")
+    chosen = ADAPTER.collect(plain, block, manifest["outputs"], limits=ResultLimits(), legacy_allowed=False)
+    picked = [(f["subfolder"], f["filename"]) for f in chosen["image"]]
+    assert picked and len(picked) == 3
+    assert picked == old_collection(manifest, plain)
+    legacy = node_graph.legacy_select(plain, manifest["outputs"])
+    assert picked == [(f["subfolder"], f["filename"]) for f in legacy["image"]]
+    # An echo and a preview ahead of the result change nothing for the selector.
+    noisy = history_of(manifest, with_noise=True, binding="gateway")
+    again = ADAPTER.collect(noisy, block, manifest["outputs"], limits=ResultLimits(), legacy_allowed=False)
+    assert [(f["subfolder"], f["filename"]) for f in again["image"]] == picked
+
+
+def test_only_the_workflows_that_never_read_an_engine_answer_declare_no_selectors():
+    bare = {path.stem for path in MANIFESTS
+            if not any("selectors" in block for block in load(path)["bindings"].values())}
+    assert bare == NO_ENGINE_HISTORY
+
+
+@pytest.mark.parametrize("name", sorted(NO_ENGINE_HISTORY))
+def test_a_workflow_with_no_engine_history_has_no_graph_binding_and_its_adapter_takes_no_selectors(name: str):
+    manifest = load(MANIFESTS[0].parent / f"{name}.yml")
+    for key, block in manifest["bindings"].items():
+        assert key not in DESCRIPTORS and "workflow" not in block, (name, key)
+        assert output_selectors.check_for_save(None, manifest, key) == {}
+        declared = {**manifest, "bindings": {key: {**block, "selectors": {"x": {"node": "1"}}}}}
+        with pytest.raises(output_selectors.SelectorError) as refused:
+            output_selectors.check_for_save(None, declared, key)
+        assert refused.value.code == "selector_malformed"
+
+
+def test_the_seamless_tile_is_made_from_two_workflows_that_have_selectors():
+    manifest = load(MANIFESTS[0].parent / "flux2-klein-4b-seamless-tile.yml")
+    for needed in manifest["requires"]["workflows"]:
+        stem = needed.rsplit(".", 1)[1]
+        assert "selectors" in load(MANIFESTS[0].parent / f"{stem}.yml")["bindings"][BINDING], needed
