@@ -32,6 +32,9 @@ baseline's paths and its own. Only these differences are allowed:
 * POST /admin/api/operator/services/{id}/secret-entries (the owner's secret commands, D27) and
   PUT and DELETE /admin/api/operator/service-registry/excluded/{section}/{id} (fix or remove a record the registry
   leaves out) are new owner routes (tests/test_secret_commands.py, tests/test_excluded_records.py);
+* GET /gateway/v1/media/jobs/{job_id}/results/{name:path} is new (a finished job's named result, S2.5b;
+  tests/test_media_job_results.py covers it): GET is its route, every other method falls to the catch-all
+  or a 405;
 * POST /me/api/media/remove-missing is new (Library "Remove missing items"): that
   method is its own route, and every other method answers as /me/api/media/{asset_id}
   did before (the sample path /me/api/media/sample);
@@ -219,6 +222,8 @@ def _deliberate(key: str) -> str | None:
         return "request_history"  # history rows, the member's own choice, its notice and permission; tests/test_request_history_*.py
     if path == PLAN_REACH_PATH:
         return "plan_reach"  # the access plan editor's before-Save preview (gateway/category_api.py); POST is the route
+    if re.fullmatch(r"/gateway/v1/media/jobs/[^/]+/results/.+", path):
+        return "media_job_results"  # a finished job's named result (gateway/api.py); tests/test_media_job_results.py
     if path in NEW_PATHS:
         return "new"
     if path == THUMBNAIL_PATH:
@@ -338,6 +343,11 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
             continue  # new offline ledger and fact editor routes
         if kind == "config_sections" and key not in old:
             continue  # new owner routes for the config sections
+        if kind == "media_job_results" and key not in old:
+            expected_get = "/gateway/v1/media/jobs/{job_id}/results/{name:path} "
+            if (outcome.startswith(expected_get) if _method_of(key) == "GET"
+                    else route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):
+                continue
         if kind == "secret_entries" and key not in old:
             continue  # new owner routes (the secret commands, and the records the registry leaves out)
         if kind == "avatar" and key not in old:
@@ -397,6 +407,8 @@ def test_live_outcomes_differ_from_baseline_only_where_reviewed(current, live_cl
             continue
         if kind == "config_sections" and key not in old:
             continue
+        if kind == "media_job_results" and key not in old:
+            continue  # GET is the result route; the other methods answer as the catch-all does
         if kind == "mesh" and key not in old:
             # POST is never a live row (it has a real handler, sharded with its siblings); the rest answer as above.
             assert _method_of(key) != "POST", key
