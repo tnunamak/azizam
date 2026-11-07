@@ -66,12 +66,13 @@ def test_the_shipped_descriptions_close_three_binding_keys() -> None:
 
 
 def test_the_compositions_list_the_fields_their_code_reads() -> None:
-    """The lists below are what the readers in proxy.py, identity_api.py, workflow_openapi.py and models_catalog.py read."""
+    """The lists below are what the readers in proxy.py, identity_api.py, workflow_openapi.py, models_catalog.py and
+    output_selectors.py (the identity graph's selectors) read."""
     gateway = bd.shipped_binding_descriptors()["gateway"]
     assert gateway.role_field == "compose"
     assert {name for name in gateway.fields} == {"compose", "model_id", "route", "requires"}
     assert {role: set(fields) for role, fields in gateway.roles.items()} == {
-        "identity_scene": {"workflow", "image_nodes", "prompt_node", "seed_node"},
+        "identity_scene": {"workflow", "image_nodes", "prompt_node", "seed_node", "selectors", "selectors_for"},
         "offset_inpaint_tile": {"base_model", "inpaint_model", "map"},
         "face_likeness": set(),
     }

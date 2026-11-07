@@ -6,7 +6,8 @@
 # `binding_fields` closes the block: a field not listed here is refused when the workflow is saved. `roles` lists the
 # implementations the `compose` field may name, each with the fields only that role reads. `inputs_via: role` says the
 # role's code reads the inputs; an `offset_inpaint_tile` binding also holds an input map that the code applies to its
-# stages.
+# stages. An `identity_scene` binding runs one graph, so it holds that graph's output `selectors` and names the adapter
+# whose selector form they use in `selectors_for` (gateway/output_selectors.py).
 protocol_version: 1
 id: gateway-compose
 title: Gateway composition
@@ -27,6 +28,8 @@ roles:
       image_nodes: {kind: target_list, required: true, max: 32}
       prompt_node: {kind: target, required: true}
       seed_node: {kind: target, required: true}
+      selectors: {kind: selectors}
+      selectors_for: {kind: text}
   offset_inpaint_tile:
     fields:
       base_model: {kind: text}
