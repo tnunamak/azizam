@@ -35,8 +35,12 @@ from tests.support.fake_upstream import fake_upstreams, scenario_from_data  # no
 ORIGIN = "http://engine.test:1"
 
 
-def make_envelope() -> JobEnvelope:
+GENERATED = {"mine": 731820465, "theirs": 842931576}
+
+
+def make_envelope(generated_value: int | None = None) -> JobEnvelope:
     return build_job_envelope(
+        generated=None if generated_value is None else {"count": {"generator": "random_integer", "value": generated_value}},
         source_kind="workflow",
         source_id="wf-privacy",
         contract={"inputs": {"value": {"type": "string"}}},
@@ -420,7 +424,7 @@ def _seed_person(jobs: Path, admin: Path, user: dict, app: dict, auth: Any, *, t
         media_jobs.MediaJob(intent="image.generate", workflow="test", request_id=f"imgjob_seeded_{tag}",
                             app_id=app["id"], created_at=int(time.time()) - 100, status=media_jobs.STATUS_RUNNING,
                             metadata={"request_hash": f"{tag}-fingerprint"}),
-        input_data={"prompt": f"{tag}-{PRIVATE}"}, envelope=make_envelope(), path=jobs, maker_from_request=False)
+        input_data={"prompt": f"{tag}-{PRIVATE}"}, envelope=make_envelope(GENERATED[tag]), path=jobs, maker_from_request=False)
     prompt_memory.put(f"asset_{tag}", user["id"], f"{tag}-{PRIVATE}", kept_until=None, path=jobs, admin_path=admin,
                       created_at=int(time.time()) - 100)
     if spool:
@@ -474,11 +478,13 @@ def test_a_privacy_mode_leaves_no_durable_copy_of_the_body(stores, mode: str):
     after = _durable_text(root, jobs)
     for name, text in after.items():
         assert f"mine-{PRIVATE}" not in text, f"the body survived {mode} in the {name}"
+        assert str(GENERATED["mine"]) not in text, f"the generated value survived {mode} in the {name}"
         assert "mine-fingerprint" not in text, f"the fingerprint survived {mode} in the {name}"
     assert not proxy._image_media_job_payload_path(mine["job_id"]).exists()
     assert prompt_memory.get(mine["asset"], user["id"], path=jobs) is None
     assert media_jobs.get(mine["job_id"], path=jobs) is not None, "the job itself is kept"
     assert DefinitionStore(jobs).envelope(mine["job_id"]) is not None, "its pins are kept"
+    assert DefinitionStore(jobs).envelope(mine["job_id"]).generated == {}, "its generated block is emptied"
     # A write by a worker that started before the cutoff cannot put the prompt back.
     assert prompt_memory.put(mine["asset"], user["id"], f"mine-{PRIVATE}", kept_until=None, path=jobs,
                              admin_path=admin, created_at=int(time.time()) - 100) is False
@@ -491,6 +497,7 @@ def test_a_privacy_mode_leaves_no_durable_copy_of_the_body(stores, mode: str):
     assert proxy._load_image_media_job_payload(theirs["job_id"])["body"] == {"prompt": f"theirs-{PRIVATE}"}
     assert prompt_memory.get(theirs["asset"], other_user["id"], path=jobs)["prompt_text"] == f"theirs-{PRIVATE}"
     assert "theirs-fingerprint" in _durable_text(root, jobs)["job rows"]
+    assert str(GENERATED["theirs"]) in _durable_text(root, jobs)["envelope tables"], "another person's value is kept"
 
 
 def test_forget_keeps_the_body_in_memory_only_and_it_dies_with_the_process(stores):
