@@ -3,6 +3,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from gateway import extension_packages
 from gateway.extension_packages import (
     EXTENSION_PACKAGE_INDEX_SETTING_KEY,
     _git_source_url,
@@ -414,6 +417,43 @@ bindings:
     assert before["ok"] is True
     assert after["ok"] is True
     assert before["package_hash"] != after["package_hash"]
+
+
+@pytest.mark.parametrize("kind", ["uri", "code"])
+def test_package_directory_refuses_outside_symlink_without_reading_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
+) -> None:
+    root = tmp_path / "package"
+    directory = root / "artifacts"
+    (directory / "nested").mkdir(parents=True)
+    (directory / "direct.txt").write_bytes(b"direct artifact")
+    (directory / "nested" / "inside.txt").write_bytes(b"nested artifact")
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"must not be read")
+    (directory / "nested" / "outside.txt").symlink_to(outside)
+    original_read = Path.read_bytes
+
+    def checked_read(path: Path) -> bytes:
+        assert path.resolve() != outside.resolve(), "read an artifact outside the package root"
+        return original_read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", checked_read)
+    errors: list[str] = []
+    hashed: dict[str, bytes] = {}
+    if kind == "uri":
+        extension_packages._hash_package_uri(
+            "package://artifacts", "workflow", root, errors, hashed,
+        )
+    else:
+        assert extension_packages._normalize_code_package_path(
+            {"package_path": "artifacts"}, "adapter", root, hashed, errors,
+        ) == "artifacts"
+
+    assert errors == ["artifacts/nested/outside.txt: path traversal is not allowed"]
+    assert hashed == {
+        "artifacts/direct.txt": b"direct artifact",
+        "artifacts/nested/inside.txt": b"nested artifact",
+    }
 
 
 def test_invalid_capability_and_workflow_objects_return_validation_errors(

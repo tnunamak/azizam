@@ -101,6 +101,7 @@ def test_a_graph_relative_to_its_package_pins_as_the_run_resolves_it(tmp_path: P
     package = tmp_path / "pkg"
     (package / "graphs").mkdir(parents=True)
     (package / "graphs" / "pkg-only.json").write_bytes(b'{"1": {"class_type": "X", "inputs": {}}}')
+    (package / "manifest.yml").write_text("id: pkg.wf", encoding="utf-8")
     record = type("Record", (), {"source_path": str(package / "manifest.yml")})()
     registry = type("Registry", (), {"get": staticmethod(lambda wid: record if wid == "pkg.wf" else None)})()
     monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry)
@@ -109,6 +110,101 @@ def test_a_graph_relative_to_its_package_pins_as_the_run_resolves_it(tmp_path: P
     assert proxy._resolve_workflow_artifact_path(record, "package://graphs/pkg-only.json").exists(), "the run finds it"
     built = proxy._manifest_job_envelope(manifest, proxy._GRAPH_CAPABILITY)
     assert built is not None and built.envelope.template is not None
+
+
+@pytest.mark.parametrize("source_kind", ["directory", "manifest"])
+def test_package_artifact_ignores_project_shadow_and_keeps_plain_resolution(
+    tmp_path: Path, source_kind: str,
+):
+    package = tmp_path / "package"
+    relative = "tests/test_job_envelope_sites.py"
+    artifact = package / relative
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("reviewed package artifact", encoding="utf-8")
+    source = package
+    if source_kind == "manifest":
+        source = package / "manifest.yml"
+        source.write_text("id: package.workflow", encoding="utf-8")
+    record = type("Record", (), {"source_path": source})()
+
+    # This same relative file really exists in the project, without writing there.
+    assert (ROOT / relative).is_file()
+    assert proxy._resolve_workflow_artifact_path(record, relative) == ROOT / relative
+    assert proxy._resolve_workflow_artifact_path(record, f"package://{relative}") == artifact
+
+
+@pytest.mark.parametrize("escape", ["parent", "symlink"])
+def test_package_artifact_refuses_paths_outside_its_root(tmp_path: Path, escape: str):
+    package = tmp_path / "package"
+    package.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("outside the reviewed package", encoding="utf-8")
+    relative = "../outside.json"
+    if escape == "symlink":
+        (package / "escape.json").symlink_to(outside)
+        relative = "escape.json"
+    record = type("Record", (), {"source_path": package})()
+
+    with pytest.raises(ValueError, match="package root"):
+        proxy._resolve_workflow_artifact_path(record, f"package://{relative}")
+
+
+_PACKAGE_GRAPH = {"1": {"class_type": "PackageNode", "inputs": {}}}
+_PROJECT_GRAPH = {"1": {"class_type": "ProjectNode", "inputs": {}}}
+
+
+def _package_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, artifact: str):
+    """A package workflow whose graph names model ``shadowed``, and a built-in graph file of the same name."""
+    package = tmp_path / "package"
+    (package / "graphs").mkdir(parents=True)
+    (package / "graphs" / "shadowed.json").write_text(json.dumps(_PACKAGE_GRAPH), encoding="utf-8")
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+    (builtin / "shadowed.json").write_text(json.dumps(_PROJECT_GRAPH), encoding="utf-8")
+    (tmp_path / "outside.json").write_text(json.dumps(_PROJECT_GRAPH), encoding="utf-8")
+    manifest = {"id": "pkg.shadowed", "inputs": {}, "outputs": {},
+                "bindings": {proxy.DERIVED._GRAPH_BINDING: {"workflow": artifact}}}
+    record = type("Record", (), {"source_path": package, "manifest": manifest})()
+    registry = type("Registry", (), {"get": staticmethod(lambda wid: record if wid == "pkg.shadowed" else None),
+                                     "records": staticmethod(lambda: [record])})()
+    monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry)
+    monkeypatch.setattr(proxy.DERIVED, "COMFY_WORKFLOWS_DIR", builtin)
+    monkeypatch.setattr(proxy, "validate_workflow_graph", lambda workflow: [])
+    return manifest
+
+
+def test_the_run_and_the_pin_both_use_the_package_graph_over_a_built_in_file_of_the_same_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    manifest = _package_model(tmp_path, monkeypatch, "package://graphs/shadowed.json")
+    loaded = proxy.load_graph_workflow("shadowed")
+    assert loaded is not None and loaded["1"]["class_type"] == "PackageNode"
+    pinned: dict[str, bytes] = {}
+    real_build = proxy.job_envelope.build_job_envelope
+
+    def capture(**kwargs):
+        pinned["template"] = kwargs["template"]
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(proxy.job_envelope, "build_job_envelope", capture)
+    proxy._manifest_job_envelope(manifest, proxy._GRAPH_CAPABILITY)
+    assert json.loads(pinned["template"]) == _PACKAGE_GRAPH
+
+
+def test_a_package_graph_the_resolver_refuses_makes_the_model_unavailable_without_a_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    # The escaping path names model "shadowed" too, so a fallback to the built-in file would load it.
+    _package_model(tmp_path, monkeypatch, "package://../builtin/shadowed.json")
+    assert proxy.load_graph_workflow("shadowed") is None
+
+
+def test_a_missing_package_folder_is_not_read_as_a_manifest_file(tmp_path: Path):
+    (tmp_path / "packages" / "graphs").mkdir(parents=True)
+    (tmp_path / "packages" / "graphs" / "demo.json").write_text("a sibling's bytes", encoding="utf-8")
+    record = type("Record", (), {"source_path": tmp_path / "packages" / "missing-package"})()
+    with pytest.raises(ValueError, match="no package root"):
+        proxy._resolve_workflow_artifact_path(record, "package://graphs/demo.json")
 
 
 def test_an_unreadable_graph_file_pins_nothing_and_does_not_raise(caplog: pytest.LogCaptureFixture):
@@ -150,3 +246,119 @@ def test_pinned_blobs_land_in_the_jobs_database(tmp_path: Path):
     assert pinned(job.job_id, db) == built.envelope
     with sqlite3.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM definition_blob").fetchone()[0] == 3
+
+
+def _graph_package(root: Path, name: str, graph: dict) -> Path:
+    package = root / name
+    (package / "graphs").mkdir(parents=True)
+    (package / "graphs" / "shadowed.json").write_text(json.dumps(graph), encoding="utf-8")
+    return package
+
+
+def _registry_of(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rows: list[tuple[str, str, Path, str]]):
+    """A registry of (id, intent, package folder, artifact) records, and an empty built-in graph folder."""
+    records = [
+        type("Record", (), {"source_path": folder, "manifest": {
+            "id": rid, "intent": intent, "inputs": {}, "outputs": {},
+            "bindings": {proxy.DERIVED._GRAPH_BINDING: {"workflow": artifact}}}})()
+        for rid, intent, folder, artifact in rows
+    ]
+    by_id = {record.manifest["id"]: record for record in records}
+    registry = type("Registry", (), {"get": staticmethod(by_id.get), "records": staticmethod(lambda: records)})()
+    monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry)
+    (tmp_path / "builtin").mkdir(exist_ok=True)
+    monkeypatch.setattr(proxy.DERIVED, "COMFY_WORKFLOWS_DIR", tmp_path / "builtin")
+    monkeypatch.setattr(proxy, "validate_workflow_graph", lambda workflow: [])
+    return by_id
+
+
+def _pinned_graph(monkeypatch: pytest.MonkeyPatch, manifest: dict) -> dict:
+    pinned: dict[str, bytes] = {}
+    real_build = proxy.job_envelope.build_job_envelope
+
+    def capture(**kwargs):
+        pinned["template"] = kwargs["template"]
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(proxy.job_envelope, "build_job_envelope", capture)
+    proxy._manifest_job_envelope(manifest, proxy._GRAPH_CAPABILITY)
+    return json.loads(pinned["template"])
+
+
+def _node(name: str) -> dict:
+    return {"1": {"class_type": name, "inputs": {}}}
+
+
+@pytest.mark.parametrize("audio_id", ["audio.generate.unrelated", "audio.generate.shadowed"])
+def test_a_record_of_another_intent_with_the_same_graph_name_never_supplies_the_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, audio_id: str,
+):
+    audio = _graph_package(tmp_path, "audio-pkg", _node("AudioNode"))
+    image = _graph_package(tmp_path, "image-pkg", _node("ImageNode"))
+    # The audio record is registered first, so a first-basename-match loader would take it.
+    by_id = _registry_of(monkeypatch, tmp_path, [
+        (audio_id, "audio.generate", audio, "package://graphs/shadowed.json"),
+        ("image.generate.shadowed", "image.generate", image, "package://graphs/shadowed.json"),
+    ])
+    loaded = proxy.load_graph_workflow("shadowed", intent="image.generate")
+    assert loaded is not None and loaded["1"]["class_type"] == "ImageNode"
+    manifest = proxy._find_image_manifest("image.generate", "shadowed")
+    assert manifest is not None and manifest["id"] == "image.generate.shadowed"
+    assert _pinned_graph(monkeypatch, by_id["image.generate.shadowed"].manifest) == _node("ImageNode")
+
+
+def test_two_packages_with_colliding_graph_names_each_load_and_pin_their_own_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    first = _graph_package(tmp_path, "first", _node("FirstNode"))
+    second = _graph_package(tmp_path, "second", _node("SecondNode"))
+    by_id = _registry_of(monkeypatch, tmp_path, [
+        ("image.generate.alpha", "image.generate", first, "package://graphs/shadowed.json"),
+        ("image.generate.shadowed", "image.generate", second, "package://graphs/shadowed.json"),
+    ])
+    loaded = proxy.load_graph_workflow("shadowed", intent="image.generate")
+    assert loaded is not None and loaded["1"]["class_type"] == "SecondNode"
+    assert _pinned_graph(monkeypatch, by_id["image.generate.shadowed"].manifest) == _node("SecondNode")
+
+
+def test_a_refused_package_model_is_refused_not_absent_and_never_becomes_its_edit_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    package = _graph_package(tmp_path, "pkg", _node("PackageNode"))
+    (tmp_path / "outside.json").write_text(json.dumps(_node("OutsideNode")), encoding="utf-8")
+    _registry_of(monkeypatch, tmp_path, [
+        ("image.edit.shadowed", "image.edit", package, "package://../outside.json"),
+    ])
+    (tmp_path / "builtin" / "shadowed-edit.json").write_text(json.dumps(_node("BuiltInEdit")), encoding="utf-8")
+    assert proxy.load_graph_workflow("shadowed", intent="image.edit") is None
+    assert proxy.graph_workflow_refused("shadowed", intent="image.edit")
+    assert not proxy.graph_workflow_refused("no-such-model", intent="image.edit")
+    assert proxy._select_edit_workflow("shadowed", image_count=1, has_mask=False) == "shadowed"
+    assert proxy.load_graph_workflow("shadowed", intent="image.edit") is None
+
+
+def test_edit_selection_reads_the_edit_record_not_another_intents_record_of_the_same_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    audio = _graph_package(tmp_path, "audio", _node("AudioNode"))
+    refused = _graph_package(tmp_path, "pkg", _node("PackageNode"))
+    (tmp_path / "outside.json").write_text(json.dumps(_node("OutsideNode")), encoding="utf-8")
+    _registry_of(monkeypatch, tmp_path, [
+        ("audio.generate.shadowed", "audio.generate", audio, "package://graphs/shadowed.json"),
+        ("image.edit.shadowed-edit", "image.edit", tmp_path, "shadowed-edit.json"),
+        ("image.edit.shadowed", "image.edit", refused, "package://../outside.json"),
+    ])
+    (tmp_path / "builtin" / "shadowed-edit.json").write_text(json.dumps(_node("BuiltInEdit")), encoding="utf-8")
+    assert proxy._select_edit_workflow("shadowed", image_count=1, has_mask=False) == "shadowed"
+    assert proxy.load_graph_workflow("shadowed", intent="image.edit") is None
+
+
+def test_a_package_graph_that_reaches_a_symlink_loop_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    package = _graph_package(tmp_path, "pkg", _node("PackageNode"))
+    (package / "loop").symlink_to(package / "loop")
+    _registry_of(monkeypatch, tmp_path, [
+        ("image.generate.shadowed", "image.generate", package, "package://loop/shadowed.json"),
+    ])
+    (tmp_path / "builtin" / "shadowed.json").write_text(json.dumps(_node("BuiltIn")), encoding="utf-8")
+    assert proxy.load_graph_workflow("shadowed", intent="image.generate") is None
+    assert proxy.graph_workflow_refused("shadowed", intent="image.generate")

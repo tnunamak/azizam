@@ -6213,23 +6213,42 @@ def _build_graph_submit_payload(workflow: dict, **extra: Any) -> dict:
     return payload
 
 
-def load_graph_workflow(model_name: str) -> Optional[dict]:
+def load_graph_workflow(model_name: str, *, intent: str | None = None) -> Optional[dict]:
     """Load a ComfyUI workflow template by model name.
 
     Attaches the UI-format twin (`<model>.ui.json`) under the private
     `__ui_workflow__` key when present, so submit sites can include it in
     `extra_data.extra_pnginfo.workflow`. The key survives deepcopy and is
-    popped by `_build_graph_submit_payload`.
+    popped by `_build_graph_submit_payload`. ``intent`` names the route's intent, so the record
+    that loads is the one `_find_image_manifest` selects and the job pins.
     """
-    workflow_path = DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+    return _load_graph_workflow_outcome(model_name, intent)[0]
+
+
+def graph_workflow_refused(model_name: str, *, intent: str | None = None) -> bool:
+    """Whether ``model_name`` names a package workflow whose graph the package resolver refuses (not merely absent)."""
+    return _load_graph_workflow_outcome(model_name, intent)[1]
+
+
+def _load_graph_workflow_outcome(model_name: str, intent: str | None) -> tuple[Optional[dict], bool]:
+    """``(workflow, refused)``: ``refused`` marks a selected package record whose graph is refused, which is not the
+    same as a model with no workflow, so that no caller falls through to another graph."""
+    found = _graph_workflow_artifact_for_model(model_name, intent)
+    if found is not None and found[1].startswith("package://"):
+        # A package's graph is the file its review hashed: never a built-in file of the same name, and a path the
+        # resolver refuses (no package root, or one it leaves) makes the model unavailable, not an error.
+        try:
+            workflow_path = _resolve_workflow_artifact_path(*found)
+        except ValueError as exc:
+            print(f"[proxy] WARNING: graph for {model_name!r} refused: {exc}", flush=True)
+            return None, True
+    else:
+        workflow_path = DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        if not workflow_path.exists() and found is not None:
+            workflow_path = _resolve_workflow_artifact_path(*found)
     if not workflow_path.exists():
-        workflow_path = _graph_workflow_artifact_path_for_model(model_name)
-    if not workflow_path.exists():
-        return None
-    workflow = _load_graph_workflow_file(workflow_path)
-    if workflow is None:
-        return None
-    return workflow
+        return None, False
+    return _load_graph_workflow_file(workflow_path), False
 
 
 
@@ -6273,30 +6292,41 @@ def _load_graph_workflow_file(workflow_path: Path) -> Optional[dict]:
     return workflow
 
 
-def _graph_workflow_artifact_path_for_model(model_name: str) -> Path:
+def _graph_binding_artifact(record: Any) -> str | None:
+    bindings = record.manifest.get("bindings")
+    comfy = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings, Mapping) else None
+    artifact = comfy.get("workflow") if isinstance(comfy, Mapping) else None
+    return artifact if isinstance(artifact, str) and artifact else None
+
+
+def _graph_workflow_artifact_for_model(model_name: str, intent: str | None = None) -> tuple[Any, str] | None:
+    """The record a model loads from, and its graph artifact as written.
+
+    The record is the one the job pins: chosen by model identity (and ``intent`` when given), the way
+    `_find_image_manifest` chooses. A record that only shares the graph file's name is never chosen for a package
+    artifact; it can still supply a non-package artifact when no built-in file exists.
+    """
     try:
         registry = GATEWAY_WORKFLOW_REGISTRY
     except NameError:
-        return DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        return None
+    record = _image_workflow_record(intent, model_name) if intent else next(
+        (r for r in registry.records()
+         if str(r.manifest.get("id") or "").split(".")[-1] == model_name or r.manifest.get("id") == model_name),
+        None,
+    )
+    if record is not None and (artifact := _graph_binding_artifact(record)) is not None:
+        return record, artifact
     for record in registry.records():
-        bindings = record.manifest.get("bindings")
-        if not isinstance(bindings, Mapping):
-            continue
-        comfy = bindings.get(DERIVED._GRAPH_BINDING)
-        if not isinstance(comfy, Mapping):
-            continue
-        artifact = comfy.get("workflow")
-        if not isinstance(artifact, str) or not artifact:
-            continue
-        if Path(artifact.replace("package://", "")).stem != model_name:
-            continue
-        return _resolve_workflow_artifact_path(record, artifact)
-    return DERIVED.COMFY_WORKFLOWS_DIR / f"{model_name}.json"
+        artifact = _graph_binding_artifact(record)
+        if artifact and not artifact.startswith("package://") and Path(artifact).stem == model_name:
+            return record, artifact
+    return None
 
 
 def _resolve_workflow_artifact_path(record: Any, artifact: str) -> Path:
     if artifact.startswith("package://"):
-        artifact = artifact.removeprefix("package://").lstrip("/")
+        return _resolve_package_artifact_path(record, artifact.removeprefix("package://").lstrip("/"))
     path = Path(artifact)
     if path.is_absolute():
         return path
@@ -6310,6 +6340,24 @@ def _resolve_workflow_artifact_path(record: Any, artifact: str) -> Path:
         base = source_path if source_path.is_dir() else source_path.parent
         return (base / path).resolve()
     return project_relative
+
+
+def _resolve_package_artifact_path(record: Any, relative: str) -> Path:
+    """A ``package://`` artifact is the file the package review hashed: it resolves only beneath the record's package root
+    (``source_path``, the package folder, or the folder of a manifest file in it), never a same-named project file, and a
+    path that leaves that root (``..``, a symlink) is refused."""
+    source_path = Path(getattr(record, "source_path", "") or "")
+    if not str(source_path) or str(source_path) == "." or not (source_path.is_dir() or source_path.is_file()):
+        # A package folder that is gone is not read as a manifest file: its parent holds other packages.
+        raise ValueError(f"package artifact {relative!r} has no package root")
+    try:
+        root = (source_path if source_path.is_dir() else source_path.parent).resolve()
+        resolved = (root / relative).resolve()
+    except (RuntimeError, OSError) as exc:  # a symlink loop or an unreadable link inside the package
+        raise ValueError(f"package artifact {relative!r} cannot be resolved ({type(exc).__name__})") from exc
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"package artifact {relative!r} is outside its package root")
+    return resolved
 
 
 def _graph_job_envelope(
@@ -9050,7 +9098,7 @@ async def proxy_graph_image_request(
             output_format=output_format, output_compression=output_compression, quality=quality, background=background,
         )
 
-    workflow = load_graph_workflow(model)
+    workflow = load_graph_workflow(model, intent=IMAGE_GENERATE_INTENT)
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -9491,7 +9539,7 @@ async def proxy_graph_image_edit_request(
             request, auth_context, form, form_dict, image_files, str(prompt or ""), response_format,
         )
 
-    workflow = load_graph_workflow(model)
+    workflow = load_graph_workflow(model, intent=IMAGE_EDIT_INTENT)
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -20812,6 +20860,9 @@ _IMAGE_ROUTE_INTENTS = {
     "/v1/images/edits": "image.edit",
     "/v1/images/variations": "image.variation",
 }
+# The intents of the generation and edit routes, named once here; a route loads its workflow record under its own intent.
+IMAGE_GENERATE_INTENT = _IMAGE_ROUTE_INTENTS["/v1/images/generations"]
+IMAGE_EDIT_INTENT = _IMAGE_ROUTE_INTENTS["/v1/images/edits"]
 
 
 def start_image_route_receipt(
@@ -21489,8 +21540,8 @@ async def _proxy_offset_inpaint_tile_request(
         "inpaint_model",
         fallback="flux2-klein-4b-inpaint",
     )
-    base_workflow = load_graph_workflow(base_model)
-    inpaint_workflow = load_graph_workflow(inpaint_model)
+    base_workflow = load_graph_workflow(base_model, intent=IMAGE_GENERATE_INTENT)
+    inpaint_workflow = load_graph_workflow(inpaint_model, intent=IMAGE_EDIT_INTENT)
     base_manifest = _find_image_manifest("image.generate", base_model)
     inpaint_manifest = _find_image_manifest("image.edit", inpaint_model)
     if not base_workflow or not inpaint_workflow or base_manifest is None or inpaint_manifest is None:
@@ -21773,7 +21824,7 @@ def _prefer_inpaint_workflow_for_mask(model: str) -> str:
         return model
     base = model.removesuffix("-edit")
     candidate = f"{base}-inpaint"
-    return candidate if load_graph_workflow(candidate) else model
+    return candidate if load_graph_workflow(candidate, intent=IMAGE_EDIT_INTENT) else model
 
 
 def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> str:
@@ -21785,7 +21836,11 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
         return selected
 
     if not (selected.endswith("-edit") or selected.endswith("-inpaint")):
-        direct_workflow = load_graph_workflow(selected)
+        # The edit route's own record (intent image.edit) decides, the same one its final load uses: another
+        # intent's record of the same name never supplies metadata or hides this record's refusal.
+        direct_workflow = load_graph_workflow(selected, intent=IMAGE_EDIT_INTENT)
+        if direct_workflow is None and graph_workflow_refused(selected, intent=IMAGE_EDIT_INTENT):
+            return selected  # a refused package model is unavailable; it never becomes its -edit sibling
         direct_meta = direct_workflow.get("_meta", {}) if isinstance(direct_workflow, Mapping) else {}
         if not isinstance(direct_meta, Mapping) or not (direct_meta.get("image_node") or direct_meta.get("image_nodes")):
             selected = f"{selected}-edit"
@@ -21831,7 +21886,8 @@ def _attach_image_manifest_if_available(
             pass
 
 
-def _find_image_manifest(intent: str, resolved_model: str) -> dict[str, Any] | None:
+def _image_workflow_record(intent: str, resolved_model: str) -> Any:
+    """The registry record for ``resolved_model`` under ``intent``: what a route loads from and its job pins."""
     candidate_ids = {
         f"{intent}.{resolved_model}",
         f"{intent}.{resolved_model.removesuffix('-edit')}",
@@ -21842,8 +21898,13 @@ def _find_image_manifest(intent: str, resolved_model: str) -> dict[str, Any] | N
         if manifest.get("intent") != intent:
             continue
         if mid in candidate_ids or mid.endswith(f".{resolved_model}"):
-            return copy.deepcopy(dict(manifest))
+            return record
     return None
+
+
+def _find_image_manifest(intent: str, resolved_model: str) -> dict[str, Any] | None:
+    record = _image_workflow_record(intent, resolved_model)
+    return copy.deepcopy(dict(record.manifest)) if record is not None else None
 
 
 def _record_unknown_image_fields(
