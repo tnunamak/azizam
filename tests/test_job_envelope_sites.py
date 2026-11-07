@@ -337,6 +337,22 @@ def test_a_refused_package_model_is_refused_not_absent_and_never_becomes_its_edi
     assert proxy.load_graph_workflow("shadowed", intent="image.edit") is None
 
 
+def test_edit_selection_reads_the_edit_record_not_another_intents_record_of_the_same_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    audio = _graph_package(tmp_path, "audio", _node("AudioNode"))
+    refused = _graph_package(tmp_path, "pkg", _node("PackageNode"))
+    (tmp_path / "outside.json").write_text(json.dumps(_node("OutsideNode")), encoding="utf-8")
+    _registry_of(monkeypatch, tmp_path, [
+        ("audio.generate.shadowed", "audio.generate", audio, "package://graphs/shadowed.json"),
+        ("image.edit.shadowed-edit", "image.edit", tmp_path, "shadowed-edit.json"),
+        ("image.edit.shadowed", "image.edit", refused, "package://../outside.json"),
+    ])
+    (tmp_path / "builtin" / "shadowed-edit.json").write_text(json.dumps(_node("BuiltInEdit")), encoding="utf-8")
+    assert proxy._select_edit_workflow("shadowed", image_count=1, has_mask=False) == "shadowed"
+    assert proxy.load_graph_workflow("shadowed", intent="image.edit") is None
+
+
 def test_a_package_graph_that_reaches_a_symlink_loop_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     package = _graph_package(tmp_path, "pkg", _node("PackageNode"))
     (package / "loop").symlink_to(package / "loop")

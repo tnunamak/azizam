@@ -21824,8 +21824,10 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
         return selected
 
     if not (selected.endswith("-edit") or selected.endswith("-inpaint")):
-        direct_workflow = load_graph_workflow(selected)
-        if direct_workflow is None and graph_workflow_refused(selected):
+        # The edit route's own record (intent image.edit) decides, the same one its final load uses: another
+        # intent's record of the same name never supplies metadata or hides this record's refusal.
+        direct_workflow = load_graph_workflow(selected, intent="image.edit")
+        if direct_workflow is None and graph_workflow_refused(selected, intent="image.edit"):
             return selected  # a refused package model is unavailable; it never becomes its -edit sibling
         direct_meta = direct_workflow.get("_meta", {}) if isinstance(direct_workflow, Mapping) else {}
         if not isinstance(direct_meta, Mapping) or not (direct_meta.get("image_node") or direct_meta.get("image_nodes")):
