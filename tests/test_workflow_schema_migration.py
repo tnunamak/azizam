@@ -1152,7 +1152,7 @@ except Exception as error:  # reported, not raised: the test reads it
 reloaded = {key: registry.get(key) is not None for key in json.loads(os.environ["BOOT_IDS"])}
 evidence = asyncio.run(proxy._live_probe_evidence())
 print("RESULT" + json.dumps({"booted": booted, "reloaded": reloaded, "reload_error": reloaded_error,
-                             "mesh": proxy.MESH_MANIFEST.id, "evidence": evidence}))
+                             "mesh": proxy.current_mesh_workflow().id, "evidence": evidence}))
 """
 
 

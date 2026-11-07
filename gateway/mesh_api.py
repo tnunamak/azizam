@@ -286,7 +286,9 @@ def mesh_workflow_from_record(record: Any, checked_against: MeshManifest | None 
 class MeshApiDeps:
     """Everything the handler reads from the gateway. Tests inject fakes for each of them."""
 
-    manifest: MeshManifest | MeshWorkflow
+    # Zero-argument: the workflow record as it is now. Each request and each listing calls it once and uses that one
+    # value throughout, so a refresh in the middle cannot mix two records.
+    current_manifest: Callable[[], MeshManifest | MeshWorkflow]
     # Synchronous: the gateway's authenticator. Returns the caller's context, or the refusal to send.
     authenticate: Callable[[Request, str], Any]
     # The normalized frontend records (live registry, else seed).
@@ -449,7 +451,6 @@ def prefers_async(value: str | None) -> bool:
 
 
 def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
-    manifest = deps.manifest
     # Runs that no client connection owns: the async jobs, and the sync runs whose client left. Held here so the event
     # loop never drops them.
     runs: set[asyncio.Future] = set()
@@ -470,6 +471,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         if deps.workflow_available is not None and not deps.workflow_available():
             LOG.warning("mesh route refused: %s", WORKFLOW_ABSENT)
             return _unavailable(request_id)
+        manifest = deps.current_manifest()  # once: this request uses this record from here to its end
         facts = await registry_snapshot(deps)
         row, record_problem = route_row(facts.frontend_records(), manifest)
         if row is None:
@@ -490,17 +492,18 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         wants_async = (deps.jobs is not None and deps.store_output is not None
                        and prefers_async(request.headers.get("prefer")))
         async with deps.open_receipt(gate, request_id, MESH_PATH) as owner:
-            parsed = await _read_request(request, request_id, owner)
+            parsed = await _read_request(request, request_id, owner, manifest)
             if isinstance(parsed, Response):
                 return parsed
             fields, image_asset, source_name = parsed
             if wants_async:
                 return await _submit_job(request, request_id, owner, service, spec, observer, fields, image_asset, gate,
-                                         source_name)
+                                         source_name, manifest)
             return await _watch_and_run(request, request_id, owner, service, spec, observer, fields, image_asset, gate,
-                                        (run, source_name))
+                                        (run, source_name), manifest)
 
-    async def _read_request(request: Request, request_id: str, owner: Any) -> tuple[Mapping[str, str], Any, str] | Response:
+    async def _read_request(request: Request, request_id: str, owner: Any,
+                            manifest: MeshManifest | MeshWorkflow) -> tuple[Mapping[str, str], Any, str] | Response:
         """The engine's form fields, its image and the name the caller gave the picture, or the 400 for a body that does
         not bind to the manifest."""
         try:
@@ -535,7 +538,8 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
 
     async def _watch_and_run(request: Request, request_id: str, owner: Any, service: Mapping[str, Any],
                              spec: ExclusivePoolSpec, observer: tuple[str | None, str], fields: Mapping[str, str],
-                             image: Any, gate: Any, run_and_name: tuple[dict[str, Any], str]) -> Response:
+                             image: Any, gate: Any, run_and_name: tuple[dict[str, Any], str],
+                             manifest: MeshManifest | MeshWorkflow) -> Response:
         config = _config_of(service)
         base = service_base_url(config)
         if not base:
@@ -554,7 +558,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
                     owner.report(status="failed", reason="not_admitting")
                     return refusal
             work = asyncio.ensure_future(_lease_and_post(client, request_id, base, config, spec, observer, fields,
-                                                         image))
+                                                         image, manifest))
             watcher = asyncio.ensure_future(_watch_disconnect(request))
             try:
                 done, _ = await asyncio.wait({work, watcher}, return_when=asyncio.FIRST_COMPLETED)
@@ -566,7 +570,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
             if work in done:
                 watcher.cancel()
                 await asyncio.gather(watcher, return_exceptions=True)
-                return await _finish(work, owner, request_id, spec, gate, image, *run_and_name)
+                return await _finish(work, owner, request_id, spec, gate, image, *run_and_name, manifest)
             # The client went away first. The engine cannot be told to stop, so the HTTP task is not cancelled: it
             # keeps the lease until the engine answers or times out (a second run would meet a busy engine), and its
             # answer is dropped. Only the receipt closes now, as cancelled.
@@ -588,7 +592,8 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
 
     async def _lease_and_post(client: httpx.AsyncClient, request_id: str, base: str, config: Mapping[str, Any],
                               spec: ExclusivePoolSpec, observer: tuple[str | None, str], fields: Mapping[str, str],
-                              image: Any, admitted: Callable[[], None] | None = None) -> bytes:
+                              image: Any, manifest: MeshManifest | MeshWorkflow,
+                              admitted: Callable[[], None] | None = None) -> bytes:
         """One lease, held from the observation until the engine answers. ``admitted`` runs when the lease is held,
         before the engine is called. A pool whose lease is held (by a run still going, even one whose caller left) is
         refused at once, never queued: the sync and the async form answer a busy engine the same way."""
@@ -628,7 +633,8 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
             except TimeoutError as error:
                 raise MultipartFailure(KIND_TIMEOUT) from error
 
-    def _workflow_output(glb: bytes, request_id: str, image: Any, source_name: str) -> asset_types.WorkflowOutput:
+    def _workflow_output(glb: bytes, request_id: str, image: Any, source_name: str,
+                         manifest: MeshManifest | MeshWorkflow) -> asset_types.WorkflowOutput:
         """The model with what made it: the workflow's name, the request and the picture it came from."""
         return asset_types.WorkflowOutput(
             data=glb, suffix=".glb", workflow_name=manifest.data.get("display_name"), request_id=request_id,
@@ -636,7 +642,8 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
             takes_text=manifest.takes_text)
 
     async def _finish(work: asyncio.Future, owner: Any, request_id: str, spec: ExclusivePoolSpec, gate: Any,
-                      image: Any, run: dict[str, Any], source_name: str) -> Response:
+                      image: Any, run: dict[str, Any], source_name: str,
+                      manifest: MeshManifest | MeshWorkflow) -> Response:
         try:
             glb = work.result()
         except Exception as error:  # noqa: BLE001 - every fault is one bounded outcome (_failure_of)
@@ -648,7 +655,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         if deps.store_output is not None:
             try:
                 asset_id = await asyncio.to_thread(deps.store_output, gate,
-                                                   _workflow_output(glb, request_id, image, source_name))
+                                                   _workflow_output(glb, request_id, image, source_name, manifest))
             except Exception:  # noqa: BLE001 - a finished model is still returned when the library cannot keep it
                 LOG.exception("mesh output was not stored")
                 asset_id = None
@@ -666,7 +673,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
 
     async def _submit_job(request: Request, request_id: str, owner: Any, service: Mapping[str, Any],
                           spec: ExclusivePoolSpec, observer: tuple[str | None, str], fields: Mapping[str, str],
-                          image: Any, gate: Any, source_name: str) -> Response:
+                          image: Any, gate: Any, source_name: str, manifest: MeshManifest | MeshWorkflow) -> Response:
         """Take the lease, then answer 202 with the job. From there the job's task owns the lease, the engine call, the
         Library write and the receipt; this request's connection owns none of them."""
         jobs = deps.jobs
@@ -700,7 +707,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         held: asyncio.Future = asyncio.get_running_loop().create_future()
         # The task closes the client. It answers ``held`` when the lease is taken (the job then exists) or refused.
         task = asyncio.ensure_future(_run_job(job, path, owner, client, held, request_id, base, config, spec, observer,
-                                              fields, image, gate, source_name))
+                                              fields, image, gate, source_name, manifest))
         keep(task)
         try:
             refusal = await asyncio.shield(held)
@@ -720,7 +727,8 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
     async def _run_job(job: media_jobs.MediaJob, path: Path, owner: Any, client: httpx.AsyncClient,
                        held: asyncio.Future, request_id: str, base: str, config: Mapping[str, Any],
                        spec: ExclusivePoolSpec, observer: tuple[str | None, str], fields: Mapping[str, str],
-                       image: Any, gate: Any, source_name: str) -> None:
+                       image: Any, gate: Any, source_name: str,
+                       manifest: MeshManifest | MeshWorkflow) -> None:
         """The whole life of one async run. It ends with the job finished, the lease freed and the receipt closed."""
         job_id = job.job_id
         made = False
@@ -741,7 +749,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         try:
             try:
                 try:
-                    glb = await _lease_and_post(client, request_id, base, config, spec, observer, fields, image,
+                    glb = await _lease_and_post(client, request_id, base, config, spec, observer, fields, image, manifest,
                                                 admitted=admitted)
                 finally:
                     await client.aclose()
@@ -760,7 +768,7 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
                         "error_code": failure.code, "error_category": failure.category,
                         "retryable": failure.category != "internal", "upstream_http_status": None})
                 return
-            await _keep_result(job_id, path, owner, gate, _workflow_output(glb, request_id, image, source_name))
+            await _keep_result(job_id, path, owner, gate, _workflow_output(glb, request_id, image, source_name, manifest))
         except BaseException as error:  # noqa: BLE001 - a stop of the gateway must still end the job
             stopped = isinstance(error, asyncio.CancelledError)
             # A stop fails the job (it must be made again), so the receipt fails with it, as the next start's recovery
@@ -910,7 +918,7 @@ async def pool_evidence(deps: MeshApiDeps) -> dict[str, dict[str, Any]]:
     or the answer of one live probe of the service health and the observer's facts. A route that is not set up or is
     turned off says so (``configured`` or ``enabled`` false). It acquires no capacity, dispatches nothing, and reports
     a reason rather than raising."""
-    manifest = deps.manifest
+    manifest = deps.current_manifest()
     workflow_present = deps.workflow_available is None or deps.workflow_available()
     deps = await registry_snapshot(deps)
     _, problem = route_row(deps.frontend_records(), manifest)

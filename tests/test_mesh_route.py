@@ -145,7 +145,7 @@ class Harness:
             )
 
         return MeshApiDeps(
-            manifest=MANIFEST,
+            current_manifest=lambda: MANIFEST,
             authenticate=authenticate,
             frontend_records=lambda: self.frontends,
             services=lambda: self.services,
