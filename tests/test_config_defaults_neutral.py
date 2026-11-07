@@ -67,15 +67,17 @@ def _network_problem(token: str) -> str | None:
     return f"{token} is a public network"
 
 
-# A URL is `scheme://authority` plus whatever follows up to white space or a quote. Only its host is judged; the rest is
-# a path, a query or a fragment, and no address literal is read inside it.
-_URL = re.compile(r"""(?i)[a-z][a-z0-9+.-]*://([^/?#\s"'<>]*)[^\s"'<>]*""")
+# A URL is `scheme://authority`, then a path, query or fragment that runs to white space or a quote. The authority stops at
+# closing punctuation (`)`, `,`, `;`), and the path stops where another `scheme://` starts, so "(http://h)" and
+# "http://a,http://b" are judged by their hosts. Only the host is judged; no address literal is read inside the path.
+_URL = re.compile(r"""(?i)[a-z][a-z0-9+.-]*://([^/?#\s"'<>(),;]*)(?:[/?#](?:(?![a-z][a-z0-9+.-]*://)[^\s"'<>])*)?""")
 # Outside URLs, an address literal is one of three shapes. They start with different characters (`[`, a digit then a dot,
 # a hex digit or `:` then a colon), so at any position at most one of them can match and it takes all it can:
 # `[::ffff:127.0.0.1]:80` and `::ffff:127.0.0.1` are one literal each.
 _LITERAL = re.compile(
     r"\[[0-9A-Fa-f:.%\w]*:[0-9A-Fa-f:.%\w]*\](?::\d{1,5})?"                         # bracketed IPv6, optional port
-    r"|(?<![\w.])\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,3})?(?::\d{1,5})?(?![\w])(?!\.\d)"  # IPv4, optional /prefix, optional :port
+    # IPv4, optional /prefix, optional :port; "1.2.3.4-style" and "build-1.2.3.4" are identifiers, not addresses
+    r"|(?<![\w.])(?<![A-Za-z]-)\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,3})?(?::\d{1,5})?(?![\w])(?!\.\d)(?!-[A-Za-z])"
     r"|(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f.]*(?:/\d{1,3})?"                # bare IPv6, optional /prefix
 )
 _V4_PORT = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3}):\d{1,5}")
@@ -163,29 +165,25 @@ class Ref:
     path: tuple[str, ...]
     keys: bool = False
 
-    @property
-    def schema_field(self) -> str:
-        """The schema field name this declaration covers: the last step that is a name."""
-        names = [step.removesuffix("[]") for step in self.path if step != "*"]
-        return names[-1] if names else ""
-
 
 @dataclass(frozen=True)
 class Section:
     refs: tuple[Ref, ...] = ()
-    not_references: dict[str, str] = field(default_factory=dict)  # reference-looking schema field -> why it is none
+    not_references: dict[tuple[str, ...], str] = field(default_factory=dict)  # reference-looking schema path -> why it is none
+    open_paths: dict[tuple[str, ...], str] = field(default_factory=dict)  # declared path the schema leaves open -> why
 
 
-_WORKFLOW_TABLE = Section(refs=(
-    Ref("workflow", ("default_workflow",)), Ref("workflow", ("extend_workflow",)), Ref("workflow", ("remix_workflow",)),
-    Ref("workflow", ("workflows",), keys=True),
+_AUDIO_TABLE = Section(refs=(
+    Ref("workflow", ("default_workflow",)), Ref("workflow", ("workflows",), keys=True), Ref("workflow", ("aliases", "*")),
+))
+_VIDEO_TABLE = Section(refs=(
+    *_AUDIO_TABLE.refs, Ref("workflow", ("extend_workflow",)), Ref("workflow", ("remix_workflow",)),
     Ref("workflow", ("workflows", "*", "i2v_workflow")), Ref("workflow", ("workflows", "*", "chain_workflow")),
-    Ref("workflow", ("aliases", "*")),
 ))
 
 SECTIONS: dict[str, Section] = {
-    "audio": _WORKFLOW_TABLE,
-    "videos": _WORKFLOW_TABLE,
+    "audio": _AUDIO_TABLE,
+    "videos": _VIDEO_TABLE,
     "images": Section(refs=(Ref("workflow", ("variations", "default_workflow")), Ref("workflow", ("edits", "multiref_default_workflow")))),
     "voices": Section(refs=(Ref("service", ("quality_engine",)), Ref("service", ("design_engine",)))),
     "models": Section(refs=(Ref("model", (), keys=True), Ref("service", ("*", "backend")))),
@@ -198,11 +196,15 @@ SECTIONS: dict[str, Section] = {
         Ref("alias_target", ("*", "stable", "*")), Ref("service", ("*", "engines"), keys=True),
         Ref("service", ("*", "engines", "*", "service")), Ref("model", ("*", "engines", "*", "model")),
         Ref("stable_name", ("*", "openai[]", "to")),
-    )),
+    ), open_paths={
+        ("*", "engines", "*", "service"): "an engine is an open object in the schema; the data holds a service id here",
+        ("*", "engines", "*", "model"): "an engine is an open object in the schema; the data holds a model id here",
+        ("*", "openai[]", "to"): "a pattern is an open object in the schema; the data holds a stable name here",
+    }),
     # no id of a service, workflow or model lives in these sections
-    "identity": Section(not_references={"face_service": "the CPU face sidecar's own config object, not a registry service id"}),
+    "identity": Section(not_references={("face_service",): "the CPU face sidecar's own config object, not a registry service id"}),
     "instance": Section(), "model_routing": Section(), "reasoning": Section(),
-    "llm": Section(not_references={"pin_loaded_model": "a boolean"}),
+    "llm": Section(not_references={("pin_loaded_model",): "a boolean"}),
     "resource_admission": Section(), "workflow_execution": Section(),
 }
 
@@ -243,23 +245,68 @@ def references(name: str, document: Any) -> Iterator[tuple[str, str, str]]:
                         yield ref.kind, item.strip(), where
 
 
-def schema_field_names(schema: Any) -> set[str]:
-    names: set[str] = set()
-    if isinstance(schema, dict):
-        for key, item in schema.items():
-            if key == "properties" and isinstance(item, dict):
-                names.update(str(n) for n in item)
-            names |= schema_field_names(item)
-    elif isinstance(schema, list):
-        for item in schema:
-            names |= schema_field_names(item)
-    return names
+def _resolve(node: Any, root: Any) -> Any:
+    """Follow a local ``$ref`` (``#/$defs/x``) to its target."""
+    seen = 0
+    while isinstance(node, dict) and isinstance(node.get("$ref"), str) and node["$ref"].startswith("#/") and seen < 20:
+        target: Any = root
+        for part in node["$ref"][2:].split("/"):
+            target = target.get(part, {}) if isinstance(target, dict) else {}
+        node, seen = target, seen + 1
+    return node
 
 
-def uncovered_reference_fields(section: Section, schema: Any) -> set[str]:
-    """Schema fields of one section whose name looks like a reference and that its table neither reads nor excuses."""
-    looking = {n for n in schema_field_names(schema) if SERVICE_KEY.match(n) or WORKFLOW_KEY.match(n) or MODEL_KEY.match(n)}
-    return looking - {ref.schema_field for ref in section.refs} - set(section.not_references)
+def schema_paths(schema: Any) -> tuple[set[tuple[str, ...]], set[tuple[str, ...]]]:
+    """(every path, the paths named by a ``properties`` key) of a JSON schema, in the step language of ``Ref``: a property
+    name is its name; ``additionalProperties`` and ``patternProperties`` are ``*``; the items of an array under a property
+    are ``name[]``. A local ``$ref`` is followed; ``oneOf``/``anyOf``/``allOf`` branches add to the same path."""
+    every: set[tuple[str, ...]] = set()
+    named: set[tuple[str, ...]] = set()
+
+    def visit(node: Any, path: tuple[str, ...], active: frozenset) -> None:
+        node = _resolve(node, schema)
+        if not isinstance(node, dict) or (id(node), path) in active:
+            return
+        active = active | {(id(node), path)}
+        every.add(path)
+        for keyword in ("oneOf", "anyOf", "allOf"):
+            for branch in node.get(keyword) or []:
+                visit(branch, path, active)
+        for name, child in (node.get("properties") or {}).items():
+            named.add((*path, str(name)))
+            visit(child, (*path, str(name)), active)
+        for keyword in ("patternProperties",):
+            for child in (node.get(keyword) or {}).values():
+                visit(child, (*path, "*"), active)
+        extra = node.get("additionalProperties")
+        if isinstance(extra, dict):
+            visit(extra, (*path, "*"), active)
+        items = node.get("items")
+        if isinstance(items, dict) and path and not path[-1].endswith("[]"):
+            every.add((*path[:-1], path[-1] + "[]"))
+            visit(items, (*path[:-1], path[-1] + "[]"), active)
+
+    visit(schema, (), frozenset())
+    return every, named
+
+
+def _looks_like_a_reference(name: str) -> bool:
+    return bool(SERVICE_KEY.match(name) or WORKFLOW_KEY.match(name) or MODEL_KEY.match(name))
+
+
+def uncovered_reference_paths(section: Section, schema: Any) -> set[tuple[str, ...]]:
+    """Schema paths of one section whose last step looks like a reference name and that its table neither reads (at that
+    path) nor excuses (at that path)."""
+    _, named = schema_paths(schema)
+    looking = {path for path in named if _looks_like_a_reference(path[-1])}
+    return looking - {ref.path for ref in section.refs} - set(section.not_references)
+
+
+def undeclared_schema_paths(section: Section, schema: Any) -> set[tuple[str, ...]]:
+    """Declared paths that the schema does not have (a typo, or a container that does not exist), less the paths the section
+    says the schema leaves open."""
+    every, _ = schema_paths(schema)
+    return {ref.path for ref in section.refs if ref.path and ref.path not in every and ref.path not in section.open_paths}
 
 
 SENTINEL = "sentinel-unshipped-id"
@@ -386,12 +433,21 @@ def test_every_default_file_has_a_declared_section_and_no_section_is_none():
     assert all(isinstance(section, Section) for section in SECTIONS.values())
 
 
-def test_every_reference_looking_schema_field_of_a_section_is_declared_there_or_not_a_reference():
-    """Per section, not across the release: a field called ``backend`` that one section reads says nothing about another."""
+def _schema_of(name: str) -> Any:
+    return json.loads((DEFAULTS / f"{name}.schema.json").read_text(encoding="utf-8"))
+
+
+def test_every_reference_looking_schema_path_of_a_section_is_declared_there_or_not_a_reference():
+    """Per section and per path: a field called ``backend`` that one path reads says nothing about another path or section."""
     for name in sorted(_section_files()):
-        schema = json.loads((DEFAULTS / f"{name}.schema.json").read_text(encoding="utf-8"))
-        assert uncovered_reference_fields(SECTIONS[name], schema) == set(), \
-            f"{name}: a schema field looks like a reference and the section's table neither reads nor excuses it"
+        assert uncovered_reference_paths(SECTIONS[name], _schema_of(name)) == set(), \
+            f"{name}: a schema path looks like a reference and the section's table neither reads nor excuses it"
+
+
+def test_every_declared_path_exists_in_the_schema_of_its_section():
+    for name in sorted(_section_files()):
+        assert undeclared_schema_paths(SECTIONS[name], _schema_of(name)) == set(), f"{name}: a declared path is not in the schema"
+        assert set(SECTIONS[name].open_paths) <= {ref.path for ref in SECTIONS[name].refs}, f"{name}: an excuse for no declared path"
 
 
 def test_the_declared_paths_are_found_in_the_shipped_defaults_or_catch_a_sentinel():
@@ -407,16 +463,43 @@ def test_the_declared_paths_are_found_in_the_shipped_defaults_or_catch_a_sentine
 
 
 def test_a_new_reference_field_in_one_section_is_not_excused_by_another_sections_handler():
-    schema = json.loads((DEFAULTS / "images.schema.json").read_text(encoding="utf-8"))
+    schema = _schema_of("images")
     schema["properties"]["backend"] = {"type": "string"}
-    assert uncovered_reference_fields(SECTIONS["images"], schema) == {"backend"}
+    assert uncovered_reference_paths(SECTIONS["images"], schema) == {("backend",)}
     assert _problems({"backend": "my-private-engine"}, "images.yml") == []  # nothing reads it, so the table must grow
-    assert uncovered_reference_fields(SECTIONS["roles"], {"properties": {"backend": {}, "model": {}}}) == set()
+    assert uncovered_reference_paths(SECTIONS["roles"], _schema_of("roles")) == set()  # roles reads ("*", "backend"), not ("backend",)
+    assert uncovered_reference_paths(SECTIONS["roles"], {"properties": {"backend": {}}}) == {("backend",)}
 
 
-def test_a_section_that_declares_no_reference_leaves_its_reference_fields_uncovered():
-    audio = json.loads((DEFAULTS / "audio.schema.json").read_text(encoding="utf-8"))
-    assert uncovered_reference_fields(Section(), audio) == {"default_workflow"}
+def test_a_section_that_declares_no_reference_leaves_its_reference_paths_uncovered():
+    assert uncovered_reference_paths(Section(), _schema_of("audio")) == {("default_workflow",)}
+
+
+def test_the_schema_paths_are_read_in_the_step_language():
+    schema = {"$defs": {"entry": {"type": "object", "properties": {"backend": {}, "list": {"type": "array", "items": {
+                  "type": "object", "properties": {"to": {}}}}}}},
+              "type": "object", "patternProperties": {"^x$": {"$ref": "#/$defs/entry"}},
+              "properties": {"one": {"oneOf": [{"type": "object", "properties": {"model": {}}}, {"allOf": [{"properties": {"default_model": {}}}]}]},
+                             "table": {"type": "object", "additionalProperties": {"type": "object", "properties": {"service": {}}}}}}
+    every, named = schema_paths(schema)
+    assert {("*", "backend"), ("*", "list"), ("*", "list[]", "to"), ("one", "model"), ("one", "default_model"),
+            ("table", "*", "service")} <= named
+    assert {("table", "*"), ("*", "list[]")} <= every
+
+
+def test_a_declared_path_that_is_not_in_the_schema_is_found():
+    roles = _schema_of("roles")
+    wrong = Section(refs=(Ref("service", ("*", "not_a_real_container", "backend")), Ref("model", ("*", "model"))))
+    assert undeclared_schema_paths(wrong, roles) == {("*", "not_a_real_container", "backend")}
+    assert undeclared_schema_paths(Section(refs=(Ref("model", ("*", "model")),)), roles) == set()
+    assert undeclared_schema_paths(Section(refs=(Ref("service", ("*", "gone"), keys=True),)), roles) == {("*", "gone")}
+    assert undeclared_schema_paths(Section(refs=(Ref("service", ("*", "gone")),), open_paths={("*", "gone"): "open"}), roles) == set()
+
+
+def test_a_second_nested_reference_field_in_a_section_that_reads_the_first_is_found():
+    roles = _schema_of("roles")
+    roles["additionalProperties"]["properties"]["fallback"] = {"type": "object", "properties": {"backend": {"type": "string"}}}
+    assert uncovered_reference_paths(SECTIONS["roles"], roles) == {("*", "fallback", "backend")}
 
 
 def test_a_second_address_on_a_line_with_an_allowed_one_is_found():
@@ -434,6 +517,24 @@ def test_every_address_in_a_text_is_found_not_only_the_first_token():
     assert _problems({"value": ["a", {"n": "network=10.4.0.0/16"}]})
     assert _problems({"value": "endpoint=" + LAN_HOST + ":8080"})
     assert _problems({"value": "[" + LAN_HOST + "]"}) and _problems({"value": "see (" + LAN_HOST + ")."})
+
+
+def test_a_url_ended_by_closing_punctuation_or_joined_to_another_url_is_judged_by_its_host():
+    for text in (f"see (http://{LAN_HOST})", f"see (http://{LAN_HOST}:8080/x).", f"endpoint=http://{LAN_HOST}, next",
+                 f"a=http://{LAN_HOST};b=1", f"http://127.0.0.1/ok,http://{LAN_HOST}/v1", f"(http://127.0.0.1) and (http://{LAN_HOST})",
+                 f"http://127.0.0.1,{LAN_HOST}", "http://[2a01:4f8::1]:8080, next"):
+        assert _problems({"v": text}), text
+    for text in ("see (http://127.0.0.1)", "endpoint=http://127.0.0.1:8000, next", "http://127.0.0.1/a,http://[::1]:80/b",
+                 "http://[::1]:8000/x", "(http://example.test/10.0.0.0/8)"):
+        assert _problems({"v": text}) == [], text
+
+
+def test_a_dotted_quad_joined_to_a_word_by_a_hyphen_is_an_identifier_not_an_address():
+    for text in ("version 1.2.3.4-style", "build-1.2.3.4", "tool 8.8.8.8-rc1 released", "pkg-8.8.8.8-beta"):
+        assert _problems({"v": text}) == [], text
+    for text in (f"{LAN_HOST}", f"range {LAN_HOST}-{_built('192', '168', '1', '99')}", f"- {LAN_HOST}", f"host {LAN_HOST} - up",
+                 "8.8.8.8", "dns 8.8.8.8, 1.1.1.1"):
+        assert _problems({"v": text}), text
 
 
 def test_an_address_in_a_comment_line_is_found():

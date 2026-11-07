@@ -220,7 +220,8 @@ def test_no_unit_file_or_shell_script_sets_a_removed_environment_variable():
 class _Scope:
     """One module or function body: the bindings made in it. A binding is (value, simple); ``value`` is the right-hand side
     of ``name = value`` (or None when the name is bound some other way: a parameter, a loop, an import, an unpacking);
-    ``simple`` is true only for ``name = value`` and ``name: T = value`` with that single target."""
+    ``simple`` is true only for ``name = value`` and ``name: T = value`` with that single target. A parameter's value is its
+    default; a name bound by an unpacking or a walrus holds the right-hand side."""
 
     def __init__(self, parent: "_Scope | None") -> None:
         self.parent = parent
@@ -256,9 +257,12 @@ def _collect(tree) -> "tuple[list[tuple[object, _Scope]], _Scope]":
             for default in (*arguments.defaults, *arguments.kw_defaults):
                 if default is not None:
                     visit(default, scope)
-            for argument in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs, arguments.vararg, arguments.kwarg):
+            positional = [*arguments.posonlyargs, *arguments.args]
+            defaults = dict(zip((a.arg for a in positional[len(positional) - len(arguments.defaults):]), arguments.defaults))
+            defaults.update({a.arg: d for a, d in zip(arguments.kwonlyargs, arguments.kw_defaults) if d is not None})
+            for argument in (*positional, *arguments.kwonlyargs, arguments.vararg, arguments.kwarg):
                 if argument is not None:
-                    bind(inner, argument.arg)
+                    bind(inner, argument.arg, defaults.get(argument.arg))  # a default is a value the name may hold
             for child in (node.body if isinstance(node.body, list) else [node.body]):
                 visit(child, inner)
             return
@@ -268,7 +272,10 @@ def _collect(tree) -> "tuple[list[tuple[object, _Scope]], _Scope]":
                 for target in targets:
                     if isinstance(target, ast.Name):
                         bind(scope, target.id, node.value, simple=len(targets) == 1)
-                    else:
+                    else:  # an unpacking: each name it binds may hold (part of) the value
+                        for bound in ast.walk(target):
+                            if isinstance(bound, ast.Name) and isinstance(bound.ctx, ast.Store):
+                                bind(scope, bound.id, node.value)
                         visit(target, scope)
                 visit(node.value, scope)
                 return
@@ -278,6 +285,8 @@ def _collect(tree) -> "tuple[list[tuple[object, _Scope]], _Scope]":
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             for name in node.names:
                 bind(scope, name)
+        elif isinstance(node, ast.NamedExpr):
+            bind(scope, node.target.id, node.value)
         elif isinstance(node, ast.ClassDef):
             bind(scope, node.name)
         elif isinstance(node, ast.ExceptHandler) and node.name:
@@ -308,7 +317,9 @@ def startup_keys_read(sources: dict[str, str], section_ids: set[str]) -> tuple[s
     plain ``name = value``. A name bound twice, rebound, a parameter, or a target of ``a = b = value`` is not followed: a
     read through it that could reach the file, and a read whose key is not a literal or such a constant, come back in
     ``unresolved`` as ``file:line: expression`` and the test fails on them. One pass, no fixed point: a name is
-    resolved by looking up its single binding, and following aliases of aliases stops at a name seen twice.
+    resolved by looking up its single binding, and following aliases of aliases stops at a name seen twice. A name whose
+    binding the scan does not understand but whose value may be one of the objects (a parameter default, an unpacking,
+    a walrus, a conditional expression; not a value read out of one) is not skipped: a read through it is unresolved too.
 
     A key that is a section id, or ``backends``, is read from the merged config unless the read is on
     ``_bootstrap_config``: a section id that the schema also lists (``images``) is a startup key only through its raw
@@ -329,6 +340,21 @@ def startup_keys_read(sources: dict[str, str], section_ids: set[str]) -> tuple[s
         owner, bindings = looked
         return (owner, bindings[0][0]) if len(bindings) == 1 and bindings[0][1] else (owner, None)
 
+    def mentions(expression) -> bool:
+        """May the expression itself be a tracked object (not a value read out of one)? True for the object, a conditional or
+        ``or`` with it, or a tuple holding it, or a walrus of it."""
+        if ast.unparse(expression) in tracked:
+            return True
+        if isinstance(expression, ast.IfExp):
+            return mentions(expression.body) or mentions(expression.orelse)
+        if isinstance(expression, ast.BoolOp):
+            return any(mentions(value) for value in expression.values)
+        if isinstance(expression, ast.NamedExpr):
+            return mentions(expression.value)
+        if isinstance(expression, (ast.Tuple, ast.List, ast.Set)):
+            return any(mentions(element) for element in expression.elts)
+        return False
+
     def object_of(expression, scope: _Scope, seen: frozenset = frozenset()) -> str | None:
         """A tracked object name, ``ambiguous`` when a name that may hold one has several bindings, or None."""
         text = ast.unparse(expression)
@@ -342,8 +368,18 @@ def startup_keys_read(sources: dict[str, str], section_ids: set[str]) -> tuple[s
             return None
         owner, bindings = looked
         if len(bindings) == 1 and bindings[0][1]:
-            return object_of(bindings[0][0], owner, seen)
-        return ambiguous if any(value is not None and object_of(value, owner, seen) for value, _ in bindings) else None
+            return object_of(bindings[0][0], owner, seen) or (ambiguous if mentions(bindings[0][0]) else None)
+        return ambiguous if any(value is not None and (object_of(value, owner, seen) or mentions(value)) for value, _ in bindings) else None
+
+    def bootstrap_possible(expression, scope: _Scope, seen: frozenset = frozenset()) -> bool:
+        """Can a name hold the raw file, by any of its bindings?"""
+        if "_bootstrap_config" in ast.unparse(expression):
+            return True
+        looked = scope.lookup(expression.id) if isinstance(expression, ast.Name) else None
+        if looked is None or (looked[0], expression.id) in seen:
+            return False
+        seen = seen | {(looked[0], expression.id)}
+        return any(value is not None and bootstrap_possible(value, looked[0], seen) for value, _ in looked[1])
 
     for filename, source in sources.items():
         reads, module = _collect(ast.parse(source))
@@ -355,6 +391,9 @@ def startup_keys_read(sources: dict[str, str], section_ids: set[str]) -> tuple[s
             holder = object_of(receiver, scope)
             if holder is None:
                 continue
+            if (holder == ambiguous and isinstance(key_node, ast.Constant) and key_node.value in section_ids | {"backends"}
+                    and not bootstrap_possible(receiver, scope)):
+                continue  # only the merged config can be read here, and a section id or ``backends`` read from it is no startup key
             key = None
             if holder != ambiguous:
                 if isinstance(key_node, ast.Constant):
@@ -461,3 +500,32 @@ def test_an_alias_made_by_a_multiple_assignment_is_unresolved():
 def test_an_alias_cycle_ends():
     source = 'a = b\nb = a\na.get("k")\n'
     assert _bounded(startup_keys_read, {"x.py": source}, set()) == (set(), [])
+
+
+def test_a_read_through_a_name_bound_by_an_unsupported_form_is_unresolved():
+    forms = {
+        "a parameter default": 'def f(raw=config):\n    return raw.get("k")\n',
+        "a keyword-only default": 'def f(*, raw=_bootstrap_config):\n    return raw.get("k")\n',
+        "an unpacking": 'raw, other = config, {}\nraw.get("k")\n',
+        "a walrus": 'if (raw := config):\n    raw.get("k")\n',
+        "a conditional expression": 'raw = config if flag else {}\nraw.get("k")\n',
+    }
+    for form, source in forms.items():
+        found, unresolved = _bounded(startup_keys_read, {"x.py": source}, set())
+        assert found == set() and len(unresolved) == 1 and unresolved[0].startswith("x.py:") , form
+
+
+def test_a_name_bound_by_a_form_that_holds_no_tracked_object_is_still_skipped():
+    source = ('def f(raw=None, other=compute()):\n    return raw.get("a"), other.get("b")\n'
+              'x, y = 1, 2\nx.get("c")\nz = flag if flag else {}\nz.get("d")\nvalue = config.get("proxy")\nvalue.get("port")\n'
+              'partial = build(_bootstrap_config)\npartial[1]\n')
+    assert _bounded(startup_keys_read, {"x.py": source}, set()) == ({"proxy"}, [])
+
+
+def test_an_ambiguous_read_of_a_section_id_is_no_startup_key_unless_the_raw_file_can_be_the_holder():
+    merged = 'def f(runtime_config):\n    source = runtime_config if runtime_config is not None else config\n    return source.get("reasoning")\n'
+    assert _bounded(startup_keys_read, {"x.py": merged}, {"reasoning"}) == (set(), [])
+    raw = 'def f(flag):\n    source = _bootstrap_config if flag else config\n    return source.get("reasoning")\n'
+    assert _bounded(startup_keys_read, {"x.py": raw}, {"reasoning"}) == (set(), ["x.py:3: source.get('reasoning')"])
+    unknown = 'def f(flag):\n    source = config if flag else {}\n    return source.get("zzz")\n'
+    assert _bounded(startup_keys_read, {"x.py": unknown}, {"reasoning"}) == (set(), ["x.py:3: source.get('zzz')"])
