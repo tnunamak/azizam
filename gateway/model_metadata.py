@@ -438,23 +438,23 @@ def _asset_inputs(manifest: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 
 def _asset_input_modality(spec: Mapping[str, Any], *, default: str | None) -> str | None:
-    major = str(spec.get("media_type") or "").split("/", 1)[0].strip().lower()
+    """The modality an asset input accepts: the shared kind of its ``accepts`` list (a schema 1 ``media_type`` counts as a
+    one-item list), else the intent's default."""
+    accepted = spec.get("accepts") or ([spec["media_type"]] if spec.get("media_type") else ())
+    majors = {str(item).split("/", 1)[0].strip().lower() for item in accepted if str(item).strip()}
+    major = next(iter(majors)) if len(majors) == 1 else ""
     return major if major in INPUT_MODALITIES else default
 
 
-def asset_media_type(intent: str | None, spec: Mapping[str, Any], declared: str | None = None) -> str | None:
-    """Media kind of one asset input, as ``image/*``. A schema 1 document says what it declared (``declared``, empty for
-    nothing): that, else its intent's default. A document written as schema 2 says it by what the input accepts: one type as
-    it is, several as their shared kind."""
-    if declared is None:
-        accepted = [str(item).strip() for item in spec.get("accepts") or () if str(item).strip()]
-        if len(accepted) == 1:
-            return accepted[0]
-        majors = {item.split("/", 1)[0].lower() for item in accepted}
-        if len(majors) == 1 and next(iter(majors)) in INPUT_MODALITIES:
-            return f"{next(iter(majors))}/*"
-    elif declared:
-        return declared
+def asset_media_type(intent: str | None, spec: Mapping[str, Any]) -> str | None:
+    """Media kind of one asset input, as ``image/*``. The document says it by what the input accepts: one type as it is,
+    several as their shared kind; an input that accepts nothing it can name falls back to its intent's default."""
+    accepted = [str(item).strip() for item in spec.get("accepts") or () if str(item).strip()]
+    if len(accepted) == 1:
+        return accepted[0]
+    majors = {item.split("/", 1)[0].lower() for item in accepted}
+    if len(majors) == 1 and next(iter(majors)) in INPUT_MODALITIES:
+        return f"{next(iter(majors))}/*"
     major = _INTENT_ASSET_MODALITY.get(str(intent or ""))
     return f"{major}/*" if major else None
 

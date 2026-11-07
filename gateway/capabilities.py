@@ -36,7 +36,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
-from gateway.workflow_view import declared_capability, inputs_without_pictures, settable_inputs
+from gateway.workflow_policy import NEEDS_CONFIGURATION_MESSAGE
+from gateway.workflow_view import settable_inputs
 from gateway.discovery import WorkflowRecord
 from gateway.policy import ALLOWED, DecidingRule, EffectiveAccess, PolicyDecision, PolicyRequest
 
@@ -523,11 +524,14 @@ def capability_from_workflow_record(
     manifest = record.contract
     facts = record.facts
     outputs = manifest.get("outputs") or {}
-    inputs = inputs_without_pictures(settable_inputs(manifest), facts)
+    inputs = settable_inputs(manifest)
     input_modalities = _derive_input_modalities(inputs, intent=record.intent)
     output_modalities = _derive_output_modalities(outputs)
 
     caveats: list[str] = list(extra_caveats)
+    if facts is None:
+        # No policy facts, and no defaults: the capability is closed (exposure ``disabled``) until its owner configures it.
+        caveats.append(NEEDS_CONFIGURATION_MESSAGE)
     if not record.identity.trusted:
         # ``trusted`` is the record's own flag; no one is named as its reviewer.
         caveats.append(UNREVIEWED_WORKFLOW_CAVEAT)
@@ -536,7 +540,7 @@ def capability_from_workflow_record(
         intent=record.intent,
         title=manifest.get("display_name") or manifest.get("name") or manifest.get("title"),
         description=manifest.get("description"),
-        capability=declared_capability(manifest, facts),
+        capability=manifest.get("capability"),
         backend=chosen_backend,
         workflow=record.id,
         input_modalities=input_modalities,
@@ -548,10 +552,10 @@ def capability_from_workflow_record(
             intent=record.intent),
         execution=execution,
         streaming=streaming,
-        exposure=facts.exposure or "default",
-        trust_tier=facts.trust_tier or ("stable" if record.identity.trusted else "experimental"),
-        resource_tier=facts.resource_tier or ("batch" if execution == "job" else "interactive"),
-        tags=facts.tags,
+        exposure=facts.exposure if facts else "disabled",
+        trust_tier=facts.trust_tier if facts else "experimental",
+        resource_tier=facts.resource_tier if facts else "batch",
+        tags=facts.tags if facts else (),
         lifecycle="unknown",
         health="unknown",
         policy_available=True,

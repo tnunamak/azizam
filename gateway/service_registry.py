@@ -39,7 +39,8 @@ from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.capability_ids import MODEL_KIND_LABELS, capabilities_without_inner_endpoint, offered_model_kinds
 from gateway.discovery import WorkflowRecord, bundled_workflow_manifests, summarize_workflow
-from gateway.manifests import manifest_identity, validate_manifest
+from gateway.manifests import Provenance, enforce_contract, manifest_identity
+from gateway.workflow_policy import FACT_NAMES, facts_from_mapping, release_facts
 from gateway.transition_gate import ServicePaths, domain_violations
 from gateway import transition_profiles
 
@@ -2462,6 +2463,7 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
                 "identity",
                 "manifest_hash",
                 "overrides",
+                "policy",
                 "provenance",
                 "registry_source",
                 "source_path",
@@ -2469,11 +2471,13 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
             }
         }
     manifest_dict = copy.deepcopy(dict(manifest))
-    validate_manifest(manifest_dict)
-    identity = manifest_identity(manifest_dict)
+    enforce_contract(manifest_dict)   # a save refuses what a load refuses; schema 1 is refused, not converted
     source = str(raw.get("registry_source") or raw.get("source") or "ui")
     if source not in DATA_OBJECT_SOURCES:
         source = "ui"
+    identity = manifest_identity(manifest_dict, stored_provenance(source))
+    policy = raw.get("policy")
+    facts = facts_from_mapping(policy) or release_facts(identity.id)
     provenance = raw.get("provenance")
     if not isinstance(provenance, Mapping):
         provenance = {}
@@ -2483,8 +2487,9 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
         manifest=manifest_dict,
         identity=identity,
         source_path=Path(source_path) if source_path else Path(""),
+        facts=facts,
     )
-    return {
+    normalized = {
         "id": identity.id or workflow_id,
         "source": source,
         "editable": bool_from_config(raw.get("editable"), source == "ui"),
@@ -2501,6 +2506,16 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
         "manifest_path": manifest_path,
         "provenance": copy.deepcopy(dict(provenance)),
     }
+    stated = facts_from_mapping(policy)
+    if stated is not None:
+        # The record's own facts (an owner's patch over the release's): kept, so a read and a write back keep them.
+        normalized["policy"] = {name: list(getattr(stated, name)) if name == "tags" else getattr(stated, name) for name in FACT_NAMES}
+    return normalized
+
+
+def stored_provenance(source: str) -> Provenance:
+    """A stored record is not the release's own file: it is not reviewed, and its source is where it was stored from."""
+    return Provenance(trusted=False, source=source)
 
 
 def normalize_capability_record(capability_id: str, raw: Mapping[str, Any]) -> dict[str, Any]:
@@ -2561,13 +2576,14 @@ def workflow_records_from_registry(registry: Mapping[str, Any]) -> list[Workflow
         if not isinstance(manifest, Mapping):
             continue
         manifest_dict = copy.deepcopy(dict(manifest))
-        identity = manifest_identity(manifest_dict)
+        identity = manifest_identity(manifest_dict, stored_provenance(str(record.get("source") or "ui")))
         source_path = str(record.get("source_path") or "")
         records.append(
             WorkflowRecord(
                 manifest=manifest_dict,
                 identity=identity,
                 source_path=Path(source_path) if source_path else Path("admin.db"),
+                facts=facts_from_mapping(record.get("policy")) or release_facts(identity.id),
             )
         )
     return records

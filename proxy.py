@@ -335,6 +335,8 @@ from gateway.toolcall_detection import (
     ToolcallStreamDetector as _ToolcallStreamDetector,
 )
 from gateway.discovery import WorkflowRegistry
+from gateway.workflow_policy import (
+    NEEDS_CONFIGURATION_CODE, NEEDS_CONFIGURATION_MESSAGE, NeedsConfiguration, PolicyFacts)
 from gateway.video_limits import limits_for_workflow, video_limits
 from gateway.app_key_openapi import augment_app_key_openapi
 from gateway import operation_security
@@ -384,6 +386,7 @@ from gateway.litellm_substrate import (
 from gateway.manifests import (
     ManifestError,
     ManifestIdentity,
+    Provenance,
     bind_backend_request,
     load_workflow_manifest,
     manifest_identity,
@@ -419,6 +422,7 @@ from gateway.openai_media_schemas import (
     VIDEOS_STATUS_OPENAPI,
     VOICES_LIST_OPENAPI,
 )
+from gateway.policy import apply_to_receipt as apply_policy_to_receipt
 from gateway.policy import (
     CANNOT_START_MODEL, DENIED, NO_ACCESS, NO_ACCESS_PLAN, NOT_IN_ACCESS_PLAN, RULE_PROVIDER_UNAVAILABLE,
     DecidingRule, EffectiveAccess, PolicyDecision, evaluate,
@@ -14191,7 +14195,9 @@ def _load_gateway_workflow_registry(*, strict: bool = False) -> WorkflowRegistry
             admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
             if admin_registry is not None:
                 for record in service_registry.workflow_records_from_registry(admin_registry):
-                    registry.add_manifest(record.manifest, source_path=record.source_path, replace=True)
+                    registry.add_manifest(
+                        record.manifest, source_path=record.source_path, replace=True,
+                        provenance=Provenance(record.identity.trusted, record.identity.source), facts=record.facts)
         except Exception as e:  # noqa: BLE001
             if strict:
                 raise
@@ -16313,13 +16319,13 @@ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a111
 # --- Image to 3D: POST /v1/meshes/generate (gateway/mesh_api.py) -------------
 # The manifest is bundled data; the lease manager is one per process (one gateway worker per physical pool).
 _MESH_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
-# The route reads its workflow record from the registry and runs the mesh frontend profile on its contract; the old mesh
-# validator reads the same file beside it as a check (CODE_TO_DATA_S3, S3.4; it goes in S3.9).
-_MESH_CHECK = mesh_manifest.load_mesh_manifest(_MESH_MANIFEST_PATH)
-_MESH_RECORD = GATEWAY_WORKFLOW_REGISTRY.get(_MESH_CHECK.id)
+# The route reads its workflow record from the registry (the schema 2 contract) and runs the mesh frontend profile on it
+# (CODE_TO_DATA_S3, D9). The file names the record; the route holds no copy of its content.
+_MESH_WORKFLOW_ID = str(yaml.safe_load(_MESH_MANIFEST_PATH.read_text(encoding="utf-8"))["id"])
+_MESH_RECORD = GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID)
 if _MESH_RECORD is None:
-    raise mesh_manifest.MeshManifestError(f"workflow {_MESH_CHECK.id} is not in the registry")
-MESH_MANIFEST = mesh_api.mesh_workflow_from_record(_MESH_RECORD, checked_against=_MESH_CHECK)
+    raise mesh_manifest.MeshManifestError(f"workflow {_MESH_WORKFLOW_ID} is not in the registry")
+MESH_MANIFEST = mesh_api.mesh_workflow_from_record(_MESH_RECORD)
 MESH_LEASES = exclusive_pool.ExclusivePoolLeaseManager()
 
 
@@ -20840,7 +20846,16 @@ def _apply_image_route_policy(
     workflow: str | None = None,
     manifest: Mapping[str, Any] | None = None,
 ) -> PolicyDecision:
-    metadata = _image_manifest_policy_metadata(manifest)
+    try:
+        metadata = _image_manifest_policy_metadata(manifest)
+    except NeedsConfiguration:
+        # A workflow with no policy facts is closed: the route answers before it sends anything to an engine (D2).
+        access = _access_for_auth_context(auth_context)
+        decision = PolicyDecision(
+            decision=DENIED, sources=("policy:workflow-needs-configuration",),
+            reasons=(NEEDS_CONFIGURATION_MESSAGE,), visibility_level=access.receipt_detail, code=NEEDS_CONFIGURATION_CODE)
+        apply_policy_to_receipt(decision, receipt)
+        return decision
     return evaluate_and_apply(
         auth_context.identity,
         make_policy_request(
@@ -20861,25 +20876,24 @@ def _apply_image_route_policy(
 def _image_manifest_policy_metadata(
     manifest: Mapping[str, Any] | None,
 ) -> dict[str, object]:
-    """The route's policy facts for the workflow a manifest names: the record-level facts a load makes from the stored
-    document (CODE_TO_DATA_S3, D2), with the old defaults filled in."""
+    """The route's policy facts for the workflow a manifest names: the facts of its record (CODE_TO_DATA_S3, D2), found by
+    the workflow's id. Nothing is read from the document. A request that names no workflow is a request for a model, which
+    has its own fixed answer; a workflow whose record states no facts raises ``NeedsConfiguration``."""
     if manifest is None:
-        return _image_policy_metadata(None, trusted=True)
-    from gateway.workflow_convert import policy_facts_of, trusted_of
-
-    return _image_policy_metadata(policy_facts_of(manifest), trusted=trusted_of(manifest))
-
-
-def _image_policy_metadata(facts: Any, *, trusted: bool) -> dict[str, object]:
-    """The policy facts of an image route, with the old defaults filled in where the record states none."""
-    if facts is None:
         return {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "tags": ()}
-    return {
-        "exposure": facts.exposure or "default",
-        "trust_tier": facts.trust_tier or ("stable" if trusted else "experimental"),
-        "resource_tier": facts.resource_tier or "batch",
-        "tags": facts.tags,
-    }
+    return _image_policy_metadata(_workflow_policy_facts(manifest.get("id")), workflow_id=manifest.get("id"))
+
+
+def _workflow_policy_facts(workflow_id: Any) -> PolicyFacts | None:
+    record = GATEWAY_WORKFLOW_REGISTRY.get(str(workflow_id)) if isinstance(workflow_id, str) else None
+    return record.facts if record is not None else None
+
+
+def _image_policy_metadata(facts: PolicyFacts | None, *, workflow_id: Any = None) -> dict[str, object]:
+    """The policy facts of an image route, as the record states them. There is no default: a record with none is refused."""
+    if facts is None:
+        raise NeedsConfiguration(workflow_id if isinstance(workflow_id, str) else None)
+    return {"exposure": facts.exposure, "trust_tier": facts.trust_tier, "resource_tier": facts.resource_tier, "tags": facts.tags}
 
 
 def _policy_workflow_for_receipt(receipt: RouteReceipt | None) -> str | None:

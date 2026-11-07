@@ -195,6 +195,11 @@ def shipped_binding_descriptors(directory: Path | None = None) -> dict[str, Bind
 _SHIPPED: dict[Path, dict[str, BindingDescriptor]] = {}
 
 
+def cached_shipped_binding_descriptors() -> dict[str, BindingDescriptor]:
+    """The shipped descriptors, read once per process."""
+    return _cached_shipped()
+
+
 def _cached_shipped() -> dict[str, BindingDescriptor]:
     if PROTOCOL_DIR not in _SHIPPED:
         _SHIPPED[PROTOCOL_DIR] = shipped_binding_descriptors()
@@ -280,8 +285,10 @@ def _check_field(spec: BindingField, value: Any, at: tuple[PathPart, ...], input
     kind = spec.kind
     limit = spec.maximum
     if kind == "template":
-        if not isinstance(value, str) or len(value) > MAX_TEXT or not _TEMPLATE_REF.fullmatch(value) \
-                or {".", ".."} & set(value.split("/")):
+        # An extension package names its own template as ``package://<path>``; the path after the scheme is the reference.
+        reference = value.removeprefix("package://") if isinstance(value, str) else value
+        if not isinstance(reference, str) or len(reference) > MAX_TEXT or not _TEMPLATE_REF.fullmatch(reference) \
+                or {".", ".."} & set(reference.split("/")):
             errors.add(at, "template_invalid", "a template reference must be a canonical relative path")
     elif kind == "relative_path":
         if not isinstance(value, str) or len(value) > MAX_TEXT or not _RELATIVE_PATH.fullmatch(value) \

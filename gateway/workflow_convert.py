@@ -1,28 +1,24 @@
-"""The one-time conversion of a workflow document from schema version 1 to 2 (CODE_TO_DATA_S3, D3), and the report-only
-check the loader runs on every bundled document until the files are rewritten (S3.5).
+"""The one-time conversion of a workflow document from schema version 1 to 2 (CODE_TO_DATA_S3, D3).
 
-This module is temporary. It may name the keys of the old shape (``trusted``, ``seed``, ``transport``), which the permanent
-contract module (``workflow_contract``) must not. When the bundled files and the stored records are v2, it goes.
+This module is a tool, not a reader. The loader refuses schema 1 (``schema_version_unsupported``) and never converts: the
+bundled files were rewritten with this converter (S3.5a), and the stored owner records are rewritten by the migration
+(S3.5b). A package author or an owner runs it through ``scripts/workflow_contract.py convert``. It may name the keys of the
+old shape (``trusted``, ``seed``, ``transport``), which the permanent contract module (``workflow_contract``) must not.
 
 ``convert_1_to_2`` is pure: it returns a new document and the list of edits it made. It does not decide whether the result
 is valid; ``check_contract`` does. A document it cannot improve passes through unchanged, so the check shows what is wrong.
+``v1_policy_facts`` and ``v1_provenance`` read what a schema 1 document said beside its contract, for the one who writes the
+policy file or the stored record's facts; the converter itself drops those keys.
 """
 
 from __future__ import annotations
 
 import copy
-import dataclasses
-import hashlib
-import json
-import logging
-import threading
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from gateway.manifests import MEDIA_INPUT_TYPES, ContractError
-from gateway.workflow_contract import CONTRACT_VERSION, Report, check_contract
-
-log = logging.getLogger(__name__)
+from gateway.workflow_contract import Report, check_contract
 
 # What the routes passed to the media resolver before inputs declared their own accepted types.
 DEFAULT_ASSET_ACCEPTS = ["image/*"]
@@ -34,94 +30,24 @@ BACKFILL_KEY = "azizam.dev/backfill"
 POLICY_KEYS = ("exposure", "trust_tier", "resource_tier", "tags")
 
 
-@dataclass(frozen=True)
-class PolicyFacts:
-    """The record-level facts of a workflow (CODE_TO_DATA_S3, D2): what a reader needs to decide who may run it and at what
-    cost, and what a schema 1 document said of its media inputs that the contract no longer says. ``None`` (or an empty
-    list) means the record states nothing; each reader fills its own old default until S3.5 removes the defaults. They
-    never live in the contract document.
-
-    ``v1_assets`` holds, for each asset input of a schema 1 document (the mesh-only picture type is one), the media type it
-    declared (empty when it declared none): the contract only lists what the input accepts, and a default list looks the
-    same as a declared one. ``pictures`` names the inputs that were the picture type, which the modality readers did not
-    count. Both are empty for a document that was written as schema 2. ``capability_backfilled`` is true when the converter
-    inferred the capability from the intent, so the document did not declare one."""
-
-    exposure: str | None = None
-    trust_tier: str | None = None
-    resource_tier: str | None = None
-    tags: tuple[str, ...] = ()
-    v1_assets: tuple[tuple[str, str], ...] = ()
-    pictures: tuple[str, ...] = ()
-    capability_backfilled: bool = False
-
-    def declared_media(self, name: str) -> str | None:
-        """What a schema 1 document declared for this asset input (``""`` for nothing), or ``None`` for an input it did not
-        have as an asset."""
-        return dict(self.v1_assets).get(name)
-
-
-def _fact_text(value: Any) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def _v1_media_facts(manifest: Mapping[str, Any]) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
-    inputs = manifest.get("inputs")
-    if manifest.get("schema_version") != 1 or not isinstance(inputs, Mapping):
-        return (), ()
-    assets: list[tuple[str, str]] = []
-    pictures: list[str] = []
-    for name, spec in inputs.items():
-        kind = spec.get("type") if isinstance(spec, Mapping) else None
-        if kind == "asset":
-            assets.append((str(name), str(spec.get("media_type") or "").strip()))
-        elif kind in MEDIA_INPUT_TYPES:
-            pictures.append(str(name))
-            assets.append((str(name), str(spec.get("media_type") or "").strip()))
-    return tuple(assets), tuple(pictures)
-
-
-def policy_facts_of(manifest: Mapping[str, Any]) -> PolicyFacts:
-    """The facts of a schema 1 document, which holds them beside the contract. This and ``normalize`` are the only readers."""
-    raw_tags = manifest.get("tags")
-    tags = [item for item in raw_tags if isinstance(item, str) and item] if isinstance(raw_tags, list) else []
-    assets, pictures = _v1_media_facts(manifest)
-    return PolicyFacts(
-        exposure=_fact_text(manifest.get("exposure")), trust_tier=_fact_text(manifest.get("trust_tier")),
-        resource_tier=_fact_text(manifest.get("resource_tier")), tags=tuple(dict.fromkeys(tags)),
-        v1_assets=assets, pictures=pictures)
-
-
-def trusted_of(manifest: Mapping[str, Any]) -> bool:
-    """Whether a schema 1 document says it is reviewed: provenance, which belongs to the record, not the contract."""
-    return bool(manifest.get("trusted", False))
-
-
-def _carry_requirements(contract: dict[str, Any]) -> None:
-    """Requirements the converter left at the top (a document with several bindings, which the contract check reports) go
-    into every binding, so no accepted document loses them: a reader gathers them across the bindings without repeats. The
-    stored document and the conversion report are not changed."""
-    requires = contract.get("requires")
-    bindings = contract.get("bindings")
-    if requires is None or not isinstance(bindings, dict):
-        return
-    owners = [block for block in bindings.values() if isinstance(block, dict)]
-    if not owners:
-        return
-    del contract["requires"]
-    for block in owners:
-        block["requires"] = copy.deepcopy(requires)
-
-
-def normalize(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], PolicyFacts]:
-    """What every reader of a loaded schema 1 document reads: the schema 2 contract (made in memory, nothing is checked or
-    refused) and the policy facts that were beside it."""
-    contract, notes = convert_1_to_2(manifest)
+def v1_policy_facts(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """The policy facts a schema 1 document states beside its contract: only those it states, as it states them. A document
+    that states none gives ``{}``; nothing is filled in (a record with no facts needs configuration)."""
+    found: dict[str, Any] = {}
     for key in POLICY_KEYS:
-        contract.pop(key, None)
-    _carry_requirements(contract)
-    facts = dataclasses.replace(policy_facts_of(manifest), capability_backfilled=any(n.operation == "backfill" for n in notes))
-    return contract, facts
+        value = manifest.get(key)
+        if key == "tags":
+            if isinstance(value, list):
+                found[key] = list(dict.fromkeys(item for item in value if isinstance(item, str) and item))
+        elif isinstance(value, str) and value:
+            found[key] = value
+    return found
+
+
+def v1_provenance(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """What a schema 1 document said of its own review and origin (``trusted``, ``source``). Provenance belongs to the record;
+    the one who stores the converted document decides it from where the record came from, and this is only what was said."""
+    return {"trusted": bool(manifest.get("trusted", False)), "source": manifest.get("source")}
 
 
 @dataclass(frozen=True)
@@ -167,16 +93,38 @@ def convert_1_to_2(doc: Mapping[str, Any]) -> tuple[dict[str, Any], list[Convers
     return out, notes
 
 
+def _infer_capability(intent: str) -> str:
+    """The rule the catalog used to infer a capability from an intent prefix. It runs here, once, at conversion; nothing at
+    load or at request time infers a capability any more (D10)."""
+    for prefix, capability in (("image.", "image"), ("video.", "video"), ("mesh.", "mesh"), ("audio.", "audio"), ("speech.", "audio")):
+        if intent.startswith(prefix):
+            return capability
+    return "workflow"
+
+
+def _insert_after(mapping: dict[str, Any], after: str, key: str, value: Any) -> None:
+    """Put ``key`` right after ``after`` (at the end when ``after`` is absent), so a converted file reads in a fixed order."""
+    items = list(mapping.items())
+    mapping.clear()
+    placed = False
+    for name, held in items:
+        mapping[name] = held
+        if name == after:
+            mapping[key] = value
+            placed = True
+    if not placed:
+        mapping[key] = value
+
+
 def _backfill_capability(out: dict[str, Any], note: Any) -> None:
     intent = out.get("intent")
     if "capability" in out or not isinstance(intent, str):
         return
-    # The one copy of the rule that infers a capability from an intent. It is deleted with the inference (S3.5).
-    from gateway.workflows_catalog import _capability_from_intent
-
-    out["capability"] = _capability_from_intent(intent)
-    annotations = out.setdefault("annotations", {})
-    if isinstance(annotations, dict):
+    _insert_after(out, "intent", "capability", _infer_capability(intent))
+    annotations = out.get("annotations")
+    if annotations is None:
+        _insert_after(out, "capability", "annotations", {BACKFILL_KEY: dict(BACKFILL_NOTE)})
+    elif isinstance(annotations, dict):
         annotations[BACKFILL_KEY] = dict(BACKFILL_NOTE)
     note(("capability",), "backfill", "inferred once from the intent prefix, as the catalog did")
 
@@ -186,11 +134,11 @@ def _convert_input(at: tuple[str, ...], spec: dict[str, Any], note: Any) -> None
         note(at + ("modality",), "remove", "an asset input lists the media types it accepts")
     if spec.get("type") in MEDIA_INPUT_TYPES - {"asset"}:  # the mesh-only picture type of schema 1
         spec["type"] = "asset"
-        spec["accepts"] = list(OLD_PICTURE_ACCEPTS)
+        _insert_after(spec, "type", "accepts", list(OLD_PICTURE_ACCEPTS))
         note(at + ("type",), "set", "the picture type is an asset that accepts the types the old check accepted")
     elif spec.get("type") == "asset" and "accepts" not in spec:
         declared = spec.pop("media_type", None)
-        spec["accepts"] = [declared] if isinstance(declared, str) else list(DEFAULT_ASSET_ACCEPTS)
+        _insert_after(spec, "type", "accepts", [declared] if isinstance(declared, str) else list(DEFAULT_ASSET_ACCEPTS))
         note(at + ("accepts",), "add", "taken from the declared media type" if declared else "the type the routes passed before")
     if spec.get("type") == "object" and "properties" not in spec and "opaque" not in spec:
         spec["opaque"] = True
@@ -271,52 +219,3 @@ def _generate_seeds(out: dict[str, Any], flattened: set[str], note: Any) -> None
     if isinstance(spec, dict) and spec.get("type") == "integer" and "generate" not in spec and "default" not in spec:
         spec["generate"] = dict(SEED_GENERATOR)
         note(("inputs", "seed", "generate"), "add", "the routes drew this value when the caller gave none")
-
-
-# ------------------------------------------------------------------------------------------------ report-only check
-
-MAX_LOGGED_ERRORS = 10
-_REPORTED: set[tuple[str, int]] = set()
-_REPORTED_LIMIT = 4096
-_REPORTED_LOCK = threading.Lock()
-
-
-def forget_reported() -> None:
-    """Forget which documents were reported (a test wants a fresh report)."""
-    with _REPORTED_LOCK:
-        _REPORTED.clear()
-
-
-def _first_report(manifest: Mapping[str, Any]) -> bool:
-    """True once per (document digest, contract version) for the process; the later loads skip the work."""
-    digest = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
-    key = (digest, CONTRACT_VERSION)
-    # Membership, the capacity reset and the insert are one step: two threads must not both be first.
-    with _REPORTED_LOCK:
-        if key in _REPORTED:
-            return False
-        if len(_REPORTED) >= _REPORTED_LIMIT:
-            _REPORTED.clear()
-        _REPORTED.add(key)
-        return True
-
-
-def log_bundled_report(manifest: Mapping[str, Any], source: object = None) -> None:
-    """Convert a loaded v1 document, check it as v2 and log the report once. Nothing is refused and nothing is raised,
-    not even by a logging handler."""
-    try:
-        if not _first_report(manifest):
-            return
-        _, _, report = convert_and_check(manifest)
-        name = manifest.get("id") or source
-        if report.ok:
-            log.debug("workflow %s: no schema 2 contract errors", name)
-            return
-        log.warning("workflow %s: %d schema 2 contract errors (report only)", name, len(report.errors))
-        for error in report.errors[:MAX_LOGGED_ERRORS]:
-            log.warning("workflow %s: %s %s: %s", name, error.pointer or "/", error.code, error.message)
-    except Exception:  # the report must never stop a load
-        try:
-            log.exception("workflow contract report failed for %s", source)
-        except Exception:  # the handler that failed may be the one that logs this
-            pass

@@ -160,7 +160,7 @@ def _workflow_row(
     example = _example_request(record, effective_inputs, preferred or sync_route or async_route, base_url)
     engine_binding = _engine_binding_label(summary.get("supported_backends") or [], capability_rows)
     availability = _availability(capability_rows)
-    capability = _capability_from_intent(record.intent, record.contract.get("capability"))
+    capability = str(record.contract["capability"])
     manifest_purpose = summary.get("purpose")
     purpose = manifest_purpose.strip() if isinstance(manifest_purpose, str) else ""
     member_summary = record.contract.get("summary")
@@ -293,7 +293,7 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
         # keep what it really is, so a page can tell a picture input from a text one.
         if declared.get("type") == "asset" or spec.get("x-azizam-asset"):
             row["asset"] = True
-            media_type = asset_media_type(record.intent, declared, record.facts.declared_media(str(name)))
+            media_type = asset_media_type(record.intent, declared)
             if media_type:
                 row["media_type"] = media_type
         if isinstance(declared.get("label"), str) and declared["label"].strip():
@@ -712,22 +712,6 @@ def _aliases_for(workflow_id: str, aliases: Mapping[str, Any] | None) -> list[st
                 if isinstance(alias, str) and alias not in out:
                     out.append(alias)
     return out
-
-
-def _capability_from_intent(intent: str, declared: Any = None) -> str:
-    if isinstance(declared, str) and declared in {
-        "image", "video", "speech", "transcribe", "music", "sfx", "audio", "mesh"
-    }:
-        return declared
-    if intent.startswith("image."):
-        return "image"
-    if intent.startswith("video."):
-        return "video"
-    if intent.startswith("mesh."):
-        return "mesh"
-    if intent.startswith("audio.") or intent.startswith("speech."):
-        return "audio"
-    return "workflow"
 
 
 def _availability_reason_code(capabilities: list[Capability]) -> str:

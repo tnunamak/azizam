@@ -1,8 +1,7 @@
 """Small readers over the schema 2 workflow contract (CODE_TO_DATA_S3, S3.4).
 
-Every consumer reads the contract through these or through plain keys of the v2 grammar. Nothing here names a v1-only
-field (``trusted``, ``source``, ``transport``, a top-level ``requires``, the picture input type) or any workflow, engine
-or modality.
+Every consumer reads the contract through these or through plain keys of the v2 grammar. Nothing here names any workflow,
+engine or modality.
 """
 
 from __future__ import annotations
@@ -42,17 +41,3 @@ def settable_inputs(contract: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(inputs, Mapping):
         return {}
     return {name: spec for name, spec in inputs.items() if not (isinstance(spec, Mapping) and spec.get("settable") is False)}
-
-
-def inputs_without_pictures(inputs: Mapping[str, Any], facts: Any) -> dict[str, Any]:
-    """The inputs a modality is read from: the old mesh picture type, which no modality reader counted, stays out."""
-    pictures = set(getattr(facts, "pictures", ()) or ())
-    return {name: spec for name, spec in inputs.items() if name not in pictures}
-
-
-def declared_capability(contract: Mapping[str, Any], facts: Any = None) -> Any:
-    """The capability the document declared. One the converter inferred from the intent (the record's facts say so) is not
-    a declaration: the readers that show a declared capability showed nothing for it, and fill the intent's rule themselves."""
-    if getattr(facts, "capability_backfilled", False):
-        return None
-    return contract.get("capability")

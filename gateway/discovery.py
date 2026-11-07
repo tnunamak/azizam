@@ -29,15 +29,19 @@ import copy
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
-from gateway.workflow_view import backend_ids
+from gateway.workflow_view import backend_ids, settable_inputs
 from gateway.manifests import (
+    BUNDLED_PROVENANCE,
+    UNKNOWN_PROVENANCE,
     ManifestError,
     ManifestIdentity,
+    Provenance,
     load_workflow_manifest,
     manifest_identity,
 )
+from gateway.workflow_policy import PolicyFacts, release_policy
 
 VALID_AUDIENCES = ("client", "admin", "internal")
 MANIFEST_GLOBS = ("*.yml", "*.yaml")
@@ -48,27 +52,25 @@ BUNDLED_WORKFLOWS_DIR = Path(__file__).resolve().parent.parent / "manifests" / "
 
 @dataclass(frozen=True)
 class WorkflowRecord:
-    """A validated workflow manifest plus its on-disk provenance."""
+    """A validated workflow manifest, where it came from, and the facts about it that are not in the document.
+
+    ``manifest`` is the schema 2 contract (CODE_TO_DATA_S3): the document as stored, never converted on load. The identity
+    carries the provenance (``trusted``, ``source``), which the loader sets from the origin of the record. ``facts`` are the
+    record's policy facts; ``None`` means the record states none, so it needs configuration and runs nothing (D2)."""
 
     manifest: dict[str, Any]
     identity: ManifestIdentity
     source_path: Path
-    # What readers read (CODE_TO_DATA_S3, S3.4): the schema 2 contract and the policy facts, made once from the stored
-    # document. ``manifest`` is for the loader and the run path; a test may pass its own contract and facts.
-    contract: Any = field(default=None, compare=False, repr=False)
-    facts: Any = field(default=None, compare=False, repr=False)
-    # The dialect the stored document is in, which the summary reports until the files are rewritten (S3.5).
-    stored_schema_version: Any = field(default=None, compare=False, repr=False)
+    facts: PolicyFacts | None = field(default=None, compare=False, repr=False)
 
-    def __post_init__(self) -> None:
-        if self.contract is None or self.facts is None:
-            from gateway.workflow_convert import normalize
+    @property
+    def contract(self) -> dict[str, Any]:
+        """What readers read: the stored document is the contract."""
+        return self.manifest
 
-            contract, facts = normalize(self.manifest)
-            object.__setattr__(self, "contract", self.contract if self.contract is not None else contract)
-            object.__setattr__(self, "facts", self.facts if self.facts is not None else facts)
-        if self.stored_schema_version is None:
-            object.__setattr__(self, "stored_schema_version", self.manifest.get("schema_version"))
+    @property
+    def needs_configuration(self) -> bool:
+        return self.facts is None
 
     @property
     def id(self) -> str:
@@ -106,17 +108,28 @@ class WorkflowRegistry:
         self._errors: list[RegistryLoadError] = []
 
     @classmethod
-    def from_directory(cls, directory: str | Path) -> "WorkflowRegistry":
+    def from_directory(cls, directory: str | Path, *, policy: Mapping[str, PolicyFacts] | None = None) -> "WorkflowRegistry":
         registry = cls()
-        registry.load_directory(directory)
+        registry.load_directory(directory, policy=policy)
         return registry
 
-    def load_directory(self, directory: str | Path) -> None:
+    def load_directory(
+        self, directory: str | Path, *, provenance: Provenance = BUNDLED_PROVENANCE,
+        policy: Mapping[str, PolicyFacts] | None = None,
+    ) -> None:
         """Load every ``*.yml`` / ``*.yaml`` manifest in ``directory``.
 
         Malformed manifests are collected in :attr:`errors` so callers can
-        decide whether to fail hard or proceed with healthy entries.
+        decide whether to fail hard or proceed with healthy entries. The directory is the release's own, so each record has
+        the given provenance (reviewed and local by default) and the facts that ``policy`` (the release policy file by
+        default) holds for its id; an id the policy does not list needs configuration.
         """
+        if policy is None:
+            try:
+                policy = release_policy()
+            except ValueError as exc:   # a policy file that cannot be read states nothing
+                self._errors.append(RegistryLoadError(source_path=Path(directory), message=str(exc)))
+                policy = {}
         root = Path(directory)
         if not root.is_dir():
             raise ManifestError(f"manifest directory not found: {root}")
@@ -124,7 +137,7 @@ class WorkflowRegistry:
         for path in sorted(_iter_manifest_files(root)):
             try:
                 manifest = load_workflow_manifest(path)
-                self.add_manifest(manifest, source_path=path)
+                self.add_manifest(manifest, source_path=path, provenance=provenance, facts=policy.get(str(manifest["id"])))
             except (ManifestError, OSError, ValueError) as exc:
                 self._errors.append(
                     RegistryLoadError(source_path=path, message=str(exc))
@@ -136,9 +149,13 @@ class WorkflowRegistry:
         *,
         source_path: Path | str | None = None,
         replace: bool = False,
+        provenance: Provenance = UNKNOWN_PROVENANCE,
+        facts: PolicyFacts | None = None,
     ) -> WorkflowRecord:
-        """Add a manifest. A second one with the same id is refused, unless ``replace`` says it takes the place of the first."""
-        identity = manifest_identity(manifest)
+        """Add a manifest. A second one with the same id is refused, unless ``replace`` says it takes the place of the first.
+        The provenance and the facts are the record's, set by whoever knows where it came from; none means not reviewed and
+        needs configuration."""
+        identity = manifest_identity(manifest, provenance)
         if identity.id in self._records and not replace:
             raise ManifestError(
                 f"duplicate workflow manifest id: {identity.id}"
@@ -147,6 +164,7 @@ class WorkflowRegistry:
             manifest=copy.deepcopy(manifest),
             identity=identity,
             source_path=Path(source_path) if source_path else Path(""),
+            facts=facts,
         )
         self._records[identity.id] = record
         return record
@@ -218,21 +236,23 @@ def summarize_workflow(record: WorkflowRecord, audience: str) -> dict[str, Any]:
         "id": record.id,
         "intent": record.intent,
         "version": contract.get("version"),
-        "schema_version": record.stored_schema_version,
+        "schema_version": contract.get("schema_version"),
         "display_name": contract.get("display_name"),
         "purpose": contract.get("purpose"),
         "description": contract.get("description"),
-        "exposure": facts.exposure or "default",
-        "trust_tier": facts.trust_tier or ("stable" if record.identity.trusted else "experimental"),
-        "resource_tier": facts.resource_tier or "batch",
-        "tags": list(facts.tags),
+        "exposure": facts.exposure if facts else None,
+        "trust_tier": facts.trust_tier if facts else None,
+        "resource_tier": facts.resource_tier if facts else None,
+        "tags": list(facts.tags) if facts else [],
         "typical_seconds": _manifest_number(contract, "typical_seconds"),
-        # Stays on the stored document: the mesh workflow's picture input is listed as ``image`` on the wire and the
-        # contract calls it ``asset`` (CODE_TO_DATA_S3, S3.4). It moves with the wire in a later slice.
-        "inputs": _portable_inputs(record.manifest.get("inputs") or {}),
+        "inputs": _portable_inputs(settable_inputs(contract)),
         "outputs": _portable_outputs(contract.get("outputs") or {}),
         "supported_backends": record.supported_backends,
     }
+
+    if facts is None:
+        # No policy facts: the record is closed until its owner configures it (CODE_TO_DATA_S3, D2).
+        summary["needs_configuration"] = True
 
     if audience == "client":
         return summary
