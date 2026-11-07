@@ -27,7 +27,7 @@ from typing import Any, Iterable, Mapping
 
 import jsonschema
 
-from gateway.manifests import ContractError, ContractErrors, ErrorCollector, PathPart, validate_input_value
+from gateway.manifests import ContractError, ContractErrors, ErrorCollector, PathPart, exact_number, validate_input_value
 from gateway.result_bundle import ResultLimits
 from gateway.workflow_call import SNIFFED_MEDIA_TYPES
 
@@ -361,9 +361,10 @@ def _generates_a_value(spec: Mapping[str, Any], low: Any, high: Any) -> bool:
     """True when some integer in ``low..high`` is also a value the input accepts (its enum, its step and offset).
     Decided with exact arithmetic: the grid ``offset + k*step`` is a congruence, solved, not searched. When the input
     cannot be reasoned about (a step or offset that is not a number), the answer is yes: only a proven empty domain is refused."""
-    if not (_is_number(low) and _is_number(high) and _is_finite(low) and _is_finite(high)):
+    low_exact, high_exact = exact_number(low), exact_number(high)
+    if low_exact is None or high_exact is None:
         return True
-    first, last = math.ceil(Fraction(low)), math.floor(Fraction(high))
+    first, last = math.ceil(low_exact), math.floor(high_exact)
     if first > last:
         return False
     enum = spec.get("enum")
@@ -375,16 +376,16 @@ def _generates_a_value(spec: Mapping[str, Any], low: Any, high: Any) -> bool:
     step = spec.get("step")
     if step is None:
         return True
-    offset = spec.get("offset", 0)
-    if not (_is_number(step) and _is_number(offset) and _is_finite(step) and _is_finite(offset)) or step <= 0:
+    step_exact, offset_exact = exact_number(step), exact_number(spec.get("offset", 0))
+    if step_exact is None or offset_exact is None or step_exact <= 0:
         return True
-    found = _first_on_grid(first, Fraction(step), Fraction(offset))
+    found = _first_on_grid(first, step_exact, offset_exact)
     return found is not None and found <= last
 
 
 def _first_on_grid(first: int, step: Fraction, offset: Fraction) -> int | None:
-    """The least integer n >= first with n = offset + k*step for an integer k, or None when no integer is on the grid.
-    With D the common denominator, D*n = A (mod P) for the integers A = offset*D and P = step*D."""
+    """The least integer n >= first with n = offset + k*step for an integer k (the grid ``on_grid`` tests), or None
+    when no integer is on the grid. With D the common denominator, D*n = A (mod P) for the integers A = offset*D and P = step*D."""
     denominator = math.lcm(step.denominator, offset.denominator)
     target, period = int(offset * denominator), int(step * denominator)
     divisor = math.gcd(denominator, period)

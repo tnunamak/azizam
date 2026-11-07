@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import math
+from fractions import Fraction
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -498,6 +499,25 @@ def validate_input_value(name: str, value: Any, spec: dict[str, Any]) -> str | N
     return _validate_value(name, value, spec)
 
 
+def exact_number(value: Any) -> Fraction | None:
+    """A JSON number as an exact Fraction with decimal meaning: an int is itself, a finite float is its shortest
+    round-trip decimal (1.1 is 11/10, what the manifest author wrote). A bool, non-finite float or non-number is None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return Fraction(value)
+    if isinstance(value, float) and math.isfinite(value):
+        return Fraction(repr(value))
+    return None
+
+
+def on_grid(value: Any, step: Fraction, offset: Fraction) -> bool:
+    """True when (value - offset) / step is a whole number. The one grid test that input validation and the
+    workflow contract's generator feasibility share, so they agree by construction."""
+    exact = exact_number(value)
+    return exact is not None and ((exact - offset) / step).denominator == 1
+
+
 def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     expected_type = spec.get("type", "string")
     if expected_type == "string":
@@ -537,18 +557,14 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
         # This is data on the input spec, not knowledge about a particular model.
         step = spec.get("step")
         if step is not None:
-            try:
-                step_value = float(step)
-            except (TypeError, ValueError):
-                return f"{name} has an invalid step"
-            if step_value <= 0:
+            step_value = exact_number(step)
+            if step_value is None or step_value <= 0:
                 return f"{name} has an invalid step"
             offset = spec.get("offset", 0)
-            try:
-                remainder = (value - offset) % step_value
-            except (TypeError, ValueError):
+            offset_value = exact_number(offset)
+            if offset_value is None:
                 return f"{name} has an invalid offset"
-            if remainder not in (0, step_value):
+            if not on_grid(value, step_value, offset_value):
                 if offset:
                     return f"{name} must be {offset} plus a multiple of {spec['step']}"
                 return f"{name} must be a multiple of {spec['step']}"

@@ -880,7 +880,7 @@ def test_the_exact_grid_and_the_validator_judge_a_sample_alike(spec_extra):
 
 @pytest.mark.parametrize("field_, bad, expected", [
     ("maximum", 10**400, []),
-    ("step", 1e-320, [(("inputs", "x", "generate"), "generator_range_empty")]),
+    ("step", 1e-320, []),  # decimal meaning: 1e-320 divides every integer, so the range holds a value
     ("step", float("nan"), [(("inputs", "x", "step"), "number_not_finite")]),
 ])
 def test_arithmetic_on_a_huge_or_odd_number_reports_instead_of_raising(field_, bad, expected):
@@ -1004,3 +1004,48 @@ def test_the_repeat_loads_skip_the_conversion_and_the_check(tmp_path, monkeypatc
 def test_a_broken_bound_hides_the_generator_range_error_it_would_cause():
     spec = {"type": "integer", "minimum": 1.5, "generate": {"generator": "random_integer", "minimum": 1, "maximum": 1}}
     assert pairs(with_input("x", spec)) == [(("inputs", "x", "minimum"), "integer_expected")]
+
+
+def test_a_decimal_step_with_a_negative_decimal_offset_is_feasible_when_the_validator_accepts_it():
+    # 1.1 means 11/10 to the author: (1 - -0.1) / 1.1 = 1. Binary-float fractions called this grid empty.
+    spec = {"type": "integer", "step": 1.1, "offset": -0.1}
+    assert validate_input_value("n", 1, spec) is None
+    assert pairs(generated({"step": 1.1, "offset": -0.1}, 1, 1)) == []
+
+
+def test_a_singleton_range_beyond_float_precision_is_judged_as_the_validator_judges_it():
+    spec = {"type": "integer", "step": 3}
+    n = 2**53 + 1  # a multiple of 3; float modulo rounded it and refused it
+    assert validate_input_value("n", n, spec) is None
+    assert pairs(generated({"step": 3}, n, n)) == []
+    assert validate_input_value("n", n + 1, spec) is not None
+    assert pairs(generated({"step": 3}, n + 1, n + 1)) == [(("inputs", "n", "generate"), "generator_range_empty")]
+
+
+def test_feasibility_and_validation_agree_over_a_sweep_of_grids():
+    from gateway.workflow_contract import _generates_a_value
+    steps = [1, 2, 3, 7, 0.1, 0.25, 1.1, 2.5, 10**30, 3 * 10**15]
+    offsets = [0, -1, -0.1, 0.5, 1.1, 5, 12, 10**15]
+    values = [-7, -1, 0, 1, 2, 3, 5, 6, 10, 11, 12, 100, 2**53 - 1, 2**53, 2**53 + 1, 2**53 + 3, 10**30, 10**30 + 1, 10**30 + 11]
+    checked = 0
+    for step in steps:
+        for offset in offsets:
+            spec = {"type": "integer", "step": step, "offset": offset}
+            for n in values:
+                assert _generates_a_value(spec, n, n) is (validate_input_value("n", n, spec) is None), (step, offset, n)
+                checked += 1
+    assert checked == len(steps) * len(offsets) * len(values)
+
+
+def test_huge_integers_and_steps_give_a_message_or_a_report_error_not_an_exception():
+    huge = 10**400
+    assert pairs(generated({"enum": [huge], "step": 2}, huge, huge)) == []
+    assert validate_input_value("n", huge, {"type": "integer", "step": 2}) is None
+    assert validate_input_value("n", huge + 1, {"type": "integer", "step": 2}) is not None
+    assert validate_input_value("n", 1, {"type": "integer", "enum": [1], "step": huge}) is not None
+    assert pairs(generated({"enum": [1], "step": huge}, 1, 1)) == [(("inputs", "n", "generate"), "generator_range_empty")]
+
+
+def test_a_decimal_step_accepts_what_float_modulo_wrongly_refused():
+    assert validate_input_value("x", 0.3, {"type": "number", "step": 0.1}) is None
+    assert validate_input_value("x", 0.35, {"type": "number", "step": 0.1}) is not None
