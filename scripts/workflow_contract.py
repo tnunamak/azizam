@@ -3,6 +3,7 @@
 
     python scripts/workflow_contract.py check PATH... [--json]
     python scripts/workflow_contract.py convert FILE [-o OUTFILE]
+    python scripts/workflow_contract.py diff-effective --before GIT_REF --after WORK_TREE [--json]
 
 ``check`` reads each file (a directory means every ``*.yml`` and ``*.yaml`` in it). A schema 1 document is converted in
 memory first and the result is checked as schema 2; a schema 2 document is checked as it is. It prints every error with its
@@ -10,12 +11,21 @@ path and code. Exit status: 0 when every document passes, 1 when one does not, 2
 
 ``convert`` prints the schema 2 form of one schema 1 file (to ``-o OUTFILE`` if given; an existing file is never overwritten)
 and the list of edits to standard error. It does not check the result; run ``check`` on it.
+
+``diff-effective`` is the migration's equality check: it compares what the code at GIT_REF makes of its bundled workflows
+with what the code in WORK_TREE makes of its own (projections, compiled engine requests for a fixed input corpus with
+generated values fixed, binding content against the converter's edits, services and protocol descriptions) and prints each
+difference, with its reason when ``scripts/workflow_equality_allowed.yml`` names it. Exit status: 0 when every difference is
+named, 1 when one is not.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -23,6 +33,11 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from gateway.workflow_convert import convert_1_to_2, convert_and_check  # noqa: E402
+from gateway.workflow_equality import diff_effective  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent
+# What the code of a ref needs to answer: its packages, its data, its top-level modules.
+REF_PATHS = ("gateway", "registry", "manifests", "workflows")
 
 
 def _files(paths: list[str]) -> list[Path]:
@@ -85,6 +100,42 @@ def run_convert(file: str, out: str | None) -> int:
     return 0
 
 
+def extract_ref(ref: str, into: Path) -> Path:
+    """The code and data of a git ref, in a new directory under ``into``."""
+    names = subprocess.run(["git", "-C", str(REPO), "ls-tree", "--name-only", ref], capture_output=True, text=True, check=True).stdout.split()
+    wanted = [name for name in names if name in REF_PATHS or (name.endswith(".py") and "/" not in name)]
+    target = into / "before"
+    target.mkdir()
+    archive = subprocess.Popen(["git", "-C", str(REPO), "archive", ref, "--", *wanted], stdout=subprocess.PIPE)
+    subprocess.run(["tar", "-x", "-C", str(target)], stdin=archive.stdout, check=True)
+    if archive.wait() != 0:
+        raise RuntimeError(f"git archive {ref} failed")
+    return target
+
+
+def run_diff_effective(before: str, after: str, as_json: bool) -> int:
+    scratch = Path(tempfile.mkdtemp(prefix="effective-", dir=Path.home() / ".tmp"))
+    try:
+        result = diff_effective(extract_ref(before, scratch), Path(after).resolve(), scratch=scratch)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    if as_json:
+        print(json.dumps({"ok": result.ok, "compared": result.compared,
+                          "unexplained": [d.__dict__ for d in result.unexplained],
+                          "explained": [{**d.__dict__, "reason": reason} for d, reason in result.explained]}, indent=2, default=str))
+        return 0 if result.ok else 1
+    print(f"compared: {', '.join(f'{name} {count}' for name, count in result.compared.items())}")
+    reasons: dict[str, list[str]] = {}
+    for diff, reason in result.explained:
+        reasons.setdefault(reason, []).append(diff.workflow)
+    for reason, workflows in reasons.items():
+        print(f"named difference x{len(workflows)} ({len(set(workflows))} workflows): {reason}")
+    for diff in result.unexplained:
+        print(f"UNEXPLAINED {diff.line()}")
+    print("PASS: every difference is named" if result.ok else f"FAIL: {len(result.unexplained)} differences are not named")
+    return 0 if result.ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -94,7 +145,13 @@ def main(argv: list[str] | None = None) -> int:
     convert = commands.add_parser("convert", help="print the schema 2 form of a schema 1 document")
     convert.add_argument("file")
     convert.add_argument("-o", "--out")
+    effective = commands.add_parser("diff-effective", help="compare the effective registry of a git ref and a work tree")
+    effective.add_argument("--before", required=True, help="a git ref")
+    effective.add_argument("--after", required=True, help="a work tree")
+    effective.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    if args.command == "diff-effective":
+        return run_diff_effective(args.before, args.after, args.json)
     if args.command == "check":
         return run_check(args.paths, args.json)
     return run_convert(args.file, args.out)

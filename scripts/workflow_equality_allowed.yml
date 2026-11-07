@@ -1,0 +1,58 @@
+# The differences the equality check (gateway/workflow_equality.py) accepts between a tree before S3.5a and a tree after.
+# Each row names the checks, the consumer ("scopes", a glob; empty means any), the workflows ("all" or a list), the paths
+# (globs over the JSON pointer, a list index written []) and the reason. A difference that no row covers fails the check.
+# "before" narrows a row to differences whose before-value is exactly that.
+schema_version: 1
+allowed:
+  - checks: [projections]
+    scopes: ["summary:*"]
+    paths: ["/schema_version"]
+    reason: The bundled files are schema 2 (the summary shows the stored document's version).
+  - checks: [projections]
+    scopes: ["summary:*"]
+    paths: ["/manifest_hash"]
+    reason: The hash is of the document, and every bundled document changed by the converter's edits (the binding-content check shows the edits).
+  - checks: [projections]
+    scopes: [capabilities, projected]
+    paths: ["[]/capability"]
+    before: null
+    reason: The converter wrote the inferred capability into 33 files, so the reader shows it as declared. Same value the catalog inferred.
+  - checks: [projections]
+    scopes: [capabilities, projected]
+    workflows: [mesh.generate.trellis-2]
+    paths: ["[]/input_modalities"]
+    reason: "Design open question 6: the mesh picture input was an uncounted image type and becomes an asset, so the input modalities list it."
+  - checks: [projections]
+    scopes: ["summary:*"]
+    workflows: [mesh.generate.trellis-2]
+    paths: ["/inputs[]/type"]
+    reason: "Design open question 6: the mesh picture input type is asset (it was image)."
+  - checks: [projections]
+    scopes: [member_catalog]
+    workflows: [mesh.generate.trellis-2]
+    paths:
+      - "/workflows[]/capabilities[]/input_modalities"
+      - "/workflows[]/inputs[]/media_type"
+      - "/workflows[]/example_request/*"
+      - "/workflows[]/examples/*"
+    reason: "Design open question 6: the catalog lists the mesh picture as an asset input that accepts image types, so its row, its upload media type and its examples show that."
+  - checks: [projections]
+    workflows: [audio.generate.ace-step-1.5-xl-turbo]
+    paths:
+      - "/async/prompt"
+      - "/sync/prompt"
+      - "/properties/prompt"
+      - "/inputs"
+      - "/bindings[]/map/prompt"
+      - "/bindings[]/mapped_inputs"
+      - "/workflows[]/inputs"
+      - "/workflows[]/openapi/execution/*/fields/prompt"
+      - "/workflows[]/example_request/*"
+      - "/workflows[]/examples/*"
+      - "[]/execution/*/fields/prompt"
+    reason: "Named defect fix: the bundled file mapped both prompt and tags to the same node input. prompt is no longer an input; the route sends the prompt to tags when no tags are given, as it did."
+binding_edits:
+  - workflow: audio.generate.ace-step-1.5-xl-turbo
+    path: [comfyui, map, prompt]
+    operation: remove
+    reason: "Named defect fix: prompt and tags both wrote node 5 input tags."
