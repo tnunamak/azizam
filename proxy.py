@@ -8164,7 +8164,8 @@ def _select_video_file(job: Mapping[str, Any], manifest: Mapping[str, Any] | Non
             limits=result_bundle.limits_from_config(runtime().config),
             legacy_allowed=output_selectors.legacy_collection_enabled(runtime().config),
             history_bytes=len(json.dumps(job, default=str).encode("utf-8")),
-            legacy_kind="video",
+            legacy_keys=node_graph.VIDEO_KEYS,
+            legacy_suffixes=node_graph.VIDEO_SUFFIXES,
         )
     except node_graph.SelectionRefused as refusal:
         if refusal.code == "result_missing":

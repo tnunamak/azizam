@@ -341,33 +341,33 @@ def select_outputs(job: Mapping[str, Any] | None, selectors: Mapping[str, Mappin
     return chosen
 
 
-def legacy_select(job: Mapping[str, Any] | None, outputs: Mapping[str, Any], *, kind: str | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
+def legacy_select(job: Mapping[str, Any] | None, outputs: Mapping[str, Any], *, keys: Sequence[str] = OUTPUT_KEYS,
+                  suffixes: Sequence[str] | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
     """The files of a contract that declares no selectors: the output-directory files under any known output key.
 
     This is the fallback for a contract older than selectors. It reads the output directory only, and it refuses what it
     would have to guess: a contract of more than one result, or files that come from more than one place in the answer.
 
-    ``kind="video"`` is the older video collection, kept while the legacy flag is on: only video files count (a preview
-    image beside the clip is not a result), they are read under the video keys, and the first one in node order is the
-    result, so several output nodes are not a guess. Any other ``kind`` reads as the general rule above.
+    ``keys`` are the output keys it reads (``OUTPUT_KEYS`` by default). A route with an older collection passes its own
+    ``keys`` and ``suffixes``. With ``suffixes`` set, only a file whose name ends in one of them counts (a preview image
+    beside a clip is not a result), and the first one in node order is the result, so several output nodes are not a guess.
     """
     if len(outputs) != 1:
         raise SelectionRefused("result_ambiguous", f"a contract with {len(outputs)} results needs selectors to tell them apart")
     (name,) = outputs
-    video = kind == "video"
     places: list[list[dict[str, Any]]] = []
     for node_output in _history_outputs(job).values():
         if not isinstance(node_output, Mapping):
             continue
-        for key in VIDEO_KEYS if video else OUTPUT_KEYS:
+        for key in keys:
             files = _output_files(node_output.get(key), "output", result=name)
-            if video:
-                files = [file for file in files if file["filename"].lower().endswith(VIDEO_SUFFIXES)]
+            if suffixes is not None:
+                files = [file for file in files if file["filename"].lower().endswith(tuple(suffixes))]
             if files:
                 places.append(files)
     if not places:
         raise SelectionRefused("result_missing", f"result {name} is not in the engine's answer")
-    if video:
+    if suffixes is not None:
         return {name: (places[0][0],)}
     if len(places) > 1:
         raise SelectionRefused("result_ambiguous", f"result {name} could be files from {len(places)} places in the engine's answer")
@@ -886,20 +886,20 @@ class NodeGraphAdapter:
 
     def collect(self, job: Mapping[str, Any] | None, block: Mapping[str, Any], outputs: Mapping[str, Any], *, limits: Any,
                 legacy_allowed: bool, history_bytes: int | None = None,
-                legacy_kind: str | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
+                legacy_keys: Sequence[str] = OUTPUT_KEYS, legacy_suffixes: Sequence[str] | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
         """The files of each named result of a finished prompt, by the binding's selectors (or the legacy collection).
 
         ``block`` is the binding, ``outputs`` the contract's declared results, ``limits`` the deployment's result limits
         and ``history_bytes`` the size of the history answer that ``job`` came from. A binding with selectors is read by
-        them. One with none is read by ``legacy_select`` if ``legacy_allowed`` (``legacy_kind`` says which older collection),
-        and refused if not. Raises ``SelectionRefused``; a refused run delivers nothing.
+        them. One with none is read by ``legacy_select`` if ``legacy_allowed`` (``legacy_keys`` and ``legacy_suffixes`` say
+        which older collection), and refused if not. Raises ``SelectionRefused``; a refused run delivers nothing.
         """
         if history_bytes is not None and history_bytes > limits.max_history_bytes:
             raise SelectionRefused("history_too_large", f"the engine's answer is larger than {limits.max_history_bytes} bytes")
         if "selectors" not in block:
             if not legacy_allowed:
                 raise SelectionRefused("selectors_missing", "this workflow declares no output selectors, and the legacy collection is off")
-            return legacy_select(job, outputs, kind=legacy_kind)
+            return legacy_select(job, outputs, keys=legacy_keys, suffixes=legacy_suffixes)
         if self.result_selectors is None:
             raise SelectionRefused("selectors_unsupported", "this engine's description takes no output selectors")
         try:
