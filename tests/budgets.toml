@@ -596,7 +596,8 @@
 # S3.5 integration fixes (2026-11-07): +9 cases (frozen release oracle, ace fix as data, marked record, policy facts); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21330.
 # S3.5a equality-gate fixes (2026-11-07): +17 cases (tests/test_workflow_equality.py: empty checks, enumeration, one-sided workflows, exact allow-list, input preparation, scratch); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21347.
 # S3.5 integration fixes 3 (2026-11-07): +10 cases (forged codes, record-level policy, owner save and write for real, JSON equality, bundled-id quarantine); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21357.
-pytest = 21357
+# S3.5a equality-gate second review (2026-11-07): +10 cases (JSON-typed pins, generator rule and boundary draws, package roots, pinned hash and capability, demo facts); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21367.
+pytest = 21367
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

@@ -5,7 +5,9 @@
 #   before / after   the before-value or the after-value is exactly that ("<absent>" for a key that is not there);
 #   replace          text: the after-text is the before-text with these (from, to) pairs applied and nothing else changed;
 #   drops            list: the after-list is the before-list without the items that match ({value} or {key, value}).
-# A row that pins no value says so in its reason (a hash, or an inferred value that differs for each workflow).
+#   kept_type        both values are present and of that JSON type (string, integer, number, boolean, null);
+# Pins compare JSON values by type as well as by value (true is not 1, 0 is not false). A row that pins no value says so in
+# its reason (a hash, which may change but must stay a text value).
 schema_version: 1
 allowed:
   - checks: [projections]
@@ -17,12 +19,56 @@ allowed:
   - checks: [projections]
     scopes: ["summary:admin", "summary:internal"]
     paths: ["/manifest_hash"]
-    reason: The hash is of the document, and every bundled document changed by the converter's edits (the binding-content check shows the edits). The value differs for each workflow, so it is not pinned.
+    kept_type: string
+    reason: The hash is of the document, and every bundled document changed by the converter's edits (the binding-content check shows the edits). The value differs for each workflow, so it is not pinned; it must stay a text value on both sides (it may not disappear or change type).
   - checks: [projections]
     scopes: [capabilities, projected]
+    workflows:
+      - image.analyze.face-likeness
+      - image.edit.fibo-2-edit-turbo
+      - image.edit.flux2-klein
+      - image.edit.flux2-klein-4b
+      - image.edit.flux2-klein-4b-inpaint
+      - image.edit.image-identity
+      - image.edit.qwen-image-2.1-edit
+      - image.edit.qwen-image-2.1-edit-multiref
+      - image.edit.qwen-image-2.1-inpaint
+      - image.edit.seedvr2-upscale
+      - image.generate.anima-turbo
+      - image.generate.flux2-klein
+      - image.generate.flux2-klein-4b
+      - image.generate.flux2-klein-4b-seamless-tile
+      - image.generate.flux2-klein-snofs
+      - image.generate.krea2-turbo
+      - image.generate.krea2-turbo-snofs
+      - image.generate.moss-image
+      - image.generate.moss-image-fast
+      - image.generate.moss-image-quality
+      - image.generate.sdxl-seamless-tile
+      - image.generate.test-demo-package
     paths: ["[]/capability"]
     before: null
-    reason: The converter wrote the inferred capability into 33 files, so the reader shows it as declared. Same value the catalog inferred; the value differs for each workflow, so it is not pinned.
+    after: image
+    reason: The converter wrote the capability the catalog inferred from the intent prefix (image) into these files, so the reader shows it as declared. Only these workflows, only this value.
+  - checks: [projections]
+    scopes: [capabilities, projected]
+    workflows:
+      - video.edit.rife-interpolate
+      - video.edit.scail-2-replace
+      - video.generate.ltx-2.5-i2v
+      - video.generate.ltx-2.5-keyframes
+      - video.generate.ltx-2.5-keyframes-mid
+      - video.generate.ltx-2.5-long
+      - video.generate.ltx-2.5-t2v
+      - video.generate.minimax-h3-i2v
+      - video.generate.minimax-h3-keyframes
+      - video.generate.minimax-h3-keyframes-mid
+      - video.generate.minimax-h3-long
+      - video.generate.minimax-h3-t2v
+    paths: ["[]/capability"]
+    before: null
+    after: video
+    reason: The converter wrote the capability the catalog inferred from the intent prefix (video) into these files, so the reader shows it as declared. Only these workflows, only this value.
   - checks: [projections]
     scopes: [capabilities, projected]
     workflows: [mesh.generate.trellis-2]
@@ -146,49 +192,6 @@ allowed:
     before: [{input: tags, node: "5"}]
     after: "<absent>"
     reason: "Named defect fix: the bundled file mapped both prompt and tags to node 5 input tags; the prompt mapping is gone."
-  # The demo package workflow: its schema 1 file carried policy facts (exposure, tags, tiers) that schema 2 keeps out of the
-  # document (D2). The package path builds the record with no facts, so it needs configuration until its owner sets them.
-  - checks: [projections]
-    scopes: ["summary:*"]
-    workflows: [image.generate.test-demo-package]
-    paths: ["/exposure", "/resource_tier", "/trust_tier"]
-    after: null
-    reason: "Policy facts are not in a schema 2 document (D2), and a package record has none until its owner sets them."
-  - checks: [projections]
-    scopes: ["summary:*"]
-    workflows: [image.generate.test-demo-package]
-    paths: ["/needs_configuration"]
-    before: "<absent>"
-    after: true
-    reason: "The package workflow states no policy facts, so it needs configuration (D2)."
-  - checks: [projections]
-    scopes: ["summary:admin", "summary:internal"]
-    workflows: [image.generate.test-demo-package]
-    paths: ["/source"]
-    before: package
-    after: null
-    reason: "The package workflow's source was read from its schema 1 policy block; a schema 2 package record states none."
-  - checks: [projections]
-    scopes: ["summary:*", capabilities, projected, member_catalog]
-    workflows: [image.generate.test-demo-package]
-    paths: ["/tags", "[]/tags", "/workflows[]/capabilities[]/tags"]
-    before: [test, demo]
-    after: []
-    reason: "Tags are a policy fact (D2); a package record has none until its owner sets them."
-  - checks: [projections]
-    scopes: [capabilities, projected, member_catalog]
-    workflows: [image.generate.test-demo-package]
-    paths: ["[]/exposure", "/workflows[]/capabilities[]/exposure"]
-    before: opt_in
-    after: disabled
-    reason: "Exposure is a policy fact (D2); a record with no facts is closed until its owner configures it."
-  - checks: [projections]
-    scopes: [capabilities, projected, member_catalog]
-    workflows: [image.generate.test-demo-package]
-    paths: ["[]/caveats", "/workflows[]/capabilities[]/caveats"]
-    before: ["This workflow isn't marked as reviewed. Test it before you rely on it."]
-    after: ["This workflow needs configuration: its policy facts are not set.", "This workflow isn't marked as reviewed. Test it before you rely on it."]
-    reason: "A record with no policy facts says it needs configuration (D2)."
 binding_edits:
   - workflow: audio.generate.ace-step-1.5-xl-turbo
     path: [comfyui, map, prompt]

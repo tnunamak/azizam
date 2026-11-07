@@ -112,6 +112,21 @@ def _load_sources() -> Any:
     return module
 
 
+def package_record_arguments(workflow_id: str) -> dict[str, Any]:
+    """What this tree's ``add_manifest`` takes for a package record: the package provenance and the release policy's facts.
+    A tree whose code predates the facts keeps the document's own fields, so nothing is passed."""
+    import inspect
+
+    from gateway.discovery import WorkflowRegistry
+
+    if "facts" not in inspect.signature(WorkflowRegistry.add_manifest).parameters:
+        return {}
+    from gateway.manifests import Provenance
+    from gateway.workflow_policy import release_policy
+
+    return {"provenance": Provenance(trusted=False, source="package"), "facts": release_policy().get(workflow_id)}
+
+
 def main(argv: list[str]) -> int:
     root = Path(argv[1]).resolve()
     corpus = json.loads(Path(argv[2]).read_text(encoding="utf-8"))
@@ -121,14 +136,15 @@ def main(argv: list[str]) -> int:
     sources = _load_sources()
     registry = WorkflowRegistry.from_directory(root / "manifests" / "workflows")
     # A package workflow is not in the directory: it is added the way a reviewed package record is, from the file the
-    # package names. The file lists come from one module, so both trees and the comparison enumerate the same way.
-    directory = (root / "manifests" / "workflows").resolve()
-    for workflow_id, (path, document) in sources.read_documents(root).items():
-        if path.resolve().parent != directory:
-            manifest = {key: value for key, value in document.items() if key != "kind"}
-            registry.add_manifest(manifest, source_path=path)
+    # package names, with the package provenance and the release policy's facts for its id (when this tree's code takes
+    # them). The file lists come from one module, so both trees and the comparison enumerate the same way.
+    documents = sources.read_documents(root)
+    for workflow_id, (path, document, package_root) in documents.items():
+        if package_root is not None:
+            registry.add_manifest({key: value for key, value in document.items() if key != "kind"}, source_path=path,
+                                  **package_record_arguments(workflow_id))
     result: dict[str, Any] = {"errors": plain(registry.errors), "workflows": {}}
-    packages = {workflow_id: path.parent.parent for workflow_id, (path, _document) in sources.read_documents(root).items()}
+    packages = {workflow_id: package_root for workflow_id, (_path, _document, package_root) in documents.items()}
     for record in registry.records():
         cases = corpus.get(record.id, [])
         result["workflows"][record.id] = {

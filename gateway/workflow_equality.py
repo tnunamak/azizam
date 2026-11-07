@@ -41,6 +41,7 @@ from gateway.workflow_convert import convert_1_to_2
 ALLOWED_PATH = Path(__file__).resolve().parent.parent / "scripts" / "workflow_equality_allowed.yml"
 DUMP_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "workflow_effective_dump.py"
 SOURCES_SCRIPT = DUMP_SCRIPT.with_name("workflow_sources.py")
+ABSENT = "<absent>"  # what ``walk`` writes for a key that is not there
 CHECKS = ("projections", "requests", "binding_content", "services", "protocols")
 
 
@@ -71,9 +72,9 @@ def walk(before: Any, after: Any, path: str = "") -> list[tuple[str, Any, Any]]:
         for key in sorted(set(before) | set(after), key=str):
             child = f"{path}/{key}"
             if key not in before:
-                found.append((child, "<absent>", after[key]))
+                found.append((child, ABSENT, after[key]))
             elif key not in after:
-                found.append((child, before[key], "<absent>"))
+                found.append((child, before[key], ABSENT))
             else:
                 found.extend(walk(before[key], after[key], child))
         return found
@@ -85,6 +86,18 @@ def walk(before: Any, after: Any, path: str = "") -> list[tuple[str, Any, Any]]:
             found.extend(walk(left, right, f"{path}[{index}]"))
         return found
     return [] if before == after else [(path or "/", before, after)]
+
+
+def json_equal(left: Any, right: Any) -> bool:
+    """Equality of two JSON values that tells the types apart: ``True`` is not ``1``, ``0`` is not ``False`` and ``1`` is not
+    ``1.0`` (the same rule ``walk`` uses to see a type change), at every depth. Every pin of the allowed list uses this."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(json_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(json_equal(a, b) for a, b in zip(left, right, strict=True))
+    return left == right
 
 
 def glob(pattern: str, text: str) -> bool:
@@ -118,10 +131,13 @@ def _is_drop(before: Any, after: Any, match: dict[str, Any]) -> bool:
         return False
 
     def hit(item: Any) -> bool:
-        return (item.get(match["key"]) if "key" in match and isinstance(item, dict) else item) == match["value"]
+        return json_equal(item.get(match["key"]) if "key" in match and isinstance(item, dict) else item, match["value"])
 
     kept = [item for item in before if not hit(item)]
-    return len(kept) < len(before) and kept == after
+    return len(kept) < len(before) and json_equal(kept, after)
+
+
+JSON_TYPES: dict[str, type] = {"string": str, "integer": int, "number": float, "boolean": bool, "null": type(None)}
 
 
 @dataclass(frozen=True)
@@ -137,6 +153,7 @@ class Rule:
     has_after: bool = False
     replace: tuple[tuple[str, str], ...] = ()  # text: the after-value is the before-value with these (from, to) pairs applied
     drops: dict[str, Any] | None = None  # list: the after-value is the before-list without its items that match
+    kept_type: str | None = None  # both values are present and of this JSON type (a value that may change but not vanish)
 
     def covers(self, diff: Difference, scope: str) -> bool:
         if diff.check not in self.checks:
@@ -145,9 +162,12 @@ class Rule:
             return False
         if self.scopes and not any(glob(pattern, scope) for pattern in self.scopes):
             return False
-        if self.has_before and diff.before != self.before:
+        if self.has_before and not json_equal(diff.before, self.before):
             return False
-        if self.has_after and diff.after != self.after:
+        if self.has_after and not json_equal(diff.after, self.after):
+            return False
+        if self.kept_type is not None and not all(type(value) is JSON_TYPES[self.kept_type] and value != ABSENT
+                                                  for value in (diff.before, diff.after)):
             return False
         if self.replace and not _is_replacement(diff.before, diff.after, self.replace):
             return False
@@ -176,7 +196,10 @@ def load_allowed(path: Path = ALLOWED_PATH) -> Allowed:
             checks=tuple(row["checks"]), scopes=tuple(row.get("scopes", ())),
             workflows=None if workflows == "all" else tuple(workflows), paths=tuple(row["paths"]), reason=row["reason"],
             before=row.get("before"), has_before="before" in row, after=row.get("after"), has_after="after" in row,
-            replace=tuple((pair["from"], pair["to"]) for pair in row.get("replace", ())), drops=row.get("drops")))
+            replace=tuple((pair["from"], pair["to"]) for pair in row.get("replace", ())), drops=row.get("drops"),
+            kept_type=row.get("kept_type")))
+        if rules[-1].kept_type is not None and rules[-1].kept_type not in JSON_TYPES:
+            raise ValueError(f"an allowed difference names an unknown kept_type: {row}")
     return Allowed(rules=tuple(rules), binding_edits=tuple(raw.get("binding_edits", [])))
 
 
@@ -193,7 +216,7 @@ def _sources() -> Any:
 def read_workflows(root: Path) -> dict[str, dict[str, Any]]:
     """Workflow id -> document, for every workflow file of a tree: the bundled directory (``*.yml`` and ``*.yaml``, as
     discovery reads it) and the workflow objects of the bundled extension packages."""
-    return {workflow_id: document for workflow_id, (_path, document) in _sources().read_documents(root).items()}
+    return {workflow_id: document for workflow_id, (_path, document, _package) in _sources().read_documents(root).items()}
 
 
 def read_services(root: Path) -> dict[str, Any]:
@@ -264,15 +287,34 @@ def build_corpus(documents: dict[str, dict[str, Any]], limit: int = 48) -> dict[
     return corpus
 
 
-def generated_value(workflow_id: str, name: str, spec: dict[str, Any]) -> Any:
-    """What a generate rule gives: a draw from a random source seeded by the workflow and input, inside the generator's range
-    and the input's bounds. The generator must be a reviewed one (``GENERATORS``); a rule with no valid range gives no value."""
+def generator_range(workflow_id: str, name: str, spec: dict[str, Any]) -> tuple[int, int] | None:
+    """The values a generate rule can give: its range cut by the input's bounds, or ``None`` when they share no value. The
+    generator must be a reviewed one (``GENERATORS``)."""
     rule = spec["generate"]
     if rule.get("generator") not in GENERATORS:
         raise ValueError(f"{workflow_id} input {name}: no reviewed generator {rule.get('generator')!r}")
     low = max(int(rule.get("minimum", 0)), int(spec.get("minimum", rule.get("minimum", 0))))
     high = min(int(rule["maximum"]), int(spec.get("maximum", rule["maximum"])))
-    return None if low > high else random.Random(f"{workflow_id}:{name}").randint(low, high)
+    return None if low > high else (low, high)
+
+
+def generated_value(workflow_id: str, name: str, spec: dict[str, Any]) -> Any:
+    """What a generate rule gives: a draw from a random source seeded by the workflow and input, inside the generator's range
+    and the input's bounds. A rule with no valid range gives no value."""
+    bounds = generator_range(workflow_id, name, spec)
+    return None if bounds is None else random.Random(f"{workflow_id}:{name}").randint(*bounds)
+
+
+def generator_rules(documents: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per workflow, the generation rule of each generated input with the bounds of that input: the rule itself, which a
+    single draw cannot show (a range of 0..3 and one of 0..4 can draw the same value)."""
+    found: dict[str, dict[str, Any]] = {}
+    for workflow_id, document in documents.items():
+        for name, spec in _specs(document).items():
+            if isinstance(spec.get("generate"), dict):
+                rule = {"generate": spec["generate"], "minimum": spec.get("minimum", ABSENT), "maximum": spec.get("maximum", ABSENT)}
+                found.setdefault(workflow_id, {})[name] = rule
+    return found
 
 
 def prepare_inputs(workflow_id: str, document: dict[str, Any], supplied: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
@@ -315,6 +357,15 @@ def prepare_corpus(documents: dict[str, dict[str, Any]], corpus: dict[str, list[
             values, rejected = prepare_inputs(workflow_id, documents[workflow_id], case["values"])
             prepared.append({"name": case["name"], "values": {k: v for k, v in values.items() if k not in rejected},
                              "rejected": rejected})
+        # The least and the greatest value each generate rule of this tree can give, on top of the required values: a range
+        # that grows or shrinks moves one of them.
+        required = next((case["values"] for case in cases if case["name"] == "required"), {})
+        for name, spec in sorted(_specs(documents[workflow_id]).items()):
+            bounds = generator_range(workflow_id, name, spec) if isinstance(spec.get("generate"), dict) else None
+            for label, value in zip(("generated-minimum", "generated-maximum"), bounds or (), strict=False):
+                values, rejected = prepare_inputs(workflow_id, documents[workflow_id], {**required, name: value})
+                prepared.append({"name": f"{label}:{name}", "values": {k: v for k, v in values.items() if k not in rejected},
+                                 "rejected": rejected})
         out[workflow_id] = prepared
     return out
 
@@ -351,8 +402,8 @@ def binding_content_differences(before: dict[str, dict[str, Any]], after: dict[s
     found: list[Difference] = []
     for workflow_id in sorted(set(before) | set(after)):
         if workflow_id not in before or workflow_id not in after:
-            found.append(Difference("binding_content", workflow_id, "/", "present" if workflow_id in before else "<absent>",
-                                    "present" if workflow_id in after else "<absent>"))
+            found.append(Difference("binding_content", workflow_id, "/", "present" if workflow_id in before else ABSENT,
+                                    "present" if workflow_id in after else ABSENT))
             continue
         # The named edits belong to the migration: a document that is schema 2 already has had them.
         edits = allowed.binding_edits if before[workflow_id].get("schema_version") == 1 else ()
@@ -365,14 +416,14 @@ def binding_content_differences(before: dict[str, dict[str, Any]], after: dict[s
 def _record_differences(check: str, before: dict[str, Any], after: dict[str, Any]) -> list[Difference]:
     found = []
     for record_id in sorted(set(before) | set(after)):
-        left, right = before.get(record_id, "<absent>"), after.get(record_id, "<absent>")
+        left, right = before.get(record_id, ABSENT), after.get(record_id, ABSENT)
         for path, was, now in walk(left, right):
             found.append(Difference(check, record_id, path, was, now))
     return found
 
 
 def _presence(check: str, workflow_id: str, left: Any, right: Any) -> Difference:
-    return Difference(check, workflow_id, "/", "present" if left is not None else "<absent>", "present" if right is not None else "<absent>")
+    return Difference(check, workflow_id, "/", "present" if left is not None else ABSENT, "present" if right is not None else ABSENT)
 
 
 def _projection_differences(before: dict[str, Any], after: dict[str, Any]) -> tuple[list[tuple[str, Difference]], list[Difference]]:
@@ -448,6 +499,11 @@ def diff_effective(before_root: Path, after_root: Path, *, checks: tuple[str, ..
             for scope, diff in scoped:
                 sort(diff, scope)
         if "requests" in checks:
+            rules = {side: generator_rules(docs) for side, docs in (("before", before_docs), ("after", after_docs))}
+            compared["requests"] += sum(len(inputs) for inputs in rules["before"].values())
+            for workflow_id in sorted(set(rules["before"]) | set(rules["after"])):
+                for path, was, now in walk(rules["before"].get(workflow_id, {}), rules["after"].get(workflow_id, {})):
+                    requests.append(Difference("requests", workflow_id, f"/generate{path}", was, now))
             for diff in requests:
                 sort(diff)
     if "binding_content" in checks:

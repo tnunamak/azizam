@@ -353,3 +353,144 @@ def test_diff_effective_keeps_its_scratch_in_the_normal_temporary_directory(monk
     monkeypatch.setattr(contract, "diff_effective", lambda *a, **k: eq.Result([], [], {"x": 1}))
     assert contract.run_diff_effective("ref", ".", False) == 0
     assert made and all("dir" not in kwargs and str(Path.home()) not in repr(args) for args, kwargs in made)
+
+
+# ------------------------------------------------------------------------------------- the second review's five findings
+
+DEMO = "image.generate.test-demo-package"
+
+
+def test_json_equality_tells_booleans_numbers_and_their_types_apart_at_every_depth():
+    """Finding 1: Python equality made true equal 1 and false equal 0, so an exact pin accepted a changed type."""
+    assert eq.json_equal({"a": [1, {"b": "x"}]}, {"a": [1, {"b": "x"}]})
+    for left, right in ((True, 1), (1, True), (False, 0), (0, False), (1, 1.0), ([0], [False]), ({"a": 1}, {"a": True}), ({"a": 1}, {"b": 1})):
+        assert not eq.json_equal(left, right), (left, right)
+
+
+def test_a_pin_a_drop_and_a_retained_item_are_checked_by_json_type():
+    base = dict(checks=("projections",), scopes=(), workflows=None, paths=("/x",), reason="r")
+    diff = lambda before, after: eq.Difference("projections", "w", "/x", before, after)  # noqa: E731
+    after_true = eq.Rule(**base, after=True, has_after=True)
+    assert after_true.covers(diff(eq.ABSENT, True), "") and not after_true.covers(diff(eq.ABSENT, 1), "")
+    before_zero = eq.Rule(**base, before=0, has_before=True)
+    assert before_zero.covers(diff(0, 5), "") and not before_zero.covers(diff(False, 5), "")
+    drops = eq.Rule(**base, drops={"value": "p"})
+    assert drops.covers(diff(["p", 0], [0]), "") and not drops.covers(diff(["p", 0], [False]), "")
+    assert not drops.covers(diff(["p", True], [1]), "")
+
+
+def test_a_generator_range_change_that_draws_the_same_value_is_still_seen(tmp_path_factory):
+    """Finding 2: 0..3 and 0..4 both draw 1 for this input, so one draw per input could not tell them apart."""
+    spec = lambda high: {"type": "integer", "minimum": 0, "generate": {"generator": "random_integer", "minimum": 0, "maximum": high}}  # noqa: E731
+    assert eq.generated_value("image.generate.flux2-klein", "seed", spec(3)) == eq.generated_value("image.generate.flux2-klein", "seed", spec(4))
+
+    def with_range(base: Path, high: int) -> Path:
+        tree = make_tree(base / "tree")
+        edit(tree, "flux2-klein.yml", lambda d: d["inputs"]["seed"]["generate"].__setitem__("maximum", high))
+        return tree
+
+    narrow, wide = with_range(tmp_path_factory.mktemp("narrow"), 3), with_range(tmp_path_factory.mktemp("wide"), 4)
+    result = run(narrow, wide, tmp_path_factory.mktemp("scratch"), checks=("requests",))
+    assert not result.ok and {d.workflow for d in result.unexplained} == {"image.generate.flux2-klein"}
+    assert "/generate/seed/generate/maximum" in {d.path for d in result.unexplained}  # the rule itself
+    assert any(d.path.startswith("/requests") for d in result.unexplained)  # and the boundary draw it moves
+    assert run(narrow, with_range(tmp_path_factory.mktemp("same"), 3), tmp_path_factory.mktemp("scratch"), checks=("requests",)).ok
+
+
+def test_the_corpus_of_a_tree_holds_the_least_and_the_greatest_generated_value():
+    document = {"schema_version": 2, "id": "w", "inputs": {
+        "g": {"type": "integer", "minimum": 2, "generate": {"generator": "random_integer", "minimum": 0, "maximum": 9}}}}
+    prepared = eq.prepare_corpus({"w": document}, eq.build_corpus({"w": document}))["w"]
+    assert {case["name"]: case["values"]["g"] for case in prepared if case["name"].startswith("generated-")} == {
+        "generated-minimum:g": 2, "generated-maximum:g": 9}
+
+
+def write_package(tree: Path, name: str, workflow_path: str, graph_path: str, workflow_id: str) -> None:
+    """A package whose workflow object sits at ``workflow_path`` and names its graph as ``package://<graph_path>``."""
+    package = tree / "extensions" / "bundled" / name
+    demo = tree / "extensions" / "bundled" / "demo-image-package"
+    document = yaml.safe_load((demo / "objects" / "workflow.yml").read_text(encoding="utf-8"))
+    document["id"] = workflow_id
+    document["bindings"]["comfyui"]["workflow"] = f"package://{graph_path}"
+    for path, text in ((workflow_path, yaml.safe_dump(document, sort_keys=False)),
+                       (graph_path, (demo / "workflows" / "test-demo-image.json").read_text(encoding="utf-8")),
+                       ("extension.yml", yaml.safe_dump({"schema_version": 1, "kind": "extension_package", "id": name, "name": name,
+                                                         "version": "0.1.0", "objects": {"workflows": [workflow_path]}}))):
+        (package / path).parent.mkdir(parents=True, exist_ok=True)
+        (package / path).write_text(text, encoding="utf-8")
+
+
+def test_a_package_root_is_the_folder_of_the_declaring_manifest_wherever_the_workflow_file_is(tmp_path):
+    """Finding 3: the dump took the workflow file's grandparent as the package folder."""
+    tree = make_tree(tmp_path / "t")
+    write_package(tree, "top-package", "workflow.yaml", "graphs/g.json", "image.generate.top-level")
+    write_package(tree, "deep-package", "objects/deeper/still/workflow.yml", "graphs/g.json", "image.generate.deep-object")
+    documents = eq._sources().read_documents(tree)
+    package_roots = {workflow_id: documents[workflow_id][2] for workflow_id in documents}
+    bundled = tree / "extensions" / "bundled"
+    assert package_roots["image.generate.top-level"] == bundled / "top-package"
+    assert package_roots["image.generate.deep-object"] == bundled / "deep-package"
+    assert package_roots[DEMO] == bundled / "demo-image-package"
+    assert package_roots["image.generate.flux2-klein"] is None
+    result = eq.diff_effective(tree, tree, scratch=tmp_path, checks=("requests",))  # each graph resolves in its own package
+    assert result.ok and result.compared["requests"] > 300
+
+
+def test_a_package_reference_to_a_missing_file_is_an_error_and_not_a_workflow_left_out(tmp_path):
+    """Finding 3, second part: a missing file was filtered out of the list and out of the expected ids alike."""
+    tree = make_tree(tmp_path / "t")
+    manifest = tree / "extensions" / "bundled" / "demo-image-package" / "extension.yml"
+    document = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    document["objects"]["workflows"].append("objects/gone.yml")
+    manifest.write_text(yaml.safe_dump(document), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"objects/gone\.yml.*does not exist"):
+        eq.read_workflows(tree)
+
+
+def allowed_reason(workflow: str, path: str, scope: str, before, after):
+    return eq.load_allowed().reason_for(eq.Difference("projections", workflow, path, before, after, scope), scope)
+
+
+def test_a_hash_may_change_but_may_not_disappear_or_change_type():
+    """Finding 4: any hash change was allowed, a vanished hash included."""
+    for scope in ("summary:admin", "summary:internal"):
+        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, "a" * 64, "b" * 64)
+        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, "a" * 64, eq.ABSENT) is None
+        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, eq.ABSENT, "b" * 64) is None
+        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, "a" * 64, 7) is None
+        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", scope, None, "b" * 64) is None
+
+
+def test_a_capability_may_become_the_inferred_value_for_the_listed_workflows_only():
+    """Finding 4: any null-to-value change for any workflow was allowed."""
+    for scope in ("capabilities", "projected"):
+        assert allowed_reason("image.generate.flux2-klein", "[0]/capability", scope, None, "image")
+        assert allowed_reason("video.generate.ltx-2.5-t2v", "[0]/capability", scope, None, "video")
+        assert allowed_reason("image.generate.flux2-klein", "[0]/capability", scope, None, "video") is None  # not its value
+        assert allowed_reason("image.generate.flux2-klein", "[0]/capability", scope, None, eq.ABSENT) is None  # disappearance
+        assert allowed_reason("image.generate.flux2-klein", "[0]/capability", scope, "image", None) is None
+        assert allowed_reason("audio.generate.tangoflux", "[0]/capability", scope, None, "audio") is None  # not listed
+        assert allowed_reason("unrelated.workflow", "[0]/capability", scope, None, "image") is None
+
+
+def test_every_pinned_capability_is_the_prefix_of_the_intent_of_the_workflow_it_names():
+    """The cross-check: the converter infers the capability from the intent prefix, so the pin must say the same."""
+    documents = eq.read_workflows(ROOT)
+    pinned = {}
+    for rule in eq.load_allowed().rules:
+        if rule.paths == ("[]/capability",):
+            assert rule.workflows and rule.has_before and rule.before is None and rule.has_after
+            pinned.update({workflow: rule.after for workflow in rule.workflows})
+    assert pinned and set(pinned) <= set(documents)
+    assert {workflow: documents[workflow]["intent"].split(".")[0] for workflow in pinned} == pinned
+
+
+def test_the_demo_package_workflow_has_policy_facts_and_needs_no_configuration(tmp_path):
+    """Finding 5: the rewrite dropped the demo's facts, so the shipped demo showed as needing configuration."""
+    tree = make_tree(tmp_path / "t")
+    corpus = tmp_path / "corpus.json"
+    corpus.write_text("{}", encoding="utf-8")
+    summary = eq.dump_tree(tree, corpus)["workflows"][DEMO]["projections"]["summary:client"]
+    assert "needs_configuration" not in summary
+    assert (summary["exposure"], summary["trust_tier"], summary["resource_tier"], summary["tags"]) == ("opt_in", "experimental", "batch", ["test", "demo"])
+    assert not [rule for rule in eq.load_allowed().rules if rule.workflows and DEMO in rule.workflows and "/needs_configuration" in rule.paths]
