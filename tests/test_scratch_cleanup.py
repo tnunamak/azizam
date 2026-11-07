@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -257,3 +258,58 @@ def test_collect_keeps_only_a_failed_tests_files(tmp_path: Path) -> None:
     assert copied == [f"artifacts-18200/b-spec-case-chromium/{name}" for name in ("error-context.md", "test-failed-1.png", "trace.zip")]
     subprocess.run([sys.executable, str(PRUNE), "--collect", str(tmp_path / "absent"), str(tmp_path / "none")], check=True, capture_output=True)
     assert not (tmp_path / "none").exists()
+
+
+def test_the_cap_also_bounds_error_contexts_and_names_what_it_dropped(tmp_path: Path) -> None:
+    case = tmp_path / "e2e-failures" / "artifacts-18200" / "c-spec-case-chromium"
+    case.mkdir(parents=True)
+    (case / "error-context.md").write_text("x" * 600)
+    (case / "test-failed-1.png").write_bytes(b"p" * 300)
+    (case / "trace.zip").write_bytes(b"t" * 300)
+    prune_receipts.bound_artifacts(tmp_path / "e2e-failures", cap=500)
+    left = sorted(path.name for path in (tmp_path / "e2e-failures").rglob("*") if path.is_file())
+    assert left == ["OMITTED.txt"]
+    assert "c-spec-case-chromium/error-context.md" in (tmp_path / "e2e-failures" / "OMITTED.txt").read_text()
+
+
+def test_collect_copies_contexts_first_and_stops_at_the_cap(tmp_path: Path) -> None:
+    out = tmp_path / "browser-results"
+    case = out / "artifacts-18200" / "d-spec-case-chromium"
+    case.mkdir(parents=True)
+    (case / "error-context.md").write_text("x" * 100)
+    (case / "test-failed-1.png").write_bytes(b"p" * 200)
+    (case / "trace.zip").write_bytes(b"t" * 300)
+    dest = tmp_path / "receipt" / "e2e-failures"
+    assert prune_receipts.collect_failures(out, dest, cap=350) == 2
+    copied = sorted(path.name for path in dest.rglob("*") if path.is_file())
+    assert copied == ["OMITTED.txt", "error-context.md", "test-failed-1.png"]
+    assert (dest / "OMITTED.txt").read_text() == "artifacts-18200/d-spec-case-chromium/trace.zip\n"
+
+
+def test_no_symlink_leads_pruning_or_collection_outside_the_receipts(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "trace.zip"
+    sentinel.write_bytes(b"t" * 1000)
+    receipts = tmp_path / "receipts"
+    receipts.mkdir()
+    padding = [_receipt(receipts, f"r{index:02d}", age_days=index / 100) for index in range(20)]
+    assert padding
+    run = _failed_run(receipts, "linked", age_days=1)
+    shutil.rmtree(run / "e2e-failures")
+    (run / "e2e-failures").symlink_to(outside, target_is_directory=True)
+    _prune(receipts)
+    assert sentinel.is_file()
+    assert not (run / "e2e-failures").exists() and not (run / "e2e-failures").is_symlink()
+    prune_receipts.bound_artifacts(tmp_path / "link-root", cap=0)
+    (tmp_path / "link-root").symlink_to(outside, target_is_directory=True)
+    prune_receipts.bound_artifacts(tmp_path / "link-root", cap=0)
+    assert sentinel.is_file()
+
+    src = tmp_path / "browser-results"
+    src.mkdir()
+    (src / "artifacts-18200").symlink_to(outside, target_is_directory=True)
+    dest = tmp_path / "receipt" / "e2e-failures"
+    assert prune_receipts.collect_failures(src, dest) == 0
+    assert prune_receipts.collect_failures(tmp_path / "link-root", dest) == 0
+    assert not dest.exists()

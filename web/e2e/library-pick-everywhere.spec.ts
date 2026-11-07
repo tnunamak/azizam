@@ -3,8 +3,8 @@ import path from "node:path";
 import { deflateSync } from "node:zlib";
 import type { Locator, Page, Route } from "@playwright/test";
 import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
-import { expect, test } from "./fixtures/isolation";
-import { fulfilBytes, fulfilJson } from "./fixtures/intercept";
+import { expect, test, testOrigin } from "./fixtures/isolation";
+import { fulfilBytes, fulfilJson, primeShape } from "./fixtures/intercept";
 
 /*
  * "Choose from Library" at every media input, through the one shared input: Home's picture and
@@ -274,7 +274,9 @@ function solidPng(size: number, [red, green, blue]: [number, number, number]) {
 async function openTranscribe(page: Page, viewport: { width: number; height: number }) {
   await page.setViewportSize(viewport);
   // A catalog of one model, answered without a call to the gateway, so a slow gateway cannot hold the page on
-  // "Loading models…". fulfilJson checks the shape against the real catalog.
+  // "Loading models…". fulfilJson checks the shape against the real catalog; that shape is taken here, before
+  // the page loads, so the check never waits on the gateway while the page does.
+  await primeShape(testOrigin(test.info()), "GET", "/me/api/models/catalog");
   await page.route("**/me/api/models/catalog*", (route) =>
     fulfilJson(route, {
       aliases: [],
