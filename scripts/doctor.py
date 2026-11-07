@@ -191,7 +191,10 @@ def default_comfy_url(admin_db: Path | None = None) -> str | None:
         return None
     if not backend.get("host") or not backend.get("port"):
         return None
-    return f"http://{backend['host']}:{backend['port']}"
+    host = str(backend["host"])
+    if ":" in host and not host.startswith("["):  # an IPv6 literal is bracketed in a URL authority
+        host = f"[{host}]"
+    return f"http://{host}:{backend['port']}"
 
 
 def run_doctor(

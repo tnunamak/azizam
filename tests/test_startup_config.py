@@ -238,7 +238,7 @@ def startup_keys_read(sources: dict[str, str], section_ids: set[str]) -> set[str
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" and node.args:
                 key_node, receiver = node.args[0], ast.unparse(node.func.value)
-            elif isinstance(node, ast.Subscript):
+            elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):  # a write or a delete is not a read
                 key_node, receiver = node.slice, ast.unparse(node.value)
             else:
                 continue
@@ -273,3 +273,8 @@ def test_the_startup_key_scan_sees_a_new_read_and_ignores_a_section_read():
     source = ('SECTION = "audio"\n_bootstrap_config.get(SECTION)\nconfig.get("zzz")\nruntime().config["images"]\n'
               'config["backends"]\nother.get("nope")\n')
     assert startup_keys_read({"x.py": source}, {"images", "audio"}) == {"audio", "zzz"}
+
+
+def test_the_startup_key_scan_does_not_count_a_write_or_a_delete_as_a_read():
+    source = '_bootstrap_config["unused"] = 1\ndel config["gone"]\nconfig["read"]\n'
+    assert startup_keys_read({"x.py": source}, set()) == {"read"}

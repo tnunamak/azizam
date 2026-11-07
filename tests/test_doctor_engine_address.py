@@ -26,3 +26,16 @@ def test_no_database_or_no_comfyui_service_means_no_probe_address_and_no_databas
     admin_store.init_db(db)
     _store(db, {"chat-engine": {"kind": "llama", "capabilities": ["chat"], "host": "203.0.113.5", "port": 1, "enabled": True}})
     assert doctor.default_comfy_url(db) is None
+
+
+def test_an_ipv6_engine_address_is_bracketed_once(tmp_path):
+    from urllib.parse import urlsplit
+
+    from gateway import admin_store
+    for host in ("2001:db8::1", "[2001:db8::1]"):
+        db = tmp_path / f"admin-{len(host)}.db"
+        admin_store.init_db(db)
+        _store(db, {"comfyui": {"kind": "comfyui", "capabilities": ["images"], "host": host, "port": 24680, "enabled": True}})
+        url = doctor.default_comfy_url(db)
+        assert url == "http://[2001:db8::1]:24680"
+        assert urlsplit(url).port == 24680
