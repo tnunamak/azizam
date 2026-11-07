@@ -121,7 +121,7 @@ def gateway(tmp_path, monkeypatch):
     # shipped values back at teardown; without it the next test in the same
     # worker sees a registry with no speech, transcription or kobold services.
     monkeypatch.setattr(proxy, "config", proxy.config)
-    for name in proxy._derive_backend_constants(proxy.config):
+    for name in ("VIDEO_ALIASES", "AUDIO_ALIASES"):  # the module names a reload assigns; the derived values ride the snapshot
         monkeypatch.setattr(proxy, name, getattr(proxy, name))
     set_instance(path, {"base_url": "https://ai.example"})
     clients = []

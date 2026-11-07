@@ -62,7 +62,7 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_manifest_video_workflow_runs_against_fake_comfyui(self) -> None:
         fake = self.fakes.asgi(load_scenario("comfyui/video-manifest-run"))
-        self.monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+        self.monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
         with patch.object(proxy.asyncio, "sleep", return_value=None):
             response = await proxy._execute_video_manifest_workflow(
                 _Request(), "rife-interpolate", access_context(),  # type: ignore[arg-type]
@@ -83,7 +83,7 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_refused_source_upload_stops_before_any_submission(self) -> None:
         fake = self.fakes.asgi(load_scenario("comfyui/video-manifest-upload-failed"))
-        self.monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+        self.monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
         response = await proxy._execute_video_manifest_workflow(
             _Request(), "rife-interpolate", proxy.NO_AUTH_CONTEXT,  # type: ignore[arg-type]
         )
@@ -95,7 +95,7 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_an_out_of_memory_submit_on_an_idle_engine_frees_models_and_submits_again(self) -> None:
         fake = self.fakes.asgi(load_scenario("comfyui/video-manifest-oom-then-complete"))
-        self.monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+        self.monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
         self.monkeypatch.setattr(proxy, "_image_free_vram_on_exhaustion", lambda: True)
         with patch.object(proxy.asyncio, "sleep", return_value=None):
             response = await proxy._execute_video_manifest_workflow(

@@ -38,6 +38,7 @@ from gateway.audio_extensions import (  # noqa: E402
     detect_unknown_audio_fields,
 )
 import proxy  # noqa: E402
+from tests.support.config_snapshot import derived_patch
 from tests.support.access import access_context  # noqa: E402
 
 
@@ -525,7 +526,7 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
         def fake_client_factory(*_args: Any, **_kwargs: Any) -> _FakeAudioClient:
             return _FakeAudioClient(captured)
 
-        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+        with derived_patch("COMFY_ENABLED", True), patch.object(
             proxy,
             "_resolve_audio_workflow",
             return_value=("ace-step-1.5-xl-turbo", {"file": "unused"}),
@@ -574,7 +575,7 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(workflow["20"]["inputs"]["seed"], 1234)
 
     async def test_unknown_audio_model_returns_model_not_found(self) -> None:
-        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+        with derived_patch("COMFY_ENABLED", True), patch.object(
             proxy, "_resolve_audio_workflow", return_value=(None, None)
         ):
             response = await proxy.proxy_audio_generate(
@@ -664,7 +665,7 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
         def fake_client_factory(*_args: Any, **_kwargs: Any) -> _FakeAudioClient:
             return _FakeAudioClient(captured)
 
-        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+        with derived_patch("COMFY_ENABLED", True), patch.object(
             proxy,
             "_resolve_audio_workflow",
             return_value=("tangoflux", {"file": "unused", "min_seconds": 1, "max_seconds": 30}),

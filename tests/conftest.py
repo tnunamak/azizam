@@ -243,6 +243,8 @@ def _config_snapshot_of_one_test() -> Iterator[None]:
     holder = module.CONFIG_HOME.holder if module is not None else None
     saved = holder.current() if holder is not None else None
     saved_config = module.config if module is not None else None
+    # A reload republishes the workflow alias tables as module names too (proxy.py `_publish_runtime_config`).
+    saved_aliases = {name: getattr(module, name) for name in ("VIDEO_ALIASES", "AUDIO_ALIASES")} if module is not None else {}
     egress = sys.modules.get("gateway.engine_egress")
     saved_egress = egress._live if egress is not None else None
     yield
@@ -250,6 +252,8 @@ def _config_snapshot_of_one_test() -> Iterator[None]:
         holder.publish(saved)
     if module is not None:
         module.config = saved_config
+        for name, table in saved_aliases.items():
+            setattr(module, name, table)
     if egress is not None and saved_egress is not None:
         egress._live = saved_egress
 

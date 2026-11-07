@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import derived_patch
 from tests.support.access import access_context, authenticated, identity, plan_for  # noqa: E402
 from gateway import model_metadata as mm  # noqa: E402
 from gateway.models_catalog import build_models_catalog  # noqa: E402
@@ -288,7 +289,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
             patch.object(proxy, "config", cfg),
             section_published("roles", {}),
             patch.object(proxy, "MODELS_CATALOG", {}),
-            patch.object(proxy, "LLM_BACKEND_HOSTS", {
+            derived_patch("LLM_BACKEND_HOSTS", {
                 name: record["base_url"] for name, record in self.backends.items()}),
             patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry),
             patch.object(proxy, "currently_loaded_model", return_value=QWEN_PATH),
@@ -335,7 +336,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         context = access_context()
         target, error = asyncio.run(proxy._current_loaded_llm_target(
             context, enforce_gateway_policy=False))
-        self.assertIsNone(error)
+        self.assertIsNone(error, getattr(error, "body", None))
         self.assertIsNotNone(target)
         return target
 

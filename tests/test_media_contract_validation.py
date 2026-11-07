@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from openai import AsyncOpenAI
 import proxy
+from tests.support.config_snapshot import derived_patch
 from tests.support.audio_workflow import audio_manifest
 from tests.support.access import access_context  # noqa: E402
 from test_audio_media_job_integration import _StubJsonRequest
@@ -39,11 +40,11 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         for name, value in (
-            ("COMFY_ENABLED", True),
             ("_service_availability_response", lambda *a, **kw: None),
             ("configured_downstream_headers", lambda *a: {}),
         ):
             self.stack.enter_context(patch.object(proxy, name, value))
+        self.stack.enter_context(derived_patch("COMFY_ENABLED", True))
         self.stack.enter_context(patch.object(proxy.httpx, "AsyncClient", _FakeAsyncClient))
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []

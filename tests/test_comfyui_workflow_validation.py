@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import derived_patch
 from gateway.engine_protocol.node_validation import (  # noqa: E402
     validate_workflow_graph,
 )
@@ -71,7 +72,7 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch.object(proxy, "COMFY_WORKFLOWS_DIR", workflows_dir):
+            with derived_patch("COMFY_WORKFLOWS_DIR", workflows_dir):
                 self.assertIsNone(proxy.load_graph_workflow("bad"))
 
     def test_proxy_loader_resolves_imported_package_workflow_artifacts(self) -> None:
@@ -114,10 +115,7 @@ class TestComfyUIWorkflowValidation(unittest.TestCase):
                 source_path=package_dir,
             )
 
-            with patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry), patch.object(
-                proxy,
-                "COMFY_WORKFLOWS_DIR",
-                package_dir / "empty",
+            with patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry), derived_patch("COMFY_WORKFLOWS_DIR", package_dir / "empty",
             ):
                 workflow = proxy.load_graph_workflow("demo")
                 manifest = proxy._find_image_manifest("image.generate", "demo")

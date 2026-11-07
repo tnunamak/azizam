@@ -241,7 +241,6 @@ def world(fake_upstreams, monkeypatch, tmp_path):
     }
     monkeypatch.setattr(proxy, "config", cfg)
     for name, value in {
-        "COMFY_ENABLED": True, "COMFY_HOST": "http://matrix-graph.fk.test",
         "IMAGE_CACHE_DIR": tmp_path / "assets", "_image_url_signing_secret": b"matrix-signing",
         "get_vram_estimate": lambda *_a, **_kw: 1024,
         "graph_free_vram_bytes": AsyncMock(return_value=10**10),
@@ -249,6 +248,8 @@ def world(fake_upstreams, monkeypatch, tmp_path):
         "resolve_image_background_decision": AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False)),
     }.items():
         monkeypatch.setattr(proxy, name, value)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", "http://matrix-graph.fk.test")
     # Metadata encoding is outside retention; keep this video fixture independent of ffmpeg.
     monkeypatch.setattr(proxy.media_delivery, "deliver_bytes", lambda data, *_a, **_kw: data)
     monkeypatch.setattr(proxy.media_delivery, "attach_provenance", lambda data, *_a, **_kw: data)

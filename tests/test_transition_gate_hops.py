@@ -72,7 +72,7 @@ def gate(engine, monkeypatch, tmp_path):
                 OTHER: _service("other-domain", transition=enabled)}
     monkeypatch.setitem(proxy.config, "backends", backends)
     for name in (ALIAS, OTHER):
-        monkeypatch.setitem(proxy.LLM_BACKEND_HOSTS, name, "http://127.0.0.1:59999")
+        monkeypatch.setitem(proxy.DERIVED.LLM_BACKEND_HOSTS, name, "http://127.0.0.1:59999")
     pin_inner_hop_hosts(monkeypatch, {name: "http://127.0.0.1:59999" for name in (ALIAS, OTHER)})
     _set_drain(monkeypatch, enabled=False)
     store = GateStore(tmp_path / "transition.db")
@@ -702,7 +702,7 @@ def stopped(gate, monkeypatch, tmp_path):
     """
     engine = StoppedEngine(monkeypatch, tmp_path, service_id=BACKEND)
     engine.install(monkeypatch, engine.record())
-    monkeypatch.setitem(proxy.LLM_BACKEND_HOSTS, BACKEND, engine.url)
+    monkeypatch.setitem(proxy.DERIVED.LLM_BACKEND_HOSTS, BACKEND, engine.url)
     pin_inner_hop_hosts(monkeypatch, {BACKEND: engine.url})
     engine.sends = []
 

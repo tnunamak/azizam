@@ -22,7 +22,7 @@ def test_chat_opens_one_connection_per_identity_lookup_and_revocation_is_immedia
         hash=hash_api_key(key), prefix="fixture", path=db, created_by=accountable_person(db, app["id"]))
     monkeypatch.setattr(proxy.ADMIN_STORE, "path", db)
     monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
-    monkeypatch.setattr(proxy, "LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"})
+    monkeypatch.setitem(proxy.runtime().derived, "LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"})
     monkeypatch.setattr(proxy, "get_active_backend", AsyncMock(return_value="kobold"))
     monkeypatch.setattr(proxy, "current_llm_model_for_backend", AsyncMock(return_value="fixture-model"))
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *args, **kwargs: None)

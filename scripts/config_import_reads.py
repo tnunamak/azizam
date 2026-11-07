@@ -55,8 +55,6 @@ NOT_SETTINGS = frozenset({
 })
 # Config-derived values computed inside a function that a module-level statement calls: the scan cannot see them.
 HIDDEN = {
-    "LLM_BACKEND_HOSTS": "backends",  # _build_llm_backend_hosts()
-    "_GRAPH_BINDING": "backends",  # the comfyui registry record, read by a helper
     "ADMIN_OIDC_CONFIG": "admin",  # the file fallback of the stored OIDC provider
 }
 

@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import derived_patch
 from gateway import media_jobs, receipt_store, request_source  # noqa: E402
 from gateway.access_plans import AccessPlan  # noqa: E402
 from tests.support.access import access, plan_for, auth_identity  # noqa: E402
@@ -805,14 +806,8 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             "media_job_admission": {},
         }
 
-        with authenticated_profile(media_profile), patch.object(
-            proxy,
-            "TTS_ENABLED",
-            True,
-        ), patch.object(
-            proxy,
-            "STT_ENABLED",
-            True,
+        with authenticated_profile(media_profile), derived_patch("TTS_ENABLED", True,
+        ), derived_patch("STT_ENABLED", True,
         ), patch.object(
             proxy.ADMIN_STORE,
             "operator_overrides",
@@ -1011,8 +1006,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
     def test_existing_only_target_policy_uses_workflow_availability(self) -> None:
         existing_only = plan_for("workflow-existing-only", caps=('image',), load=False)
 
-        with authenticated_profile(existing_only) as identity, patch.object(
-            proxy, "COMFY_ENABLED", True
+        with authenticated_profile(existing_only) as identity, derived_patch("COMFY_ENABLED", True
         ), patch.object(
             proxy.ADMIN_STORE,
             "operator_overrides",
@@ -1027,8 +1021,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
 
         self.assertIsNone(allowed)
 
-        with authenticated_profile(existing_only) as identity, patch.object(
-            proxy, "COMFY_ENABLED", False
+        with authenticated_profile(existing_only) as identity, derived_patch("COMFY_ENABLED", False
         ):
             auth_context = proxy.AuthContext(identity)
             denied = proxy._workflow_target_policy_decision(
@@ -1241,7 +1234,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             {"header": "x-api-key", "secret": "api_key", "secret_env": "FIXTURE_INJECT_KEY"},
         ]
         lane_credential = {"credentials": {"inference": {
-            "secret_env": "FIXTURE_LANE_KEY", "header": "x-lane-key", "origin": proxy.LLM_BACKEND_HOSTS["kobold"],
+            "secret_env": "FIXTURE_LANE_KEY", "header": "x-lane-key", "origin": proxy.DERIVED.LLM_BACKEND_HOSTS["kobold"],
         }}}
         with authenticated_profile(profile, downstream=downstream), patch.dict(
             proxy._PROVIDER_NATIVE_TARGETS["kobold"]["record"], {"auth_inject": inject, "connection": lane_credential},
@@ -1266,7 +1259,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.json(), {"native": True})
         self.assertEqual(
             _CaptureNativePassthroughClient.calls[0]["url"],
-            f"{proxy.LLM_BACKEND_HOSTS['kobold']}/v1/models?limit=1",
+            f"{proxy.DERIVED.LLM_BACKEND_HOSTS['kobold']}/v1/models?limit=1",
         )
         forwarded_headers = {
             key.lower(): value
@@ -1435,7 +1428,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         declared = {
             "native": {"allow": [{"method": "POST", "path": "/prompt", "class": "generate"}]},
             "connection": {"credentials": {"inference": {
-                "secret_env": "FIXTURE_COMFY_KEY", "header": "x-comfy-key", "origin": proxy.COMFY_HOST,
+                "secret_env": "FIXTURE_COMFY_KEY", "header": "x-comfy-key", "origin": proxy.DERIVED.COMFY_HOST,
             }}},
         }
         with authenticated_profile(profile, downstream=downstream), patch.dict(
@@ -1458,7 +1451,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         call = _CaptureNativePassthroughClient.calls[0]
         self.assertEqual(call["method"], "POST")
-        self.assertEqual(call["url"], f"{proxy.COMFY_HOST}/prompt")
+        self.assertEqual(call["url"], f"{proxy.DERIVED.COMFY_HOST}/prompt")
         self.assertIn(b'"prompt"', call["content"])
         forwarded_headers = {
             key.lower(): value

@@ -19,6 +19,7 @@ from typing import Any
 from unittest.mock import patch
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from gateway.engine_protocol.audio_graph import AudioLimits, effective_manifest, manifest_inputs
 from gateway.manifests import ManifestError
 from tests.support.access import access_context
@@ -49,12 +50,12 @@ def _call(body: dict[str, Any], *, manifest: dict[str, Any], template: dict[str,
             loaded.append(cfg.get("file"))
         return json.loads(json.dumps(template))
 
-    with patch.object(proxy, "COMFY_ENABLED", True), \
+    with derived_patch("COMFY_ENABLED", True), \
             patch.object(proxy, "_service_availability_response", new=lambda *_a, **_k: None), \
             patch.object(proxy, "_resolve_audio_workflow", return_value=("fx", {"file": "config/elsewhere.json"})), \
             patch.object(proxy, "_load_audio_workflow_manifest", new=lambda _name: manifest), \
             patch.object(proxy, "_load_audio_workflow_file", new=load), \
-            patch.object(proxy, "COMFY_HOST", f"http://{HOST}"), \
+            derived_patch("COMFY_HOST", f"http://{HOST}"), \
             patch.object(proxy, "configured_downstream_headers", new=lambda *_a, **_k: {}):
         return asyncio.run(proxy.proxy_audio_generate(_JsonRequest(body), access_context()))
 

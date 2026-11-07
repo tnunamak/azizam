@@ -56,7 +56,7 @@ class SpeechSeamTests(RouteCase):
         [(conn, op, request)] = recording.calls
         self.assertEqual(op, "speech.synthesize")
         self.assertEqual(conn.address, "http://127.0.0.1:8010")
-        self.assertEqual((conn.timeouts.connect_s, conn.timeouts.first_byte_s), (10, proxy.TTS_TIMEOUT))
+        self.assertEqual((conn.timeouts.connect_s, conn.timeouts.first_byte_s), (10, proxy.DERIVED.TTS_TIMEOUT))
         self.assertEqual(request.raw_body, seen[0].content)
         self.assertEqual(json.loads(request.raw_body)["input"], "hello")
         self.assertEqual(request.headers["content-type"], "application/json")

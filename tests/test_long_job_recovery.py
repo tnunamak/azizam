@@ -27,7 +27,7 @@ def store(tmp_path, monkeypatch):
 def test_restart_recovers_or_explains_every_job(store, monkeypatch, kind, intent, status, enabled, payload):
     job = media_jobs.MediaJob(intent=intent, status=status, metadata={"mode": f"async_{kind}_generation"})
     media_jobs.create(job, path=store)
-    monkeypatch.setattr(proxy, "COMFY_ENABLED", True)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
     monkeypatch.setattr(proxy, "_image_media_job_resume_on_start", lambda: enabled)
     monkeypatch.setattr(proxy, "_has_image_media_job_payload", lambda _: payload)
     scheduled = Mock(return_value=True)

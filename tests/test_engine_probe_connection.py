@@ -123,7 +123,7 @@ def _saved_registry(monkeypatch, backend: str, saved: dict, **fields):
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {"services": {backend: record}})
     monkeypatch.setattr(proxy, "config", {"backends": {backend: {
         "host": "127.0.0.1", "port": 1, "capabilities": ["chat"], **fields}}})
-    monkeypatch.setitem(proxy.LLM_BACKEND_HOSTS, backend, "http://127.0.0.1:1")
+    monkeypatch.setitem(proxy.DERIVED.LLM_BACKEND_HOSTS, backend, "http://127.0.0.1:1")
     monkeypatch.setattr(proxy, "_loaded_state", {})
     monkeypatch.setattr(proxy, "_MODEL_CONTEXT_CACHE", {})
 
@@ -148,13 +148,13 @@ def test_the_current_model_and_context_window_probes_use_the_saved_connection(mo
 def test_active_backend_health_keeps_the_root_path_with_saved_headers_and_key(monkeypatch, fake_upstreams):
     fake_upstreams.asgi(_engine("/health", {"status": "ok"}), host=HOST)
     monkeypatch.setattr(proxy, "config", {"backends": {"health-probe": _saved()}})
-    monkeypatch.setattr(proxy, "LLM_BACKEND_HOSTS", {"health-probe": "http://stale.invalid:1"})
+    monkeypatch.setitem(proxy.runtime().derived, "LLM_BACKEND_HOSTS", {"health-probe": "http://stale.invalid:1"})
     monkeypatch.setattr(proxy, "_RESOURCE_FACT_CACHE", {})
     assert asyncio.run(proxy.get_active_backend()) == "health-probe"
 
 
 def test_a_backend_without_a_saved_record_keeps_the_boot_host(monkeypatch):
     monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {"services": {}})
-    monkeypatch.setitem(proxy.LLM_BACKEND_HOSTS, "probe-legacy", "http://127.0.0.1:5099")
+    monkeypatch.setitem(proxy.DERIVED.LLM_BACKEND_HOSTS, "probe-legacy", "http://127.0.0.1:5099")
     assert proxy._engine_probe("probe-legacy", "/v1/models") == ("http://127.0.0.1:5099/v1/models", {})
     assert proxy._engine_probe("probe-legacy", "/props") == ("http://127.0.0.1:5099/props", {})

@@ -279,9 +279,9 @@ def test_overlapping_reloads_apply_in_order_and_the_last_applied_config_is_the_s
             assert release_first.wait(10)
         return {**copy.deepcopy(dict(proxy.config)), "marker": snapshot}
 
-    def derive(cfg):
+    def derive(cfg, **kwargs):
         applied.append(cfg["marker"])
-        return original(cfg)
+        return original(cfg, **kwargs)
 
     monkeypatch.setattr(proxy, "_load_effective_runtime_config", loader)
     monkeypatch.setattr(proxy, "_derive_backend_constants", derive)

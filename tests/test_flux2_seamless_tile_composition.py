@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import derived_patch
 from tests.support.access import access_context  # noqa: E402
 from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.extension_catalog import summarize_extensions  # noqa: E402
@@ -262,7 +263,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
             "background": "transparent",
         }
 
-        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+        with derived_patch("COMFY_ENABLED", True), patch.object(
             proxy,
             "configured_downstream_headers",
             lambda _auth_context, _service: {},
@@ -360,10 +361,7 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
                 proxy,
                 "_image_url_signing_secret",
                 b"test-secret",
-            ), patch.object(
-                proxy,
-                "COMFY_ENABLED",
-                True,
+            ), derived_patch("COMFY_ENABLED", True,
             ), patch.object(
                 proxy,
                 "configured_downstream_headers",

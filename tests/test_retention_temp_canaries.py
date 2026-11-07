@@ -476,7 +476,7 @@ def test_video_probe_cancellation_waits_for_private_scratch_cleanup(world: World
         task = asyncio.create_task(proxy._resolve_video_workflow_assets(
             {"extensions": {proxy.WORKFLOW_EXTENSION_NAMESPACE: {"source": "a video"}}},
             {"inputs": {"source": {"type": "asset"}},
-             "bindings": {proxy._GRAPH_BINDING: {"map": {"source": "1.file"}}}},
+             "bindings": {proxy.DERIVED._GRAPH_BINDING: {"map": {"source": "1.file"}}}},
             {"source_video_input": "source"}, None))
         assert await asyncio.to_thread(started.wait, 10), "worker did not start"
         assert started.is_set(), "video probe did not start"

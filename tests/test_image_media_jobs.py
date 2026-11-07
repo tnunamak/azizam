@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import derived_patch
 from tests.support.access import authenticated, access_context  # noqa: E402
 from gateway import media_jobs, request_source  # noqa: E402
 
@@ -437,10 +438,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             "prompt": "private prompt",
         }
 
-        with authenticated(), patch.object(
-            proxy,
-            "COMFY_ENABLED",
-            False,
+        with authenticated(), derived_patch("COMFY_ENABLED", False,
         ):
             response = await proxy._dispatch_gateway_media_job_submission(
                 request=_StubJsonRequest({}),  # type: ignore[arg-type]
@@ -547,10 +545,7 @@ class ImageMediaJobExecutionTests(unittest.IsolatedAsyncioTestCase):
             "media_job_admission": {},
         }
 
-        with authenticated(), patch.object(
-            proxy,
-            "COMFY_ENABLED",
-            True,
+        with authenticated(), derived_patch("COMFY_ENABLED", True,
         ), patch.object(
             proxy.ADMIN_STORE,
             "operator_overrides",

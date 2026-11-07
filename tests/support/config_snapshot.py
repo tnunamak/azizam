@@ -7,6 +7,7 @@ code that reads the snapshot (the decision runtime, the mesh frontend records). 
 from __future__ import annotations
 
 from typing import Any, Mapping
+from unittest import mock
 
 import pytest
 
@@ -27,8 +28,15 @@ def pin_inner_hop_hosts(monkeypatch: pytest.MonkeyPatch, hosts: Mapping[str, str
 
 
 def publish_section(monkeypatch: pytest.MonkeyPatch, section: str, value: Any) -> None:
-    """``publish_config`` of the current config with one top-level ``section`` replaced by ``value``."""
-    publish_config(monkeypatch, {**proxy.config, section: value})
+    """``publish_config`` of the current config with one top-level ``section`` replaced by ``value``.
+
+    A section other than ``backends`` does not change what the registry derives, so the running snapshot's derived values
+    (a test may have patched one, ``derived_patch``) stay in the new snapshot. ``backends`` derives them afresh.
+    """
+    config = {**proxy.config, section: value}
+    monkeypatch.setattr(proxy, "config", config)
+    carried = dict(proxy.runtime().derived) if section != "backends" else None
+    proxy.CONFIG_HOME.publish(proxy.CONFIG_HOME.snapshot(config, derived=carried))
 
 
 class section_published:
@@ -56,6 +64,54 @@ class section_published:
             self._saved = None
 
     def __enter__(self) -> "section_published":
+        self.start()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.stop()
+
+
+class derived_patch:
+    """Patch one value of the published snapshot's ``derived`` mapping (``proxy.DERIVED.<name>``), for a ``with`` block or
+    ``start``/``stop``.
+
+    A test that patched a module constant a reader used to read (``patch.object(proxy, "COMFY_ENABLED", True)``) patches the
+    snapshot the reader now takes it from. The snapshot is the one published when ``start`` runs, so a list of patchers that
+    starts a ``section_published`` first patches that snapshot. A test that publishes another snapshot afterwards (a reload,
+    ``publish_config``) must patch after that.
+    """
+
+    _ABSENT = object()
+
+    def __init__(self, name: str, value: Any) -> None:
+        self.name = name
+        self.value = value
+        self._patch: Any = None
+        self._patched: Any = None
+        self._original: Any = self._ABSENT
+
+    def start(self) -> None:
+        self._patched = proxy.runtime().derived
+        self._original = self._patched.get(self.name, self._ABSENT)
+        self._patch = mock.patch.dict(self._patched, {self.name: self.value})
+        self._patch.start()
+
+    def stop(self) -> None:
+        if self._patch is None:
+            return
+        self._patch.stop()
+        self._patch = None
+        # publish_section carries the running derived values into the snapshot it publishes, so a snapshot published
+        # inside this block holds the patched value too. Put the value back there as well.
+        current = proxy.runtime().derived
+        if current is not self._patched and current.get(self.name, self._ABSENT) == self.value:
+            if self._original is self._ABSENT:
+                current.pop(self.name, None)
+            else:
+                current[self.name] = self._original
+        self._patched = None
+
+    def __enter__(self) -> "derived_patch":
         self.start()
         return self
 

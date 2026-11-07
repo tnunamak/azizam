@@ -29,6 +29,7 @@ from gateway.job_envelope import JobEnvelope, build_job_envelope
 from gateway.workflow_call import build_request
 from tests.support.access import auth_identity, store_plan
 from tests.support.app_keys import accountable_person
+from tests.support.config_snapshot import derived_patch
 from tests.support.fake_upstream import fake_upstreams, scenario_from_data  # noqa: F401
 
 ORIGIN = "http://engine.test:1"
@@ -218,13 +219,15 @@ class SubmittedCanaryCarrierTests(unittest.IsolatedAsyncioTestCase):
             (media_jobs, "DB_PATH", self.jobs),
             (proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", root / "payloads"),
             (proxy, "IMAGE_CACHE_DIR", root / "cache"),
-            (proxy, "COMFY_ENABLED", True),
             (proxy, "_image_url_signing_secret", b"test-secret"),
             (proxy, "_schedule_audio_media_job", lambda job_id: self.scheduled.append(job_id) or True),
         ):
             patcher = patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        enabled = derived_patch("COMFY_ENABLED", True)
+        enabled.start()
+        self.addCleanup(enabled.stop)
         overrides = patch.object(proxy.ADMIN_STORE, "operator_overrides",
                                  return_value={"service_availability": {}, "media_job_admission": {}})
         overrides.start()
@@ -243,7 +246,7 @@ class SubmittedCanaryCarrierTests(unittest.IsolatedAsyncioTestCase):
             {"prompt": CANARY_PROMPT, "seed": CANARY_SEED, "duration": CANARY_DURATION},
             wrap_intent=route["submit"]["body"]["intent"])
         fake = self.fakes.asgi(_audio_scenario())
-        with patch.object(proxy, "COMFY_HOST", fake.base_url), patch.object(proxy.asyncio, "sleep", AsyncMock()):
+        with derived_patch("COMFY_HOST", fake.base_url), patch.object(proxy.asyncio, "sleep", AsyncMock()):
             response = await proxy._dispatch_gateway_media_job_submission(
                 request=_Request(auth), payload=built.json, audience="client")  # type: ignore[arg-type]
             assert response is not None and response.status_code == 202, getattr(response, "body", b"")

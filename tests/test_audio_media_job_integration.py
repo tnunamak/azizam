@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import derived_patch
 from tests.support.access import authenticated, access_context  # noqa: E402
 from gateway import media_jobs, request_source  # noqa: E402
 
@@ -122,7 +123,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "duration": 8,
         }
 
-        with patch.object(proxy, "COMFY_ENABLED", False):
+        with derived_patch("COMFY_ENABLED", False):
             response = await proxy._submit_audio_media_job(
                 request=_StubJsonRequest(body),  # type: ignore[arg-type]
                 intent="audio.generate",
@@ -188,7 +189,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "media_job_admission": {},
         }
 
-        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+        with derived_patch("COMFY_ENABLED", True), patch.object(
             proxy.ADMIN_STORE,
             "operator_overrides",
             return_value=overrides,
@@ -443,7 +444,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 )
 
                 with (
-                    patch.object(proxy, "COMFY_ENABLED", True),
+                    derived_patch("COMFY_ENABLED", True),
                     patch.object(
                         proxy, "_image_media_job_resume_on_start", lambda: resume_enabled
                     ),

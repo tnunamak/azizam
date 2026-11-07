@@ -63,8 +63,8 @@ def dispatch_env(fake_upstreams, monkeypatch, tmp_path):
     signed_in.start()
     monkeypatch.setattr(proxy, '_operator_override_docs', lambda: {'service_availability': {}, 'media_job_admission': {}})
     monkeypatch.setattr(proxy, 'PROXY_PORT', 19999)
-    monkeypatch.setattr(proxy, 'COMFY_ENABLED', True)
-    monkeypatch.setattr(proxy, 'TTS_ENABLED', True)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
+    monkeypatch.setitem(proxy.runtime().derived, "TTS_ENABLED", True)
     monkeypatch.setattr(proxy, "_image_background_removal_enabled", lambda: False)
     monkeypatch.setattr(proxy, 'IMAGE_CACHE_DIR', tmp_path / 'images')
     for module in (receipt_store, media_jobs):
@@ -190,7 +190,7 @@ def test_limit_facts_and_protocol_projection(monkeypatch, cfg, override, code, p
 def test_worker_rechecks_before_executor(monkeypatch, kind, intent):
     monkeypatch.setattr(proxy, '_effective_media_job_admission_cfg', lambda: {'disabled_intents': [intent]})
     monkeypatch.setattr(proxy, '_operator_service_availability_overrides', lambda: {})
-    monkeypatch.setattr(proxy, 'COMFY_ENABLED', True)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
     monkeypatch.setattr(media_jobs, 'get', lambda *a, **kw: {'status': 'queued', 'intent': intent})
     failures = []
     executor = AsyncMock(side_effect=AssertionError('worker reached backend'))

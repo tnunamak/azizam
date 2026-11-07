@@ -40,7 +40,7 @@ def _history(fake_upstreams, monkeypatch, in_history):
         "exchanges": [{"id": "history", "match": {"method": "GET", "path": "/history/p"},
                        "response": {"json": {"p": job} if in_history else {}}}],
     }))
-    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
 
 
 # --- the node of a video status ---------------------------------------------------------------------------------------------

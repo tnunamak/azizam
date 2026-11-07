@@ -871,6 +871,13 @@ ratchet line.
   reload result == boot result for random registry edits from the existing fixtures).
 - Route policies follow a frontend change without restart.
 
+As built (`tests/test_config_c9_derived.py`). One function, `_derive_backend_constants(config, registry=...)`, computes
+every class A and class B value, the protocol route registry and the four route policies. The boot snapshot and every
+reload publish its result as the snapshot's `derived` mapping; `ConfigHome.derive` fills `derived` for any snapshot built
+without it. Readers write `DERIVED.<NAME>` (`proxy.py`), which reads the snapshot of the call. No module name holds a
+copy, so a reload has nothing to reassign except the two alias tables that C8b and C3 still read. The reload reads the
+registry once for the route policies; the frontend table reads the same stored value (the read is cached by document).
+
 **C10 Startup file and shrink.** See 10.2.
 
 ### 10.2 The "done" gate

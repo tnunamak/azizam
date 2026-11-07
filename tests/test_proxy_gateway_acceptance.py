@@ -46,6 +46,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import derived_patch
 from gateway.access_plans import AccessPlan  # noqa: E402
 from tests.support.access import access, access_context, authenticated, plan_for, auth_identity  # noqa: E402
 from tests.support.mesh_pool import fake_mesh_pool  # noqa: E402
@@ -659,10 +660,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             raise AssertionError("model='current' must not activate or load models")
 
         client = TestClient(proxy.app)
-        with authenticated(), patch.object(
-            proxy,
-            "LLM_BACKEND_HOSTS",
-            {"kobold": "http://127.0.0.1:5051"},
+        with authenticated(), derived_patch("LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"},
         ), patch.object(
             proxy,
             "get_active_backend",
@@ -718,10 +716,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             return _FakeStreamClient(), _FakeLiteLLMResponse()
 
         client = TestClient(proxy.app)
-        with authenticated(), patch.object(
-            proxy,
-            "LLM_BACKEND_HOSTS",
-            {"kobold": "http://127.0.0.1:5051"},
+        with authenticated(), derived_patch("LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"},
         ), patch.object(
             proxy,
             "get_active_backend",
@@ -764,10 +759,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             return tracked_client, _RaisingCloseNonStreamResponse()
 
         client = TestClient(proxy.app, raise_server_exceptions=False)
-        with authenticated(), patch.object(
-            proxy,
-            "LLM_BACKEND_HOSTS",
-            {"kobold": "http://127.0.0.1:5051"},
+        with authenticated(), derived_patch("LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"},
         ), patch.object(
             proxy,
             "get_active_backend",
@@ -810,10 +802,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             raise AssertionError("model='current-fast' must not activate or load models")
 
         client = TestClient(proxy.app)
-        with authenticated(), patch.object(
-            proxy,
-            "LLM_BACKEND_HOSTS",
-            {"kobold": "http://127.0.0.1:5051"},
+        with authenticated(), derived_patch("LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"},
         ), patch.object(
             proxy,
             "get_active_backend",
@@ -861,10 +850,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             raise AssertionError("unloaded current model request must not load")
 
         client = TestClient(proxy.app)
-        with authenticated(), patch.object(
-            proxy,
-            "LLM_BACKEND_HOSTS",
-            {"kobold": "http://127.0.0.1:5051"},
+        with authenticated(), derived_patch("LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"},
         ), patch.object(
             proxy,
             "get_active_backend",
@@ -930,7 +916,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
                 }
             ]
         }
-        with patch.object(proxy, "LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"}), patch.object(
+        with derived_patch("LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"}), patch.object(
             proxy,
             "config",
             {"backends": {"kobold": service_cfg}},
@@ -1715,7 +1701,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
                 media_type="application/json",
             )
 
-        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+        with derived_patch("COMFY_ENABLED", True), patch.object(
             # Background-removal decisioning calls get_active_backend() ->
             # check_service_health() against every configured backend host —
             # a real network call this test must not depend on (it hangs
@@ -1767,7 +1753,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
                 media_type="application/json",
             )
 
-        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+        with derived_patch("COMFY_ENABLED", True), patch.object(
             # Background-removal decisioning calls get_active_backend() ->
             # check_service_health() against every configured backend host —
             # a real network call this test must not depend on (it hangs
@@ -1847,7 +1833,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
                 media_type="application/json",
             )
 
-        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+        with derived_patch("COMFY_ENABLED", True), patch.object(
             # Background-removal decisioning calls get_active_backend() ->
             # check_service_health() against every configured backend host —
             # a real network call this test must not depend on (it hangs

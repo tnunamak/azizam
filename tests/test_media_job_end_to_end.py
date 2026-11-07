@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import proxy
+from tests.support.config_snapshot import derived_patch
 from gateway import accounts, admin_store, media_jobs
 from gateway.workflow_call import build_request
 from tests.support.access import store_plan
@@ -149,7 +150,6 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
             (media_jobs, "DB_PATH", self.jobs),
             (proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", root / "payloads"),
             (proxy, "IMAGE_CACHE_DIR", root / "cache"),
-            (proxy, "COMFY_ENABLED", True),
             (proxy, "_image_url_signing_secret", b"test-secret"),
             (proxy, "_schedule_audio_media_job", lambda job_id: self.scheduled.append(job_id) or True),
             (proxy, "_schedule_image_media_job", lambda job_id: self.scheduled.append(job_id) or True),
@@ -158,6 +158,9 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
             patcher = patch.object(target, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        comfy_enabled = derived_patch("COMFY_ENABLED", True)
+        comfy_enabled.start()
+        self.addCleanup(comfy_enabled.stop)
         overrides = patch.object(proxy.ADMIN_STORE, "operator_overrides",
                                  return_value={"service_availability": {}, "media_job_admission": {}})
         overrides.start()
@@ -191,7 +194,7 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
         # The workflow writes FLAC (its manifest output), as the live backend does.
         fake = self.fakes.asgi(_audio_scenario("sfx_00001_.flac", "audio/flac"))
         auth = self.caller(caller)
-        with patch.object(proxy, "COMFY_HOST", fake.base_url), \
+        with derived_patch("COMFY_HOST", fake.base_url), \
                 patch.object(proxy.asyncio, "sleep", AsyncMock()):
             job_id = await self.submit_as_mcp("audio.generate.sa3-small-sfx", {"prompt": "a door creaks"}, auth)
             self.assertEqual(self.scheduled, [job_id])
@@ -203,7 +206,7 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
         auth = self.caller(caller)
         # "auto" background asks a chat model whether to cut out the subject; no chat backend here.
         no_cutout = AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False))
-        with patch.object(proxy, "COMFY_HOST", fake.base_url), \
+        with derived_patch("COMFY_HOST", fake.base_url), \
                 patch.object(proxy, "resolve_image_background_decision", no_cutout), \
                 patch.object(proxy.asyncio, "sleep", AsyncMock()):
             job_id = await self.submit_as_mcp("image.generate.flux2-klein-4b", {"prompt": "a red fox"}, auth)
@@ -221,7 +224,7 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
         # The body MCP builds for the video route, sent as a durable media job.
         built = await build_request(lambda *_: None, None, auth, entry, submit, {"prompt": "waves at dusk"},
                                     wrap_intent=None)
-        with patch.object(proxy, "COMFY_HOST", fake.base_url), \
+        with derived_patch("COMFY_HOST", fake.base_url), \
                 patch.object(proxy.asyncio, "sleep", AsyncMock()), \
                 patch.object(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0):
             response = await proxy._dispatch_gateway_media_job_submission(

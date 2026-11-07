@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
 from tests.support.audio_workflow import audio_manifest  # noqa: E402
-from tests.support.config_snapshot import section_key_published  # noqa: E402
+from tests.support.config_snapshot import derived_patch, section_key_published  # noqa: E402
 from tests.support.access import plan_for, access, access_context, auth_identity  # noqa: E402
 from gateway import admin_store, asset_types, media_delivery, media_jobs, media_metadata, prompt_memory, provenance, receipt_store  # noqa: E402
 
@@ -487,12 +487,9 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         _patch_route_stores(self, Path(self.tmp.name))
-        for target, value in (
-            ("COMFY_ENABLED", True),
-        ):
-            patcher = patch.object(proxy, target, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = derived_patch("COMFY_ENABLED", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     async def _generate(self, extensions: dict[str, Any] | None, auth_context) -> tuple[Any, dict[str, Any]]:
         body = {"prompt": "a cat", "model": "krea2-turbo", "size": "8x6", "response_format": "b64_json"}
@@ -668,7 +665,7 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         class Req(StubRequest):
             query_params = __import__("starlette.datastructures", fromlist=["QueryParams"]).QueryParams(query)
 
-        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+        with derived_patch("COMFY_ENABLED", True), patch.object(
             proxy, "_prompt_id_from_video_id", lambda _v: prompt_id
         ), patch.dict(proxy._video_job_records, {prompt_id: record}, clear=False), patch.object(
             proxy, "_graph_history", AsyncMock(return_value={"outputs": {}})
@@ -825,8 +822,8 @@ class AudioGenerateRouteTests(unittest.TestCase):
         self.auth = FULL_AUTH
         self.client = TestClient(proxy.app)
         for patcher in (
-            patch.object(proxy, "COMFY_ENABLED", True),
             section_key_published("audio", "workflows", {"fx": {"file": str(graph)}}),
+            derived_patch("COMFY_ENABLED", True),
             patch.object(proxy, "_load_audio_workflow_manifest",
                          lambda name: audio_manifest(name, {"prompt": [("1", "text")], "seed": [("1", "seed")]},
                                                       workflow=str(graph))),

@@ -25,7 +25,7 @@ def video_state(monkeypatch):
     monkeypatch.setattr(proxy, "_video_records_restored", set())
     monkeypatch.setattr(proxy, "_video_progress_lock", asyncio.Lock())
     monkeypatch.setattr(proxy, "_persist_video_record", Mock())
-    monkeypatch.setattr(proxy, "COMFY_ENABLED", True)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
     monkeypatch.setattr(proxy, "configured_downstream_headers", lambda *a: {})
     monkeypatch.setattr(proxy.prompt_memory, "delete_asset", Mock())
 
@@ -37,7 +37,7 @@ def worker(tmp_path, monkeypatch, video_state):
     monkeypatch.setattr(media_jobs, "DB_PATH", db)
     monkeypatch.setattr(proxy, "_video_media_job_semaphore", asyncio.Semaphore(1))
     monkeypatch.setattr(proxy, "_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS", 0)
-    monkeypatch.setattr(proxy, "COMFY_VIDEO_TIMEOUT", 10)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_VIDEO_TIMEOUT", 10)
     monkeypatch.setattr(proxy, "_load_video_media_job_payload", lambda _: {})
     monkeypatch.setattr(proxy, "_request_shim_from_video_job_payload", lambda _: SimpleNamespace(scope={}))
     # The worker checks its caller's plan before each poll: a caller whose plan allows video.
@@ -134,7 +134,7 @@ def test_reconcile_distinguishes_unavailable_active_terminal_and_orphan(
 
 def test_status_fallback_never_regresses_and_terminal_error_wins(video_state, monkeypatch, fake_upstreams):
     fake = fake_upstreams.asgi(load_scenario("comfyui/video-status-progression"))
-    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
     proxy._video_job_records["p"] = {
         "owner_key_hash": None, "deleted_at": None, "created_at": 1,
         "completed_at": None, "model": "sora-2", "size": "960x512", "seconds": "5"}
@@ -194,7 +194,7 @@ def _comfy_state_fake(fake_upstreams, monkeypatch, *, queue=None, history=None):
             {"id": "history", "repeat": True, "match": {"method": "GET", "path": "/history"}, "response": history or healthy_history},
         ],
     }))
-    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
     return fake
 
 
@@ -227,7 +227,7 @@ def test_direct_create_rejects_non_string_prompt_before_provider(video_state, is
             "response": {"json": {"prompt_id": "p"}},
         }],
     }))
-    monkeypatch.setattr(proxy, "COMFY_HOST", fake.base_url)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_HOST", fake.base_url)
     monkeypatch.setattr(proxy, "_dispatch_admission_response", lambda *a, **kw: None)
     monkeypatch.setattr(proxy, "_service_availability_response", lambda *a, **kw: None)
     monkeypatch.setattr(proxy, "_begin_media_delivery", lambda *a: None)

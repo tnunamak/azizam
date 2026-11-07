@@ -545,6 +545,7 @@
 # Train 13 (2026-11-06): S2.3 result bundles (+73) and S2.4 output selectors (+262) on train 12; summed 20241.
 # feat/config-homes-c4 (2026-11-06): registry layering, migration step, export/import and rollback tests; measured 19849 (+28 net of the seed and backfill tests it removed).
 # C4 review fixes: a damaged stored registry is never overwritten (+3); measured 19852.
+# feat/config-homes-c9 (2026-11-06): registry-derived constants acceptance tests (+13); measured 19865.
 # Train 14 (2026-11-06): C4 registry layering (+31) on train 13; summed 20272.
 # feat/config-homes-c5 (2026-11-06): stored workflows win over bundled ones, the workflow registry follows a registry save, the pre-deploy report (+13); measured 19865.
 # C5 review fix: repairing a left-out workflow under a bundled id needs the overrides claim (+2); measured 19867.
@@ -565,8 +566,12 @@
 # feat/code-to-data-s2-5b review fixes (2026-11-06): +27 (result-name rule 12 + 7, path-shaped refusals 4, legacy video 3, over-limit video 1); measured 20254 with scripts/run-hermetic-pytest.sh --collect-only -q.
 # Train 15 with S2.5a engine protocol v2 (+54) and S2.5b selector routes (+27 and its fixes): measured 20525.
 # Train 15 gate fixes (2026-11-06): +1 case, the legacy collection's keys and suffix filter; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20526.
+# C9 merged with main (train 14): measured 20285.
+# C9 merge review fix: a derived patch is undone in a snapshot published inside its block (+3); measured 20288.
+# Train 16 (2026-11-06): C9 merged with train 15 (20526 + the 16 cases C9 added to train 14); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20542.
 # Sidecar hotfix (2026-11-06): +1 case, the sidecar reads owner patches over the release records: 20527.
-pytest = 20527
+# Train 16 candidate: C9 (20542) plus the sidecar hotfix case: 20543.
+pytest = 20543
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -805,7 +810,8 @@ ad_hoc_upstream_fake_files = 46
 # 830 on 2026-11-05 (mesh gate fix): -10 where the kind words moved from gateway/asset_types.py to registry/asset_kinds.yml.
 # 826 on 2026-11-06 (S2.2 pinned-workflow check): the audio route names its resolved workflow once instead of five times.
 # 825 on 2026-11-06 (feat/config-homes-c4): -1 where the mesh upgrade step names left with the engine backfill.
-domain_literals = 825
+# 824 on 2026-11-06 (feat/config-homes-c9): -1 where the TTS/STT/COMFY constant blocks left proxy.py for the derive function.
+domain_literals = 824
 # Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
 # scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
 # a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through
@@ -833,7 +839,10 @@ domain_literals = 825
 "import_time_config_reads.admin" = 2
 "import_time_config_reads.audio" = 2
 "import_time_config_reads.auth" = 5
-"import_time_config_reads.backends" = 20
+# C9 (feat/config-homes-c9) lowered backends 23 to 3: the ten class A and ten class B constants of the registry records are
+# derived into the snapshot (DERIVED.*). Left: TTS_BACKEND_MODEL, STT_BACKEND_MODEL (C8c moves both) and EMBEDDINGS_MODEL (C8c).
+# Main (train 14) lowered it to 20 when C8c moved those three; merged with C9: measured 0.
+"import_time_config_reads.backends" = 0
 "import_time_config_reads.gateway" = 0
 "import_time_config_reads.identity" = 0
 "import_time_config_reads.images" = 7
@@ -847,7 +856,8 @@ domain_literals = 825
 "import_time_config_reads.roles" = 0
 "import_time_config_reads.videos" = 0
 # C4 (feat/config-homes-c4) lowered whole_config 6 to 5: the registry boot read no longer hands the startup config to the registry seed.
-"import_time_config_reads.whole_config" = 5
+# C9 lowered it 5 to 1: the route policies and the protocol route aliases are derived into the snapshot; the boot frontend mount stays.
+"import_time_config_reads.whole_config" = 1
 
 # Browser hygiene (TEST_STRATEGY.md 3.4 rules 1-3, and 3.4's intercept rule):
 # occurrences in Playwright code under web/e2e and *.e2e.* / *.playwright.*
