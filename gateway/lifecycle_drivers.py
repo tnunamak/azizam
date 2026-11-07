@@ -62,6 +62,7 @@ from gateway import log_scrub, off_loop_spawn, runtime_secrets
 import asyncio
 import concurrent.futures
 import contextlib
+import json
 import os
 import subprocess
 import tempfile
@@ -414,12 +415,27 @@ def engine_read_request(
     base = connection.url
     if not base:
         return None
-    if endpoint == "/v1" or endpoint.startswith("/v1/"):
-        from urllib.parse import urlsplit
-        # A legacy root URL names no protocol path. Its declared endpoint
-        # already supplies /v1; a saved protocol base replaces that prefix.
-        path = endpoint.removeprefix("/v1") if urlsplit(base).path.strip("/") else endpoint
-        url = join_url(base, path)
+    from gateway.engine_readiness import record_readiness_path
+
+    if endpoint == record_readiness_path(config):
+        # The readiness path the record's definition declares is a server-root path, whatever its first segment: it
+        # already holds the saved base path, so it is never joined onto the base a second time.
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(base)
+        url = urlunsplit((parts.scheme, parts.netloc, "", "", "")) + endpoint
+    elif endpoint == "/v1" or endpoint.startswith("/v1/"):
+        from urllib.parse import urlsplit, urlunsplit
+        base_path = urlsplit(base).path.rstrip("/")
+        if base_path and (endpoint == base_path or endpoint.startswith(base_path + "/")):
+            # A server-root path that already names the saved protocol base (a stored readiness path such as
+            # /v1/openai/models under /v1/openai) is not joined onto it a second time.
+            parts = urlsplit(base)
+            url = urlunsplit((parts.scheme, parts.netloc, "", "", "")) + endpoint
+        else:
+            # A legacy root URL names no protocol path. Its declared endpoint
+            # already supplies /v1; a saved protocol base replaces that prefix.
+            path = endpoint.removeprefix("/v1") if base_path.strip("/") else endpoint
+            url = join_url(base, path)
     elif endpoint == str(config.get("health_endpoint") or "/health"):
         # A connection save adds safe headers/auth, but must not move existing
         # health endpoints. Explicit base URLs retain their entire path;
@@ -490,6 +506,9 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
     request = _health_request(svc)
     if request is None:
         return False
+    fallback_key = _readiness_fallback_key(svc)
+    if fallback_key is not None and fallback_key in _READINESS_FALLBACK:
+        request = _fallback_request(svc, _READINESS_FALLBACK[fallback_key]) or request
     url, headers = request
 
     loop = asyncio.get_running_loop()
@@ -501,11 +520,82 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
                 resp = await client.get(url, **_get_kwargs(headers, timeout=min(interval * 2, 5.0), extensions=engine_egress.probe()))
                 if resp.status_code == 200:
                     return True
+                if resp.status_code == 404 and fallback_key is not None:
+                    # The default health path is absent (not a 5xx, 401 or timeout): read the route the engine's
+                    # definition declares, and remember what it answers for this process. A poll that finds the
+                    # memo already written by a concurrent poll adopts it, so both polls agree.
+                    if fallback_key not in _READINESS_FALLBACK:
+                        _READINESS_FALLBACK[fallback_key] = _declared_fallback_path(svc) or ""
+                    path = _READINESS_FALLBACK[fallback_key]
+                    alternative = _fallback_request(svc, path) if path else None
+                    if alternative is not None and alternative[0] != url:
+                        url, headers = alternative
+                        continue
         except Exception:
             pass
         if loop.time() >= deadline:
             return False
         await asyncio.sleep(interval)
+
+
+# What the default health path answered 404 for, by connection: the definition's readiness path read instead
+# ("" when the definition declares none). Kept for the life of the process.
+_READINESS_FALLBACK: dict[tuple[Any, ...], str] = {}
+
+
+def _readiness_fallback_key(svc: Mapping[str, Any]) -> Optional[tuple[Any, ...]]:
+    """The memo key when ``svc`` has no declared readiness of its own: no process_ready, no health_endpoint."""
+    if svc.get("health_endpoint") or not svc.get("definition"):
+        return None
+    # Every field of the record can change the readiness request (address parts, headers, credential references,
+    # the probe mode), so the key is a digest of the whole record: an edit gives a new key, two records at one
+    # address stay apart, and no credential value is kept in the key (a digest, held in memory only).
+    import hashlib
+
+    digest = hashlib.sha256(json.dumps(svc, sort_keys=True, default=repr).encode("utf-8")).hexdigest()
+    return (svc.get("definition"), digest)
+
+
+def _declared_fallback_path(svc: Mapping[str, Any]) -> Optional[str]:
+    from gateway.engine_readiness import record_readiness_path
+
+    return record_readiness_path(svc)
+
+
+def _fallback_request(svc: Mapping[str, Any], path: str) -> Optional[tuple[str, dict[str, str]]]:
+    """The readiness read at ``path``, built like every other probe of the record (``engine_read_request``)."""
+    if not path:
+        return None
+    return _health_request({**svc, "health_endpoint": path})
+
+
+def readiness_failure_text(svc: Mapping[str, Any]) -> Optional[str]:
+    """What to tell a client when an engine the gateway does not start fails its readiness check.
+
+    ``None`` for any driver that starts the engine (its failure is a failed start). The text names the path read,
+    never the address or its credentials.
+    """
+    if not isinstance(svc, Mapping) or process_config_driver(svc) in ("docker", "command", "process", "systemd", "http-load-unload"):
+        return None
+    from gateway.engine_contract_view import observations_config
+
+    if observations_config(svc).get("process_ready"):
+        return "the engine did not report ready (its process_ready observation)"
+    request = _health_request(svc)
+    fallback_key = _readiness_fallback_key(svc)
+    if fallback_key in _READINESS_FALLBACK and _READINESS_FALLBACK[fallback_key]:
+        request = _fallback_request(svc, _READINESS_FALLBACK[fallback_key]) or request
+    from urllib.parse import urlsplit
+
+    path = urlsplit(request[0]).path if request else ""
+    where = f" (GET {path})" if path else ""
+    return f"the engine did not answer its readiness check{where}"
+
+
+def process_config_driver(svc: Mapping[str, Any]) -> str:
+    from gateway.engine_contract_view import process_config
+
+    return str(process_config(svc).get("driver") or "none").strip().lower()
 
 
 # ---------------------------------------------------------------------------

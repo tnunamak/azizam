@@ -626,8 +626,8 @@ function Wizard({
             left={<BackButton onClick={back} />}
             right={
               <>
-                {addNowButton(noneTicked)}
-                <Button type="button" size="md" onClick={next}>
+                {noneTicked ? keepOffButton() : addNowButton(false)}
+                <Button type="button" size="md" disabled={noneTicked} onClick={next}>
                   Continue
                 </Button>
               </>
@@ -671,7 +671,7 @@ function Wizard({
         />
         {noneTicked && (
           <Note tone="warn" role="status">
-            Nothing is turned on. The engine will be added but will not serve anything.
+            Nothing is turned on. Tick at least one thing this engine does, or add it turned off.
           </Note>
         )}
         <p className="text-meta text-muted-foreground">
@@ -760,7 +760,7 @@ function Wizard({
             <Button
               type="button"
               size="md"
-              disabled={isDup || !engineName || creating}
+              disabled={isDup || !engineName || creating || noneTicked}
               onClick={() => void create({ acknowledge: isWarning })}
             >
               {creating && <Loader2 aria-hidden="true" className="animate-spin" />}
