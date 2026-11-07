@@ -574,7 +574,8 @@
 # S2 close-out (2026-11-07): D1 identity selector cases, D2 legacy cases removed, D3 crash cases; with its review fix: 20565.
 # S3.1 contract errors (2026-11-07): +244 over train 16 (231 corpus cases, 13 review cases).
 # Train 17: S2 close-out (20565) plus S3.1 (+244): 20809.
-pytest = 20809
+# Genreg flake (2026-11-07): +1 case (an unreadable store gives no generation, named once by type): 20810.
+pytest = 20810
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
