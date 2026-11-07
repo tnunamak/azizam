@@ -41,6 +41,10 @@ def _node_problem(template: Mapping[str, Any] | None, node: Any) -> tuple[str, s
 def check_graph_targets(*, field: str, kind: str, value: Any, at: tuple[PathPart, ...], inputs: Mapping[str, Any] | None,
                         template: Mapping[str, Any] | None, errors: ErrorCollector) -> None:
     """Targets that write into a graph. The same rules as ``manifests.bind_backend_request`` applies at run, said at save."""
+    if template is not None and not isinstance(template, Mapping):
+        # A template that is not a mapping of nodes says nothing about any target: report it, then check what needs no template.
+        errors.add(at, "template_node_invalid", "the template is not a mapping of nodes")
+        template = None
     if kind == "input_map":
         written: dict[tuple[str, ...], tuple[PathPart, ...]] = {}   # where each write lands, and who wrote it first
         for logical, targets in value.items():

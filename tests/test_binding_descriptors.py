@@ -692,6 +692,17 @@ def test_a_malformed_template_node_is_an_error_not_a_crash(template: Any, expect
     assert comfy_places({"prompt": [{"path": "1.inputs.text"}]}, {"1": 7}) == [(MAP_AT + ("prompt", 0, "path"), "template_node_invalid")]
 
 
+@pytest.mark.parametrize("template", [7, ["1"], "1"])
+@pytest.mark.parametrize("target", [{"path": "1.inputs.text"}, {"node": "1", "input": "text"}])
+def test_a_template_that_is_not_a_mapping_of_nodes_is_an_error_not_a_crash(template: Any, target: Any) -> None:
+    assert comfy_places({"prompt": [target]}, template) == [(MAP_AT, "template_node_invalid")]
+
+
+def test_a_template_that_is_not_a_mapping_still_lets_the_duplicate_check_run() -> None:
+    twice = {"prompt": [{"node": "1", "input": "text"}], "seed": [{"node": "1", "input": "text"}]}
+    assert comfy_places(twice, 7) == [(MAP_AT, "template_node_invalid"), (MAP_AT + ("seed", 0), "target_duplicate")]
+
+
 def test_a_target_node_that_is_not_a_mapping_is_an_error_for_a_single_target_too() -> None:
     manifest = manifest_of("image-identity")
     graph = bundled_templates(manifest)["gateway"]
