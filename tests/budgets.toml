@@ -620,7 +620,8 @@
 # Second review follow-up: +9 cases for an empty query or fragment and the origin call line: 21248 + 9 = 21257.
 # Package review end-to-end tests (2026-11-07): +3; 21523 + 3 = 21526, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
 # Train 22: 21523 (main) + 29 (readiness follow-ups) + 18 (Add engine composed path, two review rounds) + 3 (package review end to end); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21573.
-pytest = 21573
+# Real-test final route guard: +5 cases (an unsafe declared route on a plain address); 21573 + 5 = 21578.
+pytest = 21578
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

@@ -473,3 +473,42 @@ def test_the_call_line_shows_the_url_the_check_sends_for_a_probe_from_the_origin
     ctx = type("Ctx", (), {"definition": origin_probe, "address": "http://h.test:8080/api/v1", "origin": "http://h.test:8080"})()
     assert engine_check._primary_url(ctx) == ("GET", "http://h.test:8080/api/tags")
     assert engine_check.call_line(origin_probe, values) == "GET http://h.test:8080/api/tags"
+
+
+@pytest.mark.parametrize("unsafe", [
+    {"route": "/chat?"}, {"route": "/chat#x"}, {"route": "/../admin/chat"},
+    {"route_base": "/v1/../admin"}, {"route_base": "/v1?"},
+])
+def test_a_real_test_sends_nothing_when_the_definition_declares_an_unsafe_route_on_a_plain_address(unsafe):
+    import asyncio
+    import copy
+
+    from gateway import engine_check
+    from gateway.engine_definitions import load_engine_catalog
+
+    real = load_engine_catalog()
+    definition = copy.deepcopy(real.definition("openai-compatible"))
+    if "route_base" in unsafe:
+        definition["probes"]["route_base"] = unsafe["route_base"]
+
+    class Catalog:
+        data = real.data
+
+        def capability(self, capability_id):
+            capability = copy.deepcopy(real.capability(capability_id))
+            if "route" in unsafe:
+                capability["route"]["path"] = unsafe["route"]
+            return capability
+
+    sent = []
+
+    async def fetch(*args, **kwargs):
+        sent.append(args)
+        raise AssertionError("the real test reached the network")
+
+    with pytest.raises(engine_check.DraftError) as refused:
+        asyncio.run(engine_check.run_real_test(
+            Catalog(), definition, {"address": "http://h.test:8080/api", "path_prefix": "/v1"}, "chat",
+            key=engine_check.KeyInput(), fetch=fetch, model="m"))
+    assert refused.value.field == "capability"
+    assert sent == []
