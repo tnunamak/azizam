@@ -277,6 +277,13 @@ def test_a_selector_on_a_node_that_an_asset_input_writes_is_an_echo_of_that_inpu
     refused(by_path, "selector_echoes_source", template=template)
 
 
+@pytest.mark.parametrize("kind", [["image"], {"type": "image"}], ids=["list", "dict"])
+def test_non_string_input_types_are_not_media_sources(kind: Any):
+    m = manifest(inputs={"photo": {"type": kind}}, map={"photo": [{"node": "9", "input": "file"}]})
+    # Node 9 produces a result; the malformed type must not mark it as a media source.
+    assert save(m) == save(manifest())
+
+
 def test_duplicate_selectors_are_refused_at_save():
     m = manifest(selectors={"a": selector(), "b": selector()}, outputs={"a": {"media_type": "a/b"}, "b": {"media_type": "c/d"}})
     refused(m, "selector_duplicate")

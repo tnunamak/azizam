@@ -350,7 +350,8 @@ def _check_echo_into(descriptor: SelectorDescriptor, selectors: Mapping[str, Map
     if isinstance(binding_map, Mapping):
         for input_name, mappings in binding_map.items():
             spec = inputs.get(input_name)
-            if isinstance(spec, Mapping) and spec.get("type") in MEDIA_INPUT_TYPES and isinstance(mappings, list):
+            if (isinstance(spec, Mapping) and isinstance(spec.get("type"), str)
+                and spec.get("type") in MEDIA_INPUT_TYPES and isinstance(mappings, list)):
                 source_nodes.update(node for node in map(_mapped_node, mappings) if node is not None)
     for name, selector in selectors.items():
         node_id = selector[descriptor.template_node]

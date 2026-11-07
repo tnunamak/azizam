@@ -397,6 +397,17 @@ class WorkflowOpenApiTests(unittest.TestCase):
         )
 
 
+class RequestMappingTypeTests(unittest.TestCase):
+    def test_non_string_input_types_are_not_assets(self) -> None:
+        from types import SimpleNamespace
+        from gateway.workflow_openapi import request_mapping
+
+        for kind in (["image"], {"type": "image"}):
+            with self.subTest(kind=kind):
+                record = SimpleNamespace(intent="video.edit", contract={"inputs": {"photo": {"type": kind}}})
+                self.assertEqual(request_mapping(record, "sync"), {"photo": {"in": "form", "field": "photo"}})
+
+
 if __name__ == "__main__":
     unittest.main()
 
