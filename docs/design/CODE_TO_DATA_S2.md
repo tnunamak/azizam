@@ -205,7 +205,8 @@ Every step is additive and keeps the current route path as the default. Each ste
 | S2.2 | Compile from the pinned template, per route, behind a config flag. The audio route goes first. | The flag is off until the audio goldens, plus a crash test and a pin test, pass with it on. Then it is turned on for audio. |
 | S2.3 | The result bundle, staging and publication, the private JSON store, receipts, limits. The routes keep `assets`. | Existing routes publish a bundle that mirrors their assets. Client output is unchanged. |
 | S2.4 | Selectors and adapter descriptors; selector migration of the bundled workflows (golden-checked); the legacy fallback flag; refusal at save. | The legacy fallback stays on until every bundled workflow has selectors. |
-| S2.5 | The v2 `start` outcome, with an http-v1 synchronous fixture. | v1 adapters are unchanged. |
+| S2.5a | The v2 `start` outcome in the runner, an http-v1 selector descriptor, the pinned runtime, and the data-only and pin tests (acceptance 1 and 4). | v1 adapters are unchanged. No route calls the runner yet. |
+| S2.5b | The image and video routes collect through `adapter.collect`; the `results` job-view field and the JSON read route; the legacy collection goes off. | Route goldens move on purpose. |
 | S2.6 | The asset resolver, the disclosure check, the upload capability. | The image routes keep their current ingestion until their goldens pass on the resolver. |
 
 ### S2.2 as built
@@ -307,8 +308,8 @@ one helper). The module names no workflow, engine, model, intent or modality.
   protocol description (`registry/protocols/node-graph.yml`; the schema is `protocol.schema.json`). The block lists
   `fields` (each `text` or `enum`, required or with a default), `identity` (the fields that say where a result is),
   `template_node` (the field that names a node of the template) and `kind_field` (an enum field whose values map to a
-  result kind, `json` or `assets`). The compiler refuses the block unless the executor is a reviewed adapter that names a
-  binding. A malformed descriptor raises `DescriptorError`, so the description does not load.
+  result kind, `json` or `assets`). The compiler refuses the block unless the description names a binding (S2.5a relaxed an earlier
+  rule that also required an adapter executor, so an http-v1 description can carry one). A malformed descriptor raises `DescriptorError`, so the description does not load.
 - **Selectors in the binding.** `selectors: {<result name>: {node, key, from: output_dir, decode: none|json,
   take: all|first|single}}`. `validate_manifest` checks the shape against the descriptor at load: declared fields only,
   the right types, required fields present, defaults filled, every named result a declared output, every output covered,
@@ -379,14 +380,10 @@ Decisions the design did not settle:
   belongs with the http-v1 adapter.
 - **`check_for_save` has no caller yet** (see above).
 
-Left for S2.5 and later:
+Left for S2.5b and later:
 - The image and video job routes: collect through `adapter.collect`, name their bundle results by output, and refresh
   their goldens on purpose.
-- A selector descriptor for the http-v1 adapter, so a JSON-only or mixed contract runs through it and through a
-  graph fixture (acceptance items 1 and 4).
 - The `results` field in the job view and the authenticated JSON read route.
-- Reading a `json` result through `fetch_json` into the result store from a route, with the streaming reader through
-  `LimitedAssetStore`.
 - Turn the legacy flag off by default once no workflow in use lacks selectors, and delete the legacy collection.
 - The call to `check_for_save` from the registration route (S4).
 
@@ -539,6 +536,103 @@ caller's own asset reads can see.
   its own errors; the bytes are not forwarded as they came.
 - Source-video inputs (video id, video data URI, video URL). The sniffer knows only MP4 among video types, so a WebM
   source would be refused: a wire change. The image-only `accepts` of this step does not cover them.
+
+(S2.5a did the selector descriptor for the http-v1 adapter, the JSON read through the fetch gate, and the data-only tests.)
+
+### S2.5a as built
+
+The code is `gateway/engine_protocol/jobs.py` (the runner), `gateway/pinned_runtime.py` (new), the v2 methods of
+`http_adapter.py` and `node_graph.py`, the result types in `gateway/engine_protocol/types.py`, and small hunks in
+`description.py`, `output_selectors.py`, `executor.py`, `manifests.py`, `pinned_definitions.py`, `job_envelope.py` and
+`proxy.py`. None of them names a workflow, engine, model, intent or modality; a test reads the tokens of `jobs.py`,
+`pinned_runtime.py` and `http_adapter.py` and fails on a modality or engine word.
+
+- **Interface version 2.** `SUPPORTED_INTERFACE_VERSIONS = (1, 2)`. `start(conn, op, request)` answers `Pending(ref)` or
+  `Completed(ResultBundle)`. An optional `results(conn, ref, status, request, context)` reads the named results of a job
+  that has succeeded. The http-v1 and node-graph adapters declare version 2. The reviewed inline-speech and chunked-speech
+  adapters stay on version 1 and still use `submit`, `poll` and `fetch_assets`.
+- **The runner decides by the declared number, never by a name.** A version 2 adapter without `start` is refused as
+  `adapter_version_mismatch` before anything is resolved or sent. A version 2 job that is already finished returns
+  `None` before its connection is resolved (D3, first row). The marker is written before `start`, as before. A
+  `Completed` bundle is staged and published in the one transaction of D4, and that commit clears
+  `protocol_submitting`. A crash before the commit leaves the marker, so a restart reads `submission_unknown` and sends
+  nothing. A `Pending` outcome follows today's loop (`protocol_job` saved, then poll). When the poll succeeds and the
+  adapter has `results`, the runner commits that bundle and leaves the marker alone (the job id is saved, so the marker
+  no longer decides a restart); an adapter without `results` goes through `fetch_assets` as before.
+- **What `run` returns.** The adapter's files for a version 1 adapter. The published `ResultBundle` for a version 2
+  adapter that returned results. `None` for a finished version 2 job. Tests that drove a graph workflow through `run`
+  read the bundle now.
+- **A refused result publishes nothing.** `ResultRefused` (a limit) or `SelectionRefused` (a result that is missing,
+  null, ambiguous or of the wrong type) leaves the job running, the marker set, and every staged result aborted.
+- **Result limits reach the adapter through the runtime.** The runner asks its runtime for `result_context()` (the limits
+  and the legacy setting). A runtime that does not have one gets the code defaults.
+- **The http-v1 selector form** is the descriptor in the description, as for the graph. The test fixture uses
+  `identity: [source]`, `kind_field: decode` and `fields.source` (text, the name of a `select` entry of the response) and
+  `fields.decode` (`json`, `base64` or `binary`, mapped to the kinds `json`, `assets` and `assets`). Names, fields and
+  values are data. Core reads only `identity`, `kind_field` and the kind map.
+  - `json`: the selected value, written as canonical JSON, is the result bytes.
+  - `base64`: the selected text is an encoded file that the adapter decodes and saves. This is how one synchronous
+    reply holds a JSON value and a file at once (a mixed contract).
+  - `binary`: the whole binary body is one file result. A reply has one body, so at most one result may read it.
+  - A selected value that is missing or null is `result_missing`. A text that is not valid base64 is `result_malformed`.
+    An operation with a `job` pattern is `Pending` and takes the usual loop; an operation with neither a `job` nor a
+    binding that has selectors is refused (`selectors_missing`), because a synchronous answer has no legacy reading. A
+    streamed reply has no selectors and is refused (`UnsupportedByAdapter`).
+- **Result against contract** (`output_selectors.wrong_type_reason`, used by both adapters). A `json` result fits an
+  output that declares `application/json`. A file result fits an output that declares the same top-level type for every
+  file, as the reviewed sniffer names it, and never fits a JSON output. An output that declares no type accepts either.
+  The reason never holds a value.
+- **A pinned run** (`pinned_runtime.PinnedRuntime`) asks its envelope, not a file or a registry. The request carries the
+  pinned manifest (pinned contract, one pinned binding) and the pinned template, so an edit or a delete after accept
+  changes nothing. The connection is the live one, checked against the pin first: protocol id and revision, adapter id
+  and interface version, and the digest of the engine address. A difference raises `DefinitionUnavailable` and nothing
+  is sent. The address is stored only as a digest, so a moved engine cannot be followed; the job needs a new
+  acceptance. The check runs on every call, so a runtime built after a restart meets the same pin.
+  - **The adapter id** is the named adapter, or the built-in executor (`http-v1`) when the description names none. The
+    envelope needs a non-empty value.
+  - **The protocol revision** is the SHA-256 of the canonical JSON of the parsed description. Comments and spacing do not
+    change it; any other edit does. `proxy.py` pins it for graph jobs in place of the `unrevisioned` marker, so a job
+    accepted before this change fails the identity check (the product is unreleased, so there is no compatibility path).
+  - **The pinned manifest is checked against the pinned protocol's own selector descriptor** (`validate_manifest` and
+    `PinnedDefinitions.manifest` take the descriptors), not the shipped registry. `compile_workflow` no longer re-checks
+    selectors in its view of one binding (they say how results are read, not how inputs are bound, and were checked at
+    load).
+- **The JSON read goes through the fetch gate.** `NodeGraphAdapter.fetch_json` took no part in `FETCH_GATE`. Called alone
+  it now takes a slot under the deployment limits (a refused wait is `SelectionRefused('fetch_timeout')`). `results` holds
+  one slot for its whole read (history, JSON and files) and passes its session, so the gate is taken once. Tests cover
+  both: a held slot times a standalone read and a result read out.
+- **A JSON file on a graph engine is read through a `key`.** The descriptor's `key` enum lists the history lists that
+  hold files (`images`, `videos`, `gifs`, `audios`, `audio`, `wav`, `mp3`), so a JSON file must be listed under one of
+  them. A node that writes JSON under another key needs the enum widened in the adapter's description (data). Not done:
+  no bundled engine does this.
+
+Goldens that moved (path by path): `image_job_succeeds`, `image_job_upstream_failure`, `image_job_oom_then_complete`,
+`video_job_succeeds` and `audio_generate_job` (shared by the compiled-from-pin run). All changes are in the pinned
+envelope and the copies of it: `$.media_jobs.job_envelope[0].envelope_json.definitions.protocol.revision`
+(`unrevisioned` becomes the description digest) and `...executor.interface_version` (1 becomes 2). `audio_generate_job`
+also moves `$.media_jobs.result_bundle[0].summary_json.envelope.interface_version` and
+`$.receipts.receipts[0].receipt_json.metadata.result_bundle.envelope.interface_version` (1 becomes 2), because the
+bundle summary and the receipt copy the envelope. No other path moved. The audio route wire goldens, the OpenAPI snapshots
+and the job view did not move.
+
+Tests are in `tests/test_start_outcome_v2.py`. Every name a contract or description uses is made at random when a test
+builds its rig. The same checks run on a synchronous http-v1 fixture and a graph fixture, for a JSON-only and a mixed
+contract, and for one offering envelope. Positive controls put back an identity branch and a modality branch in the
+commit step; each must fail the check. Revert-checks (each mutation made the named tests fail, and was reverted):
+`start` not chosen for version 2 (26 tests), the contract type check removed from the http adapter (the wrong-type
+case), the pin identity check removed (the seven pin cases), the gate removed from standalone `fetch_json` and from
+`results` (one test each).
+
+Decisions the design did not settle:
+- **No route calls the runner or `PinnedRuntime` yet.** S2.5b moves the image and video routes; until then the new path is
+  exercised only by tests, as the runner was before.
+- **Both adapters moved to version 2 now**, not only http-v1, so one pin and one runner path cover them. This is why the
+  goldens above moved.
+- **`run` returns the bundle**, not a list of files, for a version 2 job that published one.
+- **An answer with no declared selectors is refused on a synchronous operation.** The legacy collection reads a graph
+  history only, so it has nothing to read here.
+- **Left for S2.5b:** the items listed above, plus choosing the graph engine's JSON `key` values when a bundled engine
+  needs one.
 
 ## Done when: the S2 acceptance matrix
 

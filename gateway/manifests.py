@@ -100,7 +100,9 @@ def manifest_identity(manifest: dict[str, Any]) -> ManifestIdentity:
     )
 
 
-def validate_manifest(manifest: dict[str, Any]) -> None:
+def validate_manifest(manifest: dict[str, Any], descriptors: Mapping[str, Any] | None = None) -> None:
+    """Check a manifest. ``descriptors`` are the selector descriptors by binding key to check selectors against; the
+    default is the shipped registry. A run from a pin passes the descriptor of the protocol it was started with."""
     for field_name in ("schema_version", "id", "intent", "inputs", "outputs", "bindings"):
         if field_name not in manifest:
             raise ManifestError(f"manifest missing required field: {field_name}")
@@ -141,7 +143,7 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
     # A binding that declares output selectors is checked against its adapter's descriptor (CODE_TO_DATA_S2, D8).
     from gateway import output_selectors
 
-    output_selectors.check_manifest(manifest)
+    output_selectors.check_manifest(manifest, descriptors)
 
 
 def validate_inputs(

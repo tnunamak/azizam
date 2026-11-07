@@ -275,14 +275,14 @@
             "contract": "sha256:c286ebdf57a2d6eb834f0c902168759103b0f96f98216ccb86fc7499f74cb0e9",
             "protocol": {
               "id": "node-graph",
-              "revision": "unrevisioned"
+              "revision": "sha256:84391540e9d8d834292fd4386d44e7821375eb989c8b36963a1b9734f7856454"
             },
             "template": "sha256:bfbb76521be40b520c685d190179e610c2f2e74967fed3583f8d5f3b2cacd855"
           },
           "envelope_version": 1,
           "executor": {
             "adapter_id": "node-graph",
-            "interface_version": 1
+            "interface_version": 2
           },
           "generated": {},
           "results": {

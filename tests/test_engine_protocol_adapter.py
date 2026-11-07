@@ -37,12 +37,16 @@ def http_adapter(operations, handler, **extra):
 
 
 def test_the_interface_is_versioned_and_complete() -> None:
-    assert adapter.ADAPTER_INTERFACE_VERSION == 1
+    assert adapter.ADAPTER_INTERFACE_VERSION == 1 and adapter.ADAPTER_INTERFACE_VERSION_V2 == 2
+    assert adapter.SUPPORTED_INTERFACE_VERSIONS == (1, 2)
     from gateway.engine_protocol.chunked_stt import ChunkedSttAdapter
-    for impl in (HttpV1Adapter, InlineTtsAdapter, ChunkedSttAdapter):
-        assert impl.interface_version == adapter.ADAPTER_INTERFACE_VERSION
+    # The http-v1 adapter declares version 2 (it also answers a synchronous operation with a whole result); the reviewed
+    # adapters that did not move still declare version 1.
+    for impl, version in ((HttpV1Adapter, 2), (InlineTtsAdapter, 1), (ChunkedSttAdapter, 1)):
+        assert impl.interface_version == version
         for name in INTERFACE:
             assert inspect.iscoroutinefunction(getattr(impl, name)) or inspect.isasyncgenfunction(getattr(impl, name)) or name == "events", (impl, name)
+    assert inspect.iscoroutinefunction(HttpV1Adapter.start)
     assert isinstance(HttpV1Adapter(HttpV1Executor(description.load_registry()["openai-compatible"])), adapter.EngineAdapter)
 
 
