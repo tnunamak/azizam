@@ -6,12 +6,13 @@ so a line that holds one allowed address and one deployment address fails.
 """
 from __future__ import annotations
 
+import copy
 import ipaddress
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
-from urllib.parse import urlsplit
 
 import yaml
 
@@ -66,51 +67,55 @@ def _network_problem(token: str) -> str | None:
     return f"{token} is a public network"
 
 
+# A URL is `scheme://authority` plus whatever follows up to white space or a quote. Only its host is judged; the rest is
+# a path, a query or a fragment, and no address literal is read inside it.
+_URL = re.compile(r"""(?i)[a-z][a-z0-9+.-]*://([^/?#\s"'<>]*)[^\s"'<>]*""")
+# Outside URLs, an address literal is one of three shapes. They start with different characters (`[`, a digit then a dot,
+# a hex digit or `:` then a colon), so at any position at most one of them can match and it takes all it can:
+# `[::ffff:127.0.0.1]:80` and `::ffff:127.0.0.1` are one literal each.
+_LITERAL = re.compile(
+    r"\[[0-9A-Fa-f:.%\w]*:[0-9A-Fa-f:.%\w]*\](?::\d{1,5})?"                         # bracketed IPv6, optional port
+    r"|(?<![\w.])\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,3})?(?::\d{1,5})?(?![\w])(?!\.\d)"  # IPv4, optional /prefix, optional :port
+    r"|(?<![\w:.])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f.]*(?:/\d{1,3})?"                # bare IPv6, optional /prefix
+)
 _V4_PORT = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3}):\d{1,5}")
-_V6_PORT = re.compile(r"(\[[0-9A-Fa-f:.%\w]+\]):\d{1,5}")
+_BRACKETED = re.compile(r"(\[[^\]]*\])(?::\d{1,5})?")
 
 
-def _literal(token: str) -> tuple[bool, str | None]:
-    """(recognised, problem) for one whole literal: a URL, host:port, address/prefix or a bare address."""
-    if "://" in token:
+def _authority_host(authority: str) -> str:
+    host = authority.rpartition("@")[2]
+    return host[: host.index("]") + 1] if host.startswith("[") and "]" in host else host.split(":", 1)[0]
+
+
+def _literal_problem(literal: str) -> str | None:
+    """Judge one whole address literal: a host (with or without a port) or an ``address/prefix`` network."""
+    bracketed = _BRACKETED.fullmatch(literal)
+    if bracketed:
+        return host_problem(bracketed.group(1))
+    if "/" in literal:
         try:
-            host = urlsplit(token).hostname
+            ipaddress.ip_address(literal.split("/", 1)[0])
         except ValueError:
-            return False, None
-        return (True, host_problem(host)) if host else (False, None)
-    for pattern in (_V4_PORT, _V6_PORT):
-        match = pattern.fullmatch(token)
-        if match:
-            return True, host_problem(match.group(1))
-    if "/" in token:
-        head = token.split("/", 1)[0]
-        try:
-            ipaddress.ip_address(head)
-        except ValueError:
-            return False, None
-        return True, _network_problem(token)
-    try:
-        ipaddress.ip_address(token.strip("[]"))
-    except ValueError:
-        return False, None
-    return True, host_problem(token)
+            return None
+        return _network_problem(literal)
+    with_port = _V4_PORT.fullmatch(literal)
+    return host_problem(with_port.group(1) if with_port else literal)
 
 
 def address_problems(text: str) -> list[str]:
-    """Every non-neutral address in a string. The whole string is tried as one literal first (a URL is judged by its
-    host, never read as a CIDR); a string that is not one literal is split into tokens and each token is tried the same way."""
-    recognised, problem = _literal(text.strip())
-    if recognised:
-        return [problem] if problem else []
-    found = []
-    for token in re.split(r"[\s,;]+", text):
-        for candidate in (token, token.strip("[]()\"'.:")):
-            recognised, problem = _literal(candidate)
-            if recognised:
-                if problem:
-                    found.append(problem)
-                break
-    return found
+    """Every non-neutral address in a string, found by scanning the whole text (never by splitting it). A URL is judged by
+    its host only; every address literal outside the URLs is judged whole."""
+    problems: list[str] = []
+    outside: list[str] = []
+    position = 0
+    for url in _URL.finditer(text):
+        outside.append(text[position:url.start()])
+        position = url.end()
+        problems.append(host_problem(_authority_host(url.group(1))))
+    outside.append(text[position:])
+    for chunk in outside:
+        problems += [_literal_problem(literal.group(0)) for literal in _LITERAL.finditer(chunk)]
+    return [problem for problem in problems if problem]
 
 
 # Keys whose value names a thing the release must ship (used to keep the reference fields below complete).
@@ -147,104 +152,146 @@ def shipped_ids() -> dict[str, set[str]]:
     return {"service": services - {""}, "workflow": workflows - {""}, "model": models - {""}}
 
 
-# --- where each section keeps an id (read from registry/defaults/*.schema.json and the shipped records) ---------------
-# Each handler yields (kind, id, where). A section with no entry here holds no reference; the completeness tests below
-# fail when a section is missing from REFERENCE_SHAPES or a schema grows a reference-looking field the handler lacks.
+# --- where each section keeps an id: data, one table, read by the checker and by the coverage tests -------------------
+# A path is a tuple of steps from the document root: a name is a key; ``*`` is every key of a mapping; ``name[]`` is every
+# element of the list under ``name``. The ids are the values at the end of the path (a string, or a list of strings), or,
+# with ``keys=True``, the keys of the mapping the path ends at.
 
-def _fields(entry: Any, where: str, fields: dict[str, str]) -> Iterator[tuple[str, str, str]]:
-    if isinstance(entry, dict):
-        for field, kind in fields.items():
-            value = entry.get(field)
-            if isinstance(value, str) and value.strip():
-                yield kind, value.strip(), f"{where}/{field}"
+@dataclass(frozen=True)
+class Ref:
+    kind: str
+    path: tuple[str, ...]
+    keys: bool = False
 
-
-def _workflow_table(document: Any) -> Iterator[tuple[str, str, str]]:
-    """audio.yml and videos.yml: ``*_workflow`` fields, ``workflows`` (keyed by workflow id) and ``aliases`` (name -> workflow id)."""
-    document = document or {}
-    yield from _fields(document, "", {"default_workflow": "workflow", "extend_workflow": "workflow", "remix_workflow": "workflow"})
-    for workflow_id, entry in (document.get("workflows") or {}).items():
-        yield "workflow", str(workflow_id), f"/workflows/{workflow_id} (key)"
-        yield from _fields(entry, f"/workflows/{workflow_id}", {"i2v_workflow": "workflow", "chain_workflow": "workflow"})
-    for alias, target in (document.get("aliases") or {}).items():
-        if isinstance(target, str):
-            yield "workflow", target.strip(), f"/aliases/{alias}"
+    @property
+    def schema_field(self) -> str:
+        """The schema field name this declaration covers: the last step that is a name."""
+        names = [step.removesuffix("[]") for step in self.path if step != "*"]
+        return names[-1] if names else ""
 
 
-def _images(document: Any) -> Iterator[tuple[str, str, str]]:
-    document = document or {}
-    yield from _fields(document.get("variations"), "/variations", {"default_workflow": "workflow"})
-    yield from _fields(document.get("edits"), "/edits", {"multiref_default_workflow": "workflow"})
+@dataclass(frozen=True)
+class Section:
+    refs: tuple[Ref, ...] = ()
+    not_references: dict[str, str] = field(default_factory=dict)  # reference-looking schema field -> why it is none
 
 
-def _voices(document: Any) -> Iterator[tuple[str, str, str]]:
-    yield from _fields(document, "", {"quality_engine": "service", "design_engine": "service"})
+_WORKFLOW_TABLE = Section(refs=(
+    Ref("workflow", ("default_workflow",)), Ref("workflow", ("extend_workflow",)), Ref("workflow", ("remix_workflow",)),
+    Ref("workflow", ("workflows",), keys=True),
+    Ref("workflow", ("workflows", "*", "i2v_workflow")), Ref("workflow", ("workflows", "*", "chain_workflow")),
+    Ref("workflow", ("aliases", "*")),
+))
 
-
-def _keyed(kind: str, field_kinds: dict[str, str]):
-    """A map keyed by id of a ``kind`` (``None``: the keys are defined here) whose entries may hold reference fields."""
-    def handler(document: Any) -> Iterator[tuple[str, str, str]]:
-        for key, entry in (document or {}).items():
-            if kind:
-                yield kind, str(key), f"/{key} (key)"
-            yield from _fields(entry, f"/{key}", field_kinds)
-    return handler
-
-
-def _model_compatibility(document: Any) -> Iterator[tuple[str, str, str]]:
-    for operation, model in ((document or {}).get("defaults") or {}).items():
-        if isinstance(model, str) and model.strip():
-            yield "model", model.strip(), f"/defaults/{operation}"
-
-
-def _model_aliases(document: Any) -> Iterator[tuple[str, str, str]]:
-    """Per operation: ``stable`` targets (a string, or a list of engines) name a workflow, model, service, another stable
-    name or an engine of this document; ``engines`` is keyed by engine id and each holds a ``service`` and a ``model``;
-    ``openai`` patterns point (``to``) at a stable name of this document."""
-    for operation, body in (document or {}).items():
-        if not isinstance(body, dict):
-            continue
-        for name, target in (body.get("stable") or {}).items():
-            for item in ([target] if isinstance(target, str) else target if isinstance(target, list) else []):
-                if isinstance(item, str) and item.strip():
-                    yield "alias_target", item.strip(), f"/{operation}/stable/{name}"
-        for engine_id, entry in (body.get("engines") or {}).items():
-            yield "service", str(engine_id), f"/{operation}/engines/{engine_id} (key)"
-            yield from _fields(entry, f"/{operation}/engines/{engine_id}", {"service": "service", "model": "model"})
-        for index, pattern in enumerate(body.get("openai") or []):
-            yield from _fields(pattern, f"/{operation}/openai/{index}", {"to": "stable_name"})
-
-
-REFERENCE_SHAPES = {
-    "audio": _workflow_table, "videos": _workflow_table, "images": _images, "voices": _voices,
-    "models": _keyed("model", {"backend": "service"}), "roles": _keyed(None, {"backend": "service", "model": "model"}),
-    "service_availability": _keyed("service", {}), "model_compatibility": _model_compatibility,
-    "model_aliases": _model_aliases,
-    # no id of a service, workflow or model lives here
-    "identity": None, "instance": None, "llm": None, "model_routing": None, "reasoning": None,
-    "resource_admission": None, "workflow_execution": None,
+SECTIONS: dict[str, Section] = {
+    "audio": _WORKFLOW_TABLE,
+    "videos": _WORKFLOW_TABLE,
+    "images": Section(refs=(Ref("workflow", ("variations", "default_workflow")), Ref("workflow", ("edits", "multiref_default_workflow")))),
+    "voices": Section(refs=(Ref("service", ("quality_engine",)), Ref("service", ("design_engine",)))),
+    "models": Section(refs=(Ref("model", (), keys=True), Ref("service", ("*", "backend")))),
+    "roles": Section(refs=(Ref("service", ("*", "backend")), Ref("model", ("*", "model")))),
+    "service_availability": Section(refs=(Ref("service", (), keys=True),)),
+    "model_compatibility": Section(refs=(Ref("model", ("defaults", "*")),)),
+    # per operation: a stable target names a workflow, model, service, stable name or engine; an engine holds a service
+    # and a model; an openai pattern points at a stable name
+    "model_aliases": Section(refs=(
+        Ref("alias_target", ("*", "stable", "*")), Ref("service", ("*", "engines"), keys=True),
+        Ref("service", ("*", "engines", "*", "service")), Ref("model", ("*", "engines", "*", "model")),
+        Ref("stable_name", ("*", "openai[]", "to")),
+    )),
+    # no id of a service, workflow or model lives in these sections
+    "identity": Section(not_references={"face_service": "the CPU face sidecar's own config object, not a registry service id"}),
+    "instance": Section(), "model_routing": Section(), "reasoning": Section(),
+    "llm": Section(not_references={"pin_loaded_model": "a boolean"}),
+    "resource_admission": Section(), "workflow_execution": Section(),
 }
-# Schema fields whose name looks like a reference and is not one (and why).
-NOT_REFERENCES = {
-    "pin_loaded_model": "a boolean",
-    "face_service": "the CPU face sidecar's own config object, not a registry service id",
-}
-# Reference-looking schema fields that the handlers above read.
-READ_REFERENCE_FIELDS = {
-    "default_workflow", "extend_workflow", "remix_workflow", "multiref_default_workflow", "i2v_workflow", "chain_workflow",
-    "quality_engine", "design_engine", "backend", "model",
-}
+
+
+def _walk(node: Any, path: tuple[str, ...], where: str) -> Iterator[tuple[Any, str]]:
+    if not path:
+        yield node, where
+        return
+    step, rest = path[0], path[1:]
+    if not isinstance(node, dict):
+        return
+    if step == "*":
+        for key, child in node.items():
+            yield from _walk(child, rest, f"{where}/{key}")
+    elif step.endswith("[]"):
+        items = node.get(step[:-2])
+        for index, child in enumerate(items if isinstance(items, list) else []):
+            yield from _walk(child, rest, f"{where}/{step[:-2]}/{index}")
+    elif step in node:
+        yield from _walk(node[step], rest, f"{where}/{step}")
 
 
 def references(name: str, document: Any) -> Iterator[tuple[str, str, str]]:
     """(kind, id, where) for every reference to a service, workflow or model in the data document ``name``."""
     stem = name.split(".")[0]
-    if stem not in REFERENCE_SHAPES:
+    section = SECTIONS.get(stem)
+    if section is None:
         yield "unmapped", stem, f"no reference shape is declared for {name}"
         return
-    handler = REFERENCE_SHAPES[stem]
-    if handler is not None:
-        yield from handler(document)
+    for ref in section.refs:
+        for target, where in _walk(document or {}, ref.path, ""):
+            if ref.keys:
+                for key in target if isinstance(target, dict) else ():
+                    yield ref.kind, str(key), f"{where}/{key} (key)"
+            else:
+                for item in [target] if isinstance(target, str) else target if isinstance(target, list) else []:
+                    if isinstance(item, str) and item.strip():
+                        yield ref.kind, item.strip(), where
+
+
+def schema_field_names(schema: Any) -> set[str]:
+    names: set[str] = set()
+    if isinstance(schema, dict):
+        for key, item in schema.items():
+            if key == "properties" and isinstance(item, dict):
+                names.update(str(n) for n in item)
+            names |= schema_field_names(item)
+    elif isinstance(schema, list):
+        for item in schema:
+            names |= schema_field_names(item)
+    return names
+
+
+def uncovered_reference_fields(section: Section, schema: Any) -> set[str]:
+    """Schema fields of one section whose name looks like a reference and that its table neither reads nor excuses."""
+    looking = {n for n in schema_field_names(schema) if SERVICE_KEY.match(n) or WORKFLOW_KEY.match(n) or MODEL_KEY.match(n)}
+    return looking - {ref.schema_field for ref in section.refs} - set(section.not_references)
+
+
+SENTINEL = "sentinel-unshipped-id"
+
+
+def with_sentinel(document: Any, ref: Ref) -> Any:
+    """A copy of ``document`` with an id this release does not ship put where ``ref`` says an id lives."""
+    root = copy.deepcopy(document) if isinstance(document, dict) else {}
+    node = root
+    steps = ref.path if ref.keys else ref.path[:-1]
+    for step in steps:
+        if step == "*":
+            key = next(iter(node), "probe")
+            child = node.get(key)
+        elif step.endswith("[]"):
+            key = step[:-2]
+            child = node.get(key)
+            if not isinstance(child, list) or not child or not isinstance(child[0], dict):
+                child = node[key] = [{}]
+            node = child[0]
+            continue
+        else:
+            key = step
+            child = node.get(key)
+        if not isinstance(child, dict):
+            child = node[key] = {}
+        node = child
+    if ref.keys:
+        node[SENTINEL] = {}
+    else:
+        node[next(iter(node), "probe") if ref.path[-1] == "*" else ref.path[-1]] = SENTINEL
+    return root
 
 
 def strings(value: Any) -> Iterator[str]:
@@ -298,13 +345,18 @@ def test_the_release_defaults_are_neutral():
     assert not found, "\n".join(found)
 
 
-def test_the_comments_of_the_default_files_name_no_host_path_or_address():
+def comment_problems(name: str, text: str) -> list[str]:
+    """Host paths and addresses on any line of a default file, comments included."""
     found = []
-    for path in sorted(DEFAULTS.glob("*.yml")):
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if HOST_PATH.search(line):
-                found.append(f"{path.name}:{number}: host path")
-            found += [f"{path.name}:{number}: {why}" for why in address_problems(line)]
+    for number, line in enumerate(text.splitlines(), 1):
+        if HOST_PATH.search(line):
+            found.append(f"{name}:{number}: host path")
+        found += [f"{name}:{number}: {why}" for why in address_problems(line)]
+    return found
+
+
+def test_the_comments_of_the_default_files_name_no_host_path_or_address():
+    found = [problem for path in sorted(DEFAULTS.glob("*.yml")) for problem in comment_problems(path.name, path.read_text(encoding="utf-8"))]
     assert not found, "\n".join(found)
 
 
@@ -325,35 +377,76 @@ LAN_HOST = _built("192", "168", "1", "23")
 LAN_NET = _built("192", "168", "1", "0") + "/24"
 
 
-def test_every_default_file_has_a_declared_reference_shape():
-    assert {path.name.split(".")[0] for path in DEFAULTS.glob("*.yml")} == set(REFERENCE_SHAPES)
+def _section_files() -> set[str]:
+    return {path.name.split(".")[0] for path in DEFAULTS.glob("*.yml")}
 
 
-def test_every_reference_looking_schema_field_is_read_or_declared_not_a_reference():
-    names: set[str] = set()
+def test_every_default_file_has_a_declared_section_and_no_section_is_none():
+    assert _section_files() == set(SECTIONS)
+    assert all(isinstance(section, Section) for section in SECTIONS.values())
 
-    def walk(node: Any) -> None:
-        if isinstance(node, dict):
-            for key, item in node.items():
-                if key == "properties" and isinstance(item, dict):
-                    names.update(str(n) for n in item)
-                walk(item)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
 
-    for name, document in release_documents().items():
-        if name.endswith(".schema.json"):
-            walk(document)
-    looking = {n for n in names if SERVICE_KEY.match(n) or WORKFLOW_KEY.match(n) or MODEL_KEY.match(n)}
-    assert looking - READ_REFERENCE_FIELDS - set(NOT_REFERENCES) == set(), "a schema field looks like a reference and no handler reads it"
-    assert READ_REFERENCE_FIELDS <= names
+def test_every_reference_looking_schema_field_of_a_section_is_declared_there_or_not_a_reference():
+    """Per section, not across the release: a field called ``backend`` that one section reads says nothing about another."""
+    for name in sorted(_section_files()):
+        schema = json.loads((DEFAULTS / f"{name}.schema.json").read_text(encoding="utf-8"))
+        assert uncovered_reference_fields(SECTIONS[name], schema) == set(), \
+            f"{name}: a schema field looks like a reference and the section's table neither reads nor excuses it"
+
+
+def test_the_declared_paths_are_found_in_the_shipped_defaults_or_catch_a_sentinel():
+    """Every declared (section, path): an id this release does not ship, put at that path in a copy of the shipped record,
+    is reported by the checker (and the shipped record itself is clean)."""
+    shipped = shipped_ids()
+    for name in sorted(_section_files()):
+        record = yaml.safe_load((DEFAULTS / f"{name}.yml").read_text(encoding="utf-8"))
+        assert document_problems(f"{name}.yml", record, shipped) == [], name
+        for ref in SECTIONS[name].refs:
+            problems = document_problems(f"{name}.yml", with_sentinel(record, ref), shipped)
+            assert any(SENTINEL in problem for problem in problems), (name, ref)
+
+
+def test_a_new_reference_field_in_one_section_is_not_excused_by_another_sections_handler():
+    schema = json.loads((DEFAULTS / "images.schema.json").read_text(encoding="utf-8"))
+    schema["properties"]["backend"] = {"type": "string"}
+    assert uncovered_reference_fields(SECTIONS["images"], schema) == {"backend"}
+    assert _problems({"backend": "my-private-engine"}, "images.yml") == []  # nothing reads it, so the table must grow
+    assert uncovered_reference_fields(SECTIONS["roles"], {"properties": {"backend": {}, "model": {}}}) == set()
+
+
+def test_a_section_that_declares_no_reference_leaves_its_reference_fields_uncovered():
+    audio = json.loads((DEFAULTS / "audio.schema.json").read_text(encoding="utf-8"))
+    assert uncovered_reference_fields(Section(), audio) == {"default_workflow"}
 
 
 def test_a_second_address_on_a_line_with_an_allowed_one_is_found():
     assert _problems({"hosts": f"[127.0.0.1, {LAN_HOST}]"})
     assert _problems({"hosts": ["127.0.0.1", LAN_HOST]})
     assert _problems({"hosts": f"127.0.0.1 and {LAN_HOST}:8080"})
+
+
+def test_every_address_in_a_text_is_found_not_only_the_first_token():
+    other = "http://" + LAN_HOST + ":8080/v1"
+    assert _problems({"value": "http://127.0.0.1/health " + other})  # the second URL is not the first one's path
+    assert _problems({"value": ["x", {"nested": ["http://127.0.0.1/health " + other]}]})
+    assert _problems({"value": "http://127.0.0.1/health http://127.0.0.1:4011/ok"}) == []
+    assert _problems({"value": "network=10.4.0.0/16"})
+    assert _problems({"value": ["a", {"n": "network=10.4.0.0/16"}]})
+    assert _problems({"value": "endpoint=" + LAN_HOST + ":8080"})
+    assert _problems({"value": "[" + LAN_HOST + "]"}) and _problems({"value": "see (" + LAN_HOST + ")."})
+
+
+def test_an_address_in_a_comment_line_is_found():
+    assert comment_problems("x.yml", "a: 1\n# endpoint=" + LAN_HOST + ":8080\n")[0].startswith("x.yml:2:")
+    assert comment_problems("x.yml", "# network=10.4.0.0/16 and 127.0.0.1\n")
+    assert comment_problems("x.yml", "# the gateway listens on 127.0.0.1:8000, trusting 10.0.0.0/8 and [::1]\n") == []
+    assert comment_problems("x.yml", "# see http://example.test/10.0.0.0/8\n") == []
+
+
+def test_a_mapped_address_is_one_literal_and_a_url_path_is_not_scanned():
+    assert _problems({"v": "[::ffff:" + LAN_HOST + "]:80"}) and _problems({"v": "::ffff:" + LAN_HOST})
+    assert _problems({"v": "[::ffff:127.0.0.1]:80"}) == [] and _problems({"v": "::ffff:127.0.0.1"}) == []
+    assert _problems({"v": "https://user@127.0.0.1/" + LAN_HOST}) == []
 
 
 def test_ipv6_is_checked():

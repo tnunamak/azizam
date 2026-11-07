@@ -217,61 +217,154 @@ def test_no_unit_file_or_shell_script_sets_a_removed_environment_variable():
 
 # --- done gate item 9: the schema's top-level keys are the keys the code reads -------------------------------------------
 
+class _Scope:
+    """One module or function body: the bindings made in it. A binding is (value, simple); ``value`` is the right-hand side
+    of ``name = value`` (or None when the name is bound some other way: a parameter, a loop, an import, an unpacking);
+    ``simple`` is true only for ``name = value`` and ``name: T = value`` with that single target."""
+
+    def __init__(self, parent: "_Scope | None") -> None:
+        self.parent = parent
+        self.bindings: dict[str, list[tuple[object, bool]]] = {}
+
+    def lookup(self, name: str) -> "tuple[_Scope, list[tuple[object, bool]]] | None":
+        scope: _Scope | None = self
+        while scope is not None:
+            if name in scope.bindings:
+                return scope, scope.bindings[name]
+            scope = scope.parent
+        return None
+
+
+def _collect(tree) -> "tuple[list[tuple[object, _Scope]], _Scope]":
+    """(reads, module scope): every ``x.get(k)`` and ``x[k]`` load with the scope it sits in, and the bindings of every scope."""
+    import ast
+
+    reads: list[tuple[object, _Scope]] = []
+
+    def bind(scope: _Scope, name: str, value: object = None, simple: bool = False) -> None:
+        scope.bindings.setdefault(name, []).append((value, simple))
+
+    def visit(node, scope: _Scope) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            inner = _Scope(scope)
+            if not isinstance(node, ast.Lambda):
+                bind(scope, node.name)
+                for outer in (*node.decorator_list, node.returns):
+                    if outer is not None:
+                        visit(outer, scope)
+            arguments = node.args
+            for default in (*arguments.defaults, *arguments.kw_defaults):
+                if default is not None:
+                    visit(default, scope)
+            for argument in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs, arguments.vararg, arguments.kwarg):
+                if argument is not None:
+                    bind(inner, argument.arg)
+            for child in (node.body if isinstance(node.body, list) else [node.body]):
+                visit(child, inner)
+            return
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if node.value is not None:
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        bind(scope, target.id, node.value, simple=len(targets) == 1)
+                    else:
+                        visit(target, scope)
+                visit(node.value, scope)
+                return
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bind(scope, (alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                bind(scope, name)
+        elif isinstance(node, ast.ClassDef):
+            bind(scope, node.name)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bind(scope, node.name)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bind(scope, node.id)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" and node.args:
+            reads.append((node, scope))
+        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):  # a write or a delete is not a read
+            reads.append((node, scope))
+        for child in ast.iter_child_nodes(node):
+            visit(child, scope)
+
+    module = _Scope(None)
+    for statement in tree.body:
+        visit(statement, module)
+    return reads, module
+
+
 def startup_keys_read(sources: dict[str, str], section_ids: set[str]) -> tuple[set[str], list[str]]:
     """(keys, unresolved): top-level keys that code reads from the loaded startup file, and the reads the scan could not resolve.
 
     Three objects hold it: ``_bootstrap_config`` (the raw file), ``config`` and ``runtime().config`` (the file merged with
-    the sections and the registry's ``backends``). A simple alias (``cfg = _bootstrap_config``, at module or function
-    level) is the same object. Every literal key read (``x.get("k")`` or ``x["k"]``) is collected; a module-level string
-    constant (``K = "k"`` or ``K: str = "k"``) counts as literal. A key that is a section id, or ``backends``, is read from
-    the merged config unless the read is on ``_bootstrap_config``: a section id that the schema also lists (``images``) is
-    a startup key only through its raw reads. A read whose key cannot be resolved (a run-time value) is not skipped: it
-    comes back in ``unresolved`` as ``file:line: expression`` and the test fails on it. Limit: a local variable that is
-    also called ``config`` and is not the loaded file would add a key; the test then names it.
+    the sections and the registry's ``backends``). Every literal key read (``x.get("k")`` or ``x["k"]``) is collected.
+
+    A name (an alias of one of those objects, or a string constant used as the key) is followed only when it has exactly
+    one binding in its scope (the module, or the function that holds the read, or one around it) and that binding is a
+    plain ``name = value``. A name bound twice, rebound, a parameter, or a target of ``a = b = value`` is not followed: a
+    read through it that could reach the file, and a read whose key is not a literal or such a constant, come back in
+    ``unresolved`` as ``file:line: expression`` and the test fails on them. One pass, no fixed point: a name is
+    resolved by looking up its single binding, and following aliases of aliases stops at a name seen twice.
+
+    A key that is a section id, or ``backends``, is read from the merged config unless the read is on
+    ``_bootstrap_config``: a section id that the schema also lists (``images``) is a startup key only through its raw
+    reads. Limit: a local variable that is also called ``config`` and is not the loaded file would add a key.
     """
     import ast
 
     tracked = {"config", "_bootstrap_config", "runtime().config"}
+    ambiguous = "(ambiguous)"
     found: set[str] = set()
     unresolved: list[str] = []
+
+    def single(scope: _Scope, name: str):
+        """(binding scope, value) of a name with one plain binding; (binding scope, None) when it has other bindings; None when unbound."""
+        looked = scope.lookup(name)
+        if looked is None:
+            return None
+        owner, bindings = looked
+        return (owner, bindings[0][0]) if len(bindings) == 1 and bindings[0][1] else (owner, None)
+
+    def object_of(expression, scope: _Scope, seen: frozenset = frozenset()) -> str | None:
+        """A tracked object name, ``ambiguous`` when a name that may hold one has several bindings, or None."""
+        text = ast.unparse(expression)
+        if text in tracked:
+            return text
+        if not isinstance(expression, ast.Name) or (scope, text) in seen:
+            return None
+        seen = seen | {(scope, text)}
+        looked = scope.lookup(text)
+        if looked is None:
+            return None
+        owner, bindings = looked
+        if len(bindings) == 1 and bindings[0][1]:
+            return object_of(bindings[0][0], owner, seen)
+        return ambiguous if any(value is not None and object_of(value, owner, seen) for value, _ in bindings) else None
+
     for filename, source in sources.items():
-        tree = ast.parse(source)
-        constants: dict[str, str] = {}
-        for node in tree.body:
-            target, value = ((node.targets[0], node.value) if isinstance(node, ast.Assign) and len(node.targets) == 1
-                             else (node.target, node.value) if isinstance(node, ast.AnnAssign) and node.value is not None
-                             else (None, None))
-            if isinstance(target, ast.Name) and isinstance(value, ast.Constant) and isinstance(value.value, str):
-                constants[target.id] = value.value
-        aliases: dict[str, str] = {}
-        grew = True
-        while grew:  # an alias of an alias counts
-            grew = False
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.Assign, ast.AnnAssign)):
-                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                    if node.value is None or len(targets) != 1 or not isinstance(targets[0], ast.Name):
-                        continue
-                    origin = ast.unparse(node.value)
-                    origin = aliases.get(origin, origin)
-                    if origin in tracked and aliases.get(targets[0].id) != origin and targets[0].id not in tracked:
-                        aliases[targets[0].id] = origin
-                        grew = True
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" and node.args:
-                key_node, receiver = node.args[0], ast.unparse(node.func.value)
-            elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):  # a write or a delete is not a read
-                key_node, receiver = node.slice, ast.unparse(node.value)
+        reads, module = _collect(ast.parse(source))
+        for node, scope in reads:
+            if isinstance(node, ast.Call):
+                key_node, receiver = node.args[0], node.func.value
             else:
+                key_node, receiver = node.slice, node.value
+            holder = object_of(receiver, scope)
+            if holder is None:
                 continue
-            receiver = aliases.get(receiver, receiver)
-            if receiver not in tracked:
-                continue
-            key = key_node.value if isinstance(key_node, ast.Constant) else constants.get(getattr(key_node, "id", ""))
+            key = None
+            if holder != ambiguous:
+                if isinstance(key_node, ast.Constant):
+                    key = key_node.value
+                elif isinstance(key_node, ast.Name) and (named := single(scope, key_node.id)) and isinstance(named[1], ast.Constant):
+                    key = named[1].value
             if not isinstance(key, str):
                 unresolved.append(f"{filename}:{node.lineno}: {ast.unparse(node)}")
                 continue
-            if receiver == "_bootstrap_config" or (key not in section_ids and key != "backends"):
+            if holder == "_bootstrap_config" or (key not in section_ids and key != "backends"):
                 found.add(key)
     return found, unresolved
 
@@ -322,3 +415,49 @@ def test_the_startup_key_scan_reports_a_read_it_cannot_resolve_with_its_location
     found, unresolved = startup_keys_read({"x.py": source}, set())
     assert found == {"fine"}
     assert unresolved == ["x.py:2: config.get(name)", "x.py:3: _bootstrap_config[f'x{name}']"]
+
+
+def _bounded(call, *args, seconds: int = 5):
+    """Run the scan with a time limit, so a loop that never ends fails the test instead of hanging the run."""
+    import signal
+
+    def give_up(*_):
+        raise TimeoutError(f"the scan did not finish in {seconds} s")
+
+    previous = signal.signal(signal.SIGALRM, give_up)
+    signal.alarm(seconds)
+    try:
+        return call(*args)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def test_a_name_bound_twice_is_not_followed_and_the_scan_ends():
+    source = 'cfg = _bootstrap_config\ncfg = config\ncfg.get("x")\n'
+    found, unresolved = _bounded(startup_keys_read, {"x.py": source}, set())
+    assert found == set() and unresolved == ["x.py:3: cfg.get('x')"]
+
+
+def test_an_alias_name_used_in_two_functions_resolves_in_each_function_alone():
+    source = ('def one():\n    raw = _bootstrap_config\n    return raw.get("one")\n'
+              'def two():\n    raw = {}\n    return raw.get("two")\n'
+              'def three():\n    raw = config\n    return raw.get("sect")\n')
+    assert _bounded(startup_keys_read, {"x.py": source}, {"sect"}) == ({"one"}, [])
+
+
+def test_a_constant_bound_twice_or_shadowed_by_a_parameter_is_unresolved():
+    twice = 'KEY = "proxy"\nKEY = compute()\nconfig.get(KEY)\n'
+    assert _bounded(startup_keys_read, {"x.py": twice}, set()) == (set(), ["x.py:3: config.get(KEY)"])
+    shadowed = 'KEY = "proxy"\ndef f(KEY):\n    return config.get(KEY)\ndef g():\n    return config.get(KEY)\n'
+    assert _bounded(startup_keys_read, {"x.py": shadowed}, set()) == ({"proxy"}, ["x.py:3: config.get(KEY)"])
+
+
+def test_an_alias_made_by_a_multiple_assignment_is_unresolved():
+    source = 'a = b = _bootstrap_config\na.get(name)\nb.get("lit")\n'
+    assert _bounded(startup_keys_read, {"x.py": source}, set()) == (set(), ["x.py:2: a.get(name)", "x.py:3: b.get('lit')"])
+
+
+def test_an_alias_cycle_ends():
+    source = 'a = b\nb = a\na.get("k")\n'
+    assert _bounded(startup_keys_read, {"x.py": source}, set()) == (set(), [])
