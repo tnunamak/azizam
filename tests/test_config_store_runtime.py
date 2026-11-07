@@ -741,10 +741,11 @@ def test_proxy_runtime_in_a_real_request_keeps_the_snapshot_it_started_with_whil
 # The generation in the snapshot key (review finding 9)
 # ---------------------------------------------------------------------------------------------------------------------
 
-def test_the_generation_in_the_key_is_the_one_of_the_registry_the_config_was_built_from(live, caplog):  # noqa: F811
+def test_the_generation_in_the_key_is_the_one_of_the_registry_the_config_was_built_from(live, monkeypatch, caplog):  # noqa: F811
     from gateway import service_registry
 
     registry = service_registry.ensure_service_registry(path=live)  # what a load builds its config from
+    monkeypatch.setattr(proxy, "_GENERATION_READ_FAILURE_LOGGED", False)
     stored = admin_store.get_service_registry_with_generation(path=live)
     assert proxy._generation_of_registry(registry) == stored["operator_settings_generation"]
     moved = copy.deepcopy(registry)
@@ -755,7 +756,8 @@ def test_the_generation_in_the_key_is_the_one_of_the_registry_the_config_was_bui
         audit_target_id="service_registry", audit_metadata={}, session=None, path=live,
     )
     assert proxy._generation_of_registry(registry) is None, "the store now holds a newer registry than the one used"
-    assert not caplog.records, "None came from the compare, not from a read that failed"
+    failed_reads = [r for r in caplog.records if "registry generation could not be read" in r.getMessage()]
+    assert not failed_reads, "None came from the compare, not from a read that failed"
 
 
 def test_an_unreadable_store_gives_no_generation_and_names_the_failure_once_by_type(live, monkeypatch, caplog):  # noqa: F811
