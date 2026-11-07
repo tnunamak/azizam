@@ -50,8 +50,18 @@ def projections(record: Any) -> dict[str, Any]:
     return {name: plain(value) for name, value in out.items()}
 
 
-def engine_requests(root: Path, document: dict[str, Any], cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The request each corpus case compiles to, for every binding that holds a template (a node graph the engine runs)."""
+def template_path(root: Path, package_dir: Path | None, template: str) -> Path:
+    """A bundled workflow names its template from the tree root; a package workflow names it as ``package://<path>``."""
+    if template.startswith("package://") and package_dir is not None:
+        return package_dir / template.removeprefix("package://").lstrip("/")
+    return root / template
+
+
+def engine_requests(root: Path, package_dir: Path | None, document: dict[str, Any], cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The request each corpus case compiles to, for every binding that holds a template (a node graph the engine runs).
+
+    A case holds the values the route would hand to the binding: the caller's, the defaults and the generated ones, already
+    prepared by the comparison from this tree's own document; ``rejected`` holds what the input check refused."""
     from gateway.manifests import bind_backend_request
 
     out: list[dict[str, Any]] = []
@@ -59,11 +69,11 @@ def engine_requests(root: Path, document: dict[str, Any], cases: list[dict[str, 
         template = block.get("workflow") if isinstance(block, dict) else None
         if not isinstance(template, str):
             continue
-        graph = json.loads((root / template).read_text(encoding="utf-8"))
+        graph = json.loads(template_path(root, package_dir, template).read_text(encoding="utf-8"))
         for case in cases:
             result = bind_backend_request(document, key, graph, copy.deepcopy(case["values"]))
             out.append({"binding": key, "case": case["name"], "request": plain(result.request),
-                        "applied": sorted(result.applied_inputs)})
+                        "applied": sorted(result.applied_inputs), "rejected": case.get("rejected", {})})
     return out
 
 
@@ -86,10 +96,20 @@ def multipart_form(record: Any, cases: list[dict[str, Any]]) -> list[dict[str, A
         try:
             request = mesh_manifest.bind_request(workflow, supplied, picture)
             fields, part = mesh_manifest.downstream_form(workflow, request)
-            out.append({"case": case["name"], "fields": fields, "part": part.filename, "image_input": workflow.image_input})
+            out.append({"case": case["name"], "fields": fields, "part": part.filename, "image_input": workflow.image_input,
+                        "rejected": case.get("rejected", {})})
         except mesh_manifest.MeshInputError as error:
-            out.append({"case": case["name"], "refused": error.code})
+            out.append({"case": case["name"], "refused": error.code, "rejected": case.get("rejected", {})})
     return out
+
+
+def _load_sources() -> Any:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("workflow_sources", Path(__file__).resolve().parent / "workflow_sources.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def main(argv: list[str]) -> int:
@@ -98,14 +118,22 @@ def main(argv: list[str]) -> int:
     sys.path.insert(0, str(root))
     os.chdir(root)
     from gateway.discovery import WorkflowRegistry
-
+    sources = _load_sources()
     registry = WorkflowRegistry.from_directory(root / "manifests" / "workflows")
+    # A package workflow is not in the directory: it is added the way a reviewed package record is, from the file the
+    # package names. The file lists come from one module, so both trees and the comparison enumerate the same way.
+    directory = (root / "manifests" / "workflows").resolve()
+    for workflow_id, (path, document) in sources.read_documents(root).items():
+        if path.resolve().parent != directory:
+            manifest = {key: value for key, value in document.items() if key != "kind"}
+            registry.add_manifest(manifest, source_path=path)
     result: dict[str, Any] = {"errors": plain(registry.errors), "workflows": {}}
+    packages = {workflow_id: path.parent.parent for workflow_id, (path, _document) in sources.read_documents(root).items()}
     for record in registry.records():
         cases = corpus.get(record.id, [])
         result["workflows"][record.id] = {
             "projections": projections(record),
-            "requests": engine_requests(root, record.manifest, cases),
+            "requests": engine_requests(root, packages.get(record.id), record.manifest, cases),
             "form": multipart_form(record, cases),
         }
     # A path under the tree is the tree's, not the workflow's: it must not differ between two trees.

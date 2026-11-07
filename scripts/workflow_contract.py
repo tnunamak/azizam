@@ -37,7 +37,7 @@ from gateway.workflow_equality import diff_effective  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 # What the code of a ref needs to answer: its packages, its data, its top-level modules.
-REF_PATHS = ("gateway", "registry", "manifests", "workflows")
+REF_PATHS = ("gateway", "registry", "manifests", "workflows", "extensions")
 
 
 def _files(paths: list[str]) -> list[Path]:
@@ -114,7 +114,7 @@ def extract_ref(ref: str, into: Path) -> Path:
 
 
 def run_diff_effective(before: str, after: str, as_json: bool) -> int:
-    scratch = Path(tempfile.mkdtemp(prefix="effective-", dir=Path.home() / ".tmp"))
+    scratch = Path(tempfile.mkdtemp(prefix="effective-"))
     try:
         result = diff_effective(extract_ref(before, scratch), Path(after).resolve(), scratch=scratch)
     finally:

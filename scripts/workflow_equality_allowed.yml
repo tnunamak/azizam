@@ -1,56 +1,194 @@
 # The differences the equality check (gateway/workflow_equality.py) accepts between a tree before S3.5a and a tree after.
-# Each row names the checks, the consumer ("scopes", a glob; empty means any), the workflows ("all" or a list), the paths
-# (globs over the JSON pointer, a list index written []) and the reason. A difference that no row covers fails the check.
-# "before" narrows a row to differences whose before-value is exactly that.
+# Each row names the checks, the consumer ("scopes", a glob; empty means any), the workflows ("all" or a list), the exact
+# paths (a JSON pointer with a list index written []; the only wildcard is "*" in a scope) and the reason. A difference that
+# no row covers fails the check. A row pins the value it expects wherever the value is known:
+#   before / after   the before-value or the after-value is exactly that ("<absent>" for a key that is not there);
+#   replace          text: the after-text is the before-text with these (from, to) pairs applied and nothing else changed;
+#   drops            list: the after-list is the before-list without the items that match ({value} or {key, value}).
+# A row that pins no value says so in its reason (a hash, or an inferred value that differs for each workflow).
 schema_version: 1
 allowed:
   - checks: [projections]
     scopes: ["summary:*"]
     paths: ["/schema_version"]
+    before: 1
+    after: 2
     reason: The bundled files are schema 2 (the summary shows the stored document's version).
   - checks: [projections]
-    scopes: ["summary:*"]
+    scopes: ["summary:admin", "summary:internal"]
     paths: ["/manifest_hash"]
-    reason: The hash is of the document, and every bundled document changed by the converter's edits (the binding-content check shows the edits).
+    reason: The hash is of the document, and every bundled document changed by the converter's edits (the binding-content check shows the edits). The value differs for each workflow, so it is not pinned.
   - checks: [projections]
     scopes: [capabilities, projected]
     paths: ["[]/capability"]
     before: null
-    reason: The converter wrote the inferred capability into 33 files, so the reader shows it as declared. Same value the catalog inferred.
+    reason: The converter wrote the inferred capability into 33 files, so the reader shows it as declared. Same value the catalog inferred; the value differs for each workflow, so it is not pinned.
   - checks: [projections]
     scopes: [capabilities, projected]
     workflows: [mesh.generate.trellis-2]
     paths: ["[]/input_modalities"]
+    before: [text]
+    after: [asset, text]
     reason: "Design open question 6: the mesh picture input was an uncounted image type and becomes an asset, so the input modalities list it."
+  - checks: [projections]
+    scopes: [member_catalog]
+    workflows: [mesh.generate.trellis-2]
+    paths: ["/workflows[]/capabilities[]/input_modalities"]
+    before: [text]
+    after: [asset, text]
+    reason: "Design open question 6: the catalog row lists the asset input modality."
   - checks: [projections]
     scopes: ["summary:*"]
     workflows: [mesh.generate.trellis-2]
     paths: ["/inputs[]/type"]
+    before: image
+    after: asset
     reason: "Design open question 6: the mesh picture input type is asset (it was image)."
   - checks: [projections]
     scopes: [member_catalog]
     workflows: [mesh.generate.trellis-2]
-    paths:
-      - "/workflows[]/capabilities[]/input_modalities"
-      - "/workflows[]/inputs[]/media_type"
-      - "/workflows[]/example_request/*"
-      - "/workflows[]/examples/*"
-    reason: "Design open question 6: the catalog lists the mesh picture as an asset input that accepts image types, so its row, its upload media type and its examples show that."
+    paths: ["/workflows[]/inputs[]/media_type"]
+    before: "<absent>"
+    after: image/*
+    reason: "Design open question 6: the catalog lists the mesh picture as an asset input that accepts image types, so its upload media type shows."
   - checks: [projections]
+    scopes: [member_catalog]
+    workflows: [mesh.generate.trellis-2]
+    paths: ["/workflows[]/example_request/files/image/media_type"]
+    before: "<absent>"
+    after: image/*
+    reason: "Design open question 6: the example request names the picture's media type."
+  - checks: [projections]
+    scopes: [member_catalog]
+    workflows: [mesh.generate.trellis-2]
+    paths:
+      - "/workflows[]/example_request/curl"
+      - "/workflows[]/example_request/javascript"
+      - "/workflows[]/example_request/python"
+      - "/workflows[]/examples/curl"
+      - "/workflows[]/examples/javascript"
+      - "/workflows[]/examples/python"
+    replace:
+      - {from: image.bin, to: image.png}
+    reason: "Design open question 6: the code samples name the picture file image.png (it was image.bin). Every other character of each sample must be the same."
+  - checks: [projections]
+    scopes: [mapping]
+    workflows: [audio.generate.ace-step-1.5-xl-turbo]
+    paths: ["/async/prompt", "/sync/prompt"]
+    before: {field: prompt, in: body}
+    after: "<absent>"
+    reason: "Named defect fix: the bundled file mapped both prompt and tags to the same node input. prompt is no longer an input; the route sends the prompt to tags when no tags are given, as it did."
+  - checks: [projections]
+    scopes: [schema]
+    workflows: [audio.generate.ace-step-1.5-xl-turbo]
+    paths: ["/properties/prompt"]
+    before: {description: Describe what you want to make., type: string}
+    after: "<absent>"
+    reason: "Named defect fix (prompt is no longer an input): the schema no longer lists it."
+  - checks: [projections]
+    scopes: [openapi_catalog]
+    workflows: [audio.generate.ace-step-1.5-xl-turbo]
+    paths: ["[]/execution/async/fields/prompt", "[]/execution/sync/fields/prompt"]
+    before: {field: prompt, in: body}
+    after: "<absent>"
+    reason: "Named defect fix (prompt is no longer an input): the OpenAPI execution fields no longer list it."
+  - checks: [projections]
+    scopes: [member_catalog]
+    workflows: [audio.generate.ace-step-1.5-xl-turbo]
+    paths: ["/workflows[]/openapi/execution/async/fields/prompt", "/workflows[]/openapi/execution/sync/fields/prompt"]
+    before: {field: prompt, in: body}
+    after: "<absent>"
+    reason: "Named defect fix (prompt is no longer an input): the catalog's OpenAPI execution fields no longer list it."
+  - checks: [projections]
+    scopes: [member_catalog]
+    workflows: [audio.generate.ace-step-1.5-xl-turbo]
+    paths: ["/workflows[]/inputs"]
+    drops: {key: name, value: prompt}
+    reason: "Named defect fix (prompt is no longer an input): the catalog lists no prompt input. Every other input must be the same."
+  - checks: [projections]
+    scopes: [member_catalog]
+    workflows: [audio.generate.ace-step-1.5-xl-turbo]
+    paths: ["/workflows[]/example_request/body/request/prompt"]
+    before: A small teal fish mark on a clean white card.
+    after: "<absent>"
+    reason: "Named defect fix (prompt is no longer an input): the example request has no prompt."
+  - checks: [projections]
+    scopes: [member_catalog]
     workflows: [audio.generate.ace-step-1.5-xl-turbo]
     paths:
-      - "/async/prompt"
-      - "/sync/prompt"
-      - "/properties/prompt"
-      - "/inputs"
-      - "/bindings[]/map/prompt"
-      - "/bindings[]/mapped_inputs"
-      - "/workflows[]/inputs"
-      - "/workflows[]/openapi/execution/*/fields/prompt"
-      - "/workflows[]/example_request/*"
-      - "/workflows[]/examples/*"
-      - "[]/execution/*/fields/prompt"
-    reason: "Named defect fix: the bundled file mapped both prompt and tags to the same node input. prompt is no longer an input; the route sends the prompt to tags when no tags are given, as it did."
+      - "/workflows[]/example_request/curl"
+      - "/workflows[]/example_request/javascript"
+      - "/workflows[]/example_request/python"
+      - "/workflows[]/examples/curl"
+      - "/workflows[]/examples/javascript"
+      - "/workflows[]/examples/python"
+    replace:
+      - {from: '"prompt":"A small teal fish mark on a clean white card.",', to: ""}
+      - {from: "'prompt': 'A small teal fish mark on a clean white card.', ", to: ""}
+      - {from: "    \"prompt\": \"A small teal fish mark on a clean white card.\",\n", to: ""}
+    reason: "Named defect fix (prompt is no longer an input): the code samples send no prompt. Every other character of each sample must be the same."
+  - checks: [projections]
+    scopes: ["summary:*"]
+    workflows: [audio.generate.ace-step-1.5-xl-turbo]
+    paths: ["/inputs"]
+    drops: {key: name, value: prompt}
+    reason: "Named defect fix (prompt is no longer an input): the summary lists no prompt input. Every other input must be the same."
+  - checks: [projections]
+    scopes: ["summary:admin", "summary:internal"]
+    workflows: [audio.generate.ace-step-1.5-xl-turbo]
+    paths: ["/bindings[]/mapped_inputs"]
+    drops: {value: prompt}
+    reason: "Named defect fix (prompt is no longer an input): the binding no longer maps it. Every other mapped input must be the same."
+  - checks: [projections]
+    scopes: ["summary:internal"]
+    workflows: [audio.generate.ace-step-1.5-xl-turbo]
+    paths: ["/bindings[]/map/prompt"]
+    before: [{input: tags, node: "5"}]
+    after: "<absent>"
+    reason: "Named defect fix: the bundled file mapped both prompt and tags to node 5 input tags; the prompt mapping is gone."
+  # The demo package workflow: its schema 1 file carried policy facts (exposure, tags, tiers) that schema 2 keeps out of the
+  # document (D2). The package path builds the record with no facts, so it needs configuration until its owner sets them.
+  - checks: [projections]
+    scopes: ["summary:*"]
+    workflows: [image.generate.test-demo-package]
+    paths: ["/exposure", "/resource_tier", "/trust_tier"]
+    after: null
+    reason: "Policy facts are not in a schema 2 document (D2), and a package record has none until its owner sets them."
+  - checks: [projections]
+    scopes: ["summary:*"]
+    workflows: [image.generate.test-demo-package]
+    paths: ["/needs_configuration"]
+    before: "<absent>"
+    after: true
+    reason: "The package workflow states no policy facts, so it needs configuration (D2)."
+  - checks: [projections]
+    scopes: ["summary:admin", "summary:internal"]
+    workflows: [image.generate.test-demo-package]
+    paths: ["/source"]
+    before: package
+    after: null
+    reason: "The package workflow's source was read from its schema 1 policy block; a schema 2 package record states none."
+  - checks: [projections]
+    scopes: ["summary:*", capabilities, projected, member_catalog]
+    workflows: [image.generate.test-demo-package]
+    paths: ["/tags", "[]/tags", "/workflows[]/capabilities[]/tags"]
+    before: [test, demo]
+    after: []
+    reason: "Tags are a policy fact (D2); a package record has none until its owner sets them."
+  - checks: [projections]
+    scopes: [capabilities, projected, member_catalog]
+    workflows: [image.generate.test-demo-package]
+    paths: ["[]/exposure", "/workflows[]/capabilities[]/exposure"]
+    before: opt_in
+    after: disabled
+    reason: "Exposure is a policy fact (D2); a record with no facts is closed until its owner configures it."
+  - checks: [projections]
+    scopes: [capabilities, projected, member_catalog]
+    workflows: [image.generate.test-demo-package]
+    paths: ["[]/caveats", "/workflows[]/capabilities[]/caveats"]
+    before: ["This workflow isn't marked as reviewed. Test it before you rely on it."]
+    after: ["This workflow needs configuration: its policy facts are not set.", "This workflow isn't marked as reviewed. Test it before you rely on it."]
+    reason: "A record with no policy facts says it needs configuration (D2)."
 binding_edits:
   - workflow: audio.generate.ace-step-1.5-xl-turbo
     path: [comfyui, map, prompt]
