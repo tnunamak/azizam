@@ -614,7 +614,8 @@
 # S3.5 integration fix 6 (2026-11-07): -18 kept-off cases, +4 (bundled version serves for a quarantined override at either enabled value; none without a bundled counterpart); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21419.
 # S3.5 integration fix 7 (2026-11-07): +10 (3 enum members, 3 big-range draws, 1 unchanged small draw, 2 unlistable package folders, 1 shipped-hash cache); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21429.
 # S3.5 integration fix 8 (2026-11-07): +3 huge-integer enum members; 21429 + 3, to confirm with scripts/run-hermetic-pytest.sh --collect-only -q.
-pytest = 0  # TRAIN21-MEASURE
+# Train 21: 21210 (main) + 16 (package artifact root) + 297 (S3.5 integration) + 0 (lifecycle sentinel); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21523.
+pytest = 21523
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
