@@ -155,13 +155,14 @@ def test_a_replayed_create_and_a_full_limit_roll_their_transaction_back(jobs_db,
 
 
 def test_prompt_erasure_locks_each_batch_and_rolls_a_failed_batch_back(jobs_db, monkeypatch):
-    """media_jobs.py:715 and :750 BEGIN IMMEDIATE; :762 rollback."""
+    """erase_prompt_derivatives locks three times: the cutoff, the job results (S2.3 result bundles), each batch; a
+    failed batch rolls back."""
     seed(jobs_db, "j1", app_id="app-1")
     seen = trace(monkeypatch, mj)
     owner = {"app:app-1"}
     assert mj.erase_prompt_derivatives(owner, before=2**40, path=jobs_db) == 1
     assert seen[first(seen, "BEGIN IMMEDIATE")] == "BEGIN IMMEDIATE"
-    assert seen.count("BEGIN IMMEDIATE") == 2 and first(seen, "BEGIN IMMEDIATE") < first(seen, "CREATE TABLE")
+    assert seen.count("BEGIN IMMEDIATE") == 3 and first(seen, "BEGIN IMMEDIATE") < first(seen, "CREATE TABLE")
     seed(jobs_db, "j2", app_id="app-2")
     seen.clear()
 

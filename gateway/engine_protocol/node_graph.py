@@ -406,7 +406,9 @@ def compile_workflow(manifest: Mapping[str, Any], binding: str, template: Mappin
             raise InputRefused(f"{name} is applied by the route, not by the graph", param=name)
     # The graph's view of the manifest: only the selected binding, without its edge-only inputs, so they get no default
     # and are not required. Other bindings are left out, so their own markers cannot make this view invalid.
-    selected = {key: value for key, value in block.items() if key != "edge_only_inputs"} if isinstance(block, Mapping) else block
+    # Selectors say how results are read, not how inputs are bound; they were checked when the manifest loaded.
+    selected = ({key: value for key, value in block.items() if key not in ("edge_only_inputs", "selectors")}
+                if isinstance(block, Mapping) else block)
     graph_manifest = dict(manifest, bindings={binding: selected},
                           inputs={name: spec for name, spec in manifest["inputs"].items() if name not in edge_only})
     supplied = {name: spec["default"] for name, spec in graph_manifest["inputs"].items()
