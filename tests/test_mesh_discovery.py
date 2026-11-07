@@ -21,7 +21,7 @@ from tests.test_mesh_route import OBSERVER_URL, TOTAL, TRELLIS_URL, Harness
 
 
 def _facts(harness: Harness) -> Capability:
-    return mesh_api.discovery_facts(harness.deps().manifest, harness.frontends)
+    return mesh_api.discovery_facts(harness.deps().current_manifest(), harness.frontends)
 
 
 def _evidence(harness: Harness) -> dict[str, Any]:
