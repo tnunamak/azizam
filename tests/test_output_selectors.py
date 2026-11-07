@@ -241,6 +241,12 @@ def test_a_new_contract_with_no_selectors_is_refused_with_a_reason_that_says_wha
     assert "declares no output selectors" in message and "eng" in message
 
 
+def test_an_explicit_null_selectors_key_is_refused_like_an_absent_one():
+    m = manifest(selectors=None)
+    m["bindings"]["eng"]["selectors"] = None
+    refused(m, "selectors_missing")
+
+
 def test_a_binding_of_an_adapter_that_takes_no_selectors_must_declare_none():
     assert save(manifest(selectors=None), parsed=None) == {}
     refused(manifest(), "selector_malformed", parsed=None)

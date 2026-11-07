@@ -155,6 +155,9 @@ def test_a_binding_with_no_selectors_is_refused_when_it_runs_whatever_the_engine
     with pytest.raises(SelectionRefused) as caught:
         collect({}, history)
     assert caught.value.code == "selectors_missing"
+    with pytest.raises(SelectionRefused) as caught:
+        collect({"workflow": "w.json", "selectors": None}, history)
+    assert caught.value.code == "selectors_missing"
 
 
 def test_a_binding_whose_selectors_do_not_fit_the_descriptor_is_refused_when_it_runs():

@@ -334,7 +334,8 @@ def check_for_save(descriptor: SelectorDescriptor | None, manifest: Mapping[str,
             raise SelectorError("selector_malformed", f"binding {binding_key} has selectors, but its adapter takes none")
         return {}
     outputs = manifest.get("outputs") or {}
-    if "selectors" not in block:
+    # ``selectors: null`` declares nothing, as an absent key does; it is not a way past this rule.
+    if block.get("selectors") is None:
         ambiguous = ambiguous_outputs(outputs)
         if ambiguous:
             raise SelectorError("results_ambiguous", f"results {ambiguous} have the same type and nothing tells them apart; "

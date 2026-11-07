@@ -785,7 +785,7 @@ class NodeGraphAdapter:
         """
         if history_bytes is not None and history_bytes > limits.max_history_bytes:
             raise SelectionRefused("history_too_large", f"the engine's answer is larger than {limits.max_history_bytes} bytes")
-        if "selectors" not in block:
+        if block.get("selectors") is None:  # an explicit null declares nothing, as an absent key does
             raise SelectionRefused("selectors_missing", "this workflow declares no output selectors, so its result cannot be read")
         if self.result_selectors is None:
             raise SelectionRefused("selectors_unsupported", "this engine's description takes no output selectors")
