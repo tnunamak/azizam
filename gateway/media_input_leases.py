@@ -85,6 +85,10 @@ def lease_in(conn: sqlite3.Connection, lease_id: str, *, asset_id: str, owner_ke
         "UNION ALL SELECT 1 FROM media_input_effect WHERE asset_id = ? AND created_asset = 1 AND effect_id IS NOT ? LIMIT 1",
         (asset_id, asset_id, effect_id),
     ).fetchone() is not None
+    if effect_id is not None:
+        # The sweep may have found this file unheld and left it for this ingest (``discard_unheld``): the duty passes on.
+        row = conn.execute("SELECT created_asset FROM media_input_effect WHERE effect_id = ?", (effect_id,)).fetchone()
+        shared = shared or bool(row and row[0])
     conn.execute(
         "INSERT INTO media_input_lease (lease_id, asset_id, owner_key, holder_kind, holder_id, created_asset, created) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -148,7 +152,8 @@ def sweep_in(
       created, or was deleted by a path that did not release.
     - A released lease row is deleted. A file it created is a discard when no live lease holds it.
 
-    The caller removes the files after this transaction commits, with ``MediaInputLedger.sweep``.
+    The caller removes the files after this transaction commits, with ``MediaInputLedger.sweep``, which checks each file
+    again in its own transaction before it removes it.
     """
     _require_transaction(conn)
     discards: dict[tuple[str, str], Discard] = {}
@@ -238,14 +243,38 @@ class MediaInputLedger:
                 "SELECT asset_id FROM media_input_lease WHERE holder_kind = ? AND holder_id = ? AND released_at IS NULL "
                 "ORDER BY created, lease_id", (holder_kind, holder_id))]
 
+    def sweep_scan(self, *, effect_grace_s: float = 3600, request_ttl_s: float = 3600) -> list[Discard]:
+        """First half of a pass: release what has no live holder, commit, and name the files that looked unheld."""
+        with self._write() as conn:
+            return sweep_in(conn, now=self._clock(), effect_grace_s=effect_grace_s, request_ttl_s=request_ttl_s)
+
+    def discard_unheld(self, found: Iterable[Discard], discard: Callable[[str, str], None]) -> int:
+        """Second half: remove each file, but only if nothing holds it *now*. A lease or ingest marker can land after
+        the scan committed, so the check and the removal share one write transaction per file: a writer that comes
+        later waits for the lock and then sees the file gone, and one that came earlier is seen by the check. A file
+        that is held after all stays, and its holder inherits the duty to remove it (``created_asset`` is set), so
+        it is not left behind when the holder lets go. Returns how many files were discarded. A failed ``discard``
+        raises and leaves the file; the rows of the files before it are already committed. Callers pass a
+        ``discard`` that does not raise for a file that is already gone."""
+        removed = 0
+        for item in found:
+            with self._write() as conn:
+                held = conn.execute(
+                    "UPDATE media_input_lease SET created_asset = 1 WHERE asset_id = ? AND released_at IS NULL",
+                    (item.asset_id,),
+                ).rowcount
+                pending = conn.execute(
+                    "UPDATE media_input_effect SET created_asset = 1 WHERE asset_id = ?", (item.asset_id,),
+                ).rowcount
+                if held or pending:
+                    continue
+                discard(item.asset_id, item.owner_key)
+                removed += 1
+        return removed
+
     def sweep(self, discard: Callable[[str, str], None], *, effect_grace_s: float = 3600,
               request_ttl_s: float = 3600) -> int:
-        """One pass: release what has no live holder, then call ``discard(asset_id, owner_key)`` for each file to
-        remove. Returns how many files were discarded. A failed ``discard`` raises and leaves the file; the lease and
-        marker rows are already gone, so the next pass does not know about it. Callers pass a ``discard`` that does
-        not raise for a file that is already gone."""
-        with self._write() as conn:
-            found = sweep_in(conn, now=self._clock(), effect_grace_s=effect_grace_s, request_ttl_s=request_ttl_s)
-        for item in found:
-            discard(item.asset_id, item.owner_key)
-        return len(found)
+        """One pass: release what has no live holder, then call ``discard(asset_id, owner_key)`` for each file that
+        is still unheld when its turn comes. Returns how many files were discarded."""
+        found = self.sweep_scan(effect_grace_s=effect_grace_s, request_ttl_s=request_ttl_s)
+        return self.discard_unheld(found, discard)

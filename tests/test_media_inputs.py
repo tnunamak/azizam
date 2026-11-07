@@ -254,12 +254,27 @@ def test_an_empty_or_oversized_body_is_refused_before_storing(db, clock):
     assert assets.calls == [] and rows(db, "media_input_effect") == 0
 
 
-def test_a_stored_asset_over_the_limit_is_refused_without_reading_it(db, clock):
+# Revert: ``resolve_asset`` passes ``capped=True`` to ``_check_bytes`` (or checks ``size`` against ``max_bytes``).
+def test_a_stored_asset_over_the_limit_still_resolves(db, clock):
+    """The limit bounds what the gateway fetches or receives. A file already in the store is not refused by it."""
     resolver, assets, _ = build(db, clock, max_bytes=100)
     big = assets.add(PNG + b"\x00" * 100, "a")
+    resolved = resolver.resolve_asset(person("a"), big, holder=JOB, destination=LOCAL, accepts=IMAGES)
+    assert resolved.data == assets.files[big] and resolved.ref.size_bytes == len(resolved.data)
+    assert live(db, JOB) == [big]
+
+
+# Revert: the length check in ``_check_bytes`` (the ``capped`` branch).
+def test_a_fetched_body_over_the_limit_is_refused_and_nothing_is_stored(db, clock):
+    async def fetch(url: str):
+        return Fetched(PNG + b"\x00" * 100)
+
+    resolver, assets, _ = build(db, clock, max_bytes=100, fetch=fetch)
     with pytest.raises(MediaInputError) as large:
-        resolver.resolve_asset(person("a"), big, holder=JOB, destination=LOCAL, accepts=IMAGES)
-    assert large.value.code == TOO_LARGE and assets.calls == []
+        asyncio.run(resolver.resolve_url(person("a"), "https://x.test/p.png", holder=REQUEST, destination=LOCAL,
+                                         accepts=IMAGES))
+    assert large.value.code == TOO_LARGE
+    assert assets.calls == [] and rows(db, "media_input_effect") == 0
 
 
 # --- disclosure -------------------------------------------------------------
@@ -543,3 +558,72 @@ def test_a_reference_is_immutable_and_holds_no_bytes():
     with pytest.raises(Exception):
         ref.asset_id = "other"  # type: ignore[misc]
     assert not any(isinstance(v, (bytes, bytearray)) for v in vars(ref).values())
+
+
+# --- the sweep re-checks each file when it removes it -------------------------
+
+
+def released_upload(db, clock):
+    """An upload that this ingest created, released, with its lease row not yet swept."""
+    resolver, assets, resolved = lease_one(db, clock, REQUEST)
+    resolver.release(REQUEST)
+    return resolver, assets, resolved.ref.asset_id
+
+
+# Revert: ``discard_unheld`` calls ``discard`` without the held and pending checks.
+def test_a_lease_granted_after_the_scan_keeps_its_file(db, clock):
+    resolver, assets, asset = released_upload(db, clock)
+    ledger = resolver._ledger
+    found = ledger.sweep_scan()
+    assert [item.asset_id for item in found] == [asset], "the scan saw nothing holding it"
+    # Another request reads the file and leases it after the scan committed, before the discard.
+    other = Holder("request", "r_late")
+    resolver.resolve_asset(person("alice"), asset, holder=other, destination=LOCAL, accepts=IMAGES)
+    assert ledger.discard_unheld(found, assets.discard) == 0
+    assert asset in assets.files
+    # The late holder inherits the duty: when it lets go, the next pass removes the file.
+    resolver.release(other)
+    assert resolver.sweep() == 1 and asset not in assets.files
+
+
+# Revert: ``discard_unheld`` calls ``discard`` without the held and pending checks.
+def test_an_ingest_marker_written_after_the_scan_keeps_its_file(db, clock):
+    resolver, assets, asset = released_upload(db, clock)
+    ledger = resolver._ledger
+    found = ledger.sweep_scan()
+    assert [item.asset_id for item in found] == [asset]
+    # A second ingest of the same bytes starts after the scan: it writes its marker, then the lease.
+    ledger.begin_effect("mie_late", owner_key="alice", asset_id=asset, created_asset=False)
+    assert ledger.discard_unheld(found, assets.discard) == 0
+    assert asset in assets.files
+    holder = Holder("request", "r_late")
+    ledger.lease("mil_late", asset_id=asset, owner_key="alice", holder_kind=holder.kind, holder_id=holder.id,
+                 created_asset=False, effect_id="mie_late")
+    resolver.release(holder)
+    assert resolver.sweep() == 1 and asset not in assets.files
+
+
+# Revert: ``resolve_asset`` returns without looking for the file again after its lease.
+def test_a_file_the_sweep_removed_before_the_lease_is_refused_as_missing(db, clock):
+    resolver, assets, asset = released_upload(db, clock)
+    ledger = resolver._ledger
+    found = ledger.sweep_scan()
+    lease = ledger.lease
+
+    def sweep_wins_then_lease(*args, **kwargs):
+        # The sweep's discard runs after the resolver read the bytes and before its lease lands.
+        assert ledger.discard_unheld(found, assets.discard) == 1
+        lease(*args, **kwargs)
+
+    ledger.lease = sweep_wins_then_lease
+    with pytest.raises(MediaInputError) as refused:
+        resolver.resolve_asset(person("alice"), asset, holder=Holder("request", "r_late"), destination=LOCAL, accepts=IMAGES)
+    assert refused.value.code == MISSING
+    assert asset not in assets.files
+
+
+def test_a_file_nothing_holds_at_discard_time_is_removed(db, clock):
+    resolver, assets, asset = released_upload(db, clock)
+    found = resolver._ledger.sweep_scan()
+    assert resolver._ledger.discard_unheld(found, assets.discard) == 1
+    assert asset not in assets.files

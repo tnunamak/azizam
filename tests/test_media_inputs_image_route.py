@@ -102,6 +102,26 @@ def test_the_lease_is_released_when_the_upload_fails_too(rig, monkeypatch):
     assert error is not None and live_rows() == 0
 
 
+def test_the_lease_is_released_when_the_upload_raises(rig, monkeypatch):
+    async def raising(client, headers, content, *, filename, media_type="image/png"):
+        raise ConnectionError("engine went away")
+
+    monkeypatch.setattr(proxy, "_upload_graph_image_bytes", raising)
+    with pytest.raises(ConnectionError):
+        run_extension(stored(image_bytes("PNG")))
+    assert lease_rows() == 1 and live_rows() == 0
+
+
+# Revert: ``resolve_asset`` caps a stored asset by ``max_bytes`` again.
+def test_a_stored_image_over_the_download_cap_still_goes_to_the_engine(rig, monkeypatch):
+    """The cap bounds what the gateway fetches or receives; the old path never measured a stored image against it."""
+    monkeypatch.setattr(proxy.media_fetch, "max_bytes", lambda: 8)
+    data = image_bytes("PNG")
+    assert len(data) > 8
+    _, error = run_extension(stored(data))
+    assert error is None and [content for _, content, _ in rig.uploads] == [data]
+
+
 # Revert: the ``may_read`` check, or the call to the resolver.
 def test_another_apps_asset_is_refused_with_the_old_text_and_no_upload(rig):
     asset_id = stored(image_bytes("PNG"))
