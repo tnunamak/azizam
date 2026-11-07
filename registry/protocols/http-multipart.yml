@@ -1,0 +1,24 @@
+# How a workflow binds to a service that takes one multipart POST and answers with the finished bytes.
+#
+# This file is data. The wire is owned by the reviewed sender in gateway/http_multipart.py: one non-retried POST, a
+# bounded 2xx body, four typed failures. `binding` is the key under a workflow manifest's `bindings` that holds the
+# block; the block names its engine with `service`. `binding_fields` closes the block: a field not listed here is
+# refused when the workflow is saved. `path` is the relative URL path of the POST. `map` sends each declared input to a
+# form field; the reviewed target check refuses an object input, a field name that is not plain and a field used twice.
+protocol_version: 1
+id: http-multipart
+title: Multipart form POST
+label: Service
+executor: adapter:http-multipart
+binding: http-multipart
+check_targets: form
+inputs_via: map
+binding_fields:
+  service: {kind: service, required: true}
+  path: {kind: relative_path, required: true}
+  map: {kind: input_map, required: true}
+  requires: {kind: requirements}
+notes: >-
+  Operations: send one multipart form and read the answer. A reviewed sender owns the request.
+operations:
+  multipart.post: {class: generate}

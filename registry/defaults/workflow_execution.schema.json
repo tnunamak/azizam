@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/workflow_execution",
+  "title": "workflow_execution",
+  "description": "How workflow jobs run (docs/design/CONFIG_HOMES.md, C10): which routes compile from the definitions a job pinned at accept, and the limits on what a job's result may hold.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "compile_from_pin": {
+      "description": "Routes whose jobs compile from the definitions they pinned at accept, not from the live workflow file (docs/design/CODE_TO_DATA_S2.md, D2). Keyed by the route's capability, for example audio.generate. Only a literal true turns a route on.",
+      "x-azizam-entry": "collection",
+      "type": "object",
+      "propertyNames": {"type": "string", "minLength": 1},
+      "additionalProperties": {"type": "boolean"}
+    },
+    "legacy_output_collection": {
+      "description": "Whether a route that declares no output selector may still collect its outputs the old way (docs/design/CODE_TO_DATA_S2.md, D5). Only a literal false turns it off.",
+      "type": "boolean"
+    },
+    "result_limits": {
+      "description": "Limits on a job's result (gateway/result_bundle.py, ResultLimits). A key left out keeps the code's ceiling.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_assets": {"type": "integer", "minimum": 1},
+        "max_asset_bytes": {"type": "integer", "minimum": 1},
+        "max_total_bytes": {"type": "integer", "minimum": 1},
+        "json_max_bytes": {"type": "integer", "minimum": 1},
+        "json_max_depth": {"type": "integer", "minimum": 1},
+        "json_max_items": {"type": "integer", "minimum": 1},
+        "json_max_string_length": {"type": "integer", "minimum": 1},
+        "max_selectors": {"type": "integer", "minimum": 1},
+        "max_history_bytes": {"type": "integer", "minimum": 1},
+        "fetch_timeout_s": {"type": "integer", "minimum": 1},
+        "max_concurrent_fetches": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

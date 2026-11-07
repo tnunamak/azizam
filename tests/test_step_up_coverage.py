@@ -28,7 +28,7 @@ RISKY_PATHS = (
     (r"/people/\*(/reset)?$", "changes or removes a person, or resets a password", CHANGES),
     (r"/signin(/link-owner|/owner-password)?$", "changes who may sign in", CHANGES),
     (r"/settings/sessions$", "changes how long a sign-in lasts", CHANGES),
-    (r"/export$|/settings/effective$", "exports configuration", {"GET"}),
+    (r"/export$", "exports configuration", {"GET"}),
     (r"/service-registry($|/)", "can move a stored credential", CHANGES),
     (r"/operator/services($|/\*$|/\*/secret-entries$)", "can move or replace a stored credential", CHANGES),
     (r"/host-commands$", "lets the gateway run commands", CHANGES),
@@ -143,7 +143,7 @@ def test_every_listed_route_exists_in_the_app(routes):
 def test_the_detector_sees_the_routes_the_review_found_missing(routes):
     # The two routes the review reproduced as open: a member's key and a registry write.
     for key in (("POST", "/me/api/apps/*/keys"), ("PUT", "/admin/api/operator/service-registry"),
-                ("POST", "/setup/first-app"), ("POST", "/me/api/try-key"), ("GET", "/admin/api/settings/effective")):
+                ("POST", "/setup/first-app"), ("POST", "/me/api/try-key"), ("GET", "/admin/api/config/export")):
         assert key in routes and risky_reason(*key, routes[key]), key
 
 

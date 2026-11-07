@@ -115,7 +115,6 @@ function RetentionForm({ initial }: { initial: RetentionResponse }) {
     onSuccess: (data) => {
       client.setQueryData(receiptsKey, data);
       void client.invalidateQueries({ queryKey: ["usage"] });
-      void client.invalidateQueries({ queryKey: ["settings", "effective"] });
       toast.success(
         data.cleanup_pending
           ? "Receipt setting saved. Cleanup is pending and will retry."

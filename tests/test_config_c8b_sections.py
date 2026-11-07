@@ -17,6 +17,7 @@ import yaml
 import proxy
 from gateway import admin_store, config_layers as layers, config_legacy_import
 from tests.config_homes_golden import effective_config, raw_config
+from tests.registry_test_helpers import import_blocks
 from tests.support.config_snapshot import section_key_published, section_published
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,9 +42,7 @@ def _owner_set(db: Path, section: str, pointer: str, value, base) -> None:
 
 def _import(db: Path, startup: dict) -> dict[str, str]:
     admin_store.init_db(db)
-    found = config_legacy_import.import_at_boot(proxy.CONFIG_HOME, copy.deepcopy(startup), path=db, registry=None,
-                                                log=lambda line: None)
-    return {name: outcome.status for name, outcome in found.outcomes.items()}
+    return {name: outcome.status for name, outcome in import_blocks(db, startup).items()}
 
 
 # -- the release files -----------------------------------------------------------------------------------------------
@@ -104,7 +103,7 @@ def test_an_install_whose_workflows_differ_keeps_them_through_the_import(tmp_pat
     db = tmp_path / "admin.db"
     report = _import(db, startup)
     assert {report[name] for name in C8B_SECTIONS} == {"imported"}
-    layer = proxy.CONFIG_HOME.layer(copy.deepcopy(startup), path=db, registry=None, legacy_import=True, log=lambda line: None)
+    layer = proxy.CONFIG_HOME.layer(copy.deepcopy(startup), path=db, registry=None)
     assert layer.config["videos"]["max_total_seconds"] == 12
     assert layer.config["videos"]["workflows"]["owner-clip"] == startup["videos"]["workflows"]["owner-clip"]
     assert layer.config["audio"]["workflows"]["owner-sfx"] == startup["audio"]["workflows"]["owner-sfx"]

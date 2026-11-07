@@ -45,10 +45,12 @@ def release_aliases() -> dict[str, Any]:
     return copy.deepcopy(config_rules.config_home().sections[SECTION].defaults)
 
 
-def boot(home: config_runtime.ConfigHome, db: Path, raw: dict[str, Any], *, registry: Any = None, log: Any = None):
-    """One boot's layer: the import first, then the build (what ``proxy._layer_for(..., boot=True)`` does)."""
+def boot(home: config_runtime.ConfigHome, db: Path, raw: dict[str, Any], *, registry: Any = None):
+    """The import of the aliases block of ``raw`` (what an install did when it imported the old startup file), then the
+    layer built from the stored rows. The gateway itself no longer imports at start (C10)."""
     admin_store.init_db(db)
-    return home.layer(raw, path=db, registry=registry, legacy_import=True, log=log or (lambda line: None))
+    config_legacy_import.import_section(home, SECTION, raw.get(SECTION), path=db, registry=registry)
+    return home.layer(raw, path=db, registry=registry)
 
 
 def rows(db: Path) -> list[dict[str, Any]]:
@@ -69,7 +71,7 @@ class AliasApp:
         app = FastAPI()
         app.include_router(config_api.create_config_router(
             auth=self.auth, admin_path=self.db, home=lambda: self.home, registry=lambda: self.registry,
-            reload=self.reload, startup_block=self.startup.get))
+            reload=self.reload))
         self.client = TestClient(app)
         self.reload()
 
@@ -112,10 +114,10 @@ def test_the_release_defaults_name_no_model_service_or_engine():
 
 
 def test_a_fresh_install_serves_the_neutral_defaults_and_default_answers_alias_not_configured(tmp_path):
-    home, db, lines = config_rules.config_home(), tmp_path / "admin.db", []
-    layer = boot(home, db, {}, log=lines.append)
+    home, db = config_rules.config_home(), tmp_path / "admin.db"
+    layer = boot(home, db, {})
     aliases = layer.config[SECTION]
-    assert aliases == release_aliases() and rows(db) == [] and lines == []
+    assert aliases == release_aliases() and rows(db) == []
     assert admin_store.migration_step_recorded(STEP, path=db), "no block to import: the step is recorded all the same"
     for operation, table in aliases.items():
         for name in table["stable"]:
@@ -250,7 +252,7 @@ def test_the_import_of_the_tracked_file_gives_the_c0_golden_and_the_block_itself
     want = golden.load_golden()["inputs"]["tracked"]
     assert golden.digest(effective[SECTION]) == want["section_digests"][SECTION]
     assert golden.digest(effective[SECTION]) == golden.digest(raw[SECTION]), "the effective section is the legacy block"
-    assert golden.digest(effective) == want["effective_digest"]
+    # The whole-config digest is held by test_config_homes_goldens, with the entries C10 changes on purpose.
     assert golden.alias_table(proxy, effective) == want["aliases"]
     assert effective["model_aliases"]["chat"]["openai"] == raw[SECTION]["chat"]["openai"], "the pattern list keeps its order"
 
@@ -291,96 +293,61 @@ def test_the_import_is_one_change_of_kind_legacy_import_that_records_its_step(tm
     assert mine == ["legacy-import"] and STEP in steps
 
 
-def test_a_block_that_breaks_the_rule_is_not_imported_keeps_serving_and_is_retried_next_boot(tmp_path):
-    home, db, lines = config_rules.config_home(), tmp_path / "admin.db", []
+def test_a_block_that_breaks_the_rule_is_not_imported_leaves_no_step_and_is_retried_with_a_fixed_block(tmp_path):
+    home, db = config_rules.config_home(), tmp_path / "admin.db"
+    admin_store.init_db(db)
     broken = {"chat": {"stable": {"a": "b", "b": "a"}}}
-    layer = boot(home, db, {SECTION: broken}, log=lines.append)
-    assert layer.config[SECTION] == broken, "the file block stays in use as before"
-    assert rows(db) == [] and not admin_store.migration_step_recorded(STEP, path=db)
-    assert {p["code"] for p in layer.problems[SECTION]} == {"legacy_import_blocked"}
-    assert len(lines) == 1 and "was not imported" in lines[0]
-    reloaded = home.layer({SECTION: broken}, path=db, registry=None)
-    assert reloaded.config[SECTION] == broken, "a reload keeps serving the block, as the boot did"
+    outcome = config_legacy_import.import_section(home, SECTION, broken, path=db, registry=None)
+    assert outcome.status == "blocked" and rows(db) == [] and not admin_store.migration_step_recorded(STEP, path=db)
+    assert outcome.summary()["blocked"], "the problems name the bad pointers"
     fixed = {"chat": {"stable": {"a": "role", "b": "a"}}}
     after = boot(home, db, {SECTION: fixed})
     assert admin_store.migration_step_recorded(STEP, path=db)
     assert after.config[SECTION]["chat"]["stable"]["a"] == "role" and SECTION not in after.problems
 
 
-def test_an_import_that_hits_a_store_fault_keeps_the_file_block_and_a_missing_block_keeps_the_defaults(tmp_path, monkeypatch):
-    home, db, lines = config_rules.config_home(), tmp_path / "admin.db", []
+def test_an_import_that_hits_a_store_fault_reports_it_and_leaves_the_step_open(tmp_path, monkeypatch):
+    home, db = config_rules.config_home(), tmp_path / "admin.db"
+    admin_store.init_db(db)
     block = {"chat": {"stable": {"a": "role"}}}
 
     def fault(*args, **kwargs):
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(admin_store, "apply_config_change", fault)
-    with_block = boot(home, db, {SECTION: block}, log=lines.append)
-    assert with_block.config[SECTION] == block, "a transient fault must not drop the names the file had"
-    assert not admin_store.migration_step_recorded(STEP, path=db), "the step stays open for the next start"
-    assert len(lines) == 1 and "failed" in lines[0] and "locked" in lines[0]
-    without = boot(config_rules.config_home(), tmp_path / "other.db", {}, log=lines.append)
-    assert without.config[SECTION] == release_aliases(), "no block, nothing to keep serving: the release defaults"
+    outcome = config_legacy_import.import_section(home, SECTION, block, path=db, registry=None)
+    assert outcome.status == "failed" and "locked" in (outcome.error or "")
+    assert not admin_store.migration_step_recorded(STEP, path=db), "the step stays open for the next try"
 
 
 def test_a_block_with_a_key_the_section_does_not_take_is_blocked_not_lost(tmp_path):
     home, db = config_rules.config_home(), tmp_path / "admin.db"
+    admin_store.init_db(db)
     block = {"chat": {"stable": {"a": "role"}, "surprise": 1}}
-    layer = boot(home, db, {SECTION: block})
-    assert layer.config[SECTION] == block and rows(db) == []
-    assert {p["code"] for p in layer.problems[SECTION]} == {"legacy_import_blocked"}
+    outcome = config_legacy_import.import_section(home, SECTION, block, path=db, registry=None)
+    assert outcome.status == "blocked" and rows(db) == []
+    assert {p.code for p in outcome.plan.blocked}, "each blocked pointer is named"
 
 
-def test_a_restart_with_the_file_unchanged_warns_about_no_section(tmp_path):
-    # A section with fixed settings (images) imports nothing when the file sets them to their release values; leaving a
-    # setting out keeps its release value, so a restart with the same file finds nothing ignored.
-    db, lines = tmp_path / "admin.db", []
+def test_after_the_step_is_recorded_a_second_import_of_an_edited_block_changes_nothing(tmp_path):
+    db = tmp_path / "admin.db"
     raw = golden.raw_config("tracked")
-    boot(config_rules.config_home(), db, raw, log=lines.append)
-    lines.clear()
-    boot(config_rules.config_home(), db, raw, log=lines.append)
-    assert lines == []
-
-
-def test_after_the_step_is_recorded_an_edit_to_the_file_block_is_ignored_and_logged_once(tmp_path):
-    db, lines = tmp_path / "admin.db", []
-    raw = golden.raw_config("tracked")
-    first = boot(config_rules.config_home(), db, raw, log=lines.append)
-    assert lines and "imported" in lines[0] and "ignored from now on" in lines[0]
+    first = boot(config_rules.config_home(), db, raw)
     before = golden.digest(first.config[SECTION])
     edited = copy.deepcopy(raw)
     edited[SECTION]["chat"]["stable"]["default"] = "edited-in-the-file"
-    edited[SECTION]["chat"]["stable"]["fast"] = "also-edited"
-    lines.clear()
-    home = config_rules.config_home()  # a restart
-    second = boot(home, db, edited, log=lines.append)
-    third = boot(home, db, edited, log=lines.append)  # a second build in the same boot (a fallback path)
-    assert golden.digest(second.config[SECTION]) == before == golden.digest(third.config[SECTION])
-    assert len(lines) == 1, lines
-    assert "model_aliases block is ignored" in lines[0] and re.search(r"\b2 of its entries differ\b", lines[0])
-    lines.clear()
-    boot(config_rules.config_home(), db, raw, log=lines.append)
-    assert lines == [], "a file equal to what runs says nothing"
+    home = config_rules.config_home()
+    again = config_legacy_import.import_section(home, SECTION, edited[SECTION], path=db, registry=None)
+    assert again.status == "already_imported"
+    assert golden.digest(home.layer(edited, path=db, registry=None).config[SECTION]) == before
     assert len(rows(db)) > 0 and all(row["origin"] == "legacy-import" for row in rows(db))
 
 
-def test_a_file_with_no_block_records_the_step_so_a_later_block_is_ignored(tmp_path):
-    db, lines = tmp_path / "admin.db", []
-    boot(config_rules.config_home(), db, {}, log=lines.append)
-    later = boot(config_rules.config_home(), db, golden.raw_config("tracked"), log=lines.append)
+def test_a_file_with_no_block_records_the_step_so_a_later_block_is_not_imported(tmp_path):
+    db = tmp_path / "admin.db"
+    boot(config_rules.config_home(), db, {})
+    later = boot(config_rules.config_home(), db, golden.raw_config("tracked"))
     assert later.config[SECTION] == release_aliases() and rows(db) == []
-    mine = [line for line in lines if f"{SECTION} block" in line]
-    assert len(mine) == 1 and "ignored" in mine[0]
-
-
-def test_the_boot_runs_the_import_and_a_reload_never_does(tmp_path):
-    home, db = config_rules.config_home(), tmp_path / "admin.db"
-    admin_store.init_db(db)
-    raw = golden.raw_config("tracked")
-    reloaded = home.layer(raw, path=db, registry=None)
-    assert reloaded.config[SECTION] == release_aliases() and not admin_store.migration_step_recorded(STEP, path=db)
-    boot(home, db, raw)
-    assert admin_store.migration_step_recorded(STEP, path=db)
 
 
 def test_two_boots_cannot_both_import(tmp_path):
@@ -453,7 +420,7 @@ def test_the_workflow_alias_tables_are_derived_from_the_effective_config_and_tol
 # Rollback of 8.2
 # ---------------------------------------------------------------------------------------------------------------------
 
-def test_rollback_the_code_before_c3_serves_the_file_from_a_migrated_database_and_roll_forward_reimports(tmp_path):
+def test_rollback_the_code_before_c3_serves_the_file_from_a_migrated_database(tmp_path):
     db = tmp_path / "admin.db"
     raw = golden.raw_config("live_like")
     boot(config_rules.config_home(), db, raw)
@@ -462,21 +429,6 @@ def test_rollback_the_code_before_c3_serves_the_file_from_a_migrated_database_an
     admin_store.init_db(db)
     old = config_runtime.ConfigHome({}).layer(raw, path=db, registry=None)
     assert old.config[SECTION] == raw[SECTION], "the pre-import aliases, from the restored file"
-    # Roll forward with the file changed meanwhile: the boot ignores it and warns; the route imports it on purpose.
-    changed = copy.deepcopy(raw[SECTION])
-    changed["chat"]["stable"]["default"] = "after-rollback"
-    lines: list[str] = []
-    forward = boot(config_rules.config_home(), db, {**raw, SECTION: changed}, log=lines.append)
-    assert forward.config[SECTION]["chat"]["stable"]["default"] == raw[SECTION]["chat"]["stable"]["default"]
-    assert len(lines) == 1 and "1 of its entries differ" in lines[0]
-    app = AliasApp(tmp_path, startup={SECTION: changed}, db=db)
-    dry = app.client.post(f"{API}/sections/{SECTION}/legacy-import?dry_run=1", headers=OWNER).json()
-    assert dry["applicable"] and dry["valid"], "the report lists every row; only one differs from the store"
-    assert [change["pointer"] for change in dry["diff"]] == ["/chat/stable/default"]
-    done = app.client.post(f"{API}/sections/{SECTION}/legacy-import", headers={**OWNER, "If-Match": app.revision()})
-    assert done.status_code == 200, done.text
-    assert app.effective()["chat"]["stable"]["default"] == "after-rollback"
-    assert golden.digest(app.effective()) == golden.digest(changed)
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -498,7 +450,7 @@ def aliases_entry(result: dict[str, Any]) -> dict[str, Any]:
 
 def test_the_dry_run_command_lists_every_row_for_a_copy_of_a_config_file_and_writes_nothing(tmp_path):
     config = tmp_path / "proxy_config.copy.yml"
-    config.write_text((ROOT / "proxy_config.yml").read_text(encoding="utf-8"), encoding="utf-8")
+    config.write_text((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"), encoding="utf-8")
     scratch = tmp_path / "scratch.db"
     result = run_import_command("--config", str(config), "--db", str(scratch))
     assert sorted(entry["section"] for entry in result["sections"]) == sorted(proxy.CONFIG_HOME.sections)
@@ -513,7 +465,7 @@ def test_the_dry_run_command_lists_every_row_for_a_copy_of_a_config_file_and_wri
 
 def test_the_command_applies_only_to_a_scratch_database_it_is_given(tmp_path, capsys):
     config = tmp_path / "live-copy.yml"
-    config.write_text((ROOT / "proxy_config.yml").read_text(encoding="utf-8"), encoding="utf-8")
+    config.write_text((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"), encoding="utf-8")
     with pytest.raises(SystemExit) as refused:
         config_legacy_import.main(["--config", str(config), "--apply"])
     assert refused.value.code == 2

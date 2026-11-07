@@ -31,7 +31,7 @@ fi
 for command in bwrap git ip sha256sum tar uv; do
   command -v "$command" >/dev/null 2>&1 || { echo "error: $command is required for hermetic pytest" >&2; exit 127; }
 done
-for file in "$lock_file" "$repo_root/tests/requirements-hermetic.in" "$repo_root/requirements.txt" "$repo_root/proxy_config.yml"; do
+for file in "$lock_file" "$repo_root/tests/requirements-hermetic.in" "$repo_root/requirements.txt" "$repo_root/tests/fixtures/config_homes/deployment_startup.yml"; do
   [[ -f $file ]] || { echo "error: required hermetic test input is missing: $file" >&2; exit 127; }
 done
 "$repo_root/scripts/hermetic_source_preflight.sh" "$repo_root" "$lock_file" "$repo_root/requirements.txt" "$repo_root/tests/requirements-hermetic.in"
@@ -82,7 +82,8 @@ checkout_root="$state_dir/checkout"
 mkdir -p -- "$checkout_root"
 git -C "$repo_root" archive --format=tar HEAD | tar -x -C "$checkout_root"
 mkdir -- "$checkout_root/venv" "$checkout_root/cache"
-cp -- "$checkout_root/proxy_config.yml" "$state_dir/proxy_config.yml"
+# The startup file of the run: the startup keys of a deployment (the suite seeds its sections into the run's admin.db).
+cp -- "$checkout_root/tests/fixtures/config_homes/deployment_startup.yml" "$state_dir/proxy_config.yml"
 fresh_env="$state_dir/fresh-venv"
 env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv venv --no-project --no-managed-python --no-python-downloads --python "$python_root/bin/python3.12" "$fresh_env" >/dev/null
 env -i HOME="$state_root/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$state_root/hermetic-uv-cache" UV_NO_CONFIG=1 uv pip sync --offline --no-build --strict --require-hashes --link-mode copy --python "$fresh_env/bin/python" "$lock_file" >/dev/null

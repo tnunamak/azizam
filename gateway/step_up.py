@@ -30,10 +30,8 @@ from gateway.egress import SafeErrorResponse
 
 # "*" stands for one path segment. The middleware asks every browser session, whatever its role.
 SENSITIVE_ROUTES: tuple[tuple[str, str], ...] = (
-    # Everything the gateway would let a thief carry away. The inline view shows the same document.
+    # Everything the gateway would let a thief carry away.
     ("GET", "/admin/api/config/export"),
-    ("GET", "/admin/api/settings/effective"),
-    ("GET", "/admin/api/settings/effective/export"),
     # Provider and engine secrets, admin keys.
     ("POST", "/admin/api/providers"),
     ("PUT", "/admin/api/providers/*/key"),

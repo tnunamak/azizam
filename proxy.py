@@ -147,7 +147,7 @@ from gateway import voices_api
 from gateway import a1111_api
 from gateway import mcp_oauth, mcp_oauth_store, mcp_server, session_guard
 from gateway.workflow_call import CallError
-from gateway import identity_api, identity_scene
+from gateway import binding_descriptors, binding_registry, identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking, stt_measurement
 from gateway.lifecycle_drivers import SwapRecoveryFailed
@@ -505,8 +505,7 @@ def _layer_for(raw_config: Mapping[str, Any], registry: Mapping[str, Any], *, bo
     """The override layer for ``registry``. A reload lets an unreadable override store raise, so the old config keeps
     serving. A boot has no old config: it serves the release defaults with the same registry and reports the store."""
     try:
-        # A boot first imports each section's startup block once (docs/design/CONFIG_HOMES.md, 8.1); a reload never does.
-        return CONFIG_HOME.layer(raw_config, path=ADMIN_DB_PATH, registry=registry, legacy_import=boot)
+        return CONFIG_HOME.layer(raw_config, path=ADMIN_DB_PATH, registry=registry)
     except Exception as error:  # noqa: BLE001
         if not boot:
             raise
@@ -609,14 +608,14 @@ def _log_left_out(left_out: Mapping[str, str]) -> None:
         print(f"[proxy] ERROR: {label} left out of the running config: {reason}", flush=True)
 
 
-def _import_folded_settings(raw_config: Mapping[str, Any]) -> None:
+def _import_folded_settings() -> None:
     """Import the old stores of instance, media admission and service availability as override rows, once per section.
 
     Runs at boot, before the first layer is built. A failure is logged and boot goes on: the sections then serve the
     release defaults, and the next boot tries the import again (a section's step is recorded only with its rows).
     """
     try:
-        for record in config_fold.migrate(ADMIN_DB_PATH, raw_config):
+        for record in config_fold.migrate(ADMIN_DB_PATH):
             left_out = f", left out: {', '.join(record['dropped'])}" if record["dropped"] else ""
             print(f"[proxy] config import {record['section']}: {record['rows']} override row(s){left_out}", flush=True)
     except Exception as error:  # noqa: BLE001
@@ -633,7 +632,7 @@ def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[
     here and reported on the Overview. The LiteLLM config file is left as it is: a partial registry must
     not overwrite what the running LiteLLM reloads.
     """
-    _import_folded_settings(raw_config)
+    _import_folded_settings()
     try:
         return _load_effective_runtime_config(raw_config, boot=True), None
     except Exception as error:  # noqa: BLE001 - boot continues, degraded and loud
@@ -1010,11 +1009,7 @@ GGUF_DIR = (_bootstrap_config.get("model_routing") or {}).get("gguf_dir", "/medi
 
 
 def upstream_read_timeout() -> float:
-    """model_routing.upstream_read_timeout, read per call from the snapshot (CONFIG_HOMES C7). An UPSTREAM_READ_TIMEOUT
-    in the environment still wins until C10 removes that override."""
-    env = os.environ.get("UPSTREAM_READ_TIMEOUT")
-    if env:
-        return float(env)
+    """model_routing.upstream_read_timeout, read per call from the snapshot (CONFIG_HOMES C7)."""
     return float((runtime().config.get("model_routing") or {}).get("upstream_read_timeout", 600))
 
 # Roles: logical aliases for backends. Lets clients send `model: "default"` instead of
@@ -1045,8 +1040,20 @@ def _is_local_swap_backend(backend: str | None) -> bool:
 # This lets us surface arbitrary GGUFs on /v1/models without inventing roles.
 # All MODELS_CATALOG entries require a local file path (this is a GGUF catalog).
 # Any enabled registry backend may appear here.
+def _extra_model_entries(raw) -> dict:
+    """The ``models`` section as ``{normalized id: entry}``. The section is a mapping of the model name a client sends
+    to its entry; anything else is no catalog."""
+    if not isinstance(raw, Mapping):
+        return {}
+    return {
+        str(name).strip().lower(): {**item, "id": str(name).strip().lower()}
+        for name, item in raw.items()
+        if isinstance(item, Mapping) and str(name).strip()
+    }
+
+
 def _normalize_models_catalog(raw) -> dict:
-    """Normalize config['models'] (list of dicts) into {normalized_id: entry}.
+    """Normalize the ``models`` section into {normalized_id: entry}.
 
     Accepts any backend that is known in config["backends"].  All entries in this catalog MUST supply a local file
     path — it is a GGUF-alias catalog by design.  Entries without a path are
@@ -1054,16 +1061,11 @@ def _normalize_models_catalog(raw) -> dict:
     """
     known_backends: frozenset[str] = frozenset((config.get("backends") or {}).keys())
     out: dict = {}
-    if not isinstance(raw, list):
-        return out
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        mid = str(item.get("id", "")).strip().lower()
+    for mid, item in _extra_model_entries(raw).items():
         backend = item.get("backend")
         path = item.get("path")
         # Require a known backend AND a local path (GGUF catalog — path is mandatory).
-        if not mid or backend not in known_backends or not path:
+        if backend not in known_backends or not path:
             continue
         mmproj_raw = item.get("mmproj")
         mmproj_path = str(mmproj_raw).strip() if mmproj_raw else None
@@ -1225,11 +1227,8 @@ def _image_media_job_retry_max_seconds() -> float:
 
 
 def _image_media_job_resume_on_start() -> bool:
-    """images.media_jobs.resume_on_start (applies at restart: the snapshot keeps the value that runs). An
-    IMAGE_MEDIA_JOB_RESUME_ON_START in the environment still wins until C10 removes that override."""
-    return bool_from_config(
-        os.environ.get("IMAGE_MEDIA_JOB_RESUME_ON_START", _image_media_jobs_group().get("resume_on_start")), True,
-    )
+    """images.media_jobs.resume_on_start (applies at restart: the snapshot keeps the value that runs)."""
+    return bool_from_config(_image_media_jobs_group().get("resume_on_start"), True)
 
 
 # The job concurrency is the size of two semaphores built here, so it applies at restart (CONFIG_HOMES class R): it is
@@ -1396,7 +1395,7 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
     tts_c = backends.get("tts") or {}
     stt_c = backends.get("stt") or {}
     emb_c = backends.get("embeddings") or {}
-    cfy_c = backends.get("comfyui") or {}
+    cfy_c = backends.get(_GRAPH_BACKEND_ID) or {}
     protocol_registry = registry or service_registry.release_registry()
     route_args = {"registry": protocol_registry, "proxy_config": effective_cfg}
 
@@ -1415,7 +1414,7 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
         # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
         "TTS_TIMEOUT": int(tts_c.get("timeout", 120)),
         "EMBEDDINGS_HEALTH_ENDPOINT": emb_c.get("health_endpoint", "/health"),
-        "EMBEDDINGS_TIMEOUT": int(os.environ.get("EMBEDDINGS_TIMEOUT", emb_c.get("timeout", 120))),
+        "EMBEDDINGS_TIMEOUT": int(emb_c.get("timeout", 120)),
         "EMBEDDINGS_BACKEND_MODEL": _embeddings_backend_model(backends),
         "COMFY_TIMEOUT": int(cfy_c.get("timeout", 300)),
         "COMFY_DEFAULT_MODEL": cfy_c.get("default_model", "flux2-klein-4b"),
@@ -3269,17 +3268,16 @@ def _compat_cfg() -> Mapping[str, Any]:
 
 
 def model_compat_enabled() -> bool:
-    """model_compatibility.enabled. An AZIZAM_MODEL_COMPAT_ENABLED in the environment still wins until C10 removes it."""
-    return bool_from_config(get_env("AZIZAM_MODEL_COMPAT_ENABLED", _compat_cfg().get("enabled")), True)
+    """model_compatibility.enabled."""
+    return bool_from_config(_compat_cfg().get("enabled"), True)
 
 
-# The generated OpenAI model list is release data (registry/), not a setting: its path is fixed. The environment
-# variable stays as an override until C10 removes the non-startup env overrides.
+# The generated OpenAI model list is release data (registry/), not a setting: its path is fixed.
 GENERATED_OPENAI_MODEL_ALIASES_FILE = Path(__file__).parent / "registry" / "openai_model_aliases.generated.yml"
 
 
 def openai_model_aliases_file() -> Path:
-    return config_path(os.environ.get("OPENAI_MODEL_ALIASES_FILE"), str(GENERATED_OPENAI_MODEL_ALIASES_FILE))
+    return GENERATED_OPENAI_MODEL_ALIASES_FILE
 
 
 def openai_models_api_url() -> str:
@@ -3287,10 +3285,7 @@ def openai_models_api_url() -> str:
 
 
 def openai_model_discovery_include_private() -> bool:
-    return bool_from_config(
-        os.environ.get("OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE", _compat_cfg().get("include_private")),
-        False,
-    )
+    return bool_from_config(_compat_cfg().get("include_private"), False)
 
 
 def model_compat_defaults() -> Mapping[str, Any]:
@@ -9017,41 +9012,16 @@ async def proxy_graph_image_request(
     _record_image_input(receipt, "prompt")
 
     manifest = _find_image_manifest("image.generate", str(model))
-    gateway_compose = _gateway_image_generate_compose(manifest)
-    if gateway_compose == "offset_inpaint_tile":
-        if background == "transparent":
-            _record_image_input(
-                receipt,
-                "background",
-                rejected_reason="unsupported_for_gateway_composition",
-            )
-            return Response(
-                content=json.dumps({
-                    "error": {
-                        "message": "background=transparent is not supported for offset-inpaint tile generation",
-                        "type": "invalid_request_error",
-                        "param": "background",
-                        "code": "unsupported_value",
-                    }
-                }),
-                status_code=400,
-                media_type="application/json",
-            )
-        return await _proxy_offset_inpaint_tile_request(
-            request=request,
-            body=body,
-            auth_context=auth_context,
-            receipt=receipt,
-            manifest=manifest,
-            prompt=prompt,
-            model=str(model),
-            size=str(size),
-            n=n,
-            response_format=response_format,
-            headers=headers,
-            output_format=output_format,
-            output_compression=output_compression,
-            quality=quality,
+    gateway_binding = _gateway_image_generate_binding(manifest)
+    if gateway_binding is not None:
+        # The description lists the roles and the role registry holds their code; a role missing from either never runs.
+        role = binding_descriptors.resolve_role("gateway", gateway_binding, binding_registry.Entry.GENERATION)
+        if role is None:
+            return _binding_unavailable_response()
+        return await role.run(
+            request=request, body=body, auth_context=auth_context, receipt=receipt, manifest=manifest, prompt=prompt,
+            model=str(model), size=str(size), n=n, response_format=response_format, headers=headers,
+            output_format=output_format, output_compression=output_compression, quality=quality, background=background,
         )
 
     workflow = load_graph_workflow(model)
@@ -10937,12 +10907,8 @@ async def _resolve_gateway_media_url(
     """Resolve our own content URLs with signatures and caller ownership."""
     await _warm_video_owner_keys(auth_context)
     parsed = urlsplit(url)
-    public_urls = [
-        str(get_env("AZIZAM_PUBLIC_URL") or ""),
-        str((config.get("proxy") or {}).get("public_url") or ""),
-        str(instance_settings(ADMIN_DB_PATH).get("base_url") or ""),
-    ]
-    hosts = {urlsplit(base).hostname for base in public_urls if base}
+    base_url = str(instance_settings(ADMIN_DB_PATH).get("base_url") or "")
+    hosts = {urlsplit(base_url).hostname} if base_url else set()
     if request is not None:
         # Signed URLs are minted from these same request hosts. Recognizing a
         # host permits only internal owned-media resolution, never network I/O.
@@ -17390,11 +17356,7 @@ app.include_router(
 
 
 app.include_router(create_settings_router(
-    auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH, config_provider=lambda: {
-        **config, "oidc": _admin_oidc_config_snapshot() or {},
-        "service_registry": ADMIN_STORE.get_service_registry(),
-    },
-    overrides_provider=ADMIN_STORE.operator_overrides,
+    auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH, config_provider=lambda: config,
     prompt_memory_path=media_jobs.DB_PATH,
     receipts_path=receipt_store.DB_PATH, fact_store_path=media_jobs.DB_PATH,
     on_prompt_memory_kill=lambda: _purge_prompt_memory_on_kill(),
@@ -17406,7 +17368,6 @@ app.include_router(create_settings_router(
 app.include_router(config_api.create_config_router(
     auth=ADMIN_AUTH, admin_path=lambda: ADMIN_DB_PATH, home=lambda: CONFIG_HOME,
     registry=ADMIN_STORE.get_service_registry, reload=lambda: reload_runtime_config(),
-    startup_block=lambda section: _bootstrap_config.get(section) if isinstance(_bootstrap_config.get(section), Mapping) else None,
 ))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
 # Owner-defined categories and plans (design v3). Active rules tighten the
@@ -20382,8 +20343,7 @@ def _report_session_view_key_problem() -> None:
 def _public_base_url(request: Request) -> str | None:
     """Best-effort public origin for absolute discovery links.
 
-    Saved instance settings own the public URL after the first dashboard save.
-    ``AZIZAM_PUBLIC_URL`` and ``proxy.public_url`` provide initial defaults.
+    The instance section owns the public URL (its ``base_url``).
     Otherwise we honor standard reverse
     proxy headers, then fall back to the request's host. We return
     ``None`` if no candidate is available so the discovery helper can
@@ -20407,13 +20367,11 @@ def _public_base_url(request: Request) -> str | None:
 def _brand_settings() -> tuple[str, tuple[str, str] | None]:
     """Return ``(product_label, wordmark)`` for the shared header chrome.
 
-    Saved instance settings own the product name after the first dashboard save.
-    ``admin.brand`` (or ``AZIZAM_BRAND`` / ``AZIZAM_WORDMARK``) seeds
-    the initial name and provides the optional wordmark:
+    The instance section owns the product name. ``admin.brand.wordmark`` of the startup file (or ``AZIZAM_WORDMARK``)
+    provides the optional wordmark:
 
       admin:
         brand:
-          product: "Azizam"      # neutral product label (default)
           wordmark: "example.org"    # optional deployment mark, "name.tld"
 
     A generic install with no wordmark shows only the neutral product mark, so
@@ -21219,14 +21177,13 @@ async def _upload_graph_image_bytes(
     return str(uploaded_filename), None
 
 
-def _gateway_image_generate_compose(manifest: Mapping[str, Any] | None) -> str | None:
+def _gateway_image_generate_binding(manifest: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """The manifest's gateway binding block, or ``None`` when the manifest has no such block (it runs the graph path)."""
     if not isinstance(manifest, Mapping):
         return None
-    binding = (manifest.get("bindings") or {}).get("gateway")
-    if not isinstance(binding, Mapping):
-        return None
-    compose = binding.get("compose")
-    return str(compose) if isinstance(compose, str) and compose else None
+    bindings = manifest.get("bindings")
+    binding = bindings.get("gateway") if isinstance(bindings, Mapping) else None
+    return binding if isinstance(binding, Mapping) else None
 
 
 def _gateway_image_model_id(record_manifest: Mapping[str, Any]) -> str | None:
@@ -21394,6 +21351,48 @@ def _tile_seam_prompt(prompt: str, seam_prompt: Any) -> str:
         "scale, lighting, and brush texture. Do not add borders, text, logos, "
         "objects, frames, or directional features."
     )
+
+
+
+def _binding_unavailable_response() -> Response:
+    """A workflow names a role that no registered code runs (``binding_unavailable``). Nothing was sent to any engine."""
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": "This workflow needs code that is not installed.",
+                "type": "api_error",
+                "code": "binding_unavailable",
+            }
+        }),
+        status_code=503,
+        media_type="application/json",
+    )
+
+
+async def _run_offset_inpaint_tile_role(*, background: str, receipt: RouteReceipt | None, **route: Any) -> Response:
+    """The reviewed code of the ``offset_inpaint_tile`` role, as the image generate route calls it."""
+    if background == "transparent":
+        _record_image_input(
+            receipt,
+            "background",
+            rejected_reason="unsupported_for_gateway_composition",
+        )
+        return Response(
+            content=json.dumps({
+                "error": {
+                    "message": "background=transparent is not supported for offset-inpaint tile generation",
+                    "type": "invalid_request_error",
+                    "param": "background",
+                    "code": "unsupported_value",
+                }
+            }),
+            status_code=400,
+            media_type="application/json",
+        )
+    return await _proxy_offset_inpaint_tile_request(receipt=receipt, **route)
+
+
+binding_registry.register_role("offset_inpaint_tile", binding_registry.Entry.GENERATION, _run_offset_inpaint_tile_role)
 
 
 async def _proxy_offset_inpaint_tile_request(
@@ -21662,8 +21661,8 @@ def _manifest_uses_source_alpha_mask(manifest: Mapping[str, Any] | None) -> bool
     if not isinstance(manifest, Mapping):
         return False
     bindings = manifest.get("bindings")
-    comfyui = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings, Mapping) else None
-    return bool(comfyui.get("mask_to_source_alpha")) if isinstance(comfyui, Mapping) else False
+    graph_binding = bindings.get(DERIVED._GRAPH_BINDING) if isinstance(bindings, Mapping) else None
+    return bool(graph_binding.get("mask_to_source_alpha")) if isinstance(graph_binding, Mapping) else False
 
 
 def _manifest_route_managed_mask_input(manifest: Mapping[str, Any] | None) -> str | None:
@@ -27268,12 +27267,8 @@ def _declared_model_metadata_index(
 
     for model_id, (_service, record) in service_index.items():
         add(model_id, record)
-    extras: dict[str, Mapping[str, Any]] = {}
-    for item in config.get("models") or []:
-        if isinstance(item, Mapping) and item.get("id"):
-            extras.setdefault(normalize_model_id(str(item["id"])), item)
-    for model_id, item in extras.items():
-        add(model_id, item)
+    for model_id, item in _extra_model_entries(config.get("models")).items():
+        add(normalize_model_id(model_id), item)
     roles_cfg = config.get("roles") if isinstance(config.get("roles"), Mapping) else {}
     for role_name, role_cfg in roles_cfg.items():
         add(str(role_name), role_cfg)
@@ -27890,9 +27885,7 @@ async def list_models(request: Request):
     # compliant clients, readable by agents querying the catalog.
     roles_cfg = config.get("roles") or {}
     extra_models_cfg = {
-        normalize_model_id(str(m.get("id") or "")): m
-        for m in (config.get("models") or [])
-        if isinstance(m, Mapping) and m.get("id")
+        normalize_model_id(model_id): entry for model_id, entry in _extra_model_entries(config.get("models")).items()
     }
     for item in data:
         if not isinstance(item, dict) or item.get("description"):

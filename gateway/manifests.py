@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import math
+from fractions import Fraction
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,13 +62,14 @@ class ContractErrors(ManifestError):
     final ``too_many_errors`` entry. ``primary`` is the error the check found first, in the order of its checks; the
     message of the exception, and so its ``str()``, is the message of ``primary``."""
 
-    def __init__(self, errors: Iterable[ContractError], primary: ContractError | None = None) -> None:
+    def __init__(self, errors: Iterable[ContractError], primary: ContractError | None = None, *, final: bool = False) -> None:
+        """``final`` says the list is already sorted and capped (a report's): it is kept as it is."""
         found = list(errors)
         if not found:
             raise ValueError("ContractErrors needs at least one error")
         self.primary = primary if primary is not None else found[0]
-        ordered = sorted(found, key=_sort_key)
-        if len(ordered) > MAX_CONTRACT_ERRORS:
+        ordered = found if final else sorted(found, key=_sort_key)
+        if len(ordered) > MAX_CONTRACT_ERRORS and not final:
             dropped = len(ordered) - MAX_CONTRACT_ERRORS
             ordered = ordered[:MAX_CONTRACT_ERRORS]
             ordered.append(ContractError((), TOO_MANY_ERRORS, f"{dropped} more errors are not listed"))
@@ -180,6 +182,13 @@ def load_workflow_manifest(path: str | Path) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         raise ManifestError(f"manifest {manifest_path} must be a mapping")
     validate_manifest(manifest)
+    # Report only (CODE_TO_DATA_S3, S3.2): the schema 2 check is logged, nothing is refused. S3.5 makes it the check.
+    try:
+        from gateway.workflow_convert import log_bundled_report
+
+        log_bundled_report(manifest, manifest_path)
+    except Exception:  # an optional report, even its import or its logging, never stops a load
+        pass
     return manifest
 
 
@@ -209,9 +218,14 @@ RESULT_NAME_RULE = "a result name starts with a letter or digit and holds only l
 RESULT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
-def validate_manifest(manifest: dict[str, Any], descriptors: Mapping[str, Any] | None = None) -> None:
+def validate_manifest(
+    manifest: dict[str, Any], descriptors: Mapping[str, Any] | None = None, *,
+    binding_descriptors: Mapping[str, Any] | None = None,
+) -> None:
     """Check a manifest. ``descriptors`` are the selector descriptors by binding key to check selectors against; the
     default is the shipped registry. A run from a pin passes the descriptor of the protocol it was started with.
+    ``binding_descriptors`` (binding key to ``BindingDescriptor``), when given, also close every binding block against its
+    adapter's description; the loaders pass none until the bundled files are rewritten (CODE_TO_DATA_S3, S3.5).
 
     Every error is collected. The raised ``ContractErrors`` has them all, each with a path and a code; its message is
     the first one found, in the order of the checks below."""
@@ -220,9 +234,9 @@ def validate_manifest(manifest: dict[str, Any], descriptors: Mapping[str, Any] |
     errors = ErrorCollector()
     selector_start: list[int] = []
     with errors.stop_at_a_crash_after_an_error():
-        collect_manifest_errors(manifest, errors, descriptors, selector_start)
+        collect_manifest_errors(manifest, errors, descriptors, selector_start, binding_descriptors)
     # A manifest whose first problem is a selector is still refused with a ``SelectorError``, as it was.
-    first_is_selector = selector_start == [0] and len(errors) > 0
+    first_is_selector = selector_start[:1] == [0] and (len(selector_start) == 1 or selector_start[1] > 0) and len(errors) > 0
     errors.raise_if_any(output_selectors.SelectorErrors if first_is_selector else ContractErrors)
 
 
@@ -231,9 +245,10 @@ def collect_manifest_errors(
     errors: ErrorCollector,
     descriptors: Mapping[str, Any] | None = None,
     selector_start: list[int] | None = None,
+    binding_descriptors: Mapping[str, Any] | None = None,
 ) -> None:
     """Add every error of the manifest to ``errors``. ``selector_start``, when given, receives how many errors there were
-    before the selector check began."""
+    before the selector check began, then how many there were after it. ``binding_descriptors``, when given, adds the binding closure errors after all others."""
     if not isinstance(manifest, Mapping):
         # As before: a root that is not a mapping is refused for its first missing field (or, if it holds every field
         # name, for its type). Nothing below can read it.
@@ -300,6 +315,12 @@ def collect_manifest_errors(
     if selector_start is not None:
         selector_start.append(len(errors))
     output_selectors.collect_manifest_errors(manifest, errors, descriptors)
+    if selector_start is not None:
+        selector_start.append(len(errors))   # with the entry above: how many errors the selector check added
+    if binding_descriptors is not None:
+        from gateway import binding_descriptors as bindings_module
+
+        bindings_module.collect_binding_errors(manifest, errors, binding_descriptors)
 
 
 def _holds(value: Any, name: str) -> bool:
@@ -490,6 +511,25 @@ def validate_input_value(name: str, value: Any, spec: dict[str, Any]) -> str | N
     return _validate_value(name, value, spec)
 
 
+def exact_number(value: Any) -> Fraction | None:
+    """A JSON number as an exact Fraction with decimal meaning: an int is itself, a finite float is its shortest
+    round-trip decimal (1.1 is 11/10, what the manifest author wrote). A bool, non-finite float or non-number is None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return Fraction(value)
+    if isinstance(value, float) and math.isfinite(value):
+        return Fraction(repr(value))
+    return None
+
+
+def on_grid(value: Any, step: Fraction, offset: Fraction) -> bool:
+    """True when (value - offset) / step is a whole number. The one grid test that input validation and the
+    workflow contract's generator feasibility share, so they agree by construction."""
+    exact = exact_number(value)
+    return exact is not None and ((exact - offset) / step).denominator == 1
+
+
 def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     expected_type = spec.get("type", "string")
     if expected_type == "string":
@@ -529,18 +569,14 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
         # This is data on the input spec, not knowledge about a particular model.
         step = spec.get("step")
         if step is not None:
-            try:
-                step_value = float(step)
-            except (TypeError, ValueError):
-                return f"{name} has an invalid step"
-            if step_value <= 0:
+            step_value = exact_number(step)
+            if step_value is None or step_value <= 0:
                 return f"{name} has an invalid step"
             offset = spec.get("offset", 0)
-            try:
-                remainder = (value - offset) % step_value
-            except (TypeError, ValueError):
+            offset_value = exact_number(offset)
+            if offset_value is None:
                 return f"{name} has an invalid offset"
-            if remainder not in (0, step_value):
+            if not on_grid(value, step_value, offset_value):
                 if offset:
                     return f"{name} must be {offset} plus a multiple of {spec['step']}"
                 return f"{name} must be a multiple of {spec['step']}"

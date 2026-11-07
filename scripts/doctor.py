@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -30,7 +29,6 @@ from gateway.manifests import ManifestError, bind_backend_request, load_workflow
 
 
 MANIFESTS_DIR = ROOT / "manifests" / "workflows"
-CONFIG_PATH = ROOT / "proxy_config.yml"
 AUTH_ENV_NAMES = (
     "OPENAI_API_KEY",
     "AZIZAM_API_KEY",
@@ -63,14 +61,6 @@ def warn(name: str, message: str, **details: Any) -> CheckResult:
 
 def fail(name: str, message: str, **details: Any) -> CheckResult:
     return CheckResult(name, "fail", message, details or None)
-
-
-def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    with path.open("r", encoding="utf-8") as f:
-        loaded = yaml.safe_load(f)
-    return loaded if isinstance(loaded, dict) else {}
 
 
 def check_manifest_registry(manifests_dir: Path = MANIFESTS_DIR) -> CheckResult:
@@ -183,17 +173,28 @@ def check_auth_env(env: dict[str, str] | None = None) -> CheckResult:
     return warn("auth_env", "no auth environment variables detected")
 
 
-def default_comfy_url(config: dict[str, Any]) -> str | None:
-    if os.environ.get("COMFY_HOST"):
-        return os.environ["COMFY_HOST"]
-    if os.environ.get("COMFY_ENABLED", "true").lower() not in ("true", "1", "yes"):
+def default_comfy_url(admin_db: Path | None = None) -> str | None:
+    """ComfyUI's address from the service registry, read as the gateway reads it (the owner's patches in admin.db over
+    the release records). None when there is no admin.db, no ComfyUI service or no address. Read-only: it never
+    creates a database."""
+    from gateway import admin_store, service_registry
+
+    path = Path(admin_db or os.environ.get("AZIZAM_ADMIN_DB") or admin_store.DB_PATH)
+    if not path.is_file():
         return None
-    comfy_cfg = (config.get("backends") or {}).get("comfyui") or {}
-    if not comfy_cfg:
+    try:
+        record = admin_store.get_service_registry_json_with_generation(path=path)
+        stored = service_registry._stored_document(record["value_json"]) if record else {}
+        registry, _excluded = service_registry.effective_registry(stored)
+        backend = service_registry.runtime_backends(registry).get("comfyui") or {}
+    except Exception:  # noqa: BLE001 - a doctor report must not die on a damaged store; the probe is skipped
         return None
-    host = comfy_cfg.get("host", "127.0.0.1")
-    port = comfy_cfg.get("port", 7890)
-    return f"http://{host}:{port}"
+    if not backend.get("host") or not backend.get("port"):
+        return None
+    host = str(backend["host"])
+    if ":" in host and not host.startswith("["):  # an IPv6 literal is bracketed in a URL authority
+        host = f"[{host}]"
+    return f"http://{host}:{backend['port']}"
 
 
 def run_doctor(
@@ -203,8 +204,7 @@ def run_doctor(
     timeout: float = 3.0,
     include_comfy: bool = True,
 ) -> dict[str, Any]:
-    config = load_config()
-    resolved_comfy_url = comfy_url if comfy_url is not None else default_comfy_url(config)
+    resolved_comfy_url = comfy_url if comfy_url is not None else default_comfy_url()
     checks = [
         check_manifest_registry(),
         check_workflow_bindings(),

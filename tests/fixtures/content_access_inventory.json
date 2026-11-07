@@ -1809,21 +1809,9 @@
       "access": "operational"
     },
     {
-      "handler": "gateway.settings_api.create_settings_router.<locals>.export_effective",
-      "method": "GET",
-      "path": "/admin/api/settings/effective/export",
-      "access": "operational"
-    },
-    {
       "handler": "gateway.settings_api.create_settings_router.<locals>.get_defaults",
       "method": "GET",
       "path": "/admin/api/settings/defaults",
-      "access": "operational"
-    },
-    {
-      "handler": "gateway.settings_api.create_settings_router.<locals>.get_effective",
-      "method": "GET",
-      "path": "/admin/api/settings/effective",
       "access": "operational"
     },
     {
@@ -2184,12 +2172,6 @@
       "handler": "gateway.config_api.create_config_router.<locals>.import_config",
       "method": "POST",
       "path": "/admin/api/config/import",
-      "access": "operational"
-    },
-    {
-      "handler": "gateway.config_api.create_config_router.<locals>.legacy_import",
-      "method": "POST",
-      "path": "/admin/api/config/sections/{section_id}/legacy-import",
       "access": "operational"
     },
     {

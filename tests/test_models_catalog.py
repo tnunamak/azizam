@@ -27,7 +27,7 @@ class ModelsCatalogSeedLabelsTests(unittest.TestCase):
     def test_structured_seed_records_have_readable_display_names(self) -> None:
         import yaml
 
-        seed = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+        seed = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text())
         records = list(seed["backends"].values())
         records.extend(seed["roles"].values())
         records.extend(seed["models"])
@@ -46,7 +46,7 @@ class ModelsCatalogSeedLabelsTests(unittest.TestCase):
     def test_service_member_descriptions_omit_runtime_details(self) -> None:
         import yaml
 
-        seed = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+        seed = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text())
         records = list(seed["backends"].values())
         for service in seed["backends"].values():
             records.extend(service.get("models", []))
@@ -68,7 +68,7 @@ class ModelsCatalogSeedLabelsTests(unittest.TestCase):
     def test_unused_legacy_service_key_is_absent(self) -> None:
         import yaml
 
-        seed = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+        seed = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text())
         for section in seed.values():
             if isinstance(section, dict):
                 self.assertNotIn("kobold_service_legacy", section)

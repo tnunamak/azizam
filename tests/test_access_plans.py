@@ -353,7 +353,7 @@ def _emitted_intents() -> set[str]:
     pattern = re.compile(r"""intent\s*=\s*["']([a-z_]+\.[a-z_.]+)["']""")
     for path in [ROOT / "proxy.py", *sorted((ROOT / "gateway").rglob("*.py"))]:
         intents.update(pattern.findall(path.read_text(encoding="utf-8")))
-    config = yaml.safe_load((ROOT / "proxy_config.yml").read_text(encoding="utf-8"))
+    config = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"))
     for policy in route_registry.runtime_route_policy(proxy_config=config).values():
         if policy.get("intent"):
             intents.add(str(policy["intent"]))

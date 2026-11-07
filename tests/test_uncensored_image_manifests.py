@@ -209,7 +209,7 @@ class TestDiscoveryAndAliases(unittest.TestCase):
         self.assertLessEqual({"krea2-turbo-snofs", "flux2-klein-snofs", "anima-turbo"}, ids)
 
     def test_stable_aliases_resolve_and_default_image_is_unchanged(self) -> None:
-        cfg = yaml.safe_load((ROOT / "proxy_config.yml").read_text())["model_aliases"]
+        cfg = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text())["model_aliases"]
         targets = sa.concrete_targets(cfg, "images")
         self.assertEqual(targets["image-uncensored"], "krea2-turbo-snofs")
         self.assertEqual(targets["image-anime"], "anima-turbo")

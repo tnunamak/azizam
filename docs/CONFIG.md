@@ -4,12 +4,77 @@ All configuration is optional unless stated otherwise. The gateway runs
 without any of these env vars set; features that depend on a missing path are
 silently disabled (they return empty data rather than crashing).
 
-## Core gateway
+## The startup file
 
-The checked-in `proxy_config.yml` sets `proxy.host` to `0.0.0.0`.
-It sets `auth.setup_allowed_cidrs` (the networks that may claim the first
-owner) to loopback, `192.168.0.0/16`, `10.0.0.0/8` and `100.64.0.0/10`.
-It sets `auth.trusted_proxies` to an empty list: set it to your reverse proxy's address.
+`proxy_config.yml` is the startup file. It holds only what the gateway needs before it opens `admin.db`, or what a
+running gateway cannot change. The keys are a closed list, `registry/startup.schema.json`, and start-up refuses any
+other key. The message names the key and where that setting lives now: a config section in `admin.db`
+(`PATCH /admin/api/config/changes`, or the admin UI) or a record of the service registry (Services). Every other setting
+is an owner override of a release default in `registry/defaults/`, edited through the config API.
+
+| Key | Type | Env var (overrides the key) | What it controls |
+|---|---|---|---|
+| `proxy.host` | string |  | Address the gateway binds. Bind 127.0.0.1 unless a proxy or a trusted network needs more. |
+| `proxy.port` | integer | `AZIZAM_PORT` | Listener port. |
+| `proxy.version` | string/integer |  | Version label that the MCP front door and the config export report. Default 1. |
+| `admin.db_path` | string | `AZIZAM_ADMIN_DB` | Path of admin.db, relative to the repository when not absolute. |
+| `admin.session_signing_key` | string (secret) | `AZIZAM_ADMIN_SESSION_KEY` | Browser-session signing key, at least 32 bytes. Prefer session_signing_key_env. |
+| `admin.session_signing_key_env` | string |  | Name of the environment variable that holds the browser-session signing key. |
+| `admin.brand.wordmark` | string | `AZIZAM_WORDMARK` | Optional deployment mark, "name.tld". A generic install shows only the neutral product mark. |
+| `admin.oidc.enabled` | boolean |  |  |
+| `admin.oidc.display_name` | string | `AZIZAM_ADMIN_OIDC_DISPLAY_NAME` |  |
+| `admin.oidc.issuer` | string |  |  |
+| `admin.oidc.client_id` | string |  |  |
+| `admin.oidc.client_secret` | string (secret) |  |  |
+| `admin.oidc.client_secret_env` | string |  |  |
+| `admin.oidc.redirect_uri` | string |  |  |
+| `admin.oidc.scopes` | string/array |  |  |
+| `admin.oidc.admin_emails` | array |  | Addresses that may become the first owner while no owner exists. |
+| `admin.oidc.signing_key` | string (secret) |  |  |
+| `admin.oidc.signing_key_env` | string |  |  |
+| `admin.oidc.authorization_endpoint` | string |  |  |
+| `admin.oidc.token_endpoint` | string |  |  |
+| `admin.oidc.jwks_uri` | string |  |  |
+| `admin.oidc.clock_skew_seconds` | integer |  |  |
+| `admin.oidc.groups_claim` | string |  |  |
+| `admin.oidc.cookie.name` | string |  |  |
+| `admin.oidc.cookie.max_age_seconds` | integer |  |  |
+| `admin.oidc.cookie.secure` | boolean |  | false only for a localhost HTTP first run. Set true before the gateway is reached over HTTPS. |
+| `admin.oidc.cookie.http_only` | boolean |  |  |
+| `admin.oidc.cookie.same_site` | string |  |  |
+| `admin.oidc.cookie.path` | string |  |  |
+| `admin.oidc.cookie.domain` | string |  |  |
+| `auth.public_paths` | array |  | Paths that need no key. Default: /health. |
+| `auth.trusted_proxies` | array |  | Proxies whose X-Forwarded-For the gateway honors, as addresses or networks. |
+| `auth.setup_allowed_cidrs` | array | `AZIZAM_SETUP_ALLOWED_CIDRS` | Client networks that may claim the first owner account. Loopback is always allowed. |
+| `auth.cloudflare_mode` | boolean | `AZIZAM_CF_MODE` | Honor CF-Connecting-IP from verified Cloudflare edge addresses only. |
+| `auth.allow_query_param_key` | boolean | `AZIZAM_QUERY_PARAM_KEY` | Accept ?api_key=<key> from clients with no auth header field. |
+| `mcp.allowed_origins` | array |  |  |
+| `mcp.oauth.enabled` | boolean |  |  |
+| `mcp.oauth.access_token_seconds` | integer |  |  |
+| `mcp.oauth.refresh_idle_seconds` | integer |  |  |
+| `mcp.oauth.refresh_max_seconds` | integer |  |  |
+| `mcp.oauth.code_seconds` | integer |  |  |
+| `mcp.oauth.request_seconds` | integer |  |  |
+| `mcp.oauth.dynamic_client_registration` | boolean |  |  |
+| `request_body_limits.json_bytes` | integer | `AZIZAM_REQUEST_BODY_JSON_BYTES` |  |
+| `request_body_limits.media_bytes` | integer | `AZIZAM_REQUEST_BODY_MEDIA_BYTES` |  |
+| `model_routing.gguf_dir` | string |  | Directory the gateway scans for GGUF model files. A storage root. |
+| `images.cache_dir` | string |  | Durable media storage for the Library and `response_format: url`. |
+| `images.vram_estimates_file` | string |  | Persistent VRAM-per-(workflow,size) measurements. |
+| `images.signed_url_secret` | string (secret) |  | HMAC secret for signed media URLs. Empty or unset: generated at first run and kept in <cache_dir>/.url_signing_secret, mode 0600. |
+| `images.media_jobs.payload_dir` | string |  | Where queued image job payloads are kept. A storage root. |
+| `voices.dir` | string |  | Where custom voices are stored, relative to this file. A storage root. |
+| `audio.workflows_dir` | string |  | Directory of the audio workflow graph files. A storage root. |
+
+The checked-in file is a first-run file. It sets `proxy.host` to `127.0.0.1` and `admin.oidc.cookie.secure` to `false`,
+so setup works over plain HTTP on this computer, and it names no sign-in provider and no engine. Before you expose the
+gateway, set `admin.oidc.cookie.secure: true`, add your reverse proxy's address to `auth.trusted_proxies`, and, if
+the owner will claim the first account from another machine, that machine's network to `auth.setup_allowed_cidrs`.
+A deployment that kept its own file must carry these keys itself: a file from an earlier release also holds blocks
+(`backends`, `model_aliases`, `images.signed_url_ttl`, and so on) that start-up now refuses. Delete each block after
+its content is in `admin.db`; the refusal names the section that owns it.
+
 Protected API requests need an App key unless an owner has added the client
 address to an App under **Apps & keys → app menu → Trusted addresses**.
 Without a key or matching trusted address, the response is `401 key_required`.
@@ -22,14 +87,35 @@ The gateway refuses to start while `auth.enabled`,
 `auth.lan_bypass_enabled`, `auth.lan_bypass_cidrs`, `auth.path_tokens`,
 `auth.ollama_compat_discovery` or the env vars `AZIZAM_AUTH_ENABLED`,
 `AZIZAM_LAN_BYPASS` and `OLLAMA_COMPAT_DISCOVERY` are set.
-These are deployment-specific values, not an all-features-off baseline.
-Environment variables and Compose port publishing can override them. Check
-the effective listener, published ports, trusted proxies and setup networks
+Check the effective listener, published ports, trusted proxies and setup networks
 before exposing the gateway.
+
+The inventory of every file-borne setting, with its home and how to change it, is generated from the schemas
+(`gateway/config_sources.py`). Compose publishes the gateway on host loopback only.
+
+### Removed environment overrides
+
+An environment variable may override a startup key, and it carries secrets. It may not override a setting that lives
+in `admin.db`: that would be a second writable home for one value. These variables are no longer read. Each
+setting is now an owner override in the section named:
+
+| Removed variable | The setting now lives in |
+|---|---|
+| `UPSTREAM_READ_TIMEOUT` | section `model_routing`, entry `/upstream_read_timeout` |
+| `EMBEDDINGS_TIMEOUT` | the `embeddings` service record (Services) |
+| `AZIZAM_MODEL_COMPAT_ENABLED` | section `model_compatibility`, entry `/enabled` |
+| `OPENAI_MODEL_ALIASES_FILE` | a release file, `registry/openai_model_aliases.generated.yml`; its path is not a setting |
+| `OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE` | section `model_compatibility`, entry `/include_private` |
+| `IMAGE_MEDIA_JOB_RESUME_ON_START` | section `images`, entry `/media_jobs/resume_on_start` |
+| `AZIZAM_PUBLIC_URL` (the gateway's read) | section `instance`, entry `/base_url` (Settings → Instance). `scripts/safe-restart` still reads it from the shell. |
+| `AZIZAM_BRAND` (the first-boot seed of the instance name) | section `instance`, entry `/name` |
+| `TTS_ENABLED`, `TTS_HOST` (in `azizam.service`; nothing read them) | the `tts` service record |
+| `COMFY_ENABLED`, `COMFY_HOST` (no gateway code read them since C9; the old inventory still listed them) | the `comfyui` service record |
+| `AZIZAM_USER_SELF_SERVICE`, `AZIZAM_AUTO_CREATE_PERSONAL_APP` (the old inventory listed them; nothing read them) | access plans and the invitation default (Settings → Access plans) |
 
 | Env var | What it controls | Default |
 |---|---|---|
-| `AZIZAM_PORT` | Listener port | `5000` |
+| `AZIZAM_PORT` | Listener port; overrides `proxy.port` | `5000` |
 | `AZIZAM_SETUP_ALLOWED_CIDRS` | Exact client networks allowed to claim the first password owner; overrides `auth.setup_allowed_cidrs`. Loopback is always allowed. This does not enable anonymous inference access. | loopback only when neither setup setting exists |
 | `AZIZAM_DOCKER_SUBNET` | Compose bridge subnet; configure with its gateway to avoid local subnet conflicts. | `172.30.251.0/24` |
 | `AZIZAM_DOCKER_GATEWAY` | Compose bridge host address; Compose grants first-owner setup to this exact `/32` peer. Its published port remains loopback-only. | `172.30.251.1` |
@@ -39,7 +125,7 @@ before exposing the gateway.
 
 The owner can set **Provider display name** in **Settings → Sign-in**.
 It is public text shown as “Continue with {name}”. The `admin.oidc.display_name`
-bootstrap setting and the environment variable below use the same validation:
+startup setting and the environment variable below use the same validation:
 at most 80 characters, no angle brackets, control characters, or line separators.
 Leading and trailing spaces are removed. An empty name shows “Continue with
 single sign-on”. A saved Settings value overrides the bootstrap name; saving
@@ -47,7 +133,7 @@ an empty name clears it even when the environment variable is set.
 
 | Env var | What it controls | Default |
 |---|---|---|
-| `AZIZAM_ADMIN_OIDC_DISPLAY_NAME` | Public provider name; overrides `admin.oidc.display_name` at bootstrap | empty (single sign-on) |
+| `AZIZAM_ADMIN_OIDC_DISPLAY_NAME` | Public provider name; overrides `admin.oidc.display_name` of the startup file | empty (single sign-on) |
 | `AZIZAM_OIDC_CLIENT_SECRET` | Client secret when referenced by `admin.oidc.client_secret_env` | unset |
 | `AZIZAM_REMEMBERED_LIST_READS_PER_MINUTE` | Reads of the sign-in page's remembered-people list allowed per minute from one address. An invalid or non-positive value keeps the default. | `60` |
 | `AZIZAM_LOGIN_ATTEMPTS_PER_WINDOW` | Password sign-in attempts allowed from one address in 15 minutes, by email or by tile. The 10 attempts per email do not change. An invalid or non-positive value keeps the default and logs one line. | `60` |
@@ -69,7 +155,7 @@ evidence. Explicit readiness failure, starting or busy states take precedence.
 For example, a `/system_stats` probe can declare `health_success_path: system`.
 An opaque JSON response without such a declaration remains unknown. These
 fields are operator-authored registry data and apply after a registry edit;
-changing bootstrap seeds does not overwrite an existing service record.
+the startup file holds no service records.
 
 GPU memory and RSS are attributed to services from the same records. A service
 owns the processes in its `lifecycle.driver_config.unit` cgroup; a service with
@@ -169,7 +255,7 @@ the file exists. The file is gitignored.
 
 | Env var | What it controls | Default |
 |---|---|---|
-| `AZIZAM_CONFIG_PATH` | Bootstrap config file that the gateway loads. The first-run setup uses `first-run.yml`, which listens on loopback only. | `proxy_config.yml` |
+| `AZIZAM_CONFIG_PATH` | Startup file that the gateway loads | `proxy_config.yml` |
 | `AZIZAM_REQUIREMENTS_FILE` | Requirements file that `start.sh` installs | `requirements.txt` |
 | `AZIZAM_REQUIREMENTS_HASHES` | Set to `true` to install with `--require-hashes`. Any other value installs without hash checks. | `false` |
 | `AZIZAM_ADMIN_KEY` | Admin key for `safe-restart`. A non-blank value wins over the key file. | unset |
@@ -182,18 +268,19 @@ the file exists. The file is gitignored.
 - Relative paths in `proxy_config.yml` (e.g. `cache_dir: cache/images`) are
   resolved relative to the proxy's working directory (the repo root when using
   `start.sh` or the Docker image).
-- `proxy_config.yml` can reference environment variables for secrets using the
-  `${env:VAR_NAME}` syntax. See
+- The startup file may name an environment variable that holds a secret
+  (`admin.oidc.client_secret_env`, `admin.session_signing_key_env`). Service records
+  reference secrets with the `${env:VAR_NAME}` syntax. See
   [`docs/design/ENGINE_REGISTRY_DESIGN.md`](design/ENGINE_REGISTRY_DESIGN.md)
   for the env-ref convention.
-- `backends.<service>.chunking.global_concurrency` is a legacy-named,
+- `chunking.global_concurrency` of a transcription service record is a legacy-named,
   process-local limit. The gateway has no durable multi-worker STT coordinator,
   so each additional Python worker multiplies allowed uploads and reserved disk
   budget.
 
-## Long transcription audio (`backends.<service>.chunking`)
+## Long transcription audio (the service record's `chunking`)
 
-A transcription service that cannot take a long recording in one request sets these in its `chunking` block. Every
+A transcription service that cannot take a long recording in one request sets these in the `chunking` block of its service record. Every
 key is optional; a key left out takes its value from the bundled data file `registry/stt_chunking_defaults.yml`, and the
 engine page shows which values came from there (`stt_chunking.from_bundled_defaults`).
 
@@ -235,7 +322,7 @@ before JSON body reads. A declared oversized body may receive 413 before auth.
 | `AZIZAM_REQUEST_BODY_JSON_BYTES` | `request_body_limits.json_bytes` | 33,554,432 bytes (32 MiB) |
 | `AZIZAM_REQUEST_BODY_MEDIA_BYTES` | `request_body_limits.media_bytes` | 537,919,488 bytes (513 MiB) |
 
-Environment values override configuration. Both must be positive byte counts;
+Environment values override the startup file. Both must be positive byte counts;
 changes apply when the gateway starts. Image, audio, video, gateway media,
 workflow and identity routes, and `/sdapi/v1` use the media limit. `/openai/v1`
 media aliases use the same limit. All other routes use the JSON limit, regardless

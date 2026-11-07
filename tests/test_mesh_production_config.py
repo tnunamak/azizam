@@ -9,7 +9,7 @@ import yaml
 from gateway import exclusive_pool, vram_observer
 from gateway.exclusive_pool import MIB
 
-CONFIG = yaml.safe_load((Path(__file__).resolve().parents[1] / "proxy_config.yml").read_text(encoding="utf-8"))
+CONFIG = yaml.safe_load((Path(__file__).resolve().parents[1] / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"))
 BACKENDS = CONFIG["backends"]
 
 

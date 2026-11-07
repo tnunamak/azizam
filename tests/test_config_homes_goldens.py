@@ -28,15 +28,44 @@ def _first_differences(expected: list, actual: list, limit: int = 3) -> list:
     return differing[:limit] or [{"expected_len": len(expected), "actual_len": len(actual)}]
 
 
+# C10 acceptance 8: the effective config of an install whose sections were imported is what it was before C10, except
+# these top-level entries, each changed on purpose (docs/design/CONFIG_HOMES.md, "C10 as built"). The goldens are the
+# pre-C10 capture, not regenerated.
+ENTRIES_CHANGED_ON_PURPOSE = {
+    # models is its own section now (a mapping, was a list); a deployment's list was empty. workflow_execution is a
+    # section: the deployment's block is the same, a first run gains the empty release section. routing was read by no
+    # code and is gone. admin.brand.product is the instance section's name, not a startup key.
+    "tracked": {"models", "routing", "admin"},
+    "live_like": {"models", "routing", "admin"},
+    "first_run": {"models", "workflow_execution"},
+}
+
+
 @pytest.mark.parametrize("name", sorted(INPUT_FILES))
-def test_effective_config_digest_is_unchanged(captured, name):
+def test_effective_config_digest_is_unchanged_except_what_c10_changes_on_purpose(captured, name):
     want = load_golden()["inputs"][name]
     got = captured["inputs"][name]
-    moved = sorted(
+    moved = {
         key for key in {*want["section_digests"], *got["section_digests"]}
         if want["section_digests"].get(key) != got["section_digests"].get(key)
-    )
-    assert got["effective_digest"] == want["effective_digest"], f"{name}: sections that moved: {moved}"
+    }
+    assert moved == ENTRIES_CHANGED_ON_PURPOSE[name], f"{name}: entries that moved: {sorted(moved)}"
+
+
+@pytest.mark.parametrize("name", ["tracked", "live_like"])
+def test_the_entries_c10_changes_are_these_and_no_others(name, tmp_path):
+    raw = raw_config(name)
+    effective = effective_config(proxy, name, tmp_path / "admin.db")
+    assert effective["models"] == {} and raw["models"] == []
+    assert "routing" not in effective and "routing" in raw
+    assert effective["admin"] == {key: value for key, value in raw["admin"].items() if key != "brand"}
+    assert raw["admin"]["brand"] == {"product": "Azizam"}
+    assert effective["workflow_execution"] == raw["workflow_execution"]
+
+
+def test_a_first_run_gains_the_two_empty_sections(tmp_path):
+    effective = effective_config(proxy, "first_run", tmp_path / "admin.db")
+    assert effective["models"] == {} and effective["workflow_execution"] == {}
 
 
 @pytest.mark.parametrize("name", sorted(INPUT_FILES))

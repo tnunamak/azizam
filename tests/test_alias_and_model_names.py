@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 from contextlib import ExitStack, contextmanager
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -42,7 +43,7 @@ CHAT = "chat.completions"
 
 def _seed_catalog():
     """The shipped decision names through the real catalog builder."""
-    with open(proxy.CONFIG_PATH) as seed:
+    with open(Path(__file__).resolve().parents[1] / "tests/fixtures/config_homes/deployment_config.yml") as seed:
         cfg = yaml.safe_load(seed)
     runtime = DecisionRuntime(lambda: cfg, lambda *args: True, AsyncMock())
     views = {}

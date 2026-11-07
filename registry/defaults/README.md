@@ -33,13 +33,18 @@ The `model_aliases` release defaults are neutral: they name stable aliases with 
 service. A name with no target answers `alias_not_configured` until the owner sets it. The semantic rule for the section
 is in `gateway/stable_aliases.py` (`alias_problems`) and is registered in `gateway/config_rules.py`.
 
-A section that an older release read from the startup file is imported once at the first boot (design 8.1, step 1;
-`gateway/config_legacy_import.py`). To read what the import would write for a copy of a startup file, without touching a
-live database: `python -m gateway.config_legacy_import --config <copy of the file>`. A schema may list, at its root, the
-keys of the old block that the section does not own (`x-azizam-startup-only`); the import leaves them in the startup
-file. `model_routing` lists `gguf_dir`, a storage root a later slice moves. The audio workflow directory is a storage root and also stays in the startup file (`audio` lists `workflows_dir` the same way); `images` lists `cache_dir`,
-`vram_estimates_file` and `signed_url_secret`; `voices` lists `dir`. `model_compatibility` lists `generated_aliases_file`: the generated OpenAI model list is the release file `registry/openai_model_aliases.generated.yml`, so its path is not a setting. `models` is not a section yet: its startup
-block is a list, and a section root must be a mapping.
+Since C10 the startup file holds only startup keys (`registry/startup.schema.json`), and start-up refuses a section block
+left in it, naming the section that owns it. Earlier releases imported such a block into the override store once at the
+first boot (design 8.1); the gateway no longer runs that import. The library (`gateway/config_legacy_import.py`) stays for
+two uses: to read what an import of an old file would write, against a scratch database
+(`python -m gateway.config_legacy_import --config <copy of the old file>`), and for test setup. A schema may list, at its
+root, the keys of the old block that the section does not own (`x-azizam-startup-only`); each must be a key of the startup
+schema or a deliberate move in its `x-azizam-moved` map (`tests/test_startup_config.py` checks this). `model_routing`
+lists `gguf_dir` and `audio` lists `workflows_dir`, storage roots that stay in the startup file; `images` lists `cache_dir`,
+`vram_estimates_file` and `signed_url_secret`; `voices` lists `dir`. `model_compatibility` lists `generated_aliases_file`: the
+generated OpenAI model list is the release file `registry/openai_model_aliases.generated.yml`, so its path is not a
+setting. `models` is a section whose root is a mapping from a model id to its entry; the old startup block was a list of
+entries that each carried an `id`.
 
 ## A section is two files
 

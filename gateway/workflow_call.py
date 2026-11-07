@@ -93,6 +93,14 @@ def effective_schema(entry: Mapping[str, Any]) -> dict[str, Any]:
     return schema
 
 
+# The media types ``sniff`` names from magic bytes alone. A workflow input may accept only types in this set, or a whole
+# top-level type of one of them (workflow_contract, ``accepts_unknown_type``). A test keeps it equal to what ``sniff`` returns.
+SNIFFED_MEDIA_TYPES = frozenset({
+    "image/png", "image/jpeg", "image/gif", "image/webp", "video/mp4",
+    "audio/wav", "audio/mpeg", "audio/flac", "audio/ogg",
+})
+
+
 def sniff(data: bytes, hint: str | None = None) -> tuple[str, str]:
     """(media type, suffix) from magic bytes, falling back to ``hint``."""
     if data[:8] == b"\x89PNG\r\n\x1a\n":

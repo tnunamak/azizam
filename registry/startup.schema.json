@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/startup",
+  "title": "startup",
+  "description": "The closed list of keys the startup file (proxy_config.yml, or the file AZIZAM_CONFIG_PATH names) may hold. A startup setting is one the gateway needs before it opens admin.db, or one that a running gateway cannot change (a listener, a storage root, a login boot rule, a secret). Every other setting lives in admin.db, as an owner override of a config section (registry/defaults/) or as a record of the service registry (docs/design/CONFIG_HOMES.md, rule 3). Startup refuses a key that is not listed here and says where the setting lives now (x-azizam-moved).",
+  "type": "object",
+  "additionalProperties": false,
+  "x-azizam-moved": {
+    "backends": "the service registry. Add and edit engines in the admin UI (Services), or import them with POST /admin/api/config/import.",
+    "providers": "the service registry. Add and edit remote providers in the admin UI (Services).",
+    "routing": "nothing. No code read this section; delete it.",
+    "gateway.resource_admission.media_jobs": "config section `resource_admission`, entry /media_jobs (PUT /admin/api/operator/media-job-admission).",
+    "proxy.public_url": "config section `instance`, entry /base_url (PUT /admin/api/settings/instance).",
+    "admin.brand.product": "config section `instance`, entry /name (PUT /admin/api/settings/instance).",
+    "admin.user_defaults": "access plans and the invitation default (Settings > Access plans). Nothing read this key from the file.",
+    "model_compatibility.generated_aliases_file": "a release file, registry/openai_model_aliases.generated.yml. Its path is not a setting.",
+    "workflow_execution": "config section `workflow_execution` (the config API: PATCH /admin/api/config/changes).",
+    "models": "config section `models` (the config API: PATCH /admin/api/config/changes)."
+  },
+  "properties": {
+    "proxy": {
+      "description": "The listener.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": {"description": "Address the gateway binds. Bind 127.0.0.1 unless a proxy or a trusted network needs more.", "type": "string", "minLength": 1},
+        "port": {"description": "Listener port.", "type": "integer", "minimum": 1, "maximum": 65535, "x-azizam-env": "AZIZAM_PORT"},
+        "version": {"description": "Version label that the MCP front door and the config export report. Default 1.", "type": ["string", "integer"]}
+      }
+    },
+    "admin": {
+      "description": "Where the database is, how browser sessions are signed, and the sign-in provider of a first boot.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "db_path": {"description": "Path of admin.db, relative to the repository when not absolute.", "type": "string", "minLength": 1, "x-azizam-env": "AZIZAM_ADMIN_DB"},
+        "session_signing_key": {"description": "Browser-session signing key, at least 32 bytes. Prefer session_signing_key_env.", "type": "string", "x-azizam-secret": true, "x-azizam-env": "AZIZAM_ADMIN_SESSION_KEY"},
+        "session_signing_key_env": {"description": "Name of the environment variable that holds the browser-session signing key.", "type": "string"},
+        "brand": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "wordmark": {"description": "Optional deployment mark, \"name.tld\". A generic install shows only the neutral product mark.", "type": "string", "x-azizam-env": "AZIZAM_WORDMARK"}
+          }
+        },
+        "oidc": {
+          "description": "The sign-in provider the gateway uses until admin.db holds one (admin.db's oidc_provider_config wins once it does).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "display_name": {"type": "string", "x-azizam-env": "AZIZAM_ADMIN_OIDC_DISPLAY_NAME"},
+            "issuer": {"type": "string"},
+            "client_id": {"type": "string"},
+            "client_secret": {"type": "string", "x-azizam-secret": true},
+            "client_secret_env": {"type": "string"},
+            "redirect_uri": {"type": "string"},
+            "scopes": {"type": ["string", "array"], "items": {"type": "string"}},
+            "admin_emails": {"description": "Addresses that may become the first owner while no owner exists.", "type": "array", "items": {"type": "string"}},
+            "signing_key": {"type": "string", "x-azizam-secret": true},
+            "signing_key_env": {"type": "string"},
+            "authorization_endpoint": {"type": "string"},
+            "token_endpoint": {"type": "string"},
+            "jwks_uri": {"type": "string"},
+            "clock_skew_seconds": {"type": "integer", "minimum": 0},
+            "groups_claim": {"type": "string"},
+            "cookie": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {"type": "string"},
+                "max_age_seconds": {"type": "integer", "minimum": 1},
+                "secure": {"description": "false only for a localhost HTTP first run. Set true before the gateway is reached over HTTPS.", "type": "boolean"},
+                "http_only": {"type": "boolean"},
+                "same_site": {"type": "string"},
+                "path": {"type": "string"},
+                "domain": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth": {
+      "description": "Login boot rules: who the gateway trusts to tell it a client address, and where first-run setup is allowed.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "public_paths": {"description": "Paths that need no key. Default: /health.", "type": "array", "items": {"type": "string"}},
+        "trusted_proxies": {"description": "Proxies whose X-Forwarded-For the gateway honors, as addresses or networks.", "type": "array", "items": {"type": "string"}},
+        "setup_allowed_cidrs": {"description": "Client networks that may claim the first owner account. Loopback is always allowed.", "type": "array", "items": {"type": "string"}, "x-azizam-env": "AZIZAM_SETUP_ALLOWED_CIDRS"},
+        "cloudflare_mode": {"description": "Honor CF-Connecting-IP from verified Cloudflare edge addresses only.", "type": "boolean", "x-azizam-env": "AZIZAM_CF_MODE"},
+        "allow_query_param_key": {"description": "Accept ?api_key=<key> from clients with no auth header field.", "type": "boolean", "x-azizam-env": "AZIZAM_QUERY_PARAM_KEY"}
+      }
+    },
+    "mcp": {
+      "description": "The MCP front door: whether OAuth is on and how long its grants live.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed_origins": {"type": "array", "items": {"type": "string"}},
+        "oauth": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "access_token_seconds": {"type": "integer", "minimum": 1},
+            "refresh_idle_seconds": {"type": "integer", "minimum": 1},
+            "refresh_max_seconds": {"type": "integer", "minimum": 1},
+            "code_seconds": {"type": "integer", "minimum": 1},
+            "request_seconds": {"type": "integer", "minimum": 1},
+            "dynamic_client_registration": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "request_body_limits": {
+      "description": "Largest request body for JSON routes and for media routes. The limit is built when the process starts.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "json_bytes": {"type": "integer", "minimum": 1, "x-azizam-env": "AZIZAM_REQUEST_BODY_JSON_BYTES"},
+        "media_bytes": {"type": "integer", "minimum": 1, "x-azizam-env": "AZIZAM_REQUEST_BODY_MEDIA_BYTES"}
+      }
+    },
+    "model_routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gguf_dir": {"description": "Directory the gateway scans for GGUF model files. A storage root.", "type": "string", "minLength": 1}
+      }
+    },
+    "images": {
+      "description": "Storage roots and the URL signing secret of the image routes.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cache_dir": {"description": "Durable media storage for the Library and `response_format: url`.", "type": "string", "minLength": 1},
+        "vram_estimates_file": {"description": "Persistent VRAM-per-(workflow,size) measurements.", "type": "string", "minLength": 1},
+        "signed_url_secret": {"description": "HMAC secret for signed media URLs. Empty or unset: generated at first run and kept in <cache_dir>/.url_signing_secret, mode 0600.", "type": "string", "x-azizam-secret": true},
+        "media_jobs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "payload_dir": {"description": "Where queued image job payloads are kept. A storage root.", "type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "voices": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {"description": "Where custom voices are stored, relative to this file. A storage root.", "type": "string", "minLength": 1}
+      }
+    },
+    "audio": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workflows_dir": {"description": "Directory of the audio workflow graph files. A storage root.", "type": "string", "minLength": 1}
+      }
+    }
+  }
+}

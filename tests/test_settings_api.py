@@ -101,7 +101,7 @@ def test_prompt_memory_kill_switch_reports_pending_metadata_cleanup(tmp_path):
     assert response.json()["prompt_purge"]["retry_scheduled"] is True
 
 
-@pytest.mark.parametrize("route", ["instance", "defaults", "effective", "effective/export"])
+@pytest.mark.parametrize("route", ["instance", "defaults"])
 def test_settings_reject_missing_member_and_admin(settings, route):
     client, _, _ = settings
     assert client.get(f"/admin/api/settings/{route}").status_code == 401
@@ -170,22 +170,6 @@ def test_a_deleted_invitation_plan_reads_as_ask_each_time(settings):
     client.put("/admin/api/settings/defaults", json={"invite_access_plan": plan_id}, headers=OWNER)
     admin_store.delete_access_plan(plan_id, path=path)
     assert client.get("/admin/api/settings/defaults", headers=OWNER).json()["defaults"]["invite_access_plan"] is None
-
-
-def test_readonly_export_is_nested_secret_free_and_matches_view(settings):
-    client, _, config = settings
-    original = json.dumps(config)
-    view = client.get("/admin/api/settings/effective", headers=OWNER)
-    export = client.get("/admin/api/settings/effective/export", headers=OWNER)
-    assert view.status_code == export.status_code == 200
-    assert view.json() == export.json()
-    assert "fixture-secret" not in export.text
-    assert "user:password" not in export.text
-    assert view.json()["config"]["oidc"]["issuer"] == "https://login.example.test"
-    assert view.headers["cache-control"] == "no-store"
-    assert "attachment" in export.headers["content-disposition"]
-    assert client.put("/admin/api/settings/effective", json={}, headers=OWNER).status_code == 405
-    assert json.dumps(config) == original
 
 
 def test_defaults_mutation_requires_owner_and_csrf(settings):

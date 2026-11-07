@@ -176,7 +176,7 @@ class TestGoldenParity(unittest.TestCase):
 
     def test_golden_host_values(self):
         """Pin the exact HOST values produced by the current 8-service config."""
-        # These are the values observed from the live admin.db + proxy_config.yml.
+        # These are the values of the hermetic deployment (tests/fixtures/config_homes/deployment_config.yml).
         # If they change, the registry or config has changed intentionally — update the
         # pinned values in the test (and update this comment).
         self.assertEqual(proxy.DERIVED.LLM_BACKEND_HOSTS.get("kobold"), "http://127.0.0.1:5051")

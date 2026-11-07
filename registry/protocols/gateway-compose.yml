@@ -1,0 +1,45 @@
+# How a workflow binds to a composition the gateway runs in process, with no engine protocol of its own.
+#
+# This file is data. The compositions are owned by reviewed code that registers each role by id
+# (gateway/binding_registry.py): a role this file lists but no code registered never runs, and the job is refused as
+# `binding_unavailable`. `binding` is the key under a workflow manifest's `bindings` that holds the block.
+# `binding_fields` closes the block: a field not listed here is refused when the workflow is saved. `roles` lists the
+# implementations the `compose` field may name, each with the fields only that role reads. `inputs_via: role` says the
+# role's code reads the inputs; an `offset_inpaint_tile` binding also holds an input map that the code applies to its
+# stages. An `identity_scene` binding runs one graph, so it holds that graph's output `selectors` and names the adapter
+# whose selector form they use in `selectors_for` (gateway/output_selectors.py).
+protocol_version: 1
+id: gateway-compose
+title: Gateway composition
+label: Gateway
+executor: adapter:gateway-compose
+binding: gateway
+check_targets: graph
+inputs_via: role
+binding_fields:
+  compose: {kind: role, required: true}
+  model_id: {kind: text}
+  route: {kind: relative_path}
+  requires: {kind: requirements}
+roles:
+  identity_scene:
+    fields:
+      workflow: {kind: template, required: true}
+      image_nodes: {kind: target_list, required: true, max: 32}
+      prompt_node: {kind: target, required: true}
+      seed_node: {kind: target, required: true}
+      selectors: {kind: selectors}
+      selectors_for: {kind: text}
+  offset_inpaint_tile:
+    fields:
+      base_model: {kind: text}
+      inpaint_model: {kind: text}
+      map: {kind: input_map}
+  face_likeness:
+    fields: {}
+notes: >-
+  Roles: identity_scene places people from reference photos into a new scene with a graph and scores likeness;
+  offset_inpaint_tile makes a seamless tile from a base generation and an inpaint of its seam; face_likeness scores
+  the faces of one image against reference faces.
+operations:
+  compose.run: {class: generate}

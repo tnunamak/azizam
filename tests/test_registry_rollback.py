@@ -36,7 +36,7 @@ from pathlib import Path
 sys.path[:0] = [sys.argv[1]]
 from gateway import admin_store, service_registry
 db = Path(sys.argv[2])
-raw = yaml.safe_load((Path(sys.argv[1]) / "proxy_config.yml").read_text())
+raw = yaml.safe_load((Path(sys.argv[1]) / "proxy_config.yml").read_text())  # the previous checkout: its own file
 admin_store.init_db(db)
 reg = service_registry.ensure_service_registry(raw, path=db, actor="startup")
 litellm = reg["services"]["litellm"]
@@ -47,7 +47,7 @@ print(json.dumps({"services": sorted(reg["services"]), "frontends": sorted(reg["
 
 
 def _old_install(db: Path) -> None:
-    document = seed_registry_document(yaml.safe_load((ROOT / "proxy_config.yml").read_text(encoding="utf-8")))
+    document = seed_registry_document(yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8")))
     document["services"].pop("openrouter", None)  # the old boot never backfilled it
     document["services"]["litellm"].update({"name": "Operator LiteLLM", "enabled": False})
     document["services"]["ui-chat"] = service_registry.normalize_service_record("ui-chat", {

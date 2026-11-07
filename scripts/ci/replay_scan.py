@@ -38,6 +38,9 @@ _PRIVATE = tuple(ipaddress.ip_network(n) for n in (
 EXCEPTIONS = {
     # A copy of the public Ollama API document; its example Modelfile path is /Users/matt.
     ("tests/fixtures/ollama-api.md", "home-path"),
+    # The private-network setup CIDRs (192.168/16, 10/8, 100.64/10) of the deployment fixtures; ranges, not hosts.
+    ("tests/fixtures/config_homes/deployment_config.yml", "lan-address"),
+    ("tests/fixtures/config_homes/deployment_startup.yml", "lan-address"),
 }
 
 

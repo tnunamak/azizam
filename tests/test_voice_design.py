@@ -9,7 +9,7 @@ import yaml
 
 from gateway.voice_design import DesignPromptError, design_instruct, design_request
 
-_CONFIG = yaml.safe_load((Path(__file__).resolve().parent.parent / "proxy_config.yml").read_text(encoding="utf-8"))
+_CONFIG = yaml.safe_load((Path(__file__).resolve().parent.parent / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"))
 # The seed data of the engine the owner designs voices on.
 OMNIVOICE = _CONFIG["model_aliases"]["speech"]["engines"][_CONFIG["voices"]["design_engine"]]["voice_design"]
 

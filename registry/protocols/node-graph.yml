@@ -7,8 +7,10 @@
 # is how caller-facing messages name this engine; `serves` lists the capability
 # tokens for which this adapter answers when an engine record names no protocol;
 # `binding` is the key under a workflow manifest's `bindings` that holds this
-# engine's graph. `result_selectors` is the selector form a binding of this
-# engine accepts: each named result says which node of the graph made it and
+# engine's graph. `binding_fields` closes that binding block: a field not listed
+# there is refused when the workflow is saved. `inputs_via: map` says inputs reach
+# the engine only through the binding's input map. `result_selectors` is the
+# selector form a binding of this engine accepts: each named result says which node of the graph made it and
 # which file list of that node's history entry holds it (gateway/output_selectors.py).
 protocol_version: 1
 id: node-graph
@@ -17,6 +19,16 @@ label: ComfyUI
 executor: adapter:node-graph
 serves: [images, videos, audio.generate]
 binding: comfyui
+check_targets: graph
+inputs_via: map
+binding_fields:
+  workflow: {kind: template, required: true}
+  map: {kind: input_map, required: true}
+  selectors: {kind: selectors}
+  requires: {kind: requirements}
+  edge_only_inputs: {kind: input_list}
+  route_bound_inputs: {kind: input_list}
+  mask_to_source_alpha: {kind: boolean}
 result_selectors:
   version: 1
   identity: [node, key, from]

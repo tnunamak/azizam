@@ -11,7 +11,7 @@ import pytest
 from tests.test_engine_view_secrets import SECRET, _seed
 from tests.test_signin_who_can_enter import gateway, owner_and_admin, signed_in  # noqa: F401
 
-EXPORTS = ["/admin/api/config/export", "/admin/api/settings/effective/export"]
+EXPORTS = ["/admin/api/config/export"]
 
 
 @pytest.mark.parametrize("route", EXPORTS)
@@ -40,9 +40,3 @@ def test_the_owner_reads_the_config_export_with_every_secret_as_a_configured_ent
     exported = owner.get("/admin/api/config/export")
     assert exported.status_code == 200, exported.text
     assert SECRET not in exported.text and "configured" in exported.text and "sref_" not in exported.text
-
-
-def test_the_owner_reads_the_settings_export(gateway) -> None:
-    owner, *_ = owner_and_admin(gateway)
-    _seed(gateway, owner)
-    assert owner.get("/admin/api/settings/effective/export").status_code == 200

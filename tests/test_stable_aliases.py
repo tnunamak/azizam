@@ -24,7 +24,7 @@ from gateway.local_capabilities import build_alias_capabilities  # noqa: E402
 from tests.speech_tier_helpers import _wav_bytes  # noqa: E402
 from tests.support.config_snapshot import section_published
 
-SHIPPED = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+SHIPPED = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text())
 ALIASES = SHIPPED["model_aliases"]
 
 

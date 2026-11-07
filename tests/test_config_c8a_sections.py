@@ -20,6 +20,7 @@ import yaml
 import proxy
 from gateway import admin_store, config_api, config_layers as layers, config_legacy_import
 from tests.config_homes_golden import effective_config, raw_config
+from tests.registry_test_helpers import import_blocks
 from tests.support.config_snapshot import section_published
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,9 +42,7 @@ def _owner_set(db: Path, section: str, pointer: str, value, base) -> None:
 
 def _import(db: Path, startup: dict) -> dict[str, str]:
     admin_store.init_db(db)
-    found = config_legacy_import.import_at_boot(proxy.CONFIG_HOME, copy.deepcopy(startup), path=db, registry=None,
-                                                log=lambda line: None)
-    return {name: outcome.status for name, outcome in found.outcomes.items()}
+    return {name: outcome.status for name, outcome in import_blocks(db, startup).items()}
 
 
 def _owned(section: str, block: dict) -> dict:
@@ -225,15 +224,14 @@ def test_the_image_readers_follow_the_snapshot():
         assert proxy._SESSION_MAKE_RUNTIME.limits == limits
 
 
-def test_the_media_job_resume_follows_the_snapshot_and_the_environment_still_wins(monkeypatch):
+def test_the_media_job_resume_follows_the_snapshot_and_the_environment_does_not_move_it(monkeypatch):
     # A restart entry is held by a publish (the snapshot keeps the running value), so the test swaps the holder itself.
     running = proxy.runtime()
     off = dataclasses.replace(running, config={**running.config, "images": _images(media_jobs={"resume_on_start": False})})
     proxy.CONFIG_HOME.holder.publish(off)
-    monkeypatch.delenv("IMAGE_MEDIA_JOB_RESUME_ON_START", raising=False)
     assert proxy._image_media_job_resume_on_start() is False
-    monkeypatch.setenv("IMAGE_MEDIA_JOB_RESUME_ON_START", "true")
-    assert proxy._image_media_job_resume_on_start() is True
+    monkeypatch.setenv("IMAGE_MEDIA_JOB_RESUME_ON_START", "true")  # C10 (F4): no longer read
+    assert proxy._image_media_job_resume_on_start() is False
 
 
 def test_the_voice_readers_follow_the_snapshot():

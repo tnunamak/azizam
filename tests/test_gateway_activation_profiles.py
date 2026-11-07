@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_configured_aliases_share_one_uncensored_model_and_sticky_profile() -> None:
-    config = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+    config = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text())
     kobold = config["backends"]["kobold"]
     records = {record["id"]: record for record in kobold["models"]}
     model_file = "Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
@@ -56,7 +56,7 @@ def test_configured_aliases_share_one_uncensored_model_and_sticky_profile() -> N
 
 
 def test_q8_alias_resolves_profile_as_part_of_outer_activation_identity() -> None:
-    config = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+    config = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text())
     with patch.object(proxy, "config", config), derived_patch("LLM_BACKEND_HOSTS", {"kobold": "http://127.0.0.1:5051"},
     ):
         target = proxy._configured_litellm_local_model_target("coder-q8")
@@ -68,7 +68,7 @@ def test_q8_alias_resolves_profile_as_part_of_outer_activation_identity() -> Non
 
 
 def test_context_catalog_uses_each_profile_limit_without_live_probe() -> None:
-    config = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+    config = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text())
     with patch.object(proxy, "config", config):
         assert asyncio.run(proxy._context_window_for_model_id("coder-q5")) == 202752
         assert asyncio.run(proxy._context_window_for_model_id("coder-q8")) == 145408
@@ -78,7 +78,7 @@ def test_context_catalog_uses_each_profile_limit_without_live_probe() -> None:
 def test_context_catalog_reads_a_distinct_profile_limit_from_config() -> None:
     # Self-contained: a profile with its own limit must win over the shared one,
     # independent of which profiles the shipped config assigns to roles.
-    config = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+    config = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text())
     kobold = config["backends"]["kobold"]
     profiles = kobold["lifecycle"]["driver_config"]["activation_profiles"]
     profiles["kv-test-large"] = {**profiles["kv-q5-q4"], "LLAMA_BEE_CTX": 217088}
@@ -94,7 +94,7 @@ def test_context_catalog_reads_a_distinct_profile_limit_from_config() -> None:
 
 
 def test_seeded_litellm_compilation_keeps_unique_profile_internal_aliases() -> None:
-    config = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+    config = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text())
     compiled = compile_litellm_config_from_registry(seed_registry_document(config))
 
     entry = next(

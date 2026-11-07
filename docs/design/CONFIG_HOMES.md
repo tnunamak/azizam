@@ -907,6 +907,75 @@ All must hold:
 
 Progress is reported as "N of 13 slices" (C0 to C10, with C8 as three).
 
+### 10.3 C10 as built
+
+C10 is the last slice. The startup file is now a closed list; every other setting has one home in admin.db.
+
+**The startup schema.** `registry/startup.schema.json` lists every key the startup file may hold, with its type, its
+environment variable (`x-azizam-env`), and whether it is a secret (`x-azizam-secret`). `gateway/startup_config.py` checks a
+parsed file against it. Start-up refuses a key that the schema does not list, and the message names the key and where the
+setting lives now (`x-azizam-moved`, or the config section of the same name). The keys:
+
+- `proxy.host`, `proxy.port`, `proxy.version`
+- `admin.db_path`, `admin.session_signing_key` (secret), `admin.session_signing_key_env`, `admin.brand.wordmark`
+- `admin.oidc.*`: the sign-in provider of a first boot (admin.db's provider wins once it has one), with the cookie rules
+- `auth.public_paths`, `auth.trusted_proxies`, `auth.setup_allowed_cidrs`, `auth.cloudflare_mode`, `auth.allow_query_param_key`
+- `mcp.allowed_origins`, `mcp.oauth.*`
+- `request_body_limits.json_bytes`, `request_body_limits.media_bytes`
+- `model_routing.gguf_dir`, `images.cache_dir`, `images.vram_estimates_file`, `images.signed_url_secret` (secret),
+  `images.media_jobs.payload_dir`, `voices.dir`, `audio.workflows_dir`: storage roots and one secret
+
+**Where the other keys went.** `backends` and `providers`: the service registry. `routing`: deleted (nothing read it).
+`gateway.resource_admission.media_jobs`: section `resource_admission`. `proxy.public_url`: section `instance`, entry
+`/base_url`. `admin.brand.product`: section `instance`, entry `/name`. `admin.user_defaults`: access plans.
+`model_compatibility.generated_aliases_file`: a release file. `workflow_execution` and `models`: their own sections.
+Every other section name: the config section of that name.
+
+**The tracked file.** `proxy_config.yml` shrank from about 1,600 lines to the first-run values (`proxy.host`,
+`proxy.port`, `admin.oidc.cookie.secure: false`) and commented examples. `first-run.yml` is deleted: the tracked file is
+the first-run file. `tests/test_startup_config.py` checks that it validates against the schema.
+
+**Removed environment overrides (F4).** Fourteen variables no longer override a setting of admin.db. `docs/CONFIG.md`
+lists each with its new home, and `tests/test_startup_config.py` fails if gateway code reads one again. Only the startup
+keys keep an environment variable.
+
+**Removed routes.** `GET /admin/api/settings/effective`, `GET /admin/api/settings/effective/export` and
+`POST /admin/api/config/sections/{id}/legacy-import`, with their web callers (the effective export download and the
+Settings "Advanced" section). The gateway does not import a legacy block at boot any more. The library
+(`gateway/config_legacy_import.py`) stays for a dry-run of an old file against a scratch database, and for test setup.
+Start-up refuses the old block instead, so a stale block cannot look live.
+
+**The inventory.** `gateway/config_sources.py` is generated from the section schemas and the startup schema. A new key
+in either is a new row. `tests/test_config_sources.py` checks that every declared key has a row and that the rows hold
+what the schemas say.
+
+**Fixtures and operator tools.** Browser fixtures and operator scripts used to write a full `proxy_config.yml`. They now
+write a startup file and put engines, aliases and section settings into admin.db through one seeder,
+`scripts/ui/seed_config.py`, which uses the normal import path.
+
+**Against the done gate (10.2).**
+
+1. Met. A test checks the tracked file; `first-run.yml` is gone.
+2. Met (C1 to C9 tests, unchanged).
+3. Met (`tests/test_config_defaults_neutral.py`). The defaults are parsed as data: each address (IPv4 and IPv6) is judged on its own, and each service, workflow and model id is checked against what the release ships.
+4. The ratchet keys are unchanged by C10.
+5. Met by the removed-variable scan; section blocks in the file are refused by the startup check.
+6. Met (unchanged).
+7. Met by the fresh-install journey (`tests/e2e/fresh_instance.py`): no admin.db, the tracked file, first-run setup.
+8. Not run against live data. The synthetic equivalent holds: the C0 goldens and the conftest seeding give the same
+   effective digest before and after C10.
+9. Met (`tests/test_startup_config.py`, `startup_keys_read`). An AST scan of the literal key reads on the loaded startup
+   file (`_bootstrap_config`, `config`, `runtime().config`) gives the top-level keys the code reads. They must equal the
+   keys of `registry/startup.schema.json`. The scan does not see a key built at run time.
+10. Unchanged: `gateway/bootstrap_config.py` is the one reader.
+11. Pending: independent review by the lead.
+
+**Deploy risks.** The live `proxy_config.yml` must keep its own `proxy.host`, `auth.setup_allowed_cidrs`,
+`auth.trusted_proxies`, `model_routing.gguf_dir` and `admin.oidc.cookie.secure: true`; a section block left in it stops
+the gateway at start with the new home named. Live `workflow_execution` and `models` blocks were never imported and must
+be entered through the config API. `.dockerignore` now ships `proxy_config.yml` so a container starts from the first-run
+file.
+
 ---
 
 ## 11. Red team

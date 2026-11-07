@@ -176,7 +176,6 @@ BLOCK_RECEIVERS = {
 }
 # A name from the table that holds some other mapping in one file, with the reason.
 NOT_A_RECORD_BLOCK = {
-    ("gateway/config_sources.py", "lifecycle"): "the descriptor of a config source (authored_via, stored_in), not a record's lifecycle",
 }
 # Functions that read one key of a mapping given as their first argument (`runtime_secrets.scalar(lifecycle, "api_key")`).
 KEY_READING_CALLS = frozenset({"scalar", "url"})
@@ -190,7 +189,6 @@ CREDENTIAL_NAMES_OF_OTHER_THINGS = {
     "provider_secret_id": "a provider's secret id read by the router sidecar from the provider record it was handed",
     "secret_env": "a native credential's environment variable, inside connection.credentials (classified as a whole)",
     "secret_ref": "the reference an entry holds; every projection reads it through its entry policies",
-    "source_ref": "a config source's own descriptor",
     "voice_ref": "a voice reference in a request, not a service setting",
     "asset_ref": "the media store's id for one saved result file, in a result entry (gateway/result_bundle.py), not a credential",
     "evidence_ref": "an engine adapter's id for the proof of one transition step (gateway/transition_adapter.py), not a credential",

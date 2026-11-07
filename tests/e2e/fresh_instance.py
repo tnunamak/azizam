@@ -122,14 +122,13 @@ def snapshot(destination):
         path = Path(name)
         if not name or path.parts[0] in {"data", ".git"}:
             continue
-        if path.name.startswith(".env") or path.name == "proxy_config.yml":
+        if path.name.startswith(".env"):
             continue
         source = REPO / path
         if source.is_file() and not source.is_symlink():
             target = destination / path
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
-    shutil.copy2(REPO / "first-run.yml", destination / "first-run.yml")
     (destination / "data").mkdir()
     (destination / "tests/e2e").mkdir(parents=True, exist_ok=True)
     shutil.copy2(REPO / "tests/e2e/fake_engine.py", destination / "tests/e2e/fake_engine.py")
@@ -226,7 +225,7 @@ def run(compose):
                "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
                "LITELLM_LOCAL_MODEL_COST_MAP": "True", "DO_NOT_TRACK": "1"}
         env["AZIZAM_KEY_ACTIVITY_LOG"] = str(root / "key_activity.jsonl")
-        env["AZIZAM_CONFIG_PATH"] = str(source / "first-run.yml")
+        env["AZIZAM_CONFIG_PATH"] = str(source / "proxy_config.yml")
         env["AZIZAM_LITELLM_API_KEY"] = "sk-fresh-instance-test"
         env["LITELLM_MASTER_KEY"] = env["AZIZAM_LITELLM_API_KEY"]
         gateway_socket, gateway_port = reserve_port(stack)
