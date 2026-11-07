@@ -35,13 +35,13 @@ from gateway import media_ingestion, media_jobs, media_metadata  # noqa: E402
 from gateway.workflow_openapi import ROOT_EXTENSION, schema_name  # noqa: E402
 from gateway.manifests import load_workflow_manifest  # noqa: E402
 from tests.support.access import access_context, authenticated  # noqa: E402
-from tests.media_test_bytes import mp4_bytes  # noqa: E402
+from tests.media_test_bytes import mp4_bytes, png_bytes  # noqa: E402
 from _fake_comfy_video import NEW_PROMPT_ID, FakeComfy, succeeded_history  # noqa: E402
 
 NS = "com.azizam.workflow"
-PNG_FIRST = b"\x89PNG\r\n\x1a\n" + b"1" * 64
-PNG_LAST = b"\x89PNG\r\n\x1a\n" + b"2" * 64
-PNG_MID = b"\x89PNG\r\n\x1a\n" + b"3" * 64
+PNG_FIRST = png_bytes((1, 1, 1))
+PNG_LAST = png_bytes((2, 2, 2))
+PNG_MID = png_bytes((3, 3, 3))
 NEW_ID = f"video_{NEW_PROMPT_ID}"
 
 # model -> (parent i2v model, picture inputs beyond `image`)

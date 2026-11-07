@@ -216,6 +216,33 @@ def test_the_type_check_follows_the_input_declaration(db, clock):
                                    accepts=("image/png", "image/jpeg")).ref.media_type == "image/jpeg"
 
 
+# Revert: drop the ``_check_bytes`` call in ``check_upload``, or make it store.
+def test_check_upload_runs_every_refusal_and_has_no_effect(db, clock):
+    resolver, assets, _ = build(db, clock, max_bytes=100)
+    measured = resolver.check_upload(person("a"), PNG, destination=LOCAL, accepts=IMAGES)
+    assert measured.media_type == "image/png"
+    for body, destination, code in ((b"", LOCAL, EMPTY), (b"<html>no</html>", LOCAL, UNSUPPORTED),
+                                    (PNG + b"\x00" * 100, LOCAL, TOO_LARGE), (PNG, REMOTE, DISCLOSURE_REFUSED)):
+        with pytest.raises(MediaInputError) as refused:
+            resolver.check_upload(person("a"), body, destination=destination, accepts=IMAGES)
+        assert refused.value.code == code
+    assert assets.calls == [] and rows(db, "media_input_effect") == 0 and rows(db, "media_input_lease") == 0
+
+
+# Revert: the ``except ValueError`` around ``planned_id`` in ``_ingest``.
+def test_bytes_the_store_cannot_hold_are_refused_before_any_effect(db, clock):
+    resolver, assets, _ = build(db, clock)
+
+    def cannot(data, suffix, kind):
+        raise ValueError("truncated picture")
+
+    assets.planned_id = cannot
+    with pytest.raises(MediaInputError) as refused:
+        resolver.resolve_upload(person("a"), PNG, holder=REQUEST, destination=LOCAL, accepts=IMAGES)
+    assert refused.value.code == UNSUPPORTED
+    assert assets.calls == [] and rows(db, "media_input_effect") == 0 and rows(db, "media_input_lease") == 0
+
+
 def test_an_empty_or_oversized_body_is_refused_before_storing(db, clock):
     resolver, assets, _ = build(db, clock, max_bytes=100)
     with pytest.raises(MediaInputError) as empty:

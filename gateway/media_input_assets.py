@@ -72,7 +72,11 @@ class CacheAssetPort:
         return self._owner_key(auth)
 
     def planned_id(self, data: bytes, suffix: str, kind: str) -> str:
-        return f"{kind}_{hashlib.sha256(self._strip(data, suffix)).hexdigest()}"
+        try:
+            stripped = self._strip(data, suffix)
+        except Exception as exc:  # noqa: BLE001 - whatever the stripper says, the store cannot hold these bytes
+            raise ValueError("the store cannot hold these bytes") from exc
+        return f"{kind}_{hashlib.sha256(stripped).hexdigest()}"
 
     def put(self, data: bytes, *, kind: str, suffix: str, owner_key: str | None) -> str:
         # An input of a run is not a creation: it has no maker and keeps no prompt.

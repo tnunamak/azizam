@@ -289,11 +289,81 @@ This is the resolver half. The upload capability is the next step, after S2.4 ow
 **Left**
 
 - The upload capability on the adapter descriptor, after S2.4. Nothing in this step adds it.
-- `resolve_upload` and `resolve_url` are tested but no route calls them yet.
-- Image routes still on the old ingestion: the multipart upload branches of the image extension inputs, the edit route's
-  `image[]` uploads, and the video route's `input_reference` path. Only the extension `asset_id` branch is on the
-  resolver. The wire goldens, the job view and the receipts are unchanged for it; the new tests hold the bytes, the file
-  name and the content type equal to the old path for PNG, JPEG, WebP and GIF.
+- Inputs that still use the old ingestion, and why (see "S2.6b as built"): the image edit route's `mask`, the identity
+  alias's reference photos, and the video route's source-video inputs (video id, video data URI, video URL).
+
+### S2.6b as built (uploads and references)
+
+The three image input paths that were still on the old ingestion now go through the resolver. The wire is unchanged: the
+bytes, the file name and the content type sent upstream, the response bodies, the job view, the receipts and the frozen
+snapshots. `tests/test_media_inputs_upload_routes.py` holds each path equal to what the old ingestion sent, for PNG,
+JPEG, WebP and GIF (the old ingestion is the literal expected value: the upload as it came, the name the caller gave or
+the route's default, the content type the route fixes or the caller claimed).
+
+**Moved**
+
+- The multipart branch of the image extension inputs (`_upload_image_workflow_extension_assets`). The caller's file name
+  and content type are still what the engine is told; the resolver ignores them and measures the bytes.
+- The image edit route's `image[]` uploads, by the resolver's check only. Every reference image is read first, then each
+  is checked with `MediaInputResolver.check_upload` (the refusals of `resolve_upload`: disclosure, size, emptiness and
+  measured type, with no store write and no lease), and only then does the first one go to the engine. So one refused
+  image leaves no upload behind for the others, and the check comes before the mask step. The route does **not**
+  ingest or lease the images: it already stores each one as a source of its result (`made_from`), with the same owner
+  key and the same file id. A second claim from the resolver is the same claim, so the sweep would remove the file
+  that the result keeps as its source (the frozen `image_edit` trace shows that source file). The variations route calls
+  this route and is covered with it.
+- The video route's `input_reference` (`_resolve_input_reference`, used by the single clip, the long-video chain, the
+  extension route and the image inputs of video workflows). An asset id goes through `resolve_asset` (the existing
+  `_resolve_image_extension_asset`). A data: URI, raw base64 and an uploaded part (the multipart reader turns it into a
+  data: URI first) go through `resolve_upload`. A URL goes through `resolve_url`, and the injected fetch is the existing
+  `_fetch_media_url` (origin and redirect rules in `gateway/media_fetch.py`). The fetched file name is read from that
+  fetch call, because the resolver returns bytes, not names.
+
+**Leases.** Every ingested input (the extension uploads and the video references) holds a request lease.
+`proxy_graph_video_create` and the extension route's chain call run inside `_with_request_media_inputs`, which makes the
+request holder and, when the call ends on any exit, releases it and runs the maintenance sweep once
+(`_end_request_media_inputs`). The public name of the create route is unchanged; its old body is
+`_proxy_graph_video_create`. So a file an upload made is removed when its request ends, not at the next maintenance
+round; nothing an upload made stays in the asset store (the frozen traces list the store, and they are unchanged). The
+extension multipart branch does the same after the engine upload, also when the upload raises. A caller of
+`_resolve_input_reference` with no holder (tests, callers outside a request) gets a holder that ends with that call. No
+job-held lease is needed on these paths: the engine has the bytes before the request returns. The existing release API
+is used; there is no second one.
+
+**Refusals that are new** (each is a refusal the resolver already makes; each comes before any store write, lease or
+upstream call)
+
+- Bytes that are not a recognised image are refused on every moved path, whatever name or type the caller claimed.
+  The old paths sent them on. Text: asset ids keep "asset_id must reference a cached image asset"; the upload paths
+  have no earlier text, so they use the resolver's "the input is not a file type this model accepts". On the edit route
+  this is HTTP 400, `param: "image[]"`, `code: "input_type_unsupported"`, and the receipt records the code as the
+  rejected reason for `image[]`. Extension uploads use the existing extension error shape with the field name as param.
+- An empty body (an empty data: URI, an empty upload) is refused ("the input is empty"). The old paths sent it.
+- A picture the asset store cannot hold (the metadata stripper rejects it, for example a PNG cut short) is refused on the
+  ingesting paths with the same unsupported-type text. `AssetPort.planned_id` raises `ValueError` for it; the resolver
+  turns that into the refusal before the marker. The edit route only measures, so it still forwards such a picture.
+- A body over `media_fetch.max_bytes()` (256 MiB by default) is refused ("the input is larger than the size limit").
+- Disclosure: a remote engine the access plan does not list, and an engine the registry does not know, receive nothing
+  ("Your access plan does not allow sending files to the provider this model runs on."). The old upload paths did not
+  check.
+- A URL fetch failure keeps its old text, "failed to download input_reference: <reason>".
+- **Known gap.** The sniffer knows PNG, JPEG, GIF and WebP. An upload in another image format (BMP, TIFF, AVIF) now
+  measures as `application/octet-stream` and is refused, where the old paths forwarded it. The asset store only holds
+  those four types today. Adding a format is one sniffer entry and one suffix.
+
+**Store effect.** An uploaded input on the extension and video paths is ingested for the length of its request: the store
+writes it (with the caller's owner claim, no maker, no prompt) behind an ingest marker, the lease keeps it, and the end
+of the request removes it (see Leases). The old paths stored nothing. While the request runs, the file is one the
+caller's own asset reads can see.
+
+**Left on the old path, and why**
+
+- The edit route's `mask`. It is not an input the model reads as an image of its own: it is normalised by the mask step,
+  which has its own refusals and error text. Moving it changes which error a bad mask gets.
+- The identity alias's reference photos (`image[]` on the identity model). The face service decodes them and answers with
+  its own errors; the bytes are not forwarded as they came.
+- Source-video inputs (video id, video data URI, video URL). The sniffer knows only MP4 among video types, so a WebM
+  source would be refused: a wire change. The image-only `accepts` of this step does not cover them.
 
 ## Done when: the S2 acceptance matrix
 

@@ -149,7 +149,8 @@ class AssetPort(Protocol):
         ...
 
     def planned_id(self, data: bytes, suffix: str, kind: str) -> str:
-        """The id that ``put`` will give these bytes (the store may rewrite them, so the id is the store's to say)."""
+        """The id that ``put`` will give these bytes (the store may rewrite them, so the id is the store's to say).
+        Raises ``ValueError`` when the store cannot hold the bytes at all."""
         ...
 
     def put(self, data: bytes, *, kind: str, suffix: str, owner_key: str | None) -> str: ...
@@ -222,6 +223,12 @@ class MediaInputResolver:
         self.check_disclosure(destination, auth)
         return self._ingest(auth, body, holder, accepts)
 
+    def check_upload(self, auth: Any, body: bytes, *, destination: Destination, accepts: Sequence[str]) -> Measured:
+        """Run the refusals of ``resolve_upload`` and nothing else: no store write, no lease. A route that takes several
+        inputs checks all of them with this first, so one refused input leaves no effect from the others."""
+        self.check_disclosure(destination, auth)
+        return self._check_bytes(body, accepts)
+
     async def resolve_url(self, auth: Any, url: str, *, holder: Holder, destination: Destination,
                           accepts: Sequence[str]) -> ResolvedInput:
         """A URL, fetched by the gateway's media ingestion and nothing else. Its origin rules run inside ``fetch``."""
@@ -240,7 +247,10 @@ class MediaInputResolver:
         measured = self._check_bytes(data, accepts)
         owner = self._assets.owner_key(auth)
         kind = asset_types.asset_prefix_for_media_type(measured.media_type)
-        planned = self._assets.planned_id(data, measured.suffix, kind)
+        try:
+            planned = self._assets.planned_id(data, measured.suffix, kind)
+        except ValueError as exc:  # the store cannot hold these bytes (a truncated picture): refused, nothing written
+            raise MediaInputError(UNSUPPORTED, "the input is not a file type this model accepts") from exc
         created = not self._assets.exists(planned)
         effect_id = f"mie_{uuid.uuid4().hex}"
         self._ledger.begin_effect(effect_id, owner_key=owner or "", asset_id=planned, created_asset=created)

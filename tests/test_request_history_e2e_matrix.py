@@ -228,6 +228,9 @@ def world(fake_upstreams, monkeypatch, tmp_path):
               "capabilities": ["audio", "transcriptions"], "default_model": "matrix-speech",
               "chunking": {"enabled": False, "spool_dir": str(tmp_path / "spool")}}
     registry["services"]["matrix-speech"] = service_from_backend_config("matrix-speech", speech, source="ui")
+    # A media input may go only to a service the registry knows (the image edit upload is checked against it).
+    registry["services"].setdefault(proxy._GRAPH_BACKEND_ID, {
+        "id": proxy._GRAPH_BACKEND_ID, "config": {"base_url": "http://matrix-graph.fk.test"}})
     write_service_registry_for_test(registry, path=db)
     cfg = copy.deepcopy(proxy.config)
     cfg["backends"] = {"matrix-speech": speech}
