@@ -1,20 +1,23 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: video.edit.rife-interpolate
 intent: video.edit
+capability: video
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: RIFE 2x Frame Interpolation
 purpose: Double a video's frame rate
 description: Make a video play more smoothly by adding frames. The length and sound stay the same.
-source: local
-trusted: true
 typical_seconds: 4
 inputs:
   source_video:
     label: a video to smooth
     help: The video to make smoother.
     type: asset
-    media_type: video/*
+    accepts:
+      - video/*
     required: true
   multiplier:
     label: frame multiplier
@@ -40,9 +43,9 @@ bindings:
           input: multiplier
         - node: "4"
           input: b
-requires:
-  custom_nodes:
-    - "RIFE VFI"
-  models:
-    - role: other
-      path: custom_nodes/ComfyUI-Frame-Interpolation/ckpts/rife/rife49.pth
+    requires:
+      custom_nodes:
+        - "RIFE VFI"
+      models:
+        - role: other
+          path: custom_nodes/ComfyUI-Frame-Interpolation/ckpts/rife/rife49.pth

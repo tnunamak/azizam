@@ -1,15 +1,17 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: video.generate.ltx-2.5-long
 license: "LTX-2.x Community License (commercial use at USD 10M or more annual revenue and competing services require a separate license; acceptable-use restrictions) with Apache-2.0"
 intent: video.generate
+capability: video
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: LTX 2.5 Long
 purpose: Longer videos from a prompt
 prompt_hint: Describe the clip you want
 description: Make a longer video from a description.
-source: local
-trusted: true
 inputs:
   prompt:
     label: What to make
@@ -36,6 +38,10 @@ inputs:
     help: Use the same number to repeat a variation with the same settings.
     type: integer
     minimum: 0
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
 outputs:
   video:
     media_type: video/mp4
@@ -60,13 +66,13 @@ bindings:
       seed:
         - node: s0_noise
           input: noise_seed
-requires:
-  models:
-    - role: diffusion_model
-      path: diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors
-    - role: text_encoder
-      path: text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors
-    - role: vae
-      path: vae/ltx-2.5-video-vae-bf16.safetensors
-    - role: vae
-      path: vae/ltx-2.5-audio-vae-bf16.safetensors
+    requires:
+      models:
+        - role: diffusion_model
+          path: diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors
+        - role: text_encoder
+          path: text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors
+        - role: vae
+          path: vae/ltx-2.5-video-vae-bf16.safetensors
+        - role: vae
+          path: vae/ltx-2.5-audio-vae-bf16.safetensors

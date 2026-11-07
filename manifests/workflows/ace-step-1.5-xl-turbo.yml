@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 min_gateway_version: "0.1"
 version: "0.1.0"
 id: audio.generate.ace-step-1.5-xl-turbo
@@ -9,13 +9,7 @@ purpose: Songs and instrumentals from a prompt
 prompt_hint: Describe the music you want
 description: Songs and instrumentals from a prompt
 technical_description: Portable audio.generate contract bound to the ACE-Step 1.5 XL Turbo ComfyUI workflow.
-source: local
-trusted: true
 inputs:
-  prompt:
-    label: description
-    help: Describe what you want to make.
-    type: string
   tags:
     label: music style
     help: Describe the genre, mood and instruments.
@@ -35,6 +29,10 @@ inputs:
     help: Reuse this number and the same settings for a similar result.
     type: integer
     minimum: 0
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
   bpm:
     label: beats per minute
     help: Set the tempo.
@@ -101,9 +99,6 @@ bindings:
     selectors:
       audio: {node: '38', key: audio, from: output_dir, decode: none, take: first}
     map:
-      prompt:
-        - node: "5"
-          input: tags
       tags:
         - node: "5"
           input: tags

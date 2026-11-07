@@ -1,0 +1,100 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.generate.krea2-turbo-snofs
+intent: image.generate
+display_name: Krea 2 Turbo + SNOFS (uncensored)
+purpose: Uncensored photoreal images from a prompt
+prompt_hint: Describe the picture you want
+description: Make a realistic photo-style picture from a description, without the usual content filtering. It only shows adults.
+source: local
+trusted: true
+typical_seconds: 9
+inputs:
+  prompt:
+    label: description
+    help: Describe what you want to make.
+    type: string
+    required: true
+  width:
+    label: width
+    help: Picture width in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+    default: 1024
+  height:
+    label: height
+    help: Picture height in pixels.
+    type: integer
+    minimum: 64
+    maximum: 2048
+    default: 1024
+  steps:
+    label: steps
+    help: More steps add detail but take longer. 8 to 12 works well for this model.
+    type: integer
+    minimum: 1
+    maximum: 20
+    default: 8
+  seed:
+    label: variation number
+    help: Reuse this number and the same settings for a similar result.
+    type: integer
+    minimum: 0
+  lora_strength:
+    label: style strength
+    help: How strongly the added style applies. 1.0 is the usual setting.
+    type: number
+    minimum: 0
+    maximum: 1.5
+    default: 1.0
+  batch_size:
+    label: number of pictures
+    help: How many pictures to make at once.
+    type: integer
+    minimum: 1
+    maximum: 8
+    default: 1
+outputs:
+  image:
+    media_type: image/png
+bindings:
+  comfyui:
+    workflow: workflows/images/krea2-turbo-snofs.json
+    selectors:
+      image: {node: '9', key: images, from: output_dir, decode: none, take: all}
+    map:
+      prompt:
+        - node: "4"
+          input: text
+      width:
+        - node: "6"
+          input: width
+      height:
+        - node: "6"
+          input: height
+      steps:
+        - node: "7"
+          input: steps
+      seed:
+        - node: "7"
+          input: seed
+      lora_strength:
+        - node: "11"
+          input: strength_model
+      batch_size:
+        - node: "6"
+          input: batch_size
+requires:
+  custom_nodes:
+    - RMBG
+  models:
+    - role: diffusion_model
+      path: diffusion_models/krea2_turbo_int8_convrot.safetensors
+    - role: text_encoder
+      path: text_encoders/qwen3vl_4b_fp8_scaled.safetensors
+    - role: lora
+      path: loras/snofs_krea_v1_4.safetensors
+    - role: vae
+      path: vae/qwen_image_vae.safetensors

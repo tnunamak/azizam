@@ -2,17 +2,19 @@
 # https://huggingface.co/Comfy-Org/MOSS-Image
 # https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT
 # https://huggingface.co/darask0/MOSS-Image_4-step_adapter_lora
-schema_version: 1
+schema_version: 2
 min_gateway_version: '0.1'
 version: 0.1.0
 id: image.generate.moss-image
 intent: image.generate
+capability: image
+annotations:
+  azizam.dev/backfill:
+    capability: intent-prefix rule, schema 1 to 2
 display_name: MOSS Image
 purpose: Images from a prompt
 prompt_hint: Describe the picture you want
 description: Make a picture from a description. Uses about 12 GB of memory.
-source: local
-trusted: true
 typical_seconds: 7
 inputs:
   prompt:
@@ -39,6 +41,10 @@ inputs:
     minimum: 0
     label: variation number
     help: Reuse this number and the same settings for a similar result.
+    generate:
+      generator: random_integer
+      minimum: 0
+      maximum: 4294967295
   batch_size:
     label: number of pictures
     help: How many pictures to make at once.
@@ -56,31 +62,31 @@ bindings:
       image: {node: '9', key: images, from: output_dir, decode: none, take: all}
     map:
       prompt:
-      - node: '3'
-        input: text
+        - node: '3'
+          input: text
       width:
-      - node: '6'
-        input: width
+        - node: '6'
+          input: width
       height:
-      - node: '6'
-        input: height
+        - node: '6'
+          input: height
       seed:
-      - node: '5'
-        input: noise_seed
+        - node: '5'
+          input: noise_seed
       batch_size:
-      - node: '6'
-        input: batch_size
-requires:
-  models:
-  - role: diffusion_model
-    path: diffusion_models/moss_image_sft_bf16.safetensors
-  - role: text_encoder
-    path: text_encoders/qwen3.5_9b_int8_convrot.safetensors
-  - role: vae
-    path: vae/flux2-vae.safetensors
-  - role: adapter
-    path: rapid_moss/rapid-moss-4step/
-  custom_nodes:
-  - RMBG
-  - RapidMOSSAdapter
+        - node: '6'
+          input: batch_size
+    requires:
+      models:
+        - role: diffusion_model
+          path: diffusion_models/moss_image_sft_bf16.safetensors
+        - role: text_encoder
+          path: text_encoders/qwen3.5_9b_int8_convrot.safetensors
+        - role: vae
+          path: vae/flux2-vae.safetensors
+        - role: adapter
+          path: rapid_moss/rapid-moss-4step/
+      custom_nodes:
+        - RMBG
+        - RapidMOSSAdapter
 license: Apache-2.0

@@ -1,0 +1,46 @@
+schema_version: 1
+min_gateway_version: "0.1"
+version: "0.1.0"
+id: image.analyze.face-likeness
+intent: image.analyze
+display_name: Face Likeness Check
+purpose: Score how closely a face matches a reference
+description: Check how closely the faces in a picture match the people in your reference photos.
+source: local
+trusted: true
+typical_seconds: 2
+inputs:
+  reference:
+    help: A clear photo of the real person. Add more photos for a better check.
+    type: asset
+    required: true
+    label: a face photo
+    description: Reference photo of the real people. Repeat the field for several photos.
+  candidate:
+    help: The picture to compare with the reference.
+    type: asset
+    required: true
+    label: a photo to check
+    description: The image to check.
+  people:
+    help: Optional details identifying the people in your reference photos.
+    type: string
+    label: a list of people
+    description: JSON array of {label, image, box [x1,y1,x2,y2], infant}. Omit to auto-detect.
+  thresholds:
+    help: Optional settings for how closely faces must match.
+    type: string
+    label: custom thresholds
+    description: JSON object overriding match, uncertain and min_margin.
+outputs:
+  report:
+    media_type: application/json
+    label: a likeness score
+bindings:
+  gateway:
+    model_id: face-likeness
+    compose: face_likeness
+    route: /gateway/v1/faces/likeness
+requires:
+  services:
+    - faces
