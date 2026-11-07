@@ -217,24 +217,46 @@ def test_no_unit_file_or_shell_script_sets_a_removed_environment_variable():
 
 # --- done gate item 9: the schema's top-level keys are the keys the code reads -------------------------------------------
 
-def startup_keys_read(sources: dict[str, str], section_ids: set[str]) -> set[str]:
-    """Top-level keys that code reads from the loaded startup file.
+def startup_keys_read(sources: dict[str, str], section_ids: set[str]) -> tuple[set[str], list[str]]:
+    """(keys, unresolved): top-level keys that code reads from the loaded startup file, and the reads the scan could not resolve.
 
     Three objects hold it: ``_bootstrap_config`` (the raw file), ``config`` and ``runtime().config`` (the file merged with
-    the sections and the registry's ``backends``). Every literal key read (``x.get("k")`` or ``x["k"]``, a module-level
-    string constant counts as literal) is collected. A key that is a section id, or ``backends``, is read from the merged
-    config unless the read is on ``_bootstrap_config``: a section id that the schema also lists (``images``) is a startup
-    key only through its raw reads. Limits: a key built at run time is not seen (the scan reports any it meets), and a
-    local variable that is also called ``config`` and is not the loaded file would add a key; the test then names it.
+    the sections and the registry's ``backends``). A simple alias (``cfg = _bootstrap_config``, at module or function
+    level) is the same object. Every literal key read (``x.get("k")`` or ``x["k"]``) is collected; a module-level string
+    constant (``K = "k"`` or ``K: str = "k"``) counts as literal. A key that is a section id, or ``backends``, is read from
+    the merged config unless the read is on ``_bootstrap_config``: a section id that the schema also lists (``images``) is
+    a startup key only through its raw reads. A read whose key cannot be resolved (a run-time value) is not skipped: it
+    comes back in ``unresolved`` as ``file:line: expression`` and the test fails on it. Limit: a local variable that is
+    also called ``config`` and is not the loaded file would add a key; the test then names it.
     """
     import ast
 
+    tracked = {"config", "_bootstrap_config", "runtime().config"}
     found: set[str] = set()
-    for source in sources.values():
+    unresolved: list[str] = []
+    for filename, source in sources.items():
         tree = ast.parse(source)
-        constants = {node.targets[0].id: node.value.value for node in tree.body
-                     if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
-                     and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)}
+        constants: dict[str, str] = {}
+        for node in tree.body:
+            target, value = ((node.targets[0], node.value) if isinstance(node, ast.Assign) and len(node.targets) == 1
+                             else (node.target, node.value) if isinstance(node, ast.AnnAssign) and node.value is not None
+                             else (None, None))
+            if isinstance(target, ast.Name) and isinstance(value, ast.Constant) and isinstance(value.value, str):
+                constants[target.id] = value.value
+        aliases: dict[str, str] = {}
+        grew = True
+        while grew:  # an alias of an alias counts
+            grew = False
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                    if node.value is None or len(targets) != 1 or not isinstance(targets[0], ast.Name):
+                        continue
+                    origin = ast.unparse(node.value)
+                    origin = aliases.get(origin, origin)
+                    if origin in tracked and aliases.get(targets[0].id) != origin and targets[0].id not in tracked:
+                        aliases[targets[0].id] = origin
+                        grew = True
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" and node.args:
                 key_node, receiver = node.args[0], ast.unparse(node.func.value)
@@ -242,14 +264,16 @@ def startup_keys_read(sources: dict[str, str], section_ids: set[str]) -> set[str
                 key_node, receiver = node.slice, ast.unparse(node.value)
             else:
                 continue
-            if receiver not in ("config", "_bootstrap_config", "runtime().config"):
+            receiver = aliases.get(receiver, receiver)
+            if receiver not in tracked:
                 continue
             key = key_node.value if isinstance(key_node, ast.Constant) else constants.get(getattr(key_node, "id", ""))
             if not isinstance(key, str):
+                unresolved.append(f"{filename}:{node.lineno}: {ast.unparse(node)}")
                 continue
             if receiver == "_bootstrap_config" or (key not in section_ids and key != "backends"):
                 found.add(key)
-    return found
+    return found, unresolved
 
 
 def test_the_top_level_keys_of_the_startup_schema_are_the_keys_the_code_reads():
@@ -263,7 +287,8 @@ def test_the_top_level_keys_of_the_startup_schema_are_the_keys_the_code_reads():
     sources = {name: (root / name).read_text(encoding="utf-8")
                for name in ("proxy.py", "gateway/bootstrap_config.py", "gateway/request_body_limits.py")}
     sections = {path.name.removesuffix(".schema.json") for path in (root / "registry" / "defaults").glob("*.schema.json")}
-    read = startup_keys_read(sources, sections)
+    read, unresolved = startup_keys_read(sources, sections)
+    assert unresolved == [], "a read of the startup file whose key the scan cannot resolve; use a literal or a module constant:\n" + "\n".join(unresolved)
     declared = set(startup_config.load_schema()["properties"])
     assert read - declared == set(), f"the code reads startup keys the schema does not list: {sorted(read - declared)}"
     assert declared - read == set(), f"the schema lists startup keys no code reads: {sorted(declared - read)}"
@@ -272,9 +297,28 @@ def test_the_top_level_keys_of_the_startup_schema_are_the_keys_the_code_reads():
 def test_the_startup_key_scan_sees_a_new_read_and_ignores_a_section_read():
     source = ('SECTION = "audio"\n_bootstrap_config.get(SECTION)\nconfig.get("zzz")\nruntime().config["images"]\n'
               'config["backends"]\nother.get("nope")\n')
-    assert startup_keys_read({"x.py": source}, {"images", "audio"}) == {"audio", "zzz"}
+    assert startup_keys_read({"x.py": source}, {"images", "audio"}) == ({"audio", "zzz"}, [])
 
 
 def test_the_startup_key_scan_does_not_count_a_write_or_a_delete_as_a_read():
     source = '_bootstrap_config["unused"] = 1\ndel config["gone"]\nconfig["read"]\n'
-    assert startup_keys_read({"x.py": source}, set()) == {"read"}
+    assert startup_keys_read({"x.py": source}, set()) == ({"read"}, [])
+
+
+def test_the_startup_key_scan_resolves_an_annotated_constant():
+    source = 'KEY: str = "annotated"\n_bootstrap_config.get(KEY)\nconfig[KEY]\n'
+    assert startup_keys_read({"x.py": source}, set()) == ({"annotated"}, [])
+
+
+def test_the_startup_key_scan_follows_a_simple_alias():
+    source = ('cfg = _bootstrap_config\n'
+              'def f():\n    raw: dict = _bootstrap_config\n    return raw.get("viaannotated")\n'
+              'other = cfg\ncfg.get("viaalias")\nother["viachain"]\nnot_config = {}\nnot_config.get("nope")\n')
+    assert startup_keys_read({"x.py": source}, {"viaalias"}) == ({"viaannotated", "viaalias", "viachain"}, [])  # raw alias: section ids count
+
+
+def test_the_startup_key_scan_reports_a_read_it_cannot_resolve_with_its_location():
+    source = 'name = compute()\nconfig.get(name)\n_bootstrap_config[f"x{name}"]\nconfig.get("fine")\n'
+    found, unresolved = startup_keys_read({"x.py": source}, set())
+    assert found == {"fine"}
+    assert unresolved == ["x.py:2: config.get(name)", "x.py:3: _bootstrap_config[f'x{name}']"]

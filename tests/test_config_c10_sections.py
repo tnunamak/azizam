@@ -44,7 +44,7 @@ def test_the_catalog_reads_the_mapping(monkeypatch):
 
 # --- model_metadata: the one field of an entry that the metadata reader keeps --------------------------------------------
 
-METADATA = {"type": "language", "input_modalities": ["text", "image"], "max_tokens": 4096, "tags": ["tool-use", "vision"]}
+METADATA = {"type": "language", "input_modalities": ["text", "image"], "output_modalities": ["text"], "max_tokens": 4096, "tags": ["tool-use", "vision"]}
 
 
 def _models_section():
@@ -58,7 +58,7 @@ def test_the_models_schema_accepts_the_metadata_the_reader_reads_and_refuses_wha
     entry = {"backend": "b", "path": "/x.gguf", "model_metadata": METADATA}
     assert layers.validate_section(section, {"foo": entry}) == []
     for bad in ({"type": "gadget"}, {"max_tokens": 0}, {"max_tokens": "big"}, {"tags": ["magic"]},
-                {"input_modalities": ["smell"]}, {"extra": 1}):
+                {"input_modalities": ["smell"]}, {"output_modalities": ["smell"]}, {"output_modalities": "text"}, {"extra": 1}):
         problems = layers.validate_section(section, {"foo": {**entry, "model_metadata": bad}})
         assert problems, bad
 
@@ -93,7 +93,7 @@ def test_the_config_api_round_trips_an_entry_with_model_metadata_and_the_reader_
     assert proxy._declared_model_metadata_index({}) == {"foo": METADATA}
     sources = proxy._model_metadata_sources({}, {})
     assert model_metadata.apply_declared(None, sources.declared("Foo")).to_fields() == {
-        "type": "language", "architecture": {"input_modalities": ["text", "image"], "output_modalities": []},
+        "type": "language", "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]},
         "max_tokens": 4096, "tags": ["tool-use", "vision"]}
 
 
