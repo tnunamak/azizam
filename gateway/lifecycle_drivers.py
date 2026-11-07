@@ -506,31 +506,28 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
     request = _health_request(svc)
     if request is None:
         return False
-    fallback_key = _readiness_fallback_key(svc)
-    if fallback_key is not None and fallback_key in _READINESS_FALLBACK:
-        request = _fallback_request(svc, _READINESS_FALLBACK[fallback_key]) or request
     url, headers = request
+    # Only a record with no readiness of its own (no process_ready, no health_endpoint) may fall back.
+    fallback = _fallback_request(svc, _declared_fallback_path(svc) or "") if _may_fall_back(svc) else None
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     interval = 0.5
     while True:
+        # Every check reads the default health route first. Only a 404 in this same check (the route is absent, not
+        # a 5xx, 401, 403 or timeout) moves it to the route the engine's definition declares. Nothing is remembered:
+        # an engine whose /health later answers 503 is not ready, whatever the declared route says.
         try:
             async with engine_egress.async_client() as client:
-                resp = await client.get(url, **_get_kwargs(headers, timeout=min(interval * 2, 5.0), extensions=engine_egress.probe()))
+                kwargs = _get_kwargs(headers, timeout=min(interval * 2, 5.0), extensions=engine_egress.probe())
+                resp = await client.get(url, **kwargs)
                 if resp.status_code == 200:
                     return True
-                if resp.status_code == 404 and fallback_key is not None:
-                    # The default health path is absent (not a 5xx, 401 or timeout): read the route the engine's
-                    # definition declares, and remember what it answers for this process. A poll that finds the
-                    # memo already written by a concurrent poll adopts it, so both polls agree.
-                    if fallback_key not in _READINESS_FALLBACK:
-                        _READINESS_FALLBACK[fallback_key] = _declared_fallback_path(svc) or ""
-                    path = _READINESS_FALLBACK[fallback_key]
-                    alternative = _fallback_request(svc, path) if path else None
-                    if alternative is not None and alternative[0] != url:
-                        url, headers = alternative
-                        continue
+                if resp.status_code == 404 and fallback is not None and fallback[0] != url:
+                    alt_url, alt_headers = fallback
+                    resp = await client.get(alt_url, **_get_kwargs(alt_headers, timeout=min(interval * 2, 5.0), extensions=engine_egress.probe()))
+                    if resp.status_code == 200:
+                        return True
         except Exception:
             pass
         if loop.time() >= deadline:
@@ -538,22 +535,9 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
         await asyncio.sleep(interval)
 
 
-# What the default health path answered 404 for, by connection: the definition's readiness path read instead
-# ("" when the definition declares none). Kept for the life of the process.
-_READINESS_FALLBACK: dict[tuple[Any, ...], str] = {}
-
-
-def _readiness_fallback_key(svc: Mapping[str, Any]) -> Optional[tuple[Any, ...]]:
-    """The memo key when ``svc`` has no declared readiness of its own: no process_ready, no health_endpoint."""
-    if svc.get("health_endpoint") or not svc.get("definition"):
-        return None
-    # Every field of the record can change the readiness request (address parts, headers, credential references,
-    # the probe mode), so the key is a digest of the whole record: an edit gives a new key, two records at one
-    # address stay apart, and no credential value is kept in the key (a digest, held in memory only).
-    import hashlib
-
-    digest = hashlib.sha256(json.dumps(svc, sort_keys=True, default=repr).encode("utf-8")).hexdigest()
-    return (svc.get("definition"), digest)
+def _may_fall_back(svc: Mapping[str, Any]) -> bool:
+    """True when ``svc`` has no declared readiness of its own: no health_endpoint, and it names a definition."""
+    return not svc.get("health_endpoint") and bool(svc.get("definition"))
 
 
 def _declared_fallback_path(svc: Mapping[str, Any]) -> Optional[str]:
@@ -582,13 +566,13 @@ def readiness_failure_text(svc: Mapping[str, Any]) -> Optional[str]:
     if observations_config(svc).get("process_ready"):
         return "the engine did not report ready (its process_ready observation)"
     request = _health_request(svc)
-    fallback_key = _readiness_fallback_key(svc)
-    if fallback_key in _READINESS_FALLBACK and _READINESS_FALLBACK[fallback_key]:
-        request = _fallback_request(svc, _READINESS_FALLBACK[fallback_key]) or request
     from urllib.parse import urlsplit
 
     path = urlsplit(request[0]).path if request else ""
     where = f" (GET {path})" if path else ""
+    declared = _declared_fallback_path(svc) if _may_fall_back(svc) else None
+    if path and declared and declared != path:
+        where = f" (GET {path}, then GET {declared} if that is absent)"
     return f"the engine did not answer its readiness check{where}"
 
 

@@ -37,6 +37,7 @@ import httpx
 from gateway import transforms
 from gateway.capability_ids import offered_model_kinds
 from gateway.engine_definitions import EngineCatalog
+from gateway.engine_readiness import safe_probe_path
 from gateway import engine_egress
 
 DEFAULT_CAP_BYTES = 64 * 1024
@@ -678,6 +679,8 @@ def _route_url(ctx: _Ctx, path: str, frm: str = "address") -> str:
 
 def _primary_url(ctx: _Ctx) -> tuple[str, str]:
     probe = ctx.definition["probes"]["primary"]
+    if safe_probe_path(probe["path"]) is None:
+        raise DraftError("The engine definition declares a readiness path that cannot be checked safely.", field="address")
     return probe["method"], _route_url(ctx, probe["path"], probe["from"])
 
 
@@ -688,6 +691,8 @@ def call_line(definition: Mapping[str, Any], values: Mapping[str, Any]) -> str:
     except DraftError:
         return ""
     probe = definition["probes"]["primary"]
+    if safe_probe_path(probe["path"]) is None:
+        return ""
     base = origin_of(address) if probe["from"] == "origin" else address
     prefix = str(values.get("path_prefix") or "")
     return f"{probe['method']} {join_url(join_url(base, prefix) if prefix else base, probe['path'])}"
