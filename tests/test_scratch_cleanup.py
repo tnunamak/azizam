@@ -239,8 +239,9 @@ def test_a_failed_runs_artifacts_lose_traces_then_screenshots_over_the_cap(tmp_p
     def left(run: Path) -> list[str]:
         return sorted(path.name for path in (run / "e2e-failures").rglob("*") if path.is_file())
 
-    assert left(heavy) == ["error-context.md", "test-failed-1.png"]
-    assert left(huge) == ["error-context.md"]
+    assert left(heavy) == ["OMITTED.txt", "error-context.md", "test-failed-1.png"]
+    assert (heavy / "e2e-failures" / "OMITTED.txt").read_text() == "artifacts-18200/a-spec-case-chromium/trace.zip\n"
+    assert left(huge) == ["OMITTED.txt", "error-context.md"]
     assert left(light) == ["error-context.md", "test-failed-1.png", "trace.zip"]
 
 
@@ -269,7 +270,9 @@ def test_the_cap_also_bounds_error_contexts_and_names_what_it_dropped(tmp_path: 
     prune_receipts.bound_artifacts(tmp_path / "e2e-failures", cap=500)
     left = sorted(path.name for path in (tmp_path / "e2e-failures").rglob("*") if path.is_file())
     assert left == ["OMITTED.txt"]
-    assert "c-spec-case-chromium/error-context.md" in (tmp_path / "e2e-failures" / "OMITTED.txt").read_text()
+    assert (tmp_path / "e2e-failures" / "OMITTED.txt").read_text().splitlines() == [
+        f"artifacts-18200/c-spec-case-chromium/{name}" for name in ("trace.zip", "test-failed-1.png", "error-context.md")
+    ]
 
 
 def test_collect_copies_contexts_first_and_stops_at_the_cap(tmp_path: Path) -> None:
@@ -313,3 +316,75 @@ def test_no_symlink_leads_pruning_or_collection_outside_the_receipts(tmp_path: P
     assert prune_receipts.collect_failures(src, dest) == 0
     assert prune_receipts.collect_failures(tmp_path / "link-root", dest) == 0
     assert not dest.exists()
+
+
+def _bytes_under(directory: Path) -> int:
+    return sum(path.stat().st_size for path in directory.rglob("*") if path.is_file() and not path.is_symlink())
+
+
+@pytest.mark.parametrize("cap", [0, 20, 60, 100, 250, 1000])
+def test_the_cap_holds_with_the_note_counted(tmp_path: Path, cap: int) -> None:
+    out = tmp_path / "browser-results"
+    for case, context, picture, trace in (("a-case", 100, 0, 10), ("b-case", 30, 200, 400)):
+        (out / case).mkdir(parents=True)
+        (out / case / "error-context.md").write_bytes(b"x" * context)
+        if picture:
+            (out / case / "test-failed-1.png").write_bytes(b"p" * picture)
+        (out / case / "trace.zip").write_bytes(b"t" * trace)
+    dest = tmp_path / "receipt" / "e2e-failures"
+    dest.parent.mkdir()
+    prune_receipts.collect_failures(out, dest, cap=cap)
+    assert _bytes_under(tmp_path / "receipt") <= cap
+    whole = tmp_path / "whole"
+    shutil.copytree(out, whole)
+    prune_receipts.bound_artifacts(whole, cap=cap)
+    assert _bytes_under(whole) <= cap
+
+
+def test_bounding_names_a_dropped_trace_even_when_nothing_else_goes(tmp_path: Path) -> None:
+    case = tmp_path / "e2e-failures" / "e-case"
+    case.mkdir(parents=True)
+    (case / "error-context.md").write_bytes(b"x" * 10)
+    (case / "trace.zip").write_bytes(b"t" * 100)
+    prune_receipts.bound_artifacts(tmp_path / "e2e-failures", cap=80)
+    assert (tmp_path / "e2e-failures" / "OMITTED.txt").read_text() == "e-case/trace.zip\n"
+    assert (case / "error-context.md").is_file() and _bytes_under(tmp_path / "e2e-failures") <= 80
+
+
+def test_collect_puts_contexts_first_across_cases(tmp_path: Path) -> None:
+    out = tmp_path / "browser-results"
+    (out / "a-case").mkdir(parents=True)
+    (out / "b-case").mkdir()
+    (out / "a-case" / "trace.zip").write_bytes(b"t" * 100)
+    (out / "b-case" / "error-context.md").write_bytes(b"x" * 100)
+    dest = tmp_path / "e2e-failures"
+    assert prune_receipts.collect_failures(out, dest, cap=150) == 1
+    assert (dest / "b-case" / "error-context.md").is_file() and not (dest / "a-case").exists()
+
+
+def test_collect_writes_only_into_a_new_destination(tmp_path: Path) -> None:
+    out = tmp_path / "browser-results"
+    (out / "f-case").mkdir(parents=True)
+    (out / "f-case" / "error-context.md").write_text("context")
+    dest = tmp_path / "e2e-failures"
+    dest.mkdir()
+    (dest / "f-case").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    assert prune_receipts.collect_failures(out, dest) == 0
+    assert not (tmp_path / "elsewhere").exists()
+
+
+def test_bounding_never_writes_or_counts_through_a_symlink(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "note").write_text("keep me")
+    (outside / "big.zip").write_bytes(b"t" * 1000)
+    evidence = tmp_path / "e2e-failures"
+    (evidence / "g-case").mkdir(parents=True)
+    (evidence / "g-case" / "trace.zip").write_bytes(b"t" * 300)
+    (evidence / "OMITTED.txt").symlink_to(outside / "note")
+    (evidence / "g-case" / "linked.zip").symlink_to(outside / "big.zip")
+    prune_receipts.bound_artifacts(evidence, cap=100)
+    assert (outside / "note").read_text() == "keep me"
+    assert (outside / "big.zip").stat().st_size == 1000
+    assert not (evidence / "OMITTED.txt").is_symlink()
+    assert (evidence / "OMITTED.txt").read_text() == "g-case/trace.zip\n"

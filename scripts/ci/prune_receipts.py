@@ -5,11 +5,12 @@ Receipts live in ROOT/<tree>/. The newest KEEP runs, and any run with a signoff 
 in the last SIGNOFF_DAYS days, keep everything. Every other run keeps only run.tsv, PASS, FAIL and
 signoff-*.tsv, except a run with a FAIL verdict: for FAIL_DAYS days it also keeps logs/ and the
 e2e failure artifacts in e2e-failures/ (screenshots, error-context files, traces of failed tests).
-ARTIFACT_CAP bounds e2e-failures/ only (logs/ are the gate's step logs and stay whole): collection
-copies error contexts first, then screenshots, then traces, and skips what would pass the cap; an
-existing directory over the cap loses its traces, then its screenshots, then its largest files.
-Whatever is left out is named in OMITTED.txt. A symlink is never followed: a symlinked SRC, DEST or
-kept directory is refused or removed, never traversed.
+ARTIFACT_CAP bounds e2e-failures/ only, its OMITTED.txt note included (logs/ are the gate's step
+logs and stay whole). Collection writes into a new DEST it creates itself, error contexts first,
+then screenshots, then traces, and skips what would pass the cap; an existing directory over the
+cap loses its traces, then its screenshots, then its largest files. Every file left out or dropped
+is named in OMITTED.txt, cut short to fit the cap. No symlink is followed: a symlinked SRC or kept
+directory is refused or removed, walks never enter one, and files are opened with O_NOFOLLOW.
 The run named by --keep (the gate that is starting) and ROOT/scheduled are never touched.
 
 Usage: prune_receipts.py ROOT [--keep DIR] [--runs N] [--signoff-days N] [--failed-days N]
@@ -44,6 +45,8 @@ def has_recent_signoff(run: Path, since: float) -> bool:
 
 
 OMITTED = "OMITTED.txt"
+# Room collection keeps for the OMITTED.txt note inside the cap: 4 KiB, or a tenth of a smaller cap.
+NOTE_ROOM = 4096
 
 
 def tree_files(directory: Path) -> list[Path]:
@@ -59,10 +62,38 @@ def real_dir(path: Path) -> bool:
     return path.is_dir() and not path.is_symlink()
 
 
-def note_omitted(directory: Path, paths: list[Path]) -> None:
-    if paths:
-        with (directory / OMITTED).open("a") as out:
-            out.writelines(f"{path.relative_to(directory)}\n" for path in paths)
+def size(paths: list[Path]) -> int:
+    return sum(path.stat().st_size for path in paths)
+
+
+def open_new(path: Path, append: bool = False):
+    """Open path for writing, never through a symlink (O_NOFOLLOW); a new file only, unless appending."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | (os.O_APPEND if append else os.O_EXCL)
+    return os.fdopen(os.open(path, flags, 0o644), "wb")
+
+
+def copy_new(source: Path, target: Path) -> None:
+    with os.fdopen(os.open(source, os.O_RDONLY | os.O_NOFOLLOW), "rb") as read, open_new(target) as write:
+        shutil.copyfileobj(read, write)
+
+
+def note_omitted(directory: Path, paths: list[Path], room: int) -> None:
+    """Name paths in directory/OMITTED.txt, keeping the note within room bytes (whole lines only)."""
+    if not paths or room <= 0:
+        return
+    note = directory / OMITTED
+    if note.is_symlink():
+        note.unlink()
+    old = note.read_bytes() if note.is_file() else b""
+    lines = [f"{path.relative_to(directory)}\n".encode() for path in paths]
+    added = b""
+    for line in lines:
+        if len(old) + len(added) + len(line) > room:
+            break
+        added += line
+    if added:
+        with open_new(note, append=True) as out:
+            out.write(added)
 
 
 def priority(path: Path) -> int:
@@ -71,52 +102,60 @@ def priority(path: Path) -> int:
 
 
 def bound_artifacts(directory: Path, cap: int = ARTIFACT_CAP) -> None:
-    """Drop traces, then screenshots, then the largest other files, until the directory is within cap bytes."""
+    """Drop traces, then screenshots, then the largest other files, until the files and the note fit in cap."""
     if not real_dir(directory):
         return
-    for suffix in (".zip", ".png"):
-        files = tree_files(directory)
-        if sum(path.stat().st_size for path in files) <= cap:
-            return
-        for path in files:
-            if path.suffix == suffix:
-                path.unlink(missing_ok=True)
-    files = sorted((path for path in tree_files(directory) if path.name != OMITTED), key=lambda path: path.stat().st_size)
-    total = sum(path.stat().st_size for path in files)
-    dropped = []
-    while files and total > cap:
-        path = files.pop()
+    note = directory / OMITTED
+    files = [path for path in tree_files(directory) if path != note]
+    note_size = note.stat().st_size if note.is_file() and not note.is_symlink() else 0
+    total = size(files)
+    if total + note_size <= cap:
+        return
+    order = sorted(files, key=lambda path: (path.suffix != ".zip", path.suffix != ".png", -path.stat().st_size))
+    dropped, named = [], 0
+    for path in order:
+        if total + note_size + named <= cap:
+            break
         total -= path.stat().st_size
-        path.unlink(missing_ok=True)
+        path.unlink()
         dropped.append(path)
-    note_omitted(directory, dropped)
+        named += len(f"{path.relative_to(directory)}\n".encode())
+    if note_size > cap - total:
+        note.unlink(missing_ok=True)
+    note_omitted(directory, dropped, cap - total)
 
 
 def collect_failures(src: Path, dest: Path, cap: int = ARTIFACT_CAP) -> int:
-    """Copy each failed test's artifacts from the Playwright output directories under src into dest.
+    """Copy each failed test's artifacts from the Playwright output directories under src into a new dest.
 
     A passing test leaves no such files there, so every match belongs to a failed test. The path under
     src is kept, so two ports never collide. Files are copied in priority order while they fit in cap
-    bytes; the rest are named in OMITTED.txt. Returns the number of files copied.
+    bytes less the note's room; the rest are named in OMITTED.txt. dest must not exist: every directory
+    and file under it is made here, so none can be a symlink. Returns the number of files copied.
     """
-    if not real_dir(src) or dest.is_symlink() or dest.parent.is_symlink():
+    if not real_dir(src) or dest.exists() or dest.is_symlink():
+        return 0
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not real_dir(dest.parent):
         return 0
     found = [path for path in tree_files(src) if path.name in ARTIFACT_NAMES or path.suffix in ARTIFACT_SUFFIXES]
+    if not found:
+        return 0
     found.sort(key=lambda path: (priority(path), str(path)))
+    dest.mkdir()
+    budget = cap - min(NOTE_ROOM, cap // 10)
     copied, total, left_out = 0, 0, []
     for path in found:
-        size = path.stat().st_size
+        length = path.stat().st_size
         target = dest / path.relative_to(src)
-        if total + size > cap:
+        if total + length > budget:
             left_out.append(target)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
+        copy_new(path, target)
         copied += 1
-        total += size
-    if left_out:
-        dest.mkdir(parents=True, exist_ok=True)
-        note_omitted(dest, left_out)
+        total += length
+    note_omitted(dest, left_out, cap - total)
     return copied
 
 
