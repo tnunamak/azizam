@@ -183,6 +183,13 @@ export async function exerciseOracle(origin: string, manifest: Json, engineOrigi
     const plans = (await admin.call("GET", "/admin/api/access-plans")).body.access_plans as Json[];
     const plan = plans[0];
 
+    // --- Settings: the sign-in session policy, saved as it stands (a risky save a stub may refuse).
+    const policy = (await admin.call("GET", "/admin/api/settings/sessions")).body;
+    record(
+      "PUT /admin/api/settings/sessions",
+      await admin.call("PUT", "/admin/api/settings/sessions", { data: policy.sessions, headers: { "If-Match": String(policy.revision) } }),
+    );
+
     // --- Accounts: an invite becomes a person, who signs in, is changed and removed.
     const email = "oracle-person@example.test";
     const password = "Oracle person password 2026";
@@ -435,8 +442,6 @@ export async function buildOracle(port: number, stateRoot: string, outFile: stri
   writeFileSync(
     extra,
     JSON.stringify({
-      // ComfyUI is enabled in the registry but not in the config file: the media routes need both.
-      backends: { comfyui: { enabled: true } },
       videos: {
         default_workflow: "video-ltx-2.5-t2v",
         workflows: {

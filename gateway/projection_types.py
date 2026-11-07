@@ -243,52 +243,9 @@ ENGINE_VIEW = register(Obj("EngineView", {
     "revision": ANY_SCALAR, "registry_generation": ANY_SCALAR, "hidden_settings": INT,
 }))
 
-# --- the effective configuration -------------------------------------------------------------------------------------------
-# ``GET /admin/api/settings/effective`` shows the running configuration: the YAML the operator keeps, the OIDC
-# settings, the registry and the overrides. A top-level section the type does not name is not shown, so a new
-# section cannot appear in the view before someone says what it holds.
-
-def _section(name: str, **fields: Policy) -> Obj:
-    """A section of the YAML file the operator keeps: the keys it ships with are public; any other key is hidden (D34)."""
-    return Obj(name, fields, extras=HIDDEN)
-
-
-# A backend entry of the YAML file is a service's config, with the two inline secrets the file may hold.
+# A service's config as the scans of tests/test_config_keys_are_classified.py read it: the keys of ``CONFIG`` and the two inline
+# secrets that an older record may hold.
 BACKEND_VIEW = Obj("BackendView", {**CONFIG.fields, "api_key": INLINE_SECRET, "admin_key": INLINE_SECRET}, extras=HIDDEN)
-EFFECTIVE_CONFIG = register(Obj("EffectiveConfig", {
-    "proxy": _section("ProxySection", host=STR, port=INT),
-    "llm": _section("LlmSection", pin_loaded_model=BOOL),
-    "backends": mapping(BACKEND_VIEW),
-    "images": _section("ImagesSection", cache_dir=STR, vram_estimates_file=STR, signed_url_ttl=INT, signed_url_secret=INLINE_SECRET,
-                       vram_reserve_bytes=INT, free_vram_on_exhaustion=BOOL, max_batch_size=INT, background_removal=JSON,
-                       variations=JSON, edits=JSON, media_jobs=JSON),
-    # the keys of this section name engines, which the code does not list (docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md): its
-    # values are paths, service ids and timeouts, public by contract
-    "model_routing": JSON,
-    "routing": _section("RoutingSection", default_backend=STR, audio_backend=STR),
-    "identity": _section("IdentitySection", face_service=JSON),
-    "reasoning": _section("ReasoningSection", default_effort=STR, effort_budgets=JSON),
-    "roles": JSON, "models": JSON, "model_aliases": JSON,
-    "videos": _section("VideosSection", default_workflow=STR, remix_workflow=STR, extend_workflow=STR, max_total_seconds=ANY_SCALAR,
-                       allow_untracked_ids=BOOL, chain_segment_seconds=ANY_SCALAR, workflows=JSON, aliases=JSON),
-    "audio": _section("AudioSection", default_workflow=STR, workflows_dir=STR, workflows=JSON, aliases=JSON),
-    "voices": _section("VoicesSection", **{key: ANY_SCALAR for key in (
-        "dir", "consent_mode", "max_voices_per_key", "max_consents_per_key", "max_bytes_per_key", "max_upload_bytes",
-        "min_seconds", "max_seconds", "min_speech_seconds", "target_seconds", "quality_engine", "quality_warn_below",
-        "design_engine")}),
-    "model_compatibility": _section("ModelCompatibilitySection", enabled=BOOL, generated_aliases_file=STR,
-                                    openai_models_api_url=URL, include_private=BOOL, defaults=JSON, aliases=JSON),
-    "auth": _section("AuthSection", public_paths=JSON, trusted_proxies=JSON, setup_allowed_cidrs=JSON, cloudflare_mode=BOOL,
-                     allow_query_param_key=BOOL),
-    "admin": _section("AdminSection", db_path=STR, brand=JSON),
-    "oidc": Obj("OidcSnapshot", {
-        "client_secret": INLINE_SECRET, "client_secret_ref": OMIT, "source": SHORT, "apply_mode": SHORT, "enabled": BOOL,
-        "client_id": STR, "client_secret_set": BOOL, "display_name": STR, "scopes": JSON, "clock_skew_seconds": ANY_SCALAR,
-        "groups_claim": STR, "updated_at": ANY_SCALAR, "provenance": JSON,
-        **{key: URL for key in ("issuer", "redirect_uri", "authorization_endpoint", "token_endpoint", "jwks_uri")},
-    }, extras=HIDDEN),
-    "service_registry": REGISTRY_DOC, "instance": JSON, "receipt_retention": JSON, "operator_overrides": OVERRIDES,
-}))
 
 # --- the keys of a management response body --------------------------------------------------------------------------------
 # A route answers with a mapping; each key is a registered type. A key that is not here is a programming error:
@@ -316,10 +273,6 @@ BODY_KEYS: dict[str, Policy] = {
     "affected_records": seq(AFFECTED_RECORD),
     "service_id": STR,
     "engine": ENGINE_VIEW,
-    "config": EFFECTIVE_CONFIG,
-    "read_only": BOOL,
-    "redacted": BOOL,
-    "export_url": STR,
 }
 
 # The process fields the v2 record view may show; any other field stays stored only.

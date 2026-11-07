@@ -4,10 +4,9 @@ import Link from "next/link";
 import { useViewer } from "@/components/shell/session";
 import { useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Loader2, Puzzle } from "lucide-react";
+import { Loader2, Puzzle } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
-  adminDownload,
   adminFetch,
   ApiError,
   adminRegistryMutation,
@@ -81,7 +80,6 @@ const keys = {
   media: ["settings", "media"],
   hostCommands: ["settings", "host-commands"],
   extensions: ["settings", "extensions"],
-  effective: ["settings", "effective"],
 };
 const split = (value: string) =>
   value
@@ -373,7 +371,6 @@ function InstanceForm({
       setDraft({ form: data.instance, revision: data.revision });
       client.setQueryData(keys.instance, data);
       void client.invalidateQueries({ queryKey: ["foundation", "instance"] });
-      void client.invalidateQueries({ queryKey: keys.effective });
       toast.success("Instance settings saved");
     },
   });
@@ -497,7 +494,6 @@ function DefaultsForm({
       }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.defaults });
-      void client.invalidateQueries({ queryKey: keys.effective });
     },
   });
   if (!owner)
@@ -793,7 +789,6 @@ function MediaForm({
         },
       });
       void client.invalidateQueries({ queryKey: keys.media });
-      void client.invalidateQueries({ queryKey: keys.effective });
       toast.success("Media admission saved");
     },
   });
@@ -905,7 +900,6 @@ function ExtensionsSection() {
       }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.extensions });
-      void client.invalidateQueries({ queryKey: keys.effective });
       setAdding(false);
       setReviewed(null);
       toast.success("Extension enabled");
@@ -1117,85 +1111,6 @@ function ExtensionsSection() {
     </Section>
   );
 }
-function AdvancedSection() {
-  const [open, setOpen] = useState(false);
-  const { data, isPending, isError, error, refetch } = useQuery({
-    queryKey: keys.effective,
-    staleTime: 15_000,
-    queryFn: () =>
-      adminFetch<{ config: Record<string, unknown>; export_url: string }>(
-        "/admin/api/settings/effective",
-      ),
-    enabled: open,
-  });
-  return (
-    <Section
-      title="Advanced"
-      summary={{
-        label: "Redacted configuration snapshot",
-        description: "Read-only export for inspection.",
-      }}
-    >
-      <details onToggle={(e) => setOpen(e.currentTarget.open)}>
-        <summary className="text-meta flex min-h-11 cursor-pointer items-center font-medium">
-          Effective configuration and export
-        </summary>
-        <div className="space-y-4 pt-3">
-          <p className="text-muted-foreground text-meta">
-            This is a read-only snapshot, not a restore bundle. Bootstrap
-            settings change in their source files; dashboard settings change in
-            their own sections.
-          </p>
-          {open &&
-            (isPending ? (
-              <Loading />
-            ) : isError ? (
-              <SettingsError
-                error={error}
-                message="Effective configuration could not be loaded."
-                onRetry={() => void refetch()}
-              />
-            ) : (
-              <>
-                <Button variant="outline" asChild>
-                  {/* A link, so it still works without scripts; a click saves
-                      the file through adminDownload, which can ask the person to
-                      confirm it is them first. */}
-                  <a
-                    href={data.export_url}
-                    download
-                    onClick={(event) => {
-                      event.preventDefault();
-                      adminDownload(
-                        data.export_url,
-                        "gateway-effective-config.json",
-                      ).catch((failure: unknown) =>
-                        toast.error(
-                          failure instanceof Error && failure.message
-                            ? failure.message
-                            : "The export didn’t download. Try again.",
-                        ),
-                      );
-                    }}
-                  >
-                    <Download />
-                    Export redacted snapshot
-                  </a>
-                </Button>
-                <pre
-                  tabIndex={0}
-                  aria-label="Effective configuration JSON"
-                  className="bg-muted focus-visible:outline-ring rounded-control overflow-x-auto p-4 font-mono text-xs leading-relaxed focus-visible:outline-2"
-                >
-                  <code>{JSON.stringify(data.config, null, 2)}</code>
-                </pre>
-              </>
-            ))}
-        </div>
-      </details>
-    </Section>
-  );
-}
 export default function SettingsPage() {
   // The settings template: a 720 column, sections 32 apart, and no jump
   // links while every section fits on the page (ban 22).
@@ -1214,7 +1129,6 @@ export default function SettingsPage() {
         <MediaSection />
         <HostCommandsSection />
         <ExtensionsSection />
-        <AdvancedSection />
       </div>
     </div>
   );

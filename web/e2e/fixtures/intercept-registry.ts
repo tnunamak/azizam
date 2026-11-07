@@ -129,12 +129,6 @@ const REQUIRED: Record<string, string[]> = {
     "/defaults",
     "/defaults/invite_access_plan",
   ],
-  "/admin/api/settings/effective": [
-    "/config",
-    "/config/proxy",
-    "/config/proxy/port",
-    "/export_url",
-  ],
   "/admin/api/settings/instance": ["/instance", "/instance/base_url"],
   "/admin/api/settings/prompt-memory": [
     "/prompt_memory",
@@ -347,10 +341,6 @@ export const REGISTRY: Endpoint[] = [
   reads("/admin/api/settings/defaults", {
     required: ["/aliases", "/defaults", "/defaults/invite_access_plan"],
   }),
-  reads("/admin/api/settings/effective", {
-    required: ["/config", "/export_url"],
-    free: ["/config"],
-  }),
   reads("/admin/api/settings/instance", {
     required: ["/instance", "/instance/base_url"],
   }),
@@ -367,8 +357,8 @@ export const REGISTRY: Endpoint[] = [
     required: ["/retention_days", "/revision"],
   }),
   reads("/admin/api/settings/sessions"),
-  // A risky download: a stub answers it with the step-up refusal (status 401).
-  reads("/admin/api/settings/effective/export", { free: ["/config"] }),
+  // A risky save: a stub answers it with the step-up refusal (status 401).
+  executed("PUT", "/admin/api/settings/sessions", { required: REQUIRED["/admin/api/settings/sessions"] }),
   reads("/admin/api/status", { required: ["/status"] }),
   reads("/admin/api/users", {
     required: [

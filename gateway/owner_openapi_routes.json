@@ -178,11 +178,6 @@
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "owner_only": true
   },
-  "POST /admin/api/config/sections/{section_id}/legacy-import": {
-    "tag": "config sections",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "owner_only": true
-  },
   "GET /admin/api/credentials": {
     "tag": "apps and keys",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin",
@@ -453,16 +448,6 @@
     "owner_only": true
   },
   "PUT /admin/api/settings/defaults": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "owner_only": true
-  },
-  "GET /admin/api/settings/effective": {
-    "tag": "settings",
-    "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
-    "owner_only": true
-  },
-  "GET /admin/api/settings/effective/export": {
     "tag": "settings",
     "gate": "AdminAuthenticator / _require_admin; owner/admin/superadmin; owner role required",
     "owner_only": true

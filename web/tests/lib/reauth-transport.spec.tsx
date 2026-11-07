@@ -1,7 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
-  adminDownload,
   adminFetch,
   ApiError,
   confirmWithPassword,
@@ -70,13 +69,6 @@ function openPrompt() {
     if (info && !shown.includes(info)) shown.push(info);
     return info;
   });
-}
-
-/** jsdom has no blob URLs; install stand-ins and remove them after the test. */
-function stubBlobUrls() {
-  const create = vi.fn(() => "blob:fixture");
-  Object.assign(URL, { createObjectURL: create, revokeObjectURL: vi.fn() });
-  return create;
 }
 
 it("opens the prompt, then retries the request once the person confirms", async () => {
@@ -216,41 +208,6 @@ it("treats a reauth_required body without a usable method as sign-in only", () =
   });
   expect(parseReauth({ error: { code: "session_expired", message: "x" } })).toBeNull();
   expect(parseReauth(null)).toBeNull();
-});
-
-it("saves a download after the person confirms, under the name the gateway gives", async () => {
-  reply(
-    "/admin/api/settings/effective/export",
-    stale,
-    () =>
-      new Response('{"config":{}}', {
-        headers: { "content-disposition": 'attachment; filename="gateway-effective-config.json"' },
-      }),
-  );
-  stubBlobUrls();
-  const saved: string[] = [];
-  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
-    saved.push(`${this.download} ${this.href}`);
-  });
-  const prompt = openPrompt();
-  const request = adminDownload("/admin/api/settings/effective/export", "fallback.json");
-  await vi.waitFor(() => expect(prompt.result.current).not.toBeNull());
-  expect(saved).toEqual([]);
-  act(() => settleReauth(true));
-  await request;
-  expect(saved).toEqual(["gateway-effective-config.json blob:fixture"]);
-  expect(callsTo("/admin/api/settings/effective/export")).toHaveLength(2);
-});
-
-it("does not save anything when the person cancels a download", async () => {
-  reply("/admin/api/settings/effective/export", stale);
-  const create = stubBlobUrls();
-  const prompt = openPrompt();
-  const outcome = adminDownload("/admin/api/settings/effective/export", "x.json").catch((e: unknown) => e);
-  await vi.waitFor(() => expect(prompt.result.current).not.toBeNull());
-  act(() => settleReauth(false));
-  expect(await outcome).toMatchObject({ code: "reauth_required" });
-  expect(create).not.toHaveBeenCalled();
 });
 
 it("confirms a password with the CSRF header and surfaces a wrong one", async () => {

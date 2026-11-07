@@ -102,13 +102,6 @@ function seed(state: State) {
     }),
   );
   routes.set(
-    "/admin/api/settings/effective",
-    reply({
-      config: { proxy: { port: 18000 }, secret: "<redacted>" },
-      export_url: "/admin/api/settings/effective/export",
-    }),
-  );
-  routes.set(
     "/admin/api/signin",
     reply(state === "empty" ? firstRunSnapshot() : liveSnapshot()),
   );
@@ -259,7 +252,6 @@ const SECTIONS = [
   "Media admission",
   "Computer commands",
   "Extensions",
-  "Advanced",
 ];
 
 describe("computer command permission", () => {
@@ -315,11 +307,6 @@ describe("settings page states", () => {
     expect(
       within(signIn).queryByRole("button", { name: "Edit Sign-in" }),
     ).not.toBeInTheDocument();
-    const { user } = await editSection("Advanced");
-    await user.click(screen.getByText("Effective configuration and export"));
-    expect(
-      await screen.findByRole("link", { name: "Export redacted snapshot" }),
-    ).toHaveAttribute("href", "/admin/api/settings/effective/export");
   });
 
   it("shows the first-run sign-in and no extensions (empty)", async () => {
@@ -338,15 +325,10 @@ describe("settings page states", () => {
         "People sign in with a password. To add another way to sign in, connect a provider below.",
       ),
     ).toBeVisible();
-    const { user } = await editSection("Extensions");
+    await editSection("Extensions");
     expect(
       screen.getAllByText("No extensions installed").length,
     ).toBeGreaterThan(0);
-    await editSection("Advanced");
-    await user.click(screen.getByText("Effective configuration and export"));
-    expect(
-      await screen.findByRole("link", { name: "Export redacted snapshot" }),
-    ).toBeVisible();
   });
 
   it("offers a retry in every section when the gateway is down (error)", async () => {
@@ -357,12 +339,9 @@ describe("settings page states", () => {
         await screen.findByRole("region", { name: "Receipts" }),
       ).findByText("Couldn’t load receipt settings"),
     ).toBeVisible();
-    const user = userEvent.setup();
-    await editSection("Advanced");
-    await user.click(screen.getByText("Effective configuration and export"));
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: "Try again" })).toHaveLength(
-        9,
+        8,
       ),
     );
     for (const name of ["People and access"]) {

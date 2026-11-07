@@ -115,8 +115,19 @@ def _reviewed(path: str | None, methods: list[str] | None = None) -> bool:
         for prefix in ADDED_PATHS)
 
 
+# Deliberate removals since the freeze: path -> reason. A frozen route, dispatch row, policy row or OpenAPI path for
+# one of these is left out of every comparison below.
+REMOVED_PATHS: dict[str, str] = {
+    "/admin/api/settings/effective": "config homes C10: the sections routes under /admin/api/config replace the effective view",
+    "/admin/api/settings/effective/export": "config homes C10: GET /admin/api/config/export is the one export",
+}
+
+
 def _frozen() -> dict:
-    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+    frozen = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    frozen["routes"] = [row for row in frozen["routes"] if row["path"] not in REMOVED_PATHS]
+    frozen["dispatch"] = {path: outcome for path, outcome in frozen["dispatch"].items() if path not in REMOVED_PATHS}
+    return frozen
 
 
 def test_the_fixture_holds_the_whole_graph() -> None:
@@ -195,7 +206,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # those paths and nothing else changed in the document (tests/fixtures/headless_openapi.json adds the same four).
         # Re-captured 2026-11-06 for GET /gateway/v1/media/jobs/{job_id}/results/{name} (see ADDED_PATHS); removing that one
         # path recovers the document with digest 43b3c3dd5cdca3be5586a47e5c47a48e2bcceed643c1dcd0786dd17534cf4db8 exactly.
-        assert route_graph.openapi_digest(proxy.app) == "ed99ec17dded4d89353e7f6aaebe74d3271f26ca923f5bedab83211514254518"
+        # Re-captured 2026-11-07 for config homes C10: GET /admin/api/settings/effective and its export left (see
+        # REMOVED_PATHS), and so did POST /admin/api/config/sections/{section_id}/legacy-import, which an earlier
+        # config homes slice had added. Before it the digest was ed99ec17dded4d89353e7f6aaebe74d3271f26ca923f5bedab83211514254518.
+        assert route_graph.openapi_digest(proxy.app) == "2b97a3fb9cf8d5b3f2f00b03b90cd8b5420b422d1d569ed85c4623239d711272"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -220,4 +234,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Before it the frozen digest was dce19f7d0e1c01037ee0154b9da207150e8884d5e10470275bec0cbf52fba388.
         # Re-captured 2026-11-06 for GET /gateway/v1/media/jobs/{job_id}/results/{name}: only that path differs. Before it
         # the frozen digest was 2ce206e55ec717e2626ac7f109a35ecf224b9be54c1dddbc677778be9208b415.
+    # Re-captured 2026-11-07 for config homes C10 (see the same note above): the two effective-view paths and the
+    # legacy-import path left. Before it the frozen digest was adbd04be5b8d22f93a3ba68925b5f7716b17268dcb8066cae31bf0fcf80c8202.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

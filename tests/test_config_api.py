@@ -42,11 +42,10 @@ def make_home() -> config_runtime.ConfigHome:
 class Gateway:
     """One router, one database, one fake reload that publishes the way the gateway's reload does."""
 
-    def __init__(self, tmp_path: Path, name: str = "admin.db", startup: dict[str, Any] | None = None) -> None:
+    def __init__(self, tmp_path: Path, name: str = "admin.db") -> None:
         self.db = tmp_path / name
         admin_store.init_db(self.db)
         self.home = make_home()
-        self.startup = startup if startup is not None else {}
         self.reloads = 0
         self.reload_error: Exception | None = None
         self.after_failure_note: Callable[[], None] | None = None
@@ -54,7 +53,6 @@ class Gateway:
         app = FastAPI()
         app.include_router(config_api.create_config_router(
             auth=self.auth, admin_path=self.db, home=lambda: self.home, registry=lambda: {}, reload=self.reload,
-            startup_block=self.startup.get,
         ))
 
         @app.get(f"{API}/export")  # the gateway answers this path from proxy.py (format=v1); the test app does it directly
@@ -143,7 +141,6 @@ ROUTES = [
     ("GET", f"{API}/drift", None),
     ("GET", f"{API}/problems", None),
     ("POST", f"{API}/import", {"document": {"format": layers.EXPORT_FORMAT}}),
-    ("POST", f"{API}/sections/{SECTION}/legacy-import", {}),
 ]
 
 
@@ -161,9 +158,6 @@ def test_the_routes_that_need_a_precondition_answer_428_without_one(gw):
     assert gw.client.patch(f"{API}/changes", json={"items": [setting("/timeout", 5)]}, headers=OWNER).status_code == 428
     missing = gw.client.delete(f"{API}/sections/{SECTION}/entries?pointer=/timeout", headers=OWNER)
     assert missing.status_code == 428 and missing.json()["error"]["code"] == "revision_required"
-    gw.startup[SECTION] = {"timeout": 9}
-    legacy = gw.client.post(f"{API}/sections/{SECTION}/legacy-import", headers=OWNER)
-    assert legacy.status_code == 428 and legacy.json()["sections"] == [SECTION]
     assert gw.counts() == (0, 0)
 
 
@@ -288,7 +282,7 @@ def test_a_malformed_body_is_400_with_the_codes_the_admin_api_uses_and_writes_no
 
 
 def test_a_body_that_is_not_text_for_a_note_is_400_on_every_write_route_and_writes_nothing(tmp_path):
-    gw = Gateway(tmp_path, startup={SECTION: {**copy.deepcopy(DEFAULTS), "timeout": 99}})
+    gw = Gateway(tmp_path)
     committed = gw.patch(setting("/timeout", 60)).json()["change_id"]
     before = gw.counts()
     document = export_of(gw)
@@ -298,8 +292,6 @@ def test_a_body_that_is_not_text_for_a_note_is_400_on_every_write_route_and_writ
             "revert": gw.client.post(f"{API}/changes/{committed}/revert",
                                      json={"if_match": {SECTION: gw.revision()}, "note": note}, headers=OWNER),
             "import": gw.client.post(f"{API}/import", json=import_body(document, gw, note=note), headers=OWNER),
-            "legacy-import": gw.client.post(f"{API}/sections/{SECTION}/legacy-import", json={"note": note},
-                                            headers={**OWNER, "If-Match": gw.revision()}),
         }
         for route, response in attempts.items():
             assert response.status_code == 400, (route, note, response.text)
@@ -458,12 +450,6 @@ def test_an_object_value_is_served_with_its_keys_in_the_order_the_owner_sent(gw)
     assert stored == '{"right": "R", "left": "L"}'
 
 
-def test_a_legacy_import_keeps_the_key_order_of_the_startup_block(tmp_path):
-    block = {**copy.deepcopy(DEFAULTS), "pair": {"right": "R", "left": "L"}}
-    gw = Gateway(tmp_path, startup={SECTION: block})
-    response = gw.client.post(f"{API}/sections/{SECTION}/legacy-import", headers={**OWNER, "If-Match": "0"})
-    assert response.status_code == 200, response.text
-    assert list(gw.entries()["/pair"]["value"]) == ["right", "left"]
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -611,50 +597,12 @@ def test_a_block_the_section_cannot_take_blocks_the_import_and_names_why(block, 
     assert code in {p.code for p in blocked}
 
 
-def test_the_legacy_import_route_shows_the_whole_report_in_a_dry_run_then_applies_it(tmp_path):
-    gw = Gateway(tmp_path, startup={SECTION: copy.deepcopy(LEGACY_BLOCK)})
-    dry = gw.client.post(f"{API}/sections/{SECTION}/legacy-import?dry_run=1", headers=OWNER).json()
-    assert dry["applicable"] and gw.counts() == (0, 0)
-    assert {r["pointer"]: (r["file_value"], r.get("release_value")) for r in dry["rows"]} == {
-        "/timeout": (45, 30), "/mode": ("slow", "fast"), "/aliases/default": ({"target": "svc-live"}, {"target": "svc-a"}),
-        "/aliases/extra": ({"engine": "eng-1"}, None)}
-    assert dry["removes"] == [{"pointer": "/aliases/fast", "release_value": {"target": "svc-b"}}]
-    response = gw.client.post(f"{API}/sections/{SECTION}/legacy-import", headers={**OWNER, "If-Match": '"0"'})
-    assert response.status_code == 200 and response.json()["rows"] == dry["rows"], response.text
-    # /mode applies at restart: the running snapshot keeps its value and the view shows the imported one as pending.
-    assert layers.digest(gw.home.holder.current().config[SECTION]) == layers.digest({**LEGACY_BLOCK, "mode": DEFAULTS["mode"]})
-    assert gw.entries()["/mode"]["pending"] is True and gw.entries()["/mode"]["value"] == "slow"
-    change = gw.client.get(f"{API}/changes", headers=OWNER).json()["changes"][0]
-    assert change["kind"] == "legacy-import" and len(change["items"]) == 5
-    conn = sqlite3.connect(gw.db)
-    assert {r[0] for r in conn.execute("SELECT origin FROM config_overrides")} == {"legacy-import"}
-    conn.close()
 
 
-def test_a_second_legacy_import_after_the_file_changed_is_a_new_change_that_also_resets_what_it_drops(tmp_path):
-    gw = Gateway(tmp_path, startup={SECTION: copy.deepcopy(LEGACY_BLOCK)})
-    gw.client.post(f"{API}/sections/{SECTION}/legacy-import", headers={**OWNER, "If-Match": "0"})
-    again = gw.client.post(f"{API}/sections/{SECTION}/legacy-import", headers={**OWNER, "If-Match": "1"}).json()
-    assert again["change_id"] is None, "the same block again changes nothing"
-    gw.startup[SECTION] = {**copy.deepcopy(DEFAULTS), "timeout": 99}
-    gw.client.post(f"{API}/sections/{SECTION}/legacy-import", headers={**OWNER, "If-Match": "1"})
-    assert gw.home.holder.current().config[SECTION] == {**DEFAULTS, "timeout": 99}
-    assert {p for p in gw.entries() if gw.entries()[p]["source"] != "release"} == {"/timeout"}
 
 
-def test_a_blocked_legacy_import_writes_nothing_and_names_each_bad_pointer(tmp_path):
-    gw = Gateway(tmp_path, startup={SECTION: {"timeout": "ten", "surprise": 1}})
-    response = gw.client.post(f"{API}/sections/{SECTION}/legacy-import", headers={**OWNER, "If-Match": "0"})
-    assert response.status_code == 422 and response.json()["error"]["code"] == "legacy_import_blocked"
-    assert {p["pointer"] for p in response.json()["problems"]} >= {"/timeout", "/surprise"}
-    assert gw.counts() == (0, 0)
-    dry = gw.client.post(f"{API}/sections/{SECTION}/legacy-import?dry_run=1", headers=OWNER).json()
-    assert dry["applicable"] is False and dry["blocked"]
 
 
-def test_a_legacy_import_with_no_startup_block_or_an_unknown_section_is_refused(gw):
-    assert gw.client.post(f"{API}/sections/{SECTION}/legacy-import", headers=OWNER).status_code == 409
-    assert gw.client.post(f"{API}/sections/nope/legacy-import", headers=OWNER).status_code == 404
 
 
 # ---------------------------------------------------------------------------------------------------------------------

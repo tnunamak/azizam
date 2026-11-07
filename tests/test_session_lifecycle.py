@@ -467,7 +467,7 @@ def test_keys_neither_renew_nor_step_up_and_never_get_a_session_cookie(sg):
     opk = owner.post(f"/admin/api/apps/{app['id']}/keys", json={"label": "k"}, headers=csrf(owner)).json()["credential"]["api_key"]
 
     bare = sg.client()
-    gated = bare.get("/admin/api/settings/effective/export", headers={"authorization": f"Bearer {oak}"})
+    gated = bare.get("/admin/api/config/export", headers={"authorization": f"Bearer {oak}"})
     gated_write = bare.put("/admin/api/operator/host-commands", json={"enabled": False},
                            headers={"authorization": f"Bearer {oak}", "if-match": '"0"'})
     models = bare.get("/openai/v1/models", headers={"authorization": f"Bearer {opk}"})
@@ -488,7 +488,7 @@ def test_a_stale_session_cookie_beside_a_key_does_not_stop_the_key(sg):
     forge(sg, stale, OWNER, issued_ago=3 * DAY, authenticated_ago=3 * DAY, sid="stale_beside_key_01")
     accounts.revoke_session("stale_beside_key_01", int(time.time() + 30 * DAY), path=sg.path)      # revoked: no session
 
-    response = stale.get("/admin/api/settings/effective/export", headers={"authorization": f"Bearer {oak}"})
+    response = stale.get("/admin/api/config/export", headers={"authorization": f"Bearer {oak}"})
 
     assert response.status_code == 200, response.text
 
@@ -599,7 +599,7 @@ def test_the_401_says_how_this_person_can_confirm_and_for_how_long(sg):
     stale = stale_owner(sg)
     set_password(sg, OWNER)
 
-    body = stale.get("/admin/api/settings/effective/export").json()["error"]
+    body = stale.get("/admin/api/config/export").json()["error"]
 
     assert body["code"] == "reauth_required"
     assert body["reauth"] == {"methods": ["password", "oidc"], "window_seconds": 15 * MINUTE, "oidc_url": "/login?reauth=1"}
@@ -608,13 +608,13 @@ def test_the_401_says_how_this_person_can_confirm_and_for_how_long(sg):
 def test_a_person_with_only_the_provider_is_offered_the_provider(sg):
     stale = stale_owner(sg)
 
-    assert stale.get("/admin/api/settings/effective/export").json()["error"]["reauth"]["methods"] == ["oidc"]
+    assert stale.get("/admin/api/config/export").json()["error"]["reauth"]["methods"] == ["oidc"]
 
 
 def test_confirming_with_the_right_password_makes_the_session_fresh_and_the_retry_goes_through(sg):
     stale = stale_owner(sg)
     set_password(sg, OWNER)
-    assert asks_again(stale.get("/admin/api/settings/effective/export"))
+    assert asks_again(stale.get("/admin/api/config/export"))
     before = cookie_session(stale)
 
     response = stale.post("/auth/api/reauth", json={"password": PASSWORD}, headers=csrf(stale))
@@ -623,7 +623,7 @@ def test_confirming_with_the_right_password_makes_the_session_fresh_and_the_retr
     after = cookie_session(stale)
     assert after.session_id != before.session_id and after.family_id == before.family_id
     assert abs(after.last_authenticated - time.time()) < 10
-    retry = stale.get("/admin/api/settings/effective/export")
+    retry = stale.get("/admin/api/config/export")
     assert retry.status_code == 200, retry.text
     assert registry(sg, after.session_id)[0]["expires_at"] == int(after.expires_at)
 
@@ -636,7 +636,7 @@ def test_a_wrong_password_does_not_make_the_session_fresh(sg):
 
     assert response.status_code == 401 and response.json()["error"]["code"] == "invalid_password"
     assert session_cookies(response) == []
-    assert asks_again(stale.get("/admin/api/settings/effective/export"))
+    assert asks_again(stale.get("/admin/api/config/export"))
 
 
 def test_confirming_needs_the_csrf_token_and_a_session(sg):
@@ -671,19 +671,19 @@ def test_confirming_shares_the_sign_in_throttle(sg):
 def test_the_step_up_window_is_the_owners_setting(sg):
     set_policy(sg, step_up_minutes=60)
     client = stale_owner(sg, authenticated_ago=40 * MINUTE)
-    assert not asks_again(client.get("/admin/api/settings/effective/export"))
+    assert not asks_again(client.get("/admin/api/config/export"))
 
     set_policy(sg, step_up_minutes=30)
 
-    assert asks_again(client.get("/admin/api/settings/effective/export"))
+    assert asks_again(client.get("/admin/api/config/export"))
 
 
 def test_a_fresh_sign_in_is_good_for_exactly_the_window(sg):
     inside = stale_owner(sg, authenticated_ago=14 * MINUTE, sid="inside_window_0001")
     outside = stale_owner(sg, authenticated_ago=16 * MINUTE, sid="outside_window_001")
 
-    assert not asks_again(inside.get("/admin/api/settings/effective/export"))
-    assert asks_again(outside.get("/admin/api/settings/effective/export"))
+    assert not asks_again(inside.get("/admin/api/config/export"))
+    assert asks_again(outside.get("/admin/api/config/export"))
 
 
 def test_renewal_does_not_count_as_confirming(sg):
@@ -692,7 +692,7 @@ def test_renewal_does_not_count_as_confirming(sg):
 
     client.get("/me/api/session")                                       # renews the cookie
 
-    assert asks_again(client.get("/admin/api/settings/effective/export"))
+    assert asks_again(client.get("/admin/api/config/export"))
 
 
 def test_a_non_admin_is_refused_by_the_route_not_asked_to_confirm(sg):
@@ -709,7 +709,7 @@ def test_a_non_admin_is_refused_by_the_route_not_asked_to_confirm(sg):
     accounts.register_session(session.subject, session.session_id, int(session.expires_at), path=sg.path)
     put_cookie(member, encode_session_cookie(session, signing_key=SIGNING_KEY))
 
-    response = member.get("/admin/api/settings/effective/export")
+    response = member.get("/admin/api/config/export")
 
     assert response.status_code == 403 and not asks_again(response)
 
@@ -845,7 +845,7 @@ def test_confirming_through_the_provider_rotates_the_session_id_inside_the_same_
     _, callback = reauth_through_provider(sg, stale, auth_time=int(time.time()))
 
     assert callback.status_code == 302 and callback.headers["location"] == "/settings/"
-    assert not asks_again(stale.get("/admin/api/settings/effective/export"))
+    assert not asks_again(stale.get("/admin/api/config/export"))
     after = cookie_session(stale)
     assert after.family_id == before.family_id and after.session_id != before.session_id
     replay = sg.client()
@@ -859,7 +859,7 @@ def test_a_provider_that_reuses_its_own_old_login_does_not_confirm_anyone(sg):
     _, callback = reauth_through_provider(sg, stale, auth_time=int(time.time()) - 3600)
 
     assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=provider")
-    assert asks_again(stale.get("/admin/api/settings/effective/export"))
+    assert asks_again(stale.get("/admin/api/config/export"))
 
 
 def test_an_ordinary_provider_sign_in_with_a_recent_login_is_a_recent_sign_in(sg):
@@ -867,7 +867,7 @@ def test_an_ordinary_provider_sign_in_with_a_recent_login_is_a_recent_sign_in(sg
 
     through_provider(sg, client, reauth=False, auth_time=int(time.time()) - 30)
 
-    assert not asks_again(client.get("/admin/api/settings/effective/export"))
+    assert not asks_again(client.get("/admin/api/config/export"))
 
 
 def test_a_provider_that_reports_no_auth_time_does_not_sign_the_person_in(sg):
@@ -894,12 +894,12 @@ def test_a_session_that_proves_no_sign_in_time_stays_not_recent_when_it_renews(s
 def test_a_person_with_no_recent_time_confirms_with_a_password_and_is_recent_after(sg):
     client = unknown_proof_owner(sg)
     set_password(sg, OWNER)
-    assert asks_again(client.get("/admin/api/settings/effective/export"))
+    assert asks_again(client.get("/admin/api/config/export"))
 
     confirmed = client.post("/auth/api/reauth", json={"password": PASSWORD}, headers=csrf(client))
 
     assert confirmed.status_code == 200, confirmed.text
-    assert not asks_again(client.get("/admin/api/settings/effective/export"))
+    assert not asks_again(client.get("/admin/api/config/export"))
 
 
 def test_a_session_that_ends_while_the_person_is_at_the_provider_still_gets_a_new_session(sg):
@@ -924,7 +924,7 @@ def test_a_person_with_no_recent_time_confirms_through_a_provider_that_reports_t
     _, callback = through_provider(sg, client, reauth=True, auth_time=int(time.time()))
 
     assert callback.status_code == 302
-    assert not asks_again(client.get("/admin/api/settings/effective/export"))
+    assert not asks_again(client.get("/admin/api/config/export"))
 
 
 def test_a_provider_that_never_reports_the_time_cannot_confirm_and_says_why_in_plain_words(sg):
@@ -933,7 +933,7 @@ def test_a_provider_that_never_reports_the_time_cannot_confirm_and_says_why_in_p
     _, callback = through_provider(sg, client, reauth=True, auth_time=None)
 
     assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=no_sign_in_time")
-    assert asks_again(client.get("/admin/api/settings/effective/export"))
+    assert asks_again(client.get("/admin/api/config/export"))
 
 
 def test_the_same_refusal_in_json_names_the_provider_and_the_other_way_to_confirm(sg):
@@ -972,7 +972,7 @@ def test_a_reauth_whose_auth_time_is_just_inside_the_clock_skew_allowance_confir
     _, callback = through_provider(sg, stale, reauth=True, auth_time=int(time.time()) - 45)
 
     assert callback.status_code == 302
-    assert not asks_again(stale.get("/admin/api/settings/effective/export"))
+    assert not asks_again(stale.get("/admin/api/config/export"))
 
 
 def test_the_clock_skew_allowance_is_sixty_seconds_and_written_down(sg):
@@ -992,7 +992,7 @@ def test_a_reauth_whose_auth_time_is_past_the_clock_skew_allowance_does_not_conf
     _, callback = through_provider(sg, stale, reauth=True, auth_time=int(time.time()) - 120)
 
     assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=provider")
-    assert asks_again(stale.get("/admin/api/settings/effective/export"))
+    assert asks_again(stale.get("/admin/api/config/export"))
 
 
 def test_confirming_through_the_provider_as_someone_else_is_refused(sg):
@@ -1003,7 +1003,7 @@ def test_confirming_through_the_provider_as_someone_else_is_refused(sg):
     _, callback = through_provider(sg, stale, sub="helper", email=HELPER, auth_time=int(time.time()))
 
     assert callback.status_code == 303 and callback.headers["location"].startswith("/sign-in/?error=provider")
-    assert asks_again(stale.get("/admin/api/settings/effective/export"))
+    assert asks_again(stale.get("/admin/api/config/export"))
 
 
 def test_the_reauth_request_survives_the_hop_to_the_callback_host(sg):
@@ -1023,7 +1023,7 @@ def test_a_host_header_that_reshapes_the_url_does_not_skip_the_confirmation(sg):
     stale = stale_owner(sg)
 
     for host in ("ai.example#", "ai.example?x=1", "ai.example/x"):
-        response = stale.get("/admin/api/settings/effective/export", headers={"host": host})
+        response = stale.get("/admin/api/config/export", headers={"host": host})
         assert asks_again(response), (host, response.status_code)
 
 
