@@ -772,3 +772,16 @@ def test_one_request_reads_the_route_record_once_and_its_policy_and_receipt_name
     assert len(reads) == 1
     assert harness.policy_manifests == [MANIFEST]
     assert harness.receipt_manifests == [MANIFEST]
+
+
+def test_one_app_serves_a_record_adopted_after_it_was_built() -> None:
+    harness = Harness()
+    later = dataclasses.replace(MANIFEST, version="adopted-after-start")
+    client = _client(harness)  # one app for both requests: the route must not keep the record it was built with
+
+    assert _post(client, **_multipart()).status_code == 200
+    harness.current_manifest = lambda: later
+    assert _post(client, **_multipart()).status_code == 200
+
+    assert harness.policy_manifests == [MANIFEST, later]
+    assert harness.receipt_manifests == [MANIFEST, later]

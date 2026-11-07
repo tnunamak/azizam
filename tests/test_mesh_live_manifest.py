@@ -77,6 +77,15 @@ def test_an_adopted_mesh_record_with_another_service_reaches_the_facts_and_the_p
         SimpleNamespace(identity=None), "req-live-2", "/v1/meshes/generate", proxy.current_mesh_workflow()).receipt
     assert receipt.backend == "swapped-engine"
 
+    seen = []
+    monkeypatch.setattr(proxy, "evaluate_and_apply", lambda identity, request: seen.append(request))
+    monkeypatch.setattr(proxy, "make_policy_request", lambda **kwargs: SimpleNamespace(**kwargs))
+    row = {"runtime_policy": {
+        "capability_exposure": "default", "capability_trust_tier": "stable", "capability_resource_tier": "batch"}}
+    proxy._mesh_route_policy(SimpleNamespace(identity=None), row, proxy.current_mesh_workflow())
+    proxy._mesh_route_policy(SimpleNamespace(identity=None), row, before)  # the record a request read before the swap
+    assert [request.backend for request in seen] == ["swapped-engine", before.service_id]
+
 
 def _replace_service(node, old, new):
     if isinstance(node, dict):
