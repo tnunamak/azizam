@@ -177,6 +177,18 @@ async function errorShape(origin: string): Promise<Shape | null> {
   return found;
 }
 
+/**
+ * Take an endpoint's real structure now, so a later fulfilJson for it checks against the cache and answers at once.
+ * Call it before a page step that waits on the stub: a cold cache otherwise makes fulfilJson call the gateway while
+ * the page waits, and a busy gateway then holds the page past its assertion timeout.
+ */
+export async function primeShape(origin: string, method: string, pathname: string): Promise<void> {
+  const endpoint = lookup(method, pathname);
+  if (!endpoint)
+    throw new Error(`primeShape: ${method} ${pathname} is not in e2e/fixtures/intercept-registry.ts`);
+  await realShape(origin, endpoint);
+}
+
 export async function fulfilJson(
   route: Route,
   body: unknown,

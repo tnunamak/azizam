@@ -465,6 +465,13 @@ function poolProject(testInfo: TestInfo) {
   return pool.length > 1 ? pool[testInfo.parallelIndex % pool.length] : undefined;
 }
 
+/** The origin of the gateway this test's page talks to (its pool server, or the project's own). */
+export function testOrigin(testInfo: TestInfo): string {
+  const baseURL = poolProject(testInfo)?.use.baseURL ?? testInfo.project.use.baseURL;
+  if (!baseURL) throw new Error("testOrigin: the project has no baseURL");
+  return new URL(baseURL).origin;
+}
+
 export const test = base.extend<{ isolated: Isolated; globalStateGuard: void }>({
   baseURL: async ({ baseURL }, use, testInfo) => {
     await use(poolProject(testInfo)?.use.baseURL ?? baseURL);
