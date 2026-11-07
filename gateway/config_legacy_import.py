@@ -53,6 +53,18 @@ def base_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
+def legacy_block(section_id: str, block: Any) -> Any:
+    """The block in the shape the section has now. Only ``models`` changed shape (C10): it was a list of entries that
+    each carried an ``id``, and is a mapping from that id to the entry. A list entry with no usable ``id`` is dropped."""
+    if section_id != "models" or not isinstance(block, list):
+        return block
+    return {
+        str(item["id"]).strip(): {key: value for key, value in item.items() if key != "id"}
+        for item in block
+        if isinstance(item, Mapping) and str(item.get("id", "")).strip()
+    }
+
+
 def rows_by_section(home: Any, state: Mapping[str, Any]) -> dict[str, list[layers.Override]]:
     rows: dict[str, list[layers.Override]] = {name: [] for name in home.sections}
     for row in state["rows"]:
@@ -143,6 +155,7 @@ def import_section(
     ``apply=False`` is the dry run: nothing is written and the step is not recorded.
     """
     step = step_name(section_id)
+    block = legacy_block(section_id, block)
     try:
         if admin_store.migration_step_recorded(step, path=path):
             return ImportOutcome(section_id, STATUS_DONE)

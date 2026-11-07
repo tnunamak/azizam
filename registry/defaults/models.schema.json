@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam://registry/defaults/models",
+  "title": "models",
+  "description": "Extra model names a client may send, each pinned to a model file on a registered backend. A role with a pinned model, without a role's access policy (docs/design/CONFIG_HOMES.md, C10). The key is the model name the client sends.",
+  "type": "object",
+  "x-azizam-entry": "collection",
+  "propertyNames": {"type": "string", "minLength": 1},
+  "additionalProperties": {
+    "x-azizam-entry": "atomic",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["backend", "path"],
+    "properties": {
+      "backend": {"description": "A service id of the registry.", "type": "string", "minLength": 1},
+      "path": {"description": "The model file on the backend's host.", "type": "string", "minLength": 1},
+      "mmproj": {"type": "string"},
+      "description": {"type": "string"}
+    }
+  }
+}

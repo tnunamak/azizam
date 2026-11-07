@@ -1045,8 +1045,20 @@ def _is_local_swap_backend(backend: str | None) -> bool:
 # This lets us surface arbitrary GGUFs on /v1/models without inventing roles.
 # All MODELS_CATALOG entries require a local file path (this is a GGUF catalog).
 # Any enabled registry backend may appear here.
+def _extra_model_entries(raw) -> dict:
+    """The ``models`` section as ``{normalized id: entry}``. The section is a mapping of the model name a client sends
+    to its entry; anything else is no catalog."""
+    if not isinstance(raw, Mapping):
+        return {}
+    return {
+        str(name).strip().lower(): {**item, "id": str(name).strip().lower()}
+        for name, item in raw.items()
+        if isinstance(item, Mapping) and str(name).strip()
+    }
+
+
 def _normalize_models_catalog(raw) -> dict:
-    """Normalize config['models'] (list of dicts) into {normalized_id: entry}.
+    """Normalize the ``models`` section into {normalized_id: entry}.
 
     Accepts any backend that is known in config["backends"].  All entries in this catalog MUST supply a local file
     path — it is a GGUF-alias catalog by design.  Entries without a path are
@@ -1054,16 +1066,11 @@ def _normalize_models_catalog(raw) -> dict:
     """
     known_backends: frozenset[str] = frozenset((config.get("backends") or {}).keys())
     out: dict = {}
-    if not isinstance(raw, list):
-        return out
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        mid = str(item.get("id", "")).strip().lower()
+    for mid, item in _extra_model_entries(raw).items():
         backend = item.get("backend")
         path = item.get("path")
         # Require a known backend AND a local path (GGUF catalog — path is mandatory).
-        if not mid or backend not in known_backends or not path:
+        if backend not in known_backends or not path:
             continue
         mmproj_raw = item.get("mmproj")
         mmproj_path = str(mmproj_raw).strip() if mmproj_raw else None
@@ -27269,12 +27276,8 @@ def _declared_model_metadata_index(
 
     for model_id, (_service, record) in service_index.items():
         add(model_id, record)
-    extras: dict[str, Mapping[str, Any]] = {}
-    for item in config.get("models") or []:
-        if isinstance(item, Mapping) and item.get("id"):
-            extras.setdefault(normalize_model_id(str(item["id"])), item)
-    for model_id, item in extras.items():
-        add(model_id, item)
+    for model_id, item in _extra_model_entries(config.get("models")).items():
+        add(normalize_model_id(model_id), item)
     roles_cfg = config.get("roles") if isinstance(config.get("roles"), Mapping) else {}
     for role_name, role_cfg in roles_cfg.items():
         add(str(role_name), role_cfg)
@@ -27891,9 +27894,7 @@ async def list_models(request: Request):
     # compliant clients, readable by agents querying the catalog.
     roles_cfg = config.get("roles") or {}
     extra_models_cfg = {
-        normalize_model_id(str(m.get("id") or "")): m
-        for m in (config.get("models") or [])
-        if isinstance(m, Mapping) and m.get("id")
+        normalize_model_id(model_id): entry for model_id, entry in _extra_model_entries(config.get("models")).items()
     }
     for item in data:
         if not isinstance(item, dict) or item.get("description"):
