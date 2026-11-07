@@ -154,6 +154,11 @@ class AssetPort(Protocol):
 
     def put(self, data: bytes, *, kind: str, suffix: str, owner_key: str | None) -> str: ...
 
+    def has_claim(self, asset_id: str, owner_key: str) -> bool:
+        """Whether the file is stored and this owner already holds a claim on it. With no owner key, whether it is
+        stored at all."""
+        ...
+
     def discard(self, asset_id: str, owner_key: str) -> None:
         """Remove the owner's claim and, when no owner is left, the file. Quiet if it is already gone."""
         ...
@@ -250,7 +255,7 @@ class MediaInputResolver:
         # Whether this ingest creates the file is decided inside the ledger's write transaction, where the sweep's
         # removal cannot run: a file seen there stays until the marker is gone.
         self._ledger.begin_effect(effect_id, owner_key=owner or "", asset_id=planned,
-                                  asset_exists=lambda: self._assets.exists(planned))
+                                  already_claimed=lambda: self._assets.has_claim(planned, owner or ""))
         asset_id = self._assets.put(data, kind=kind, suffix=measured.suffix, owner_key=owner)
         lease_id = self._lease(asset_id, owner or "", holder, effect_id=effect_id)
         return ResolvedInput(StoredInput(asset_id, measured.media_type, measured.size_bytes, measured.sha256, lease_id), data)

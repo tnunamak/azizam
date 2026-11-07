@@ -79,6 +79,15 @@ class CacheAssetPort:
         return self._store(data, kind=kind, suffix=suffix, owner_key_hash=owner_key, maker_person_id=None,
                            keep_prompt=False)
 
+    def has_claim(self, asset_id: str, owner_key: str) -> bool:
+        if not self.exists(asset_id):
+            return False
+        if not owner_key:
+            return True
+        with self._lock:
+            owners = self._read_metadata(asset_id).get("owner_key_hashes") or []
+        return owner_key in owners
+
     def discard(self, asset_id: str, owner_key: str) -> None:
         with self._lock:
             metadata = dict(self._read_metadata(asset_id))
