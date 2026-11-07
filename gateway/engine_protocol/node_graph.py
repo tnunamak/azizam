@@ -56,7 +56,7 @@ from gateway.engine_protocol.types import (
     Pending, Reply, ResultBundle, ResultContext, StreamReply,
 )
 from gateway.manifests import bind_backend_request, validate_inputs
-from gateway import engine_egress, output_selectors
+from gateway import binding_registry, engine_egress, output_selectors
 
 ADAPTER_ID = "node-graph"
 OPERATIONS = (
@@ -281,6 +281,15 @@ def select_outputs(job: Mapping[str, Any] | None, selectors: Mapping[str, Mappin
             raise SelectionRefused("result_ambiguous", f"result {name} is one file, but the engine listed {len(files)}")
         chosen[name] = tuple(files[:1] if selector["take"] in ("first", "single") else files)
     return chosen
+
+
+def graph_selector_cardinality(selector: Mapping[str, str]) -> tuple[int, int | None]:
+    """How many items a selector yields when it succeeds (the reviewed ``selector_cardinality`` hook, D5): ``first`` and
+    ``single`` yield one file, ``all`` yields one or more. A ``json`` result is one document whatever ``take`` says,
+    because ``results`` refuses two JSON files even for ``take: all``. ``None``: no bound of its own."""
+    if selector.get("decode") == "json" or selector.get("take") in ("first", "single"):
+        return (1, 1)
+    return (1, None)
 
 
 # ---------------------------------------------------------------------------
@@ -793,7 +802,18 @@ class NodeGraphAdapter:
             selectors = output_selectors.check_binding(self.result_selectors, outputs, block, max_selectors=limits.max_selectors)
         except output_selectors.SelectorError as exc:
             raise SelectionRefused(exc.code, str(exc)) from exc
-        return select_outputs(job, selectors)
+        chosen = select_outputs(job, selectors)
+        for name, files in chosen.items():
+            # A JSON result is one document, however many files were listed: two files stay ``result_ambiguous`` in
+            # ``results``. The count of an ``assets`` result is the files kept after filtering, de-duplication and ``take``.
+            kept = min(len(files), 1) if self.result_selectors.kind_of(selectors[name]) == "json" else len(files)
+            output_selectors.check_count(outputs.get(name), kept, name=name, max_assets=limits.max_assets)
+        return chosen
+
+    @staticmethod
+    def selector_cardinality(selector: Mapping[str, str]) -> tuple[int, int | None]:
+        """The reviewed cardinality hook of this adapter; see ``graph_selector_cardinality``."""
+        return graph_selector_cardinality(selector)
 
     async def fetch_json(self, conn: Connection, file: Mapping[str, Any], *, max_bytes: int, headers: Any = UNSET,
                          session: GraphSession | None = None, limits: Any = None) -> bytes:
@@ -863,7 +883,7 @@ class NodeGraphAdapter:
         asset limits hold while the bytes are read. A result that is missing, or that does not fit the type its output
         declares, refuses the whole run. Raises ``SelectionRefused``.
         """
-        from gateway.result_bundle import LimitedAssetStore
+        from gateway.result_bundle import LimitedAssetStore, check_json
 
         if self._assets is None:
             raise UnsupportedByAdapter("This adapter was built without a media store, so it cannot save assets.")
@@ -890,7 +910,8 @@ class NodeGraphAdapter:
                     if kinds[name] == "json":
                         if len(files) != 1:
                             raise SelectionRefused("result_ambiguous", f"result {name} is one JSON value, but the engine listed {len(files)} files")
-                        results[name] = JsonResult(await self.fetch_json(conn, files[0], max_bytes=limits.json_max_bytes, session=use))
+                        raw = await self.fetch_json(conn, files[0], max_bytes=limits.json_max_bytes, session=use)
+                        results[name] = JsonResult(raw)
                         reason = output_selectors.wrong_type_reason(outputs.get(name), "json", ())
                         saved: list[AssetRef] = []
                     else:
@@ -899,6 +920,13 @@ class NodeGraphAdapter:
                         reason = output_selectors.wrong_type_reason(outputs.get(name), "assets", [ref_.content_type for ref_ in saved])
                     if reason is not None:
                         raise SelectionRefused("result_wrong_type", f"result {name}: {reason}")
+                    if kinds[name] == "json":
+                        # The document is decoded under the JSON limits only when a shape is declared to check it against;
+                        # otherwise the one item is the bytes, and only the count is read.
+                        document = check_json(raw, limits) if isinstance(outputs.get(name), Mapping) and outputs[name].get("schema") else raw
+                        output_selectors.check_result(outputs.get(name), "json", (document,), name=name, max_assets=limits.max_assets)
+                    else:
+                        output_selectors.check_result(outputs.get(name), "assets", saved, name=name, max_assets=limits.max_assets)
         except output_selectors.FetchRefused as refusal:
             raise SelectionRefused(refusal.code, str(refusal)) from refusal
         return ResultBundle(results)
@@ -940,6 +968,9 @@ class NodeGraphAdapter:
                     yield chunk
 
             return await store.save(chunks(), content_type=content_type, max_bytes=max_bytes, name=str(file.get("filename")))
+
+
+binding_registry.register_selector_cardinality(ADAPTER_ID, graph_selector_cardinality)
 
 
 def job_event_from(ref: JobRef, event: Mapping[str, Any]) -> JobEvent | None:

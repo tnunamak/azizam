@@ -369,3 +369,167 @@ def test_a_manifest_output_name_that_is_not_one_path_segment_is_refused(name: st
     with pytest.raises(ManifestError, match="result name starts with a letter or digit") as refused:
         validate_manifest(manifest)
     assert RESULT_NAME_RULE in str(refused.value)
+
+
+# ------------------------------------------------------------------------ count and shape of a result (S3.8, D5)
+
+from gateway.engine_protocol.errors import SelectionRefused  # noqa: E402
+from gateway.engine_protocol.node_graph import graph_selector_cardinality  # noqa: E402
+from gateway.manifests import ContractErrors, enforce_contract  # noqa: E402
+
+GRAPH_HOOK = graph_selector_cardinality
+BUNDLED_IMAGE = ROOT / "manifests" / "workflows" / "flux2-klein.yml"
+
+
+def counted(**count: Any) -> dict[str, Any]:
+    return {"media_type": "a/b", "count": count}
+
+
+def refusal_of(spec: Any, kind: str, items: tuple[Any, ...], **kw: Any) -> SelectionRefused:
+    with pytest.raises(SelectionRefused) as caught:
+        sel.check_result(spec, kind, items, **kw)
+    return caught.value
+
+
+def test_a_result_with_too_few_items_is_refused():
+    # One item, not none: an empty selection is ``result_missing`` and must not hide this check.
+    refused_count = refusal_of(counted(min=2, max=3), "assets", ("a",), name="first")
+    assert refused_count.code == "result_count" and "first" in str(refused_count)
+    sel.check_result(counted(min=2, max=3), "assets", ("a", "b"))
+
+
+def test_a_result_with_too_many_items_is_refused():
+    assert refusal_of(counted(min=1, max=2), "assets", ("a", "b", "c")).code == "result_count"
+    sel.check_result(counted(min=1, max=2), "assets", ("a", "b"))
+
+
+def test_an_absent_count_allows_one_up_to_the_deployment_limit():
+    assert refusal_of({"media_type": "a/b"}, "assets", ("a", "b", "c"), max_assets=2).code == "result_count"
+    sel.check_result({"media_type": "a/b"}, "assets", ("a", "b"), max_assets=2)
+    assert refusal_of({"media_type": "a/b"}, "assets", (), max_assets=2).code == "result_count"
+
+
+def test_the_effective_count_fills_only_what_the_document_leaves_out():
+    assert sel.effective_count({"media_type": "a/b"}, 3) == (1, 3)
+    assert sel.effective_count(counted(min=2), 3) == (2, 3)
+    assert sel.effective_count(counted(min=1, max=2), 3) == (1, 2)
+    assert sel.effective_count(counted(min=2.0, max=3.0), 9) == (2, 3)    # the schema accepts an integral float
+    spec = counted(min=2)
+    sel.effective_count(spec, 3)
+    assert spec == counted(min=2), "the document is not changed, so its hash is not"
+
+
+SHAPE = {
+    "type": "object",
+    "properties": {
+        "label": {"type": "string", "required": True, "min_length": 2, "enum": ["ok", "fine"]},
+        "scores": {"type": "array", "required": True, "max_items": 3, "items": {"type": "integer"}},
+    },
+}
+GOOD = {"label": "ok", "scores": [1, 2, 3]}
+
+
+@pytest.mark.parametrize("value", [
+    {"scores": [1]},
+    {**GOOD, "extra": 1},
+    {**GOOD, "scores": [1, "two"]},
+    {**GOOD, "scores": [1, 2, 3, 4]},
+    {**GOOD, "label": "o"},
+    {**GOOD, "label": "other"},
+    [GOOD],
+], ids=["required-missing", "unknown-field", "wrong-element-type", "too-many-items", "too-short", "not-in-enum", "not-an-object"])
+def test_json_shape_uses_the_contract_grammar_recursively(value: Any):
+    spec = {"media_type": "application/json", "schema": SHAPE}
+    sel.check_result(spec, "json", (GOOD,))
+    failure = refusal_of(spec, "json", (value,), name="meta")
+    assert failure.code == "result_schema" and "meta" in str(failure)
+
+
+def test_a_schema_refusal_never_holds_a_value_or_a_name_from_the_answer():
+    spec = {"media_type": "application/json", "schema": SHAPE}
+    message = str(refusal_of(spec, "json", ({**GOOD, "leaked_key_name": "leaked_value", "label": "leaked_label"},)))
+    assert "leaked" not in message
+
+
+def test_a_json_array_is_one_result_not_one_result_per_element():
+    spec = {"media_type": "application/json", "count": {"min": 1, "max": 1},
+            "schema": {"type": "array", "max_items": 3, "items": {"type": "integer"}}}
+    sel.check_result(spec, "json", ([1, 2, 3],))          # three elements, one document: count 1 holds
+    tight = {**spec, "schema": {**spec["schema"], "max_items": 2}}
+    assert refusal_of(tight, "json", ([1, 2, 3],)).code == "result_schema"
+
+
+def test_a_json_output_with_no_schema_is_only_counted():
+    sel.check_result({"media_type": "application/json"}, "json", ({"anything": [1, "x"]},))
+    assert refusal_of({"media_type": "application/json", "count": {"min": 2}}, "json", ({},)).code == "result_count"
+
+
+def effective_manifest(take: str, **count: Any) -> dict[str, Any]:
+    return manifest(selectors={"first": selector(take=take)}, outputs={"first": {"media_type": "a/b", "count": count}})
+
+
+@pytest.mark.parametrize("take", ["single", "first"])
+def test_a_count_of_two_cannot_be_saved_for_a_selector_that_yields_one(take: str):
+    m = effective_manifest(take, min=2)
+    with pytest.raises(sel.SelectorError) as caught:
+        sel.check_for_save(descriptor(), m, "eng", template=TEMPLATE, cardinality=GRAPH_HOOK)
+    assert caught.value.code == "count_unreachable"
+    assert caught.value.path == ("outputs", "first", "count")
+    assert sel.check_for_save(descriptor(), m, "eng", template=TEMPLATE), "without the hook nothing is known about the selector"
+
+
+def test_an_interval_that_meets_the_selector_interval_can_be_saved():
+    def save_with(take: str, **count: Any) -> None:
+        sel.check_for_save(descriptor(), effective_manifest(take, **count), "eng", template=TEMPLATE, cardinality=GRAPH_HOOK)
+
+    save_with("single", min=1, max=2)          # meets [1, 1] though it is not equal to it
+    save_with("single", min=1, max=1)          # sharing one end is enough
+    save_with("all", min=2, max=2)             # [1, no bound] holds 2
+    save_with("all", min=5)
+    with pytest.raises(sel.SelectorError) as caught:
+        save_with("single", min=2, max=2)
+    assert caught.value.code == "count_unreachable"
+
+
+def test_a_malformed_selector_is_reported_first_and_the_hook_is_not_asked():
+    asked: list[Any] = []
+
+    def hook(chosen: Any) -> tuple[int, int | None]:
+        asked.append(chosen)
+        return (1, 1)
+
+    m = effective_manifest("single", min=2)
+    m["bindings"]["eng"]["selectors"]["first"]["take"] = "sometimes"
+    with pytest.raises(sel.SelectorError) as caught:
+        sel.check_for_save(descriptor(), m, "eng", template=TEMPLATE, cardinality=hook)
+    assert caught.value.code == "selector_malformed" and asked == []
+
+
+def v2_document(take: str, **count: Any) -> dict[str, Any]:
+    doc = yaml.safe_load(BUNDLED_IMAGE.read_text(encoding="utf-8"))
+    doc["bindings"]["comfyui"]["selectors"]["image"]["take"] = take
+    if count:
+        doc["outputs"]["image"]["count"] = count
+    return doc
+
+
+def test_the_owner_and_package_save_path_refuses_a_count_the_selector_cannot_yield():
+    # ``enforce_contract`` is what a loader, an owner save and a package save call.
+    enforce_contract(v2_document("first"))
+    enforce_contract(v2_document("all", min=2))
+    for take in ("first", "single"):
+        with pytest.raises(ContractErrors) as caught:
+            enforce_contract(v2_document(take, min=2))
+        assert caught.value.code == "count_unreachable" and caught.value.path == ("outputs", "image", "count")
+    enforce_contract(v2_document("first", min=1, max=2))
+
+
+def test_a_json_selector_yields_one_document_even_with_take_all():
+    assert GRAPH_HOOK({"decode": "json", "take": "all"}) == (1, 1)
+    assert GRAPH_HOOK({"decode": "none", "take": "all"}) == (1, None)
+    assert GRAPH_HOOK({"decode": "none", "take": "first"}) == (1, 1)
+    m = manifest(selectors={"first": selector(decode="json", take="all")},
+                 outputs={"first": {"media_type": "application/json", "count": {"min": 2}}})
+    with pytest.raises(sel.SelectorError) as caught:
+        sel.check_for_save(descriptor(), m, "eng", template=TEMPLATE, cardinality=GRAPH_HOOK)
+    assert caught.value.code == "count_unreachable"

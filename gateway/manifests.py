@@ -345,13 +345,33 @@ def collect_manifest_errors(
 
     if selector_start is not None:
         selector_start.append(len(errors))
-    output_selectors.collect_manifest_errors(manifest, errors, descriptors)
+    output_selectors.collect_manifest_errors(manifest, errors, descriptors, _cardinalities(bindings, binding_descriptors))
     if selector_start is not None:
         selector_start.append(len(errors))   # with the entry above: how many errors the selector check added
     if binding_descriptors is not None:
         from gateway import binding_descriptors as bindings_module
 
         bindings_module.collect_binding_errors(manifest, errors, binding_descriptors)
+
+
+def _cardinalities(bindings: Any, binding_descriptors: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The reviewed ``selector_cardinality`` hook of each binding's adapter, by selector-form binding key. Only a check that
+    knows the adapters' descriptions (a load or a save) has them; a check of the selector shape alone has none."""
+    if binding_descriptors is None or not isinstance(bindings, Mapping):
+        return {}
+    from gateway import binding_registry, output_selectors
+    from gateway.engine_protocol import node_graph  # noqa: F401  (registers the adapter's reviewed hook)
+
+    found: dict[str, Any] = {}
+    for key, block in bindings.items():
+        if not isinstance(block, Mapping):
+            continue
+        form = output_selectors.selector_form(key, block)
+        descriptor = binding_descriptors.get(form)
+        hook = binding_registry.selector_cardinality(getattr(descriptor, "adapter_id", None))
+        if hook is not None:
+            found[form] = hook
+    return found
 
 
 def _holds(value: Any, name: str) -> bool:

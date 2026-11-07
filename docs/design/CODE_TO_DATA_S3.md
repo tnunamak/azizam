@@ -213,6 +213,27 @@ ExpressionTool exemption. We depart from MLflow, which does not validate outputs
 allows undeclared outputs (GA5). The entry's synthesis says that checking outputs against declared types and counts
 goes beyond the prior art. Count bounds have no surveyed precedent (CW2, CO1 negative results).
 
+As built (S3.8): `check_count` and `check_result(spec, kind, items)` sit in `gateway/output_selectors.py` beside
+`wrong_type_reason`. A JSON result is one item (the decoded document, even an array); the shape is checked with
+`workflow_contract.value_problems`; a refusal is `SelectionRefused` (`result_count`, `result_schema`) and holds no value
+or answer-supplied name. Refusal order is unchanged: zero files is `result_missing`, two files for `take: single` is
+`result_ambiguous`, a wrong media family is `result_wrong_type`, and only then the count.
+- Graph adapter: `collect` counts the kept files after `select_outputs` (a JSON result counts as one document there, so two
+  JSON files stay `result_ambiguous` in `results`); `results` checks the saved assets and the bounded-decoded JSON value
+  before the bundle returns. HTTP adapter: `_bundle` checks each result beside `wrong_type_reason`.
+- `fetch_selected` (a route that takes bytes) keeps selection-count semantics: a download that fails is left out as before
+  and no delivered-count recheck follows. A test pins this.
+- Not covered: the HTTP job-pattern path (`Pending`, then the executor's `fetch_assets`; the HTTP adapter has no `results`)
+  and the graph adapter's legacy `fetch_assets` publish with no output spec, so no check runs there.
+- No normalization output exists yet (`check_contract` returns a report; the document hash is of the document as written), so
+  the absent `count` is not written into the contract. `effective_count(spec, max_assets)` computes `{min: 1, max:
+  <deployment max_assets>}` at check time. The per-output maximum never replaces the aggregate `max_assets` guard.
+- `selector_cardinality` is a method on each adapter. The graph one is registered under its adapter id in
+  `binding_registry`; `manifests.collect_manifest_errors` (so `enforce_contract`, hence loads, owner saves and package
+  saves) looks it up through the binding descriptor and refuses `count_unreachable` at `("outputs", name, "count")` after the
+  selector normalized. The HTTP hook has no production save path (an http-v1 description has no binding descriptor), so
+  `check_for_save(..., cardinality=hook)` takes it explicitly.
+
 ### D6. Generated defaults: a tagged, reviewed generator, resolved once
 
 ```yaml

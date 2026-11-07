@@ -156,7 +156,16 @@ class HttpV1Adapter:
             reason = output_selectors.wrong_type_reason(outputs.get(name), kind, [file.content_type for file in files])
             if reason is not None:
                 raise SelectionRefused("result_wrong_type", f"result {name}: {reason}")
+            # One answer holds one value or one file per result: a JSON array is one document, not one item per element.
+            items = (self._selected(reply, name, selector["source"]),) if kind == "json" else files
+            output_selectors.check_result(outputs.get(name), kind, items, name=name)
         return ResultBundle(results)
+
+    @staticmethod
+    def selector_cardinality(selector: Mapping[str, str]) -> tuple[int, int | None]:
+        """The reviewed cardinality hook of this adapter: every ``decode`` (json, base64, binary) yields exactly one item,
+        and a missing, null or empty answer is refused, not a result of zero items."""
+        return (1, 1)
 
     @staticmethod
     def _selected(reply: Reply, name: str, source: str) -> Any:
