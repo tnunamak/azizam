@@ -91,6 +91,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/videos/video-scail-2-replace.json
+    selectors:
+      video: {node: '60', key: images, from: output_dir, decode: none, take: first}
     # applied by the route when it prepares the subject (gateway/video_subject.py), not by a mapped node.
     edge_only_inputs: [reference_fit, source_point_x, source_point_y]
     map:

@@ -196,3 +196,100 @@ def test_a_registry_write_refuses_a_connection_address_that_holds_a_credential_w
     assert wrote.status_code == 400, wrote.text
     assert "connection.address" in wrote.text and "raw-secret-value" not in wrote.text
     assert _stored_connection(gateway) == before
+
+
+def test_a_registry_refusal_never_quotes_a_secret_the_body_holds(gateway, host_isolated, monkeypatch):
+    from gateway import service_registry
+
+    owner, *_ = owner_and_admin(gateway)
+    _plant(gateway)
+    read = owner.get(REGISTRY)
+    body = read.json()["service_registry"]
+    address = "http://127.0.0.1:5053/v1?token=query-secret-value"
+    body["services"]["eng"]["config"]["address"] = address
+
+    def quoting(payload, before=None):
+        raise ValueError(f"cannot reach {address}")
+
+    monkeypatch.setattr(service_registry, "validate_protocol_dispatch_registry", quoting)
+    wrote = owner.put(REGISTRY, headers={**csrf_for(owner), "If-Match": read.headers["etag"]}, json=body)
+    assert wrote.status_code == 400, wrote.text
+    assert "cannot reach" in wrote.text and "query-secret-value" not in wrote.text
+
+
+def test_an_excluded_record_refusal_never_quotes_a_secret_the_body_holds(gateway, host_isolated, monkeypatch):
+    from gateway import admin_runtime
+
+    owner, *_ = owner_and_admin(gateway)
+    _plant(gateway)
+    etag = owner.get(REGISTRY).headers["etag"]
+    address = "user:raw-secret-value@127.0.0.1:5053"
+
+    def quoting(self, **kwargs):
+        raise ValueError(f"cannot save {address}")
+
+    monkeypatch.setattr(admin_runtime.AdminSQLiteStore, "replace_excluded_record", quoting)
+    wrote = owner.put(f"{REGISTRY}/excluded/services/eng", headers={**csrf_for(owner), "If-Match": etag},
+                      json={"record": {"config": {"connection": {"address": address}}}})
+    assert wrote.status_code == 400, wrote.text
+    assert "cannot save" in wrote.text and "raw-secret-value" not in wrote.text
+
+
+def test_the_body_secret_texts_take_a_schemeless_address_and_skip_a_short_key():
+    from gateway import record_carriers
+
+    texts = record_carriers.request_secret_texts(
+        {"host": "user:raw-secret-value@127.0.0.1", "key": "kind", "api_key": "sk-long-provider-key"})
+    assert "raw-secret-value" in texts and "sk-long-provider-key" in texts and "kind" not in texts
+
+
+def test_the_body_secret_texts_take_a_query_secret_from_a_schemeless_address():
+    from gateway import record_carriers
+
+    texts = record_carriers.request_secret_texts({"host": "127.0.0.1:5053/v1?token=raw-query-secret"})
+    assert "raw-query-secret" in texts
+
+
+def _engine(config: dict, connection: dict | None = None) -> dict:
+    record = {"kind": "engine", "label": "Engine", "config": config}
+    if connection is not None:
+        record["connection"] = connection
+    return record
+
+
+def test_a_connection_address_that_names_another_endpoint_than_the_one_dialed_is_refused():
+    import pytest
+
+    stale = _engine({"base_url": "http://old-host.test:8000/v1", "connection": {"address": "http://new-host.test:8000/v1"}})
+    with pytest.raises(ValueError) as refused:
+        service_registry.normalize_service_record("eng", stale)
+    assert "connection.address" in str(refused.value)
+    assert "old-host" not in str(refused.value) and "new-host" not in str(refused.value)
+    top_level = _engine({"host": "old-host.test", "port": 8000}, {"address": "http://new-host.test:8000"})
+    with pytest.raises(ValueError, match="connection.address"):
+        service_registry.normalize_service_record("eng", top_level)
+
+
+def test_a_registry_write_refuses_a_connection_address_the_service_is_not_dialed_at(gateway, host_isolated):
+    owner, *_ = owner_and_admin(gateway)
+    _plant(gateway)
+    read = owner.get(REGISTRY)
+    body = read.json()["service_registry"]
+    body["services"]["eng"]["config"]["connection"]["address"] = "http://127.0.0.2:5053"
+    wrote = owner.put(REGISTRY, headers={**csrf_for(owner), "If-Match": read.headers["etag"]}, json=body)
+    assert wrote.status_code == 400, wrote.text
+    assert "connection.address" in wrote.text and "127.0.0.2" not in wrote.text
+
+
+def test_a_connection_address_the_service_is_dialed_at_still_saves():
+    # The engine form's shape: the dialed base extends the connection address with the record's own path.
+    form = _engine({"host": "engine.test", "port": 8000, "base_path": "/v1", "address": "http://engine.test:8000"},
+                   {"dispatch": "protocol", "protocol": "openai-compatible", "address": "http://engine.test:8000",
+                    "transport": "http"})
+    service_registry.normalize_service_record("eng", form)
+    # Same endpoint in another spelling: case and the default port.
+    spelled = _engine({"base_url": "http://Engine.test:80/v1", "connection": {"address": "http://engine.test/v1/"}})
+    service_registry.normalize_service_record("eng", spelled)
+    # An address routing cannot resolve while checking (it comes from the environment) is not compared.
+    from_env = _engine({"base_url_env": "ENGINE_URL", "connection": {"address": "http://engine.test:8000"}})
+    service_registry.normalize_service_record("eng", from_env)

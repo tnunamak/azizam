@@ -1710,7 +1710,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             # actually tests). Disabling the feature here is the same no-op
             # short-circuit production takes when the operator has it off
             # (see resolve_image_background_decision's own early return).
-            proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", False
+            proxy, "_image_background_removal_enabled", lambda: False
         ), patch.object(
             proxy, "configured_downstream_headers", lambda *_a, **_kw: {}
         ), patch.object(
@@ -1762,7 +1762,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             # actually tests). Disabling the feature here is the same no-op
             # short-circuit production takes when the operator has it off
             # (see resolve_image_background_decision's own early return).
-            proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", False
+            proxy, "_image_background_removal_enabled", lambda: False
         ), patch.object(
             proxy, "configured_downstream_headers", lambda *_a, **_kw: {}
         ), patch.object(
@@ -1842,7 +1842,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             # actually tests). Disabling the feature here is the same no-op
             # short-circuit production takes when the operator has it off
             # (see resolve_image_background_decision's own early return).
-            proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", False
+            proxy, "_image_background_removal_enabled", lambda: False
         ), patch.object(
             proxy, "configured_downstream_headers", lambda *_a, **_kw: {}
         ), patch.object(

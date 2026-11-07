@@ -28,7 +28,7 @@ from typing import Any, Callable, Mapping, Protocol
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, egress, receipt_store, service_registry
+from gateway import admin_store, egress, projection, receipt_store, record_carriers, service_registry
 from gateway import provider_catalog, provider_configuration, provider_listing, secret_store
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway import providers as provider_core
@@ -91,6 +91,11 @@ class _RouteError(Exception):
 
     def as_response(self) -> JSONResponse:
         return egress.safe_error_response(self.status_code, self.code, self.message)
+
+
+def _scrubbed(exc: BaseException, body: Any) -> str:
+    """The refusal's text without the secrets the body holds (its key, a URL's user info or query values)."""
+    return projection.scrub_text(str(exc), record_carriers.request_secret_texts(body))
 
 
 def normalize_provider_admin_state(value: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -205,6 +210,7 @@ def create_provider_admin_router(
         ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
+        body: Any = None
         try:
             body = await _read_json_body(request)
             with secret_store.provider_mutation_lock(_admin_db_path(store)):
@@ -249,7 +255,7 @@ def create_provider_admin_router(
         except provider_configuration.ProviderConfigurationError as exc:
             return _RouteError(exc.status_code, exc.code, exc.message).as_response()
         except (ValueError, KeyError) as exc:
-            return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_provider", str(exc)).as_response()
+            return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_provider", _scrubbed(exc, body)).as_response()
         return egress.projected_response(
             status_code=status.HTTP_201_CREATED,
             content={"provider": provider, "service_registry": record.get("value") or {}},
@@ -463,6 +469,7 @@ def create_provider_admin_router(
         ctx = _owner_guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
+        body: Any = None
         try:
             body = await _read_json_body(request)
             with secret_store.provider_mutation_lock(_admin_db_path(store)):
@@ -502,7 +509,7 @@ def create_provider_admin_router(
         except admin_store.OperatorSettingsGenerationConflict:
             return _registry_conflict_response()
         except ValueError as exc:
-            return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_provider", str(exc)).as_response()
+            return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_provider", _scrubbed(exc, body)).as_response()
         return egress.projected_response(status_code=status.HTTP_200_OK, content={"provider": provider, "service_registry": record.get("value") or {}})
 
     @router.delete("/{provider_id}")

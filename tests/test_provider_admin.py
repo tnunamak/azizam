@@ -274,6 +274,27 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertTrue(provider["key_status"]["api_key_env"].startswith("AZIZAM_PROVIDER_SECRET_"))
         self.assertNotIn("sk-", response.text)
 
+    def test_a_refused_provider_never_quotes_the_key_it_was_sent(self) -> None:
+        store = FakeProviderAdminStore()
+        store.registry["services"].pop("openrouter")
+        quoted = "refused sk-test-openrouter-key for https://provider.test:8443/v1"
+        with patch.object(store, "add_service", side_effect=ValueError(quoted), create=True):
+            response = _client(store).post(
+                "/admin/api/providers",
+                headers={"authorization": "Bearer admin"},
+                json={
+                    "preset_id": "openrouter",
+                    "base_url": "https://provider.test:8443/v1",
+                    "expected_generation": 0,
+                    "api_key": "sk-test-openrouter-key",
+                    "models": [{"id": "upstream/model", "price": {"input_usd_per_million_tokens": "3", "output_usd_per_million_tokens": "15"}}],
+                },
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("refused", response.text)
+        self.assertNotIn("sk-test-openrouter-key", response.text)
+
     def test_add_provider_preserves_validated_https_url_for_litellm_api_base(self) -> None:
         from gateway.litellm_substrate import compile_litellm_config_from_registry
 

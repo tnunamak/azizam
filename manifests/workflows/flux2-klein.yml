@@ -56,6 +56,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/images/flux2-klein.json
+    selectors:
+      image: {node: '9', key: images, from: output_dir, decode: none, take: all}
     map:
       prompt:
         - node: "6"

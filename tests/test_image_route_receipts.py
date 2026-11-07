@@ -31,6 +31,7 @@ import proxy  # noqa: E402
 from tests.support.config_snapshot import derived_patch
 from gateway import ownership  # noqa: E402
 from tests.support.access import access, identity, plan_for, auth_identity  # noqa: E402
+from tests.support.config_snapshot import section_published  # noqa: E402
 from gateway.receipts import RouteReceipt  # noqa: E402
 
 # The image handlers apply the caller's plans; these tests run as the owner.
@@ -320,8 +321,8 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             proxy, "get_vram_estimate", lambda *_a, **_k: estimate
         ), patch.object(proxy, "graph_free_vram_bytes", fake_free), patch.object(
             proxy, "_free_graph_models_if_idle", free_models
-        ), patch.object(proxy, "IMAGE_VRAM_RESERVE_BYTES", 1 << 30), patch.object(
-            proxy, "IMAGE_FREE_VRAM_ON_EXHAUSTION", True
+        ), patch.object(proxy, "_image_vram_reserve_bytes", lambda: 1 << 30), patch.object(
+            proxy, "_image_free_vram_on_exhaustion", lambda: True
         ):
             response = await proxy._generate_images_with_adaptive_batching(
                 request=_StubUrlRequest(),  # type: ignore[arg-type]
@@ -1833,9 +1834,9 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
 class TestEditWorkflowSelection(unittest.TestCase):
     def test_configured_image_defaults_and_fallback_workflows(self) -> None:
         self.assertEqual(proxy.DERIVED.COMFY_DEFAULT_MODEL, "krea2-turbo")
-        self.assertEqual(proxy.IMAGE_EDIT_DEFAULT_MODEL, "qwen-image-2.1-edit")
+        self.assertEqual(proxy.image_edit_default_model(), "qwen-image-2.1-edit")
         self.assertEqual(
-            proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW, "qwen-image-2.1-edit"
+            proxy._image_variations_default_workflow(), "qwen-image-2.1-edit"
         )
         self.assertIsNotNone(proxy.load_graph_workflow("flux2-klein-4b"))
         self.assertIsNotNone(proxy.load_graph_workflow("flux2-klein-4b-edit"))
@@ -1852,11 +1853,11 @@ class TestEditWorkflowSelection(unittest.TestCase):
 
     def test_default_edit_routes_by_input_shape(self) -> None:
         with (
-            patch.object(proxy, "IMAGE_EDIT_DEFAULT_MODEL", "qwen-image-2.1-edit"),
+            section_published("model_compatibility", {"defaults": {"image_edits": "qwen-image-2.1-edit"}}),
             patch.object(
                 proxy,
-                "IMAGE_MULTIREF_EDIT_DEFAULT_WORKFLOW",
-                "qwen-image-2.1-edit-multiref",
+                "_image_multiref_edit_default_workflow",
+                lambda: "qwen-image-2.1-edit-multiref",
             ),
         ):
             self.assertEqual(
@@ -1885,7 +1886,7 @@ class TestEditWorkflowSelection(unittest.TestCase):
             )
 
     def test_explicit_fallback_model_stays_selected_for_multi_image(self) -> None:
-        with patch.object(proxy, "IMAGE_EDIT_DEFAULT_MODEL", "qwen-image-2.1-edit"):
+        with section_published("model_compatibility", {"defaults": {"image_edits": "qwen-image-2.1-edit"}}):
             self.assertEqual(
                 proxy._select_edit_workflow(
                     "flux2-klein-4b", image_count=2, has_mask=False
@@ -2525,7 +2526,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(receipt.requested_model)
         self.assertEqual(
             receipt.metadata["variations_delegated_workflow"],
-            proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW,
+            proxy._image_variations_default_workflow(),
         )
 
     async def test_denoise_applied_only_when_manifest_declares_it(self) -> None:
@@ -2536,7 +2537,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             captured["base_workflow"]["49"]["inputs"]["denoise"],
-            proxy.IMAGE_VARIATIONS_DENOISE,
+            proxy._image_variations_denoise(),
         )
 
     async def test_denoise_not_injected_when_manifest_lacks_it(self) -> None:
@@ -2549,7 +2550,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["base_workflow"]["49"]["inputs"]["denoise"], 1.0)
 
     async def test_configured_default_workflow_is_honored(self) -> None:
-        with patch.object(proxy, "IMAGE_VARIATIONS_DEFAULT_WORKFLOW", "flux2-klein-4b-inpaint"):
+        with patch.object(proxy, "_image_variations_default_workflow", lambda: "flux2-klein-4b-inpaint"):
             receipt, response, _ = await self._run(
                 fields=[("image", _MultipartUpload("a.png", _png_bytes((1, 2, 3, 255))))],
                 manifest=self._edit_manifest(with_denoise=False),
@@ -2578,7 +2579,7 @@ class TestProxyComfyVariationsRequest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(receipt.requested_model, "dall-e-2")
         self.assertEqual(
             receipt.metadata["variations_delegated_workflow"],
-            proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW,
+            proxy._image_variations_default_workflow(),
         )
 
     async def test_concrete_local_workflow_name_is_honored_literally(self) -> None:

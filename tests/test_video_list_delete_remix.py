@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from tests.support.config_snapshot import derived_patch
+from tests.support.config_snapshot import derived_patch, section_key_published  # noqa: E402
 from tests.support.access import access_context, auth_identity  # noqa: E402
 
 
@@ -653,7 +653,7 @@ class TestVideosRemix(VideoRegistryTestCase):
 
     async def test_unconfigured_returns_stable_501(self) -> None:
         self._seed("p1")
-        with patch.object(proxy, "VIDEO_REMIX_WORKFLOW", None):
+        with section_key_published("videos", "remix_workflow", None):
             response = await proxy.proxy_graph_video_remix(
                 proxy._video_id_from_prompt_id("p1"),
                 access_context(),

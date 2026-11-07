@@ -126,11 +126,11 @@ def test_an_image_manifest_pins():
 
 
 def test_a_configured_video_workflow_pins_its_config_entry_and_graph():
-    name = proxy.VIDEO_DEFAULT_WORKFLOW
+    name = proxy._video_default_workflow()
     built = proxy._video_job_envelope(name)
     assert built is not None
     assert built.envelope.source_id == name and built.envelope.template is not None
-    assert json.loads(built.blobs[0])["workflow"]["file"] == proxy.VIDEO_WORKFLOWS[name]["file"]
+    assert json.loads(built.blobs[0])["workflow"]["file"] == proxy._video_workflow_table()[name]["file"]
     assert proxy._video_job_envelope("no-such-video-workflow") is None
 
 

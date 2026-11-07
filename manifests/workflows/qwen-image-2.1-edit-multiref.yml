@@ -52,6 +52,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/images/qwen-image-2.1-edit-multiref.json
+    selectors:
+      image: {node: '10', key: images, from: output_dir, decode: none, take: all}
     # The edit route supplies this asset from the second multipart image part.
     route_bound_inputs: [reference_image_2]
     map:

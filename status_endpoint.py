@@ -3692,6 +3692,16 @@ def _status_auth_key_names(db_path: Path | None) -> tuple[list[str], dict[str, s
     return sorted(names), app_ids_by_label
 
 
+# The generated OpenAI model list: the release file unless the environment names another, as proxy.py's
+# openai_model_aliases_file reads it (a test holds the two equal). The path is not a config setting.
+_GENERATED_OPENAI_MODEL_ALIASES_FILE = "registry/openai_model_aliases.generated.yml"
+
+
+def openai_aliases_file() -> Path:
+    path = Path(os.environ.get("OPENAI_MODEL_ALIASES_FILE") or _GENERATED_OPENAI_MODEL_ALIASES_FILE)
+    return path if path.is_absolute() else Path(__file__).parent / path
+
+
 def _status_config_snapshot(config: dict) -> dict:
     # Configuration snapshot (load-bearing values).
     config_snapshot = {
@@ -3702,11 +3712,11 @@ def _status_config_snapshot(config: dict) -> dict:
         "auth_enabled": (config.get("auth") or {}).get("enabled"),
         "auth_public_paths": (config.get("auth") or {}).get("public_paths"),
         "model_compatibility": config.get("model_compatibility") or {},
-        "openai_aliases_file": (config.get("model_compatibility") or {}).get("generated_aliases_file"),
+        "openai_aliases_file": os.environ.get("OPENAI_MODEL_ALIASES_FILE") or _GENERATED_OPENAI_MODEL_ALIASES_FILE,
     }
     # Augment with mtime + size of the generated aliases file.
     try:
-        aliases_file = Path(__file__).parent / str(config_snapshot.get("openai_aliases_file") or "")
+        aliases_file = openai_aliases_file()
         if aliases_file.is_file():
             st = aliases_file.stat()
             config_snapshot["openai_aliases_file_size_bytes"] = st.st_size

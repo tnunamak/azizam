@@ -178,9 +178,9 @@ def test_delete_during_image_retry_keeps_original_erasure_clock(stores, monkeypa
         assert prompt_memory.get(asset, user["id"], path=jobs) is None
         return proxy.JSONResponse({"data": [{"image_id": asset, "asset_id": asset, "url": "https://gateway.test/media"}]})
     monkeypatch.setattr(proxy, "proxy_graph_image_request", generate)
-    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 2)
-    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_RETRY_BASE_SECONDS", 0)
-    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_RETRY_MAX_SECONDS", 0)
+    monkeypatch.setattr(proxy, "_image_media_job_max_attempts", lambda: 2)
+    monkeypatch.setattr(proxy, "_image_media_job_retry_base_seconds", lambda: 0)
+    monkeypatch.setattr(proxy, "_image_media_job_retry_max_seconds", lambda: 0)
     asyncio.run(proxy._run_image_media_job(job.job_id))
     assert calls == 2
     assert media_jobs.get(job.job_id, audience="internal", path=jobs)["status"] == media_jobs.STATUS_SUCCEEDED

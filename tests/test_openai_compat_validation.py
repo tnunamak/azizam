@@ -240,7 +240,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
             # dall-e-2 (an OpenAI public model name, not a local workflow id)
             # resolves to the configured variations default, not a literal
             # (nonexistent) "dall-e-2-edit" workflow.
-            self.assertEqual(captured["model"], proxy.IMAGE_VARIATIONS_DEFAULT_WORKFLOW)
+            self.assertEqual(captured["model"], proxy._image_variations_default_workflow())
             self.assertEqual(captured["prompt"], proxy.IMAGE_VARIATIONS_PROMPT)
 
     def test_image_variations_unsupported_field_still_rejected_before_backend_call(self) -> None:
@@ -350,7 +350,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(resp.json()["text"], "translated")
         captured = _FakeSTTAsyncClient.requests[0]
         self.assertTrue(captured["url"].endswith("/v1/audio/translations"))
-        self.assertEqual(captured["data"]["model"], proxy.STT_BACKEND_MODEL)
+        self.assertEqual(captured["data"]["model"], proxy.stt_backend_model())
         self.assertEqual(captured["files"][0][0], "file")
 
     def test_tts_accepts_mp3_response_format(self) -> None:
@@ -376,7 +376,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
         self.assertEqual(len(_FakeTTSAsyncClient.requests), 1)
         downstream = json.loads(_FakeTTSAsyncClient.requests[0]["content"])
         self.assertEqual(downstream["response_format"], "wav")
-        self.assertEqual(downstream["model"], proxy.TTS_BACKEND_MODEL)
+        self.assertEqual(downstream["model"], proxy.tts_backend_model())
 
     def test_tts_accepts_additional_openai_audio_formats(self) -> None:
         formats = {

@@ -304,7 +304,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(proxy.time, "time", return_value=1700000000),
-            patch.object(proxy, "IMAGE_SIGNED_URL_TTL", 60),
+            patch.object(proxy, "image_signed_url_ttl", lambda: 60),
             patch.object(
                 proxy, "_sign_asset_token", return_value="fake-signature"
             ) as sign,
@@ -446,7 +446,7 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 with (
                     derived_patch("COMFY_ENABLED", True),
                     patch.object(
-                        proxy, "IMAGE_MEDIA_JOB_RESUME_ON_START", resume_enabled
+                        proxy, "_image_media_job_resume_on_start", lambda: resume_enabled
                     ),
                     patch.object(
                         proxy, "_schedule_audio_media_job", return_value=True

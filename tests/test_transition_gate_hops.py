@@ -675,7 +675,7 @@ def test_background_removal_leases_an_enabled_domain(gate, monkeypatch) -> None:
     async def model_for(_host: str) -> str:
         return "fake-p-a"
 
-    monkeypatch.setattr(proxy, "IMAGE_BACKGROUND_REMOVAL_ENABLED", True)
+    monkeypatch.setattr(proxy, "_image_background_removal_enabled", lambda: True)
     monkeypatch.setattr(proxy, "get_active_backend", active)
     monkeypatch.setattr(proxy, "_is_local_swap_backend", lambda name: name == BACKEND)
     monkeypatch.setattr(proxy, "effective_llm_model_for_host", model_for)

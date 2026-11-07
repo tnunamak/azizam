@@ -65,6 +65,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/images/qwen-image-2.1-inpaint.json
+    selectors:
+      image: {node: '13', key: images, from: output_dir, decode: none, take: all}
     # This workflow derives its edit mask from source-image alpha. Convert the
     # OpenAI mask upload into alpha on the source image before ComfyUI upload.
     mask_to_source_alpha: true

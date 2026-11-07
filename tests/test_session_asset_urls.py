@@ -317,7 +317,7 @@ def test_renewed_cookie_mints_urls_with_its_renewed_lifetime(media, monkeypatch)
     client = owner_client(media)
     forge(media, client, OWNER, issued_ago=10 * 86400, renewed_ago=8 * 86400)
     old = cookie_session(client)
-    monkeypatch.setattr(proxy, "IMAGE_SIGNED_URL_TTL", 90 * 86400)
+    monkeypatch.setattr(proxy, "image_signed_url_ttl", lambda: 90 * 86400)
     old_url = mint(client)
     assert client.get("/me/api/session").json()["authenticated"] is True
     renewed = cookie_session(client)

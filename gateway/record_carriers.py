@@ -712,6 +712,48 @@ def legacy_secret_texts(record: Any) -> list[str]:
     return sorted({text for text in found if len(text) >= 4}, key=len, reverse=True)
 
 
+# Body keys whose text value is a secret a caller typed (a provider key sent with the provider). A text shorter than
+# _BODY_SECRET_MIN is not taken: the scrub replaces plain text, and a short one could sit inside an unrelated word.
+_BODY_SECRET_KEYS = frozenset({"api_key", "key", "secret", "token", "password"})
+_BODY_SECRET_MIN = 8
+# Body keys that hold an address a caller may type without a scheme (``user:pass@host:port``).
+_BODY_ADDRESS_KEYS = frozenset({"address", "control_address", "base_url", "host", "url", "health_endpoint"})
+
+
+def request_secret_texts(body: Any) -> list[str]:
+    """The secret texts a write's body holds, longest first, so an error about the write can be scrubbed of them.
+
+    They are the user, password, query values and fragment of every URL in the body (an address field without a
+    scheme too), the text under a key named like a secret (``api_key``), and the inline secrets of every record in it. A check that refuses the body may quote any
+    of these; the caller replaces them before the message goes out.
+    """
+    from gateway import projection
+
+    found: set[str] = set()
+
+    def walk(node: Any, key: str = "") -> None:
+        if isinstance(node, Mapping):
+            if "config" in node or "connection" in node:
+                found.update(legacy_secret_texts(node))
+            for name, value in node.items():
+                walk(value, str(name))
+        elif isinstance(node, list):
+            for value in node:
+                walk(value, key)
+        elif isinstance(node, str):
+            if key in _BODY_SECRET_KEYS and len(node) >= _BODY_SECRET_MIN:
+                found.add(node)
+            if "://" in node:
+                found.update(projection.url_secret_parts(node))
+            elif key in _BODY_ADDRESS_KEYS:
+                # A schemeless address ("user:pass@host", "host/v1?token=...") is read as one, so its user,
+                # password, query and fragment are found too.
+                found.update(projection.url_secret_parts(f"//{node}"))
+
+    walk(body)
+    return sorted(found, key=len, reverse=True)
+
+
 def typed_value_texts(record: Any, *, minimum: int = 8) -> list[str]:
     """The longer text values a record holds in its plain slots (not its id or name), longest first.
 

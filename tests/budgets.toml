@@ -523,10 +523,32 @@
 # Train 7 (2026-11-06): LiteLLM restart recheck (+2), gate read policy (+2), transition-proof chat key (+13), registry connection round trip (+10); measured 19820.
 # fix/connection-address-no-userinfo (2026-11-06): a connection address with a user, query or fragment is refused (+1); measured 19821.
 # Train 8 (2026-11-06): connection address refuses a credential (+1), transition-proof trace records parked (+0); measured 19821.
+# fix/url-credential-gaps (2026-11-06): registry, excluded-record and provider refusals never quote a body secret (+4); measured 19825.
+# Train 9 (2026-11-06): registry, excluded-record and provider refusals never quote a body secret (+4); measured 19825.
+# fix/schemeless-address-scrub: a schemeless address gives up its query secret to the refusal scrub (+1); measured 19826.
+# Train 10 (2026-11-06): a schemeless address gives its query secret to the refusal scrub (+1); measured 19826.
+# fix/engine-address-one-endpoint: a connection address must name the host the service is dialed at (+4); measured 19830.
+# feat/config-homes-c8c (2026-11-06): C8c model_compatibility and identity sections, +17 cases (tests/test_config_c8c_sections.py); measured 19838.
+# C8c review fix: the status page reads the generated model list where the gateway does (+1); measured 19839.
+# Train 11 (2026-11-06): engine address guard (+4), C8c model_compatibility and identity sections (+18); measured 19848.
+# feat/config-homes-c8a (2026-11-06): +25 (tests/test_config_c8a_sections.py, images and voices sections); measured 19846.
+# fix/job-refusal-reason: a job keeps the gateway's own input-refusal sentence (+2 cases).
+# fix/job-refusal-reason-imgvid: image and video jobs keep it too (+8 cases); measured 19835.
+# Job-refusal review fixes: a job refusal drops the model name (+3 job-level, +1 helper), the audio and manifest reasons never echo a value (+2); measured 19841.
+# feat/config-homes-c8b: +15 cases in tests/test_config_c8b_sections.py (videos and audio sections), +1 import-read scan case; measured 19837.
+# Train 12 (2026-11-06): C8a images and voices sections (+25), job refusal reasons (+16), C8b videos and audio sections (+16); measured 19905.
+# Train 12 gate fix: an unchanged restart warns about no section (+1); measured 19906.
+# feat/code-to-data-s2-3 (2026-11-06): result bundle staging, publication, receipts, scan, JSON store, limits and audio route (+71); measured 19897.
+# S2.3 review fixes: a stale worker cannot stage files or publish after erasure (+2); measured 19899.
+# feat/code-to-data-s2-4 (2026-11-06): output selectors, adapter descriptor, bundled-selector proof and audio route selection (+261); measured 20160.
+# S2.4 review fix: a non-boolean legacy flag is named in a warning once (+1); measured 20161.
+# Train 13 (2026-11-06): S2.3 result bundles (+73) and S2.4 output selectors (+262) on train 12; summed 20241.
 # feat/config-homes-c4 (2026-11-06): registry layering, migration step, export/import and rollback tests; measured 19849 (+28 net of the seed and backfill tests it removed).
 # C4 review fixes: a damaged stored registry is never overwritten (+3); measured 19852.
 # feat/config-homes-c9 (2026-11-06): registry-derived constants acceptance tests (+13); measured 19865.
-pytest = 19865
+# Train 14 (2026-11-06): C4 registry layering (+31) on train 13; summed 20272.
+# C9 merged with main (train 14): measured 20285.
+pytest = 20285
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -661,7 +683,9 @@ pytest = 19865
 # Library pick everywhere (2026-11-06): +111 vitest cases (shared media input, picker, hook, focus-ring contrast); measured with npx vitest list on the merge candidate: 3913.
 # Config homes C6 (2026-11-06): the settings page spec runs its stale-write case for 412 and 409 (+2 over the base); vitest list measured 3804 (--root web).
 # Train 4 (2026-11-06): main 3913 + the C6 settings stale-write case for 412 and 409 (+2); vitest list --json measured 3915 (--root web).
-vitest = 3915
+# Library picker polish (2026-11-06): picked-summary.spec.tsx (+4, image pixel size) and try/workflow-inputs.spec.tsx (+3, empty prompt sizes to its example); vitest list --json measured 3922 (--root web).
+# Train 10 (2026-11-06): Library picker polish, picked image pixel size and the Try empty prompt field (+7); measured 3922.
+vitest = 3922
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).
@@ -780,24 +804,34 @@ domain_literals = 824
 # C7 (roles, models, llm, reasoning, model_routing): llm and roles reach zero; model_routing
 # falls 3 -> 1 (SWITCH_TIMEOUT and UPSTREAM_READ_TIMEOUT moved; GGUF_DIR stays in the startup file until C10). models
 # keeps its one count: its startup list cannot be a section root yet (CONFIG_HOMES C7, not done).
+# C8c (model_compatibility, identity): both keys reach zero (7 and 1 constants moved). TTS_BACKEND_MODEL, STT_BACKEND_MODEL
+# and EMBEDDINGS_MODEL also became per-call readers of model_compatibility.defaults; they were counted under "backends"
+# (first of their sections alphabetically), so that key falls 23 -> 20.
+# C8a (images, voices): images falls 27 -> 7 (20 names moved: 9 plain settings, 4 media-job settings, 5 holders, the make limits and
+# its runtime attribute). Seven remain on purpose: IMAGE_CACHE_DIR, VRAM_ESTIMATES_FILE, IMAGE_MEDIA_JOB_PAYLOAD_DIR and
+# IMAGE_SIGNED_URL_SECRET_CFG are startup settings (class S, C10); IMAGE_MEDIA_JOB_CONCURRENCY and the two semaphores it
+# sizes are class R (read once at start: the semaphores cannot resize). voices had no import-time read.
+# C8b (videos, audio): videos 7 -> 0 (all seven constants moved); audio 4 -> 2 (AUDIO_DEFAULT_WORKFLOW and AUDIO_WORKFLOWS_CFG
+# moved; AUDIO_WORKFLOWS_DIR and its holder stay, a storage root that the startup file keeps until C10).
 "import_time_config_reads.admin" = 2
-"import_time_config_reads.audio" = 4
+"import_time_config_reads.audio" = 2
 "import_time_config_reads.auth" = 5
 # C9 (feat/config-homes-c9) lowered backends 23 to 3: the ten class A and ten class B constants of the registry records are
 # derived into the snapshot (DERIVED.*). Left: TTS_BACKEND_MODEL, STT_BACKEND_MODEL (C8c moves both) and EMBEDDINGS_MODEL (C8c).
-"import_time_config_reads.backends" = 3
+# Main (train 14) lowered it to 20 when C8c moved those three; merged with C9: measured 0.
+"import_time_config_reads.backends" = 0
 "import_time_config_reads.gateway" = 0
-"import_time_config_reads.identity" = 1
-"import_time_config_reads.images" = 27
+"import_time_config_reads.identity" = 0
+"import_time_config_reads.images" = 7
 "import_time_config_reads.llm" = 0
 "import_time_config_reads.mcp" = 1
-"import_time_config_reads.model_compatibility" = 7
+"import_time_config_reads.model_compatibility" = 0
 "import_time_config_reads.model_routing" = 1
 "import_time_config_reads.models" = 1
 "import_time_config_reads.proxy" = 2
 "import_time_config_reads.request_body_limits" = 1
 "import_time_config_reads.roles" = 0
-"import_time_config_reads.videos" = 7
+"import_time_config_reads.videos" = 0
 # C4 (feat/config-homes-c4) lowered whole_config 6 to 5: the registry boot read no longer hands the startup config to the registry seed.
 # C9 lowered it 5 to 1: the route policies and the protocol route aliases are derived into the snapshot; the boot frontend mount stays.
 "import_time_config_reads.whole_config" = 1

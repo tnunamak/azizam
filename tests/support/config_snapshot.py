@@ -28,8 +28,15 @@ def pin_inner_hop_hosts(monkeypatch: pytest.MonkeyPatch, hosts: Mapping[str, str
 
 
 def publish_section(monkeypatch: pytest.MonkeyPatch, section: str, value: Any) -> None:
-    """``publish_config`` of the current config with one top-level ``section`` replaced by ``value``."""
-    publish_config(monkeypatch, {**proxy.config, section: value})
+    """``publish_config`` of the current config with one top-level ``section`` replaced by ``value``.
+
+    A section other than ``backends`` does not change what the registry derives, so the running snapshot's derived values
+    (a test may have patched one, ``derived_patch``) stay in the new snapshot. ``backends`` derives them afresh.
+    """
+    config = {**proxy.config, section: value}
+    monkeypatch.setattr(proxy, "config", config)
+    carried = dict(proxy.runtime().derived) if section != "backends" else None
+    proxy.CONFIG_HOME.publish(proxy.CONFIG_HOME.snapshot(config, derived=carried))
 
 
 class section_published:
@@ -94,3 +101,12 @@ class derived_patch:
 
     def __exit__(self, *_exc: Any) -> None:
         self.stop()
+
+
+class section_key_published(section_published):
+    """``section_published`` of the current section with one key replaced, for a test that patched one module global
+    of a section (``patch.object(proxy, "VIDEO_MAX_TOTAL_SECONDS", 120.0)``): the other keys stay as they are."""
+
+    def __init__(self, section: str, key: str, value: Any) -> None:
+        current = proxy.config.get(section)
+        super().__init__(section, {**(current if isinstance(current, Mapping) else {}), key: value})

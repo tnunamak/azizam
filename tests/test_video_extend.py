@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import section_key_published  # noqa: E402
 from gateway import media_jobs, video_extend as ve, video_inputs  # noqa: E402
 from test_video_remix_replace import (  # noqa: E402
     NEW_ID,
@@ -242,15 +243,15 @@ class ExtensionRouteTests(RemixReplaceBase):
         self.assertEqual(self.comfy.uploads, [], "nothing is uploaded for a rejected request")
 
     def test_total_length_cap_is_a_config_key(self) -> None:
-        with patch.object(proxy, "VIDEO_MAX_TOTAL_SECONDS", 120.0):
+        with section_key_published("videos", "max_total_seconds", 120.0):
             r = self._extend(seconds=40)
         self.assertEqual(r.status_code, 200, r.text)
-        with patch.object(proxy, "VIDEO_MAX_TOTAL_SECONDS", 10.0):
+        with section_key_published("videos", "max_total_seconds", 10.0):
             r = self._extend(seconds=4)
         self.assertEqual(r.status_code, 400)
 
     def test_default_cap_is_40_seconds(self) -> None:
-        self.assertEqual(proxy.VIDEO_MAX_TOTAL_SECONDS, 40.0)
+        self.assertEqual(proxy._video_max_total_seconds(), 40.0)
 
     def test_record_is_tracked_and_persisted_with_chain_info(self) -> None:
         self._extend(seconds=8)
@@ -303,7 +304,7 @@ class ExtensionRouteTests(RemixReplaceBase):
         self.assertEqual(r.json()["error"]["code"], "video_extend_not_supported")
 
     def test_501_when_not_configured(self) -> None:
-        with patch.object(proxy, "VIDEO_EXTEND_WORKFLOW", None):
+        with section_key_published("videos", "extend_workflow", None):
             r = self._extend(seconds=4)
         self.assertEqual(r.status_code, 501)
         self.assertEqual(r.json()["error"]["code"], "video_extend_not_configured")

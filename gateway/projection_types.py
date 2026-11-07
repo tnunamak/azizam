@@ -261,7 +261,7 @@ EFFECTIVE_CONFIG = register(Obj("EffectiveConfig", {
     "backends": mapping(BACKEND_VIEW),
     "images": _section("ImagesSection", cache_dir=STR, vram_estimates_file=STR, signed_url_ttl=INT, signed_url_secret=INLINE_SECRET,
                        vram_reserve_bytes=INT, free_vram_on_exhaustion=BOOL, max_batch_size=INT, background_removal=JSON,
-                       variations=JSON, edits=JSON),
+                       variations=JSON, edits=JSON, media_jobs=JSON),
     # the keys of this section name engines, which the code does not list (docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md): its
     # values are paths, service ids and timeouts, public by contract
     "model_routing": JSON,

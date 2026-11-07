@@ -16,6 +16,7 @@
       "const": 1
     },
     "retention_facts": {"type": "array", "maxItems": 100, "items": {"type": "object"}},
+    "result_selectors": {"type": "object", "description": "The selector form a binding of this engine accepts (gateway/output_selectors.py). Checked when the file loads; a malformed block refuses the whole description."},
     "id": {
       "$ref": "#/$defs/id"
     },

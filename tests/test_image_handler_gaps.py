@@ -98,7 +98,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
             ("get_vram_estimate", Mock(return_value=100)),
             ("graph_free_vram_bytes", AsyncMock(return_value=10**12)),
             ("compute_max_batch", Mock(return_value=1)),
-            ("IMAGE_FREE_VRAM_ON_EXHAUSTION", True),
+            ("_image_free_vram_on_exhaustion", lambda: True),
         ):
             self.stack.enter_context(patch.object(proxy, name, value))
         self.stack.enter_context(derived_patch("COMFY_ENABLED", True))

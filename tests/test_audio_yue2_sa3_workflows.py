@@ -112,10 +112,11 @@ class AudioGenerateGraphTests(unittest.IsolatedAsyncioTestCase):
 
             async def get(self, url, **kwargs):
                 if "/history/" in url:
-                    return _FakeResponse(200, {"p1": {
-                        "status": {"status_str": "success"},
-                        "outputs": {"8": {"audio": [{"filename": "o.bin", "type": "output"}]}},
-                    }})
+                    # The history names the node and key of the submitted graph's save node, as the engine does.
+                    saved = {"SaveAudio": "audio", "SaveAudioMP3": "audio", "TangoFluxVAEDecodeAndPlay": "audios"}
+                    outputs = {node_id: {saved[node["class_type"]]: [{"filename": "o.bin", "type": "output"}]}
+                               for node_id, node in submitted[-1].items() if node.get("class_type") in saved}
+                    return _FakeResponse(200, {"p1": {"status": {"status_str": "success"}, "outputs": outputs}})
                 return _FakeResponse(200, content=raw, headers={"content-type": content_type})
 
         with patch.object(proxy.httpx, "AsyncClient", FakeClient), patch.object(

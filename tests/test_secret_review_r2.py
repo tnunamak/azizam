@@ -322,7 +322,7 @@ def test_the_effective_configuration_shows_only_classified_keys_of_each_yaml_sec
         assert shown == [], (route, shown)
         body = reply.json()["config"]
         assert body["llm"]["hidden_settings"] == 2 and body["images"]["signed_url_secret"] == {"configured": True}
-        assert body["images"]["hidden_settings"] == 1 and "cache_dir" in body["images"]  # a classified key is still shown
+        assert body["images"]["hidden_settings"] == 1 and "max_batch_size" in body["images"]  # a classified key is still shown
 
 
 # --- M2: the package index and the source of a package -------------------------------------------------------------

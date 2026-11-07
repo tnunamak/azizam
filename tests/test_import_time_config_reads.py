@@ -170,6 +170,19 @@ def test_the_rule_reads_into_if_and_try_blocks_and_ignores_function_bodies():
     assert inventory.names == {"PIN": "llm", "TIMEOUT": "model_routing"}
 
 
+def test_a_section_named_by_a_module_string_constant_is_that_section():
+    source = '_SECTION = "audio"\nconfig = {}\nDIR = (config.get(_SECTION) or {}).get("dir")\nPICK = config[_SECTION]\n'
+    assert scanner.scan(source, hidden={}).names == {"DIR": "audio", "PICK": "audio"}
+    rebound = '_SECTION = "audio"\n_SECTION = "images"\nconfig = {}\nDIR = config.get(_SECTION)\n'
+    assert scanner.scan(rebound, hidden={}).names == {"DIR": "whole_config"}, "a name bound twice is not a constant"
+    for shadow in ("import _SECTION\n", "def _SECTION():\n    pass\n", "class _SECTION:\n    pass\n",
+                   "_SECTION += 'x'\n", "def f(_SECTION):\n    pass\n", "X = [_SECTION for _SECTION in 'ab']\n",
+                   "def f():\n    global _SECTION\n", "def f(x=(_SECTION := 'images')):\n    pass\n",
+                   "class C:\n    _SECTION = 'images'\n", "del _SECTION\n"):
+        source = f'_SECTION = "audio"\n{shadow}config = {{}}\nDIR = config.get(_SECTION)\n'
+        assert scanner.scan(source, hidden={}).names.get("DIR") == "whole_config", shadow
+
+
 def test_a_name_that_sees_several_sections_belongs_to_the_first_in_order():
     source = 'config = {}\nBOTH = (config.get("roles"), config.get("images"))\n'
     assert scanner.scan(source, hidden={}).names == {"BOTH": "images"}

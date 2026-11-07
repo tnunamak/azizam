@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from tests.support.config_snapshot import section_key_published  # noqa: E402
 from tests.support.access import authenticated  # noqa: E402
 from gateway import video_inputs  # noqa: E402
 from _fake_comfy_video import (  # noqa: E402
@@ -79,7 +80,7 @@ class RemixReplaceBase(unittest.TestCase):
 
 class RemixShippedStateTests(RemixReplaceBase):
     def test_shipped_config_leaves_remix_off(self) -> None:
-        self.assertIsNone(proxy.VIDEO_REMIX_WORKFLOW)
+        self.assertIsNone(proxy._video_remix_workflow())
         r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x"})
         self.assertEqual(r.status_code, 501, r.text)
         self.assertEqual(r.json()["error"]["code"], "video_remix_not_configured")
@@ -95,7 +96,7 @@ class RemixRouteTests(RemixReplaceBase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.stack.enter_context(patch.object(proxy, "VIDEO_REMIX_WORKFLOW", REMIX_STAND_IN))
+        self.stack.enter_context(section_key_published("videos", "remix_workflow", REMIX_STAND_IN))
         self.stack.enter_context(patch.dict(proxy.VIDEO_ALIASES, {"video-remix": "video-scail-2-replace"}))
 
     def test_remix_requires_prompt(self) -> None:
@@ -136,7 +137,7 @@ class RemixRouteTests(RemixReplaceBase):
 class EditRouteTests(RemixReplaceBase):
     def setUp(self) -> None:
         super().setUp()
-        self.stack.enter_context(patch.object(proxy, "VIDEO_REMIX_WORKFLOW", REMIX_STAND_IN))
+        self.stack.enter_context(section_key_published("videos", "remix_workflow", REMIX_STAND_IN))
 
     def test_missing_video_and_prompt_are_rejected(self) -> None:
         self.assertEqual(self.client.post("/v1/videos/edits", json={"prompt": "x"}).json()["error"]["param"], "video")

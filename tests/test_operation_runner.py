@@ -157,6 +157,8 @@ def _graph_harness(fake_upstreams, tmp_path, script: list[str], *, host: str = G
         for node in manifest["bindings"]["comfyui"]["map"].values():
             for entry in node:
                 entry["node"] = names.get(entry["node"], entry["node"])
+        for selector in manifest["bindings"]["comfyui"]["selectors"].values():
+            selector["node"] = names.get(selector["node"], selector["node"])
         manifest["bindings"]["engine-b"] = manifest["bindings"].pop("comfyui")
         doc = dataclasses.replace(doc, binding="engine-b", label="Engine B")
     facts = _counters()

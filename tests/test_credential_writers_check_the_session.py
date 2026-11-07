@@ -414,6 +414,10 @@ NOT_CREDENTIAL_TABLES = {
     "audit_events", "media_hidden_assets",
     # Which creating request made each media asset: asset, job and request ids only. Library deletes read it to find the
     # requests behind an asset. Only the media job store writes it, on save and in the schema backfill. It grants nothing.
+    # What a finished job produced (S2.3): stage rows name assets, the bundle row holds the summary, and the value
+    # table holds a job's JSON result under the job's owner and maker scope. Only gateway/result_bundle.py writes
+    # them, from a job's own run. None grants access or holds a credential.
+    "result_bundle", "result_json", "result_stage",
     "media_job_asset_origins", "media_job_events", "media_job_prompt_erasure_cutoffs", "media_jobs",
     "media_jobs_migrations", "media_jobs_schema_version",
     # Pinned workflow definitions and each job's envelope (gateway/definition_store.py): digests, ids and definition bytes.

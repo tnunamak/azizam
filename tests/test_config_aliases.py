@@ -331,6 +331,17 @@ def test_a_block_with_a_key_the_section_does_not_take_is_blocked_not_lost(tmp_pa
     assert {p["code"] for p in layer.problems[SECTION]} == {"legacy_import_blocked"}
 
 
+def test_a_restart_with_the_file_unchanged_warns_about_no_section(tmp_path):
+    # A section with fixed settings (images) imports nothing when the file sets them to their release values; leaving a
+    # setting out keeps its release value, so a restart with the same file finds nothing ignored.
+    db, lines = tmp_path / "admin.db", []
+    raw = golden.raw_config("tracked")
+    boot(config_rules.config_home(), db, raw, log=lines.append)
+    lines.clear()
+    boot(config_rules.config_home(), db, raw, log=lines.append)
+    assert lines == []
+
+
 def test_after_the_step_is_recorded_an_edit_to_the_file_block_is_ignored_and_logged_once(tmp_path):
     db, lines = tmp_path / "admin.db", []
     raw = golden.raw_config("tracked")

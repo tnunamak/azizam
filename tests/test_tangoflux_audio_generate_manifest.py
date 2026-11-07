@@ -121,12 +121,10 @@ class _FakeAudioClient:
                 json_data={
                     "audio-prompt": {
                         "status": {"status_str": "success"},
+                        # The node and key the workflow's selector names: its graph's save node.
                         "outputs": {
-                            "38": {
-                                "audios": [
-                                    {"filename": "out.wav", "type": "output"}
-                                ]
-                            }
+                            node: {key: [{"filename": "out.wav", "type": "output"}]}
+                            for node, key in [self.captured.get("produced", ("3", "audios"))]
                         },
                     }
                 },
@@ -520,7 +518,7 @@ class TestAceStepAudioGenerateManifest(unittest.TestCase):
 
 class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
     async def _call(self, body: dict[str, Any], workflow: dict[str, Any]):
-        captured: dict[str, Any] = {}
+        captured: dict[str, Any] = {"produced": ("38", "audio")}
 
         async def no_sleep(_seconds: float) -> None:
             return None

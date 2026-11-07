@@ -80,11 +80,11 @@ QUEUE_IDLE = {"queue_running": [], "queue_pending": []}
 
 
 def history_done(outputs_key: str = "images", filename: str = "out.png", prompt_id: str = "p1", *,
-                 subfolder: str = "", count: int = 1) -> dict[str, Any]:
+                 subfolder: str = "", count: int = 1, node: str = "9") -> dict[str, Any]:
     items = [{"filename": filename if count == 1 else f"{Path(filename).stem}_{i}{Path(filename).suffix}",
               "subfolder": subfolder, "type": "output"} for i in range(count)]
     return {prompt_id: {"status": {"status_str": "success", "completed": True, "messages": []},
-                        "outputs": {"9": {outputs_key: items}}}}
+                        "outputs": {node: {outputs_key: items}}}}
 
 
 def comfy_exchanges(*, views: Iterable[tuple[bytes, str]] = (), prompt: Mapping[str, Any] | None = None,
@@ -332,9 +332,10 @@ class GatewayRig:
         self.notes[key] = value
 
     def set(self, target: Any, name: str, value: Any) -> None:
-        """Set ``name`` on ``target``; a value the published snapshot derived (``target.DERIVED``) is set in that snapshot."""
+        """Set ``name`` on ``target``; a value the published snapshot derived (``target.DERIVED``) is set in that snapshot,
+        unless the module also holds it as an attribute that readers take (the workflow alias tables)."""
         derived = getattr(target, "DERIVED", None)
-        if derived is not None and name in target.runtime().derived:
+        if derived is not None and not hasattr(target, name) and name in target.runtime().derived:
             self.monkeypatch.setitem(target.runtime().derived, name, value)
         else:
             self.monkeypatch.setattr(target, name, value)

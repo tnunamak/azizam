@@ -28,7 +28,7 @@ def test_restart_recovers_or_explains_every_job(store, monkeypatch, kind, intent
     job = media_jobs.MediaJob(intent=intent, status=status, metadata={"mode": f"async_{kind}_generation"})
     media_jobs.create(job, path=store)
     monkeypatch.setitem(proxy.runtime().derived, "COMFY_ENABLED", True)
-    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_RESUME_ON_START", enabled)
+    monkeypatch.setattr(proxy, "_image_media_job_resume_on_start", lambda: enabled)
     monkeypatch.setattr(proxy, "_has_image_media_job_payload", lambda _: payload)
     scheduled = Mock(return_value=True)
     monkeypatch.setattr(proxy, f"_schedule_{kind}_media_job", scheduled)
@@ -53,7 +53,7 @@ def test_restart_has_no_history_page_limit(store, monkeypatch):
 def test_startup_with_resume_disabled_settles_make_and_unknown_jobs(store, monkeypatch):
     for mode in [me_make.JOB_MODE, "legacy"]:
         media_jobs.create(media_jobs.MediaJob(intent="image.generate", metadata={"mode": mode}), path=store)
-    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_RESUME_ON_START", False)
+    monkeypatch.setattr(proxy, "_image_media_job_resume_on_start", lambda: False)
     proxy._recover_media_jobs()
     assert media_jobs.unfinished(path=store) == []
     assert all(job["error"] for job in media_jobs.recent(path=store))

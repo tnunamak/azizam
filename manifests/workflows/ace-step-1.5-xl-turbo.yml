@@ -98,6 +98,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/audio/ace-step-1.5-xl-turbo.json
+    selectors:
+      audio: {node: '38', key: audio, from: output_dir, decode: none, take: first}
     map:
       prompt:
         - node: "5"

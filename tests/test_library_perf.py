@@ -335,4 +335,4 @@ def test_thumbnail_url_is_stable_within_the_signing_window(gateway_cache: Path) 
     assert first == proxy.build_signed_asset_url(request, asset_id, thumbnails.THUMB_MODE)
     assert "/thumbnail?expires=" in first and "md=" not in first
     expires = int(first.split("expires=")[1].split("&")[0])
-    assert proxy.IMAGE_SIGNED_URL_TTL <= expires - time.time() <= 2 * proxy.IMAGE_SIGNED_URL_TTL
+    assert proxy.image_signed_url_ttl() <= expires - time.time() <= 2 * proxy.image_signed_url_ttl()
