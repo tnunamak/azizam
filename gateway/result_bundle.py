@@ -40,6 +40,7 @@ from typing import Any
 from urllib.parse import quote
 
 from gateway import media_jobs
+from gateway.manifests import RESULT_NAME_RE, RESULT_NAME_RULE
 
 BUNDLE_VERSION = 1
 KINDS = ("json", "assets")
@@ -241,8 +242,8 @@ def _stage_ref(job_id: str, attempt: int, name: str) -> str:
 
 
 def _require_name(name: Any) -> str:
-    if not isinstance(name, str) or not name or len(name) > 128:
-        raise ResultRefused("bad_name", "a result name is a non-empty string of at most 128 characters")
+    if not isinstance(name, str) or not RESULT_NAME_RE.fullmatch(name):
+        raise ResultRefused("bad_name", RESULT_NAME_RULE)
     return name
 
 

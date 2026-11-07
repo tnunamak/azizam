@@ -8032,6 +8032,7 @@ def _select_video_file(job: Mapping[str, Any], manifest: Mapping[str, Any] | Non
             limits=result_bundle.limits_from_config(runtime().config),
             legacy_allowed=output_selectors.legacy_collection_enabled(runtime().config),
             history_bytes=len(json.dumps(job, default=str).encode("utf-8")),
+            legacy_kind="video",
         )
     except node_graph.SelectionRefused as refusal:
         if refusal.code == "result_missing":
@@ -11061,7 +11062,8 @@ async def _load_completed_video_bytes(
             params["subfolder"] = file_info["subfolder"]
         graph = _graph(client, "videos")
         try:
-            async with graph.view_stream(params, headers={**headers, "accept-encoding": "identity"}) as view:
+            async with output_selectors.FETCH_GATE.slot(result_bundle.limits_from_config(runtime().config)), \
+                    graph.view_stream(params, headers={**headers, "accept-encoding": "identity"}) as view:
                 if view.status_code != 200:
                     raise _VideoAssetError(f"{_graph_adapter('videos').label} /view error: {view.status_code}",
                                            param=param, status=502)
@@ -11070,6 +11072,9 @@ async def _load_completed_video_bytes(
                 except media_fetch.MediaFetchError as exc:
                     raise _VideoAssetError(str(exc), param=param) from exc
                 return data, Path(file_info["filename"]).name
+        except output_selectors.FetchRefused as refused:
+            raise _VideoAssetError("Source video result could not be read", param=param,
+                                   status=_refused_result_status(refused.code), code=refused.code) from refused
         except TransportFailure as error:
             # A transport failure of this read has always reached the callers as the client's own error (a media
             # job records its type name), so the original error is raised again, not the adapter's typed failure.
@@ -12824,17 +12829,16 @@ async def proxy_graph_video_content(
                     media_type="application/json"
                 )
 
-            params = {"filename": file_info["filename"], "type": file_info["type"]}
-            if file_info["subfolder"]:
-                params["subfolder"] = file_info["subfolder"]
+            video_graph = _graph(client, "videos")
             try:
-                async with output_selectors.FETCH_GATE.slot(result_bundle.limits_from_config(runtime().config)):
-                    view_resp = await _graph(client, "videos").view(params, headers=headers)
-            except output_selectors.FetchRefused as refused:
-                return _result_refusal_response(refused.code, 504)
-            if view_resp.status != 200:
+                video_bytes = await _graph_adapter("videos").fetch_file(
+                    video_graph.conn, file_info, limits=result_bundle.limits_from_config(runtime().config),
+                    headers=headers, session=video_graph)
+            except node_graph.SelectionRefused as refused:
+                return _result_refusal_response(refused.code, _refused_result_status(refused.code))
+            except ProtocolUpstreamError as error:
                 return Response(
-                    content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} /view error: {view_resp.status}",
+                    content=json.dumps({"error": {"message": f"{_graph_adapter('videos').label} /view error: {error.status}",
                                                   "type": "api_error"}}),
                     status_code=502,
                     media_type="application/json"
@@ -12848,7 +12852,6 @@ async def proxy_graph_video_content(
                 ".mkv": "video/x-matroska",
             }.get(ext, "application/octet-stream")
 
-            video_bytes = view_resp.raw
             record = _video_job_records.get(prompt_id) or {}
             if record.get("audio") is False:
                 # The request asked for a video-only asset: remove the track
@@ -25922,22 +25925,18 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
                 content=json.dumps({"error": {"message": "Workflow returned no video output", "type": "api_error"}}),
                 status_code=502, media_type="application/json",
             )
-        params = {"filename": file_info["filename"], "type": file_info["type"]}
-        if file_info.get("subfolder"):
-            params["subfolder"] = file_info["subfolder"]
         try:
-            async with output_selectors.FETCH_GATE.slot(result_bundle.limits_from_config(runtime().config)):
-                rendered = await graph.view(params, headers=headers)
-        except output_selectors.FetchRefused as refused:
-            return _result_refusal_response(refused.code, 504)
-        if rendered.status != 200:
+            rendered_bytes = await adapter.fetch_file(
+                graph.conn, file_info, limits=result_bundle.limits_from_config(runtime().config), headers=headers, session=graph)
+        except node_graph.SelectionRefused as refused:
+            return _result_refusal_response(refused.code, _refused_result_status(refused.code))
+        except ProtocolUpstreamError:
             return Response(
                 content=json.dumps({"error": {"message": f"{adapter.label} could not read the rendered video", "type": "api_error"}}),
                 status_code=502, media_type="application/json",
             )
         suffix = Path(file_info["filename"]).suffix.lower()
         media_type = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".mkv": "video/x-matroska"}.get(suffix, "application/octet-stream")
-        rendered_bytes = rendered.raw
         try:
             if media_delivery.current_mode() == provenance.METADATA_NONE:
                 rendered_bytes = await asyncio.to_thread(

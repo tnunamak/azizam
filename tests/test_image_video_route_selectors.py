@@ -187,3 +187,48 @@ def test_a_video_job_names_its_bundle_result_for_the_declared_output_and_lists_i
     assert names == ["video"]
     assert view["results"] == {"video": {"kind": "assets", "count": 1}}
     assert views == [[["filename", "clip_00001_.mp4"], ["type", "output"]]]
+
+
+# ------------------------------------------------------------------------------------- the legacy video collection
+
+def without_selectors(call):
+    """A workflow with no manifest has no selectors: the legacy collection reads its answer, while the flag allows it."""
+    async def drive(made: GatewayRig):
+        made.set(proxy, "_video_manifest_of_job", lambda _prompt_id: None)
+        return await call(made)
+    return drive
+
+
+MP4 = (mp4_bytes(), "video/mp4")
+MIXED_LIST = history({"7": {"images": [entry("preview_00001_.png", "output"), entry("clip_00001_.mp4", "output")]}})
+SEVERAL_NODES = history({
+    "3": {"images": [entry("side_00001_.png", "output")]},
+    "5": {"gifs": [entry("first_00001_.mp4", "output")]},
+    "60": {"videos": [entry("second_00001_.mp4", "output")]},
+})
+
+
+def test_the_legacy_video_collection_skips_a_picture_listed_ahead_of_the_clip(tmp_path: Path):
+    response, views = run(tmp_path, MIXED_LIST, MP4, without_selectors(fetch_video))
+    assert response.status_code == 200, response.text
+    assert views == [[["filename", "clip_00001_.mp4"], ["type", "output"]]]
+
+
+def test_the_legacy_video_collection_takes_the_first_clip_when_several_nodes_have_output(tmp_path: Path):
+    response, views = run(tmp_path, SEVERAL_NODES, MP4, without_selectors(fetch_video))
+    assert response.status_code == 200, response.text
+    assert views == [[["filename", "first_00001_.mp4"], ["type", "output"]]]
+
+
+def test_the_legacy_video_collection_is_off_with_the_flag_and_names_the_reason(tmp_path: Path):
+    response, views = run(tmp_path, MIXED_LIST, MP4, without_selectors(fetch_video),
+                          legacy_output_collection=False)
+    assert response.status_code == 502
+    assert json.loads(response.text)["error"]["code"] == "selectors_missing"
+    assert views == []
+
+
+def test_a_video_file_over_the_asset_limit_is_refused_while_it_is_read(tmp_path: Path):
+    response, _ = run(tmp_path, NOISY_VIDEO, MP4, fetch_video, result_limits={"max_asset_bytes": 10})
+    assert response.status_code == 502
+    assert json.loads(response.text)["error"]["code"] == "asset_too_large"

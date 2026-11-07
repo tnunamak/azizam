@@ -1089,7 +1089,7 @@
     {
       "handler": "gateway.api.create_gateway_router.<locals>.get_media_job_result",
       "method": "GET",
-      "path": "/gateway/v1/media/jobs/{job_id}/results/{name}",
+      "path": "/gateway/v1/media/jobs/{job_id}/results/{name:path}",
       "access": "content:job:read"
     },
     {

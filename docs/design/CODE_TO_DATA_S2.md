@@ -516,10 +516,11 @@ What changed:
   nosniff`.
 
 Tests and evidence:
-- `tests/test_media_job_results.py` (12 cases, the real router on a temporary jobs database) and
-  `tests/test_image_video_route_selectors.py` (10 cases on the adapter-differential rig: a selector beats a temp preview,
+- `tests/test_media_job_results.py` (16 cases, the real router on a temporary jobs database) and
+  `tests/test_image_video_route_selectors.py` (13 cases on the adapter-differential rig: a selector beats a temp preview,
   an input echo and a saved file of a side branch; the history, asset and fetch-gate limits refuse before or while the file
-  is read; the bundle is named by output and listed in the view).
+  is read, for images and for videos; the legacy video collection skips a picture and takes the first clip; the bundle is
+  named by output and listed in the view).
 - Revert-checks (each mutation made the named tests fail, and was reverted): `fetch_selected` given an empty binding (four
   image cases), `_select_video_file` given an empty binding (three video cases), `with_results` returning no results (view,
   list and asset-result cases), and the record authorizer removed from the read route (the authorizer case).
@@ -538,6 +539,20 @@ Tests and evidence:
 - Test fakes corrected to match each workflow's own selector, since the old collection took any file: video fakes use the
   key `images` and the save node of their manifest (node 60 for the ltx workflows, 18 for minimax, 6 for rife), image fakes
   use node 9, 10 or 13 as the workflow saves. These fakes were wrong about the engine, not the gateway.
+
+Review fixes (round 2):
+- **A result name is one path segment.** The read route takes `{name:path}`, so a path-shaped name never falls out of the
+  handler: it gets the same 404 body as any missing name. A published name could not be read back if it held a `/`, so the
+  store refuses such a name when it is staged (`bad_name`), and a manifest whose output has one is refused when it is
+  checked (`RESULT_NAME_RULE` in `gateway/manifests.py`): a letter or digit first, then letters, digits, `.`, `_` and `-`,
+  at most 128. Every bundled output name already fits.
+- **The legacy video collection keeps its old reading** while the flag is on (`legacy_select(..., kind="video")`): only
+  video files count, so a preview picture ahead of the clip is skipped, and the first clip in node order is the result, so
+  several output nodes are not `result_ambiguous`. It still reads the output directory only. The legacy image collection is
+  unchanged.
+- **Video reads are bounded.** `NodeGraphAdapter.fetch_file` reads one chosen file inside the fetch gate and refuses at the
+  first byte past `max_asset_bytes` (`asset_too_large`), as the image read does. Both video routes use it. The source-video
+  helper for workflow inputs now takes the fetch gate too; it keeps its own byte bound (`media_fetch`).
 
 Decisions the design did not settle:
 - **The legacy flag stays on.** Four bundled workflows have no selectors: `face-likeness`, `flux2-klein-4b-seamless-tile`,

@@ -341,25 +341,34 @@ def select_outputs(job: Mapping[str, Any] | None, selectors: Mapping[str, Mappin
     return chosen
 
 
-def legacy_select(job: Mapping[str, Any] | None, outputs: Mapping[str, Any]) -> dict[str, tuple[dict[str, Any], ...]]:
+def legacy_select(job: Mapping[str, Any] | None, outputs: Mapping[str, Any], *, kind: str | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
     """The files of a contract that declares no selectors: the output-directory files under any known output key.
 
     This is the fallback for a contract older than selectors. It reads the output directory only, and it refuses what it
     would have to guess: a contract of more than one result, or files that come from more than one place in the answer.
+
+    ``kind="video"`` is the older video collection, kept while the legacy flag is on: only video files count (a preview
+    image beside the clip is not a result), they are read under the video keys, and the first one in node order is the
+    result, so several output nodes are not a guess. Any other ``kind`` reads as the general rule above.
     """
     if len(outputs) != 1:
         raise SelectionRefused("result_ambiguous", f"a contract with {len(outputs)} results needs selectors to tell them apart")
     (name,) = outputs
+    video = kind == "video"
     places: list[list[dict[str, Any]]] = []
     for node_output in _history_outputs(job).values():
         if not isinstance(node_output, Mapping):
             continue
-        for key in OUTPUT_KEYS:
+        for key in VIDEO_KEYS if video else OUTPUT_KEYS:
             files = _output_files(node_output.get(key), "output", result=name)
+            if video:
+                files = [file for file in files if file["filename"].lower().endswith(VIDEO_SUFFIXES)]
             if files:
                 places.append(files)
     if not places:
         raise SelectionRefused("result_missing", f"result {name} is not in the engine's answer")
+    if video:
+        return {name: (places[0][0],)}
     if len(places) > 1:
         raise SelectionRefused("result_ambiguous", f"result {name} could be files from {len(places)} places in the engine's answer")
     return {name: tuple(places[0])}
@@ -832,6 +841,30 @@ class NodeGraphAdapter:
             raise SelectionRefused(refusal.code, str(refusal)) from refusal
         return chosen
 
+    async def fetch_file(self, conn: Connection, file: Mapping[str, Any], *, limits: Any, headers: Any = UNSET,
+                         session: GraphSession | None = None) -> bytes:
+        """The bytes of one file that ``collect`` chose, for a route that delivers a single file (a video).
+
+        The read goes through ``output_selectors.FETCH_GATE`` and is bounded while it is read, as ``fetch_selected`` is: a
+        file past the deployment's ``max_asset_bytes`` (or ``max_total_bytes``) is refused at the first byte over, and is
+        never held whole. A reply that is not HTTP 200 is an ``UpstreamError``. Raises ``SelectionRefused`` for a limit or
+        a fetch that waited too long."""
+        room = min(limits.max_asset_bytes, limits.max_total_bytes)
+        try:
+            async with output_selectors.FETCH_GATE.slot(limits), self._use(conn, session) as use:
+                async with use.view_stream(view_params(file), headers=headers) as reply:
+                    if reply.status_code != 200:
+                        raise UpstreamError(reply.status_code, f"A result file answered HTTP {reply.status_code}.")
+                    data = bytearray()
+                    async for chunk in reply.aiter_bytes():
+                        if len(data) + len(chunk) > room:
+                            raise SelectionRefused("asset_too_large" if room == limits.max_asset_bytes else "total_too_large",
+                                                   f"a result file is larger than {room} bytes")
+                        data.extend(chunk)
+                    return bytes(data)
+        except output_selectors.FetchRefused as refusal:
+            raise SelectionRefused(refusal.code, str(refusal)) from refusal
+
     @staticmethod
     async def _read_bounded(session: GraphSession, file: Mapping[str, Any], room: int, headers: Any, limits: Any) -> bytes | None:
         """One file, read as it arrives and refused at the first byte past ``room``. ``None``: the engine did not give it."""
@@ -850,20 +883,21 @@ class NodeGraphAdapter:
             return None
 
     def collect(self, job: Mapping[str, Any] | None, block: Mapping[str, Any], outputs: Mapping[str, Any], *, limits: Any,
-                legacy_allowed: bool, history_bytes: int | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
+                legacy_allowed: bool, history_bytes: int | None = None,
+                legacy_kind: str | None = None) -> dict[str, tuple[dict[str, Any], ...]]:
         """The files of each named result of a finished prompt, by the binding's selectors (or the legacy collection).
 
         ``block`` is the binding, ``outputs`` the contract's declared results, ``limits`` the deployment's result limits
         and ``history_bytes`` the size of the history answer that ``job`` came from. A binding with selectors is read by
-        them. One with none is read by ``legacy_select`` if ``legacy_allowed``, and refused if not. Raises
-        ``SelectionRefused``; a refused run delivers nothing.
+        them. One with none is read by ``legacy_select`` if ``legacy_allowed`` (``legacy_kind`` says which older collection),
+        and refused if not. Raises ``SelectionRefused``; a refused run delivers nothing.
         """
         if history_bytes is not None and history_bytes > limits.max_history_bytes:
             raise SelectionRefused("history_too_large", f"the engine's answer is larger than {limits.max_history_bytes} bytes")
         if "selectors" not in block:
             if not legacy_allowed:
                 raise SelectionRefused("selectors_missing", "this workflow declares no output selectors, and the legacy collection is off")
-            return legacy_select(job, outputs)
+            return legacy_select(job, outputs, kind=legacy_kind)
         if self.result_selectors is None:
             raise SelectionRefused("selectors_unsupported", "this engine's description takes no output selectors")
         try:

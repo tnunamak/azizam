@@ -215,3 +215,33 @@ def test_without_a_result_reader_the_route_answers_404(db: Path):
     app.include_router(create_gateway_router(WorkflowRegistry(), media_job_store_path=db,
                                              audience_resolver=lambda _request: "client"))
     assert TestClient(app).get(f"/gateway/v1/media/jobs/{job_id}/results/answer").status_code == 404
+
+
+# ------------------------------------------------------------------------------------ a name is one path segment
+
+@pytest.mark.parametrize("name", ["a/b", "/a", "a%2Fb", "..", ".", ".hidden", "a b", "a?b", "a#b", "", "x" * 129])
+def test_a_name_that_is_not_one_path_segment_is_never_published(db: Path, name: str):
+    job_id = make_job(db)
+    with pytest.raises(result_bundle.ResultRefused) as refused:
+        publish(db, job_id, name)
+    assert refused.value.code == "bad_name"
+    assert "results" not in client(db).get(f"/gateway/v1/media/jobs/{job_id}", headers=as_person()).json()
+
+
+def test_a_published_result_is_read_back_by_the_href_the_view_advertises(db: Path):
+    job_id = make_job(db)
+    publish(db, job_id, "a.b_c-1")
+    http = client(db)
+    href = http.get(f"/gateway/v1/media/jobs/{job_id}", headers=as_person()).json()["results"]["a.b_c-1"]["href"]
+    response = http.get(href, headers=as_person())
+    assert response.status_code == 200 and response.content == VALUE
+
+
+@pytest.mark.parametrize("name", ["a/b", "a%2Fb", "answer/extra", "%2e%2e/answer"])
+def test_a_path_shaped_name_gets_the_same_refusal_as_a_missing_one(db: Path, name: str):
+    job_id = make_job(db)
+    publish(db, job_id)
+    http = client(db)
+    plain = get_result(http, job_id, "no-such-result")
+    shaped = get_result(http, job_id, name)
+    assert (shaped.status_code, shaped.text) == (plain.status_code, plain.text) == (404, plain.text)

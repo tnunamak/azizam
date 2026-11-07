@@ -29,7 +29,7 @@ ADDED_PATHS: dict[str, str] = {
     "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd": "a person adds an unkept address again on their own App in one step; tests/test_me_binding_adoption.py covers it",
     "/me/api/credentials/{credential_id}/replace": "a person replaces a key they cannot keep, on their own App; tests/test_me_binding_adoption.py covers it",
     "/me/api/apps/{app_id}/trusted-addresses/{entry_id}": "a person removes a trusted address from their own App; tests/test_me_binding_adoption.py covers it",
-    "/gateway/v1/media/jobs/{job_id}/results/{name}": "an authenticated read of one published JSON result of a job, from the job's result bundle; every refusal is one 404; tests/test_media_job_results.py covers it",
+    "/gateway/v1/media/jobs/{job_id}/results/{name:path}": "an authenticated read of one published JSON result of a job, from the job's result bundle; every refusal is one 404; tests/test_media_job_results.py covers it",
     "/v1/meshes/generate": "source-defined mesh route owned by the mesh frontend: one image in, one GLB out, fail-closed until capacity is enabled; tests/test_mesh_route.py and tests/test_mesh_manifest.py cover it",
     "/admin/api/engines/domains": "owner-only service transition gate: start a transition, read one, read the gate and its lease counts, resolve a held step; tests/test_transition_admin.py covers them",
     "/admin/api/me/retention/ledger": "owner/admin offline retention ledger; tests/test_retention_slice6.py covers scope and no network reads",
@@ -98,8 +98,10 @@ ADDED_METHODS: dict[tuple[str, str], str] = {
 
 
 def _template(path: str) -> re.Pattern[str]:
-    """A route template, or a probed path made from it, as one pattern: ``{x}`` stands for one segment."""
-    return re.compile("/".join("[^/]+" if part.startswith("{") else re.escape(part) for part in path.split("/")))
+    """A route template, or a probed path made from it, as one pattern: ``{x}`` stands for one segment and ``{x:path}``
+    for the rest of the path."""
+    return re.compile("/".join(
+        (".+" if part.endswith(":path}") else "[^/]+") if part.startswith("{") else re.escape(part) for part in path.split("/")))
 
 
 def _reviewed(path: str | None, methods: list[str] | None = None) -> bool:

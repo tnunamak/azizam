@@ -782,7 +782,7 @@ def create_gateway_router(
             content={**row, "asset_url_ttl_s": asset_url_ttl_s},
         )
 
-    @router.get("/media/jobs/{job_id}/results/{name}")
+    @router.get("/media/jobs/{job_id}/results/{name:path}")
     def get_media_job_result(job_id: str, name: str, request: Request) -> Response:
         """One published JSON result of a job. Every refusal is the same 404: no such job or result, a result that is not
         published (a failed or running job's stage is never readable), an erased or expired value, another maker."""

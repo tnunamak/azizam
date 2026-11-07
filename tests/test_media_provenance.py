@@ -8,6 +8,7 @@ media type, and that the stored copy stays full.
 from __future__ import annotations
 
 import base64
+import contextlib
 import copy
 import hashlib
 import io
@@ -646,6 +647,9 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
             status_code = 200
             content = raw
 
+            async def aiter_bytes(self):
+                yield raw
+
         class Client:
             async def __aenter__(self):
                 return self
@@ -655,6 +659,10 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
 
             async def get(self, *_a, **_k):
                 return View()
+
+            @contextlib.asynccontextmanager
+            async def stream(self, _method, *_a, **_k):
+                yield View()
 
         class Req(StubRequest):
             query_params = __import__("starlette.datastructures", fromlist=["QueryParams"]).QueryParams(query)
@@ -921,6 +929,9 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
             def json(self):
                 return self._p
 
+            async def aiter_bytes(self):
+                yield self.content
+
         class Client:
             def __init__(self, **_k):
                 pass
@@ -930,6 +941,10 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
 
             async def __aexit__(self, *_a):
                 return False
+
+            @contextlib.asynccontextmanager
+            async def stream(self, _method, url, **kw):
+                yield await self.get(url, **kw)
 
             async def post(self, url, **kw):
                 if url.endswith("/upload/image"):
