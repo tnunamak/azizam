@@ -139,8 +139,10 @@ def _type_label(value: Any) -> str:
 
 def _check(node: Mapping[str, Any], value: Any, path: str, sections: frozenset[str], found: list[StartupProblem]) -> None:
     properties = node.get("properties") or {}
+    if value is None and path:  # a block whose lines are all comments reads as null: it holds nothing
+        return
     if not isinstance(value, Mapping):
-        found.append(StartupProblem(path, f"`{path}` must be a mapping (got {_type_label(value)})."))
+        found.append(StartupProblem(path or "(file)", f"{'`' + path + '`' if path else 'The file'} must be a mapping (got {_type_label(value)})."))
         return
     for key, item in value.items():
         child_path = f"{path}.{key}" if path else str(key)

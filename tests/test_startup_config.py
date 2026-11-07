@@ -83,7 +83,11 @@ def test_check_raises_one_line_per_fault():
 
 
 def test_a_root_that_is_not_a_mapping_is_refused():
-    assert startup_config.validate(["x"])
+    assert _problems(["x"])["(file)"].startswith("The file must be a mapping")
+
+
+def test_a_block_that_holds_only_comments_is_valid():
+    assert startup_config.validate({"mcp": None, "request_body_limits": None, "admin": {"oidc": None}}) == []
 
 
 def test_the_schema_is_closed_at_every_object():
@@ -134,3 +138,63 @@ def test_where_it_lives_prefers_the_longest_moved_entry():
 def test_the_schema_file_is_valid_json_schema():
     json.loads(startup_config.SCHEMA_PATH.read_text(encoding="utf-8"))
     startup_config.load_schema()
+
+
+def test_every_startup_only_name_of_a_section_is_a_startup_key_or_a_deliberate_move():
+    """A section's ``x-azizam-startup-only`` names the keys its old file block held that the section never owns. Each
+    must still have a home: a key of the startup schema, or an ``x-azizam-moved`` entry that says where it went. A name
+    in neither would be refused at start with no place to put it."""
+    from gateway import config_runtime
+
+    keys = {key.path for key in startup_config.iter_keys()}
+    moved = startup_config.load_schema()["x-azizam-moved"]
+    homeless = []
+    for section_id, section in config_runtime.load_sections().items():
+        for name in section.schema.get("x-azizam-startup-only") or []:
+            path = f"{section_id}.{name}"
+            if path not in keys and path not in moved:
+                homeless.append(path)
+    assert homeless == []
+
+
+def test_the_tracked_startup_file_is_valid_and_is_the_first_run_file():
+    """A fresh install starts from the tracked file: local only, no sign-in provider, setup page claims the first owner.
+    (The fresh-install journey, scripts/e2e/fresh_instance.sh, boots a gateway from it with no admin.db.)"""
+    from pathlib import Path
+
+    import yaml
+
+    raw = yaml.safe_load((Path(__file__).resolve().parent.parent / "proxy_config.yml").read_text(encoding="utf-8"))
+    startup_config.check(raw, source="proxy_config.yml")
+    assert raw["proxy"]["host"] == "127.0.0.1"
+    assert raw["admin"]["oidc"]["cookie"]["secure"] is False
+    assert not (raw["admin"]["oidc"].keys() - {"cookie"}), "no sign-in provider ships in the tracked file"
+    assert not (raw.keys() - {"proxy", "admin"}), "the tracked file holds only the listener and the cookie rule"
+
+
+REMOVED_ENV_OVERRIDES = (
+    "UPSTREAM_READ_TIMEOUT", "EMBEDDINGS_TIMEOUT", "AZIZAM_MODEL_COMPAT_ENABLED", "OPENAI_MODEL_ALIASES_FILE",
+    "OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE", "IMAGE_MEDIA_JOB_RESUME_ON_START", "AZIZAM_PUBLIC_URL", "AZIZAM_BRAND",
+    "COMFY_ENABLED", "COMFY_HOST", "AZIZAM_USER_SELF_SERVICE", "AZIZAM_AUTO_CREATE_PERSONAL_APP",
+)
+
+
+def test_no_gateway_code_reads_an_environment_override_of_a_setting_that_lives_in_admin_db():
+    """F4 (docs/design/CONFIG_HOMES.md): an env var that overrides an owner setting is a second writable home. The
+    variables listed in docs/CONFIG.md as removed must stay out of the gateway. (``scripts/safe-restart`` still reads
+    ``AZIZAM_PUBLIC_URL`` from the operator's shell; it is not gateway code.)"""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    sources = [root / "proxy.py", *sorted((root / "gateway").glob("*.py"))]
+    found = []
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
+        for name in REMOVED_ENV_OVERRIDES:
+            for quote in ('"', "'"):
+                if f"environ.get({quote}{name}{quote}" in text or f"getenv({quote}{name}{quote}" in text \
+                        or f"get_env({quote}{name}{quote}" in text or f"environ[{quote}{name}{quote}]" in text:
+                    found.append(f"{path.name}: {name}")
+    assert found == []
+    documented = (root / "docs" / "CONFIG.md").read_text(encoding="utf-8")
+    assert [name for name in REMOVED_ENV_OVERRIDES if f"`{name}`" not in documented] == [], "list each removed variable in docs/CONFIG.md"
