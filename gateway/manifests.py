@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import math
+from fractions import Fraction
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,13 +62,14 @@ class ContractErrors(ManifestError):
     final ``too_many_errors`` entry. ``primary`` is the error the check found first, in the order of its checks; the
     message of the exception, and so its ``str()``, is the message of ``primary``."""
 
-    def __init__(self, errors: Iterable[ContractError], primary: ContractError | None = None) -> None:
+    def __init__(self, errors: Iterable[ContractError], primary: ContractError | None = None, *, final: bool = False) -> None:
+        """``final`` says the list is already sorted and capped (a report's): it is kept as it is."""
         found = list(errors)
         if not found:
             raise ValueError("ContractErrors needs at least one error")
         self.primary = primary if primary is not None else found[0]
-        ordered = sorted(found, key=_sort_key)
-        if len(ordered) > MAX_CONTRACT_ERRORS:
+        ordered = found if final else sorted(found, key=_sort_key)
+        if len(ordered) > MAX_CONTRACT_ERRORS and not final:
             dropped = len(ordered) - MAX_CONTRACT_ERRORS
             ordered = ordered[:MAX_CONTRACT_ERRORS]
             ordered.append(ContractError((), TOO_MANY_ERRORS, f"{dropped} more errors are not listed"))
@@ -180,6 +182,13 @@ def load_workflow_manifest(path: str | Path) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         raise ManifestError(f"manifest {manifest_path} must be a mapping")
     validate_manifest(manifest)
+    # Report only (CODE_TO_DATA_S3, S3.2): the schema 2 check is logged, nothing is refused. S3.5 makes it the check.
+    try:
+        from gateway.workflow_convert import log_bundled_report
+
+        log_bundled_report(manifest, manifest_path)
+    except Exception:  # an optional report, even its import or its logging, never stops a load
+        pass
     return manifest
 
 
@@ -490,6 +499,25 @@ def validate_input_value(name: str, value: Any, spec: dict[str, Any]) -> str | N
     return _validate_value(name, value, spec)
 
 
+def exact_number(value: Any) -> Fraction | None:
+    """A JSON number as an exact Fraction with decimal meaning: an int is itself, a finite float is its shortest
+    round-trip decimal (1.1 is 11/10, what the manifest author wrote). A bool, non-finite float or non-number is None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return Fraction(value)
+    if isinstance(value, float) and math.isfinite(value):
+        return Fraction(repr(value))
+    return None
+
+
+def on_grid(value: Any, step: Fraction, offset: Fraction) -> bool:
+    """True when (value - offset) / step is a whole number. The one grid test that input validation and the
+    workflow contract's generator feasibility share, so they agree by construction."""
+    exact = exact_number(value)
+    return exact is not None and ((exact - offset) / step).denominator == 1
+
+
 def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
     expected_type = spec.get("type", "string")
     if expected_type == "string":
@@ -529,18 +557,14 @@ def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> str | None:
         # This is data on the input spec, not knowledge about a particular model.
         step = spec.get("step")
         if step is not None:
-            try:
-                step_value = float(step)
-            except (TypeError, ValueError):
-                return f"{name} has an invalid step"
-            if step_value <= 0:
+            step_value = exact_number(step)
+            if step_value is None or step_value <= 0:
                 return f"{name} has an invalid step"
             offset = spec.get("offset", 0)
-            try:
-                remainder = (value - offset) % step_value
-            except (TypeError, ValueError):
+            offset_value = exact_number(offset)
+            if offset_value is None:
                 return f"{name} has an invalid offset"
-            if remainder not in (0, step_value):
+            if not on_grid(value, step_value, offset_value):
                 if offset:
                     return f"{name} must be {offset} plus a multiple of {spec['step']}"
                 return f"{name} must be a multiple of {spec['step']}"

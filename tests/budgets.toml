@@ -579,7 +579,12 @@
 # C10 guard hardening (2026-11-07): address, reference, metadata and startup-scan guards; measured 20563 with scripts/run-hermetic-pytest.sh --collect-only -q.
 # C10 guards round 2 (2026-11-07): scanned address literals, scope-aware startup-key scan, per-section reference table; measured 20574.
 # Train 18: train 17 (20809) plus C10 with its guards (+40 over 20543): 20849.
-pytest = 20849
+# S3.2 workflow contract (2026-11-07): +150 cases (tests/test_workflow_contract.py: rules, 38 bundled conversions, controls, converter, command); expected 20937, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+# S3.2 review round (2026-11-07): +25 cases in tests/test_workflow_contract.py; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20962.
+# S3.2 second review round (2026-11-07): +21 cases in tests/test_workflow_contract.py (exact lattice, arithmetic reports, binding key conflict, one cap, locked report-once); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20983.
+# S3.2 shared step grid (2026-11-07): +5 cases in tests/test_workflow_contract.py; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20988.
+# Train 18 with S3.2: 20849 + 201 = 21050.
+pytest = 21050
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
