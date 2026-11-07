@@ -531,6 +531,9 @@ def test_the_least_and_the_greatest_generated_value_lie_on_the_inputs_grid():
     pytest.param({"enum": [1, 6, 9, 2.5, True, "x"], "step": 3}, [6], id="enum-cut-by-grid-range-and-type"),
     pytest.param({"enum": [5, 6], "minimum": 6}, [6], id="enum-cut-by-bound"),
     pytest.param({"enum": [20]}, None, id="enum-outside-the-rule-range"),
+    pytest.param({"enum": [1.0, 7.0], "type": "number"}, [1, 7], id="integral-float-enum-members"),
+    pytest.param({"enum": [True, 3]}, [1, 3], id="a-true-member-equals-one-as-the-check-reads-it"),
+    pytest.param({"enum": [float("nan"), float("inf"), 4]}, [4], id="non-finite-enum-members-admit-nothing"),
     pytest.param({"step": 2, "offset": 1, "minimum": 2, "maximum": 6}, [3, 5], id="integer-step-unchanged"),
 ])
 def test_the_generated_values_are_exactly_the_integers_the_input_check_accepts(constraints, expected):
@@ -566,6 +569,21 @@ def test_a_big_range_is_not_walked_value_by_value():
     low, high = eq.generator_range("w", "g", spec)
     assert (low, high) == (3, 3 + 7 * ((2**62 - 3) // 7)) and eq.validate_input_value("g", high, spec) is None
     assert eq.validate_input_value("g", eq.generated_value("w", "g", spec), spec) is None
+
+
+@pytest.mark.parametrize("maximum", [2**63 - 1, 2**64, 2**80])
+def test_a_range_of_more_values_than_a_machine_word_counts_still_draws(maximum):
+    spec = {"type": "integer", "generate": {"generator": "random_integer", "minimum": 0, "maximum": maximum}}
+    drawn = eq.generated_value("w", "g", spec)
+    assert 0 <= drawn <= maximum and eq.validate_input_value("g", drawn, spec) is None
+
+
+def test_a_small_range_draws_the_same_value_as_before():
+    """Counting without len() leaves every draw that already fit unchanged (the frozen corpus depends on them)."""
+    import random
+    spec = {"type": "integer", "step": 3, "offset": 1, "generate": {"generator": "random_integer", "minimum": 0, "maximum": 50}}
+    values = range(1, 50, 3)
+    assert eq.generated_value("w", "g", spec) == values[random.Random("w:g").randrange(len(values))]
 
 
 def with_input_change(tmp_path_factory, change) -> Path:

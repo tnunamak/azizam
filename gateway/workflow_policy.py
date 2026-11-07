@@ -128,12 +128,30 @@ def release_policy(path: Path | None = None) -> dict[str, PolicyFacts]:
 
 def shipped_package_hash(package_id: str, root: Path | None = None) -> str | None:
     """The reviewed hash of the package of this id that the release ships (a directory of ``root``, by default
-    ``extensions/bundled``), or ``None`` when it ships none or the shipped one does not review clean. The hash is the
-    installer's own (``extension_packages``): it covers every file of the package."""
+    ``extensions/bundled``), or ``None`` when it ships none, the folder cannot be read, or the shipped one does not review
+    clean. The hash is the installer's own (``extension_packages``): it covers the files the review reads (the package
+    manifest and the objects, artifacts and code it references). The release's own folder does not change while the
+    gateway runs, so its answer is reviewed once per process (``shipped_package_hash_cache_clear`` forgets it); another
+    ``root`` is reviewed on each call."""
+    return _release_package_hash(package_id) if root is None else _reviewed_package_hash(package_id, Path(root))
+
+
+@lru_cache(maxsize=None)
+def _release_package_hash(package_id: str) -> str | None:
+    return _reviewed_package_hash(package_id, BUNDLED_PACKAGES_DIR)
+
+
+shipped_package_hash_cache_clear = _release_package_hash.cache_clear
+
+
+def _reviewed_package_hash(package_id: str, base: Path) -> str | None:
     from gateway.extension_packages import MANIFEST_NAME, review_local_directory_package
 
-    base = Path(root or BUNDLED_PACKAGES_DIR)
-    for directory in sorted(base.iterdir()) if base.is_dir() else []:
+    try:
+        directories = sorted(base.iterdir()) if base.is_dir() else []
+    except OSError:
+        return None   # a folder that cannot be listed ships nothing this check can prove
+    for directory in directories:
         try:
             declared = (yaml.safe_load((directory / MANIFEST_NAME).read_text(encoding="utf-8")) or {}).get("id")
             if declared == package_id:

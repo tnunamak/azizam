@@ -233,23 +233,6 @@ def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any]
     return registry
 
 
-def load_service_registry_and_exclusions(
-    *, path: Path = admin_store.DB_PATH,
-) -> tuple[dict[str, Any], list["ExcludedRecord"]] | None:
-    """The registry in use and the records it leaves out, both from one read of the stored document, so a writer cannot
-    land between them. ``None`` when nothing is stored."""
-    record = admin_store.get_service_registry_json_with_generation(path=path)
-    if record is None:
-        return None
-    snapshot, excluded, default_timestamp = _normalized_registry_snapshot(
-        record["operator_settings_generation"], record["value_json"], release_digest(),
-    )
-    registry = copy.deepcopy(snapshot)
-    if default_timestamp:
-        registry["updated_at"] = int(time.time())
-    return registry, [replace(item, record=copy.deepcopy(item.record)) for item in excluded]
-
-
 def load_service_registry_exclusions(*, path: Path = admin_store.DB_PATH) -> list[ExcludedRecord]:
     """The stored records ``load_service_registry`` leaves out, each with its reason; none for a healthy registry."""
     record = admin_store.get_service_registry_json_with_generation(path=path)

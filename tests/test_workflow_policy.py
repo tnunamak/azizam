@@ -33,6 +33,7 @@ from gateway.workflow_policy import (
     release_facts,
     release_policy,
     shipped_package_hash,
+    shipped_package_hash_cache_clear,
 )
 from tests.support.access import access_context
 from tests.support.config_snapshot import derived_patch
@@ -322,6 +323,36 @@ def test_a_package_the_release_does_not_ship_has_no_shipped_hash(tmp_path):
     assert shipped_package_hash("not-a-shipped-package") is None
     assert shipped_package_hash(DEMO_PACKAGE, tmp_path) is None   # an empty folder of packages
     assert shipped_package_hash(DEMO_PACKAGE, tmp_path / "absent") is None
+
+
+@pytest.mark.parametrize("error", [PermissionError, FileNotFoundError], ids=["unreadable", "removed-while-listed"])
+def test_a_folder_of_packages_that_cannot_be_listed_ships_no_hash(tmp_path, error):
+    with patch.object(Path, "iterdir", side_effect=error("listing refused")):
+        assert shipped_package_hash(DEMO_PACKAGE, tmp_path) is None
+        assert release_facts(DEMO, package_id=DEMO_PACKAGE, package_hash="0" * 64, from_package=True,
+                             packages_root=tmp_path) is None
+
+
+def test_the_release_package_hash_is_reviewed_once_per_process_and_another_root_on_each_call(tmp_path):
+    from gateway import extension_packages
+    review = extension_packages.review_local_directory_package
+    calls: list[Path] = []
+
+    def counted(directory, *args, **kwargs):
+        calls.append(Path(directory))
+        return review(directory, *args, **kwargs)
+
+    shipped_package_hash_cache_clear()
+    try:
+        with patch.object(extension_packages, "review_local_directory_package", counted):
+            first = shipped_package_hash(DEMO_PACKAGE)
+            assert first and all(shipped_package_hash(DEMO_PACKAGE) == first for _ in range(3))
+            assert len(calls) == 1
+            shutil.copytree(DEMO_PACKAGE_DIR, tmp_path / "demo")
+            assert shipped_package_hash(DEMO_PACKAGE, tmp_path) == first == shipped_package_hash(DEMO_PACKAGE, tmp_path)
+            assert len(calls) == 3   # the other root is reviewed on each call
+    finally:
+        shipped_package_hash_cache_clear()
 
 
 def test_a_row_that_names_a_package_is_not_given_to_a_workflow_the_bundled_directory_loader_reads(tmp_path):

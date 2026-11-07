@@ -1210,7 +1210,7 @@ def test_a_disabled_quarantined_mesh_override_does_not_stop_the_gateway_and_the_
     assert result["mesh"] == mesh_id  # whether the engine behind it is up is another question: the workflow record is there
 
 
-# -- the registry and its left-out records are one read ---------------------------------------------------------------------
+# -- the loader reads the stored registry once ------------------------------------------------------------------------------
 
 
 def test_the_loader_reads_the_stored_registry_once_so_a_writer_between_reads_cannot_split_it(tmp_path, monkeypatch):
@@ -1235,7 +1235,7 @@ def test_the_loader_reads_the_stored_registry_once_so_a_writer_between_reads_can
 
     monkeypatch.setattr(admin_store, "get_service_registry_json_with_generation", read_then_write)
     served = proxy._load_gateway_workflow_registry().get(PLAIN_ID)
-    assert len(reads) == 1  # registry and left-out records come from the same read
+    assert len(reads) == 1  # one read of the stored document
     assert served is not None  # the bundled version serves in both states of the writer's race
 
 

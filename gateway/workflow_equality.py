@@ -339,7 +339,10 @@ def generator_values(workflow_id: str, name: str, spec: dict[str, Any]) -> Seque
     first = x0 + p * -((x0 - low) // p)   # the least x0 + p * t that is >= low
     values: Sequence[int] = range(first, high + 1, p)
     if isinstance(spec.get("enum"), list):
-        values = sorted({v for v in spec["enum"] if isinstance(v, int) and not isinstance(v, bool) and v in values})
+        # The check tests membership with Python equality, so an integral member such as 7.0 (or True) admits the whole
+        # number equal to it; a fractional or non-finite member admits none.
+        members = {int(m) for m in spec["enum"] if isinstance(m, (int, float)) and math.isfinite(m) and m == int(m)}
+        values = sorted(v for v in members if v in values)
     if not values:
         return None
     if any(validate_input_value(name, value, spec) for value in (values[0], values[-1])):
@@ -357,7 +360,11 @@ def generated_value(workflow_id: str, name: str, spec: dict[str, Any]) -> Any:
     """What a generate rule gives: a draw from a random source seeded by the workflow and input, from the values the
     input check accepts. A rule with no valid value gives none."""
     values = generator_values(workflow_id, name, spec)
-    return None if values is None else values[random.Random(f"{workflow_id}:{name}").randrange(len(values))]
+    if values is None:
+        return None
+    # len() of a range is limited to a machine word; count with whole numbers so a range of 2**63 values or more draws too.
+    count = (values[-1] - values[0]) // values.step + 1 if isinstance(values, range) else len(values)
+    return values[random.Random(f"{workflow_id}:{name}").randrange(count)]
 
 
 def generator_rules(documents: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:

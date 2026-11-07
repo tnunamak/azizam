@@ -14192,9 +14192,9 @@ def _load_gateway_workflow_registry(*, strict: bool = False) -> WorkflowRegistry
         registry = WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR)
         try:
             # Stored workflows are read record by record; a registry that cannot be read at all costs only them.
-            loaded = service_registry.load_service_registry_and_exclusions(path=ADMIN_DB_PATH)  # one read of the stored document
-            if loaded is not None:
-                admin_registry, _left_out = loaded  # a quarantined override is left out, so the bundled version serves
+            # One read of the stored document; a quarantined override is left out, so the bundled version serves.
+            admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
+            if admin_registry is not None:
                 for record in service_registry.workflow_records_from_registry(admin_registry):
                     registry.add_manifest(
                         record.manifest, source_path=record.source_path, replace=True,
