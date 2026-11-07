@@ -262,9 +262,13 @@ This is the resolver half. The upload capability is the next step, after S2.4 ow
 - The sweep (`MediaInputResolver.sweep`) runs in the prompt-memory maintenance loop, after the definition garbage
   sweep. It deletes stale markers, releases request leases past their TTL, releases job leases whose job row does not
   exist after the grace period, deletes released lease rows, and removes a stored file only when the ingest created it
-  and no live lease or marker holds it. It is idempotent.
-- `proxy.py` has seven small hunks: the import, the resolver factory, the destination for a service, the sweep call in the
-  maintenance loop, `_resolve_image_extension_asset`, and its use in `_upload_image_workflow_extension_assets`.
+  and no live lease or marker holds it. It is idempotent. The scan commits first; then each file is checked again, and
+  removed, in its own write transaction (`MediaInputLedger.discard_unheld`). A lease or marker that lands after the scan
+  keeps its file, and takes over the duty to remove it when it lets go.
+- `proxy.py` has seven hunks in `git diff`: the import; one block with the resolver factory, the destination for a
+  service and the sweep entry point; `_resolve_image_extension_asset`; the request holder in
+  `_upload_image_workflow_extension_assets`; the `asset_id` call there; the release after the upload (in a
+  `try/finally`, so a raised upload still releases the request lease); and the sweep call in the maintenance loop.
 
 **Decisions the design did not settle**
 
@@ -285,6 +289,9 @@ This is the resolver half. The upload capability is the next step, after S2.4 ow
 - One behaviour change: an `img_` asset whose bytes are not a recognised image is now refused with the existing
   "asset_id must reference a cached image asset" text. The old path sent any bytes it found under an image id. The
   `ast_` prefix is still refused by the kept prefix check. Every other refusal keeps its old text.
+- The download cap (`media_fetch.max_bytes()`) bounds bytes the gateway fetches or receives as an upload. It does not
+  apply to an asset that is already stored: `resolve_asset` never refuses one for its size, as the old path never did.
+  A test holds both sides (a stored image over the cap still resolves; an upload and a fetched body over it are refused).
 
 **Left**
 

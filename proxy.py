@@ -21949,11 +21949,13 @@ async def _upload_image_workflow_extension_assets(
 
             filename = getattr(upload, "filename", None) or f"{field_name}.png"
             content_type = getattr(upload, "content_type", None) or "image/png"
-        uploaded_filename, upload_error = await _upload_graph_image_bytes(
-            client, headers, content, filename=filename, media_type=content_type,
-        )
-        if asset_id is not None:
-            await asyncio.to_thread(_media_input_resolver().release, holder)  # the engine has the bytes, or the run is over
+        try:
+            uploaded_filename, upload_error = await _upload_graph_image_bytes(
+                client, headers, content, filename=filename, media_type=content_type,
+            )
+        finally:
+            if asset_id is not None:  # the engine has the bytes, or the run is over, or the upload raised
+                await asyncio.to_thread(_media_input_resolver().release, holder)
         if upload_error is not None:
             return updated, upload_error
 

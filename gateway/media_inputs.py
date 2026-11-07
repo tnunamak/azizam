@@ -199,7 +199,8 @@ class MediaInputResolver:
 
     def resolve_asset(self, auth: Any, asset_id: str, *, holder: Holder, destination: Destination,
                       accepts: Sequence[str]) -> ResolvedInput:
-        """An asset the caller names by id. Nothing is stored: the lease keeps it for the holder."""
+        """An asset the caller names by id. Nothing is stored: the lease keeps it for the holder. The size limit does
+        not apply: it bounds what the gateway fetches or receives, not what it already holds."""
         self.check_disclosure(destination, auth)
         if not isinstance(asset_id, str) or self._assets.parse(asset_id) is None:
             raise MediaInputError(INVALID, "asset_id is not a stored asset id")
@@ -207,11 +208,10 @@ class MediaInputResolver:
             raise MediaInputError(MISSING, "asset_id not found (may have been evicted)")
         if not self._assets.may_read(asset_id, auth):
             raise MediaInputError(FORBIDDEN, "asset_id is not accessible for this API key")
-        size = self._assets.size(asset_id)
-        if size is not None and size > self._max_bytes:
-            raise MediaInputError(TOO_LARGE, "the input is larger than the size limit")
+        # The size limit is for bytes the gateway fetches or receives. A file already in the store got in under that
+        # rule, and a route that served it before this resolver existed never measured it, so it is not refused here.
         data = self._assets.read(asset_id)
-        measured = self._check_bytes(data, accepts)
+        measured = self._check_bytes(data, accepts, capped=False)
         owner = self._assets.owner_key(auth) or ""
         lease_id = self._lease(asset_id, owner, holder, created=False, effect_id=None)
         return ResolvedInput(StoredInput(asset_id, measured.media_type, measured.size_bytes, measured.sha256, lease_id), data)
@@ -248,10 +248,10 @@ class MediaInputResolver:
         lease_id = self._lease(asset_id, owner or "", holder, created=created, effect_id=effect_id)
         return ResolvedInput(StoredInput(asset_id, measured.media_type, measured.size_bytes, measured.sha256, lease_id), data)
 
-    def _check_bytes(self, data: bytes, accepts: Sequence[str]) -> Measured:
+    def _check_bytes(self, data: bytes, accepts: Sequence[str], *, capped: bool = True) -> Measured:
         if not data:
             raise MediaInputError(EMPTY, "the input is empty")
-        if len(data) > self._max_bytes:
+        if capped and len(data) > self._max_bytes:
             raise MediaInputError(TOO_LARGE, "the input is larger than the size limit")
         measured = measure(data)
         if not accepted(measured.media_type, accepts):
