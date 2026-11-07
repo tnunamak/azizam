@@ -30,6 +30,46 @@ OLD_PICTURE_ACCEPTS = ["image/png", "image/jpeg", "image/webp"]
 SEED_GENERATOR = {"generator": "random_integer", "minimum": 0, "maximum": 4294967295}
 BACKFILL_NOTE = {"capability": "intent-prefix rule, schema 1 to 2"}
 BACKFILL_KEY = "azizam.dev/backfill"
+POLICY_KEYS = ("exposure", "trust_tier", "resource_tier", "tags")
+
+
+@dataclass(frozen=True)
+class PolicyFacts:
+    """The record-level policy facts of a workflow (CODE_TO_DATA_S3, D2): what a reader needs to decide who may run it and
+    at what cost. ``None`` (or an empty list) means the record states nothing; each reader fills its own old default
+    until S3.5 removes the defaults. They never live in the contract document."""
+
+    exposure: str | None = None
+    trust_tier: str | None = None
+    resource_tier: str | None = None
+    tags: tuple[str, ...] = ()
+
+
+def _fact_text(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def policy_facts_of(manifest: Mapping[str, Any]) -> PolicyFacts:
+    """The facts of a schema 1 document, which holds them beside the contract. This and ``normalize`` are the only readers."""
+    raw_tags = manifest.get("tags")
+    tags = [item for item in raw_tags if isinstance(item, str) and item] if isinstance(raw_tags, list) else []
+    return PolicyFacts(
+        exposure=_fact_text(manifest.get("exposure")), trust_tier=_fact_text(manifest.get("trust_tier")),
+        resource_tier=_fact_text(manifest.get("resource_tier")), tags=tuple(dict.fromkeys(tags)))
+
+
+def trusted_of(manifest: Mapping[str, Any]) -> bool:
+    """Whether a schema 1 document says it is reviewed: provenance, which belongs to the record, not the contract."""
+    return bool(manifest.get("trusted", False))
+
+
+def normalize(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], PolicyFacts]:
+    """What every reader of a loaded schema 1 document reads: the schema 2 contract (made in memory, nothing is checked or
+    refused) and the policy facts that were beside it."""
+    contract, _ = convert_1_to_2(manifest)
+    for key in POLICY_KEYS:
+        contract.pop(key, None)
+    return contract, policy_facts_of(manifest)
 
 
 @dataclass(frozen=True)

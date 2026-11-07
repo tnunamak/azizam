@@ -443,11 +443,15 @@ def _asset_input_modality(spec: Mapping[str, Any], *, default: str | None) -> st
 
 
 def asset_media_type(intent: str | None, spec: Mapping[str, Any]) -> str | None:
-    """Media kind of one asset input as ``image/*``: its declared type, else its intent's default."""
-    declared = str(spec.get("media_type") or "").strip()
-    if declared:
-        return declared
-    major = _asset_input_modality(spec, default=_INTENT_ASSET_MODALITY.get(str(intent or "")))
+    """Media kind of one asset input of a contract: what it accepts (one type as it is; several as their shared kind,
+    ``image/*``), else its intent's default."""
+    accepted = [str(item).strip() for item in spec.get("accepts") or () if str(item).strip()]
+    if len(accepted) == 1:
+        return accepted[0]
+    majors = {item.split("/", 1)[0].lower() for item in accepted}
+    if len(majors) == 1 and next(iter(majors)) in INPUT_MODALITIES:
+        return f"{next(iter(majors))}/*"
+    major = _INTENT_ASSET_MODALITY.get(str(intent or ""))
     return f"{major}/*" if major else None
 
 

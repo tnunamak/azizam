@@ -581,7 +581,8 @@
 # S3.3 review fixes: +38 cases (one resolver, strict graph targets, validated shipped reader); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20865.
 # S3.3 template-root fix: +7 cases (a template that is not a mapping of nodes); 20872.
 # S3.2 + S3.3 merged: 20787 + 201 + 85 = 21073.
-pytest = 21073
+# S3.4 readers switch (2026-11-07): +5 cases (tests/test_workflow_readers_v2.py); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 21078.
+pytest = 21078
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -822,7 +823,8 @@ ad_hoc_upstream_fake_files = 46
 # 825 on 2026-11-06 (feat/config-homes-c4): -1 where the mesh upgrade step names left with the engine backfill.
 # 824 on 2026-11-06 (feat/config-homes-c9): -1 where the TTS/STT/COMFY constant blocks left proxy.py for the derive function.
 # 822 on 2026-11-07 (S3.3): the two new protocol ids add 2 sites (the mesh binding key, a catalog pattern); 4 fall where proxy.py reads the graph binding and backend by constant, not by spelling; the new code adds none.
-domain_literals = 822
+# 821 on 2026-11-07 (S3.4): -1 where the OpenAPI projection stopped naming the mesh-only picture type.
+domain_literals = 821
 # Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
 # scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
 # a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through

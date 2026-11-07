@@ -147,6 +147,7 @@ from gateway import voices_api
 from gateway import a1111_api
 from gateway import mcp_oauth, mcp_oauth_store, mcp_server, session_guard
 from gateway.workflow_call import CallError
+from gateway.workflow_view import requirements_of
 from gateway import binding_descriptors, binding_registry, identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking, stt_measurement
@@ -14846,7 +14847,7 @@ def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[
         if not cap.policy_available or cap.backend != "gateway":
             continue
         record = records.get(cap.workflow or cap.resolved_workflow or "")
-        requirements = record.manifest.get("requires") if record else None
+        requirements = requirements_of(record.contract) if record else None
         if isinstance(requirements, Mapping):
             out.update(str(service) for service in requirements.get("services") or ())
             for workflow_id in requirements.get("workflows") or ():
@@ -16324,9 +16325,14 @@ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a111
 
 # --- Image to 3D: POST /v1/meshes/generate (gateway/mesh_api.py) -------------
 # The manifest is bundled data; the lease manager is one per process (one gateway worker per physical pool).
-MESH_MANIFEST = mesh_manifest.load_mesh_manifest(
-    Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
-)
+_MESH_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
+# The route reads its workflow record from the registry and runs the mesh frontend profile on its contract; the old mesh
+# validator reads the same file beside it as a check (CODE_TO_DATA_S3, S3.4; it goes in S3.9).
+_MESH_CHECK = mesh_manifest.load_mesh_manifest(_MESH_MANIFEST_PATH)
+_MESH_RECORD = GATEWAY_WORKFLOW_REGISTRY.get(_MESH_CHECK.id)
+if _MESH_RECORD is None:
+    raise mesh_manifest.MeshManifestError(f"workflow {_MESH_CHECK.id} is not in the registry")
+MESH_MANIFEST = mesh_api.mesh_workflow_from_record(_MESH_RECORD, checked_against=_MESH_CHECK)
 MESH_LEASES = exclusive_pool.ExclusivePoolLeaseManager()
 
 
@@ -17406,7 +17412,7 @@ def _category_service_catalog() -> list[dict[str, Any]]:
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         if record.supported_backends:
-            add(record.id, record.manifest.get("display_name"), "workflow", record.intent)
+            add(record.id, record.contract.get("display_name"), "workflow", record.intent)
 
     backends = service_registry.runtime_backends(registry)
     # Use the execution catalog's public names, including provider prefixes,
@@ -20872,38 +20878,25 @@ def _apply_image_route_policy(
 def _image_manifest_policy_metadata(
     manifest: Mapping[str, Any] | None,
 ) -> dict[str, object]:
+    """The route's policy facts for the workflow a manifest names: the record-level facts a load makes from the stored
+    document (CODE_TO_DATA_S3, D2), with the old defaults filled in."""
     if manifest is None:
-        return {
-            "exposure": "default",
-            "trust_tier": "stable",
-            "resource_tier": "batch",
-            "tags": (),
-        }
+        return _image_policy_metadata(None, trusted=True)
+    from gateway.workflow_convert import policy_facts_of, trusted_of
 
-    trusted = bool(manifest.get("trusted", False))
-    tags_raw = manifest.get("tags")
-    tags: list[str] = []
-    if isinstance(tags_raw, list):
-        tags = [tag for tag in tags_raw if isinstance(tag, str) and tag]
+    return _image_policy_metadata(policy_facts_of(manifest), trusted=trusted_of(manifest))
+
+
+def _image_policy_metadata(facts: Any, *, trusted: bool) -> dict[str, object]:
+    """The policy facts of an image route, with the old defaults filled in where the record states none."""
+    if facts is None:
+        return {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "tags": ()}
     return {
-        "exposure": _manifest_string_field(manifest, "exposure", "default"),
-        "trust_tier": _manifest_string_field(
-            manifest, "trust_tier", "stable" if trusted else "experimental"
-        ),
-        "resource_tier": _manifest_string_field(
-            manifest, "resource_tier", "batch"
-        ),
-        "tags": tuple(dict.fromkeys(tags)),
+        "exposure": facts.exposure or "default",
+        "trust_tier": facts.trust_tier or ("stable" if trusted else "experimental"),
+        "resource_tier": facts.resource_tier or "batch",
+        "tags": facts.tags,
     }
-
-
-def _manifest_string_field(
-    manifest: Mapping[str, Any], key: str, default: str
-) -> str:
-    value = manifest.get(key)
-    if isinstance(value, str) and value:
-        return value
-    return default
 
 
 def _policy_workflow_for_receipt(receipt: RouteReceipt | None) -> str | None:

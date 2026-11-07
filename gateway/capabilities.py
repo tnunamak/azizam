@@ -36,6 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
+from gateway.workflow_view import settable_inputs
 from gateway.discovery import WorkflowRecord
 from gateway.policy import ALLOWED, DecidingRule, EffectiveAccess, PolicyDecision, PolicyRequest
 
@@ -519,8 +520,9 @@ def capability_from_workflow_record(
             f"backend {chosen_backend!r} not in workflow bindings {supported!r}"
         )
 
-    manifest = record.manifest
-    inputs = manifest.get("inputs") or {}
+    manifest = record.contract
+    facts = record.facts
+    inputs = settable_inputs(manifest)
     outputs = manifest.get("outputs") or {}
 
     input_modalities = _derive_input_modalities(inputs, intent=record.intent)
@@ -528,7 +530,7 @@ def capability_from_workflow_record(
 
     caveats: list[str] = list(extra_caveats)
     if not record.identity.trusted:
-        # ``trusted`` is the manifest's own flag; no one is named as its reviewer.
+        # ``trusted`` is the record's own flag; no one is named as its reviewer.
         caveats.append(UNREVIEWED_WORKFLOW_CAVEAT)
 
     return Capability(
@@ -547,18 +549,10 @@ def capability_from_workflow_record(
             intent=record.intent),
         execution=execution,
         streaming=streaming,
-        exposure=_manifest_string(manifest, "exposure", default="default"),
-        trust_tier=_manifest_string(
-            manifest,
-            "trust_tier",
-            default="stable" if record.identity.trusted else "experimental",
-        ),
-        resource_tier=_manifest_string(
-            manifest,
-            "resource_tier",
-            default="batch" if execution == "job" else "interactive",
-        ),
-        tags=_manifest_tags(manifest),
+        exposure=facts.exposure or "default",
+        trust_tier=facts.trust_tier or ("stable" if record.identity.trusted else "experimental"),
+        resource_tier=facts.resource_tier or ("batch" if execution == "job" else "interactive"),
+        tags=facts.tags,
         lifecycle="unknown",
         health="unknown",
         policy_available=True,
@@ -692,26 +686,6 @@ def _intent_asset_modality(intent: str) -> str | None:
     if intent.startswith("video."):
         return "video"
     return None
-
-
-def _manifest_string(
-    manifest: dict[str, Any], key: str, *, default: str
-) -> str:
-    value = manifest.get(key)
-    if isinstance(value, str) and value:
-        return value
-    return default
-
-
-def _manifest_tags(manifest: dict[str, Any]) -> tuple[str, ...]:
-    value = manifest.get("tags")
-    if not isinstance(value, list):
-        return ()
-    tags: list[str] = []
-    for item in value:
-        if isinstance(item, str) and item and item not in tags:
-            tags.append(item)
-    return tuple(tags)
 
 
 def _check_audience(audience: str) -> None:
