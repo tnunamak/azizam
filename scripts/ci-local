@@ -154,8 +154,8 @@ echo "order seed: $seed (reproduce with --order-seed $seed)"
 scratch=${AZIZAM_CI_SCRATCH:-$HOME/.tmp}
 mkdir -p "$scratch" "$receipts/logs"
 receipts=$(cd "$receipts" && pwd)
-rm -f "$receipts/PASS" "$receipts/steps.tsv" "$receipts/cases.jsonl" "$receipts/cost.json" "$receipts/signoff-$sha.tsv"
-rm -rf "$receipts/steps" "$receipts/test-results" "$receipts/raw"
+rm -f "$receipts/PASS" "$receipts/FAIL" "$receipts/steps.tsv" "$receipts/cases.jsonl" "$receipts/cost.json" "$receipts/signoff-$sha.tsv"
+rm -rf "$receipts/steps" "$receipts/test-results" "$receipts/raw" "$receipts/e2e-failures"
 mkdir -p "$receipts/steps" "$receipts/raw"
 # Receipts: old runs keep only their verdicts (scripts/ci/prune_receipts.py).
 python3 "$repo/scripts/ci/prune_receipts.py" "$receipts_root" --keep "$receipts" || true
@@ -564,13 +564,17 @@ if ! awk -F '\t' -v expected="$((browser_steps + 16))" '
   NF != 6 || $2 != "0" || $3 !~ /^[0-9]+$/ { bad=1 }
   END { exit (bad || NR != expected) }
 ' "$receipts/steps.tsv"; then failed=1; fi
-# Failed runs retain textual logs and case/step receipts, not duplicate
-# browser traces, auth files, builds, environments or mutable test state.
+# Failed runs retain textual logs, case/step receipts and the failed e2e tests'
+# screenshots, error contexts and traces (bounded, kept 3 days: prune_receipts.py),
+# not auth files, builds, environments or mutable test state.
 printf 'finished\t%s\n' "$(date -u +%FT%TZ)" >> "$receipts/run.tsv"
 # The cost table and cost.json. Evidence only: the verdict does not depend on them.
 python3 "$repo/scripts/ci/gate_cost.py" report "$receipts" --measure "$cost_mode" ||
   echo "cost report failed; steps.tsv keeps the raw costs"
 if ((failed)); then
+  python3 "$repo/scripts/ci/prune_receipts.py" --collect "$run/browser-results" "$receipts/e2e-failures" ||
+    echo "could not keep the e2e failure artifacts"
+  echo "$sha" > "$receipts/FAIL"
   echo "ci-local FAILED for $sha; receipts: $receipts"
   exit 1
 fi

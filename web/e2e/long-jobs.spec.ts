@@ -3,12 +3,22 @@ import AxeBuilder from "@axe-core/playwright";
 import { mkdir } from "node:fs/promises";
 import { fulfilJson } from "./fixtures/intercept";
 
-/** A person who has not written a prompt takes the tab's example first. Written words are never replaced. */
+/**
+ * A person who has not written a prompt takes the tab's example first. Written words are never replaced.
+ * Run renders with the tab's boxes, so wait for it before asking whether the tab has an example:
+ * a check made while the page loads finds no button and leaves the prompt empty. A click made
+ * before the page is interactive is lost, so click again until the prompt holds the example.
+ */
 async function takeExampleIfEmpty(page: import("@playwright/test").Page) {
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toBeVisible();
   const example = page.getByRole("button", { name: "Try an example" });
   if (!(await example.count())) return;
   const box = page.getByRole("textbox", { name: /^(Prompt|Question)$/ });
-  if ((await box.count()) && (await box.inputValue()) === "") await example.click();
+  if (!(await box.count()) || (await box.inputValue()) !== "") return;
+  await expect(async () => {
+    await example.click();
+    await expect(box).not.toHaveValue("", { timeout: 1_000 });
+  }).toPass();
 }
 
 

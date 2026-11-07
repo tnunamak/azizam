@@ -532,6 +532,23 @@ def test_the_gate_compacts_old_receipts_at_start(world: World) -> None:
     assert (world.receipts / "cases.jsonl").is_file()
 
 
+def test_a_failed_gate_keeps_the_failed_e2e_artifacts(world: World) -> None:
+    case = "$PWD/test-results/artifacts-18200/a-spec-case-chromium"
+    result = world.run(FAKE_BROWSER_GATE=(
+        f'mkdir -p "{case}" && echo ctx > "{case}/error-context.md" && echo png > "{case}/test-failed-1.png" '
+        f'&& echo zip > "{case}/trace.zip" && echo skip > "{case}/video.webm"; false'
+    ))
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert (world.receipts / "FAIL").is_file() and not (world.receipts / "PASS").exists()
+    kept = world.receipts / "e2e-failures" / "artifacts-18200" / "a-spec-case-chromium"
+    assert sorted(path.name for path in kept.iterdir()) == ["error-context.md", "test-failed-1.png", "trace.zip"]
+    assert world.run_dirs() == []
+    # The next passing run of the same tree starts clean.
+    assert world.run().returncode == 0
+    assert (world.receipts / "PASS").is_file() and not (world.receipts / "FAIL").exists()
+    assert not (world.receipts / "e2e-failures").exists()
+
+
 # ci-local writes "pid <pid> sha ..." into the lock file it holds.
 SIGNAL_CONTROLLER = 'kill -{} "$(cut -d" " -f2 "$HOME/.tmp/azizam-ci.lock")"'
 

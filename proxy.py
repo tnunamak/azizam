@@ -550,9 +550,24 @@ def _generation_of_registry(registry: Mapping[str, Any]) -> Any:
         # ``registry`` is the normalized effective registry, so the stored effective one is normalized to compare.
         same = stored is not None and service_registry.stable_hash(
             service_registry.normalize_service_registry(stored["value"])) == service_registry.stable_hash(registry)
-    except Exception:  # noqa: BLE001 - the generation is a label; the load goes on without it
+    except Exception as error:  # noqa: BLE001 - the generation is a label; the load goes on without it
+        # The failure is named once, by type only: the text of an error can quote a stored value.
+        _log_generation_read_failure(error)
         return None
     return stored["operator_settings_generation"] if same else None
+
+
+_GENERATION_READ_FAILURE_LOGGED = False
+
+
+def _log_generation_read_failure(error: BaseException) -> None:
+    global _GENERATION_READ_FAILURE_LOGGED
+    if _GENERATION_READ_FAILURE_LOGGED:
+        return
+    _GENERATION_READ_FAILURE_LOGGED = True
+    logging.getLogger(__name__).warning(
+        "The registry generation could not be read (%s); the config snapshot key carries no generation.",
+        type(error).__name__)
 
 
 # What the Overview reports when the stored registry is not what is running (None when it is):
@@ -4527,7 +4542,9 @@ async def _probe_voice_quality(reference: Path) -> dict[str, Any] | None:
     start, GPU0 busy after retries), never raises. A 503 from the engine (GPU0 full or still loading)
     is retried twice, five seconds apart.
     """
-    engine_id = str(_voice_settings().get("quality_engine") or "chatterbox")
+    engine_id = str(_voice_settings().get("quality_engine") or "")
+    if not engine_id:
+        return {"error": "engine_not_configured"}  # the release names no engine; voices.quality_engine picks one
     endpoint = _speech_engine_endpoint(engine_id)
     if endpoint is None:
         return {"error": "engine_not_deployed"}
