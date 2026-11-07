@@ -11,6 +11,7 @@ is valid; ``check_contract`` does. A document it cannot improve passes through u
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 import logging
@@ -43,7 +44,8 @@ class PolicyFacts:
     ``v1_assets`` holds, for each asset input of a schema 1 document (the mesh-only picture type is one), the media type it
     declared (empty when it declared none): the contract only lists what the input accepts, and a default list looks the
     same as a declared one. ``pictures`` names the inputs that were the picture type, which the modality readers did not
-    count. Both are empty for a document that was written as schema 2."""
+    count. Both are empty for a document that was written as schema 2. ``capability_backfilled`` is true when the converter
+    inferred the capability from the intent, so the document did not declare one."""
 
     exposure: str | None = None
     trust_tier: str | None = None
@@ -51,6 +53,7 @@ class PolicyFacts:
     tags: tuple[str, ...] = ()
     v1_assets: tuple[tuple[str, str], ...] = ()
     pictures: tuple[str, ...] = ()
+    capability_backfilled: bool = False
 
     def declared_media(self, name: str) -> str | None:
         """What a schema 1 document declared for this asset input (``""`` for nothing), or ``None`` for an input it did not
@@ -74,7 +77,7 @@ def _v1_media_facts(manifest: Mapping[str, Any]) -> tuple[tuple[tuple[str, str],
             assets.append((str(name), str(spec.get("media_type") or "").strip()))
         elif kind in MEDIA_INPUT_TYPES:
             pictures.append(str(name))
-            assets.append((str(name), ""))  # the readers showed a picture as an asset that declared nothing
+            assets.append((str(name), str(spec.get("media_type") or "").strip()))
     return tuple(assets), tuple(pictures)
 
 
@@ -113,11 +116,12 @@ def _carry_requirements(contract: dict[str, Any]) -> None:
 def normalize(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], PolicyFacts]:
     """What every reader of a loaded schema 1 document reads: the schema 2 contract (made in memory, nothing is checked or
     refused) and the policy facts that were beside it."""
-    contract, _ = convert_1_to_2(manifest)
+    contract, notes = convert_1_to_2(manifest)
     for key in POLICY_KEYS:
         contract.pop(key, None)
     _carry_requirements(contract)
-    return contract, policy_facts_of(manifest)
+    facts = dataclasses.replace(policy_facts_of(manifest), capability_backfilled=any(n.operation == "backfill" for n in notes))
+    return contract, facts
 
 
 @dataclass(frozen=True)

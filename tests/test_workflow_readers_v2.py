@@ -18,6 +18,7 @@ import dataclasses
 import gzip
 import json
 import sys
+import types
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -227,6 +228,8 @@ MALFORMED = {
     "no inputs": lambda c: c.__setitem__("inputs", {}),
     "scalar spec None": lambda c: c["inputs"].__setitem__("resolution", None),
     "scalar spec a string": lambda c: c["inputs"].__setitem__("resolution", "integer"),
+    "scalar type a list": lambda c: c["inputs"]["resolution"].__setitem__("type", []),
+    "scalar type a dict": lambda c: c["inputs"]["resolution"].__setitem__("type", {}),
     "scalar type unknown": lambda c: c["inputs"]["resolution"].__setitem__("type", "float"),
     "scalar default of the wrong type": lambda c: c["inputs"]["resolution"].__setitem__("default", "big"),
     "range of the wrong type": lambda c: c["inputs"]["seed"].__setitem__("maximum", "high"),
@@ -262,6 +265,7 @@ DRIFT = {
     "type changed": lambda c: c["inputs"]["bg_removal"].__setitem__("type", "integer"),
     "input added": lambda c: c["inputs"].__setitem__("extra", {"type": "string"}),
     "input removed": lambda c: c["inputs"].pop("extensions"),
+    "default null added": lambda c: c["inputs"]["bg_removal"].__setitem__("default", None),
 }
 
 
@@ -287,3 +291,82 @@ def test_facts_are_record_data_with_the_old_defaults_filled_in() -> None:
     assert _image_policy_metadata(PolicyFacts(), trusted=True)["trust_tier"] == "stable"
     assert _image_policy_metadata(facts, trusted=True) == {
         "exposure": "hidden", "trust_tier": "experimental", "resource_tier": "interactive", "tags": ("a",)}
+
+
+# --- second fix round ---------------------------------------------------------------------------------------------------
+
+NOT_A_MAPPING_ROOTS = {"a list": [], "a string": "mesh", "None": None}
+
+
+@pytest.mark.parametrize("root", sorted(NOT_A_MAPPING_ROOTS))
+def test_mesh_refuses_a_contract_root_that_is_not_a_mapping(registry: WorkflowRegistry, root: str) -> None:
+    contract = NOT_A_MAPPING_ROOTS[root]
+    assert mesh_api.mesh_profile_errors(contract)  # an answer, never an exception
+    with pytest.raises(mesh_manifest.MeshManifestError):
+        mesh_api.mesh_workflow(contract, "hash")
+    # A record whose contract is None would be re-derived from its stored document, so the record is a plain stand-in.
+    record = types.SimpleNamespace(contract=contract, identity=registry.get(MESH_ID).identity)
+    with pytest.raises(mesh_manifest.MeshManifestError):
+        mesh_api.mesh_workflow_from_record(record)
+
+
+def _explicit_capability_manifest(registry: WorkflowRegistry, annotations: Any) -> dict[str, Any]:
+    manifest = copy.deepcopy(registry.get(MESH_ID).manifest)
+    manifest["capability"] = "declared-capability"
+    manifest["annotations"] = {"azizam.dev/backfill": annotations}
+    return manifest
+
+
+@pytest.mark.parametrize("annotation", [None, 7, {"capability": "x"}, {"other": 1}, "text", []])
+def test_a_declared_capability_is_shown_whatever_the_annotations_hold(registry: WorkflowRegistry, annotation: Any) -> None:
+    base = registry.get(MESH_ID)
+    record = _with_stored_document(base, _explicit_capability_manifest(registry, annotation))
+    assert not record.facts.capability_backfilled
+    (cap,) = _caps_of(record)
+    assert cap.capability == "declared-capability"
+
+
+def test_a_capability_the_converter_inferred_is_not_shown_as_declared(registry: WorkflowRegistry) -> None:
+    base = registry.get(MESH_ID)
+    manifest = copy.deepcopy(base.manifest)
+    manifest.pop("capability", None)
+    record = _with_stored_document(base, manifest)
+    assert record.facts.capability_backfilled
+    (cap,) = _caps_of(record)
+    assert cap.capability is None
+
+
+def _caps_of(record: WorkflowRecord) -> list[Any]:
+    return [capabilities.capability_from_workflow_record(record, backend=b) for b in record.supported_backends]
+
+
+def _image_row(record: WorkflowRecord) -> dict[str, Any]:
+    out = read_one(record, "member_catalog")
+    rows = [row for row in _walk_rows(out) if row.get("name") == "image" and row.get("asset")]
+    assert len(rows) == 1
+    return rows[0]
+
+
+def _walk_rows(value: Any) -> Any:
+    if isinstance(value, dict):
+        yield value
+        for item in value.values():
+            yield from _walk_rows(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _walk_rows(item)
+
+
+def test_a_picture_input_keeps_the_media_type_it_declared(registry: WorkflowRegistry) -> None:
+    base = registry.get(MESH_ID)
+    manifest = copy.deepcopy(base.manifest)
+    assert manifest["inputs"]["image"]["type"] == "image"
+    manifest["inputs"]["image"]["media_type"] = "image/png"
+    record = _with_stored_document(base, manifest)
+    # What the old helper answered for the stored spec: the declared type, else the intent's default.
+    assert str(manifest["inputs"]["image"]["media_type"]).strip() == "image/png"
+    assert record.facts.declared_media("image") == "image/png"
+    assert _image_row(record)["media_type"] == "image/png"
+    undeclared = _with_stored_document(base, base.manifest)
+    assert undeclared.facts.declared_media("image") == ""
+    assert "media_type" not in _image_row(undeclared)  # the intent has no default picture type: the old output left it out

@@ -50,12 +50,9 @@ def inputs_without_pictures(inputs: Mapping[str, Any], facts: Any) -> dict[str, 
     return {name: spec for name, spec in inputs.items() if name not in pictures}
 
 
-def declared_capability(contract: Mapping[str, Any]) -> Any:
-    """The capability the document declared. One the converter inferred from the intent (it says so in an annotation) is not
+def declared_capability(contract: Mapping[str, Any], facts: Any = None) -> Any:
+    """The capability the document declared. One the converter inferred from the intent (the record's facts say so) is not
     a declaration: the readers that show a declared capability showed nothing for it, and fill the intent's rule themselves."""
-    from gateway.workflow_convert import BACKFILL_KEY  # noqa: PLC0415 - the converter imports readers of this module
-
-    annotations = contract.get("annotations")
-    if isinstance(annotations, Mapping) and BACKFILL_KEY in annotations and "capability" in annotations[BACKFILL_KEY]:
+    if getattr(facts, "capability_backfilled", False):
         return None
     return contract.get("capability")

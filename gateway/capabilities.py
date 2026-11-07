@@ -536,7 +536,7 @@ def capability_from_workflow_record(
         intent=record.intent,
         title=manifest.get("display_name") or manifest.get("name") or manifest.get("title"),
         description=manifest.get("description"),
-        capability=declared_capability(manifest),
+        capability=declared_capability(manifest, facts),
         backend=chosen_backend,
         workflow=record.id,
         input_modalities=input_modalities,

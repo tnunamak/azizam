@@ -174,7 +174,7 @@ def _input_problems(name: Any, spec: Any, mapped: bool) -> list[str]:
     if not isinstance(spec, Mapping):
         return [f"input {name} must be a mapping"]
     kind = spec.get("type")
-    if kind not in _ROUTE_TYPES:
+    if not isinstance(kind, str) or kind not in _ROUTE_TYPES:
         return [f"input {name} has a type the route cannot read"]
     if kind == "asset":
         return []  # the picture's acceptance is checked by the profile, for the one required picture
@@ -197,6 +197,8 @@ def mesh_profile_errors(contract: Mapping[str, Any]) -> list[str]:
     """Why the mesh frontend cannot serve this workflow, from the contract only: the wire carries one file part and calls
     one engine over one multipart POST, and answers with one GLB body. Empty when it can. A contract of any shape gets an
     answer here, never an exception."""
+    if not isinstance(contract, Mapping):
+        return ["the contract must be a mapping"]
     problems: list[str] = []
     if contract.get("intent") != MESH_INTENT:
         problems.append(f"intent must be {MESH_INTENT!r}")
@@ -254,9 +256,12 @@ def mesh_workflow(contract: Mapping[str, Any], manifest_hash: str) -> MeshWorkfl
 
 def _route_view(inputs: Mapping[str, Mapping[str, Any]], picture: str) -> dict[str, tuple[Any, ...]]:
     """Each input as what the route reads of it. The picture is its name alone: the old validator and the contract name its
-    type differently, and the profile checks what it accepts."""
-    return {name: ("picture",) if name == picture else tuple(spec.get(key) for key in _ROUTE_SCALAR_KEYS)
-            for name, spec in inputs.items()}
+    type differently, and the profile checks what it accepts. A default that is absent differs from one that is ``None``:
+    ``bind_request`` sends the second and leaves the first out."""
+    def read(spec: Mapping[str, Any]) -> tuple[Any, ...]:
+        return tuple(("default" in spec, spec.get("default")) if key == "default" else spec.get(key) for key in _ROUTE_SCALAR_KEYS)
+
+    return {name: ("picture",) if name == picture else read(spec) for name, spec in inputs.items()}
 
 
 def mesh_workflow_from_record(record: Any, checked_against: MeshManifest | None = None) -> MeshWorkflow:
