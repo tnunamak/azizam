@@ -86,7 +86,7 @@ def effective_manifest(manifest: Mapping[str, Any], limits: AudioLimits) -> dict
 
 def generated_block(body: Mapping[str, Any], *, manifest: Mapping[str, Any],
                     stored: Mapping[str, Mapping[str, Any]] | None = None,
-                    source: generated_defaults.Source = generated_defaults.secure_source) -> dict[str, dict[str, Any]]:
+                    source: generated_defaults.Source | None = None) -> dict[str, dict[str, Any]]:
     """The envelope ``generated`` block for one request: the generated inputs the request left empty, each filled once.
 
     ``manifest`` must be the ``effective_manifest`` of the workflow. ``stored`` is a block a job already kept; its values
@@ -98,7 +98,7 @@ def generated_block(body: Mapping[str, Any], *, manifest: Mapping[str, Any],
 
 def manifest_inputs(body: Mapping[str, Any], *, manifest: Mapping[str, Any],
                     stored: Mapping[str, Mapping[str, Any]] | None = None,
-                    source: generated_defaults.Source = generated_defaults.secure_source) -> dict[str, Any]:
+                    source: generated_defaults.Source | None = None) -> dict[str, Any]:
     """The typed inputs the effective manifest declares, read from one public audio request. ``body`` is not modified.
 
     ``manifest`` must be the ``effective_manifest`` of the workflow. ``stored`` and ``source`` are for generated inputs

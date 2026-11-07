@@ -84,7 +84,7 @@ def resolve_generated(
     given: Mapping[str, Any],
     *,
     stored: Mapping[str, Mapping[str, Any]] | None = None,
-    source: Source = secure_source,
+    source: Source | None = None,
 ) -> dict[str, dict[str, Any]]:
     """The envelope ``generated`` block for one request: an entry for each generated input the caller left empty.
 
@@ -92,6 +92,7 @@ def resolve_generated(
     name an input marked ``settable: false``. For the others, an entry in ``stored`` made by the same generator is read
     back as it is; otherwise the generator draws. An entry with a value that does not fit the input is refused with
     ``ManifestError``, as is a generator that no reviewed code backs."""
+    source = source or secure_source  # looked up per call, so a test replaces ``secure_source``
     block: dict[str, dict[str, Any]] = {}
     for name, spec in generated_inputs(inputs).items():
         if name in given and caller_may_set(spec):
@@ -116,7 +117,7 @@ def resolved_values(
     given: Mapping[str, Any],
     *,
     stored: Mapping[str, Mapping[str, Any]] | None = None,
-    source: Source = secure_source,
+    source: Source | None = None,
 ) -> dict[str, Any]:
     """The value of every generated input for one request: the caller's own where it named one it may set, otherwise
     the generated value. The block itself is ``resolve_generated``."""

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import random
 
 import httpx
 
@@ -20,6 +19,7 @@ from unittest.mock import patch
 
 import proxy
 from tests.support.config_snapshot import derived_patch
+from gateway import generated_defaults
 from gateway.engine_protocol.audio_graph import AudioLimits, effective_manifest, manifest_inputs
 from gateway.manifests import ManifestError
 from tests.support.access import access_context
@@ -90,7 +90,7 @@ def test_an_unset_seed_is_drawn_inside_the_declared_bounds(monkeypatch):
     manifest = audio_manifest("fx", {"prompt": [("1", "text")], "seed": [("1", "seed")]})
     manifest["inputs"]["seed"].update(minimum=3, maximum=9)
     asked: list[tuple[int, int]] = []
-    monkeypatch.setattr(random, "randint", lambda low, high: asked.append((low, high)) or low)
+    monkeypatch.setattr(generated_defaults, "secure_source", lambda low, high: asked.append((low, high)) or low)
     inputs = manifest_inputs({"prompt": "x"}, manifest=effective_manifest(manifest, AudioLimits()))
     assert asked == [(3, 9)] and inputs["seed"] == 3
 
@@ -99,7 +99,7 @@ def test_fractional_seed_bounds_draw_only_the_integers_inside(monkeypatch):
     manifest = audio_manifest("fx", {"prompt": [("1", "text")], "seed": [("1", "seed")]})
     manifest["inputs"]["seed"].update(minimum=3.5, maximum=9.5)
     asked: list[tuple[int, int]] = []
-    monkeypatch.setattr(random, "randint", lambda low, high: asked.append((low, high)) or low)
+    monkeypatch.setattr(generated_defaults, "secure_source", lambda low, high: asked.append((low, high)) or low)
     manifest_inputs({"prompt": "x"}, manifest=effective_manifest(manifest, AudioLimits()))
     assert asked == [(4, 9)]
 
