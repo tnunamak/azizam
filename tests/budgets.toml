@@ -548,7 +548,8 @@
 # feat/config-homes-c9 (2026-11-06): registry-derived constants acceptance tests (+13); measured 19865.
 # Train 14 (2026-11-06): C4 registry layering (+31) on train 13; summed 20272.
 # C9 merged with main (train 14): measured 20285.
-pytest = 20285
+# C9 merge review fix: a derived patch is undone in a snapshot published inside its block (+3); measured 20288.
+pytest = 20288
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
