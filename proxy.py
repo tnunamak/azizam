@@ -9089,7 +9089,7 @@ async def proxy_graph_image_request(
             output_format=output_format, output_compression=output_compression, quality=quality, background=background,
         )
 
-    workflow = load_graph_workflow(model, intent="image.generate")
+    workflow = load_graph_workflow(model, intent=IMAGE_GENERATE_INTENT)
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -9530,7 +9530,7 @@ async def proxy_graph_image_edit_request(
             request, auth_context, form, form_dict, image_files, str(prompt or ""), response_format,
         )
 
-    workflow = load_graph_workflow(model, intent="image.edit")
+    workflow = load_graph_workflow(model, intent=IMAGE_EDIT_INTENT)
     if not workflow:
         return model_compatibility_error(
             ModelCompatibilityError(
@@ -20851,6 +20851,9 @@ _IMAGE_ROUTE_INTENTS = {
     "/v1/images/edits": "image.edit",
     "/v1/images/variations": "image.variation",
 }
+# The intents of the generation and edit routes, named once here; a route loads its workflow record under its own intent.
+IMAGE_GENERATE_INTENT = _IMAGE_ROUTE_INTENTS["/v1/images/generations"]
+IMAGE_EDIT_INTENT = _IMAGE_ROUTE_INTENTS["/v1/images/edits"]
 
 
 def start_image_route_receipt(
@@ -21528,8 +21531,8 @@ async def _proxy_offset_inpaint_tile_request(
         "inpaint_model",
         fallback="flux2-klein-4b-inpaint",
     )
-    base_workflow = load_graph_workflow(base_model, intent="image.generate")
-    inpaint_workflow = load_graph_workflow(inpaint_model, intent="image.edit")
+    base_workflow = load_graph_workflow(base_model, intent=IMAGE_GENERATE_INTENT)
+    inpaint_workflow = load_graph_workflow(inpaint_model, intent=IMAGE_EDIT_INTENT)
     base_manifest = _find_image_manifest("image.generate", base_model)
     inpaint_manifest = _find_image_manifest("image.edit", inpaint_model)
     if not base_workflow or not inpaint_workflow or base_manifest is None or inpaint_manifest is None:
@@ -21812,7 +21815,7 @@ def _prefer_inpaint_workflow_for_mask(model: str) -> str:
         return model
     base = model.removesuffix("-edit")
     candidate = f"{base}-inpaint"
-    return candidate if load_graph_workflow(candidate, intent="image.edit") else model
+    return candidate if load_graph_workflow(candidate, intent=IMAGE_EDIT_INTENT) else model
 
 
 def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> str:
@@ -21826,8 +21829,8 @@ def _select_edit_workflow(model: str, *, image_count: int, has_mask: bool) -> st
     if not (selected.endswith("-edit") or selected.endswith("-inpaint")):
         # The edit route's own record (intent image.edit) decides, the same one its final load uses: another
         # intent's record of the same name never supplies metadata or hides this record's refusal.
-        direct_workflow = load_graph_workflow(selected, intent="image.edit")
-        if direct_workflow is None and graph_workflow_refused(selected, intent="image.edit"):
+        direct_workflow = load_graph_workflow(selected, intent=IMAGE_EDIT_INTENT)
+        if direct_workflow is None and graph_workflow_refused(selected, intent=IMAGE_EDIT_INTENT):
             return selected  # a refused package model is unavailable; it never becomes its -edit sibling
         direct_meta = direct_workflow.get("_meta", {}) if isinstance(direct_workflow, Mapping) else {}
         if not isinstance(direct_meta, Mapping) or not (direct_meta.get("image_node") or direct_meta.get("image_nodes")):
