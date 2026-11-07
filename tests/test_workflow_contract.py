@@ -1001,3 +1001,8 @@ def test_the_repeat_loads_skip_the_conversion_and_the_check(tmp_path, monkeypatc
     for _ in range(3):
         load_workflow_manifest(path)
     assert len(calls) == 1
+
+
+def test_a_broken_bound_hides_the_generator_range_error_it_would_cause():
+    spec = {"type": "integer", "minimum": 1.5, "generate": {"generator": "random_integer", "minimum": 1, "maximum": 1}}
+    assert pairs(with_input("x", spec)) == [(("inputs", "x", "minimum"), "integer_expected")]
