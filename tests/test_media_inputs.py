@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import contextlib
 import hashlib
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -18,6 +20,7 @@ from typing import Any
 import pytest
 
 from gateway import media_inputs, media_jobs
+from gateway.media_input_assets import CacheAssetPort
 from gateway.media_input_leases import MediaInputLedger
 from gateway.media_inputs import (
     DISCLOSURE_REFUSED, EMPTY, FETCH_FAILED, FORBIDDEN, MISSING, TOO_LARGE, UNSUPPORTED, Destination, Holder,
@@ -708,11 +711,6 @@ def test_a_failed_removal_keeps_its_duty_for_the_next_pass(db, clock):
 
 
 def test_the_store_port_names_a_claim_only_for_an_owner_its_sidecar_lists(tmp_path: Path):
-    import contextlib
-    import json
-
-    from gateway.media_input_assets import CacheAssetPort
-
     files = {"img_" + "a" * 64: tmp_path / "a.png"}
     sidecars = {key: path.with_suffix(".json") for key, path in files.items()}
     asset = next(iter(files))

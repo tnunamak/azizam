@@ -535,7 +535,8 @@
 # S2.6 review fixes (2026-11-06): the sweep re-check, the download cap and the raised upload (+4 in test_media_inputs.py, +2 in test_media_inputs_image_route.py); measured 19903.
 # S2.6 review follow-up: a stored asset the sweep removed before its lease is refused as missing (+1); measured 19904.
 # S2.6 durable removal duty: two owners' cleanup, the existence check inside the marker transaction, erasure and a failed removal (+4); measured 19908.
-pytest = 19908
+# S2.6 claim rule: an ingest never owes the removal of a claim the owner already held, and the store port claim check (+2); measured 19910.
+pytest = 19910
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
