@@ -9,8 +9,12 @@ ARTIFACT_CAP bounds e2e-failures/ only, its OMITTED.txt note included (logs/ are
 logs and stay whole). Collection writes into a new DEST it creates itself, error contexts first,
 then screenshots, then traces, and skips what would pass the cap; an existing directory over the
 cap loses its traces, then its screenshots, then its largest files. Every file left out or dropped
-is named in OMITTED.txt, cut short to fit the cap. No symlink is followed: a symlinked SRC or kept
-directory is refused or removed, walks never enter one, and files are opened with O_NOFOLLOW.
+is named in OMITTED.txt, cut short to fit the cap. A symlink present in the evidence tree is never
+followed: a symlinked SRC, DEST parent or kept directory is refused or removed, walks never enter one,
+collection makes every directory and file under DEST relative to the descriptor of the one above with
+O_NOFOLLOW, and copies stop at the size of the opened source. The run directory and SRC are the gate's
+own and are trusted: a process that can rename DEST or a SRC directory while collection runs can write
+the run directory anyway, so such a swap is outside what this guards.
 The run named by --keep (the gate that is starting) and ROOT/scheduled are never touched.
 
 Usage: prune_receipts.py ROOT [--keep DIR] [--runs N] [--signoff-days N] [--failed-days N]
@@ -72,18 +76,53 @@ def open_new(path: Path, append: bool = False):
     return os.fdopen(os.open(path, flags, 0o644), "wb")
 
 
-def copy_new(source: Path, target: Path) -> None:
-    with os.fdopen(os.open(source, os.O_RDONLY | os.O_NOFOLLOW), "rb") as read, open_new(target) as write:
-        shutil.copyfileobj(read, write)
+def open_dir(name: str | Path, parent: int | None = None) -> int:
+    """A descriptor for a directory, refusing a symlink in its place."""
+    return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+
+
+def copy_new(source: Path, root: int, relative: Path, allowance: int) -> int | None:
+    """Copy source to root/relative, making each directory below root here, never through a symlink.
+
+    Every directory and the file are made and opened relative to the descriptor of the directory above them,
+    so a link put in place of one cannot redirect the write. The size is read from the opened source; a
+    source over allowance is not copied (None). Returns the bytes written.
+    """
+    with os.fdopen(os.open(source, os.O_RDONLY | os.O_NOFOLLOW), "rb") as read:
+        length = os.fstat(read.fileno()).st_size
+        if length > allowance:
+            return None
+        directory = os.dup(root)
+        try:
+            for part in relative.parts[:-1]:
+                try:
+                    os.mkdir(part, 0o755, dir_fd=directory)
+                except FileExistsError:
+                    pass
+                inner = open_dir(part, directory)
+                os.close(directory)
+                directory = inner
+            target = os.open(relative.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=directory)
+        finally:
+            os.close(directory)
+        with os.fdopen(target, "wb") as write:
+            written = 0
+            while written < length:
+                chunk = read.read(min(1 << 20, length - written))
+                if not chunk:
+                    break
+                write.write(chunk)
+                written += len(chunk)
+        return written
 
 
 def note_omitted(directory: Path, paths: list[Path], room: int) -> None:
     """Name paths in directory/OMITTED.txt, keeping the note within room bytes (whole lines only)."""
-    if not paths or room <= 0:
-        return
     note = directory / OMITTED
     if note.is_symlink():
         note.unlink()
+    if not paths or room <= 0:
+        return
     old = note.read_bytes() if note.is_file() else b""
     lines = [f"{path.relative_to(directory)}\n".encode() for path in paths]
     added = b""
@@ -106,6 +145,8 @@ def bound_artifacts(directory: Path, cap: int = ARTIFACT_CAP) -> None:
     if not real_dir(directory):
         return
     note = directory / OMITTED
+    if note.is_symlink():
+        note.unlink()
     files = [path for path in tree_files(directory) if path != note]
     note_size = note.stat().st_size if note.is_file() and not note.is_symlink() else 0
     total = size(files)
@@ -130,31 +171,34 @@ def collect_failures(src: Path, dest: Path, cap: int = ARTIFACT_CAP) -> int:
 
     A passing test leaves no such files there, so every match belongs to a failed test. The path under
     src is kept, so two ports never collide. Files are copied in priority order while they fit in cap
-    bytes less the note's room; the rest are named in OMITTED.txt. dest must not exist: every directory
-    and file under it is made here, so none can be a symlink. Returns the number of files copied.
+    bytes less the note's room; the rest are named in OMITTED.txt. dest must not exist and its parent must:
+    every directory and file under dest is made here (copy_new). Returns the number of files copied.
     """
-    if not real_dir(src) or dest.exists() or dest.is_symlink():
-        return 0
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if not real_dir(dest.parent):
+    if not real_dir(src) or not real_dir(dest.parent) or dest.exists() or dest.is_symlink():
         return 0
     found = [path for path in tree_files(src) if path.name in ARTIFACT_NAMES or path.suffix in ARTIFACT_SUFFIXES]
     if not found:
         return 0
     found.sort(key=lambda path: (priority(path), str(path)))
-    dest.mkdir()
+    parent = open_dir(dest.parent)
+    try:
+        os.mkdir(dest.name, 0o755, dir_fd=parent)
+        root = open_dir(dest.name, parent)
+    finally:
+        os.close(parent)
     budget = cap - min(NOTE_ROOM, cap // 10)
     copied, total, left_out = 0, 0, []
-    for path in found:
-        length = path.stat().st_size
-        target = dest / path.relative_to(src)
-        if total + length > budget:
-            left_out.append(target)
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        copy_new(path, target)
-        copied += 1
-        total += length
+    try:
+        for path in found:
+            relative = path.relative_to(src)
+            written = copy_new(path, root, relative, budget - total)
+            if written is None:
+                left_out.append(dest / relative)
+                continue
+            copied += 1
+            total += written
+    finally:
+        os.close(root)
     note_omitted(dest, left_out, cap - total)
     return copied
 
