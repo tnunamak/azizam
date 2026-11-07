@@ -36,6 +36,7 @@ import copy
 import re
 from typing import Any, Iterable, Mapping
 
+from gateway.workflow_view import settable_inputs
 from gateway.audio_extensions import ROUTE_MANAGED_AUDIO_INPUTS
 from gateway.discovery import WorkflowRecord
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE
@@ -71,9 +72,8 @@ _IMAGE_EDIT_MANAGED = frozenset(
 # The multipart part the OpenAI-compatible edit route reads pictures from. One
 # part per picture, in submission order; the field repeats.
 _IMAGE_EDIT_IMAGE_PART = "image[]"
-# Manifest input types that carry a picture or media reference. ``image`` is
-# the mesh route's single picture, sent as one multipart file part.
-_MEDIA_INPUT_TYPES = frozenset({"asset", "image"})
+# Contract input types that carry a picture or media reference (the mesh route's single picture is one).
+_MEDIA_INPUT_TYPES = frozenset({"asset"})
 _MESH_PATH = "/v1/meshes/generate"
 
 _JSON_TYPES = {
@@ -149,7 +149,7 @@ def workflow_inputs_schema(record: WorkflowRecord, *, form: bool = False) -> dic
     """JSON Schema for one workflow's manifest inputs."""
     properties: dict[str, Any] = {}
     required: list[str] = []
-    for name, spec in (record.manifest.get("inputs") or {}).items():
+    for name, spec in settable_inputs(record.contract).items():
         if not isinstance(spec, Mapping):
             continue
         properties[name] = _input_schema(spec, form=form)
@@ -157,14 +157,14 @@ def workflow_inputs_schema(record: WorkflowRecord, *, form: bool = False) -> dic
             required.append(name)
     schema: dict[str, Any] = {
         "type": "object",
-        "title": record.manifest.get("display_name") or record.id,
+        "title": record.contract.get("display_name") or record.id,
         "properties": properties,
         "additionalProperties": False,
         "x-azizam-workflow-id": record.id,
     }
     if required:
         schema["required"] = required
-    description = record.manifest.get("summary") or record.manifest.get("description")
+    description = record.contract.get("summary") or record.contract.get("description")
     if description:
         schema["description"] = " ".join(str(description).split())
     return schema
@@ -243,7 +243,7 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
     * ``{"in": "form", "field": name}``: a plain multipart form field (run route);
     * ``{"in": "none"}``: accepted by the manifest, not settable on this route.
     """
-    inputs = record.manifest.get("inputs") or {}
+    inputs = settable_inputs(record.contract)
     intent = record.intent
     out: dict[str, dict[str, Any]] = {}
     is_asset = {n: (s or {}).get("type") in _MEDIA_INPUT_TYPES for n, s in inputs.items()}
@@ -332,14 +332,14 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
 
 def gateway_route(record: WorkflowRecord) -> str | None:
     """The native route a gateway-composed workflow is served at, when it has one."""
-    binding = (record.manifest.get("bindings") or {}).get("gateway")
+    binding = (record.contract.get("bindings") or {}).get("gateway")
     route = binding.get("route") if isinstance(binding, Mapping) else None
     return route if isinstance(route, str) and route.startswith("/") else None
 
 
 def _bound_input_names(record: WorkflowRecord) -> set[str]:
     """Manifest inputs some service binding maps to a service field."""
-    bindings = record.manifest.get("bindings")
+    bindings = record.contract.get("bindings")
     if not isinstance(bindings, Mapping):
         return set()
     names: set[str] = set()
@@ -361,7 +361,7 @@ def _native_route_image_inputs(
     name appears here.
     """
     bound: set[str] = set()
-    bindings = record.manifest.get("bindings")
+    bindings = record.contract.get("bindings")
     if isinstance(bindings, Mapping):
         for binding in bindings.values():
             if not isinstance(binding, Mapping):
@@ -384,7 +384,7 @@ def route_inputs(record: WorkflowRecord) -> list[dict[str, Any]]:
     video workflows, but the video route takes them; ``n`` is the OpenAI image
     count.
     """
-    inputs = record.manifest.get("inputs") or {}
+    inputs = settable_inputs(record.contract)
     has_size = "width" in inputs and "height" in inputs
     out: list[dict[str, Any]] = []
     if gateway_route(record):
@@ -553,7 +553,7 @@ def aliases_by_workflow(
 
 
 def _typical_seconds(record: WorkflowRecord) -> float | None:
-    value = record.manifest.get("typical_seconds")
+    value = record.contract.get("typical_seconds")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
@@ -576,14 +576,14 @@ def workflow_catalog(
         typical = _typical_seconds(record)
         outputs = [
             {k: v for k, v in (("name", n), ("media_type", (s or {}).get("media_type"))) if v}
-            for n, s in (record.manifest.get("outputs") or {}).items()
+            for n, s in (record.contract.get("outputs") or {}).items()
         ]
         catalog.append({
             "id": record.id,
             "short_id": short_id(record),
             "intent": record.intent,
-            "display_name": record.manifest.get("display_name"),
-            "description": " ".join(str(record.manifest.get("summary") or record.manifest.get("description") or "").split()),
+            "display_name": record.contract.get("display_name"),
+            "description": " ".join(str(record.contract.get("summary") or record.contract.get("description") or "").split()),
             "aliases": alias_map.get(record.id, []),
             "typical_seconds": typical,
             "inputs_schema": _ref(_schema_name(record)),
@@ -913,13 +913,13 @@ def augment_openapi(
         }
     for record in run_records:
         path = f"/gateway/v1/workflows/{short_id(record)}/run"
-        outputs = (record.manifest.get("outputs") or {})
+        outputs = (record.contract.get("outputs") or {})
         media = next((o.get("media_type") for o in outputs.values() if o.get("media_type")), "video/mp4")
         paths[path] = {"post": {
             "tags": ["gateway-workflows"],
             "operationId": f"run_{short_id(record).replace('.', '_').replace('-', '_')}",
-            "summary": f"Run {record.manifest.get('display_name') or record.id}",
-            "description": " ".join(str(record.manifest.get("summary") or record.manifest.get("description") or "").split()),
+            "summary": f"Run {record.contract.get('display_name') or record.id}",
+            "description": " ".join(str(record.contract.get("summary") or record.contract.get("description") or "").split()),
             "x-azizam-workflow-id": record.id,
             "requestBody": {"required": True, "content": {
                 _MULTIPART: {"schema": _ref(_schema_name(record, FORM_PREFIX))}}},

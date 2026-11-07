@@ -18,6 +18,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from gateway.workflow_view import inputs_without_pictures, settable_inputs
 from gateway import admin_store, asset_types, providers, sqlite_startup
 from gateway.admin_api import AdminAuthError
 from gateway.admin_runtime import access_for_person, identity_from_access_row, person_for_app_credential
@@ -311,7 +312,7 @@ def _required_input_modalities(cap: Capability, workflow_records) -> list[str]:
     """
     declared = list(cap.input_modalities)
     record = next((item for item in workflow_records if item.id == cap.workflow), None) if cap.workflow else None
-    inputs = (record.manifest or {}).get("inputs") if record is not None else None
+    inputs = inputs_without_pictures(settable_inputs(record.contract or {}), record.facts) if record is not None else None
     if isinstance(inputs, Mapping) and inputs:
         required = _derive_input_modalities(
             {name: spec for name, spec in inputs.items() if isinstance(spec, Mapping) and spec.get("required") is True},
@@ -328,7 +329,7 @@ def _typical_seconds(cap: Capability, registry: Mapping[str, Any] | None, workfl
     seconds = None
     if cap.workflow:
         record = next((item for item in workflow_records if item.id == cap.workflow), None)
-        seconds = (record.manifest or {}).get("typical_seconds") if record is not None else None
+        seconds = (record.contract or {}).get("typical_seconds") if record is not None else None
     if seconds is None:
         service = ((registry or {}).get("services") or {}).get(cap.backend) or {}
         config = service.get("config") or {}

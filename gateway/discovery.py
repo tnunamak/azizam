@@ -26,11 +26,12 @@ Audiences:
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
+from gateway.workflow_view import backend_ids
 from gateway.manifests import (
     ManifestError,
     ManifestIdentity,
@@ -52,6 +53,22 @@ class WorkflowRecord:
     manifest: dict[str, Any]
     identity: ManifestIdentity
     source_path: Path
+    # What readers read (CODE_TO_DATA_S3, S3.4): the schema 2 contract and the policy facts, made once from the stored
+    # document. ``manifest`` is for the loader and the run path; a test may pass its own contract and facts.
+    contract: Any = field(default=None, compare=False, repr=False)
+    facts: Any = field(default=None, compare=False, repr=False)
+    # The dialect the stored document is in, which the summary reports until the files are rewritten (S3.5).
+    stored_schema_version: Any = field(default=None, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.contract is None or self.facts is None:
+            from gateway.workflow_convert import normalize
+
+            contract, facts = normalize(self.manifest)
+            object.__setattr__(self, "contract", self.contract if self.contract is not None else contract)
+            object.__setattr__(self, "facts", self.facts if self.facts is not None else facts)
+        if self.stored_schema_version is None:
+            object.__setattr__(self, "stored_schema_version", self.manifest.get("schema_version"))
 
     @property
     def id(self) -> str:
@@ -59,12 +76,11 @@ class WorkflowRecord:
 
     @property
     def intent(self) -> str:
-        return str(self.manifest["intent"])
+        return str(self.contract["intent"])
 
     @property
     def supported_backends(self) -> list[str]:
-        bindings = self.manifest.get("bindings") or {}
-        return sorted(bindings.keys())
+        return sorted(backend_ids(self.contract))
 
 
 @dataclass(frozen=True)
@@ -195,29 +211,26 @@ def summarize_workflow(record: WorkflowRecord, audience: str) -> dict[str, Any]:
     summaries layer on provenance and backend binding detail.
     """
     _check_audience(audience)
-    manifest = record.manifest
+    contract = record.contract
+    facts = record.facts
 
     summary: dict[str, Any] = {
         "id": record.id,
         "intent": record.intent,
-        "version": manifest.get("version"),
-        "schema_version": manifest.get("schema_version"),
-        "display_name": manifest.get("display_name"),
-        "purpose": manifest.get("purpose"),
-        "description": manifest.get("description"),
-        "exposure": _manifest_string(manifest, "exposure", default="default"),
-        "trust_tier": _manifest_string(
-            manifest,
-            "trust_tier",
-            default="stable" if record.identity.trusted else "experimental",
-        ),
-        "resource_tier": _manifest_string(
-            manifest, "resource_tier", default="batch"
-        ),
-        "tags": _manifest_tags(manifest),
-        "typical_seconds": _manifest_number(manifest, "typical_seconds"),
-        "inputs": _portable_inputs(manifest.get("inputs") or {}),
-        "outputs": _portable_outputs(manifest.get("outputs") or {}),
+        "version": contract.get("version"),
+        "schema_version": record.stored_schema_version,
+        "display_name": contract.get("display_name"),
+        "purpose": contract.get("purpose"),
+        "description": contract.get("description"),
+        "exposure": facts.exposure or "default",
+        "trust_tier": facts.trust_tier or ("stable" if record.identity.trusted else "experimental"),
+        "resource_tier": facts.resource_tier or "batch",
+        "tags": list(facts.tags),
+        "typical_seconds": _manifest_number(contract, "typical_seconds"),
+        # Stays on the stored document: the mesh workflow's picture input is listed as ``image`` on the wire and the
+        # contract calls it ``asset`` (CODE_TO_DATA_S3, S3.4). It moves with the wire in a later slice.
+        "inputs": _portable_inputs(record.manifest.get("inputs") or {}),
+        "outputs": _portable_outputs(contract.get("outputs") or {}),
         "supported_backends": record.supported_backends,
     }
 
@@ -227,12 +240,12 @@ def summarize_workflow(record: WorkflowRecord, audience: str) -> dict[str, Any]:
     summary["manifest_hash"] = record.identity.manifest_hash
     summary["source"] = record.identity.source
     summary["trusted"] = record.identity.trusted
-    summary["min_gateway_version"] = manifest.get("min_gateway_version")
+    summary["min_gateway_version"] = contract.get("min_gateway_version")
     summary["source_path"] = (
         str(record.source_path) if str(record.source_path) else None
     )
     summary["bindings"] = _binding_summaries(
-        manifest.get("bindings") or {}, audience=audience
+        contract.get("bindings") or {}, audience=audience
     )
     return summary
 
@@ -317,7 +330,7 @@ def _binding_summaries(
     for backend, spec in bindings.items():
         if not isinstance(spec, dict):
             continue
-        entry: dict[str, Any] = {"backend": backend}
+        entry: dict[str, Any] = {"backend": str(spec.get("service") or backend)}
         if "workflow" in spec:
             entry["workflow_artifact"] = spec["workflow"]
         if "endpoint" in spec:
@@ -331,29 +344,11 @@ def _binding_summaries(
     return summaries
 
 
-def _manifest_string(manifest: dict[str, Any], key: str, *, default: str) -> str:
-    value = manifest.get(key)
-    if isinstance(value, str) and value:
-        return value
-    return default
-
-
 def _manifest_number(manifest: dict[str, Any], key: str) -> float | int | None:
     value = manifest.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return value
-
-
-def _manifest_tags(manifest: dict[str, Any]) -> list[str]:
-    value = manifest.get("tags")
-    if not isinstance(value, list):
-        return []
-    tags: list[str] = []
-    for item in value:
-        if isinstance(item, str) and item and item not in tags:
-            tags.append(item)
-    return tags
 
 
 def _check_audience(audience: str) -> None:

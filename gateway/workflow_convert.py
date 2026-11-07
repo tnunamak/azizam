@@ -11,6 +11,7 @@ is valid; ``check_contract`` does. A document it cannot improve passes through u
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 import logging
@@ -30,6 +31,97 @@ OLD_PICTURE_ACCEPTS = ["image/png", "image/jpeg", "image/webp"]
 SEED_GENERATOR = {"generator": "random_integer", "minimum": 0, "maximum": 4294967295}
 BACKFILL_NOTE = {"capability": "intent-prefix rule, schema 1 to 2"}
 BACKFILL_KEY = "azizam.dev/backfill"
+POLICY_KEYS = ("exposure", "trust_tier", "resource_tier", "tags")
+
+
+@dataclass(frozen=True)
+class PolicyFacts:
+    """The record-level facts of a workflow (CODE_TO_DATA_S3, D2): what a reader needs to decide who may run it and at what
+    cost, and what a schema 1 document said of its media inputs that the contract no longer says. ``None`` (or an empty
+    list) means the record states nothing; each reader fills its own old default until S3.5 removes the defaults. They
+    never live in the contract document.
+
+    ``v1_assets`` holds, for each asset input of a schema 1 document (the mesh-only picture type is one), the media type it
+    declared (empty when it declared none): the contract only lists what the input accepts, and a default list looks the
+    same as a declared one. ``pictures`` names the inputs that were the picture type, which the modality readers did not
+    count. Both are empty for a document that was written as schema 2. ``capability_backfilled`` is true when the converter
+    inferred the capability from the intent, so the document did not declare one."""
+
+    exposure: str | None = None
+    trust_tier: str | None = None
+    resource_tier: str | None = None
+    tags: tuple[str, ...] = ()
+    v1_assets: tuple[tuple[str, str], ...] = ()
+    pictures: tuple[str, ...] = ()
+    capability_backfilled: bool = False
+
+    def declared_media(self, name: str) -> str | None:
+        """What a schema 1 document declared for this asset input (``""`` for nothing), or ``None`` for an input it did not
+        have as an asset."""
+        return dict(self.v1_assets).get(name)
+
+
+def _fact_text(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _v1_media_facts(manifest: Mapping[str, Any]) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
+    inputs = manifest.get("inputs")
+    if manifest.get("schema_version") != 1 or not isinstance(inputs, Mapping):
+        return (), ()
+    assets: list[tuple[str, str]] = []
+    pictures: list[str] = []
+    for name, spec in inputs.items():
+        kind = spec.get("type") if isinstance(spec, Mapping) else None
+        if kind == "asset":
+            assets.append((str(name), str(spec.get("media_type") or "").strip()))
+        elif kind in MEDIA_INPUT_TYPES:
+            pictures.append(str(name))
+            assets.append((str(name), str(spec.get("media_type") or "").strip()))
+    return tuple(assets), tuple(pictures)
+
+
+def policy_facts_of(manifest: Mapping[str, Any]) -> PolicyFacts:
+    """The facts of a schema 1 document, which holds them beside the contract. This and ``normalize`` are the only readers."""
+    raw_tags = manifest.get("tags")
+    tags = [item for item in raw_tags if isinstance(item, str) and item] if isinstance(raw_tags, list) else []
+    assets, pictures = _v1_media_facts(manifest)
+    return PolicyFacts(
+        exposure=_fact_text(manifest.get("exposure")), trust_tier=_fact_text(manifest.get("trust_tier")),
+        resource_tier=_fact_text(manifest.get("resource_tier")), tags=tuple(dict.fromkeys(tags)),
+        v1_assets=assets, pictures=pictures)
+
+
+def trusted_of(manifest: Mapping[str, Any]) -> bool:
+    """Whether a schema 1 document says it is reviewed: provenance, which belongs to the record, not the contract."""
+    return bool(manifest.get("trusted", False))
+
+
+def _carry_requirements(contract: dict[str, Any]) -> None:
+    """Requirements the converter left at the top (a document with several bindings, which the contract check reports) go
+    into every binding, so no accepted document loses them: a reader gathers them across the bindings without repeats. The
+    stored document and the conversion report are not changed."""
+    requires = contract.get("requires")
+    bindings = contract.get("bindings")
+    if requires is None or not isinstance(bindings, dict):
+        return
+    owners = [block for block in bindings.values() if isinstance(block, dict)]
+    if not owners:
+        return
+    del contract["requires"]
+    for block in owners:
+        block["requires"] = copy.deepcopy(requires)
+
+
+def normalize(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], PolicyFacts]:
+    """What every reader of a loaded schema 1 document reads: the schema 2 contract (made in memory, nothing is checked or
+    refused) and the policy facts that were beside it."""
+    contract, notes = convert_1_to_2(manifest)
+    for key in POLICY_KEYS:
+        contract.pop(key, None)
+    _carry_requirements(contract)
+    facts = dataclasses.replace(policy_facts_of(manifest), capability_backfilled=any(n.operation == "backfill" for n in notes))
+    return contract, facts
 
 
 @dataclass(frozen=True)
