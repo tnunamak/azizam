@@ -225,7 +225,7 @@ def test_jpeg_base64_starting_with_slash_remains_accepted():
     "localhost", "192.168.100.10", "unconfigured.example",
 ])
 def test_gateway_signed_image_url_resolves_without_network_with_ownership(monkeypatch, tmp_path, route, host):
-    monkeypatch.setenv("AZIZAM_PUBLIC_URL", "http://gateway.lan")
+    monkeypatch.setattr(proxy, "instance_settings", lambda path=None: {"base_url": "http://gateway.lan"})
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(proxy, "_image_url_signing_secret", b"test-media-url-secret")
     image = io.BytesIO()
@@ -249,8 +249,8 @@ def test_gateway_signed_image_url_resolves_without_network_with_ownership(monkey
 
 
 def test_gateway_video_asset_signed_url_resolves_internally(monkeypatch, tmp_path):
-    # Own content is recognised by the configured public URL, not a built-in host.
-    monkeypatch.setenv("AZIZAM_PUBLIC_URL", "https://gateway.example")
+    # Own content is recognised by the instance's base URL, not a built-in host.
+    monkeypatch.setattr(proxy, "instance_settings", lambda path=None: {"base_url": "https://gateway.example"})
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(proxy, "_image_url_signing_secret", b"test-media-url-secret")
     owner = SimpleNamespace(identity=SimpleNamespace(key_hash="owner"))
@@ -281,8 +281,8 @@ def test_forwarded_host_minted_signed_asset_resolves_internally(monkeypatch, tmp
 
 
 def test_redirect_into_gateway_signed_asset_uses_internal_resolver(monkeypatch, tmp_path):
-    # Own content is recognised by the configured public URL, not a built-in host.
-    monkeypatch.setenv("AZIZAM_PUBLIC_URL", "https://gateway.example")
+    # Own content is recognised by the instance's base URL, not a built-in host.
+    monkeypatch.setattr(proxy, "instance_settings", lambda path=None: {"base_url": "https://gateway.example"})
     monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path)
     monkeypatch.setattr(proxy, "_image_url_signing_secret", b"test-media-url-secret")
     owner = SimpleNamespace(identity=SimpleNamespace(key_hash="owner"))
@@ -316,8 +316,8 @@ def test_saved_instance_base_url_identifies_internal_signed_assets(monkeypatch, 
 
 
 def test_legacy_gateway_video_url_checks_ownership_and_streams_under_cap(monkeypatch):
-    # Own content is recognised by the configured public URL, not a built-in host.
-    monkeypatch.setenv("AZIZAM_PUBLIC_URL", "https://gateway.example")
+    # Own content is recognised by the instance's base URL, not a built-in host.
+    monkeypatch.setattr(proxy, "instance_settings", lambda path=None: {"base_url": "https://gateway.example"})
     from _fake_comfy_video import FakeComfy, SOURCE_BYTES, SOURCE_PROMPT_ID
 
     owner = SimpleNamespace(identity=SimpleNamespace(key_hash="owner"))

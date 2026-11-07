@@ -17,6 +17,7 @@ import yaml
 import proxy
 from gateway import admin_store, config_layers as layers, config_legacy_import
 from tests.config_homes_golden import effective_config, raw_config
+from tests.registry_test_helpers import import_blocks
 from tests.support.config_snapshot import section_published
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,11 +38,9 @@ def _owner_set(db: Path, section: str, pointer: str, value, base) -> None:
 
 
 def _import(db: Path, startup: dict) -> dict[str, str]:
-    """The boot's one-time import of every section (gateway/config_legacy_import.py): {section: status}."""
+    """The one-time import of every section's block (gateway/config_legacy_import.py): {section: status}."""
     admin_store.init_db(db)
-    found = config_legacy_import.import_at_boot(proxy.CONFIG_HOME, copy.deepcopy(startup), path=db, registry=None,
-                                                log=lambda line: None)
-    return {name: outcome.status for name, outcome in found.outcomes.items()}
+    return {name: outcome.status for name, outcome in import_blocks(db, startup).items()}
 
 
 # -- the release files -----------------------------------------------------------------------------------------------
@@ -114,17 +113,6 @@ def test_a_block_the_section_does_not_take_is_not_imported_and_leaves_no_step(tm
     assert admin_store.read_config_state(path=db)["rows"] == []
 
 
-def test_a_blocked_block_keeps_serving_from_the_file_and_the_other_sections_import(tmp_path):
-    db = tmp_path / "admin.db"
-    admin_store.init_db(db)
-    startup = copy.deepcopy(raw_config("tracked"))
-    startup["llm"] = {"pin_loaded_model": False, "not_a_key": 1}
-    layer = proxy.CONFIG_HOME.layer(startup, path=db, registry=None, legacy_import=True, log=lambda line: None)
-    assert layer.config["llm"] == startup["llm"], "the file block keeps serving, as before the section existed"
-    assert {p["code"] for p in layer.problems["llm"]} == {"legacy_import_blocked"}
-    assert layer.config["roles"] == startup["roles"] and "roles" not in layer.problems
-
-
 def test_the_startup_keys_a_section_does_not_own_are_left_out_of_the_import():
     routing = proxy.CONFIG_HOME.sections["model_routing"]
     assert layers.owned_part(routing, {"gguf_dir": "/x", "switch_timeout": 5}) == {"switch_timeout": 5}
@@ -140,16 +128,6 @@ def test_the_startup_only_annotation_is_checked():
     nested = {**base, "properties": {"a": {"type": "object", "additionalProperties": False, layers.STARTUP_ONLY_KEY: ["x"]}}}
     with pytest.raises(layers.SectionDataError, match="only at the root"):
         layers.Section.create("nested", {}, nested)
-
-
-def test_a_block_with_only_startup_only_keys_gives_no_ignored_warning(tmp_path):
-    db = tmp_path / "admin.db"
-    admin_store.init_db(db)
-    startup = {"model_routing": {"gguf_dir": "/models"}}
-    lines: list[str] = []
-    for _boot in range(2):
-        proxy.CONFIG_HOME.layer(copy.deepcopy(startup), path=db, registry=None, legacy_import=True, log=lines.append)
-    assert not [line for line in lines if "model_routing block is ignored" in line], lines
 
 
 def test_every_startup_only_name_is_a_key_of_the_tracked_startup_block():
@@ -172,13 +150,12 @@ def test_the_moved_constants_are_gone_from_the_module():
         assert not hasattr(proxy, name), name
 
 
-def test_upstream_read_timeout_follows_the_snapshot_and_the_environment_still_wins(monkeypatch):
-    monkeypatch.delenv("UPSTREAM_READ_TIMEOUT", raising=False)
+def test_upstream_read_timeout_follows_the_snapshot_and_the_environment_does_not_move_it(monkeypatch):
     with section_published("model_routing", {"switch_timeout": 60, "upstream_read_timeout": 42}):
         assert proxy.upstream_read_timeout() == 42.0
-    monkeypatch.setenv("UPSTREAM_READ_TIMEOUT", "7")
+    monkeypatch.setenv("UPSTREAM_READ_TIMEOUT", "7")  # C10 (F4): no longer read
     with section_published("model_routing", {"switch_timeout": 60, "upstream_read_timeout": 42}):
-        assert proxy.upstream_read_timeout() == 7.0
+        assert proxy.upstream_read_timeout() == 42.0
 
 
 def test_pin_loaded_model_follows_the_snapshot():

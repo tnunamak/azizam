@@ -806,13 +806,13 @@ def test_hermetic_runner_self_heals_pinned_python(
 ) -> None:
     repo, home, bin_dir = (tmp_path / name for name in ("repo", "home", "bin"))
     (repo / "scripts/lib").mkdir(parents=True)
-    (repo / "tests").mkdir()
+    (repo / "tests/fixtures/config_homes").mkdir(parents=True)
     bin_dir.mkdir()
     runner = repo / "scripts/run-hermetic-pytest.sh"
     shutil.copy2(ROOT / "scripts/run-hermetic-pytest.sh", runner)
     (repo / "scripts/lib/scratch.sh").write_text("")
     for relative in ("tests/requirements-hermetic.lock", "tests/requirements-hermetic.in",
-                     "requirements.txt", "proxy_config.yml"):
+                     "requirements.txt", "tests/fixtures/config_homes/deployment_startup.yml"):
         (repo / relative).write_text("")
     log = bin_dir / "calls"
     store = home / ".tmp/azizam-hermetic-python"

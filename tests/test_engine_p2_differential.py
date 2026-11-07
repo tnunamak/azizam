@@ -37,7 +37,7 @@ def _mismatches(section: str, observed: dict, expected_changes: dict | None = No
 
 class MigratedConfigurationTests(unittest.TestCase):
     def test_the_proven_configuration_is_the_shipped_configuration(self) -> None:
-        shipped = yaml.safe_load((_ROOT / "proxy_config.yml").read_text(encoding="utf-8"))
+        shipped = yaml.safe_load((_ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"))
         migrated = load_fixture("owner_config.migrated.json")
         self.assertEqual(migrated["model_aliases"]["speech"], shipped["model_aliases"]["speech"])
         self.assertEqual(migrated["voices"], shipped["voices"])

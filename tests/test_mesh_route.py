@@ -46,7 +46,7 @@ GOOD_CAPACITY = {
 
 
 def _proxy_config() -> dict[str, Any]:
-    return yaml.safe_load((ROOT / "proxy_config.yml").read_text(encoding="utf-8"))
+    return yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"))
 
 
 class Owner:

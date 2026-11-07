@@ -1,8 +1,12 @@
 """Goldens for the config-homes program (docs/design/CONFIG_HOMES.md, C0).
 
 Three inputs go through the real boot path, ``proxy._load_effective_runtime_config``, on a scratch admin.db:
-the tracked ``proxy_config.yml``, ``first-run.yml``, and a live-like input (the tracked file plus the live host's alias
-edit, ``tests/fixtures/config_homes/live_like_alias_edit.yml``). For each input the goldens hold
+the deployment fixture (``tests/fixtures/config_homes/deployment_config.yml``, the tracked ``proxy_config.yml`` as it was
+before C10), the first-run startup file (the tracked ``proxy_config.yml`` since C10; ``first-run.yml`` before), and a
+live-like input (the deployment fixture plus the live host's alias edit,
+``tests/fixtures/config_homes/live_like_alias_edit.yml``). The goldens in ``goldens.json`` were captured before C10 and
+are not regenerated since: ``test_config_homes_goldens.py`` holds the effective config to them, and names the entries C10
+changes on purpose. For each input the goldens hold
 
 - the digest of the effective config, with one digest per top-level section to localise a change;
 - the alias resolution table: every stable name and one sample per OpenAI pattern, for every operation;
@@ -31,7 +35,11 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 GOLDEN_PATH = ROOT / "tests" / "fixtures" / "config_homes" / "goldens.json"
 LIVE_EDIT_PATH = ROOT / "tests" / "fixtures" / "config_homes" / "live_like_alias_edit.yml"
-INPUT_FILES = {"tracked": "proxy_config.yml", "first_run": "first-run.yml", "live_like": "proxy_config.yml"}
+INPUT_FILES = {
+    "tracked": "tests/fixtures/config_homes/deployment_config.yml",
+    "first_run": "proxy_config.yml",
+    "live_like": "tests/fixtures/config_homes/deployment_config.yml",
+}
 
 
 def digest(value: Any) -> str:
@@ -55,26 +63,46 @@ def raw_config(name: str) -> dict[str, Any]:
     return loaded
 
 
+def startup_part(raw: dict[str, Any]) -> dict[str, Any]:
+    """The keys of ``raw`` the startup file may hold (registry/startup.schema.json), as the deployment's reduced file."""
+    from gateway import startup_config
+
+    paths = startup_config.startup_paths()
+
+    def project(node: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for key, value in node.items():
+            path = f"{prefix}{key}"
+            if path not in paths:
+                continue
+            if isinstance(value, dict) and any(other.startswith(path + ".") for other in paths):
+                inner = project(value, path + ".")
+                if inner:
+                    out[key] = inner
+            else:
+                out[key] = copy.deepcopy(value)
+        return out
+
+    return project(raw)
+
+
 def effective_config(proxy: Any, name: str, admin_db: Path) -> dict[str, Any]:
     """The effective config for ``name``, built by the boot loader on a scratch admin.db.
 
-    A boot, so a section the release ships imports its startup block once (docs/design/CONFIG_HOMES.md, 8.1), as the
-    gateway does at start; the scratch store holds the rows only for this input. A blocked import is an error here: the
-    goldens are the settings the startup files mean, and a block that does not import would hide them.
+    An install whose sections were imported (the suite's own run holds the same): the engines of ``backends`` are the
+    owner's registry records, each section block is imported once (``registry_test_helpers.import_deployment_sections``),
+    and the boot loader then gets the startup keys only, as the gateway reads them since C10.
     """
     from gateway import config_runtime
-    from tests.registry_test_helpers import seed_registry_from_backends
+    from tests.registry_test_helpers import import_deployment_sections, seed_registry_from_backends
 
     raw = raw_config(name)
-    # The gateway does not seed a registry from the file's ``backends`` (CONFIG_HOMES 8.5): the install the goldens mean
-    # is one whose owner already holds those engines as registry records.
     seed_registry_from_backends(admin_db, raw)
+    import_deployment_sections(admin_db, raw)
     with patch.object(proxy, "ADMIN_DB_PATH", admin_db):
-        effective = proxy._load_effective_runtime_config(copy.deepcopy(raw), boot=True)
+        effective = proxy._load_effective_runtime_config(startup_part(raw), boot=True)
     layer, _generation = config_runtime.carried(effective)
-    blocked = {section: found for section, found in layer.problems.items()
-               if any(problem["code"] == "legacy_import_blocked" for problem in found)}
-    assert not blocked, f"{name}: the startup block does not import: {blocked}"
+    assert not layer.problems, f"{name}: the effective config reports problems: {layer.problems}"
     return effective
 
 
@@ -155,7 +183,7 @@ def main(argv: list[str]) -> int:
                           ("AZIZAM_MEDIA_JOBS_DB", "media_jobs.db"), ("AZIZAM_ARBITRATION_DB", "arbitration.db"),
                           ("AZIZAM_KEY_ACTIVITY_LOG", "key_activity.jsonl")):
         os.environ[key] = str(scratch / filename)
-    os.environ["AZIZAM_CONFIG_PATH"] = str(ROOT / "proxy_config.yml")
+    os.environ["AZIZAM_CONFIG_PATH"] = str(ROOT / "tests" / "fixtures" / "config_homes" / "deployment_startup.yml")
     sys.path.insert(0, str(ROOT))
     import proxy  # noqa: E402
 

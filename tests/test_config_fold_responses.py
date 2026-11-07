@@ -3,6 +3,8 @@
 ``tests/fixtures/config_homes/c6_responses.json`` was captured from the code before the settings moved into the config
 layer. The only difference C6 allows is the conflict status of a stale write, 409 to 412 (RFC 9110): those two cells of the fixture
 were edited by hand from 409 to 412, and nothing else in it was touched.
+C10 removed the effective settings view with its route: its step and the two keys that held its answer were
+deleted from the fixture.
 """
 from __future__ import annotations
 
@@ -35,11 +37,6 @@ def test_every_step_of_the_journey_answers_as_before(recorded, golden):
 
 def test_the_audit_feed_is_unchanged(recorded, golden):
     assert recorded["audit"] == golden["audit"]
-
-
-def test_the_effective_settings_view_is_unchanged(recorded, golden):
-    assert recorded["effective_instance"] == golden["effective_instance"]
-    assert recorded["effective_operator_overrides"] == golden["effective_operator_overrides"]
 
 
 def test_only_stale_writes_answer_412(recorded):

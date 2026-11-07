@@ -144,12 +144,6 @@
    "target_kind": "operator_setting"
   }
  ],
- "effective_instance": {
-  "base_url": "https://gw.example",
-  "name": "Home",
-  "theme_default": "dark"
- },
- "effective_operator_overrides": {},
  "steps": [
   {
    "body": {
@@ -728,28 +722,6 @@
    "path": "/admin/api/operator/overrides",
    "status": 200,
    "step": "overrides: after availability cleared"
-  },
-  {
-   "body": {
-    "config": {
-     "instance": {
-      "base_url": "https://gw.example",
-      "name": "Home",
-      "theme_default": "dark"
-     },
-     "operator_overrides": {},
-     "receipt_retention": {
-      "retention_days": null
-     }
-    },
-    "export_url": "/admin/api/settings/effective/export",
-    "read_only": true,
-    "redacted": true
-   },
-   "method": "GET",
-   "path": "/admin/api/settings/effective",
-   "status": 200,
-   "step": "effective view"
   }
  ]
 }

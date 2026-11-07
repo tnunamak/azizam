@@ -426,7 +426,7 @@ def test_the_release_ships_the_folded_owner_sections_the_model_aliases_and_the_c
     # Each slice that adds a section adds its name here (CONFIG_HOMES 10).
     shipped = {"instance", "resource_admission", "service_availability", "model_aliases",
                "llm", "model_routing", "reasoning", "roles", "model_compatibility", "identity", "images", "voices",
-               "videos", "audio"}
+               "videos", "audio", "workflow_execution", "models"}
     assert set(config_runtime.load_sections()) == shipped
     assert set(proxy.CONFIG_HOME.sections) == shipped
 
@@ -897,15 +897,6 @@ def _store_raw(db: Path, section: str, pointer: str, value: Any) -> None:
     conn.close()
 
 
-def test_a_blocked_import_is_reported_on_its_own_section_only(db):
-    """A section whose startup block could not be imported does not mark a later section's load as blocked."""
-    home = config_runtime.ConfigHome({
-        "a": layers.Section.create("a", {"limit": 5}, CAP_SCHEMA),
-        "b": layers.Section.create("b", {"x": 1}, USE_SCHEMA),
-    })
-    layer = home.layer({"a": {"limit": 50}, "b": {"x": 2}}, path=db, legacy_import=True, log=lambda line: None)
-    assert {p["code"] for p in layer.problems["a"]} == {"legacy_import_blocked"}
-    assert "b" not in layer.problems and layer.config["b"] == {"x": 2}
 
 
 def test_n2_a_section_that_breaks_a_rule_against_the_effective_context_inherits_whatever_the_row_order():

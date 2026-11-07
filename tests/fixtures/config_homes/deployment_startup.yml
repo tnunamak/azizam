@@ -1,0 +1,29 @@
+# The startup file the suite runs against: the startup keys (registry/startup.schema.json) of deployment_config.yml, so
+# the run boots with the listener, login boot rules and storage roots of a deployment, and nothing else. The hermetic runner
+# copies this file to the run's state directory as AZIZAM_CONFIG_PATH. tests/test_config_c10_startup.py holds the two
+# fixtures together. model_routing.gguf_dir is left out on purpose: the code's fallback is the same path.
+proxy:
+  host: 0.0.0.0
+  port: 5000
+images:
+  cache_dir: cache/images
+  vram_estimates_file: cache/vram_estimates.json
+  signed_url_secret: ''
+audio:
+  workflows_dir: ./workflows/audio
+voices:
+  dir: data/voices
+auth:
+  public_paths:
+  - /health
+  trusted_proxies: []
+  setup_allowed_cidrs:
+  - 127.0.0.0/8
+  - ::1/128
+  - 192.168.0.0/16
+  - 10.0.0.0/8
+  - 100.64.0.0/10
+  cloudflare_mode: false
+  allow_query_param_key: false
+admin:
+  db_path: data/admin.db

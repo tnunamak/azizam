@@ -26,7 +26,6 @@ INSTANCE = "/admin/api/settings/instance"
 MEDIA = "/admin/api/operator/media-job-admission"
 AVAILABILITY = "/admin/api/operator/service-availability"
 OVERRIDES = "/admin/api/operator/overrides"
-EFFECTIVE = "/admin/api/settings/effective"
 
 
 def _client(path: Path) -> TestClient:
@@ -114,13 +113,10 @@ def run(path: Path) -> dict[str, Any]:
          name="availability: clear the rest")
     call("GET", OVERRIDES, name="overrides: after availability cleared")
 
-    # -- the settings screen's effective view -------------------------------------------------------------------------
-    effective = call("GET", EFFECTIVE, name="effective view")
     # Events of one second have no stable order, so the audit is compared as a sorted list.
     audit = sorted(
         ({key: row.get(key) for key in ("action", "actor_kind", "actor_id", "target_kind", "target_id", "metadata")}
          for row in admin_store.list_audit(path=path)),
         key=lambda row: json.dumps(row, sort_keys=True),
     )
-    return {"steps": steps, "audit": audit, "effective_instance": effective["config"].get("instance"),
-            "effective_operator_overrides": effective["config"].get("operator_overrides")}
+    return {"steps": steps, "audit": audit}

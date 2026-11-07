@@ -566,7 +566,7 @@ def test_after_a_provider_step_up_the_replaced_cookie_gets_a_session_but_must_co
     replay = sg.client()
     put_cookie(replay, old_cookie)
     assert signed_in_state(replay)
-    assert asks_again(replay.get("/admin/api/settings/effective/export"))
+    assert asks_again(replay.get("/admin/api/config/export"))
 
 
 def test_reusing_the_replaced_cookie_after_its_successor_was_used_ends_the_sign_in_and_is_audited(sg):

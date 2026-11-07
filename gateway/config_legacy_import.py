@@ -1,28 +1,26 @@
-"""The one-time import of a startup-file block into the override store (docs/design/CONFIG_HOMES.md, 8.1).
+"""The import of an old startup-file block into the override store (docs/design/CONFIG_HOMES.md, 8.1).
 
-Generic over sections: nothing here knows what a section holds. For a section the release ships and the install has not
-imported yet, the gateway takes the startup file's block, computes the fewest overrides that make the effective section
-equal that block (``config_layers.overrides_for_target``) and writes them as one change of kind ``legacy-import``,
-recording the step ``config-homes-import:<section>`` in the same transaction. From then on the file's block is ignored,
-and each boot says once how many entries of it differ from what runs.
+Generic over sections: nothing here knows what a section holds. For a section the release ships, this takes a block of
+an old startup file, computes the fewest overrides that make the effective section equal that block
+(``config_layers.overrides_for_target``) and writes them as one change of kind ``legacy-import``, recording the step
+``config-homes-import:<section>`` in the same transaction.
 
-Three callers use it:
+The gateway no longer runs it: since C10 the startup file holds only startup keys, and a file that holds a section block
+is refused at start (``gateway/startup_config.py``). The callers are:
 
-- the boot (``ConfigHome.layer(..., legacy_import=True)``) through ``import_at_boot``;
-- the owner route ``POST /admin/api/config/sections/{id}/legacy-import`` through ``plan_import``;
-- the dry-run command (``python -m gateway.config_legacy_import``), which reads a copy of a config file against a scratch
-  database, so that the live move can read the whole row list before it touches anything.
+- the dry-run command (``python -m gateway.config_legacy_import``), which reads a copy of an old config file against a
+  scratch database, so that a move off an old file can read the whole row list before it touches anything;
+- the test helpers that seed a scratch database with a deployment's sections (``tests/registry_test_helpers.py``).
 """
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from gateway import admin_store, config_runtime
 from gateway import config_layers as layers
@@ -176,7 +174,7 @@ def import_section(
             return ImportOutcome(section_id, STATUS_NOTHING, plan)
         result = admin_store.apply_config_change(
             items, if_match={section_id: state["revisions"].get(section_id, "0")}, kind="legacy-import",
-            origin="legacy-import", note=f"first-boot import of the startup file's {section_id} block",
+            origin="legacy-import", note=f"import of an old startup file's {section_id} block",
             validate=None, migration_step=step, path=path,
         )
     except Exception as error:  # noqa: BLE001 - a store fault must not stop a boot; the step stays open for the next one
@@ -184,66 +182,6 @@ def import_section(
     if result.get("skipped"):
         return ImportOutcome(section_id, STATUS_DONE, plan)
     return ImportOutcome(section_id, STATUS_IMPORTED, plan, change_id=result.get("change_id"))
-
-
-def ignored_entries(
-    home: Any, section_id: str, block: Any, effective: Any, registry: Mapping[str, Any] | None = None,
-) -> int:
-    """How many entries of what the startup block means differ from the effective section.
-
-    What the block means is what the import would have made of it: the release section with the block's overrides. A
-    key the block leaves out keeps its release value, as at the import, so leaving a fixed setting out is no change.
-    An entry on one side only counts. A block the import would refuse is compared as written.
-    """
-    if not isinstance(block, Mapping):
-        return 0
-    section = home.sections[section_id]
-    plan = plan_import(home, section_id, block, {}, registry)
-    meant = (layers.owned_part(section, block) if plan.blocked
-             else home.build_candidate({section_id: list(plan.overrides)}, registry)[section_id].effective)
-    pointers = set(section.index.entries_in(meant)) | set(section.index.entries_in(effective))
-    return sum(1 for pointer in pointers
-               if not layers.same_value(layers.get_at(meant, pointer), layers.get_at(effective, pointer)))
-
-
-@dataclass
-class BootImport:
-    """What a boot's import pass found. ``blocked`` sections keep serving the file's block (design 8.1 step 1)."""
-
-    outcomes: dict[str, ImportOutcome] = field(default_factory=dict)
-    blocked: dict[str, tuple[Any, tuple[layers.Problem, ...]]] = field(default_factory=dict)
-    done: tuple[str, ...] = ()  # sections whose step was recorded before this pass: their file block is ignored
-
-
-def import_at_boot(home: Any, raw_config: Mapping[str, Any], *, path: Path, registry: Mapping[str, Any] | None,
-                   log: Callable[[str], None]) -> BootImport:
-    """Run the import for every section whose step is not recorded. Blocked or failed ones are logged and kept open."""
-    found = BootImport()
-    done: list[str] = []
-    for section_id in sorted(home.sections):
-        block = raw_config.get(section_id)
-        outcome = import_section(home, section_id, block, path=path, registry=registry)
-        found.outcomes[section_id] = outcome
-        if outcome.status == STATUS_DONE:
-            done.append(section_id)
-        elif outcome.status == STATUS_BLOCKED and outcome.plan is not None:
-            found.blocked[section_id] = (copy.deepcopy(dict(block)), outcome.plan.blocked)
-            where = ", ".join(sorted({p.pointer or "/" for p in outcome.plan.blocked})[:8])
-            log(f"[proxy] WARNING: the startup file's {section_id} block was not imported ({len(outcome.plan.blocked)} "
-                f"fault(s) at {where}); it keeps serving from the file. Fix the block and restart, or set the values "
-                "through the config API.")
-        elif outcome.status == STATUS_FAILED:
-            if isinstance(block, Mapping) and block:  # no block means nothing to keep serving: the release defaults apply
-                found.blocked[section_id] = (copy.deepcopy(dict(block)), ())
-            log(f"[proxy] WARNING: the import of the startup file's {section_id} block failed ({outcome.error}); "
-                "it keeps serving from the file and retries at the next start.")
-        elif outcome.status == STATUS_IMPORTED and outcome.plan is not None:
-            report = outcome.plan.report()
-            log(f"[proxy] imported the startup file's {section_id} block into the override store: "
-                f"{len(report['rows'])} row(s), {len(report['removes'])} release entr(ies) removed "
-                f"(change {outcome.change_id}). The file's block is ignored from now on.")
-    found.done = tuple(done)
-    return found
 
 
 def main(argv: Sequence[str] | None = None) -> int:

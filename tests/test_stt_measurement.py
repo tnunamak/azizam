@@ -818,7 +818,7 @@ def test_start_rejects_duplicate_samples_and_invalid_widths_before_work(setup, m
 def test_seed_gpu_resources_survive_service_record_conversion():
     import yaml
     from pathlib import Path
-    config = yaml.safe_load((Path(__file__).resolve().parent.parent / "proxy_config.yml").read_text())
+    config = yaml.safe_load((Path(__file__).resolve().parent.parent / "tests/fixtures/config_homes/deployment_config.yml").read_text())
     backend = config["backends"]["stt-parakeet-gpu"]
     record = service_registry.service_from_backend_config("stt-parakeet-gpu", backend, source="seed")
     assert record["config"]["resources"] == {"gpu_required": True, "vram_gb_estimate": 3.2, "gpu": {"devices": [0]}}

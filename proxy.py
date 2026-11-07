@@ -505,8 +505,7 @@ def _layer_for(raw_config: Mapping[str, Any], registry: Mapping[str, Any], *, bo
     """The override layer for ``registry``. A reload lets an unreadable override store raise, so the old config keeps
     serving. A boot has no old config: it serves the release defaults with the same registry and reports the store."""
     try:
-        # A boot first imports each section's startup block once (docs/design/CONFIG_HOMES.md, 8.1); a reload never does.
-        return CONFIG_HOME.layer(raw_config, path=ADMIN_DB_PATH, registry=registry, legacy_import=boot)
+        return CONFIG_HOME.layer(raw_config, path=ADMIN_DB_PATH, registry=registry)
     except Exception as error:  # noqa: BLE001
         if not boot:
             raise
@@ -609,14 +608,14 @@ def _log_left_out(left_out: Mapping[str, str]) -> None:
         print(f"[proxy] ERROR: {label} left out of the running config: {reason}", flush=True)
 
 
-def _import_folded_settings(raw_config: Mapping[str, Any]) -> None:
+def _import_folded_settings() -> None:
     """Import the old stores of instance, media admission and service availability as override rows, once per section.
 
     Runs at boot, before the first layer is built. A failure is logged and boot goes on: the sections then serve the
     release defaults, and the next boot tries the import again (a section's step is recorded only with its rows).
     """
     try:
-        for record in config_fold.migrate(ADMIN_DB_PATH, raw_config):
+        for record in config_fold.migrate(ADMIN_DB_PATH):
             left_out = f", left out: {', '.join(record['dropped'])}" if record["dropped"] else ""
             print(f"[proxy] config import {record['section']}: {record['rows']} override row(s){left_out}", flush=True)
     except Exception as error:  # noqa: BLE001
@@ -633,7 +632,7 @@ def _boot_effective_runtime_config(raw_config: Mapping[str, Any]) -> tuple[dict[
     here and reported on the Overview. The LiteLLM config file is left as it is: a partial registry must
     not overwrite what the running LiteLLM reloads.
     """
-    _import_folded_settings(raw_config)
+    _import_folded_settings()
     try:
         return _load_effective_runtime_config(raw_config, boot=True), None
     except Exception as error:  # noqa: BLE001 - boot continues, degraded and loud
@@ -1010,11 +1009,7 @@ GGUF_DIR = (_bootstrap_config.get("model_routing") or {}).get("gguf_dir", "/medi
 
 
 def upstream_read_timeout() -> float:
-    """model_routing.upstream_read_timeout, read per call from the snapshot (CONFIG_HOMES C7). An UPSTREAM_READ_TIMEOUT
-    in the environment still wins until C10 removes that override."""
-    env = os.environ.get("UPSTREAM_READ_TIMEOUT")
-    if env:
-        return float(env)
+    """model_routing.upstream_read_timeout, read per call from the snapshot (CONFIG_HOMES C7)."""
     return float((runtime().config.get("model_routing") or {}).get("upstream_read_timeout", 600))
 
 # Roles: logical aliases for backends. Lets clients send `model: "default"` instead of
@@ -1232,11 +1227,8 @@ def _image_media_job_retry_max_seconds() -> float:
 
 
 def _image_media_job_resume_on_start() -> bool:
-    """images.media_jobs.resume_on_start (applies at restart: the snapshot keeps the value that runs). An
-    IMAGE_MEDIA_JOB_RESUME_ON_START in the environment still wins until C10 removes that override."""
-    return bool_from_config(
-        os.environ.get("IMAGE_MEDIA_JOB_RESUME_ON_START", _image_media_jobs_group().get("resume_on_start")), True,
-    )
+    """images.media_jobs.resume_on_start (applies at restart: the snapshot keeps the value that runs)."""
+    return bool_from_config(_image_media_jobs_group().get("resume_on_start"), True)
 
 
 # The job concurrency is the size of two semaphores built here, so it applies at restart (CONFIG_HOMES class R): it is
@@ -1422,7 +1414,7 @@ def _derive_backend_constants(effective_cfg: Mapping[str, Any], *, registry: Map
         # Class B: the timeouts, default model, workflow directories and adapter binding the registry records name.
         "TTS_TIMEOUT": int(tts_c.get("timeout", 120)),
         "EMBEDDINGS_HEALTH_ENDPOINT": emb_c.get("health_endpoint", "/health"),
-        "EMBEDDINGS_TIMEOUT": int(os.environ.get("EMBEDDINGS_TIMEOUT", emb_c.get("timeout", 120))),
+        "EMBEDDINGS_TIMEOUT": int(emb_c.get("timeout", 120)),
         "EMBEDDINGS_BACKEND_MODEL": _embeddings_backend_model(backends),
         "COMFY_TIMEOUT": int(cfy_c.get("timeout", 300)),
         "COMFY_DEFAULT_MODEL": cfy_c.get("default_model", "flux2-klein-4b"),
@@ -3276,17 +3268,16 @@ def _compat_cfg() -> Mapping[str, Any]:
 
 
 def model_compat_enabled() -> bool:
-    """model_compatibility.enabled. An AZIZAM_MODEL_COMPAT_ENABLED in the environment still wins until C10 removes it."""
-    return bool_from_config(get_env("AZIZAM_MODEL_COMPAT_ENABLED", _compat_cfg().get("enabled")), True)
+    """model_compatibility.enabled."""
+    return bool_from_config(_compat_cfg().get("enabled"), True)
 
 
-# The generated OpenAI model list is release data (registry/), not a setting: its path is fixed. The environment
-# variable stays as an override until C10 removes the non-startup env overrides.
+# The generated OpenAI model list is release data (registry/), not a setting: its path is fixed.
 GENERATED_OPENAI_MODEL_ALIASES_FILE = Path(__file__).parent / "registry" / "openai_model_aliases.generated.yml"
 
 
 def openai_model_aliases_file() -> Path:
-    return config_path(os.environ.get("OPENAI_MODEL_ALIASES_FILE"), str(GENERATED_OPENAI_MODEL_ALIASES_FILE))
+    return GENERATED_OPENAI_MODEL_ALIASES_FILE
 
 
 def openai_models_api_url() -> str:
@@ -3294,10 +3285,7 @@ def openai_models_api_url() -> str:
 
 
 def openai_model_discovery_include_private() -> bool:
-    return bool_from_config(
-        os.environ.get("OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE", _compat_cfg().get("include_private")),
-        False,
-    )
+    return bool_from_config(_compat_cfg().get("include_private"), False)
 
 
 def model_compat_defaults() -> Mapping[str, Any]:
@@ -10948,12 +10936,8 @@ async def _resolve_gateway_media_url(
     """Resolve our own content URLs with signatures and caller ownership."""
     await _warm_video_owner_keys(auth_context)
     parsed = urlsplit(url)
-    public_urls = [
-        str(get_env("AZIZAM_PUBLIC_URL") or ""),
-        str((config.get("proxy") or {}).get("public_url") or ""),
-        str(instance_settings(ADMIN_DB_PATH).get("base_url") or ""),
-    ]
-    hosts = {urlsplit(base).hostname for base in public_urls if base}
+    base_url = str(instance_settings(ADMIN_DB_PATH).get("base_url") or "")
+    hosts = {urlsplit(base_url).hostname} if base_url else set()
     if request is not None:
         # Signed URLs are minted from these same request hosts. Recognizing a
         # host permits only internal owned-media resolution, never network I/O.
@@ -17397,11 +17381,7 @@ app.include_router(
 
 
 app.include_router(create_settings_router(
-    auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH, config_provider=lambda: {
-        **config, "oidc": _admin_oidc_config_snapshot() or {},
-        "service_registry": ADMIN_STORE.get_service_registry(),
-    },
-    overrides_provider=ADMIN_STORE.operator_overrides,
+    auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH, config_provider=lambda: config,
     prompt_memory_path=media_jobs.DB_PATH,
     receipts_path=receipt_store.DB_PATH, fact_store_path=media_jobs.DB_PATH,
     on_prompt_memory_kill=lambda: _purge_prompt_memory_on_kill(),
@@ -17413,7 +17393,6 @@ app.include_router(create_settings_router(
 app.include_router(config_api.create_config_router(
     auth=ADMIN_AUTH, admin_path=lambda: ADMIN_DB_PATH, home=lambda: CONFIG_HOME,
     registry=ADMIN_STORE.get_service_registry, reload=lambda: reload_runtime_config(),
-    startup_block=lambda section: _bootstrap_config.get(section) if isinstance(_bootstrap_config.get(section), Mapping) else None,
 ))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
 # Owner-defined categories and plans (design v3). Active rules tighten the
@@ -20389,8 +20368,7 @@ def _report_session_view_key_problem() -> None:
 def _public_base_url(request: Request) -> str | None:
     """Best-effort public origin for absolute discovery links.
 
-    Saved instance settings own the public URL after the first dashboard save.
-    ``AZIZAM_PUBLIC_URL`` and ``proxy.public_url`` provide initial defaults.
+    The instance section owns the public URL (its ``base_url``).
     Otherwise we honor standard reverse
     proxy headers, then fall back to the request's host. We return
     ``None`` if no candidate is available so the discovery helper can
@@ -20414,13 +20392,11 @@ def _public_base_url(request: Request) -> str | None:
 def _brand_settings() -> tuple[str, tuple[str, str] | None]:
     """Return ``(product_label, wordmark)`` for the shared header chrome.
 
-    Saved instance settings own the product name after the first dashboard save.
-    ``admin.brand`` (or ``AZIZAM_BRAND`` / ``AZIZAM_WORDMARK``) seeds
-    the initial name and provides the optional wordmark:
+    The instance section owns the product name. ``admin.brand.wordmark`` of the startup file (or ``AZIZAM_WORDMARK``)
+    provides the optional wordmark:
 
       admin:
         brand:
-          product: "Azizam"      # neutral product label (default)
           wordmark: "example.org"    # optional deployment mark, "name.tld"
 
     A generic install with no wordmark shows only the neutral product mark, so

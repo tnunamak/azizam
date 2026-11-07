@@ -26,7 +26,7 @@ def _local_ports(node, path=""):
 
 
 def test_local_service_ports_are_unique():
-    config = yaml.safe_load((ROOT / "proxy_config.yml").read_text(encoding="utf-8"))
+    config = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"))
     users = defaultdict(list)
     for path, port in _local_ports(config):
         users[port].append(path)

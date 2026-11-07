@@ -17,7 +17,7 @@ from tests.registry_test_helpers import seed_registry_document
 from tests.test_signin_who_can_enter import csrf_for, gateway, owner_and_admin  # noqa: F401  (gateway is a fixture)
 
 ROOT = Path(__file__).resolve().parent.parent
-PROXY_CONFIG = yaml.safe_load((ROOT / "proxy_config.yml").read_text(encoding="utf-8"))
+PROXY_CONFIG = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text(encoding="utf-8"))
 MESH_BACKENDS = ("trellis", "vram-observer")
 REGISTRY_PATH = "/admin/api/operator/service-registry"
 

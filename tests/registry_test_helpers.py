@@ -63,6 +63,47 @@ def seed_registry_from_backends(path: Path, proxy_config: Mapping[str, Any]) -> 
     return write_service_registry_for_test(seed_registry_document(proxy_config), path=path)
 
 
+DEPLOYMENT_CONFIG = Path(__file__).resolve().parent / "fixtures" / "config_homes" / "deployment_config.yml"
+
+
+def deployment_config() -> dict[str, Any]:
+    """The deployment config the suite assumes: ``backends`` and every section block of an install (a fresh dict)."""
+    import yaml
+
+    return yaml.safe_load(DEPLOYMENT_CONFIG.read_text(encoding="utf-8")) or {}
+
+
+def import_blocks(path: Path, startup: Mapping[str, Any], *, registry: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Import ``startup``'s block of every section the release ships, once each, as an import of an old startup file does
+    (``gateway/config_legacy_import.py``). ``{section: ImportOutcome}``. A section whose step is recorded is left alone."""
+    import copy
+
+    from gateway import config_legacy_import, config_rules
+
+    admin_store.init_db(path)
+    home = config_rules.config_home()
+    return {
+        name: config_legacy_import.import_section(home, name, copy.deepcopy(startup.get(name)), path=path, registry=registry)
+        for name in sorted(home.sections)
+    }
+
+
+def import_deployment_sections(path: Path, startup: Mapping[str, Any]) -> dict[str, str]:
+    """Give ``path`` the owner overrides that make each section equal the block ``startup`` holds for it. ``{section: status}``.
+
+    A blocked or failed import is an error: the fixture is what the suite means by a deployment, and a block that does
+    not import would hide it. The registry must be seeded first; the rules that read it see it.
+    """
+    from gateway import config_legacy_import, service_registry
+
+    admin_store.init_db(path)
+    outcomes = import_blocks(path, startup, registry=service_registry.ensure_service_registry(path=path, actor="test"))
+    bad = {name: (o.status, o.error or o.summary().get("blocked")) for name, o in outcomes.items()
+           if o.status in (config_legacy_import.STATUS_BLOCKED, config_legacy_import.STATUS_FAILED)}
+    assert not bad, f"the deployment fixture does not import: {bad}"
+    return {name: outcome.status for name, outcome in outcomes.items()}
+
+
 def write_legacy_registry_for_test(value: Mapping[str, Any], *, path: Path, updated_by: str = "test") -> dict[str, Any]:
     """Store ``value`` as a registry written before the release layer: a whole document, held as given."""
     current = admin_store.get_service_registry_json_with_generation(path=path)

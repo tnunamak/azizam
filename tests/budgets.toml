@@ -811,7 +811,7 @@ ad_hoc_upstream_fake_files = 46
 # 826 on 2026-11-06 (S2.2 pinned-workflow check): the audio route names its resolved workflow once instead of five times.
 # 825 on 2026-11-06 (feat/config-homes-c4): -1 where the mesh upgrade step names left with the engine backfill.
 # 824 on 2026-11-06 (feat/config-homes-c9): -1 where the TTS/STT/COMFY constant blocks left proxy.py for the derive function.
-domain_literals = 824
+domain_literals = 819
 # Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
 # scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
 # a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through

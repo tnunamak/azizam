@@ -80,7 +80,8 @@ def _copy_runner_source(repo: Path) -> tuple[Path, Path, Path]:
         f"# hermetic-manifest-sha256: {digest(req)}\n"
         f"# hermetic-input-sha256: {digest(inp)}\n"
     )
-    (repo / "proxy_config.yml").write_text("backends: {}\n")
+    (repo / "tests" / "fixtures" / "config_homes").mkdir(parents=True)
+    (repo / "tests" / "fixtures" / "config_homes" / "deployment_startup.yml").write_text("proxy: {}\n")
     return req, inp, lock
 
 

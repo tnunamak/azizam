@@ -320,7 +320,7 @@ class WorkflowRegistryTests(unittest.TestCase):
         self.assertEqual(len(admin["manifest_hash"]), 64)
 
     def test_audio_video_configured_workflows_have_manifests(self) -> None:
-        config = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
+        config = yaml.safe_load((ROOT / "tests/fixtures/config_homes/deployment_config.yml").read_text())
         registry = WorkflowRegistry.from_directory(ROOT / "manifests" / "workflows")
         workflow_artifacts = {
             binding["workflow"]

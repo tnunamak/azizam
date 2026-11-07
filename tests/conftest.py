@@ -70,18 +70,18 @@ _GUARD = HermeticGuard()
 
 
 def _seed_hermetic_registry() -> None:
-    """Give the run's own admin.db the engines of the tracked ``proxy_config.yml``, as an owner's registry records.
+    """Give the run's own admin.db the deployment of ``tests/fixtures/config_homes/deployment_config.yml``: its engines as
+    an owner's registry records, and each section block as the owner overrides an import of it writes.
 
-    The gateway no longer seeds a registry from the startup file's ``backends`` (docs/design/CONFIG_HOMES.md, 8.5), and
-    most of the suite boots ``proxy`` against the tracked file's engines. A run that wants them says so here, once,
-    before any test module imports ``proxy``.
+    The gateway reads neither the file's ``backends`` nor any section block from the startup file (docs/design/CONFIG_HOMES.md,
+    8.5 and C10), and most of the suite boots ``proxy`` against a deployment's engines and sections. A run that wants
+    them says so here, once, before any test module imports ``proxy``.
     """
-    import yaml
+    from registry_test_helpers import deployment_config, import_deployment_sections, seed_registry_from_backends
 
-    from registry_test_helpers import seed_registry_from_backends
-
-    tracked = Path(__file__).resolve().parent.parent / "proxy_config.yml"
-    seed_registry_from_backends(_ADMIN_DB, yaml.safe_load(tracked.read_text(encoding="utf-8")) or {})
+    deployment = deployment_config()
+    seed_registry_from_backends(_ADMIN_DB, deployment)
+    import_deployment_sections(_ADMIN_DB, deployment)
 
 
 _seed_hermetic_registry()

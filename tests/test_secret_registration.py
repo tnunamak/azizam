@@ -34,7 +34,7 @@ CONFIG_BASE = re.compile(r"(?i)(config|settings|cfg|conf)$")
 NO_REGISTRATION_NEEDED = {
     "gateway/backends/llm_execution.py::_base_url_from_config": "an address, not a credential",
     "gateway/compat.py::positive_int_env": "a number from the environment",
-    "gateway/config_sources.py::_env_rows": "reads the names and presence of settings for a management view",
+    "gateway/config_sources.py::startup_rows": "reads which startup keys the schema marks secret, to list them; it never reads a value",
     "gateway/engine_admin.py::_stored_evidence_binding": "hashes the value into an evidence digest; the value goes nowhere",
     "gateway/engine_admin.py::engine_view": "asks only whether a variable is set",
     "gateway/engine_admin.py::EngineService.__init__": "stores the reader function; reads nothing",
