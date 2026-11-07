@@ -618,6 +618,7 @@
 # Readiness follow-ups: +30 readiness cases (4 regression, 26 path confinement) -2 retired memo cases, +1 evidence-copy case: 21210 + 29 = 21239.
 # Review follow-up: +9 Add engine cases for an address or prefix the client would normalise: 21239 + 9 = 21248.
 # Second review follow-up: +9 cases for an empty query or fragment and the origin call line: 21248 + 9 = 21257.
+# Package review end-to-end tests (2026-11-07): +3; 21523 + 3 = 21526, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
 pytest = 0  # TRAIN22-MEASURE
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
