@@ -331,6 +331,13 @@ class QualityProbeTests(CustomVoiceRouteCase):
 
             return Client()
 
+    def setUp(self) -> None:
+        super().setUp()
+        self.voices = {"quality_engine": "chatterbox"}  # the release names no quality engine; an install picks one
+        voice_settings = patch.object(proxy, "_voice_settings", lambda: self.voices)
+        voice_settings.start()
+        self.addCleanup(voice_settings.stop)
+
     def probe(self, statuses):
         engine = self._Engine(statuses)
         with patch.object(proxy.httpx, "AsyncClient", engine), patch.object(proxy.asyncio, "sleep", AsyncMock()):
@@ -346,6 +353,12 @@ class QualityProbeTests(CustomVoiceRouteCase):
 
     def test_other_errors_are_not_retried(self) -> None:
         self.assertEqual(self.probe([500]), ({"error": "engine_http_500"}, 1))
+
+    def test_with_no_quality_engine_set_nothing_is_called_and_the_reason_says_so(self) -> None:
+        self.voices = {}
+        result, calls = self.probe([200])
+        self.assertEqual((result, calls), ({"error": "engine_not_configured"}, 0))
+        self.ready.assert_not_awaited()
 
     def test_a_disabled_engine_is_reported_and_its_unit_is_never_started(self) -> None:
         self.cfg["backends"]["tts-chatterbox"]["enabled"] = False

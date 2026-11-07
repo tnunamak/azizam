@@ -4542,7 +4542,9 @@ async def _probe_voice_quality(reference: Path) -> dict[str, Any] | None:
     start, GPU0 busy after retries), never raises. A 503 from the engine (GPU0 full or still loading)
     is retried twice, five seconds apart.
     """
-    engine_id = str(_voice_settings().get("quality_engine") or "chatterbox")
+    engine_id = str(_voice_settings().get("quality_engine") or "")
+    if not engine_id:
+        return {"error": "engine_not_configured"}  # the release names no engine; voices.quality_engine picks one
     endpoint = _speech_engine_endpoint(engine_id)
     if endpoint is None:
         return {"error": "engine_not_deployed"}
