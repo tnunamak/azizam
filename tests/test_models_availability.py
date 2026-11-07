@@ -194,10 +194,17 @@ class ModelAvailabilityTests(unittest.TestCase):
             self.assertEqual(entry["azizam_availability"]["reason"], "The service is disabled.")
             self.assertNotIn(OFF_MODEL, self._entries("?available=true"))
 
-    def test_remote_provider_declared_in_config_is_mapped(self) -> None:
-        backends = {"svc-remote": {"provider_type": "paid-remote", "model_id": "remote-listed"}}
+    def test_a_remote_provider_counts_only_under_its_prefixed_name(self) -> None:
+        remote_cfg = {"protocol": "openai", "provider_type": "paid-remote", "model": "same", "api_key_env": "TEST_REMOTE_KEY"}
+        registry = {"services": {"svc-remote": {"enabled": True, "config": remote_cfg}}}
+        (prefixed,) = litellm_public_model_service_ids(registry)
+        self.assertNotEqual(prefixed, "same")
+        backends = {"svc-local": {"model_id": "same"}, "svc-remote": dict(remote_cfg, model_id="same")}
         with patch.dict(proxy.config, {"backends": backends}):
-            self.assertEqual(REAL_INDEX({"services": {}})["remote-listed"], ["svc-remote"])
+            index = REAL_INDEX(registry)
+        self.assertEqual(index[proxy.normalize_model_id(prefixed)], ["svc-remote"])
+        # The local model's own name must not borrow the remote service: a down local model stays unavailable.
+        self.assertEqual(index["same"], ["svc-local"])
 
     def test_busy_and_degraded_services_count_as_available(self) -> None:
         records = {"services": {sid: {"enabled": True, "config": {}} for sid in ("busy", "bad", "gone")}}
@@ -238,6 +245,14 @@ class ModelAvailabilityTests(unittest.TestCase):
                 patch.object(availability, "_services_mapping", calls):
             proxy._annotate_model_availability(data, only_available=False)
         self.assertLessEqual(calls.call_count, 2)
+
+    def test_each_service_is_projected_once_per_request(self) -> None:
+        names = {f"model-{i}": ["svc-down", "svc-up", "svc-unseen"] for i in range(25)}
+        calls = MagicMock(side_effect=availability.project_service)
+        with patch.object(proxy, "_model_service_ids_index", lambda _registry: names), \
+                patch.object(availability, "project_service", calls):
+            proxy._annotate_model_availability([{"id": name} for name in names], only_available=False)
+        self.assertEqual(sorted(call.args[0] for call in calls.call_args_list), ["svc-down", "svc-unseen", "svc-up"])
 
 
 if __name__ == "__main__":

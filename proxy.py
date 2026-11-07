@@ -27898,8 +27898,8 @@ def _model_service_ids_index(registry: Mapping[str, Any] | None) -> dict[str, li
     """{normalized public model id: [service id, ...]} for every service that serves the name.
 
     The same names as `_service_model_index`, but every serving service is kept, not only the first.
-    Disabled and remote-provider declarations are kept too: this index only judges availability, it never
-    decides what is listed or routed."""
+    Disabled declarations are kept too: this index only judges availability, it never decides what is listed or
+    routed. A remote provider counts only under its provider-prefixed public names, as in the catalog."""
     index: dict[str, list[str]] = {}
 
     def add(name: str, service_id: str) -> None:
@@ -27915,7 +27915,9 @@ def _model_service_ids_index(registry: Mapping[str, Any] | None) -> dict[str, li
         pass
     backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
     for service_id, service_cfg in backends.items():
-        if not isinstance(service_cfg, Mapping):
+        # A remote provider is reached only by its provider-prefixed public names, which the LiteLLM part above
+        # already maps. Its raw upstream names would attach it to an unrelated local entry of the same name.
+        if not isinstance(service_cfg, Mapping) or service_registry.is_remote_provider_config(service_cfg):
             continue
         for record in _service_model_records(service_cfg):
             for key in ("id", "model_group", "public_name"):
