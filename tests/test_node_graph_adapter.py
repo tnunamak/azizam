@@ -408,8 +408,8 @@ def test_pushed_messages_become_typed_events() -> None:
 
 def test_the_adapter_implements_the_versioned_interface() -> None:
     adapter = NodeGraphAdapter()
-    assert isinstance(adapter, EngineAdapter) and adapter.interface_version == 1
-    for name in ["health", "inventory", "invoke", "submit", "poll", "cancel", "recover", "fetch_assets"]:
+    assert isinstance(adapter, EngineAdapter) and adapter.interface_version == 2
+    for name in ["health", "inventory", "invoke", "submit", "poll", "cancel", "recover", "fetch_assets", "start", "results"]:
         assert inspect.iscoroutinefunction(getattr(adapter, name)), name
     assert inspect.isasyncgenfunction(adapter.events)
     with pytest.raises(UnknownOperation):

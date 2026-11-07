@@ -541,6 +541,20 @@ class HttpV1Executor:
     async def _read_json(self, response: WireResponse) -> Any:
         return self._parse_json(await self._read_all(response, self.budgets.max_response_bytes, "max_response_bytes"))
 
+    async def save_bytes(self, data: bytes, *, name: str | None = None) -> AssetRef:
+        """Save bytes the engine's answer carried inline (a decoded field), under the same type check and size budget as a
+        binary answer: the bytes decide the type, and an unknown or mismatched one is refused before anything is saved."""
+        if self._assets is None:
+            raise ProtocolError("No asset store is configured, so an inline file cannot be saved.", code="no_asset_store")
+        if len(data) > self.budgets.max_asset_bytes:
+            raise BudgetExceeded("max_asset_bytes", f"The engine's answer is larger than {self.budgets.max_asset_bytes} bytes.")
+        content_type = media_type_for(None, data[:_SNIFF_BYTES])
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield data
+
+        return await self._assets.save(chunks(), content_type=content_type, max_bytes=len(data), name=name)
+
     async def _save_binary(self, response: WireResponse, *, name: str | None = None, fetch_left: int | None = None) -> AssetRef:
         if self._assets is None:
             raise ProtocolError("No asset store is configured, so a binary answer cannot be saved.", code="no_asset_store")

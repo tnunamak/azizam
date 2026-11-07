@@ -193,9 +193,10 @@ def test_a_made_up_graph_workflow_runs_through_the_runner_with_data_only(fake_up
     runtime = Runtime(adapter, Connection(address=f"http://{host}", timeouts=TIMEOUTS), {"manifest": manifest},
                       (0.5, 5.0))
     job_id = _new_job(jobs_db)
-    refs = asyncio.run(jobs.run(runtime, "smell.infer", {"smiles": "CCO"}, job_id=job_id))
+    bundle = asyncio.run(jobs.run(runtime, "smell.infer", {"smiles": "CCO"}, job_id=job_id))
     assert len(posts) == 1, "the fixture workflow was not submitted once"
-    assert [ref.content_type for ref in refs] == ["image/png"]
+    (result,) = bundle.results.values()   # a version 2 adapter returns the bundle the run published
+    assert [ref.content_type for ref in result.assets] == ["image/png"]
 
 
 # --- criterion 6 (dropped in review): no compile cache. validate and submit each compile the request they are given.

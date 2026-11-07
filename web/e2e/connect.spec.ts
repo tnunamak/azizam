@@ -197,11 +197,16 @@ test("Connect shows an App's access and key, and Create key on an App with none 
   // Revoke the only key: the App now has none.
   await confirm.click();
   await expect(page.getByRole("button", { name: `Add key to ${name}` })).toBeVisible();
+  // The closing dialog gives focus back, which can scroll the page between two position reads.
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   // On a phone a zero-key app keeps Set up on the same row as its menu, so its card stays short.
   await page.setViewportSize({ width: 390, height: 900 });
   const setUpLink = page.getByRole("link", { name: `Set up ${name}`, exact: true });
   const menuButton = page.getByRole("button", { name: `Actions for ${name}` });
-  expect(Math.abs((await setUpLink.boundingBox())!.y - (await menuButton.boundingBox())!.y)).toBeLessThan(2);
+  // Read again until the layout settles; a card that wraps for good still fails.
+  await expect
+    .poll(async () => Math.abs((await setUpLink.boundingBox())!.y - (await menuButton.boundingBox())!.y))
+    .toBeLessThan(2);
   await page.setViewportSize({ width: 1440, height: 1000 });
 
   await page.getByRole("link", { name: `Set up ${name}`, exact: true }).click();

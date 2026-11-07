@@ -200,7 +200,8 @@ def test_image_job_upstream_failure(tmp_path, record_testsuite_property):
 
 def test_image_edit(tmp_path, record_testsuite_property):
     def setup(rig):
-        _comfy(rig, comfy_exchanges(views=[(_png((20, 20, 20)), "image/png")]))
+        # The edit runs the inpaint workflow; its binding reads the image from its save node.
+        _comfy(rig, comfy_exchanges(views=[(_png((20, 20, 20)), "image/png")], history=history_done(node="13")))
 
     async def drive(rig):
         await rig.call("POST", "/v1/images/edits", label="edit with image and mask",
@@ -219,7 +220,7 @@ def test_image_variation(tmp_path, record_testsuite_property):
 
     def setup(rig):
         rig.set(proxy, "resolve_image_background_decision", no_cutout)
-        _comfy(rig, comfy_exchanges(views=[(_png((70, 70, 160)), "image/png")]))
+        _comfy(rig, comfy_exchanges(views=[(_png((70, 70, 160)), "image/png")], history=history_done(node="10")))
 
     async def drive(rig):
         await rig.call("POST", "/v1/images/variations", label="variation of one image",
@@ -302,7 +303,7 @@ def test_image_generation_timeout(tmp_path, record_testsuite_property):
 
 def _video_comfy(rig, **kw):
     return _comfy(rig, comfy_exchanges(
-        history=history_done("videos", "clip.mp4", count=1), views=[(kw.pop("clip", mp4_bytes()), "video/mp4")], **kw))
+        history=history_done("images", "clip.mp4", count=1, node="60"), views=[(kw.pop("clip", mp4_bytes()), "video/mp4")], **kw))
 
 
 def test_video_lifecycle(tmp_path, record_testsuite_property):

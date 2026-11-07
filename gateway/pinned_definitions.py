@@ -30,6 +30,9 @@ from gateway.workflow_envelope import Envelope
 
 CONFIG_SECTION = "workflow_execution"
 CONFIG_KEY = "compile_from_pin"
+# The manifest fields a job pins as its contract: the header a compile validates (`validate_manifest`) and the input and
+# output schemas. Everything else in a manifest is for listings and the UI, and a run does not read it.
+PINNED_MANIFEST_FIELDS = ("schema_version", "id", "intent", "inputs", "outputs")
 
 
 def compile_from_pin_enabled(config: Mapping[str, Any], capability: str) -> bool:
@@ -48,13 +51,15 @@ class PinnedDefinitions:
     binding: Mapping[str, Any]
     template: bytes | None
 
-    def manifest(self, binding_key: str) -> dict[str, Any]:
+    def manifest(self, binding_key: str, descriptors: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """The manifest the route compiles with: the pinned contract, and the pinned binding under ``binding_key``.
 
-        A contract that is not a complete manifest (a job that pinned another shape) raises ``DefinitionUnavailable``."""
+        ``descriptors`` are the selector descriptors, by binding key, that the binding's selectors are checked against
+        (the shipped registry when absent). A contract that is not a complete manifest (a job that pinned another
+        shape) raises ``DefinitionUnavailable``."""
         manifest = {**self.contract, "bindings": {binding_key: dict(self.binding)}}
         try:
-            validate_manifest(manifest)
+            validate_manifest(manifest, descriptors)
         except ManifestError as exc:
             raise DefinitionUnavailable(f"job {self.envelope.source_id}: the pinned contract is not a manifest: {exc}") from exc
         return manifest

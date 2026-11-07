@@ -97,7 +97,7 @@ def _png() -> bytes:
     return out.getvalue()
 
 
-def _comfy_scenario(name: str, outputs_key: str, filename: str, media_type: str, content: bytes) -> Any:
+def _comfy_scenario(name: str, outputs_key: str, filename: str, media_type: str, content: bytes, node: str = "9") -> Any:
     """One job: submitted, done at the first history check, its output downloaded."""
     return scenario_from_data({
         "protocol": "comfyui", "name": name, "provenance": PROVENANCE,
@@ -106,7 +106,7 @@ def _comfy_scenario(name: str, outputs_key: str, filename: str, media_type: str,
              "response": {"json": {"prompt_id": "p1"}}},
             {"id": "history", "match": {"method": "GET", "path": "/history/p1"}, "repeat": True,
              "response": {"json": {"p1": {"status": {"status_str": "success", "completed": True},
-                                          "outputs": {"9": {outputs_key: [{"filename": filename, "subfolder": "",
+                                          "outputs": {node: {outputs_key: [{"filename": filename, "subfolder": "",
                                                                            "type": "output"}]}}}}}},
             {"id": "view", "match": {"method": "GET", "path": "/view"}, "repeat": True,
              "response": {"headers": {"content-type": media_type}, "body": [{"hex": content.hex()}]}},
@@ -215,8 +215,8 @@ class AsyncMediaJobEndToEndTests(unittest.IsolatedAsyncioTestCase):
         return media_jobs.get(job_id, audience="internal", path=self.jobs)
 
     async def run_video(self, caller: str) -> dict[str, Any]:
-        fake = self.fakes.asgi(_comfy_scenario("video-job-succeeds", "videos", "out.mp4", "video/mp4",
-                                               _encoded_video()))
+        fake = self.fakes.asgi(_comfy_scenario("video-job-succeeds", "images", "out.mp4", "video/mp4",
+                                               _encoded_video(), node="60"))
         auth = self.caller(caller)
         entry = next(e for e in proxy._mcp_catalog() if e["id"] == "video.generate.ltx-2.5-t2v")
         route = entry["execution"]["async"]

@@ -38,7 +38,7 @@ from gateway import secret_refs as _refs
 from gateway.secret_store import credential_origin_from_url
 from gateway.capabilities import Capability, ResourceEstimate, summarize_capability
 from gateway.capability_ids import MODEL_KIND_LABELS, capabilities_without_inner_endpoint, offered_model_kinds
-from gateway.discovery import WorkflowRecord, summarize_workflow
+from gateway.discovery import WorkflowRecord, bundled_workflow_manifests, summarize_workflow
 from gateway.manifests import manifest_identity, validate_manifest
 from gateway.transition_gate import ServicePaths, domain_violations
 from gateway import transition_profiles
@@ -1096,6 +1096,10 @@ def merge_imported_records(
         if not workflow_id:
             continue
         record = normalize_workflow_record(workflow_id, raw)
+        if record["id"] in bundled_workflow_manifests():
+            raise ServiceRegistryConflict(
+                f"workflow {record['id']!r} is a bundled workflow; a package cannot replace it"
+            )
         _merge_imported_record(out["workflows"], record["id"], record, "workflow")
 
     for raw_id, raw in (capabilities or {}).items():
@@ -2448,6 +2452,7 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
                 "enabled",
                 "identity",
                 "manifest_hash",
+                "overrides",
                 "provenance",
                 "registry_source",
                 "source_path",
@@ -2557,6 +2562,68 @@ def workflow_records_from_registry(registry: Mapping[str, Any]) -> list[Workflow
             )
         )
     return records
+
+
+class BundledWorkflowId(ValueError):
+    """A save would store a workflow under the id of a bundled one without saying it overrides it (8.4).
+
+    ``bundled`` is the manifest the release ships, so a client can copy it, edit the copy and save it with ``overrides``.
+    """
+
+    def __init__(self, workflow_id: str, bundled: Mapping[str, Any]) -> None:
+        super().__init__(f"workflow {workflow_id!r} is a bundled workflow; to replace it, save with overrides: {workflow_id!r}")
+        self.workflow_id = workflow_id
+        self.bundled = copy.deepcopy(dict(bundled))
+
+
+def refuse_unclaimed_bundled_workflows(
+    payload: Mapping[str, Any], registry: Mapping[str, Any], *, before: Mapping[str, Any] | None = None,
+) -> None:
+    """Refuse a whole-registry save that adds or changes a workflow under a bundled id unless its record says ``overrides: <id>``.
+
+    A stored override the save leaves as it was is not a new claim, so a registry read and written back unchanged
+    saves. ``registry`` is ``payload`` normalized; ``overrides`` is read from the payload, since a stored record
+    does not keep it. The release has to ship the id: an id it does not ship needs no claim.
+    """
+    bundled = bundled_workflow_manifests()
+    previous = (before or {}).get("workflows") or {}
+    for workflow_id, record in (registry.get("workflows") or {}).items():
+        if workflow_id not in bundled:
+            continue
+        stored = previous.get(workflow_id)
+        if isinstance(stored, Mapping) and stored.get("manifest") == record.get("manifest"):
+            continue
+        if not _claims_override(payload, workflow_id):
+            raise BundledWorkflowId(workflow_id, bundled[workflow_id])
+
+
+def _claims_override(payload: Mapping[str, Any], workflow_id: str) -> bool:
+    for key, raw in (payload.get("workflows") or {}).items():
+        if not isinstance(raw, Mapping):
+            continue
+        manifest = raw.get("manifest")
+        if workflow_id in (key, raw.get("id"), manifest.get("id") if isinstance(manifest, Mapping) else None):
+            return raw.get("overrides") == workflow_id
+    return False
+
+
+def workflow_overrides(registry: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """``{id: {"source": "owner", "fields": [...]}}`` for each stored workflow that has the id of a bundled one.
+
+    The fields are the names of the manifest fields that differ from the bundled manifest, never values. A record that
+    is not listed serves from the release, or is the owner's own (no bundled manifest has its id).
+    """
+    bundled = bundled_workflow_manifests()
+    view: dict[str, dict[str, Any]] = {}
+    for workflow_id, record in (registry.get("workflows") or {}).items():
+        manifest = record.get("manifest") if isinstance(record, Mapping) else None
+        if workflow_id in bundled and isinstance(manifest, Mapping):
+            base = bundled[workflow_id]
+            view[workflow_id] = {
+                "source": registry_layers.SOURCE_OWNER,
+                "fields": sorted(key for key in {*base, *manifest} if base.get(key) != manifest.get(key)),
+            }
+    return view
 
 
 def capability_from_registry_record(record: Mapping[str, Any]) -> Capability:

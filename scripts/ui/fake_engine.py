@@ -177,6 +177,10 @@ def down():
 # answers the OpenAI speech route. Both return fixture media.
 _FIXTURE_MEDIA = os.path.join(os.path.dirname(__file__), "fixtures", "household")
 _COMFY_PROMPTS: dict[str, int] = {}
+# The nodes of each submitted graph that save a file. ComfyUI lists a finished prompt's files under those nodes, and the
+# gateway reads a result from the node the workflow's selector names, so the answer must say which node saved it.
+_COMFY_OUTPUT_NODES: dict[str, list[str]] = {}
+_DEFAULT_OUTPUT_NODE = "9"
 
 
 # Files the gateway sent on to the engine, so a browser test can prove the
@@ -216,9 +220,15 @@ def fixture_uploads_reset():
 
 @app.post("/prompt")
 async def comfy_prompt(request: Request):
-    await request.json()
+    body = await request.json()
     prompt_id = f"fixture-{time.time_ns()}"
     _COMFY_PROMPTS[prompt_id] = len(_COMFY_PROMPTS)
+    graph = body.get("prompt") if isinstance(body, dict) else None
+    nodes = graph.items() if isinstance(graph, dict) else ()
+    _COMFY_OUTPUT_NODES[prompt_id] = [
+        str(node_id) for node_id, node in nodes
+        if isinstance(node, dict) and str(node.get("class_type", "")).startswith("Save")
+    ] or [_DEFAULT_OUTPUT_NODE]
     return {"prompt_id": prompt_id, "number": _COMFY_PROMPTS[prompt_id], "node_errors": {}}
 
 
@@ -228,7 +238,10 @@ def comfy_history(prompt_id: str):
         return {}
     return {prompt_id: {
         "status": {"completed": True, "status_str": "success", "messages": []},
-        "outputs": {"9": {"images": [{"filename": "apple-tart.png", "subfolder": "", "type": "output"}]}},
+        "outputs": {
+            node_id: {"images": [{"filename": "apple-tart.png", "subfolder": "", "type": "output"}]}
+            for node_id in _COMFY_OUTPUT_NODES.get(prompt_id, [_DEFAULT_OUTPUT_NODE])
+        },
     }}
 
 

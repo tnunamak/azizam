@@ -112,6 +112,16 @@ class UnsupportedByAdapter(ProtocolError):
     code = "unsupported_by_adapter"
 
 
+class SelectionRefused(ProtocolError):
+    """An engine's answer does not hold a workflow's results as its selectors say. ``code`` names the rule; the message
+    never holds a value from the answer."""
+
+    code = "result_refused"
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message, code=code)
+
+
 def retryable_poll_failure(error: ProtocolError) -> bool:
     """Only transient transport failures and server HTTP failures may retry a poll."""
     if isinstance(error, TransportFailure):

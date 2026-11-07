@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway.engine_protocol import node_graph  # noqa: E402
 from tests.support.access import access_context  # noqa: E402
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: E402,F401
 
@@ -56,7 +57,7 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
             },
         ):
             with self.subTest(outputs=list(outputs)):
-                output = proxy._first_video_output({"outputs": outputs})
+                output = node_graph.first_video_output({"outputs": outputs})
                 self.assertEqual(output["filename"], "rendered.mp4")
 
     async def test_manifest_video_workflow_runs_against_fake_comfyui(self) -> None:

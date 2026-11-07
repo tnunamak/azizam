@@ -52,8 +52,12 @@ def _owner_changes(gw: Gateway) -> None:
 
 
 def _effective(gw: Gateway) -> dict[str, Any]:
-    return service_registry.normalize_service_registry(
+    # The registry's updated_at is the second its own database last wrote it, not content an import carries,
+    # so two gateways written a second apart differ there and nowhere else.
+    effective = service_registry.normalize_service_registry(
         admin_store.get_service_registry_with_generation(path=gw.db)["value"])
+    effective.pop("updated_at", None)
+    return effective
 
 
 def _body(source: dict[str, Any], gw: Gateway, **extra: Any) -> dict[str, Any]:

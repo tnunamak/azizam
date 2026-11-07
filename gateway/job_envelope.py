@@ -44,6 +44,11 @@ def _digest(body: bytes) -> str:
     return "sha256:" + hashlib.sha256(body).hexdigest()
 
 
+def origin_digest(origin: str) -> str:
+    """The digest an envelope records for an engine's address. The address itself is never stored."""
+    return _digest(origin.encode("utf-8"))
+
+
 def build_job_envelope(
     *,
     source_kind: str,
@@ -78,7 +83,7 @@ def build_job_envelope(
             "source": {"kind": source_kind, "id": source_id, "revision": revision},
             "definitions": definitions,
             "executor": {"adapter_id": adapter_id, "interface_version": interface_version},
-            "upstream": {"service_id": service_id, "origin_digest": _digest(origin.encode("utf-8"))},
+            "upstream": {"service_id": service_id, "origin_digest": origin_digest(origin)},
             "generated": {},
             "results": {"bundle": None},
         }

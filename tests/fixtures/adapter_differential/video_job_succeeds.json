@@ -62,10 +62,10 @@
       "response": {
         "body": {
           "kind": "json",
-          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99\",\"content_url\":\"http://gateway.test/v1/assets/vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99/content?expires=<expires>&md=none&sig=<sig>\",\"filename\":\"clip.mp4\",\"kind\":\"video\",\"media_type\":\"video/mp4\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"video.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"completed_at\":\"<time>\",\"idempotency\":\"request\",\"last_http_status\":200,\"mode\":\"async_video_generation\",\"model\":\"ltx-2.5-t2v\",\"request_hash\":\"<random-hash>\",\"seconds\":5.0,\"size\":\"1280x720\",\"started_at\":\"<time>\",\"upstream_video_id\":\"video_p1\"},\"parent_request_id\":\"<job:2>\",\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<job:2>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"video-ltx-2.5-t2v\",\"asset_url_ttl_s\":3600}"
+          "text": "{\"accepted_at\":\"<time>\",\"queued_at\":\"<time>\",\"started_at\":\"<time>\",\"first_output_at\":\"<time>\",\"finished_at\":\"<time>\",\"error_code\":null,\"error_category\":null,\"retryable\":null,\"upstream_http_status\":null,\"attempt_number\":1,\"api_key_name\":\"test-app\",\"app_id\":\"app_test\",\"app_profile\":\"plan_everything\",\"assets\":[{\"asset_id\":\"vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99\",\"content_url\":\"http://gateway.test/v1/assets/vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99/content?expires=<expires>&md=none&sig=<sig>\",\"filename\":\"clip.mp4\",\"kind\":\"video\",\"media_type\":\"video/mp4\"}],\"backend\":\"comfyui\",\"cancel_requested\":false,\"created_at\":\"<time>\",\"error\":null,\"intent\":\"video.generate\",\"job_id\":\"<job:1>\",\"metadata\":{\"completed_at\":\"<time>\",\"idempotency\":\"request\",\"last_http_status\":200,\"mode\":\"async_video_generation\",\"model\":\"ltx-2.5-t2v\",\"request_hash\":\"<random-hash>\",\"seconds\":5.0,\"size\":\"1280x720\",\"started_at\":\"<time>\",\"upstream_video_id\":\"video_p1\"},\"parent_request_id\":\"<job:2>\",\"previous_attempts\":[],\"progress\":100,\"request_id\":\"<job:2>\",\"status\":\"succeeded\",\"updated_at\":\"<time>\",\"workflow\":\"video-ltx-2.5-t2v\",\"results\":{\"video\":{\"kind\":\"assets\",\"count\":1}},\"asset_url_ttl_s\":3600}"
         },
         "headers": {
-          "content-length": "<1182 after normalisation>",
+          "content-length": "<1230 after normalisation>",
           "content-type": "application/json"
         },
         "status": 200
@@ -275,18 +275,18 @@
             "contract": "sha256:c286ebdf57a2d6eb834f0c902168759103b0f96f98216ccb86fc7499f74cb0e9",
             "protocol": {
               "id": "node-graph",
-              "revision": "unrevisioned"
+              "revision": "sha256:84391540e9d8d834292fd4386d44e7821375eb989c8b36963a1b9734f7856454"
             },
             "template": "sha256:bfbb76521be40b520c685d190179e610c2f2e74967fed3583f8d5f3b2cacd855"
           },
           "envelope_version": 1,
           "executor": {
             "adapter_id": "node-graph",
-            "interface_version": 1
+            "interface_version": 2
           },
           "generated": {},
           "results": {
-            "bundle": null
+            "bundle": "bundle:<job:1>:1"
           },
           "source": {
             "id": "video-ltx-2.5-t2v",
@@ -452,6 +452,58 @@
     "media_jobs_schema_version": [
       {
         "version": 6
+      }
+    ],
+    "result_bundle": [
+      {
+        "attempt": 1,
+        "bundle_ref": "bundle:<job:1>:1",
+        "job_id": "<job:1>",
+        "published_at": "<time>",
+        "receipt_linked_at": "<time>",
+        "summary_json": {
+          "bundle": "bundle:<job:1>:1",
+          "bundle_version": 1,
+          "envelope": {
+            "adapter_id": "node-graph",
+            "binding": "sha256:4d9d5205117826bfc0210336160ed00090314ea332d1ef8d9e5b88576ee1b701",
+            "contract": "sha256:c286ebdf57a2d6eb834f0c902168759103b0f96f98216ccb86fc7499f74cb0e9",
+            "interface_version": 2,
+            "source_id": "video-ltx-2.5-t2v",
+            "source_kind": "workflow",
+            "source_revision": "sha256:4a14c83e0f7d152b61a2b5b7fb102c20b2695345dce69655110994cbb60d5f48",
+            "template": "sha256:bfbb76521be40b520c685d190179e610c2f2e74967fed3583f8d5f3b2cacd855"
+          },
+          "results": [
+            {
+              "count": 1,
+              "kind": "assets",
+              "name": "video",
+              "size_bytes": 11572
+            }
+          ]
+        }
+      }
+    ],
+    "result_stage": [
+      {
+        "attempt": 1,
+        "bytes": 11572,
+        "count": 1,
+        "created": "<time>",
+        "items_json": [
+          {
+            "asset_ref": "vid_4bb3012e86681607a26c0afd03acef85422724c25a87cffe7119c5c7d0f2ba99",
+            "media_type": "video/mp4",
+            "size_bytes": 11572
+          }
+        ],
+        "job_id": "<job:1>",
+        "kind": "assets",
+        "name": "video",
+        "ref": "stage:<job:1>:1:video",
+        "sha256": null,
+        "state": "published"
       }
     ],
     "retention_fact_destinations": [
@@ -764,6 +816,28 @@
           "manifest_id": null,
           "manifest_version": null,
           "metadata": {
+            "result_bundle": {
+              "bundle": "bundle:<job:1>:1",
+              "bundle_version": 1,
+              "envelope": {
+                "adapter_id": "node-graph",
+                "binding": "sha256:4d9d5205117826bfc0210336160ed00090314ea332d1ef8d9e5b88576ee1b701",
+                "contract": "sha256:c286ebdf57a2d6eb834f0c902168759103b0f96f98216ccb86fc7499f74cb0e9",
+                "interface_version": 2,
+                "source_id": "video-ltx-2.5-t2v",
+                "source_kind": "workflow",
+                "source_revision": "sha256:4a14c83e0f7d152b61a2b5b7fb102c20b2695345dce69655110994cbb60d5f48",
+                "template": "sha256:bfbb76521be40b520c685d190179e610c2f2e74967fed3583f8d5f3b2cacd855"
+              },
+              "results": [
+                {
+                  "count": 1,
+                  "kind": "assets",
+                  "name": "video",
+                  "size_bytes": 11572
+                }
+              ]
+            },
             "status_code": 200,
             "terminal_reason": "http_200"
           },
