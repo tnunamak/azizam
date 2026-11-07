@@ -412,6 +412,10 @@ def test_the_add_engine_check_builds_no_url_from_an_unsafe_probe_path():
     ("http://h.test:8080/v1", "%2fadmin", "path_prefix"),
     ("http://h.test:8080/v1", "/x?y=1", "path_prefix"),
     ("http://h.test:8080/v1", "/x#y", "path_prefix"),
+    ("http://h.test:8080/v1", "/x?", "path_prefix"),
+    ("http://h.test:8080/v1", "/x#", "path_prefix"),
+    ("http://h.test:8080/v1?", "", "address"),
+    ("http://h.test:8080/v1#", "", "address"),
 ])
 def test_the_add_engine_check_refuses_an_address_or_prefix_the_client_would_normalise(address, prefix, field):
     from gateway import engine_check
@@ -435,3 +439,37 @@ def test_the_add_engine_check_keeps_a_plain_address_and_prefix():
     assert engine_check.check_base("http://h.test:8080", "") == "http://h.test:8080"
     line = engine_check.call_line(safe, {"address": "http://h.test:8080/api", "path_prefix": "/v1"})
     assert line == "GET http://h.test:8080/api/v1/models"
+
+
+@pytest.mark.parametrize(("address", "prefix"), [
+    ("http://h.test:8080/v1", "/x#"), ("http://h.test:8080/v1", "/x?"),
+    ("http://h.test:8080/v1#", ""), ("http://h.test:8080/v1?", ""),
+])
+def test_a_real_test_sends_nothing_when_an_empty_query_or_fragment_would_cut_its_route(address, prefix):
+    import asyncio
+
+    from gateway import engine_check
+    from gateway.engine_definitions import load_engine_catalog
+
+    sent = []
+
+    async def fetch(*args, **kwargs):
+        sent.append(args)
+        raise AssertionError("the real test reached the network")
+
+    catalog = load_engine_catalog()
+    with pytest.raises(engine_check.DraftError):
+        asyncio.run(engine_check.run_real_test(
+            catalog, catalog.definition("openai-compatible"), {"address": address, "path_prefix": prefix}, "chat",
+            key=engine_check.KeyInput(), fetch=fetch, model="m"))
+    assert sent == []
+
+
+def test_the_call_line_shows_the_url_the_check_sends_for_a_probe_from_the_origin():
+    from gateway import engine_check
+
+    origin_probe = {"probes": {"primary": {"method": "GET", "path": "/api/tags", "from": "origin"}}}
+    values = {"address": "http://h.test:8080/api", "path_prefix": "/v1"}
+    ctx = type("Ctx", (), {"definition": origin_probe, "address": "http://h.test:8080/api/v1", "origin": "http://h.test:8080"})()
+    assert engine_check._primary_url(ctx) == ("GET", "http://h.test:8080/api/tags")
+    assert engine_check.call_line(origin_probe, values) == "GET http://h.test:8080/api/tags"

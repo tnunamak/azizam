@@ -28,6 +28,7 @@ import ssl
 import time
 import zlib
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
 from urllib.parse import quote, urlsplit
 
@@ -482,9 +483,11 @@ def join_url(base: str, path: str) -> str:
 
 
 def _plain_route(url: str) -> bool:
-    """True when ``url`` has no query or fragment and a path the HTTP client sends as written (``safe_probe_path``)."""
-    parts = urlsplit(url)
-    return not parts.query and not parts.fragment and safe_probe_path(parts.path or "/") is not None
+    """True when ``url`` has no ``?`` or ``#`` (even an empty query or fragment, which ends the path the client sends)
+    and a path the HTTP client sends as written (``safe_probe_path``)."""
+    if "?" in url or "#" in url:
+        return False
+    return safe_probe_path(urlsplit(url).path or "/") is not None
 
 
 def check_base(address: str, prefix: str) -> str:
@@ -708,16 +711,12 @@ def call_line(definition: Mapping[str, Any], values: Mapping[str, Any]) -> str:
     """The request the check makes first, as the dialog shows it: "GET http://…/models"."""
     try:
         address = normalize_address(values.get("address"))
-        check_base(address, str(values.get("path_prefix") or "").strip())
+        base = check_base(address, str(values.get("path_prefix") or "").strip())
+        # The same URL the check sends (``_primary_url``): a probe from the origin ignores the path prefix.
+        method, url = _primary_url(SimpleNamespace(definition=definition, address=base, origin=origin_of(address)))
     except DraftError:
         return ""
-    probe = definition["probes"]["primary"]
-    if safe_probe_path(probe["path"]) is None:
-        return ""
-    base = origin_of(address) if probe["from"] == "origin" else address
-    prefix = str(values.get("path_prefix") or "").strip()
-    url = join_url(join_url(base, prefix) if prefix else base, probe["path"])
-    return f"{probe['method']} {url}" if _plain_route(url) else ""
+    return f"{method} {url}"
 
 
 MODEL_LIST_CAP_BYTES = 1024 * 1024
@@ -1285,6 +1284,8 @@ async def run_real_test(
         url = join_url(join_url(route_base, prefix), cap["route"]["path"])
     else:
         url = join_url(base, cap["route"]["path"])
+    if not _plain_route(url):
+        raise DraftError("This kind of server declares a route that cannot be tested safely.", field="capability")
     slots = {"model": model or ""}
     body = _substitute(test.get("body") or {}, slots)
     # The request adjustments the engine will run with: the draft's, or the kind's default for a new engine.
