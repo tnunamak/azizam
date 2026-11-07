@@ -229,6 +229,8 @@ def test_the_mesh_route_still_sends_no_value_when_the_caller_gives_none():
 
 
 def word_hits(text: str, word: str) -> list[str]:
+    # A `seed=` keyword argument is the receipt's own field name (the provenance record), not a selection by name.
+    text = re.sub(r"\b" + re.escape(word) + r"=", "", text)
     return re.findall(r"(?<![a-z0-9_-])" + re.escape(word) + r"(?![a-z0-9_-])", text.lower())
 
 
