@@ -7,7 +7,7 @@ from fnmatch import fnmatch
 from pathlib import PurePosixPath
 from typing import Any
 
-from gateway.manifests import ManifestError
+from gateway.manifests import ErrorCollector
 
 
 @dataclass(frozen=True)
@@ -44,13 +44,18 @@ def validate_workflow_requirements(
     The return value is safe to surface to clients: it includes only requirement
     names from the manifest and generic reasons, not raw backend paths.
     """
-    requirements = _requirements(manifest)
+    errors = ErrorCollector()
+    requirements = _requirements(manifest, errors)
+    custom_node_classes = _required_custom_node_classes(requirements, errors)
+    model_requirements = _required_model_artifacts(requirements, errors)
+    # Every problem of the requirements is listed; the message is the first one found.
+    errors.raise_if_any()
     inventory = backend_inventory or {}
     node_classes = _observed_node_classes(inventory)
     model_artifacts = _observed_model_artifacts(inventory)
 
     missing: list[RequirementIssue] = []
-    for required_class in _required_custom_node_classes(requirements):
+    for required_class in custom_node_classes:
         if required_class not in node_classes:
             missing.append(
                 RequirementIssue(
@@ -60,7 +65,7 @@ def validate_workflow_requirements(
                 )
             )
 
-    for requirement in _required_model_artifacts(requirements):
+    for requirement in model_requirements:
         if not _model_requirement_satisfied(requirement, model_artifacts):
             missing.append(
                 RequirementIssue(
@@ -73,91 +78,86 @@ def validate_workflow_requirements(
     return WorkflowRequirementsResult(missing=missing)
 
 
-def _requirements(manifest: dict[str, Any]) -> dict[str, Any]:
+def _requirements(manifest: dict[str, Any], errors: ErrorCollector) -> dict[str, Any]:
     if not isinstance(manifest, dict):
-        raise ManifestError("manifest must be a mapping")
+        errors.add((), "type_mismatch", "manifest must be a mapping")
+        return {}
     requirements = manifest.get("requires", {})
     if requirements is None:
         return {}
     if not isinstance(requirements, dict):
-        raise ManifestError("manifest requires must be a mapping")
+        errors.add(("requires",), "type_mismatch", "manifest requires must be a mapping")
+        return {}
     allowed = {"custom_nodes", "models"}
-    unknown = sorted(set(requirements) - allowed)
-    if unknown:
-        raise ManifestError(f"manifest requires has unknown field: {unknown[0]}")
+    for key in sorted(set(requirements) - allowed):
+        errors.add(("requires", key), "unknown_field", f"manifest requires has unknown field: {key}")
     return requirements
 
 
-def _required_custom_node_classes(requirements: dict[str, Any]) -> list[str]:
+def _required_custom_node_classes(requirements: dict[str, Any], errors: ErrorCollector) -> list[str]:
     entries = requirements.get("custom_nodes", [])
     if entries is None:
         return []
     if not isinstance(entries, list):
-        raise ManifestError("manifest requires.custom_nodes must be a list")
+        errors.add(("requires", "custom_nodes"), "type_mismatch", "manifest requires.custom_nodes must be a list")
+        return []
 
     classes: list[str] = []
     for index, entry in enumerate(entries):
+        at = ("requires", "custom_nodes", index)
         if isinstance(entry, str):
             class_name = entry
         elif isinstance(entry, dict):
             class_name = entry.get("class")
             if set(entry) - {"class"}:
-                raise ManifestError(
-                    f"manifest requires.custom_nodes[{index}] has unknown field"
-                )
+                errors.add(at, "unknown_field", f"manifest requires.custom_nodes[{index}] has unknown field")
+                continue
         else:
-            raise ManifestError(
-                f"manifest requires.custom_nodes[{index}] must be a string or mapping"
-            )
+            errors.add(at, "type_mismatch", f"manifest requires.custom_nodes[{index}] must be a string or mapping")
+            continue
         if not isinstance(class_name, str) or not class_name.strip():
-            raise ManifestError(
-                f"manifest requires.custom_nodes[{index}].class must be a non-empty string"
-            )
+            errors.add(at + ("class",), "value_empty", f"manifest requires.custom_nodes[{index}].class must be a non-empty string")
+            continue
         classes.append(class_name.strip())
     return classes
 
 
-def _required_model_artifacts(requirements: dict[str, Any]) -> list[dict[str, str]]:
+def _required_model_artifacts(requirements: dict[str, Any], errors: ErrorCollector) -> list[dict[str, str]]:
     entries = requirements.get("models", [])
     if entries is None:
         return []
     if not isinstance(entries, list):
-        raise ManifestError("manifest requires.models must be a list")
+        errors.add(("requires", "models"), "type_mismatch", "manifest requires.models must be a list")
+        return []
 
     models: list[dict[str, str]] = []
     for index, entry in enumerate(entries):
+        at = ("requires", "models", index)
         if not isinstance(entry, dict):
-            raise ManifestError(f"manifest requires.models[{index}] must be a mapping")
+            errors.add(at, "type_mismatch", f"manifest requires.models[{index}] must be a mapping")
+            continue
         allowed = {"role", "path", "pattern", "sha256"}
         unknown = sorted(set(entry) - allowed)
         if unknown:
-            raise ManifestError(
-                f"manifest requires.models[{index}] has unknown field: {unknown[0]}"
-            )
+            errors.add(at + (unknown[0],), "unknown_field", f"manifest requires.models[{index}] has unknown field: {unknown[0]}")
+            continue
         role = entry.get("role")
         path = entry.get("path")
         pattern = entry.get("pattern")
         sha256 = entry.get("sha256")
+        before = len(errors)
         if not isinstance(role, str) or not role.strip():
-            raise ManifestError(
-                f"manifest requires.models[{index}].role must be a non-empty string"
-            )
+            errors.add(at + ("role",), "value_empty", f"manifest requires.models[{index}].role must be a non-empty string")
         if (path is None) == (pattern is None):
-            raise ManifestError(
-                f"manifest requires.models[{index}] must set exactly one of path or pattern"
-            )
+            errors.add(at, "exactly_one_of", f"manifest requires.models[{index}] must set exactly one of path or pattern")
         if path is not None and (not isinstance(path, str) or not path.strip()):
-            raise ManifestError(
-                f"manifest requires.models[{index}].path must be a non-empty string"
-            )
+            errors.add(at + ("path",), "value_empty", f"manifest requires.models[{index}].path must be a non-empty string")
         if pattern is not None and (not isinstance(pattern, str) or not pattern.strip()):
-            raise ManifestError(
-                f"manifest requires.models[{index}].pattern must be a non-empty string"
-            )
+            errors.add(at + ("pattern",), "value_empty", f"manifest requires.models[{index}].pattern must be a non-empty string")
         if sha256 is not None and (not isinstance(sha256, str) or not sha256.strip()):
-            raise ManifestError(
-                f"manifest requires.models[{index}].sha256 must be a non-empty string"
-            )
+            errors.add(at + ("sha256",), "value_empty", f"manifest requires.models[{index}].sha256 must be a non-empty string")
+        if len(errors) != before:
+            continue
 
         normalized = {"role": role.strip()}
         if path is not None:

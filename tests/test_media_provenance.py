@@ -826,7 +826,7 @@ class AudioGenerateRouteTests(unittest.TestCase):
             derived_patch("COMFY_ENABLED", True),
             patch.object(proxy, "_load_audio_workflow_manifest",
                          lambda name: audio_manifest(name, {"prompt": [("1", "text")], "seed": [("1", "seed")]},
-                                                      workflow=str(graph))),
+                                                      workflow=str(graph), result=("9", "audio"))),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "_service_availability_response", return_value=None),
             patch.object(proxy, "configured_downstream_headers", lambda *_a: {}),

@@ -211,7 +211,7 @@ class AudioFailurePollingGaps(unittest.IsolatedAsyncioTestCase):
                     {"default_duration": 8, "min_seconds": 1, "max_seconds": 30},
                 ),
                 "_load_audio_workflow_file": lambda cfg: workflow,
-                "_load_audio_workflow_manifest": lambda name: audio_manifest(name, {"prompt": [("1", "text")]}),
+                "_load_audio_workflow_manifest": lambda name: audio_manifest(name, {"prompt": [("1", "text")]}, result=("1", "audio")),
                 "evaluate_and_apply": lambda *a, **kw: SimpleNamespace(denied=False),
                 "_workflow_target_policy_decision": lambda *a, **kw: None,
                 "configured_downstream_headers": lambda *a, **kw: {},

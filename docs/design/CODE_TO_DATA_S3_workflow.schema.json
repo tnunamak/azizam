@@ -1,0 +1,565 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "azizam/workflow/2",
+  "title": "Azizam workflow document, schema version 2 (draft, appendix to CODE_TO_DATA_S3.md)",
+  "description": "The structural layer only. It closes every level of the document except the interior of a binding, which the binding's adapter descriptor closes (CODE_TO_DATA_S3.md, D7). Cross-field rules (a default fits its spec, a map names declared inputs, a generator is registered) are the semantic layer's.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "version",
+    "intent",
+    "capability",
+    "inputs",
+    "outputs",
+    "bindings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "version": {
+      "$ref": "#/$defs/shortText"
+    },
+    "min_gateway_version": {
+      "$ref": "#/$defs/shortText"
+    },
+    "intent": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,31}(\\.[a-z][a-z0-9_-]{0,31}){1,3}$"
+    },
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+    },
+    "display_name": {
+      "$ref": "#/$defs/shortText"
+    },
+    "purpose": {
+      "$ref": "#/$defs/text"
+    },
+    "summary": {
+      "$ref": "#/$defs/text"
+    },
+    "description": {
+      "$ref": "#/$defs/text"
+    },
+    "technical_description": {
+      "$ref": "#/$defs/text"
+    },
+    "prompt_hint": {
+      "$ref": "#/$defs/shortText"
+    },
+    "action_label": {
+      "$ref": "#/$defs/shortText"
+    },
+    "license": {
+      "$ref": "#/$defs/shortText"
+    },
+    "task": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "typical_seconds": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 86400
+    },
+    "annotations": {
+      "$ref": "#/$defs/annotations"
+    },
+    "inputs": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/inputSpec"
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 16,
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/outputSpec"
+      }
+    },
+    "bindings": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 8,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "description": "Closed by the adapter descriptor that the key names (semantic layer)."
+      }
+    }
+  },
+  "$defs": {
+    "shortText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "\\S"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "pattern": "\\S"
+    },
+    "annotations": {
+      "description": "Namespaced, non-executing data. Core never reads it. Excluded from the contract digest. Key: <domain>/<name>.",
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+/[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"
+      }
+    },
+    "generator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generator"
+      ],
+      "properties": {
+        "generator": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "minimum": {
+          "type": "integer"
+        },
+        "maximum": {
+          "type": "integer"
+        }
+      }
+    },
+    "inputSpec": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "string",
+            "integer",
+            "number",
+            "boolean",
+            "asset",
+            "object",
+            "array"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "string"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/stringSpec"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "integer",
+                  "number"
+                ]
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/numericSpec"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "boolean"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/booleanSpec"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "asset"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/assetSpec"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "object"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/objectSpec"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "array"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/arraySpec"
+          }
+        }
+      ]
+    },
+    "stringSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {},
+        "label": {},
+        "help": {},
+        "description": {},
+        "required": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "$ref": "#/$defs/annotations"
+        },
+        "default": {
+          "type": "string"
+        },
+        "enum": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "min_length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_length": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/$defs/presentationTypes"
+        }
+      ]
+    },
+    "numericSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {},
+        "label": {},
+        "help": {},
+        "description": {},
+        "required": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "$ref": "#/$defs/annotations"
+        },
+        "default": {
+          "type": "number"
+        },
+        "enum": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "type": "number"
+          }
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "step": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "offset": {
+          "type": "number"
+        },
+        "generate": {
+          "$ref": "#/$defs/generator"
+        },
+        "settable": {
+          "type": "boolean"
+        }
+      },
+      "not": {
+        "required": [
+          "default",
+          "generate"
+        ]
+      },
+      "allOf": [
+        {
+          "$ref": "#/$defs/presentationTypes"
+        }
+      ]
+    },
+    "booleanSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {},
+        "label": {},
+        "help": {},
+        "description": {},
+        "required": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "$ref": "#/$defs/annotations"
+        },
+        "default": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/$defs/presentationTypes"
+        }
+      ]
+    },
+    "assetSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accepts"
+      ],
+      "properties": {
+        "type": {},
+        "label": {},
+        "help": {},
+        "description": {},
+        "required": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "$ref": "#/$defs/annotations"
+        },
+        "accepts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z]+/([a-z0-9][a-z0-9.+-]*|\\*)$"
+          }
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/$defs/presentationTypes"
+        }
+      ]
+    },
+    "objectSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {},
+        "label": {},
+        "help": {},
+        "description": {},
+        "required": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "$ref": "#/$defs/annotations"
+        },
+        "properties": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 64,
+          "propertyNames": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/inputSpec"
+          }
+        },
+        "opaque": {
+          "const": true
+        },
+        "default": {
+          "type": "object"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "properties"
+          ]
+        },
+        {
+          "required": [
+            "opaque"
+          ]
+        }
+      ],
+      "allOf": [
+        {
+          "$ref": "#/$defs/presentationTypes"
+        }
+      ]
+    },
+    "arraySpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "items",
+        "max_items"
+      ],
+      "properties": {
+        "type": {},
+        "label": {},
+        "help": {},
+        "description": {},
+        "required": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "$ref": "#/$defs/annotations"
+        },
+        "items": {
+          "$ref": "#/$defs/inputSpec"
+        },
+        "min_items": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_items": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "default": {
+          "type": "array"
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/$defs/presentationTypes"
+        }
+      ]
+    },
+    "presentationTypes": {
+      "properties": {
+        "label": {
+          "$ref": "#/$defs/shortText"
+        },
+        "help": {
+          "$ref": "#/$defs/text"
+        },
+        "description": {
+          "$ref": "#/$defs/text"
+        }
+      }
+    },
+    "outputSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "media_type"
+      ],
+      "properties": {
+        "media_type": {
+          "type": "string",
+          "pattern": "^[a-z]+/([a-z0-9][a-z0-9.+-]*|\\*)$"
+        },
+        "count": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "min": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "schema": {
+          "$ref": "#/$defs/inputSpec"
+        },
+        "label": {
+          "$ref": "#/$defs/shortText"
+        },
+        "help": {
+          "$ref": "#/$defs/text"
+        },
+        "description": {
+          "$ref": "#/$defs/text"
+        },
+        "annotations": {
+          "$ref": "#/$defs/annotations"
+        }
+      },
+      "if": {
+        "required": [
+          "schema"
+        ]
+      },
+      "then": {
+        "properties": {
+          "media_type": {
+            "const": "application/json"
+          }
+        }
+      }
+    }
+  }
+}

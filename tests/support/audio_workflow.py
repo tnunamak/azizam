@@ -2,7 +2,8 @@
 
 The audio route reads the request against a manifest and compiles the graph from the manifest's binding map; the
 template's ``_meta`` is not read. A test that stubs a workflow template therefore stubs its manifest too. ``targets``
-names, for each input, the template nodes it writes: ``{"prompt": [("1", "text")]}``.
+names, for each input, the template nodes it writes: ``{"prompt": [("1", "text")]}``. ``result`` names the history node and
+key that the engine saves the audio file under, as the binding's selector; a test whose engine answers with a file needs it.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ INPUT_SPECS: dict[str, dict[str, Any]] = {
 
 
 def audio_manifest(name: str, targets: Mapping[str, Sequence[tuple[str, str]]], *, binding: str = "comfyui",
-                   workflow: str | None = None) -> dict[str, Any]:
+                   workflow: str | None = None, result: tuple[str, str] | None = None) -> dict[str, Any]:
     """``workflow`` is the template file the binding names; the route loads it from there."""
     manifest = {
         "schema_version": 1,
@@ -40,5 +41,9 @@ def audio_manifest(name: str, targets: Mapping[str, Sequence[tuple[str, str]]], 
                     for input_name, nodes in targets.items()},
         }},
     }
+    if result is not None:
+        node, key = result
+        manifest["bindings"][binding]["selectors"] = {
+            "audio": {"node": node, "key": key, "from": "output_dir", "decode": "none", "take": "first"}}
     validate_manifest(manifest)
     return manifest

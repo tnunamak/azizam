@@ -33,3 +33,10 @@ bindings:
       top_k:
         - node: "2"
           input: top_k
+    selectors:
+      images:
+        node: "3"
+        key: images
+        from: output_dir
+        decode: none
+        take: all

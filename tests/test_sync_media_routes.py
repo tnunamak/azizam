@@ -25,6 +25,7 @@ from gateway.api import create_gateway_router
 from gateway.discovery import WorkflowRegistry
 from gateway.receipts import RouteReceipt
 from tests.media_test_bytes import mp4_bytes
+from tests.support.graph_selectors import video_manifest
 
 
 def _png_bytes() -> bytes:
@@ -124,6 +125,7 @@ class SyncMediaRouteTests(unittest.TestCase):
             patch.object(media_jobs, "DB_PATH", self.media_db),
             patch.object(receipt_store, "DB_PATH", self.receipt_db),
             patch.object(proxy, "IMAGE_CACHE_DIR", self.cache),
+            patch.object(proxy, "_video_manifest_of_job", lambda _prompt_id: video_manifest("save", "videos")),
             patch.object(proxy, "_image_url_signing_secret", b"sync-media-test-secret"),
             authenticated(),
         ]

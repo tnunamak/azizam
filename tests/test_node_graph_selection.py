@@ -1,7 +1,7 @@
 """The graph adapter reads a workflow's results through its selectors (S2.4, D5).
 
-The rules for missing and null, order, duplicates and lists each have a case. The legacy collection is the fallback for a
-binding with no selectors: it reads the output directory only and refuses what it would have to guess.
+The rules for missing and null, order, duplicates and lists each have a case. A binding with no selectors is refused: the
+engine's answer is never read by guessing which files are the result.
 """
 
 from __future__ import annotations
@@ -128,63 +128,7 @@ def test_an_entry_in_a_directory_other_than_output_is_dropped_before_it_is_check
     assert pick(job(n9={"images": [file("../x", "temp"), file("a.png")]}), image=sel()) == {"image": ["a.png"]}
 
 
-# ---------------------------------------------------------------------------------------- the legacy collection
-
 OUTPUT = {"result": {"media_type": "a/b"}}
-
-
-def legacy(history: Any, outputs: Any = OUTPUT) -> dict[str, list[str]]:
-    return {name: [f["filename"] for f in files] for name, files in node_graph.legacy_select(history, outputs).items()}
-
-
-def test_the_legacy_collection_reads_the_output_directory_only():
-    history = job(n1={"images": [file("echo.png", "input")]}, n2={"images": [file("peek.png", "temp")]}, n9={"images": [file("a.png"), file("b.png")]})
-    assert legacy(history) == {"result": ["a.png", "b.png"]}
-
-
-def test_the_legacy_collection_finds_the_files_under_any_known_output_key():
-    for key in ("images", "videos", "gifs", "audios", "audio", "wav", "mp3"):
-        assert legacy(job(n5={key: [file("f")]})) == {"result": ["f"]}, key
-    assert legacy(job(n5={"text": [file("f")]}, n6={"images": [file("g")]})) == {"result": ["g"]}
-
-
-def test_the_legacy_collection_refuses_a_contract_it_cannot_tell_apart():
-    history = job(n9={"images": [file("a.png")]})
-    for outputs in ({}, {"a": {}, "b": {}}):
-        with pytest.raises(SelectionRefused) as caught:
-            node_graph.legacy_select(history, outputs)
-        assert caught.value.code == "result_ambiguous"
-
-
-def test_the_legacy_collection_refuses_files_that_come_from_more_than_one_place():
-    with pytest.raises(SelectionRefused) as caught:
-        node_graph.legacy_select(job(n8={"images": [file("a.png")]}, n9={"images": [file("b.png")]}), OUTPUT)
-    assert caught.value.code == "result_ambiguous" and "2 places" in str(caught.value)
-    with pytest.raises(SelectionRefused):
-        node_graph.legacy_select(job(n9={"images": [file("a.png")], "audio": [file("a.wav")]}), OUTPUT)
-
-
-def test_the_legacy_collection_reports_a_missing_result_and_does_not_guess_from_a_preview():
-    for history in (job(), job(n9={"images": [file("peek.png", "temp")]}), job(n9={"images": []})):
-        with pytest.raises(SelectionRefused) as caught:
-            node_graph.legacy_select(history, OUTPUT)
-        assert caught.value.code == "result_missing"
-
-
-def test_a_suffix_filter_keeps_only_matching_files_and_takes_the_first_in_node_order():
-    keys, suffixes = ("clips", "stills"), (".mp4", ".webm")
-    history = job(n1={"stills": [file("peek.png")]}, n2={"stills": [file("a.png"), file("b.WEBM")], "clips": [file("c.mp4")]},
-                  n3={"clips": [file("d.mp4")]})
-    # Two nodes give a clip, which would be ambiguous without a filter; with one, node order decides.
-    picked = node_graph.legacy_select(history, OUTPUT, keys=keys, suffixes=suffixes)
-    assert [f["filename"] for f in picked["result"]] == ["c.mp4"]
-    # The filter and the keys are the caller's: a key that is not listed is not read, and no match is a missing result.
-    with pytest.raises(SelectionRefused) as caught:
-        node_graph.legacy_select(job(n1={"images": [file("a.mp4")]}), OUTPUT, keys=keys, suffixes=suffixes)
-    assert caught.value.code == "result_missing"
-    with pytest.raises(SelectionRefused) as caught:
-        node_graph.legacy_select(job(n1={"clips": [file("a.png")]}), OUTPUT, keys=keys, suffixes=suffixes)
-    assert caught.value.code == "result_missing"
 
 
 # ----------------------------------------------------------------------------------------------- collect()
@@ -193,21 +137,26 @@ BLOCK = {"workflow": "w.json", "selectors": {"result": sel(node="9", key="images
 HISTORY = job(n8={"images": [file("peek.png", "temp")]}, n9={"images": [file("a.png"), file("b.png")]})
 
 
-def collect(block: Any = BLOCK, history: Any = HISTORY, limits: Any = LIMITS, legacy_allowed: bool = True, **kw: Any):
-    return ADAPTER.collect(history, block, OUTPUT, limits=limits, legacy_allowed=legacy_allowed, **kw)
+def collect(block: Any = BLOCK, history: Any = HISTORY, limits: Any = LIMITS, **kw: Any):
+    return ADAPTER.collect(history, block, OUTPUT, limits=limits, **kw)
 
 
-def test_a_binding_with_selectors_is_read_by_them_even_when_the_legacy_collection_is_off():
-    chosen = collect(legacy_allowed=False)
+def test_a_binding_with_selectors_is_read_by_them():
+    chosen = collect()
     assert [f["filename"] for f in chosen["result"]] == ["a.png"]
 
 
-def test_a_binding_with_no_selectors_uses_the_legacy_collection_when_it_is_on_and_is_refused_when_it_is_off():
+def test_a_binding_with_no_selectors_is_refused_when_it_runs_whatever_the_engine_answered():
     block = {"workflow": "w.json"}
     history = job(n9={"images": [file("a.png")]})
-    assert [f["filename"] for f in collect(block, history)["result"]] == ["a.png"]
     with pytest.raises(SelectionRefused) as caught:
-        collect(block, history, legacy_allowed=False)
+        collect(block, history)
+    assert caught.value.code == "selectors_missing"
+    with pytest.raises(SelectionRefused) as caught:
+        collect({}, history)
+    assert caught.value.code == "selectors_missing"
+    with pytest.raises(SelectionRefused) as caught:
+        collect({"workflow": "w.json", "selectors": None}, history)
     assert caught.value.code == "selectors_missing"
 
 
@@ -220,7 +169,7 @@ def test_a_binding_whose_selectors_do_not_fit_the_descriptor_is_refused_when_it_
 
 def test_an_adapter_with_no_selector_descriptor_refuses_selectors():
     with pytest.raises(SelectionRefused) as caught:
-        NodeGraphAdapter().collect(HISTORY, BLOCK, OUTPUT, limits=LIMITS, legacy_allowed=True)
+        NodeGraphAdapter().collect(HISTORY, BLOCK, OUTPUT, limits=LIMITS)
     assert caught.value.code == "selectors_unsupported"
 
 
@@ -228,9 +177,9 @@ def test_the_selector_count_limit_is_enforced_when_the_results_are_read():
     outputs = {f"r{i}": {} for i in range(3)}
     block = {"selectors": {name: sel(node=str(i)) for i, name in enumerate(outputs)}}
     history = job(n0={"images": [file("a")]}, n1={"images": [file("b")]}, n2={"images": [file("c")]})
-    assert len(ADAPTER.collect(history, block, outputs, limits=ResultLimits(max_selectors=3), legacy_allowed=True)) == 3
+    assert len(ADAPTER.collect(history, block, outputs, limits=ResultLimits(max_selectors=3))) == 3
     with pytest.raises(SelectionRefused) as caught:
-        ADAPTER.collect(history, block, outputs, limits=ResultLimits(max_selectors=2), legacy_allowed=True)
+        ADAPTER.collect(history, block, outputs, limits=ResultLimits(max_selectors=2))
     assert caught.value.code == "selector_count"
 
 
@@ -240,8 +189,9 @@ def test_a_history_answer_over_the_byte_limit_is_refused_before_anything_is_read
     with pytest.raises(SelectionRefused) as caught:
         collect(limits=small, history_bytes=101)
     assert caught.value.code == "history_too_large"
-    with pytest.raises(SelectionRefused):
-        collect({"workflow": "w"}, HISTORY, small, history_bytes=101)    # the legacy path is bounded too
+    with pytest.raises(SelectionRefused) as caught:
+        collect({"workflow": "w"}, HISTORY, small, history_bytes=101)    # the byte limit is checked before the binding is
+    assert caught.value.code == "history_too_large"
 
 
 def test_the_limits_for_fetching_come_from_trusted_config_with_code_defaults():

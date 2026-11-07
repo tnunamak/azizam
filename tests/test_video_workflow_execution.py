@@ -13,7 +13,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway.engine_protocol import node_graph  # noqa: E402
 from tests.support.access import access_context  # noqa: E402
 from tests.support.fake_upstream import fake_upstreams, load_scenario  # noqa: E402,F401
 
@@ -44,21 +43,6 @@ class VideoWorkflowExecutionTests(unittest.IsolatedAsyncioTestCase):
     def _inject(self, fake_upstreams, monkeypatch, isolated_receipts):
         self.fakes = fake_upstreams
         self.monkeypatch = monkeypatch
-
-    def test_video_output_prefers_downstream_result_over_input_echo(self) -> None:
-        for outputs in (
-            {
-                "1": {"images": [{"filename": "input.mp4", "type": "input"}]},
-                "6": {"images": [{"filename": "rendered.mp4", "type": "output"}]},
-            },
-            {
-                "6": {"images": [{"filename": "rendered.mp4", "type": "output"}]},
-                "1": {"images": [{"filename": "input.mp4", "type": "input"}]},
-            },
-        ):
-            with self.subTest(outputs=list(outputs)):
-                output = node_graph.first_video_output({"outputs": outputs})
-                self.assertEqual(output["filename"], "rendered.mp4")
 
     async def test_manifest_video_workflow_runs_against_fake_comfyui(self) -> None:
         fake = self.fakes.asgi(load_scenario("comfyui/video-manifest-run"))
