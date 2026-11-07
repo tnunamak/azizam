@@ -111,6 +111,43 @@ def test_a_graph_relative_to_its_package_pins_as_the_run_resolves_it(tmp_path: P
     assert built is not None and built.envelope.template is not None
 
 
+@pytest.mark.parametrize("source_kind", ["directory", "manifest"])
+def test_package_artifact_ignores_project_shadow_and_keeps_plain_resolution(
+    tmp_path: Path, source_kind: str,
+):
+    package = tmp_path / "package"
+    relative = "tests/test_job_envelope_sites.py"
+    artifact = package / relative
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("reviewed package artifact", encoding="utf-8")
+    source = package
+    if source_kind == "manifest":
+        source = package / "manifest.yml"
+        source.write_text("id: package.workflow", encoding="utf-8")
+    record = type("Record", (), {"source_path": source})()
+
+    # This same relative file really exists in the project, without writing there.
+    assert (ROOT / relative).is_file()
+    assert proxy._resolve_workflow_artifact_path(record, relative) == ROOT / relative
+    assert proxy._resolve_workflow_artifact_path(record, f"package://{relative}") == artifact
+
+
+@pytest.mark.parametrize("escape", ["parent", "symlink"])
+def test_package_artifact_refuses_paths_outside_its_root(tmp_path: Path, escape: str):
+    package = tmp_path / "package"
+    package.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("outside the reviewed package", encoding="utf-8")
+    relative = "../outside.json"
+    if escape == "symlink":
+        (package / "escape.json").symlink_to(outside)
+        relative = "escape.json"
+    record = type("Record", (), {"source_path": package})()
+
+    with pytest.raises(ValueError, match="package root"):
+        proxy._resolve_workflow_artifact_path(record, f"package://{relative}")
+
+
 def test_an_unreadable_graph_file_pins_nothing_and_does_not_raise(caplog: pytest.LogCaptureFixture):
     # A distinctive id: log_scrub replaces any registered secret value in a log line, and another test on the same
     # worker may have registered a short one such as "x".

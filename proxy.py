@@ -6287,7 +6287,7 @@ def _graph_workflow_artifact_path_for_model(model_name: str) -> Path:
 
 def _resolve_workflow_artifact_path(record: Any, artifact: str) -> Path:
     if artifact.startswith("package://"):
-        artifact = artifact.removeprefix("package://").lstrip("/")
+        return _resolve_package_artifact_path(record, artifact.removeprefix("package://").lstrip("/"))
     path = Path(artifact)
     if path.is_absolute():
         return path
@@ -6301,6 +6301,20 @@ def _resolve_workflow_artifact_path(record: Any, artifact: str) -> Path:
         base = source_path if source_path.is_dir() else source_path.parent
         return (base / path).resolve()
     return project_relative
+
+
+def _resolve_package_artifact_path(record: Any, relative: str) -> Path:
+    """A ``package://`` artifact is the file the package review hashed: it resolves only beneath the record's package root
+    (``source_path``, the package folder, or the folder of a manifest file in it), never a same-named project file, and a
+    path that leaves that root (``..``, a symlink) is refused."""
+    source_path = Path(getattr(record, "source_path", "") or "")
+    if not str(source_path) or str(source_path) == ".":
+        raise ValueError(f"package artifact {relative!r} has no package root")
+    root = (source_path if source_path.is_dir() else source_path.parent).resolve()
+    resolved = (root / relative).resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"package artifact {relative!r} is outside its package root")
+    return resolved
 
 
 def _graph_job_envelope(

@@ -1204,7 +1204,7 @@ def _hash_package_uri(
         _hash_code_file(path, root, hash_files, errors)
         return
     if path.is_dir():
-        for child in sorted(item for item in path.rglob("*") if item.is_file()):
+        for child in _package_directory_files(path, root, errors):
             _hash_code_file(child, root, hash_files, errors)
         return
     errors.append(f"{field}: package artifact not found: {uri}")
@@ -1231,7 +1231,7 @@ def _normalize_code_package_path(
         _hash_code_file(path, root, hash_files, errors)
         return raw_path
     if path.is_dir():
-        for child in sorted(item for item in path.rglob("*") if item.is_file()):
+        for child in _package_directory_files(path, root, errors):
             if "__pycache__" in child.parts or child.name.endswith(".pyc"):
                 continue
             _hash_code_file(child, root, hash_files, errors)
@@ -1241,14 +1241,26 @@ def _normalize_code_package_path(
     return ""
 
 
+def _package_directory_files(path: Path, root: Path, errors: list[str]) -> list[Path]:
+    files: list[Path] = []
+    for child in sorted(path.rglob("*")):
+        resolved = _resolve_package_path(root, child.relative_to(root).as_posix(), errors)
+        if resolved is not None and resolved.is_file():
+            files.append(child)
+    return files
+
+
 def _hash_code_file(
     path: Path,
     root: Path,
     hash_files: dict[str, bytes],
     errors: list[str],
 ) -> None:
+    resolved = _resolve_package_path(root, path.relative_to(root).as_posix(), errors)
+    if resolved is None:
+        return
     try:
-        hash_files[_display_path(path, root)] = path.read_bytes()
+        hash_files[_display_path(path, root)] = resolved.read_bytes()
     except OSError as exc:
         errors.append(f"{_display_path(path, root)}: failed to read code file: {exc}")
 
