@@ -9,10 +9,12 @@ ARTIFACT_CAP bounds e2e-failures/ only, its OMITTED.txt note included (logs/ are
 logs and stay whole). Collection writes into a new DEST it creates itself, error contexts first,
 then screenshots, then traces, and skips what would pass the cap; an existing directory over the
 cap loses its traces, then its screenshots, then its largest files. Every file left out or dropped
-is named in OMITTED.txt, cut short to fit the cap. Inside the evidence tree no symlink is followed: a
-symlinked SRC, DEST parent or kept directory is refused or removed, walks never enter one, collection
-makes every directory and file relative to the descriptor of the one above with O_NOFOLLOW, and copies
-stop at the size of the opened source. The run directory above DEST is the gate's own and is trusted.
+is named in OMITTED.txt, cut short to fit the cap. A symlink present in the evidence tree is never
+followed: a symlinked SRC, DEST parent or kept directory is refused or removed, walks never enter one,
+collection makes every directory and file under DEST relative to the descriptor of the one above with
+O_NOFOLLOW, and copies stop at the size of the opened source. The run directory and SRC are the gate's
+own and are trusted: a process that can rename DEST or a SRC directory while collection runs can write
+the run directory anyway, so such a swap is outside what this guards.
 The run named by --keep (the gate that is starting) and ROOT/scheduled are never touched.
 
 Usage: prune_receipts.py ROOT [--keep DIR] [--runs N] [--signoff-days N] [--failed-days N]

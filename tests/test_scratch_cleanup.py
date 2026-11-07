@@ -419,6 +419,49 @@ def test_a_copy_never_passes_the_allowance_it_was_given(tmp_path: Path) -> None:
     assert (tmp_path / "dest" / "a" / "trace.zip").stat().st_size == 100
 
 
+def test_a_source_that_grows_after_it_is_opened_is_copied_at_its_opened_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "trace.zip"
+    source.write_bytes(b"t" * 100)
+    (tmp_path / "dest").mkdir()
+    real_fstat = os.fstat
+    grown = []
+
+    def fstat_then_grow(fd: int) -> os.stat_result:
+        result = real_fstat(fd)
+        if not grown:
+            grown.append(True)
+            with source.open("ab") as out:
+                out.write(b"g" * 1000)
+        return result
+
+    monkeypatch.setattr(prune_receipts.os, "fstat", fstat_then_grow)
+    root = os.open(tmp_path / "dest", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        assert prune_receipts.copy_new(source, root, Path("trace.zip"), allowance=100) == 100
+    finally:
+        os.close(root)
+    assert grown
+    assert source.stat().st_size == 1100
+    assert (tmp_path / "dest" / "trace.zip").read_bytes() == b"t" * 100
+
+
+@pytest.mark.parametrize(("paths", "room"), [([], 100), (["i-case/trace.zip"], 0)])
+def test_the_note_writer_removes_a_symlinked_note_before_it_returns(
+    tmp_path: Path, paths: list[str], room: int
+) -> None:
+    outside = tmp_path / "outside"
+    outside.write_text("keep me")
+    evidence = tmp_path / "e2e-failures"
+    evidence.mkdir()
+    (evidence / "OMITTED.txt").symlink_to(outside)
+    prune_receipts.note_omitted(evidence, [evidence / path for path in paths], room)
+    assert outside.read_text() == "keep me"
+    assert not (evidence / "OMITTED.txt").exists()
+    assert not (evidence / "OMITTED.txt").is_symlink()
+
+
 def test_collect_never_writes_through_a_linked_directory_below_the_destination(tmp_path: Path) -> None:
     out = tmp_path / "browser-results"
     (out / "i-case").mkdir(parents=True)
