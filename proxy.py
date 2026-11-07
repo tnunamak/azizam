@@ -551,9 +551,25 @@ def _generation_of_registry(registry: Mapping[str, Any]) -> Any:
         # ``registry`` is the normalized effective registry, so the stored effective one is normalized to compare.
         same = stored is not None and service_registry.stable_hash(
             service_registry.normalize_service_registry(stored["value"])) == service_registry.stable_hash(registry)
-    except Exception:  # noqa: BLE001 - the generation is a label; the load goes on without it
+    except (sqlite3.Error, OSError, ValueError) as error:
+        # The generation is a label; the load goes on without it. The failure is named once, by type only: the text
+        # of an error can quote a stored value.
+        _log_generation_read_failure(error)
         return None
     return stored["operator_settings_generation"] if same else None
+
+
+_GENERATION_READ_FAILURE_LOGGED = False
+
+
+def _log_generation_read_failure(error: BaseException) -> None:
+    global _GENERATION_READ_FAILURE_LOGGED
+    if _GENERATION_READ_FAILURE_LOGGED:
+        return
+    _GENERATION_READ_FAILURE_LOGGED = True
+    logging.getLogger(__name__).warning(
+        "The registry generation could not be read (%s); the config snapshot key carries no generation.",
+        type(error).__name__)
 
 
 # What the Overview reports when the stored registry is not what is running (None when it is):
