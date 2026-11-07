@@ -194,6 +194,10 @@ class WorkflowRegistry:
     def restore(self, contents: tuple[dict[str, WorkflowRecord], list[RegistryLoadError]]) -> None:
         self._records, self._errors = contents
 
+    def discard(self, workflow_id: str) -> None:
+        """Make an id unavailable (a bundled workflow the owner turned off)."""
+        self._records.pop(workflow_id, None)
+
     def get(self, workflow_id: str) -> WorkflowRecord | None:
         return self._records.get(workflow_id)
 

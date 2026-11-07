@@ -14194,6 +14194,9 @@ def _load_gateway_workflow_registry(*, strict: bool = False) -> WorkflowRegistry
             # Stored workflows are read record by record; a registry that cannot be read at all costs only them.
             admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
             if admin_registry is not None:
+                for kept_off in service_registry.workflow_ids_kept_off(
+                        service_registry.load_service_registry_exclusions(path=ADMIN_DB_PATH)):
+                    registry.discard(kept_off)  # the owner had turned this override off before the migration
                 for record in service_registry.workflow_records_from_registry(admin_registry):
                     registry.add_manifest(
                         record.manifest, source_path=record.source_path, replace=True,

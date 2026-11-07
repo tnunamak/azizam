@@ -193,7 +193,12 @@ def _failed_entry(entry: Any, failures: list[Failure]) -> Any:
         return {layers.REPLACE_KEY: _failed_entry(entry[layers.REPLACE_KEY], failures)}
     kept = copy.deepcopy(dict(entry))
     kept["enabled"] = False
-    kept["migration"] = {"step": STEP, "errors": [
+    # ``was_enabled`` keeps the owner's own choice: a record the owner had turned off and one this step turns off look the
+    # same afterwards, and the bundled version of the id must not come back for the first.
+    earlier = entry.get("migration")  # a record this step marked before keeps the choice it recorded then
+    was_enabled = earlier.get("was_enabled") is not False if isinstance(earlier, Mapping) and earlier.get("step") == STEP \
+        else entry.get("enabled") is not False
+    kept["migration"] = {"step": STEP, "was_enabled": was_enabled, "errors": [
         {"pointer": item.pointer, "code": item.code, "message": item.message} for item in failures[:MAX_STORED_ERRORS]]}
     return kept
 

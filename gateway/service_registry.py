@@ -312,6 +312,27 @@ def _left_by_workflow_migration(raw: Any) -> list[str] | None:
     return list(dict.fromkeys(codes))[:5]
 
 
+def _bounded_scrubbed(message: str, record: Mapping[str, Any]) -> str:
+    """The message with every value the record holds redacted, then cut to 300 characters. The scrub runs on the whole
+    text, so a cut can never leave the start of a value the scrub would have redacted."""
+    scrubbed = projection.scrub_text(message, [*record_carriers.legacy_secret_texts(record), *record_carriers.typed_value_texts(record)])
+    return scrubbed[:300]
+
+
+def workflow_ids_kept_off(excluded: Iterable["ExcludedRecord"]) -> set[str]:
+    """Ids of bundled workflows the owner had turned off before the schema 2 migration left their override out.
+
+    The bundled version of such an id stays unavailable, as it was before the migration."""
+    bundled = bundled_workflow_manifests()
+    off: set[str] = set()
+    for item in excluded:
+        if item.section != "workflows" or item.id not in bundled or _left_by_workflow_migration(item.record) is None:
+            continue
+        if item.record["migration"].get("was_enabled") is False:
+            off.add(item.id)
+    return off
+
+
 def read_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], list[ExcludedRecord]]:
     """The records of a stored registry that validate, and each one that does not, with why.
 
@@ -449,23 +470,23 @@ def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str,
                 if codes is not None:
                     # The migration kept a record it could not convert, disabled, so the owner can fix it. It is not an
                     # error of the read, even a strict one: it is left out of the registry and listed as needing configuration.
+                    bundled = record_id in bundled_workflow_manifests()
+                    was_off = isinstance(raw.get("migration"), Mapping) and raw["migration"].get("was_enabled") is False
                     message = (f"{NEEDS_CONFIGURATION_CODE}: the schema 2 migration could not convert this workflow; it stays "
                                "disabled until you save a schema 2 document for it."
-                               + (" The bundled version of this workflow is served in the meantime."
-                                  if record_id in bundled_workflow_manifests() else "")
+                               + (" It was disabled before the migration, so the bundled version is not served either."
+                                  if bundled and was_off else
+                                  " The bundled version of this workflow is served in the meantime." if bundled else "")
                                + f" Reasons: {', '.join(codes) or 'none stored'}.")
                     # The scrub reads the record without its migration block: the codes are the block's own, already bounded
                     # above; a code that equals any other value of the record is still redacted.
-                    rest = {key: value for key, value in raw.items() if key != "migration"}
-                    message = projection.scrub_text(
-                        message[:300], [*record_carriers.legacy_secret_texts(rest), *record_carriers.typed_value_texts(rest)])
+                    message = _bounded_scrubbed(message, {key: value for key, value in raw.items() if key != "migration"})
                     excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message, copy.deepcopy(raw)))
                     continue
                 if strict:
                     raise
                 message = str(error) if isinstance(error, ValueError) else f"{type(error).__name__}: {error}"
-                message = projection.scrub_text(
-                    message[:300], [*record_carriers.legacy_secret_texts(raw), *record_carriers.typed_value_texts(raw)])
+                message = _bounded_scrubbed(message, raw)
                 excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message, copy.deepcopy(raw)))
                 continue
             kept[key] = record

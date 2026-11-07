@@ -1090,3 +1090,97 @@ def test_a_patch_over_a_release_record_stating_policy_keeps_the_stated_facts():
     assert _rows(plan)[TRUSTED_ID].action == migration.CONVERT_PATCH
     effective = layers.layer(plan.stored, release)["workflows"][TRUSTED_ID]
     assert effective["policy"] == RECORD_FACTS
+
+
+# -- the exclusion text: scrub the whole text, then cap it ----------------------------------------------------------------
+
+
+def test_a_code_that_straddles_the_cap_boundary_is_redacted_whole():
+    secret = "Opk_Abc123SecretValueOfTheOwner"  # an identifier-shaped code that is also a value the record holds
+    for pad in range(1, 65):  # moves the start of the secret code across character 300 of the unscrubbed text
+        registry = _marked_registry("a" * 64, "b" * 64, "c" * pad, secret)
+        registry["workflows"]["owner.bad"]["manifest"]["display_name"] = secret
+        (item,) = service_registry.read_registry(registry)[1]
+        assert "Opk_" not in item.error and len(item.error) <= 300, pad
+
+
+def test_a_scrub_that_makes_the_text_longer_is_still_capped():
+    for pad in range(1, 65):  # the unscrubbed text sits at 290..300 for some pad; "<redacted>" is longer than the value
+        registry = _marked_registry("a" * 64, "b" * 64, "c" * pad, "d" * 9)
+        registry["workflows"]["owner.bad"]["manifest"]["display_name"] = "disabled"  # a word of the fixed text
+        (item,) = service_registry.read_registry(registry)[1]
+        assert len(item.error) <= 300, pad
+
+
+# -- an override the owner had turned off stays off ------------------------------------------------------------------------
+
+
+def _bundled_override_db(tmp_path, *, enabled: bool) -> Path:
+    bad = _with_stated_capability()
+    bad["inputs"]["x"] = {"type": []}
+    record = _owner_record(PLAIN_ID, bad, overrides=PLAIN_ID, enabled=enabled)
+    db = _db_with(tmp_path, {PLAIN_ID: record})
+    service_registry.ensure_service_registry(path=db, actor="test")
+    return db
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_the_migration_keeps_whether_an_override_was_enabled(tmp_path, enabled):
+    db = _bundled_override_db(tmp_path, enabled=enabled)
+    block = json.loads(_row(db)[0])["workflows"][PLAIN_ID]["migration"]
+    assert block["was_enabled"] is enabled and block["step"] == migration.STEP
+
+
+def test_a_bundled_override_the_owner_had_disabled_stays_unavailable_after_migration_and_reload(tmp_path, monkeypatch):
+    import proxy
+
+    db = _bundled_override_db(tmp_path, enabled=False)
+    monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
+    service_registry.ensure_service_registry(path=db, actor="test")  # a second start reads the stored block again
+    assert proxy._load_gateway_workflow_registry().get(PLAIN_ID) is None
+    (item,) = [e for e in service_registry.load_service_registry_exclusions(path=db) if e.id == PLAIN_ID]
+    assert "not served either" in item.error and "is served in the meantime" not in item.error
+
+
+def test_a_bundled_override_the_migration_disabled_gets_the_bundled_version(tmp_path, monkeypatch):
+    import proxy
+    from gateway.discovery import bundled_workflow_manifests
+
+    db = _bundled_override_db(tmp_path, enabled=True)
+    monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
+    served = proxy._load_gateway_workflow_registry().get(PLAIN_ID)
+    assert served is not None and served.manifest == bundled_workflow_manifests()[PLAIN_ID]
+    (item,) = [e for e in service_registry.load_service_registry_exclusions(path=db) if e.id == PLAIN_ID]
+    assert "is served in the meantime" in item.error
+
+
+# -- a replacement that does not validate changes nothing ------------------------------------------------------------------
+
+
+def test_an_invalid_replacement_leaves_the_row_the_block_and_the_generation_unchanged(tmp_path):
+    db = _marked_db(tmp_path)
+    before = _row(db)
+    store = _store_of(db)
+    still_bad = _fixed_record(db, inline=False)
+    still_bad["manifest"]["schema_version"] = 1
+    still_bad["manifest"]["inputs"] = {"x": {"type": []}}
+    with pytest.raises(ValueError):
+        store.replace_excluded_record(section="workflows", record_id="owner.bad", record=still_bad,
+                                      actor=_owner_actor(), expected_generation=before[1])
+    assert _row(db) == before
+    assert json.loads(before[0])["workflows"]["owner.bad"]["migration"]["step"] == migration.STEP
+    assert [e.id for e in service_registry.load_service_registry_exclusions(path=db)] == ["owner.bad"]
+
+
+# -- the release fix compares as JSON does, through apply_release_fixes -----------------------------------------------------
+
+
+def test_apply_release_fixes_keeps_a_path_whose_value_changed_type(monkeypatch):
+    monkeypatch.setattr(migration, "_frozen_documents", lambda: {"x.y": {"a": {"flag": True}, "b": "s"}})
+    monkeypatch.setattr(migration, "_frozen_fixes", lambda: {"x.y": (("a",), ("b",))})
+    same = {"a": {"flag": True}, "b": "s"}
+    migration.apply_release_fixes("x.y", same)
+    assert same == {}
+    edited = {"a": {"flag": 1}, "b": "s"}  # True became 1: equal in Python, different in JSON
+    migration.apply_release_fixes("x.y", edited)
+    assert edited == {"a": {"flag": 1}, "b": "s"}
