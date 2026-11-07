@@ -705,3 +705,26 @@ def test_a_failed_removal_keeps_its_duty_for_the_next_pass(db, clock):
         resolver._ledger.sweep(fail)
     assert resolved.ref.asset_id in assets.files and rows(db, "media_input_created") == 1
     assert resolver._ledger.sweep(real) == 1 and resolved.ref.asset_id not in assets.files
+
+
+def test_the_store_port_names_a_claim_only_for_an_owner_its_sidecar_lists(tmp_path: Path):
+    import contextlib
+    import json
+
+    from gateway.media_input_assets import CacheAssetPort
+
+    files = {"img_" + "a" * 64: tmp_path / "a.png"}
+    sidecars = {key: path.with_suffix(".json") for key, path in files.items()}
+    asset = next(iter(files))
+    port = CacheAssetPort(
+        parse=lambda a: None, path_for=files.get, may_read=lambda a, auth: True, deliver=lambda p: p.read_bytes(),
+        owner_key=lambda auth: None, strip=lambda data, suffix: data, store=lambda *a, **k: asset,
+        read_metadata=lambda a: json.loads(sidecars[a].read_text()) if sidecars[a].exists() else {},
+        write_metadata=lambda a, m: sidecars[a].write_text(json.dumps(m)), metadata_path=sidecars.get,
+        lock=contextlib.nullcontext(),
+    )
+    assert not port.has_claim(asset, "alice") and not port.has_claim(asset, ""), "no file, no claim"
+    files[asset].write_bytes(PNG)
+    sidecars[asset].write_text(json.dumps({"owner_key_hashes": ["bob"]}))
+    assert port.has_claim(asset, "bob") and not port.has_claim(asset, "alice")
+    assert port.has_claim(asset, ""), "with no owner key, a stored file counts"
