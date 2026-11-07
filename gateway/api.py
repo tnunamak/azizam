@@ -25,7 +25,8 @@ Endpoints
 * ``GET /gateway/v1/resources``               — client-visible backend resource/queue status
 * ``POST /gateway/v1/media/jobs``             — create/attach or delegate executable media job submit
 * ``GET /gateway/v1/media/jobs``              — recent media jobs
-* ``GET /gateway/v1/media/jobs/{job_id}``     — single media job
+* ``GET /gateway/v1/media/jobs/{job_id}``     — single media job (with its published ``results``)
+* ``GET /gateway/v1/media/jobs/{job_id}/results/{name}`` — one published JSON result of a job, to its maker only
 * ``GET /gateway/v1/media/jobs/{job_id}/events`` — list job events
 * ``POST /gateway/v1/media/jobs/{job_id}/events`` — append a job event
 * ``POST /gateway/v1/media/jobs/{job_id}/cancel`` — cancel a non-terminal job
@@ -43,11 +44,12 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Sequence
 
 from fastapi import APIRouter, Body, Query, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from gateway import egress
 from gateway import output_availability
 from gateway import media_jobs as _media_jobs
+from gateway import result_bundle as _result_bundle
 from gateway import receipts as _receipts
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.discovery import VALID_AUDIENCES, WorkflowRegistry
@@ -61,6 +63,7 @@ CapabilitiesProvider = Callable[[Request], Iterable[Capability] | Awaitable[Iter
 ReceiptGetter = Callable[..., dict[str, Any] | None]
 ReceiptLister = Callable[..., list[dict[str, Any]]]
 ReceiptViewerResolver = Callable[[Request], str | None]
+ResultReaderResolver = Callable[[Request], "_result_bundle.Reader | None"]
 ResourceLister = Callable[..., list[dict[str, Any]] | Awaitable[list[dict[str, Any]]]]
 MediaJobCreator = Callable[..., dict[str, Any]]
 MediaJobGetter = Callable[..., dict[str, Any] | None]
@@ -119,8 +122,9 @@ def _resolve_request_audience(
 # the raw ``metadata`` bag to the admin shape, nothing else. Owner and input
 # identifiers are never in an API body, whatever the audience.
 def _job_body(row: Mapping[str, Any], resolver: output_availability.AssetPathResolver | None = None) -> dict[str, Any]:
+    # ``results`` is the named results the job published (``result_bundle.results_view``), added by the job providers.
     return output_availability.project(
-        {k: v for k, v in row.items() if k in _media_jobs.ADMIN_VISIBLE_FIELDS | {"metadata"}}, resolver)
+        {k: v for k, v in row.items() if k in _media_jobs.ADMIN_VISIBLE_FIELDS | {"metadata", "results"}}, resolver)
 
 
 def _receipt_body(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -247,11 +251,23 @@ def _build_media_job_providers(
         record = _media_jobs.create(submission, path=store_path)
         return record.to_dict(audience)
 
+    def with_results(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """The rows a caller sees carry the job's published ``results`` (the summary only, never a value), at every audience:
+        the gateway's own owner view reads at the internal one."""
+        listed = [dict(row) for row in rows]
+        views = _result_bundle.results_view((str(row.get("job_id")) for row in listed), path=store_path)
+        for row in listed:
+            if row.get("job_id") in views:
+                row["results"] = views[row["job_id"]]
+        return listed
+
     def store_getter(job_id: str, *, audience: str) -> dict[str, Any] | None:
-        return _media_jobs.get(job_id, audience=audience, path=store_path)
+        row = _media_jobs.get(job_id, audience=audience, path=store_path)
+        return None if row is None else with_results([row])[0]
 
     def store_many(ids: Iterable[str], *, audience: str) -> dict[str, dict[str, Any]]:
-        return _media_jobs.get_many(ids, audience=audience, path=store_path)
+        rows = _media_jobs.get_many(ids, audience=audience, path=store_path)
+        return {row["job_id"]: row for row in with_results(rows.values())}
 
     store_getter.many = store_many  # type: ignore[attr-defined]
 
@@ -265,7 +281,7 @@ def _build_media_job_providers(
         status: str | None = None,
         since_s: int | None = None,
     ) -> list[dict[str, Any]]:
-        return _media_jobs.recent(
+        return with_results(_media_jobs.recent(
             limit=limit,
             audience=audience,
             app_profile=app_profile,
@@ -274,7 +290,7 @@ def _build_media_job_providers(
             status=status,
             since_s=since_s,
             path=store_path,
-        )
+        ))
 
     def store_event_appender(
         job_id: str,
@@ -342,6 +358,7 @@ def create_gateway_router(
     media_job_store_path: str | Path | None = None,
     record_authorizer: RecordAuthorizer | None = None,
     record_scope_provider: Callable[[Request], dict[str, Any]] | None = None,
+    result_reader_resolver: ResultReaderResolver | None = None,
     aliases_provider: Callable[[str | None], dict[str, Any]] | None = None,
     alias_resolver: Callable[[str, str], dict[str, Any]] | None = None,
     entry_visible: Callable[[Request, Mapping[str, Any]], bool] | None = None,
@@ -764,6 +781,32 @@ def create_gateway_router(
             status_code=status.HTTP_200_OK,
             content={**row, "asset_url_ttl_s": asset_url_ttl_s},
         )
+
+    @router.get("/media/jobs/{job_id}/results/{name}")
+    def get_media_job_result(job_id: str, name: str, request: Request) -> Response:
+        """One published JSON result of a job. Every refusal is the same 404: no such job or result, a result that is not
+        published (a failed or running job's stage is never readable), an erased or expired value, another maker."""
+        refused = JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=_error_payload("media_job_result_not_found", "media job result not found"),
+        )
+        if media_job_store_path is None or result_reader_resolver is None:
+            return refused
+        audience = _resolve_request_audience(resolve_audience, request)
+        try:
+            if record_authorizer is not None:
+                internal = media_job_getter(job_id, audience="internal") if media_job_getter is not None else None
+                if internal is None or not record_authorizer(request, "media_job", internal):
+                    return refused
+            reader = result_reader_resolver(request)
+            read = None if reader is None else _result_bundle.read_json(
+                job_id, name, reader, path=Path(media_job_store_path))
+        except Exception as exc:  # noqa: BLE001
+            return _internal_error(audience, exc)
+        if read is None:
+            return refused
+        return Response(content=read.body, media_type=read.media_type,
+                        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
 
     @router.get("/media/jobs/{job_id}/events")
     def list_media_job_events(

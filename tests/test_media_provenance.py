@@ -664,7 +664,8 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         ), patch.dict(proxy._video_job_records, {prompt_id: record}, clear=False), patch.object(
             proxy, "_graph_history", AsyncMock(return_value={"outputs": {}})
         ), patch.object(proxy, "_job_status_from_history", lambda _j: ("succeeded", None)), patch.object(
-            proxy, "_first_video_output", lambda _j: {"filename": "v.mp4", "type": "output", "subfolder": ""}
+            proxy, "_select_video_file",
+            lambda _j, _m: ("video", {"filename": "v.mp4", "type": "output", "subfolder": ""}, None)
         ), patch.object(proxy.httpx, "AsyncClient", lambda *a, **k: Client()), patch.object(
             proxy, "configured_downstream_headers", lambda *_a: {}
         ), patch.object(proxy, "authenticate_request", lambda *_a: auth), patch.object(
@@ -938,7 +939,7 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
             async def get(self, url, **kw):
                 if "/history/" in url:
                     return Resp(200, {"p1": {"status": {"completed": True},
-                                              "outputs": {"6": {"videos": [{"filename": "r.mp4", "type": "output"}]}}}})
+                                              "outputs": {"6": {"images": [{"filename": "r.mp4", "type": "output"}]}}}})
                 return Resp(200, content=raw)
 
         with patch.object(proxy.httpx, "AsyncClient", Client), patch.object(proxy.asyncio, "sleep", return_value=None):

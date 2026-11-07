@@ -36,6 +36,7 @@ GET /gateway/v1/receipts/{request_id} 404                      # not exercised: 
 POST /gateway/v1/media/jobs 400                                # not exercised: {"error": {"code": "unsupported_media_job", "message": "Media job inte
 GET /gateway/v1/media/jobs/{job_id} 404                        # not exercised: was: HTTP status in DENIED
 GET /gateway/v1/media/jobs/{job_id}/events 404                 # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/media/jobs/{job_id}/results/{name} 404         # not exercised: was: HTTP status in DENIED
 POST /gateway/v1/media/jobs/{job_id}/events 400                # not exercised: {"error": {"code": "invalid_media_job_event", "message": "event payloa
 POST /gateway/v1/media/jobs/{job_id}/cancel 404                # not exercised: was: HTTP status in DENIED
 GET /me/api/make/jobs/{job_id} 404                             # not exercised: was: HTTP status in DENIED
@@ -91,6 +92,7 @@ GET /gateway/v1/receipts/{request_id} 404                      # not exercised: 
 POST /gateway/v1/media/jobs 400                                # not exercised: {"error": {"code": "unsupported_media_job", "message": "Media job inte
 GET /gateway/v1/media/jobs/{job_id} 404                        # not exercised: was: HTTP status in DENIED
 GET /gateway/v1/media/jobs/{job_id}/events 404                 # not exercised: was: HTTP status in DENIED
+GET /gateway/v1/media/jobs/{job_id}/results/{name} 404         # not exercised: was: HTTP status in DENIED
 POST /gateway/v1/media/jobs/{job_id}/events 400                # not exercised: {"error": {"code": "invalid_media_job_event", "message": "event payloa
 POST /gateway/v1/media/jobs/{job_id}/cancel 404                # not exercised: was: HTTP status in DENIED
 GET /me/api/make/jobs/{job_id} 404                             # not exercised: was: HTTP status in DENIED

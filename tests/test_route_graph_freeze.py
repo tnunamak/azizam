@@ -29,6 +29,7 @@ ADDED_PATHS: dict[str, str] = {
     "/me/api/apps/{app_id}/trusted-addresses/{entry_id}/readd": "a person adds an unkept address again on their own App in one step; tests/test_me_binding_adoption.py covers it",
     "/me/api/credentials/{credential_id}/replace": "a person replaces a key they cannot keep, on their own App; tests/test_me_binding_adoption.py covers it",
     "/me/api/apps/{app_id}/trusted-addresses/{entry_id}": "a person removes a trusted address from their own App; tests/test_me_binding_adoption.py covers it",
+    "/gateway/v1/media/jobs/{job_id}/results/{name}": "an authenticated read of one published JSON result of a job, from the job's result bundle; every refusal is one 404; tests/test_media_job_results.py covers it",
     "/v1/meshes/generate": "source-defined mesh route owned by the mesh frontend: one image in, one GLB out, fail-closed until capacity is enabled; tests/test_mesh_route.py and tests/test_mesh_manifest.py cover it",
     "/admin/api/engines/domains": "owner-only service transition gate: start a transition, read one, read the gate and its lease counts, resolve a held step; tests/test_transition_admin.py covers them",
     "/admin/api/me/retention/ledger": "owner/admin offline retention ledger; tests/test_retention_slice6.py covers scope and no network reads",
@@ -190,7 +191,9 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # paths recovers the document with digest 07410fbacc45a00c2dd669a3213d285d782897a57de979c10c08b01b7f1cb7fe exactly.
         # Re-captured 2026-11-05 for the four /admin/api/engines/domains/... transition routes (see ADDED_PATHS); removing
         # those paths and nothing else changed in the document (tests/fixtures/headless_openapi.json adds the same four).
-        assert route_graph.openapi_digest(proxy.app) == "43b3c3dd5cdca3be5586a47e5c47a48e2bcceed643c1dcd0786dd17534cf4db8"
+        # Re-captured 2026-11-06 for GET /gateway/v1/media/jobs/{job_id}/results/{name} (see ADDED_PATHS); removing that one
+        # path recovers the document with digest 43b3c3dd5cdca3be5586a47e5c47a48e2bcceed643c1dcd0786dd17534cf4db8 exactly.
+        assert route_graph.openapi_digest(proxy.app) == "ed99ec17dded4d89353e7f6aaebe74d3271f26ca923f5bedab83211514254518"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -213,4 +216,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # c31760a71916116e6e65da2f260b796df6295e9125f78a3666f8486ca3ec5168.
         # Re-captured 2026-11-05 for the four /admin/api/engines/domains/... transition routes: only those paths differ.
         # Before it the frozen digest was dce19f7d0e1c01037ee0154b9da207150e8884d5e10470275bec0cbf52fba388.
+        # Re-captured 2026-11-06 for GET /gateway/v1/media/jobs/{job_id}/results/{name}: only that path differs. Before it
+        # the frozen digest was 2ce206e55ec717e2626ac7f109a35ecf224b9be54c1dddbc677778be9208b415.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

@@ -31,10 +31,10 @@ class FakeResponse:
         yield self.content
 
 
-def succeeded_history(filename: str = "source_00001_.mp4") -> dict:
+def succeeded_history(filename: str = "source_00001_.mp4", node: str = "60") -> dict:
     return {
         "status": {"completed": True, "status_str": "success", "messages": []},
-        "outputs": {"60": {"videos": [{"filename": filename, "subfolder": "video", "type": "output"}]}},
+        "outputs": {node: {"images": [{"filename": filename, "subfolder": "video", "type": "output"}]}},
     }
 
 
