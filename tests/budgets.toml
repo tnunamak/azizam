@@ -595,7 +595,8 @@
 # Train 20: e2e flake round 2 (descriptor-relative copies, prune tests): +8 cases.
 # Train 20: text tool call in a non-streamed answer: +2 cases.
 # Train 20: engine readiness: +46 cases (21154 to 21200 on its branch).
-pytest = 21210
+# Readiness follow-ups: +30 readiness cases (4 regression, 26 path confinement) -2 retired memo cases, +1 evidence-copy case: 21210 + 29 = 21239.
+pytest = 21239
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
