@@ -340,8 +340,9 @@ def generator_values(workflow_id: str, name: str, spec: dict[str, Any]) -> Seque
     values: Sequence[int] = range(first, high + 1, p)
     if isinstance(spec.get("enum"), list):
         # The check tests membership with Python equality, so an integral member such as 7.0 (or True) admits the whole
-        # number equal to it; a fractional or non-finite member admits none.
-        members = {int(m) for m in spec["enum"] if isinstance(m, (int, float)) and math.isfinite(m) and m == int(m)}
+        # number equal to it; a fractional or non-finite member admits none. A whole number of any size is taken as it is.
+        members = {int(m) for m in spec["enum"]
+                   if isinstance(m, int) or (isinstance(m, float) and math.isfinite(m) and m.is_integer())}
         values = sorted(v for v in members if v in values)
     if not values:
         return None

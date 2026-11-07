@@ -131,7 +131,7 @@ def shipped_package_hash(package_id: str, root: Path | None = None) -> str | Non
     ``extensions/bundled``), or ``None`` when it ships none, the folder cannot be read, or the shipped one does not review
     clean. The hash is the installer's own (``extension_packages``): it covers the files the review reads (the package
     manifest and the objects, artifacts and code it references). The release's own folder does not change while the
-    gateway runs, so its answer is reviewed once per process (``shipped_package_hash_cache_clear`` forgets it); another
+    gateway runs, so its answer is cached for the process (two first calls at once may both review; they give the same hash) (``shipped_package_hash_cache_clear`` forgets it); another
     ``root`` is reviewed on each call."""
     return _release_package_hash(package_id) if root is None else _reviewed_package_hash(package_id, Path(root))
 

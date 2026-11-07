@@ -534,6 +534,9 @@ def test_the_least_and_the_greatest_generated_value_lie_on_the_inputs_grid():
     pytest.param({"enum": [1.0, 7.0], "type": "number"}, [1, 7], id="integral-float-enum-members"),
     pytest.param({"enum": [True, 3]}, [1, 3], id="a-true-member-equals-one-as-the-check-reads-it"),
     pytest.param({"enum": [float("nan"), float("inf"), 4]}, [4], id="non-finite-enum-members-admit-nothing"),
+    pytest.param({"enum": [1, 10**400]}, [1], id="a-huge-integer-member-beside-a-valid-one"),
+    pytest.param({"enum": [-(10**400), 2]}, [2], id="a-huge-negative-integer-member"),
+    pytest.param({"enum": [10**400]}, None, id="only-a-huge-integer-member"),
     pytest.param({"step": 2, "offset": 1, "minimum": 2, "maximum": 6}, [3, 5], id="integer-step-unchanged"),
 ])
 def test_the_generated_values_are_exactly_the_integers_the_input_check_accepts(constraints, expected):
