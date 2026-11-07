@@ -295,6 +295,7 @@ class ExcludedRecord:
 
 
 WORKFLOW_SCHEMA_2_STEP = "workflow-schema-2"
+_ERROR_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")  # a stored code is accepted only as a short identifier
 
 
 def _left_by_workflow_migration(raw: Any) -> list[str] | None:
@@ -306,7 +307,8 @@ def _left_by_workflow_migration(raw: Any) -> list[str] | None:
     if not isinstance(block, Mapping) or block.get("step") != WORKFLOW_SCHEMA_2_STEP:
         return None
     errors = block.get("errors")
-    codes = [str(item.get("code")) for item in errors if isinstance(item, Mapping) and item.get("code")] if isinstance(errors, list) else []
+    codes = [item["code"] for item in errors
+             if isinstance(item, Mapping) and isinstance(item.get("code"), str) and _ERROR_CODE.fullmatch(item["code"])] if isinstance(errors, list) else []
     return list(dict.fromkeys(codes))[:5]
 
 
@@ -447,8 +449,16 @@ def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str,
                 if codes is not None:
                     # The migration kept a record it could not convert, disabled, so the owner can fix it. It is not an
                     # error of the read, even a strict one: it is left out of the registry and listed as needing configuration.
-                    message = (f"{NEEDS_CONFIGURATION_CODE}: the schema 2 migration could not convert this workflow "
-                               f"({', '.join(codes) or 'no reason stored'}); it stays disabled until you save a schema 2 document for it.")
+                    message = (f"{NEEDS_CONFIGURATION_CODE}: the schema 2 migration could not convert this workflow; it stays "
+                               "disabled until you save a schema 2 document for it."
+                               + (" The bundled version of this workflow is served in the meantime."
+                                  if record_id in bundled_workflow_manifests() else "")
+                               + f" Reasons: {', '.join(codes) or 'none stored'}.")
+                    # The scrub reads the record without its migration block: the codes are the block's own, already bounded
+                    # above; a code that equals any other value of the record is still redacted.
+                    rest = {key: value for key, value in raw.items() if key != "migration"}
+                    message = projection.scrub_text(
+                        message[:300], [*record_carriers.legacy_secret_texts(rest), *record_carriers.typed_value_texts(rest)])
                     excluded.append(ExcludedRecord(section, str(raw_key), record_id or str(raw_key), message, copy.deepcopy(raw)))
                     continue
                 if strict:

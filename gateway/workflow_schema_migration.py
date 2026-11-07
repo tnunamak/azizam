@@ -40,6 +40,7 @@ from typing import Any
 from gateway import registry_layers as layers
 from gateway import service_registry
 from gateway.workflow_convert import POLICY_KEYS, convert_and_check
+from gateway.workflow_policy import facts_from_mapping
 
 STEP = service_registry.WORKFLOW_SCHEMA_2_STEP
 FROZEN_RELEASE_PATH = Path(__file__).resolve().parent / "migration_data" / "workflow_schema_1_release.json"
@@ -88,6 +89,13 @@ def _at(document: Any, path: list[str]) -> Any:
     return document
 
 
+def _json_equal(left: Any, right: Any) -> bool:
+    """JSON equality: ``True`` is not ``1`` and ``1`` is not ``1.0``, as a stored document would show."""
+    if left is _OMIT or right is _OMIT:
+        return left is right
+    return json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
+
+
 def apply_release_fixes(record_id: str, manifest: dict[str, Any]) -> None:
     """Remove from a schema 1 ``manifest`` what S3.5a's defect fixes removed from the release document of ``record_id``.
 
@@ -96,7 +104,7 @@ def apply_release_fixes(record_id: str, manifest: dict[str, Any]) -> None:
     frozen = _frozen_documents().get(record_id)
     paths = _frozen_fixes().get(record_id, ()) if frozen is not None else ()
     # The fix is one change: if the owner edited any part of it, none is made, and the record fails the checks as it was.
-    if not paths or any(_at(frozen, path) is _OMIT or _at(manifest, path) != _at(frozen, path) for path in paths):
+    if not paths or any(_at(frozen, path) is _OMIT or not _json_equal(_at(manifest, path), _at(frozen, path)) for path in paths):
         return
     for path in paths:
         del _at(manifest, path[:-1])[path[-1]]
@@ -147,6 +155,10 @@ def _convert_record(record_id: str, entry: Mapping[str, Any]) -> tuple[dict[str,
     manifest, beside = _split(entry)
     apply_release_fixes(record_id, manifest)
     facts = v1_effective_facts(manifest)
+    record_facts = facts_from_mapping(beside.get("policy"))
+    if record_facts is not None:  # facts the record states itself win over those derived from the manifest, then the defaults
+        facts = {"exposure": record_facts.exposure, "trust_tier": record_facts.trust_tier,
+                 "resource_tier": record_facts.resource_tier, "tags": list(record_facts.tags)}
     stated = {key: manifest.pop(key) for key in POLICY_KEYS if key in manifest}  # a v2 document holds none of these
     converted, notes, report = convert_and_check(manifest)
     failures = [Failure(error.pointer or "/", error.code, error.message) for error in report.errors]
