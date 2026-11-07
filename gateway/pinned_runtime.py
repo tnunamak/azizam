@@ -24,6 +24,7 @@ from typing import Any
 
 from gateway import job_envelope, media_jobs, pinned_definitions
 from gateway.definition_store import DefinitionUnavailable
+from gateway.engine_protocol.adapter import AdapterOrigin
 from gateway.engine_protocol.description import ProtocolDescription
 from gateway.engine_protocol.types import CanonicalRequest, Connection, ResultContext
 from gateway.result_bundle import ResultLimits
@@ -31,7 +32,7 @@ from gateway.result_bundle import ResultLimits
 
 def adapter_identity(protocol: ProtocolDescription) -> str:
     """The id a job pins for the code that runs it: the named adapter, or the built-in executor the description names."""
-    return protocol.adapter_id or protocol.executor
+    return protocol.adapter_identity
 
 
 def build_envelope(
@@ -56,9 +57,16 @@ class PinnedRuntime:
         self, *, job_id: str, adapter: Any, protocol: ProtocolDescription, connection: Callable[[], Connection],
         timing: tuple[float, float], jobs_path: Path | None = None, context: ResultContext | None = None,
     ) -> None:
+        # The adapter must be the one built from this very description: an adapter built from another revision of the same
+        # protocol would run that revision's request shape under this job's pin. One that cannot say what it was built
+        # from is refused too.
+        origin = getattr(adapter, "built_from", None)
+        if origin != AdapterOrigin.of(protocol):
+            raise DefinitionUnavailable(f"job {job_id}: the adapter was not built from the protocol description given")
         self.job_id = job_id
         self.adapter = adapter
         self._protocol = protocol
+        self._origin = origin
         self._connection = connection
         self._timing = timing
         self._jobs_path = jobs_path
@@ -72,6 +80,8 @@ class PinnedRuntime:
         protocol = self._protocol
         if (envelope.protocol_id, envelope.protocol_revision) != (protocol.id, protocol.revision):
             raise DefinitionUnavailable(f"job {self.job_id}: the protocol description is not the one the job pinned")
+        if (envelope.protocol_id, envelope.protocol_revision, envelope.adapter_id) != self._origin:
+            raise DefinitionUnavailable(f"job {self.job_id}: the adapter was not built from the protocol description the job pinned")
         if (envelope.adapter_id, envelope.interface_version) != (adapter_identity(protocol), self.adapter.interface_version):
             raise DefinitionUnavailable(f"job {self.job_id}: the adapter is not the one the job pinned")
         if envelope.origin_digest != job_envelope.origin_digest(conn.address):

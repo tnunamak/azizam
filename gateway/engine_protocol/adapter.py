@@ -37,7 +37,7 @@ so core can choose another way (poll instead of events) or refuse.
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Callable, Mapping, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Callable, Mapping, NamedTuple, Protocol, runtime_checkable
 
 from gateway.engine_protocol.assets import AssetStore
 from gateway.engine_protocol.description import ProtocolDescription
@@ -55,8 +55,22 @@ ADAPTER_INTERFACE_VERSION_V2 = 2
 SUPPORTED_INTERFACE_VERSIONS = (ADAPTER_INTERFACE_VERSION, ADAPTER_INTERFACE_VERSION_V2)
 
 __all__ = [
-    "ADAPTER_INTERFACE_VERSION", "ADAPTER_INTERFACE_VERSION_V2", "SUPPORTED_INTERFACE_VERSIONS", "AdapterRegistry", "EngineAdapter", "Health", "Inventory", "connection_from_record",
+    "ADAPTER_INTERFACE_VERSION", "ADAPTER_INTERFACE_VERSION_V2", "SUPPORTED_INTERFACE_VERSIONS", "AdapterOrigin", "AdapterRegistry", "EngineAdapter", "Health", "Inventory", "connection_from_record",
 ]
+
+
+class AdapterOrigin(NamedTuple):
+    """What an adapter was built from: the protocol description's id and revision, and the adapter's identity. An adapter
+    that runs a pinned job exposes this as ``built_from``, so a runtime can check it against the pin instead of trusting a
+    separately supplied description."""
+
+    protocol_id: str
+    protocol_revision: str
+    adapter_id: str
+
+    @classmethod
+    def of(cls, description: ProtocolDescription) -> "AdapterOrigin":
+        return cls(description.id, description.revision, description.adapter_identity)
 
 
 @runtime_checkable

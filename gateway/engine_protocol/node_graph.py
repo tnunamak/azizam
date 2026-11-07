@@ -42,7 +42,7 @@ import httpx
 
 from gateway import log_scrub
 
-from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION_V2
+from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION_V2, AdapterOrigin
 from gateway.engine_protocol.assets import AssetStore, served_media_type
 from gateway.engine_protocol.description import ProtocolDescription
 from gateway.engine_protocol.errors import (
@@ -499,6 +499,8 @@ class NodeGraphAdapter:
                  workflow_root: Path | None = None, client_id: str | None = None,
                  derive_ui: Callable[[Mapping[str, Any]], dict | None] | None = None) -> None:
         self.label = (description.label if description is not None else "") or _DEFAULT_LABEL
+        # What this adapter was built from (None: it was built without a description, so it cannot run a pinned job).
+        self.built_from = AdapterOrigin.of(description) if description is not None else None
         # The key under a workflow manifest's ``bindings`` that holds this engine's graph ("" when the description names none).
         self.binding = description.binding if description is not None else ""
         # The selector form this engine's bindings take, declared in its protocol description (None: it takes none).
@@ -905,7 +907,7 @@ class NodeGraphAdapter:
                         reason = output_selectors.wrong_type_reason(outputs.get(name), "json", ())
                         saved: list[AssetRef] = []
                     else:
-                        saved = [await self._save_output(use, store, file) for file in files]
+                        saved = [await self._save_output(use, store, file, max_bytes=limits.max_asset_bytes) for file in files]
                         results[name] = AssetsResult(tuple(saved))
                         reason = output_selectors.wrong_type_reason(outputs.get(name), "assets", [ref_.content_type for ref_ in saved])
                     if reason is not None:
@@ -922,18 +924,35 @@ class NodeGraphAdapter:
         selectors = output_selectors.check_binding(self.result_selectors, outputs, block)
         return {name: self.result_selectors.kind_of(selectors[name]) for name in picked}
 
-    async def _save_output(self, session: GraphSession, store: Any, file: Mapping[str, Any]) -> AssetRef:
-        reply = await session.view(view_params(file))
-        if reply.status != 200 or not reply.raw:
-            raise UpstreamError(reply.status, "An output file could not be read.")
-        content_type = served_media_type(reply.headers.get("content-type"), reply.raw[:16])
-        if content_type is None:
-            raise MalformedResponse("An output file is not a media type that is served.")
+    async def _save_output(self, session: GraphSession, store: Any, file: Mapping[str, Any], *, max_bytes: int) -> AssetRef:
+        """One selected file, read as a stream and saved through ``store``. Only the first bytes are held to name the
+        media type; the rest goes to the store chunk by chunk, so the store's limits stop the read at the first byte over
+        them and the whole body is never buffered here."""
+        async with session.view_stream(view_params(file)) as response:
+            if response.status_code != 200:
+                raise UpstreamError(response.status_code, "An output file could not be read.")
+            body = response.aiter_bytes()
+            head: list[bytes] = []
+            held = 0
+            async for chunk in body:
+                if chunk:
+                    head.append(chunk)
+                    held += len(chunk)
+                if held >= 16:
+                    break
+            if not held:
+                raise UpstreamError(response.status_code, "An output file could not be read.")
+            content_type = served_media_type(response.headers.get("content-type"), b"".join(head)[:16])
+            if content_type is None:
+                raise MalformedResponse("An output file is not a media type that is served.")
 
-        async def chunks(data: bytes = reply.raw) -> AsyncIterator[bytes]:
-            yield data
+            async def chunks() -> AsyncIterator[bytes]:
+                for chunk in head:
+                    yield chunk
+                async for chunk in body:
+                    yield chunk
 
-        return await store.save(chunks(), content_type=content_type, max_bytes=len(reply.raw), name=str(file.get("filename")))
+            return await store.save(chunks(), content_type=content_type, max_bytes=max_bytes, name=str(file.get("filename")))
 
 
 def job_event_from(ref: JobRef, event: Mapping[str, Any]) -> JobEvent | None:

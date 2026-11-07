@@ -184,11 +184,38 @@ class ProtocolDescription:
     def adapter_id(self) -> str | None:
         return self.executor.split(":", 1)[1] if self.executor.startswith("adapter:") else None
 
+    @property
+    def adapter_identity(self) -> str:
+        """The id a job pins for the code that runs it: the named adapter, or the built-in executor the description names."""
+        return self.adapter_id or self.executor
+
     def advice_for(self, status: int) -> Advice | None:
         for row in self.errors:
             if status in row.statuses:
                 return row
         return None
+
+
+# The selector form the http-v1 adapter reads: each selector names a ``source`` (a key the response framing selects) and a
+# ``decode`` that says how that value becomes a result.
+_HTTP_DECODE_KINDS = {"json": "json", "base64": "assets", "binary": "assets"}
+
+
+def http_selector_problem(descriptor: SelectorDescriptor) -> str | None:
+    """Why an http-v1 description's selector descriptor is not the form the adapter reads, or ``None``. Checked when the
+    description loads, so a descriptor the adapter cannot read never reaches a request."""
+    source, decode = descriptor.fields.get("source"), descriptor.fields.get("decode")
+    if source is None or source.type != "text" or not source.required:
+        return "an http-v1 description's selectors need a required text field 'source'"
+    if decode is None or decode.type != "enum" or descriptor.kind_field != "decode":
+        return "an http-v1 description's selectors need an enum field 'decode' that is the kind_field"
+    unknown = [value for value in decode.values if value not in _HTTP_DECODE_KINDS]
+    if unknown:
+        return f"decode takes only {list(_HTTP_DECODE_KINDS)}, not {unknown}"
+    wrong = [value for value in decode.values if decode.kinds.get(value) != _HTTP_DECODE_KINDS[value]]
+    if wrong:
+        return f"decode must map {', '.join(f'{v} to {_HTTP_DECODE_KINDS[v]}' for v in wrong)}"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +363,10 @@ class _Compiler:
                     selectors = parse_descriptor(doc["result_selectors"])
                 except DescriptorError as exc:
                     self.bad("result_selectors", str(exc))
+                else:
+                    problem = http_selector_problem(selectors) if executor == "http-v1" else None
+                    if problem:
+                        self.bad("result_selectors", problem)
         if self.problems:
             raise DescriptionError(self.source, self.problems)
         return ProtocolDescription(

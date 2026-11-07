@@ -532,7 +532,8 @@
 # feat/code-to-data-s2-4 (2026-11-06): output selectors, adapter descriptor, bundled-selector proof and audio route selection (+261); measured 20160.
 # S2.4 review fix: a non-boolean legacy flag is named in a warning once (+1); measured 20161.
 # feat/code-to-data-s2-5a (2026-11-06): interface version 2 start outcome, http-v1 selectors, pinned runtime, data-only and pin tests (+44); measured 20205.
-pytest = 20205
+# S2.5a review fixes (2026-11-06): streamed result file limit, adapter bound to its pinned description, http-v1 selector preflight (+10); measured 20215.
+pytest = 20215
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

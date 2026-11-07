@@ -6,11 +6,12 @@ import base64
 import binascii
 import dataclasses
 import json
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Mapping
 
 from gateway import output_selectors
-from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION_V2
-from gateway.engine_protocol.errors import ProtocolError, SelectionRefused, UnsupportedByAdapter, UpstreamError
+from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION_V2, AdapterOrigin
+from gateway.engine_protocol.description import http_selector_problem
+from gateway.engine_protocol.errors import DescriptionError, ProtocolError, SelectionRefused, UnsupportedByAdapter, UpstreamError
 from gateway.engine_protocol.executor import HttpV1Executor
 from gateway.engine_protocol.types import (
     AssetRef, AssetsResult, CanonicalRequest, Completed, Connection, Health, Inventory, JobEvent, JobRef, JobStatus, JsonResult,
@@ -27,6 +28,10 @@ class HttpV1Adapter:
 
     def __init__(self, executor: HttpV1Executor) -> None:
         self._executor = executor
+        problem = http_selector_problem(executor.description.result_selectors) if executor.description.result_selectors is not None else None
+        if problem:   # a description made by hand and not loaded is held to the same form as a loaded one
+            raise DescriptionError(executor.description.source, [f"result_selectors: {problem}"])
+        self.built_from = AdapterOrigin.of(executor.description)
         # The key under a manifest's bindings that holds this description's selectors, and the form they take; both are
         # data the description declares (empty and None when it declares none).
         self.binding = executor.description.binding
@@ -101,30 +106,38 @@ class HttpV1Adapter:
         described = self._executor.description.operations.get(op)
         if described is not None and described.job is not None:
             return Pending(await self.submit(conn, op, request))
+        self._read_binding(request)   # an unreadable binding is refused before any request is sent
         reply = await self._executor.invoke(conn, dataclasses.replace(request, op=op))
         if isinstance(reply, StreamReply):
             await reply.aclose()
             raise UnsupportedByAdapter("A streamed answer has no result selectors; the operation must answer once.")
         return Completed(await self._bundle(reply, request))
 
-    async def _bundle(self, reply: Reply, request: CanonicalRequest) -> ResultBundle:
-        """The named results the binding's selectors read from one answer. A selection that is missing or null, a value
-        that does not fit what its output declares, or an answer the selectors cannot read is refused; nothing is guessed
-        and a refused answer delivers nothing."""
+    def _read_binding(self, request: CanonicalRequest) -> tuple[Mapping[str, Any], dict[str, dict[str, str]]]:
+        """The declared outputs and the normalized selectors of the request's binding. The binding must carry selectors
+        (not absent, not null) that cover every declared output and use at most one binary body. Nothing is sent before
+        this passes. Raises ``SelectionRefused``."""
         if self.result_selectors is None:
             raise SelectionRefused("selectors_unsupported", "this engine's description takes no output selectors")
         manifest = request.params.get("manifest")
         block = ((manifest or {}).get("bindings") or {}).get(self.binding) if isinstance(manifest, dict) else None
-        if not isinstance(block, dict) or "selectors" not in block:
+        if not isinstance(block, dict) or block.get("selectors") is None:
             raise SelectionRefused("selectors_missing", "this operation declares no output selectors, and a synchronous answer has no legacy reading")
         outputs = manifest.get("outputs") or {}
         try:
             selectors = output_selectors.check_binding(self.result_selectors, outputs, block)
         except output_selectors.SelectorError as exc:
             raise SelectionRefused(exc.code, str(exc)) from exc
-        descriptor = self.result_selectors
         if sum(1 for sel in selectors.values() if sel["decode"] == "binary") > 1:
             raise SelectionRefused("result_ambiguous", "an answer has one binary body; at most one result can read it")
+        return outputs, selectors
+
+    async def _bundle(self, reply: Reply, request: CanonicalRequest) -> ResultBundle:
+        """The named results the binding's selectors read from one answer. A selection that is missing or null, a value
+        that does not fit what its output declares, or an answer the selectors cannot read is refused; nothing is guessed
+        and a refused answer delivers nothing."""
+        outputs, selectors = self._read_binding(request)
+        descriptor = self.result_selectors
         results: dict[str, JsonResult | AssetsResult] = {}
         for name, selector in selectors.items():
             kind = descriptor.kind_of(selector)

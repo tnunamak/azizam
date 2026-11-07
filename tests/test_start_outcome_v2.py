@@ -225,7 +225,7 @@ def graph_manifest(names: Names, shape: str, relative: str) -> dict[str, Any]:
     return manifest
 
 
-def graph_rig(fake_upstreams, jobs_db, tmp_path, *, shape: str, host: str = "graph.test:7890") -> Rig:
+def graph_rig(fake_upstreams, jobs_db, tmp_path, *, shape: str, host: str = "graph.test:7890", file_view: Any = None) -> Rig:
     names = Names()
     relative = f"{rnd('w')}.json"
     template = graph_template(names, shape)
@@ -252,6 +252,8 @@ def graph_rig(fake_upstreams, jobs_db, tmp_path, *, shape: str, host: str = "gra
             return httpx.Response(200, json={"job-1": entry})
         if request.method == "GET" and path == "/view":
             facts["fetches"] += 1
+            if file_view is not None and request.url.params.get("filename") == "t.wav":
+                return file_view(request)
             if request.url.params.get("filename") == "r.json":
                 return httpx.Response(200, content=json.dumps(META).encode(), headers={"content-type": "application/json"})
             return httpx.Response(200, content=WAV, headers={"content-type": "audio/wav"})
@@ -519,20 +521,20 @@ class OtherVersion:
 def test_a_pin_that_no_longer_holds_is_definition_unavailable_and_sends_nothing(change, engine, fake_upstreams, jobs_db, tmp_path):
     rig = build(engine, "mixed", fake_upstreams, jobs_db, tmp_path)
     job_id = rig.accept()
-    runtime = rig.runtime(job_id)
+    build_runtime = lambda: rig.runtime(job_id)   # noqa: E731 - built inside the raises block: a constructor may refuse too
     if change == "protocol":
-        runtime = rig.runtime(job_id, protocol=dataclasses.replace(rig.protocol, revision="sha256:" + "0" * 64))
+        build_runtime = lambda: rig.runtime(job_id, protocol=dataclasses.replace(rig.protocol, revision="sha256:" + "0" * 64))  # noqa: E731
     elif change == "address":
         rig.live_address = "http://moved.test:1234"
     elif change == "adapter":
-        runtime = rig.runtime(job_id, adapter=OtherVersion(rig.adapter))
+        build_runtime = lambda: rig.runtime(job_id, adapter=OtherVersion(rig.adapter))  # noqa: E731
     else:
         with media_jobs.connection(rig.db) as conn:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute("DELETE FROM definition_blob")
             conn.commit()
     with pytest.raises(DefinitionUnavailable):
-        rig.run(job_id, runtime)
+        rig.run(job_id, build_runtime())
     assert rig.facts["requests"] == 0
     assert result_bundle.bundle_summary(job_id, path=rig.db) is None
 
@@ -592,6 +594,129 @@ def test_a_result_read_waits_for_the_fetch_gate_and_times_out(fake_upstreams, jo
     with pytest.raises(SelectionRefused) as refused:
         asyncio.run(scenario())
     assert refused.value.code == "fetch_timeout"
+    assert result_bundle.bundle_summary(job_id, path=rig.db) is None
+
+
+# --- the adapter must be the one built from the pinned description ---------------------------------------------------
+
+
+def second_http_adapter(rig: Rig, requests: list[str]) -> tuple[Any, Any]:
+    """A same-interface-version adapter built from a changed description of the same protocol (another request path)."""
+    names = rig.names
+    text = http_description_text(names, shape=rig.shape).replace(f"/v1/{names.route}", f"/v1/{rnd('moved')}")
+    changed = description.parse_description_text(text, source="changed.yml")
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return httpx.Response(200, json={"meta": META})
+
+    transport = HttpxTransport.for_tests(HandlerTransport(answer))
+    return changed, AdapterRegistry({changed.id: changed}, transport=transport, assets=MemoryAssetStore()).adapter_for(changed.id)
+
+
+@pytest.mark.parametrize("given", ["old-protocol", "changed-protocol"])
+def test_an_adapter_built_from_a_changed_description_is_refused_and_sends_nothing(given, fake_upstreams, jobs_db):
+    rig = http_rig(fake_upstreams, jobs_db, shape="json")
+    job_id = rig.accept()
+    requests: list[str] = []
+    changed, other_adapter = second_http_adapter(rig, requests)
+    assert (changed.id, other_adapter.interface_version) == (rig.protocol.id, rig.adapter.interface_version)
+    assert changed.revision != rig.protocol.revision
+    with pytest.raises(DefinitionUnavailable):
+        # Either way one input disagrees: the adapter was built from another description than the one handed over, or than
+        # the one the job pinned.
+        rig.run(job_id, rig.runtime(job_id, protocol=rig.protocol if given == "old-protocol" else changed, adapter=other_adapter))
+    assert requests == [] and rig.facts["requests"] == 0
+    assert result_bundle.bundle_summary(job_id, path=rig.db) is None
+
+
+def test_an_adapter_that_cannot_say_what_it_was_built_from_is_refused(fake_upstreams, jobs_db):
+    rig = http_rig(fake_upstreams, jobs_db, shape="json")
+    job_id = rig.accept()
+
+    class Unlabelled:
+        interface_version = rig.adapter.interface_version
+
+    with pytest.raises(DefinitionUnavailable):
+        rig.runtime(job_id, adapter=Unlabelled())
+    assert rig.facts["requests"] == 0
+
+
+# --- the http-v1 form is checked before anything is sent ---------------------------------------------------------------
+
+
+def test_a_descriptor_the_http_adapter_cannot_read_does_not_load(fake_upstreams, jobs_db):
+    names = Names()
+    text = http_description_text(names, shape="json")
+    source_only = text.replace("""    decode: {type: enum, default: json, values: [json, base64, binary], kinds: {json: json, base64: assets, binary: assets}}
+""", "").replace("  kind_field: decode\n", "")
+    wrong_kind = text.replace("kinds: {json: json, base64: assets, binary: assets}", "kinds: {json: assets, base64: assets, binary: assets}")
+    other_values = text.replace("values: [json, base64, binary]", "values: [json, base64, binary, hex]").replace(
+        "binary: assets}", "binary: assets, hex: assets}")
+    for broken in (source_only, wrong_kind, other_values):
+        assert broken != text
+        with pytest.raises(DescriptionError):
+            description.parse_description_text(broken, source="bad.yml")
+    # A description made by hand, not loaded, is held to the same form when an adapter is built from it.
+    good = description.parse_description_text(text, source="good.yml")
+    handmade = dataclasses.replace(good, result_selectors=output_selectors.parse_descriptor(
+        {"version": 1, "identity": ["source"], "fields": {"source": {"type": "text", "required": True}}}))
+    with pytest.raises(DescriptionError):
+        AdapterRegistry({handmade.id: handmade}, transport=None, assets=MemoryAssetStore()).adapter_for(handmade.id)
+
+
+@pytest.mark.parametrize("selectors", [None, {}, "x", "short"], ids=["null", "empty", "not-a-mapping", "missing-an-output"])
+def test_a_binding_whose_selectors_do_not_cover_the_outputs_is_refused_before_any_request(selectors, fake_upstreams, jobs_db):
+    rig = http_rig(fake_upstreams, jobs_db, shape="mixed")
+    block = rig.manifest["bindings"][rig.names.binding]
+    if selectors == "short":
+        del block["selectors"][rig.names.file_result]
+    else:
+        block["selectors"] = selectors
+    job_id = rig.accept()
+    with pytest.raises((SelectionRefused, DefinitionUnavailable)):   # the pin's own manifest check or the adapter's
+        rig.run(job_id)
+    assert rig.facts["requests"] == 0 and rig.facts["posts"] == []
+    assert result_bundle.bundle_summary(job_id, path=rig.db) is None
+
+
+def test_a_binding_with_null_selectors_names_the_missing_selectors(fake_upstreams, jobs_db):
+    rig = http_rig(fake_upstreams, jobs_db, shape="json")
+    rig.manifest["bindings"][rig.names.binding]["selectors"] = None
+    job_id = rig.accept()
+    with pytest.raises(SelectionRefused) as refused:
+        rig.run(job_id)
+    assert refused.value.code == "selectors_missing" and rig.facts["requests"] == 0
+
+
+# --- a result file is read as a stream the limits stop ----------------------------------------------------------------
+
+
+class CountingBody(httpx.AsyncByteStream):
+    """An engine's file that is far bigger than the limit; it counts the chunks it was asked for."""
+
+    def __init__(self, head: bytes, chunk: int, total_chunks: int) -> None:
+        self.head, self.chunk, self.total_chunks, self.yielded = head, chunk, total_chunks, 0
+
+    async def __aiter__(self):
+        yield self.head
+        self.yielded += 1
+        for _ in range(self.total_chunks):
+            self.yielded += 1
+            yield bytes(self.chunk)
+
+
+def test_an_oversized_result_file_is_refused_while_it_is_read(fake_upstreams, jobs_db, tmp_path):
+    body = CountingBody(WAV, chunk=512, total_chunks=2000)
+    rig = graph_rig(fake_upstreams, jobs_db, tmp_path, shape="mixed",
+                    file_view=lambda request: httpx.Response(200, headers={"content-type": "audio/wav"}, stream=body))
+    rig.context = ResultContext(dataclasses.replace(result_bundle.ResultLimits(), max_asset_bytes=len(WAV) + 1024))
+    job_id = rig.accept()
+    with pytest.raises(result_bundle.ResultRefused) as refused:
+        rig.run(job_id)
+    assert refused.value.code == "asset_too_large"
+    assert body.yielded <= 4, f"{body.yielded} of {body.total_chunks + 1} chunks were read before the refusal"
+    assert rig.store.count() == 0
     assert result_bundle.bundle_summary(job_id, path=rig.db) is None
 
 
