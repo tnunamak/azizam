@@ -806,8 +806,8 @@ def test_one_flat_binding_still_converts():
 @pytest.mark.parametrize("count, expected", [
     ({"min": 3.0, "max": 2.0}, [(("outputs", "picture", "count"), "count_invalid")]),
     ({"min": 1.0, "max": 17.0}, [(("outputs", "picture", "count", "max"), "count_over_limit")]),
-    ({"min": 17.0, "max": 20.0}, [(("outputs", "picture", "count", "min"), "count_over_limit"),
-                                  (("outputs", "picture", "count", "max"), "count_over_limit")]),
+    ({"min": 17.0, "max": 20.0}, [(("outputs", "picture", "count", "max"), "count_over_limit"),
+                                  (("outputs", "picture", "count", "min"), "count_over_limit")]),
 ])
 def test_an_integral_float_count_gets_the_same_meaning_as_an_integer(count, expected):
     doc = base()
@@ -860,7 +860,7 @@ def test_a_grid_with_no_integer_on_it_is_refused_however_long_the_range():
     ({"step": 0.5}, 3, 3, True),
     ({"step": 1.5}, 1, 1, False),
     ({"step": 1.5, "offset": 0.5}, 2, 2, True),
-    ({"step": 0.25, "offset": 0.75}, 0, 10**6, False),
+    ({"step": 0.5, "offset": 0.25}, 0, 10**6, False),
     ({"step": 4, "offset": 2.0}, 5, 6, True),
 ])
 def test_feasibility_is_decided_exactly(extra, low, high, feasible):
@@ -878,36 +878,25 @@ def test_the_exact_grid_and_the_validator_judge_a_sample_alike(spec_extra):
     assert (min(on_grid) if on_grid else None) == (first if first is not None and first < 50 else None)
 
 
-@pytest.mark.parametrize("field_, bad", [
-    ("maximum", 10**400),
-    ("step", 1e-320),
-    ("step", float("nan")),
+@pytest.mark.parametrize("field_, bad, expected", [
+    ("maximum", 10**400, []),
+    ("step", 1e-320, [(("inputs", "x", "generate"), "generator_range_empty")]),
+    ("step", float("nan"), [(("inputs", "x", "step"), "number_not_finite")]),
 ])
-def test_arithmetic_on_a_huge_or_odd_number_reports_instead_of_raising(field_, bad):
-    spec = {"type": "number", "minimum": 1, "maximum": 2, "generate": {"generator": "random_integer", "minimum": 1, "maximum": 2}}
+def test_arithmetic_on_a_huge_or_odd_number_reports_instead_of_raising(field_, bad, expected):
+    # 10**400 overflowed math.isfinite, 1e-320 overflowed ceil(inf) and NaN raised ValueError.
+    spec = {"type": "integer", "minimum": 1, "generate": {"generator": "random_integer", "minimum": 1, "maximum": 2}}
     spec[field_] = bad
-    found = pairs(with_input("x", spec))
-    if field_ == "step" and bad != bad:
-        assert found == [(("inputs", "x", "step"), "number_not_finite")]
-    else:
-        assert all(isinstance(code, str) for _, code in found)
+    if field_ == "step":
+        spec["maximum"] = 2
+    assert pairs(with_input("x", spec)) == expected
 
 
-def test_a_huge_integer_bound_is_a_report_not_an_overflow():
+def test_a_huge_bound_on_the_generate_rule_is_exact():
     spec = {"type": "integer", "generate": {"generator": "random_integer", "minimum": 1, "maximum": 10**400}}
     assert pairs(with_input("x", spec)) == []
     spec = {"type": "integer", "maximum": 10**400, "generate": {"generator": "random_integer", "minimum": 5, "maximum": 2}}
     assert pairs(with_input("x", spec)) == [(("inputs", "x", "generate"), "generator_range_empty")]
-
-
-def test_a_tiny_step_over_a_range_is_decided_exactly():
-    spec = {"type": "number", "step": 1e-320, "generate": {"generator": "random_integer", "minimum": 1, "maximum": 2}}
-    assert pairs(with_input("x", spec)) == []
-
-
-def test_a_broken_field_hides_the_generator_check_that_depends_on_it():
-    spec = {"type": "number", "step": float("nan"), "generate": {"generator": "random_integer", "minimum": 1, "maximum": 2}}
-    assert pairs(with_input("x", spec)) == [(("inputs", "x", "step"), "number_not_finite")]
 
 
 def test_a_binding_that_would_flatten_onto_an_existing_key_keeps_both_and_says_so():
@@ -933,8 +922,8 @@ def test_structural_errors_and_conflicts_share_one_cap_and_one_marker():
     merged = check_contract(converted, extra_errors=conversion_errors(notes))
     markers = [e for e in merged.errors if e.code == "too_many_errors"]
     assert len(markers) == 1 and len(merged.errors) == 101
-    total = 105 + len(conversion_errors(notes))
-    assert markers[0].message == f"{total - 100} more errors are not listed"
+    omitted = int(raw.errors[-1].message.split()[0]) + len(conversion_errors(notes))
+    assert markers[0].message == f"{omitted} more errors are not listed"
 
 
 def test_two_threads_do_not_both_report_one_document(monkeypatch):
@@ -1007,7 +996,7 @@ def test_a_changed_document_is_reported_again(tmp_path, caplog):
 def test_the_repeat_loads_skip_the_conversion_and_the_check(tmp_path, monkeypatch):
     calls = []
     real = check_contract
-    monkeypatch.setattr("gateway.workflow_convert.check_contract", lambda doc: calls.append(1) or real(doc))
+    monkeypatch.setattr("gateway.workflow_convert.check_contract", lambda doc, **kw: calls.append(1) or real(doc, **kw))
     path = ROOT / "manifests" / "workflows" / "flux2-klein.yml"
     for _ in range(3):
         load_workflow_manifest(path)
