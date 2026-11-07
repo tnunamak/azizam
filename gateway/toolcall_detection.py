@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import unicodedata
 from typing import Any, AsyncIterator
 
 logger = logging.getLogger("gateway.toolcall")
@@ -103,7 +104,7 @@ def advisory_for_backend(
     fam = family or "unknown"
     base = (
         f"Detected {fam}-format tool calls in the response content, but tool_calls "
-        f"is empty — this backend"
+        f"is empty; this backend"
         + (f" ({backend_hint})" if backend_hint else "")
         + " is not lifting tool calls into the OpenAI tool_calls field. Enable "
         "tool-call parsing in the backend's own configuration (most OpenAI-"
@@ -113,6 +114,19 @@ def advisory_for_backend(
     if operator_advisory:
         return f"{base} {operator_advisory.strip()}"
     return base
+
+
+_HEADER_PUNCTUATION = str.maketrans({"\u2014": "-", "\u2013": "-", "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"'})
+
+
+def advisory_header_value(advisory: str) -> str:
+    """``advisory`` as a response header value: one line of ASCII.
+
+    A header value must encode as latin-1, or the response cannot be sent at all. The operator's own advisory may hold any
+    text, so dashes and quotes become their ASCII forms, accents are dropped from their letters, and any other character
+    outside ASCII is left out."""
+    text = " ".join(advisory.translate(_HEADER_PUNCTUATION).split())
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
 
 
 # ---------------------------------------------------------------------------

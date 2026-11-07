@@ -292,6 +292,54 @@ class _FakeLiteLLMModelsResponse:
 # ---------------------------------------------------------------------------
 
 
+class _FakeTextToolCallResponse(_FakeLiteLLMResponse):
+    """A model that wrote its tool call as text: the backend left tool_calls empty."""
+
+    async def aread(self):
+        return json.dumps({
+            "id": "chatcmpl_text_call", "object": "chat.completion", "model": "assistant-default",
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {
+                "role": "assistant",
+                "content": "<tool_call>\n<function=execute>\n<parameter=tool>\nlookup\n</parameter>\n</function>\n</tool_call>"}}],
+        }).encode()
+
+
+class TestUnliftedToolCallAdvisory(unittest.IsolatedAsyncioTestCase):
+    async def test_a_text_tool_call_answer_is_returned_with_a_header_safe_advisory(self) -> None:
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        request = Request({"type": "http", "method": "POST", "scheme": "http", "path": "/v1/chat/completions",
+                           "raw_path": b"/v1/chat/completions", "query_string": b"", "headers": [],
+                           "server": ("testserver", 80), "client": ("testclient", 1234)}, receive)
+
+        async def dispatch(_request):
+            return _FakeStreamClient(), _FakeTextToolCallResponse()
+
+        async def read(_client, response):
+            return await response.aread()
+
+        _ReceiptSpan.dispatch_result = dispatch
+        _ReceiptSpan.read_result = read
+        runtime = SimpleNamespace(enabled=True, base_url="http://litellm.invalid", api_key="test", service_id="litellm")
+        tools = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object", "properties": {}}}}]
+        with patch.object(proxy, "_OuterCancellationSpan", _ReceiptSpan), patch.object(
+            proxy.receipt_store, "begin"
+        ), patch.object(proxy.receipt_store, "finalize"):
+            response = await proxy._forward_litellm_proxy_request(
+                request,
+                request_path="/v1/chat/completions",
+                auth_context=access_context(),
+                body_json={"model": "test", "messages": [{"role": "user", "content": "hi"}], "tools": tools},
+                runtime_config=runtime,
+            )
+        self.assertEqual(response.status_code, 200)
+        advisory = response.headers["x-azizam-toolcall-advisory"]
+        advisory.encode("ascii")
+        self.assertIn("tool_calls", advisory)
+        self.assertIn("<function=execute>", json.loads(response.body)["choices"][0]["message"]["content"])
+
+
 class TestLiteLLMReceiptLifecycle(unittest.IsolatedAsyncioTestCase):
     def _request(self) -> Request:
         async def receive():
