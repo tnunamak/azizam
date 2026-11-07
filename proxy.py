@@ -503,6 +503,12 @@ class _DerivedValues:
         except KeyError:
             raise AttributeError(f"the snapshot derived no value named {name!r}") from None
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        # An instance attribute would shadow ``__getattr__`` for good: every later read would see it, not the snapshot.
+        # (``monkeypatch.setattr`` "restores" such an attribute with the old value, so it never goes away.) A test
+        # that needs another value patches the snapshot: ``monkeypatch.setitem(proxy.runtime().derived, name, value)``.
+        raise AttributeError(f"DERIVED is read-only; the snapshot owns {name!r}")
+
 
 DERIVED = _DerivedValues()
 

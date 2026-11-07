@@ -168,7 +168,7 @@ def _package_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, artifact: st
     registry = type("Registry", (), {"get": staticmethod(lambda wid: record if wid == "pkg.shadowed" else None),
                                      "records": staticmethod(lambda: [record])})()
     monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry)
-    monkeypatch.setattr(proxy.DERIVED, "COMFY_WORKFLOWS_DIR", builtin)
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_WORKFLOWS_DIR", builtin)
     monkeypatch.setattr(proxy, "validate_workflow_graph", lambda workflow: [])
     return manifest
 
@@ -267,7 +267,7 @@ def _registry_of(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rows: list[tup
     registry = type("Registry", (), {"get": staticmethod(by_id.get), "records": staticmethod(lambda: records)})()
     monkeypatch.setattr(proxy, "GATEWAY_WORKFLOW_REGISTRY", registry)
     (tmp_path / "builtin").mkdir(exist_ok=True)
-    monkeypatch.setattr(proxy.DERIVED, "COMFY_WORKFLOWS_DIR", tmp_path / "builtin")
+    monkeypatch.setitem(proxy.runtime().derived, "COMFY_WORKFLOWS_DIR", tmp_path / "builtin")
     monkeypatch.setattr(proxy, "validate_workflow_graph", lambda workflow: [])
     return by_id
 
@@ -362,3 +362,15 @@ def test_a_package_graph_that_reaches_a_symlink_loop_is_refused(tmp_path: Path, 
     (tmp_path / "builtin" / "shadowed.json").write_text(json.dumps(_node("BuiltIn")), encoding="utf-8")
     assert proxy.load_graph_workflow("shadowed", intent="image.generate") is None
     assert proxy.graph_workflow_refused("shadowed", intent="image.generate")
+
+
+def test_derived_values_cannot_be_assigned_so_a_patch_never_outlives_its_test(monkeypatch: pytest.MonkeyPatch):
+    """An assigned name would shadow the snapshot for every later test on the worker (it once hid a patched
+    ``COMFY_WORKFLOWS_DIR`` from an unrelated test). A patch goes on the snapshot's own mapping instead."""
+    with pytest.raises(AttributeError, match="read-only"):
+        monkeypatch.setattr(proxy.DERIVED, "COMFY_WORKFLOWS_DIR", Path("/nowhere"))
+    assert "COMFY_WORKFLOWS_DIR" not in vars(proxy.DERIVED)
+    with monkeypatch.context() as scoped:
+        scoped.setitem(proxy.runtime().derived, "COMFY_WORKFLOWS_DIR", Path("/patched"))
+        assert proxy.DERIVED.COMFY_WORKFLOWS_DIR == Path("/patched")
+    assert proxy.DERIVED.COMFY_WORKFLOWS_DIR != Path("/patched")
