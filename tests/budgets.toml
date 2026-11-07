@@ -543,7 +543,8 @@
 # feat/code-to-data-s2-4 (2026-11-06): output selectors, adapter descriptor, bundled-selector proof and audio route selection (+261); measured 20160.
 # S2.4 review fix: a non-boolean legacy flag is named in a warning once (+1); measured 20161.
 # Train 13 (2026-11-06): S2.3 result bundles (+73) and S2.4 output selectors (+262) on train 12; summed 20241.
-pytest = 20241
+# S2 acceptance matrix, items 2 and 3 (2026-11-06): tests/test_s2_matrix_privacy.py (+7) and tests/test_s2_matrix_replay.py (+27); scripts/run-hermetic-pytest.sh --collect-only -q measured 20275.
+pytest = 20275
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

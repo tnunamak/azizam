@@ -430,3 +430,24 @@ Left for S2.5 and later:
    - The runtime still checks hostile engine replies.
 
 The full public oracle (owner registration, hot edit, the generic route) stays with S4 to S6. S2 does not claim it.
+
+### S2 matrix coverage: items 2 and 3
+
+Files: `tests/test_s2_matrix_privacy.py` (item 2) and `tests/test_s2_matrix_replay.py` (item 3). "Existing" means a test
+that was already in the tree.
+
+| Bullet | Tests | State |
+|---|---|---|
+| 2.1 Canary values in neutral string, enum, integer, number, boolean, nested, filename and URL inputs | `test_neutral_input_values_do_not_change_what_the_envelope_pins` (all eight shapes, compared with a fixed baseline, so a copied boolean or enum is caught); `SubmittedCanaryCarrierTests::test_the_submitted_values_reach_the_engine_and_no_durable_carrier` (string, integer and number through the real audio route; the engine gets them). Existing: `test_job_envelope_privacy.py`. | covered. The audio route takes only a string, an integer and a number, so the other shapes are checked at the store. The seed and the duration stay in the internal job row on purpose (`_safe_request_metadata`); the test pins that they are nowhere else. |
+| 2.2 Envelope, job, events, receipts, client and admin views | The same `SubmittedCanaryCarrierTests` test reads the envelope tables, the job row, the events table, the receipts table, and the job, event and receipt views for the client and the admin audience, each checked non-empty first. | partly: one route (audio). No HTTP or UI rendering of the views. |
+| 2.3 Forget, member-off, kill switch, erasure, stale worker rewrite | `test_a_privacy_mode_leaves_no_durable_copy_of_the_body` (member-off, kill, person erasure: spool, saved prompt, job fingerprint, events and envelope tables; a stale prompt write is refused; another person is untouched); `test_forget_keeps_the_body_in_memory_only_and_it_dies_with_the_process`; `test_a_stale_worker_rewrite_cannot_restore_what_erasure_removed` (a worker paused before its write while erasure commits). | covered for the spool, the saved prompt, the job fingerprint and the seeded request IDs. The envelope's `generated` block is always empty today, so clearing a non-empty one is untested. |
+| 2.4 The normal spool keeps working | Existing: `test_prompt_memory_lifecycle.py::test_normal_async_spool_survives_memory_loss`, `::test_old_active_disk_payload_survives_cleanup`. New control in the privacy-mode test: the other person's spool still loads after the erasure. | covered |
+| 3.1 Crash before and after the envelope commit | `test_a_crash_around_the_envelope_commit_replays_to_one_job` (before and after the commit, then a retry with a different envelope); `test_a_crash_after_the_job_row_but_before_the_envelope_leaves_nothing`. | covered |
+| 3.1 Around each upload | None. The media input ledger and the engine upload are not on this base (S2.6 is a separate branch). | not covered |
+| 3.1 Around the attempt marker; after send but before the id is saved; during fetch | `test_a_crash_at_each_point_of_a_protocol_run_resends_only_when_nothing_could_have_been_sent` (before the marker, after the marker before the send, after the send before the id, after the id, during the fetch; sends and fetches counted at the engine). | covered for the protocol runner. The audio, image and video job runners in `proxy.py` are not driven here. |
+| 3.1 During the final commit | `test_a_crash_in_the_final_job_commit_leaves_the_prior_state` (a crash in the `before_commit` hook, and at the commit). | covered for the job state and what the hook writes. Result-bundle publication is judged under item 5. |
+| 3.2 Concurrent same-key retries | `test_concurrent_same_key_creates_record_one_job_and_one_envelope` (the second create waits on the write lock, then replays). | covered at the store; not a scheduler test |
+| 3.2 Changed input, owner or person | `test_a_replay_with_one_changed_submission_fact_conflicts` (input, owner, person). | covered |
+| 3.2 Erased fingerprints | `test_an_erased_fingerprint_cannot_authorize_a_replay` (plain, and with a stale worker rewrite). | covered |
+| 3.2 Both sides of the 14-day window | `test_a_finished_job_replays_up_to_and_including_the_window_edge` (three terminal states, 1 s inside, on, and 1 s outside the edge); `test_an_unfinished_job_replays_however_old`. | covered |
+
