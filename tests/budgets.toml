@@ -563,7 +563,8 @@
 # S2.5a review fixes (2026-11-06): streamed result file limit, adapter bound to its pinned description, http-v1 selector preflight (+10); measured 20215.
 # feat/code-to-data-s2-5b (2026-11-06): image and video route selectors, job-view results and the JSON read route (+22: 12 results, 10 route selectors); measured 20227 with scripts/run-hermetic-pytest.sh --collect-only -q.
 # feat/code-to-data-s2-5b review fixes (2026-11-06): +27 (result-name rule 12 + 7, path-shaped refusals 4, legacy video 3, over-limit video 1); measured 20254 with scripts/run-hermetic-pytest.sh --collect-only -q.
-pytest = 20503
+# Train 15 with S2.5a engine protocol v2 (+54) and S2.5b selector routes (+27 and its fixes): measured 20525.
+pytest = 20525
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
