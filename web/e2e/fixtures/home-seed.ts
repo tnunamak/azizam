@@ -224,11 +224,21 @@ export async function seedOwner(page: Page, request: APIRequestContext) {
   await serveSeedFiles(page);
   const real = await (await request.get("/me/api/home")).json();
   const status = await (await request.get("/admin/api/status")).json();
-  // The Home model also reads the service registry, which @global-state cases change while this one runs; the seed
-  // answers the copy read here, so the working line counts one registry for the whole case.
+  // The Home model also reads the service registry, the providers and the gateway's recent requests. Cases running in
+  // parallel on the same gateway change all three while this one runs: the owner's views first count from the seeded
+  // receipts, then recount from the recent requests when they arrive, where another case's failed request marks a
+  // capability failing. The seed answers the registry and providers read here, and recent requests that are Sam's
+  // own (none), so the working line counts one gateway state for the whole case.
   const registry = await (await request.get("/admin/api/operator/service-registry")).json();
   await page.route("**/admin/api/operator/service-registry", (route) =>
     route.request().method() === "GET" ? fulfilJson(route, registry) : route.fallback(),
+  );
+  const providers = await (await request.get("/admin/api/providers")).json();
+  await page.route("**/admin/api/providers", (route) =>
+    route.request().method() === "GET" ? fulfilJson(route, providers) : route.fallback(),
+  );
+  await page.route("**/admin/api/activity/requests?*", (route) =>
+    fulfilJson(route, { records: [], people: [], next_cursor: null }),
   );
   const now = Date.now() / 1000;
   const template = real.capabilities.find((row: Json) => row.icon_key === "chat") ?? real.capabilities[0];
