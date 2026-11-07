@@ -592,7 +592,8 @@
 # Voice quality probe without a configured engine (2026-11-07): +1 case.
 # Failed gate runs keep their e2e evidence, with a hard cap and no symlink followed (2026-11-07): +17 cases.
 # Train 19: 21135 + 1 + 1 + 17 = 21154.
-pytest = 21154
+# Engine readiness (2026-11-07): +36 cases in tests/test_engine_readiness.py and tests/test_engine_admin_routes.py; 21154 + 36 = 21190.
+pytest = 21190
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
@@ -729,7 +730,8 @@ pytest = 21154
 # Train 4 (2026-11-06): main 3913 + the C6 settings stale-write case for 412 and 409 (+2); vitest list --json measured 3915 (--root web).
 # Library picker polish (2026-11-06): picked-summary.spec.tsx (+4, image pixel size) and try/workflow-inputs.spec.tsx (+3, empty prompt sizes to its example); vitest list --json measured 3922 (--root web).
 # Train 10 (2026-11-06): Library picker polish, picked image pixel size and the Try empty prompt field (+7); measured 3922.
-vitest = 3922
+# Engine readiness (2026-11-07): +1 case in add-engine-dialog.spec.tsx (abilities step with nothing ticked); measured 3921 (vitest list --json --root web).
+vitest = 3921
 # Keep UI: +2 Playwright cases in e2e/keep-binding.spec.ts, at 1440 and 390 px. playwright.config.ts 494 -> 496;
 # gate lists 517 (496 + live-data 3 + household 18), measured 2026-10-23.
 # Keep UI round 2: keep-binding.spec.ts runs keep, replace and add-again at 1440 and 390 px (+4 cases).

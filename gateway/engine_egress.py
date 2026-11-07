@@ -169,7 +169,7 @@ def observer_paths_declared_by(services: Mapping[str, Any]) -> dict[str, set[str
 def declared_probe_paths(record: Mapping[str, Any]) -> set[str]:
     """The paths a service record declares as health, metadata or observer reads (the only paths a probe mark covers).
 
-    These are the record's ``health_endpoint`` (and the default health path), its ``context_window_probe`` endpoint,
+    These are the record's ``health_endpoint`` (and the default health path), the readiness read its definition declares, its ``context_window_probe`` endpoint,
     the path of each declared observation, the ``verify_endpoint`` of its lifecycle driver, and the same fields of
     each offering. (The observer path another record names for this service is added by ``project``.)
     ``project`` allows each path as written and under the path prefix of the record's own URL.
@@ -182,6 +182,13 @@ def declared_probe_paths(record: Mapping[str, Any]) -> set[str]:
         offerings = scope.get("offerings")
         if isinstance(offerings, list):
             scopes.extend(item for item in offerings if isinstance(item, Mapping))
+    if isinstance(record.get("config"), Mapping):
+        # The readiness read the record's definition declares: an older record with no health endpoint falls back to it.
+        from gateway.engine_readiness import record_readiness_path
+
+        declared = record_readiness_path(record["config"])
+        if declared:
+            found.add(declared)
     for scope in scopes:
         for value in (scope.get("health_endpoint"),
                       (scope.get("context_window_probe") or {}).get("endpoint") if isinstance(scope.get("context_window_probe"), Mapping) else None):

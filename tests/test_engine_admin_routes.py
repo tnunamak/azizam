@@ -62,8 +62,15 @@ def _write_headers(client):
     return {**csrf_for(client), "If-Match": etag}
 
 
-def _create(client, body):
+def _create_as_sent(client, body):
     return client.post("/admin/api/operator/services", headers=_write_headers(client), json=body)
+
+
+def _create(client, body):
+    """Add an engine. An engine added turned on needs a ticked capability; tests that are not about that rule tick chat."""
+    if not body.get("disabled") and "capabilities" not in body:
+        body = {**body, "capabilities": ["chat"]}
+    return _create_as_sent(client, body)
 
 
 def _edit(client, service_id, body):
@@ -163,12 +170,50 @@ def test_a_warning_blocks_once_and_acknowledge_warnings_adds_it(gateway, fake_up
     assert first.status_code == 409, first.text
     assert first.json()["error"]["code"] == "engine_check_warnings"
     assert "voice-box" not in _registry(gateway)["services"]
-    second = _create(owner, {**body, "acknowledge_warnings": True})
+    # Only what the check marked Likely is ticked by default; a chat route that is only Possible is not, and an
+    # engine added turned on needs at least one thing ticked.
+    unticked = _create_as_sent(owner, {**body, "acknowledge_warnings": True})
+    assert unticked.status_code == 400, unticked.text
+    assert unticked.json()["error"]["field"] == "capabilities"
+    assert "voice-box" not in _registry(gateway)["services"]
+    second = _create(owner, {**body, "acknowledge_warnings": True, "capabilities": ["chat"]})
     assert second.status_code == 201, second.text
     record = _record(gateway, "voice-box")
-    # Only what the check marked Likely is ticked by default; a chat route that is only Possible is not.
-    assert record["capabilities"] == []
+    assert "chat" in record["capabilities"]
     assert record["config"]["engine_check"]["status"] == "ok"
+
+
+def test_an_engine_added_turned_on_needs_at_least_one_capability_and_one_added_off_does_not(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    fake = _chat_server(fake_upstreams, host="needs-one.fk.test")
+    body = {"definition": "openai-compatible", "name": "needs-one", "values": {"address": f"{fake.base_url}/v1"},
+            "acknowledge_warnings": True}
+    for capabilities in ([], None):
+        refused = _create_as_sent(owner, {**body, **({} if capabilities is None else {"capabilities": capabilities})})
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["error"]["field"] == "capabilities"
+        assert "needs-one" not in _registry(gateway)["services"]
+    off = _create(owner, {**body, "disabled": True})
+    assert off.status_code == 201, off.text
+    assert _record(gateway, "needs-one")["capabilities"] == []
+    assert _record(gateway, "needs-one")["enabled"] is False
+
+
+def test_the_check_reports_the_readiness_read_and_creation_stores_the_route_it_read(gateway, fake_upstreams):
+    owner, *_ = owner_and_admin(gateway)
+    fake = _serve(fake_upstreams, "no-health-route", host="reported.fk.test", chat_status=400,
+                  chat_reply={"error": {"message": "'messages' is required"}})
+    checked = owner.post("/admin/api/engines/check", headers=csrf_for(owner),
+                         json={"definition": "openai-compatible", "values": {"address": f"{fake.base_url}/v1"}})
+    assert checked.status_code == 200, checked.text
+    check = checked.json()["check"]
+    assert check["readiness"] == {"method": "GET", "path": "/v1/models", "status": 200, "ok": True}
+    assert {"label": "Readiness read", "result": "GET /v1/models: answered"} in check["steps"]
+    assert not fake.calls("health"), "the check read the definition's route, not /health"
+    created = _create(owner, {"definition": "openai-compatible", "name": "reported", "values": {"address": f"{fake.base_url}/v1"},
+                              "capabilities": ["chat"], "acknowledge_warnings": True})
+    assert created.status_code == 201, created.text
+    assert _record(gateway, "reported")["config"]["health_endpoint"] == "/v1/models"
 
 
 def test_add_but_keep_off_skips_the_check_and_sends_nothing(gateway, fake_upstreams):
@@ -1215,3 +1260,93 @@ def test_declared_switch_and_workflow_offerings_reach_the_page(gateway, fake_ups
     assert owner.get("/admin/api/engines/declared-offerings").json()["engine"]["v2"]["offerings"] == declared
     refused = _edit(owner, "declared-offerings", {"definition": "openai-compatible", "disabled": True, "models": []})
     assert refused.status_code == 400, refused.text
+
+
+# -- readiness: the wizard verifies the route the request path waits on ------------------------------------------------
+
+def _chat_through_gateway(gateway, owner, owner_id, fake_upstreams, model):
+    """A chat request through /openai/v1 with the model router a stand-in over the registry the wizard wrote."""
+    from tests.support.router_sidecar import router_sidecar
+
+    registry = _registry(gateway)
+    registry["services"]["litellm"] = {"id": "litellm", "kind": "llm-substrate", "enabled": True, "capabilities": ["llm.execution"],
+                                       "config": {"base_url": "http://router.fk.test", "api_key_env": "FK_LITELLM_MASTER_KEY"}}
+    _put_registry(gateway, registry)
+    fake_upstreams.router.add("router.fk.test", router_sidecar(lambda: _registry(gateway)))
+    from gateway.runtime_auth import hash_api_key
+
+    app = admin_store.create_app("Chat app", kind="service", owner_user_id=owner_id, access_plan="person", path=gateway.path)
+    key = "opk_readiness_fixture_key"
+    admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], app_id=app["id"], hash=hash_api_key(key),
+                                       prefix=key[:16], created_by=owner_id, path=gateway.path)
+    return owner.post("/openai/v1/chat/completions", headers={"authorization": f"Bearer {key}"},
+                      json={"model": model, "messages": [{"role": "user", "content": "hi"}]})
+
+
+def _wizard_added_engine_with_no_health_route(gateway, owner, fake_upstreams, monkeypatch):
+    monkeypatch.setenv("FK_LITELLM_MASTER_KEY", "fk-master")
+    reply = {"id": "c1", "object": "chat.completion", "created": 1, "model": "qwen3-32b-instruct-q4_k_m",
+             "choices": [{"index": 0, "message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}],
+             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+    # On a real port: the model router reaches an engine over a socket, as the gateway's own check does here.
+    fake = fake_upstreams.loopback(load_scenario("engine-probe/no-health-route", token=TOKEN, chat_status=200, chat_reply=reply))
+    created = _create(owner, {"definition": "openai-compatible", "name": "garage-gpu", "values": {"address": f"{fake.base_url}/v1"},
+                              "capabilities": ["chat"], "acknowledge_warnings": True})
+    assert created.status_code == 201, created.text
+    return fake
+
+
+def _set_health_endpoint(gateway, value):
+    registry = _registry(gateway)
+    config = registry["services"]["garage-gpu"]["config"]
+    config.pop("health_endpoint", None)
+    if value is not None:
+        config["health_endpoint"] = value
+    _put_registry(gateway, registry)
+    import proxy
+
+    proxy.reload_runtime_config()
+
+
+def test_an_engine_with_no_health_route_that_the_wizard_verified_answers_chat(gateway, fake_upstreams, monkeypatch):
+    owner, owner_id, *_ = owner_and_admin(gateway)
+    fake = _wizard_added_engine_with_no_health_route(gateway, owner, fake_upstreams, monkeypatch)
+    config = _record(gateway, "garage-gpu")["config"]
+    # The check read the route the definition declares, and the record keeps it for the request path.
+    assert config["health_endpoint"] == "/v1/models"
+    assert config["engine_check"]["readiness"] == {"method": "GET", "path": "/v1/models", "ok": True}
+    answered = _chat_through_gateway(gateway, owner, owner_id, fake_upstreams, "qwen3-32b")
+    assert answered.status_code == 200, answered.text
+    assert answered.json()["choices"][0]["message"]["content"] == "OK"
+    assert not fake.calls("health"), "the request path read /health although the record stores its readiness route"
+    assert {request.path for request in fake.requests if request.method == "GET"} >= {"/v1/models"}
+
+
+def test_an_older_record_with_no_stored_endpoint_falls_back_to_the_definitions_route_when_health_is_absent(gateway, fake_upstreams, monkeypatch):
+    from gateway import lifecycle_drivers
+
+    lifecycle_drivers._READINESS_FALLBACK.clear()
+    owner, owner_id, *_ = owner_and_admin(gateway)
+    fake = _wizard_added_engine_with_no_health_route(gateway, owner, fake_upstreams, monkeypatch)
+    _set_health_endpoint(gateway, None)
+    answered = _chat_through_gateway(gateway, owner, owner_id, fake_upstreams, "qwen3-32b")
+    assert answered.status_code == 200, answered.text
+    assert len(fake.calls("health")) == 1, "the default /health was tried once, answered 404, and the result was remembered"
+    second = owner.post("/openai/v1/chat/completions", headers=answered.request.headers and {"authorization": answered.request.headers["authorization"]},
+                        json={"model": "qwen3-32b", "messages": [{"role": "user", "content": "again"}]})
+    assert second.status_code == 200, second.text
+    assert len(fake.calls("health")) == 1
+    lifecycle_drivers._READINESS_FALLBACK.clear()
+
+
+def test_an_engine_that_does_not_answer_its_readiness_route_fails_naming_that_route_and_no_address(gateway, fake_upstreams, monkeypatch):
+    owner, owner_id, *_ = owner_and_admin(gateway)
+    _wizard_added_engine_with_no_health_route(gateway, owner, fake_upstreams, monkeypatch)
+    _set_health_endpoint(gateway, "/openapi.json")  # an explicit endpoint wins over the definition's route (the engine answers it 404)
+    answered = _chat_through_gateway(gateway, owner, owner_id, fake_upstreams, "qwen3-32b")
+    assert answered.status_code == 503, answered.text
+    error = answered.json()["error"]
+    assert error["code"] == "backend_unavailable"
+    assert "could not start" not in error["message"]
+    assert "the engine did not answer its readiness check (GET /openapi.json)" in error["message"]
+    assert "127.0.0.1" not in error["message"] and "http://" not in error["message"]

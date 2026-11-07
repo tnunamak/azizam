@@ -3778,14 +3778,22 @@ def _litellm_activation_failure_response(
     backend: str,
     target_model: Optional[str],
 ) -> Response:
+    from gateway.lifecycle_drivers import readiness_failure_text
+
+    # An engine the gateway does not start never "failed to start": say which readiness read it did not answer.
+    not_ready = readiness_failure_text((config.get("backends") or {}).get(backend) or {})
+    if not_ready:
+        message = f"Failed to satisfy request for model '{requested_model}': {not_ready}."
+    else:
+        message = (
+            f"Failed to satisfy request for model '{requested_model}': "
+            f"could not start backend '{backend}'"
+            + (f" or load model '{target_model}'." if target_model else ".")
+        )
     return Response(
         content=json.dumps({
             "error": {
-                "message": (
-                    f"Failed to satisfy request for model '{requested_model}': "
-                    f"could not start backend '{backend}'"
-                    + (f" or load model '{target_model}'." if target_model else ".")
-                ),
+                "message": message,
                 "type": "service_unavailable",
                 "code": "backend_unavailable",
             }

@@ -957,6 +957,7 @@ async def _run_check(
         "suggested_name": "",
         "name_source": "",
         "steps": [],
+        "readiness": None,
     }
     advice = catalog.advice_rows(definition)
     result["suggested_name"] = _fill(definition["name_fallback"], {"host": fill["host"], "host_label": host_label(address)})
@@ -1045,6 +1046,11 @@ async def _run_check(
     elif probe["kind"] == "model_list" and primary.status is not None and primary.status != 200:
         obs["shape"] = "none"
     result["steps"].append({"label": definition["check_rows"][2], "result": f"{len(models)} found" if probe["kind"] == "model_list" else ""})
+    # The primary read is the definition's readiness read (``gateway.engine_readiness``): the same method, URL, headers and
+    # credential the request path sends once the engine is saved, so its answer is the engine's readiness answer.
+    readiness_path = urlsplit(url).path or "/"
+    result["readiness"] = {"method": method, "path": readiness_path, "status": primary.status, "ok": primary.status == 200}
+    result["steps"].append({"label": "Readiness read", "result": f"{method} {readiness_path}: " + ("answered" if primary.status == 200 else f"{primary.status_text}")})
 
     # Metadata reads, all at once.
     rows = [catalog.metadata_row(row_id) for row_id in definition["probes"]["metadata"]]

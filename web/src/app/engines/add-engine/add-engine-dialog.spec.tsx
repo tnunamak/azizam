@@ -307,8 +307,13 @@ describe("d, e, e2, e3: findings attached to their field", () => {
       within(dialog).getByText("Azizam could not tell what this server can do. Tick what you know it can do, then run a real test."),
     ).toBeVisible();
     for (const box of within(dialog).getAllByRole("checkbox")) expect(box).not.toBeChecked();
-    expect(within(dialog).getByText("Nothing is turned on. The engine will be added but will not serve anything.")).toBeVisible();
+    expect(within(dialog).getByText("Nothing is turned on. Tick at least one thing this engine does, or add it turned off.")).toBeVisible();
+    // With nothing ticked the engine cannot be added turned on: Continue is off, and keeping it off is the way forward.
+    expect(within(dialog).getByRole("button", { name: "Continue" })).toBeDisabled();
+    expect(within(dialog).queryByRole("button", { name: "Add engine now" })).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Add but keep off" })).toBeEnabled();
     await user.click(within(dialog).getByRole("checkbox", { name: "Chat" }));
+    expect(within(dialog).getByRole("button", { name: "Continue" })).toBeEnabled();
     expect(within(dialog).getByText("Azizam could not see this. You can turn it on, but requests may fail.")).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "Continue" }));
     expect(within(dialog).getByText("0 of 0 models offered")).toBeVisible();
@@ -319,6 +324,17 @@ describe("d, e, e2, e3: findings attached to their field", () => {
     await user.click(within(dialog).getByRole("button", { name: "Add engine" }));
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     expect(create.mock.calls[0][0]).toMatchObject({ acknowledge_warnings: true, capabilities: ["chat"], models: [] });
+  });
+
+  it("e1: with nothing ticked the abilities step cannot add the engine turned on, only turned off", async () => {
+    const { user, dialog } = await failWith("oai_nocap");
+    await user.click(within(dialog).getByRole("button", { name: "Add anyway" }));
+    const create = vi.spyOn(enginesApi, "create").mockResolvedValue({ registry: { schema_version: 1, services: {} }, serviceId: "off" } as never);
+    expect(within(dialog).getByRole("button", { name: "Continue" })).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Add but keep off" }));
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create.mock.calls[0][0]).toMatchObject({ disabled: true });
+    expect(create.mock.calls[0][0]).not.toHaveProperty("capabilities");
   });
 
   it("e2: a down server can be added kept off, with the owner's fix text", async () => {

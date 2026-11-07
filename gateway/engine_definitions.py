@@ -150,6 +150,9 @@ def _semantic_errors(data: Mapping[str, Any]) -> list[str]:
         for cap_id in definition["capabilities"]:
             if cap_id not in capabilities:
                 errors.append(f"{where}.capabilities: no capability named {cap_id!r}")
+        if definition["probes"]["primary"]["method"] != "GET":
+            # The primary read doubles as the engine's readiness read (gateway/engine_readiness.py), so it must not change state.
+            errors.append(f"{where}.probes.primary.method: the primary probe is the readiness read and must be GET")
         for row_id in definition["probes"]["metadata"]:
             if row_id not in metadata_ids:
                 errors.append(f"{where}.probes.metadata: no metadata row named {row_id!r}")
