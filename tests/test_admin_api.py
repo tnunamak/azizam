@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from tests.registry_test_helpers import seed_registry_document
 from gateway import admin_store, extension_packages, service_registry  # noqa: E402
 from tests.support.access import plan_for  # noqa: E402
 from gateway.admin_api import (  # noqa: E402
@@ -3017,7 +3018,7 @@ class AdminRegistrySQLiteCASTests(unittest.TestCase):
 class AdminServiceCrudTests(unittest.TestCase):
     def _store_with_provisioned(self) -> FakeAdminStore:
         store = FakeAdminStore()
-        store.service_registry = service_registry.build_service_registry_seed(
+        store.service_registry = seed_registry_document(
             {
                 "backends": {
                     "tabby": {
@@ -3325,7 +3326,7 @@ class AdminServicePresetsTests(unittest.TestCase):
     def test_managed_substrate_remove_is_blocked(self) -> None:
         """DELETE on the litellm managed-substrate row returns 403."""
         store = FakeAdminStore()
-        store.service_registry = service_registry.build_service_registry_seed({"backends": {}})
+        store.service_registry = seed_registry_document({"backends": {}})
         client, _ = _make_client(store)
         resp = client.delete("/admin/api/operator/services/litellm", headers=_auth())
         self.assertEqual(resp.status_code, 403)
@@ -3334,7 +3335,7 @@ class AdminServicePresetsTests(unittest.TestCase):
     def test_managed_substrate_host_edit_is_blocked(self) -> None:
         """PATCH with a base_url on the litellm managed-substrate row returns 403."""
         store = FakeAdminStore()
-        store.service_registry = service_registry.build_service_registry_seed({"backends": {}})
+        store.service_registry = seed_registry_document({"backends": {}})
         client, _ = _make_client(store)
         resp = client.patch(
             "/admin/api/operator/services/litellm",
@@ -3347,7 +3348,7 @@ class AdminServicePresetsTests(unittest.TestCase):
     def test_managed_substrate_rename_is_allowed(self) -> None:
         """PATCH with only name on the litellm managed-substrate row returns 200."""
         store = FakeAdminStore()
-        store.service_registry = service_registry.build_service_registry_seed({"backends": {}})
+        store.service_registry = seed_registry_document({"backends": {}})
         client, _ = _make_client(store)
         resp = client.patch(
             "/admin/api/operator/services/litellm",

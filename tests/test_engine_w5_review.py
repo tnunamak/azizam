@@ -155,13 +155,15 @@ def test_engine_create_returns_the_registry_revision_after_reload_backfills(tmp_
     from gateway.admin_runtime import AdminSQLiteStore
     db = tmp_path / 'admin.db'
     admin_store.init_db(db)
+    service_registry.ensure_service_registry(path=db)
+    generation = admin_store.get_service_registry_with_generation(path=db)['operator_settings_generation']
     store = AdminSQLiteStore(db)
-    store.on_service_registry_changed = lambda: service_registry.ensure_service_registry({'backends': {}}, path=db)
+    store.on_service_registry_changed = lambda: service_registry.ensure_service_registry(path=db)
     created = asyncio.run(engine_admin.EngineService(store).create(
         AdminContext(subject='owner', roles=frozenset({'owner'})), {
             'definition': 'openai-compatible', 'name': 'new-engine', 'disabled': True,
             'values': {'address': 'http://127.0.0.1:6061/v1'},
-        }, expected_generation=0))
+        }, expected_generation=generation))
     current = admin_store.get_service_registry_with_generation(path=db)
     assert created['operator_settings_generation'] == current['operator_settings_generation']
     assert created['value'] == service_registry.read_registry(current['value'])[0]

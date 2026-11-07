@@ -15,7 +15,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import admin_store, service_registry  # noqa: E402
+from gateway import admin_store, registry_layers, service_registry  # noqa: E402
 from gateway import admin_runtime  # noqa: E402
 from gateway.admin_runtime import runtime_identity_for_app_credential_hash  # noqa: E402
 from gateway import accounts  # noqa: E402
@@ -119,9 +119,12 @@ class RequestHotpathTests(unittest.TestCase):
                 conn.commit()
                 with patch.object(service_registry.time, "time", return_value=42):
                     # The previous loader used get_operator_setting, whose
-                    # damaged-document fallback remains the behavior oracle.
+                    # damaged-document fallback remains the behavior oracle: an empty owner
+                    # document, which the release records now fill in.
                     previous = admin_store.get_operator_setting("service_registry", path=self.db)
-                    expected = service_registry.normalize_service_registry(previous["value"])
+                    owner_data = previous["value"] if isinstance(previous["value"], dict) else {}
+                    expected = service_registry.normalize_service_registry(
+                        registry_layers.layer(owner_data, service_registry.release_registry()))
                     self.assertEqual(service_registry.load_service_registry(path=self.db), expected)
 
     def _credential(self, *, expires_at: int | None = None, plan_id: str | None = None, **plan_kwargs):

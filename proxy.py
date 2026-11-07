@@ -500,7 +500,7 @@ def _load_effective_runtime_config(raw_config: Mapping[str, Any], *, boot: bool 
     Raises when the registry cannot be applied. A bad owner override never raises: the layer rejects it and reports it.
     An override store that cannot be read raises on a reload and, with ``boot``, serves the release defaults instead.
     """
-    registry = _stored_service_registry(raw_config)
+    registry = _stored_service_registry()
     layer = _layer_for(raw_config, registry, boot=boot)
     effective = service_registry.apply_service_registry_to_config(layer.config, registry)
     if isinstance(effective, dict):
@@ -509,18 +509,14 @@ def _load_effective_runtime_config(raw_config: Mapping[str, Any], *, boot: bool 
     return CONFIG_HOME.attach(effective, layer, _generation_of_registry(registry) if layer.results else None)
 
 
-def _stored_service_registry(raw_config: Mapping[str, Any]) -> dict[str, Any]:
-    """The DB-owned service registry, seeded and backfilled from the bootstrap config when needed.
+def _stored_service_registry() -> dict[str, Any]:
+    """The DB-owned service registry: the release records under the owner's data (docs/design/CONFIG_HOMES.md, 3.4).
 
-    Any failure raises: the caller decides what keeps serving. This never answers with the bootstrap
-    file's backends in place of the registry, which would put config the registry never described live.
+    A registry stored before the layer is migrated once here. Any failure raises: the caller decides what keeps
+    serving. The startup file's ``backends`` are never read: they would put config the registry never described live.
     """
     admin_store.init_db(ADMIN_DB_PATH)
-    registry = service_registry.ensure_service_registry(
-        raw_config,
-        path=ADMIN_DB_PATH,
-        actor="startup",
-    )
+    registry = service_registry.ensure_service_registry(path=ADMIN_DB_PATH, actor="startup")
     _write_litellm_config_artifact(registry)
     return registry
 
@@ -533,11 +529,12 @@ def _generation_of_registry(registry: Mapping[str, Any]) -> Any:
     """
     try:
         stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
+        # ``registry`` is the normalized effective registry, so the stored effective one is normalized to compare.
+        same = stored is not None and service_registry.stable_hash(
+            service_registry.normalize_service_registry(stored["value"])) == service_registry.stable_hash(registry)
     except Exception:  # noqa: BLE001 - the generation is a label; the load goes on without it
         return None
-    if stored is None or service_registry.stable_hash(stored["value"]) != service_registry.stable_hash(registry):
-        return None
-    return stored["operator_settings_generation"]
+    return stored["operator_settings_generation"] if same else None
 
 
 # What the Overview reports when the stored registry is not what is running (None when it is):
@@ -575,7 +572,7 @@ def _partial_runtime_config(
     stored = admin_store.get_service_registry_with_generation(path=ADMIN_DB_PATH)
     if stored is None:
         raise LookupError("no stored service registry")
-    registry, left_out = service_registry.servable_registry_with_backfill(stored["value"], proxy_config=raw_config)
+    registry, left_out = service_registry.servable_part_of_registry(stored["value"])
     if require_exclusions and not left_out:
         raise LookupError("no stored record is left out")
     failure = service_registry.registry_error_text(failure, stored["value"])  # the cause may repeat a value a record holds
@@ -13957,7 +13954,7 @@ def _stored_registry_for_boot() -> dict[str, Any] | None:
         return None
 
 
-_PROTOCOL_ROUTE_REGISTRY = _stored_registry_for_boot() or service_registry.build_service_registry_seed(config)
+_PROTOCOL_ROUTE_REGISTRY = _stored_registry_for_boot() or service_registry.release_registry()
 CANONICAL_PROTOCOL_ROUTE_ALIASES: tuple[dict[str, object], ...] = (
     route_registry.canonical_protocol_route_aliases(
         registry=_PROTOCOL_ROUTE_REGISTRY,
@@ -19955,7 +19952,7 @@ async def admin_config_export(request: Request):
             media_type="application/json",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if request.query_params.get("format") == "v1":  # the config sections' export; C4 makes it the only one
+    if request.query_params.get("format") == "v1":  # the one export: the config sections and the registry's owner layer
         document = await asyncio.to_thread(
             config_api.build_export, CONFIG_HOME, ADMIN_DB_PATH, version=str((runtime().config.get("proxy") or {}).get("version") or "1"),
             effective=request.query_params.get("view") == "effective", registry=ADMIN_STORE.get_service_registry())

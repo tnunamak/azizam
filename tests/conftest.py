@@ -69,6 +69,24 @@ for _name, _filename in _STORE_PATHS.items():
 _GUARD = HermeticGuard()
 
 
+def _seed_hermetic_registry() -> None:
+    """Give the run's own admin.db the engines of the tracked ``proxy_config.yml``, as an owner's registry records.
+
+    The gateway no longer seeds a registry from the startup file's ``backends`` (docs/design/CONFIG_HOMES.md, 8.5), and
+    most of the suite boots ``proxy`` against the tracked file's engines. A run that wants them says so here, once,
+    before any test module imports ``proxy``.
+    """
+    import yaml
+
+    from registry_test_helpers import seed_registry_from_backends
+
+    tracked = Path(__file__).resolve().parent.parent / "proxy_config.yml"
+    seed_registry_from_backends(_ADMIN_DB, yaml.safe_load(tracked.read_text(encoding="utf-8")) or {})
+
+
+_seed_hermetic_registry()
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--order-seed", type=int, default=None,
                      help="shuffle test order from this seed (scripts/ci-local passes one on every run)")

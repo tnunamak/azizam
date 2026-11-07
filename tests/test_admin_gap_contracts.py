@@ -179,7 +179,7 @@ def test_registry_post_commit_failure_contract(
 
     durable = admin_store.get_service_registry_with_generation(path=store.path)
     assert durable["operator_settings_generation"] == 1
-    assert durable["value"]["services"] == {}
+    assert set(durable["value"]["services"]) == {"litellm"}  # the release's managed row, which no write hides
     assert len(admin_store.list_audit(path=store.path)) == 1
     before_effects = list(effects)
     with pytest.raises(admin_store.OperatorSettingsGenerationConflict):

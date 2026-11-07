@@ -102,9 +102,12 @@ Concretely:
    boot without touching a file. Audited, applies live unless the apply_mode
    says otherwise.
 3. **Provisioned plane** — workflow manifests and catalog files committed in
-   the repo (`workflows/`, the model compatibility table). Service records
-   may be seeded from provisioning config, but after that one-time seed the
-   DB/UI registry is authoritative.
+   the repo (`workflows/`, the model compatibility table, `registry/`). The
+   bundled `registry/` records are the release layer of the service registry:
+   `admin.db` holds only the owner's data (records the owner made, field-level
+   patches of release records, tombstones), and a release change to a field the
+   owner did not touch reaches every install. `proxy_config.yml` `backends` is
+   not read.
 4. **Secret/bootstrap plane** — env, Docker secrets, and secret references for
    bootstrap secrets. Remote provider keys have a deliberate product exception:
    owners can submit a write-only key through the Providers UI. Its ciphertext
@@ -113,9 +116,9 @@ Concretely:
    never the stored value. Environment references remain supported.
 
 Service/provider records carry a `source` value as provenance/history, not a
-permission boundary. After the one-time seed, every non-managed service row
-can be edited, enabled or disabled, and removed from the DB/UI registry;
-removed rows are not re-imported on later boots:
+permission boundary. Every non-managed service row can be edited, enabled or
+disabled, and removed from the DB/UI registry; a removed release row is a
+tombstone, so later boots do not bring it back:
 
 - `ui`, `provisioned`, `builtin`, and `discovered` identify how the row entered
   the registry; they do not change its DB/UI permissions.
@@ -147,7 +150,7 @@ Implications:
   operator wants such a value to change, the change path is "edit the file
   and restart with `scripts/safe-restart`" — surfaced in `change_path` and `apply_mode`.
 - The dashboard writes all non-managed service/provider records regardless of
-  `source`; source remains provenance after the one-time seed. The managed
+  `source`; source remains provenance. The managed
   LiteLLM substrate has the limited fields described above.
 - The dashboard never writes browser session signing keys. Remote provider
   secrets are an intentional write-only exception, encrypted in `admin.db`;
@@ -165,8 +168,8 @@ Implications:
 - Runtime Apps, Access plans, and keys live in `admin.db`. Bootstrap config stays
   in YAML/env, but runtime authorization decisions do not read a key file.
 - Service/provider availability is read from the registry. `proxy_config.yml`
-  can seed or provision registry records; it is not the normal live operator
-  surface.
+  does not seed or provision registry records (its `backends` block is not
+  read); the registry is the live operator surface.
 
 ## Provisioning bundles, restore, and reconciliation (deferred)
 
@@ -208,8 +211,8 @@ the dashboard as the only edit surface for runtime policy.
 - A second policy editor inside Services or APIs. Policy stays on Access plans
   (see `docs/ADMIN_ACCESS_UX_RESEARCH.md`).
 - A second service-registry ownership mode. The dashboard makes provenance
-  legible, but the DB/UI registry remains authoritative after its one-time
-  seed.
+  legible, but the DB/UI registry (the release layer under the owner's data)
+  remains authoritative.
 - Per-field schema validation in the dashboard for bootstrap fields. They
   are validated at gateway start; making the dashboard a second validator
   duplicates truth.

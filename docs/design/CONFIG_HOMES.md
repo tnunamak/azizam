@@ -684,6 +684,18 @@ One step, `config-homes-registry-layering`:
 4. Gate: the served route table, the frontend mount table, `/v1/models` and the alias table are equal before and
    after, on a copy of the live registry (values masked in test output).
 
+5. A stored registry value that does not parse as a JSON object is never migrated or overwritten. The start logs an
+   error that names the setting, leaves the value as stored for a restore or an import, and serves the release records.
+6. Known limits, accepted (review of C4, 2026-11-06):
+   - A field the owner set to the value the release held at the time is indistinguishable from an untouched field, so
+     the step stores no patch for it, and a later release change of that field reaches the install. The `bases` digest
+     marks the record as drifted for review; nothing pins the owner's value.
+   - The step does not replay the removed one-time mesh upgrade. A registry stored before the mesh release would
+     tombstone the mesh engines it never held. No such install exists: Azizam is unreleased, and the live registry
+     already holds those records as owner records.
+   - The export copies a patch verbatim. A legacy inline secret value in a stored record would be exported; the live
+     registry holds none (count of inline secret fields with a value, 2026-11-06: 0), and import refuses them.
+
 ### 8.4 Stored workflows beat bundled ones (C5)
 
 `proxy.py:13246` skips a stored manifest whose id a bundled one has. C5 inverts it: a stored manifest with a bundled id

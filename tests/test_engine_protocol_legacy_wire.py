@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
+from tests.registry_test_helpers import seed_registry_document
 from gateway import service_registry
 from gateway.litellm_substrate import compile_litellm_config_from_registry
 from tests.support.access import authenticated
@@ -26,7 +27,7 @@ def digest(value):
 
 def snapshot(monkeypatch):
     registry=json.loads(FIXTURE.read_text())
-    seed=service_registry.build_service_registry_seed(proxy.config)
+    seed=seed_registry_document(proxy.config)
     results={'projection':service_registry.runtime_backends(registry),
              'compiled':compile_litellm_config_from_registry(registry),
              'seeded_projection':service_registry.runtime_backends(seed),

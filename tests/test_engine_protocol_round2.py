@@ -556,7 +556,7 @@ def test_existing_refused_record_does_not_break_registry_read_or_healthy_engine(
     store = AdminSQLiteStore(db)
     loaded = store.get_service_registry()
     assert {'prism-local','old-lan'} <= loaded['services'].keys()
-    assert 'old-lan' in service_registry.ensure_service_registry({}, path=db)['services']
+    assert 'old-lan' in service_registry.ensure_service_registry(path=db)['services']
     monkeypatch.setattr(proxy.ADMIN_STORE, 'get_service_registry', store.get_service_registry)
     # Both records deliberately share the same offering id; select the healthy engine explicitly.
     assert chat(engine, model='prism-local/prism-chat').status_code == 200

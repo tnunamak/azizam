@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.registry_test_helpers import seed_registry_document
 from gateway import service_registry
 from gateway.admin_catalog import (
     admin_api_surfaces,
@@ -60,7 +61,7 @@ def test_admin_api_surfaces_include_bundled_provider_native_frontend() -> None:
 
 
 def test_admin_api_surfaces_accept_service_registry_document() -> None:
-    registry = service_registry.build_service_registry_seed(
+    registry = seed_registry_document(
         {
             "protocol_frontends": {
                 "internal": {
