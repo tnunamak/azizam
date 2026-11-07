@@ -126,6 +126,9 @@ bindings:
     compose: identity_scene
     route: /gateway/v1/images/identity
     workflow: workflows/identity/qwen-image-2.1-identity.json
+    selectors_for: comfyui
+    selectors:
+      image: {node: '10', key: images, from: output_dir, decode: none, take: all}
     image_nodes: ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8", "L9", "L10"]
     prompt_node: "7"
     seed_node: "8"

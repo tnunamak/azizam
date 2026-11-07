@@ -17,6 +17,7 @@ import pytest
 
 import proxy
 from tests.support.config_snapshot import derived_patch
+from tests.support.graph_selectors import IMAGE_AT_NODE_1
 from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, fake_upstreams, load_scenario, read_deadline  # noqa: F401
 
 WORKFLOW = {"1": {"class_type": "FkNode", "inputs": {"text": "poll test"}}}
@@ -46,7 +47,7 @@ def _run_round(fakes: FakeUpstreams, monkeypatch, name: str, *, wire: bool = Fal
     async def call():
         timeout = httpx.Timeout(HANG_BOUND_SECONDS, read=60.0)
         async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient(timeout=timeout) as client:
-            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "poll test", max_wait_s=2)
+            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "poll test", max_wait_s=2, **IMAGE_AT_NODE_1)
 
     with patch.object(proxy.asyncio, "sleep", sleep), derived_patch("COMFY_TIMEOUT", 100):
         error, images = asyncio.run(call())
@@ -99,7 +100,7 @@ def test_a_refused_submit_connection_gives_a_502(fake_upstreams, monkeypatch) ->
 
     async def call():
         async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient() as client:
-            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "refused", max_wait_s=2)
+            return await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "refused", max_wait_s=2, **IMAGE_AT_NODE_1)
 
     error, images = asyncio.run(call())
 

@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import weakref
 from collections.abc import AsyncGenerator, Iterable, Mapping
 from dataclasses import dataclass
@@ -48,8 +47,6 @@ MAX_FIELDS = 16
 MAX_ENUM_VALUES = 64
 MAX_TEXT = 128
 DEFAULT_MAX_SELECTORS = 16
-CONFIG_SECTION = "workflow_execution"
-LEGACY_FLAG = "legacy_output_collection"
 _DESCRIPTOR_KEYS = frozenset({"version", "fields", "identity", "template_node", "kind_field"})
 _FIELD_KEYS = frozenset({"type", "required", "default", "values", "kinds"})
 PROTOCOL_DIR = Path(__file__).resolve().parent.parent / "registry" / "protocols"
@@ -324,8 +321,8 @@ def check_for_save(descriptor: SelectorDescriptor | None, manifest: Mapping[str,
                    ) -> dict[str, dict[str, str]]:
     """The contract rules for a new or changed binding (D5). Raises ``SelectorError`` with a clear reason.
 
-    ``descriptor`` is the selector form of the binding's adapter, ``None`` if the adapter takes none: then the binding
-    must declare none. Otherwise the binding must declare selectors, the shape check passes, and, when the template is
+    ``descriptor`` is the selector form of the binding's adapter (found with ``selector_form``), ``None`` if the adapter
+    takes none: then the binding must declare none. Otherwise the binding must declare selectors, the shape check passes, and, when the template is
     given, no selector reads a node that is not a producer. Outputs that share a media type and cannot be told apart are
     refused with their own reason.
     """
@@ -337,7 +334,8 @@ def check_for_save(descriptor: SelectorDescriptor | None, manifest: Mapping[str,
             raise SelectorError("selector_malformed", f"binding {binding_key} has selectors, but its adapter takes none")
         return {}
     outputs = manifest.get("outputs") or {}
-    if "selectors" not in block:
+    # ``selectors: null`` declares nothing, as an absent key does; it is not a way past this rule.
+    if block.get("selectors") is None:
         ambiguous = ambiguous_outputs(outputs)
         if ambiguous:
             raise SelectorError("results_ambiguous", f"results {ambiguous} have the same type and nothing tells them apart; "
@@ -350,9 +348,20 @@ def check_for_save(descriptor: SelectorDescriptor | None, manifest: Mapping[str,
     return selectors
 
 
+def selector_form(binding_key: str, block: Mapping[str, Any]) -> str:
+    """The binding key of the adapter whose selector form a binding's selectors use.
+
+    A binding of an adapter that takes selectors is that adapter's own key. A binding that another adapter runs, such as
+    a route that composes its answer and runs one graph, names the adapter's key in ``selectors_for``. The caller of
+    ``check_for_save`` finds the descriptor with this key."""
+    form = block.get("selectors_for")
+    return form if isinstance(form, str) else binding_key
+
+
 def check_manifest(manifest: Mapping[str, Any], descriptors: Mapping[str, SelectorDescriptor] | None = None) -> None:
     """The load-time check of every binding that declares selectors, against its adapter's descriptor. A binding with
-    none is a legacy contract and loads. Raises ``SelectorError``."""
+    none loads (a stored manifest may predate selectors); ``check_for_save`` refuses it and a run answers
+    ``selectors_missing``. Raises ``SelectorError``."""
     bindings = manifest.get("bindings")
     outputs = manifest.get("outputs")
     if not isinstance(bindings, Mapping) or not isinstance(outputs, Mapping):
@@ -361,28 +370,10 @@ def check_manifest(manifest: Mapping[str, Any], descriptors: Mapping[str, Select
     for key, block in bindings.items():
         if not isinstance(block, Mapping) or "selectors" not in block:
             continue
-        descriptor = known.get(key)
+        descriptor = known.get(selector_form(key, block))
         if descriptor is None:
             raise SelectorError("selector_malformed", f"binding {key} has selectors, but its adapter takes none")
         check_binding(descriptor, outputs, block)
-
-
-# ---------------------------------------------------------------------------------------------- the legacy flag
-
-def legacy_collection_enabled(config: Mapping[str, Any]) -> bool:
-    """Whether a binding with no selectors may still be read by the adapter's legacy collection. On unless the trusted
-    runtime config says ``workflow_execution.legacy_output_collection: false``."""
-    section = config.get(CONFIG_SECTION) if isinstance(config, Mapping) else None
-    value = section.get(LEGACY_FLAG) if isinstance(section, Mapping) else None
-    if value is not None and not isinstance(value, bool) and repr(value) not in _WARNED_FLAGS:
-        # A value that is not true or false (a quoted "false", a 0) does not turn the collection off. Say so once.
-        _WARNED_FLAGS.add(repr(value))
-        logging.getLogger(__name__).warning(
-            "%s.%s is %r, not true or false: the legacy output collection stays on", CONFIG_SECTION, LEGACY_FLAG, value)
-    return value is not False
-
-
-_WARNED_FLAGS: set[str] = set()
 
 
 # ------------------------------------------------------------------------------------------------- the fetch gate

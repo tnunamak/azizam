@@ -8156,8 +8156,8 @@ class _SelectedImages(list):
 def _graph_result_source(manifest: Mapping[str, Any] | None, capability: str = "images") -> dict[str, Any]:
     """What a round reads its results by: the graph binding of the workflow's manifest, and the contract's outputs.
 
-    A workflow with no manifest, or a binding with no selectors, is read by the legacy collection while
-    ``workflow_execution.legacy_output_collection`` allows it (CODE_TO_DATA_S2, D5).
+    A workflow with no manifest, or a binding with no selectors, has nothing to read its results by: the round is
+    refused with ``selectors_missing`` (CODE_TO_DATA_S2, D5).
     """
     if not isinstance(manifest, Mapping):
         return {}
@@ -8189,10 +8189,7 @@ def _select_video_file(job: Mapping[str, Any], manifest: Mapping[str, Any] | Non
         picked = adapter.collect(
             job, source.get("binding") or {}, source.get("contract_outputs") or {result_bundle.DEFAULT_NAME: {}},
             limits=result_bundle.limits_from_config(runtime().config),
-            legacy_allowed=output_selectors.legacy_collection_enabled(runtime().config),
             history_bytes=len(json.dumps(job, default=str).encode("utf-8")),
-            legacy_keys=node_graph.VIDEO_KEYS,
-            legacy_suffixes=node_graph.VIDEO_SUFFIXES,
         )
     except node_graph.SelectionRefused as refusal:
         if refusal.code == "result_missing":
@@ -8200,7 +8197,7 @@ def _select_video_file(job: Mapping[str, Any], manifest: Mapping[str, Any] | Non
         return None, None, _result_refusal_response(refusal.code, 502)
     name, files = next(iter(picked.items()), (None, ()))
     file = files[0] if files else None
-    if file is not None and not str(file["filename"]).lower().endswith(node_graph.VIDEO_SUFFIXES):
+    if file is not None and not str(file["filename"]).lower().endswith(video_inputs.VIDEO_SUFFIXES):
         file = None
     return name, dict(file) if file else None, None
 
@@ -8340,7 +8337,6 @@ async def _graph_run_round(
             picked = await adapter.fetch_selected(
                 graph.conn, finished, binding or {}, contract_outputs or {result_bundle.DEFAULT_NAME: {}},
                 limits=result_bundle.limits_from_config(runtime().config),
-                legacy_allowed=output_selectors.legacy_collection_enabled(runtime().config),
                 headers=headers, session=graph,
             )
         except node_graph.SelectionRefused as refusal:
@@ -16591,9 +16587,13 @@ async def _identity_run_workflow(auth_context: AuthContext, graph: dict[str, Any
         )
         if admission is not None:
             raise identity_api.IdentityUnavailable(admission)
+        identity_record = GATEWAY_WORKFLOW_REGISTRY.get(IDENTITY_MANIFEST_ID)
         error, images = await _graph_run_round(
             client, graph, dict(headers), "identity scene",
             max_wait_s=int(_identity_cfg().get("max_wait_s", 3600)),
+            # The result is the file its manifest's selector names (CODE_TO_DATA_S2, D5).
+            binding=_identity_template()[1],
+            contract_outputs=identity_record.manifest.get("outputs") if identity_record else None,
         )
     if error is not None:
         try:
@@ -26798,7 +26798,6 @@ async def proxy_audio_generate(
                     try:
                         picked = adapter.collect(
                             job, graph_binding, manifest.get("outputs") or {}, limits=result_limits,
-                            legacy_allowed=output_selectors.legacy_collection_enabled(runtime().config),
                             history_bytes=len(history_resp.raw or b""))
                     except node_graph.SelectionRefused as refusal:
                         if refusal.code == "result_missing":

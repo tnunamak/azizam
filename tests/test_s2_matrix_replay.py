@@ -9,21 +9,29 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
+import shutil
 import sqlite3
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import pytest
 
-from gateway import media_jobs
+import proxy
+from gateway import directory_index, media_input_assets, media_input_leases, media_jobs, receipt_store
 from gateway.definition_store import DefinitionStore
 from gateway.engine_protocol import jobs as protocol_jobs
 from gateway.engine_protocol.adapter import ADAPTER_INTERFACE_VERSION
 from gateway.engine_protocol.errors import ProtocolError
 from gateway.engine_protocol.types import (CanonicalRequest, Connection, JobRef, JobState, JobStatus, Timeouts)
 from gateway.job_envelope import JobEnvelope, build_job_envelope
+from gateway.receipts import RouteReceipt
+from tests.support.access import access_context
+from tests.test_image_extensions import CONTROLNET_EDIT_MANIFEST
+from tests.test_media_inputs_image_route import OWNER_APP, image_bytes, stored
 
 ORIGIN = "http://engine.test:1"
 WINDOW = media_jobs.REPLAY_WINDOW_S
@@ -497,3 +505,319 @@ def test_a_crash_at_each_point_of_a_protocol_run_resends_only_when_nothing_could
     if cut in ("after_id_saved", "during_fetch"):
         assert engine.sends == sent_before_restart == 1, "a saved id means the restart polls and never sends"
         assert _marker(db, created.job_id)["protocol_job"] == "engine-job-1"
+
+
+# --- 3.1: a crash around each upload of a media input, and around the media input ledger ------------------------------
+# The real extension upload (`proxy._upload_image_workflow_extension_assets`) on the real media input resolver, ledger
+# and asset store, in the order a route runs: the receipt is begun, the input is resolved and sent to the engine, the
+# job is created, the receipt is finished. The engine is a counting fake of the upload call. A "crash" is the dedicated
+# BaseException at one named point. Python runs `finally` blocks while a Crash unwinds, and a dead process runs none, so
+# the durable state at the crash instant is copied first and put back after the unwind: what the restart sees is what
+# a killed process left. The retry is the same request again with the same request id. Every effect is counted: the
+# uploads the engine received, the ledger rows (markers, removal duties, leases), the files in the store, the jobs and
+# the receipts.
+
+REQUEST_ID = "req-media-input"
+
+
+class UploadEngine:
+    """The engine's upload call. `sent` is what the engine has received; a crash can come before, or after it holds the bytes."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+        self.crash_at: str | None = None
+        self.on_crash: Callable[[], None] = lambda: None
+
+    def crash(self, point: str) -> None:
+        if self.crash_at == point:
+            self.crash_at = None
+            self.on_crash()
+            raise Crash()
+
+    async def upload(self, _client: Any, _headers: Any, content: bytes, *, filename: str, media_type: str = "image/png"):
+        self.crash("engine_before_send")
+        self.sent.append(hashlib.sha256(content).hexdigest())
+        self.crash("engine_during")  # the engine holds the file; the reply is lost
+        return f"engine-{len(self.sent)}.png", None
+
+
+class MediaRig:
+    def __init__(self, db: Path, tmp_path: Path, engine: UploadEngine) -> None:
+        self.db, self.engine = db, engine
+        self.receipts = tmp_path / "receipts.db"
+        self.assets = tmp_path / "assets"
+        self.frozen = tmp_path / "frozen"
+        self.crashes = 0
+
+    # What the dead process left: the three durable stores, copied at the crash instant and put back after the unwind.
+    def freeze(self) -> None:
+        self.frozen.mkdir(exist_ok=True)
+        for name, path in (("jobs", self.db), ("receipts", self.receipts)):
+            self._copy_db(path, self.frozen / f"{name}.db")
+        shutil.rmtree(self.frozen / "assets", ignore_errors=True)
+        if self.assets.exists():
+            shutil.copytree(self.assets, self.frozen / "assets")
+
+    def thaw(self) -> None:
+        for name, path in (("jobs", self.db), ("receipts", self.receipts)):
+            self._copy_db(self.frozen / f"{name}.db", path)
+        shutil.rmtree(self.assets, ignore_errors=True)
+        if (self.frozen / "assets").exists():
+            shutil.copytree(self.frozen / "assets", self.assets)
+        directory_index.forget()
+
+    @staticmethod
+    def _copy_db(source: Path, target: Path) -> None:
+        src, dst = sqlite3.connect(source), sqlite3.connect(target)
+        try:
+            src.backup(dst)
+        finally:
+            src.close()
+            dst.close()
+
+    def restart(self, *, aged: bool = True) -> None:
+        """A new process: no cached ledger; by default two hours have passed for every row the old process wrote."""
+        proxy._media_input_ledgers.clear()
+        if not aged:
+            return
+        conn = sqlite3.connect(self.db)
+        try:
+            conn.execute("UPDATE media_input_effect SET created = created - 7200")
+            conn.execute("UPDATE media_input_created SET created = created - 7200")
+            conn.execute("UPDATE media_input_lease SET created = created - 7200")
+            conn.commit()
+        finally:
+            conn.close()
+
+    def ledger(self) -> dict[str, int]:
+        """Every ledger row, as a restarted process would count it, and the files in the store."""
+        conn = sqlite3.connect(self.db)
+        try:
+            rows = {
+                "markers": conn.execute("SELECT COUNT(*) FROM media_input_effect").fetchone()[0],
+                "duties": conn.execute("SELECT COUNT(*) FROM media_input_created").fetchone()[0],
+                "leases": conn.execute("SELECT COUNT(*) FROM media_input_lease").fetchone()[0],
+                "live": conn.execute("SELECT COUNT(*) FROM media_input_lease WHERE released_at IS NULL").fetchone()[0],
+            }
+        finally:
+            conn.close()
+        rows["files"] = len([p for p in self.assets.glob("*") if p.suffix in (".png", ".jpg", ".webp", ".gif")]) if self.assets.exists() else 0
+        return rows
+
+    def effects(self) -> dict[str, int]:
+        """The ledger, plus what the engine received, the jobs and the receipts."""
+        return {**self.ledger(), "sent": len(self.engine.sent), "jobs": count(self.db, "media_jobs"),
+                "receipts": receipt_store.count(self.receipts)}
+
+    def sweep(self) -> None:
+        """The maintenance round of a restarted process."""
+        proxy._collect_media_input_leftovers()
+
+
+@pytest.fixture
+def media_rig(db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MediaRig:
+    monkeypatch.setattr(proxy, "IMAGE_CACHE_DIR", tmp_path / "assets")
+    monkeypatch.setattr(media_jobs, "DB_PATH", db)
+    monkeypatch.setattr(proxy, "_media_input_ledgers", {})
+    directory_index.forget()
+    registry = {"schema_version": 2, "services": {
+        proxy._GRAPH_BACKEND_ID: {"id": proxy._GRAPH_BACKEND_ID, "config": {"base_url": ORIGIN}}}}
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
+    receipts = tmp_path / "receipts.db"
+    receipt_store.init_db(receipts)
+    engine = UploadEngine()
+    monkeypatch.setattr(proxy, "_upload_graph_image_bytes", engine.upload)
+    rig = MediaRig(db, tmp_path, engine)
+    engine.on_crash = rig.freeze
+    yield rig
+    directory_index.forget()
+
+
+def _crash_here(rig: MediaRig, monkeypatch: pytest.MonkeyPatch, cls: type, name: str, *, after: bool) -> None:
+    """Make one call of ``cls.name`` the crash point: at its entry, or right after it has committed."""
+    real = getattr(cls, name)
+    fired: list[bool] = []
+
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if not after and not fired:
+            fired.append(True)
+            rig.freeze()
+            raise Crash()
+        result = real(self, *args, **kwargs)
+        if after and not fired:
+            fired.append(True)
+            rig.freeze()
+            raise Crash()
+        return result
+
+    monkeypatch.setattr(cls, name, wrapped)
+
+
+def _arm(rig: MediaRig, monkeypatch: pytest.MonkeyPatch, cut: str) -> None:
+    ledger, port = media_input_leases.MediaInputLedger, media_input_assets.CacheAssetPort
+    where = {
+        "before_marker": (ledger, "begin_effect", False),
+        "marker_committed": (ledger, "begin_effect", True),
+        "file_stored_before_lease": (ledger, "lease", False),
+        "before_lease": (ledger, "lease", False),
+        "lease_committed": (ledger, "lease", True),
+        "after_reply_before_release": (ledger, "release_holder", False),
+        "release_committed": (ledger, "release_holder", True),
+        "sweep_before_removal": (port, "discard", False),
+        "sweep_after_removal": (port, "discard", True),
+    }.get(cut)
+    if where is not None:
+        _crash_here(rig, monkeypatch, *where[:2], after=where[2])
+    else:
+        rig.engine.crash_at = cut
+
+
+def _auth() -> Any:
+    return access_context(app_id=OWNER_APP["app_id"], key_hash=OWNER_APP["key_hash"])
+
+
+class _Part:
+    """An uploaded multipart part."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self.filename, self.content_type = "control.png", "image/png"
+
+    async def read(self) -> bytes:
+        return self._data
+
+
+def one_request(rig: MediaRig, source: dict[str, Any]) -> media_jobs.MediaJob:
+    """One attempt of the request, in the route's order. ``source`` is an upload or a stored asset."""
+    receipt = RouteReceipt(protocol="openai", intent="image.edit", request_id=REQUEST_ID)
+    receipt_store.begin(receipt, path=rig.receipts)
+    value = {"asset_id": source["asset_id"]} if "asset_id" in source else {"multipart_field": "control"}
+    form = SimpleNamespace(get=lambda name: _Part(source["bytes"]) if name == "control" else None)
+    updated, error = asyncio.run(proxy._upload_image_workflow_extension_assets(
+        form=form, request_body={"prompt": "x", "extensions": {proxy.WORKFLOW_EXTENSION_NAMESPACE: {"control_image": value}}},
+        manifest=CONTROLNET_EDIT_MANIFEST, client=object(), headers={}, receipt=receipt, auth_context=_auth()))
+    assert error is None
+    created = make(rig.db, REQUEST_ID)
+    receipt.finish("succeeded")
+    receipt_store.finalize(receipt, path=rig.receipts)
+    return created
+
+
+def _crashed(rig: MediaRig, source: dict[str, Any]) -> None:
+    with pytest.raises(Crash):
+        one_request(rig, source)
+    rig.thaw()
+    rig.engine.crash_at = None
+
+
+def _upload_source() -> dict[str, Any]:
+    return {"bytes": image_bytes("PNG")}
+
+
+NOTHING = {"markers": 0, "duties": 0, "leases": 0, "live": 0, "files": 0}
+
+# cut -> (what the ledger and the store hold after the crash, uploads the engine received by then)
+UPLOAD_CUTS = {
+    "before_marker": ({**NOTHING}, 0),
+    "marker_committed": ({**NOTHING, "markers": 1, "duties": 1}, 0),
+    "file_stored_before_lease": ({**NOTHING, "markers": 1, "duties": 1, "files": 1}, 0),
+    "lease_committed": ({**NOTHING, "duties": 1, "leases": 1, "live": 1, "files": 1}, 0),
+    "engine_before_send": ({**NOTHING, "duties": 1, "leases": 1, "live": 1, "files": 1}, 0),
+    "engine_during": ({**NOTHING, "duties": 1, "leases": 1, "live": 1, "files": 1}, 1),
+    "after_reply_before_release": ({**NOTHING, "duties": 1, "leases": 1, "live": 1, "files": 1}, 1),
+    "release_committed": ({**NOTHING, "duties": 1, "leases": 1, "files": 1}, 1),
+    "sweep_before_removal": ({**NOTHING, "duties": 1, "files": 1}, 1),
+    "sweep_after_removal": ({**NOTHING, "duties": 1}, 1),
+}
+# A marker with no lease holds the file it names until its hour is up, so a retry within the hour cannot remove the file.
+STALE_MARKER = ("marker_committed", "file_stored_before_lease")
+
+
+@pytest.mark.parametrize("cut", UPLOAD_CUTS)
+def test_a_crash_around_an_uploaded_input_leaves_what_the_ledger_allows_and_the_retry_runs_once(
+        media_rig: MediaRig, monkeypatch: pytest.MonkeyPatch, cut: str):
+    """3.1: before, during and after the engine upload of an upload, and around each ledger write."""
+    source = _upload_source()
+    _arm(media_rig, monkeypatch, cut)
+    _crashed(media_rig, source)
+    left, sent = UPLOAD_CUTS[cut]
+    assert media_rig.effects() == {**left, "sent": sent, "jobs": 0, "receipts": 1}, "what the dead process left"
+    assert receipt_store.get(REQUEST_ID, path=media_rig.receipts)["status"] != "succeeded"
+
+    media_rig.restart()
+    # The retry. The engine has no memory of the first attempt, so an upload it received is sent once more.
+    created = one_request(media_rig, source)
+    done = media_rig.effects()
+    assert (done["sent"], done["jobs"], done["receipts"], done["live"]) == (sent + 1, 1, 1, 0), done
+    assert receipt_store.get(REQUEST_ID, path=media_rig.receipts)["status"] == "succeeded"
+    assert set(media_rig.engine.sent) == {hashlib.sha256(source["bytes"]).hexdigest()}, "the same bytes every time"
+    # Two hours on, the retry's own sweep removes everything the crash left: no marker, duty, lease or file stays.
+    assert done == {**NOTHING, "sent": sent + 1, "jobs": 1, "receipts": 1}, done
+    assert make(media_rig.db, REQUEST_ID).job_id == created.job_id and count(media_rig.db, "media_jobs") == 1
+
+
+@pytest.mark.parametrize("cut", STALE_MARKER)
+def test_a_retry_within_the_hour_of_a_crash_before_the_lease_leaves_the_file_until_the_hour_is_up(
+        media_rig: MediaRig, monkeypatch: pytest.MonkeyPatch, cut: str):
+    """3.1: a marker with no lease holds the file it names for its grace period; the next round after that removes it."""
+    source = _upload_source()
+    _arm(media_rig, monkeypatch, cut)
+    _crashed(media_rig, source)
+    media_rig.restart(aged=False)
+    one_request(media_rig, source)
+    done = media_rig.effects()
+    assert (done["sent"], done["jobs"], done["receipts"], done["live"]) == (1, 1, 1, 0)
+    assert (done["markers"], done["duties"], done["files"]) == (1, 1, 1), "the crashed attempt's marker holds its file"
+    media_rig.restart()
+    media_rig.sweep()
+    assert media_rig.effects() == {**NOTHING, "sent": 1, "jobs": 1, "receipts": 1}
+
+
+@pytest.mark.parametrize("cut", UPLOAD_CUTS)
+def test_the_restart_sweep_before_the_retry_removes_what_the_crash_left_without_touching_the_job(
+        media_rig: MediaRig, monkeypatch: pytest.MonkeyPatch, cut: str):
+    """3.1: a restart that sweeps first leaves no marker, duty, lease or file; the retry then makes one job and one upload."""
+    source = _upload_source()
+    _arm(media_rig, monkeypatch, cut)
+    _crashed(media_rig, source)
+    sent = UPLOAD_CUTS[cut][1]
+    media_rig.restart()
+    media_rig.sweep()
+    assert media_rig.effects() == {**NOTHING, "sent": sent, "jobs": 0, "receipts": 1}
+    one_request(media_rig, source)
+    assert media_rig.effects() == {**NOTHING, "sent": sent + 1, "jobs": 1, "receipts": 1}
+
+
+# A stored asset is the caller's own file: the lease keeps it for the request and nothing ever owes its removal.
+ASSET_CUTS = {
+    "before_lease": ({**NOTHING, "files": 1}, 0),
+    "lease_committed": ({**NOTHING, "leases": 1, "live": 1, "files": 1}, 0),
+    "engine_before_send": ({**NOTHING, "leases": 1, "live": 1, "files": 1}, 0),
+    "engine_during": ({**NOTHING, "leases": 1, "live": 1, "files": 1}, 1),
+    "after_reply_before_release": ({**NOTHING, "leases": 1, "live": 1, "files": 1}, 1),
+    "release_committed": ({**NOTHING, "leases": 1, "files": 1}, 1),
+}
+
+
+@pytest.mark.parametrize("cut", ASSET_CUTS)
+def test_a_crash_around_the_upload_of_a_stored_asset_never_removes_the_callers_file(
+        media_rig: MediaRig, monkeypatch: pytest.MonkeyPatch, cut: str):
+    """3.1: before, during and after the engine upload of an asset id; the file stays through the crash, the sweep and the retry."""
+    asset_id = stored(image_bytes("PNG"))
+    source = {"asset_id": asset_id}
+    _arm(media_rig, monkeypatch, cut)
+    left, sent = ASSET_CUTS[cut]
+    _crashed(media_rig, source)
+    assert media_rig.effects() == {**left, "sent": sent, "jobs": 0, "receipts": 1}
+
+    media_rig.restart()
+    media_rig.sweep()  # a request lease past its hour is released; no duty names the file, so it stays
+    assert media_rig.effects() == {**NOTHING, "files": 1, "sent": sent, "jobs": 0, "receipts": 1}
+
+    one_request(media_rig, source)
+    # The retry's own lease is released and kept as a row until a later round deletes it.
+    assert media_rig.effects() == {**NOTHING, "leases": 1, "files": 1, "sent": sent + 1, "jobs": 1, "receipts": 1}
+    media_rig.restart()
+    media_rig.sweep()
+    assert media_rig.effects() == {**NOTHING, "files": 1, "sent": sent + 1, "jobs": 1, "receipts": 1}
+    assert proxy.asset_cache_path(asset_id).exists(), "the caller's file is still there"

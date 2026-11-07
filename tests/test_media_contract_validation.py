@@ -136,7 +136,8 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
         cfg = {"default_duration": 8, "min_seconds": 1, "max_seconds": 30}
         workflow = {"1": {"inputs": {"seed": 0, "duration": 8}}}
         manifest = audio_manifest("test-audio", {"prompt": [("1", "text")], "seed": [("1", "seed")],
-                                                 "duration": [("1", "duration")]})
+                                                 "duration": [("1", "duration")]},
+                                 result=("1", "audio"))
         with patch.object(proxy, "_resolve_audio_workflow", return_value=("test-audio", cfg)), patch.object(
             proxy, "_load_audio_workflow_file", return_value=copy.deepcopy(workflow),
         ), patch.object(proxy, "_load_audio_workflow_manifest", return_value=manifest):

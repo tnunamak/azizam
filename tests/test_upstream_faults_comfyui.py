@@ -18,6 +18,7 @@ import pytest
 
 import proxy
 from tests.support.fake_upstream import FakeUpstream, FakeUpstreams, KnownBug, expect_fixed, fake_upstreams, load_scenario, read_deadline  # noqa: F401
+from tests.support.graph_selectors import IMAGE_AT_NODE_1
 
 WORKFLOW = {"1": {"class_type": "FkNode", "inputs": {"text": "a red fox"}}}
 PNG_SIGNATURE = bytes.fromhex("89504e470d0a1a0a")
@@ -41,7 +42,7 @@ async def _round(fakes: FakeUpstreams, *, release_waits: int = 0, read_budget: f
 
     async with asyncio.timeout(HANG_BOUND_SECONDS), httpx.AsyncClient(timeout=httpx.Timeout(HANG_BOUND_SECONDS, read=read_budget)) as client:
         releaser = asyncio.create_task(pump())
-        result = await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "fk", max_wait_s=2)
+        result = await proxy._graph_run_round(client, json.loads(json.dumps(WORKFLOW)), {}, "fk", max_wait_s=2, **IMAGE_AT_NODE_1)
         await releaser
         return result
 

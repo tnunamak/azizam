@@ -144,7 +144,7 @@ def test_a_binding_is_checked_against_its_descriptor_and_defaults_are_filled():
     assert chosen == {"first": {"node": "9", "key": "files", "from": "out_dir", "decode": "none", "take": "all"}}
 
 
-def test_a_binding_with_no_selectors_is_a_legacy_binding_and_loads():
+def test_a_binding_with_no_selectors_loads_here_and_is_refused_by_the_save_and_run_rules():
     assert sel.check_binding(descriptor(), {"first": {}}, {}) == {}
 
 
@@ -203,7 +203,7 @@ def test_the_selector_count_is_limited():
 def test_a_manifest_load_checks_its_selectors_against_the_adapter_descriptor():
     descriptors = {"eng": descriptor()}
     sel.check_manifest(manifest(), descriptors)
-    sel.check_manifest(manifest(selectors=None), descriptors)    # a legacy binding loads
+    sel.check_manifest(manifest(selectors=None), descriptors)    # a stored manifest with none loads; save and run refuse it
     with pytest.raises(sel.SelectorError):
         sel.check_manifest(manifest(selectors={"first": selector(key="unlisted")}), descriptors)
     with pytest.raises(sel.SelectorError, match="takes none"):
@@ -239,6 +239,12 @@ def test_a_good_new_contract_is_saved():
 def test_a_new_contract_with_no_selectors_is_refused_with_a_reason_that_says_what_to_add():
     message = refused(manifest(selectors=None), "selectors_missing")
     assert "declares no output selectors" in message and "eng" in message
+
+
+def test_an_explicit_null_selectors_key_is_refused_like_an_absent_one():
+    m = manifest(selectors=None)
+    m["bindings"]["eng"]["selectors"] = None
+    refused(m, "selectors_missing")
 
 
 def test_a_binding_of_an_adapter_that_takes_no_selectors_must_declare_none():
@@ -294,29 +300,6 @@ def test_ambiguous_outputs_names_the_results_that_share_a_type():
     assert sel.ambiguous_outputs({"a": {"media_type": "x/y"}, "b": {"media_type": "x/y"}, "c": {"media_type": "z/y"}}) == ["a", "b"]
     assert sel.ambiguous_outputs({"a": {"media_type": "x/y"}}) == []
 
-
-# ---------------------------------------------------------------------------------------------- the legacy flag
-
-@pytest.mark.parametrize("config,expected", [
-    ({}, True), ({"workflow_execution": {}}, True), ({"workflow_execution": {"legacy_output_collection": True}}, True),
-    ({"workflow_execution": {"legacy_output_collection": False}}, False),
-    ({"workflow_execution": {"legacy_output_collection": "false"}}, True),   # only a literal false turns it off
-    ({"workflow_execution": "x"}, True),
-])
-def test_the_legacy_collection_is_on_unless_the_trusted_config_says_false(config: dict[str, Any], expected: bool):
-    assert sel.legacy_collection_enabled(config) is expected
-
-
-
-def test_a_legacy_flag_that_is_not_a_boolean_is_named_in_a_warning_once(caplog: pytest.LogCaptureFixture, monkeypatch):
-    monkeypatch.setattr(sel, "_WARNED_FLAGS", set())
-    typo = {"workflow_execution": {"legacy_output_collection": "false"}}
-    with caplog.at_level("WARNING", logger=sel.__name__):
-        assert sel.legacy_collection_enabled(typo) is True
-        assert sel.legacy_collection_enabled(typo) is True
-        assert sel.legacy_collection_enabled({"workflow_execution": {"legacy_output_collection": False}}) is False
-    warned = [r.getMessage() for r in caplog.records if r.name == sel.__name__]
-    assert len(warned) == 1 and "'false'" in warned[0] and "stays on" in warned[0]
 
 # --------------------------------------------------------------------------------------------- the fetch gate (D6)
 
