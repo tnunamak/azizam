@@ -213,7 +213,7 @@ class MediaInputResolver:
         data = self._assets.read(asset_id)
         measured = self._check_bytes(data, accepts, capped=False)
         owner = self._assets.owner_key(auth) or ""
-        lease_id = self._lease(asset_id, owner, holder, created=False, effect_id=None)
+        lease_id = self._lease(asset_id, owner, holder, effect_id=None)
         # A sweep that found the file unheld may have removed it between the read and the lease. Once the lease is in,
         # the sweep keeps the file (``discard_unheld`` checks again), so one look now settles it. The lease stays with
         # the holder and ends when the holder does.
@@ -246,11 +246,13 @@ class MediaInputResolver:
         owner = self._assets.owner_key(auth)
         kind = asset_types.asset_prefix_for_media_type(measured.media_type)
         planned = self._assets.planned_id(data, measured.suffix, kind)
-        created = not self._assets.exists(planned)
         effect_id = f"mie_{uuid.uuid4().hex}"
-        self._ledger.begin_effect(effect_id, owner_key=owner or "", asset_id=planned, created_asset=created)
+        # Whether this ingest creates the file is decided inside the ledger's write transaction, where the sweep's
+        # removal cannot run: a file seen there stays until the marker is gone.
+        self._ledger.begin_effect(effect_id, owner_key=owner or "", asset_id=planned,
+                                  asset_exists=lambda: self._assets.exists(planned))
         asset_id = self._assets.put(data, kind=kind, suffix=measured.suffix, owner_key=owner)
-        lease_id = self._lease(asset_id, owner or "", holder, created=created, effect_id=effect_id)
+        lease_id = self._lease(asset_id, owner or "", holder, effect_id=effect_id)
         return ResolvedInput(StoredInput(asset_id, measured.media_type, measured.size_bytes, measured.sha256, lease_id), data)
 
     def _check_bytes(self, data: bytes, accepts: Sequence[str], *, capped: bool = True) -> Measured:
@@ -263,10 +265,10 @@ class MediaInputResolver:
             raise MediaInputError(UNSUPPORTED, "the input is not a file type this model accepts")
         return measured
 
-    def _lease(self, asset_id: str, owner: str, holder: Holder, *, created: bool, effect_id: str | None) -> str:
+    def _lease(self, asset_id: str, owner: str, holder: Holder, *, effect_id: str | None) -> str:
         lease_id = f"mil_{uuid.uuid4().hex}"
         self._ledger.lease(lease_id, asset_id=asset_id, owner_key=owner, holder_kind=holder.kind,
-                           holder_id=holder.id, created_asset=created, effect_id=effect_id)
+                           holder_id=holder.id, effect_id=effect_id)
         return lease_id
 
     # -- ending -------------------------------------------------------------

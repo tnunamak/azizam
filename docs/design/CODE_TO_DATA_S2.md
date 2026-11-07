@@ -261,10 +261,12 @@ This is the resolver half. The upload capability is the next step, after S2.4 ow
   - a request ends (`MediaInputResolver.release`).
 - The sweep (`MediaInputResolver.sweep`) runs in the prompt-memory maintenance loop, after the definition garbage
   sweep. It deletes stale markers, releases request leases past their TTL, releases job leases whose job row does not
-  exist after the grace period, deletes released lease rows, and removes a stored file only when the ingest created it
-  and no live lease or marker holds it. It is idempotent. The scan commits first; then each file is checked again, and
-  removed, in its own write transaction (`MediaInputLedger.discard_unheld`). A lease or marker that lands after the scan
-  keeps its file, and takes over the duty to remove it when it lets go.
+  exist after the grace period, deletes released lease rows, and removes an owner's claim on a stored file only when a
+  duty row (`media_input_created`) names it and no live lease or marker holds the file. It is idempotent. The scan
+  commits first; then each claim is checked again, removed, and its duty row deleted, in one write transaction
+  (`MediaInputLedger.discard_unheld`). A lease or marker that lands after the scan keeps the file, and the duty row
+  stays until a later pass finds the file unheld. There is no flag to hand over: the duty is a row, so it cannot be lost
+  to a second owner, a crash, an erasure or a failed removal.
 - `proxy.py` has seven hunks in `git diff`: the import; one block with the resolver factory, the destination for a
   service and the sweep entry point; `_resolve_image_extension_asset`; the request holder in
   `_upload_image_workflow_extension_assets`; the `asset_id` call there; the release after the upload (in a
@@ -273,13 +275,15 @@ This is the resolver half. The upload capability is the next step, after S2.4 ow
 **Decisions the design did not settle**
 
 - Disclosure rule: local passes, remote needs a plan grant, unknown is refused (above).
-- `created` detection. A lease records `created_asset` when the planned asset id did not exist before the ingest. The
-  planned id is the sha256 of the metadata-stripped bytes, which the store computes. A second lease or marker on the
-  same asset inherits the flag, so the last holder to let go removes the file. Residual: a type whose stripper is not
-  idempotent could plan an id that differs from the stored one. The marker would then name a file that does not exist,
+- `created` detection. An ingest writes a duty row `(asset_id, owner_key)` when the planned asset id did not exist, or
+  when another ingest's row for the same asset is still waiting for the sweep (the file is temporary for this owner
+  too). The check runs inside the write transaction that writes the ingest marker, and the sweep removes files inside
+  its own write transaction, so a file the ingest saw cannot be removed before the marker holds it. The planned id is
+  the sha256 of the metadata-stripped bytes, which the store computes. Residual: a type whose stripper is not
+  idempotent could plan an id that differs from the stored one. The row would then name a file that does not exist,
   and the discard would find nothing. No bundled type does this.
 - An ingest of bytes the store already holds adds the caller's owner claim to that asset. The sweep removes only a
-  claim the ingest added, and removes the file only when no owner and no maker remains.
+  claim a duty row names, and the store removes the file only when no owner and no maker remains.
 - Leases live in the jobs database, not a new file, so a job write and its release share one transaction. There is no
   schema-version bump: the tables are `CREATE IF NOT EXISTS`, and a database without them has no leases to release.
 - A request lease expires after one hour, and a marker or an orphan job lease after the same grace period. Both are

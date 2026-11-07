@@ -3,14 +3,19 @@
 A media input is a file that a run reads: an asset the caller owns, an upload, or a download. ``gateway/media_inputs.py``
 resolves one and holds a **lease** on it for a holder: a job, or one request. A lease lasts until its holder ends:
 the job reaches a terminal state, its row is deleted, its owner is erased, or the request ends. Releasing only marks
-the lease (``released_at``). The sweep removes the lease row, and removes the stored file when the ingest created it
-and no other lease holds it. A release runs inside the transaction of the job write that caused it, so the job and its
-leases never disagree; the file is removed later, outside that transaction.
+the lease (``released_at``). The sweep removes the lease row. A release runs inside the transaction of the job write
+that caused it, so the job and its leases never disagree; the file is removed later, outside that transaction.
 
 An ingest that stores a file has its own marker (``media_input_effect``). The marker is written before the file, and
 the lease is written in the transaction that deletes the marker. A crash between the two leaves a marker with no
-lease, and the sweep removes the file the marker names. This is the pattern of the definition store
-(``gateway/definition_store.py``): durable intent first, an idempotent sweep after.
+lease. This is the pattern of the definition store (``gateway/definition_store.py``): durable intent first, an
+idempotent sweep after.
+
+The duty to remove a file is its own record: a row ``(asset_id, owner_key)`` in ``media_input_created``. The ingest
+writes it, in the transaction that writes its marker, when the file did not exist or when another ingest's row for the
+same file is still there (the file is then temporary for this owner too). The sweep removes the owner's claim on the
+file and deletes the row in one write transaction, and only when no unreleased lease and no pending marker holds the
+file. A row stays until that happens, so a late holder, a crash, an erasure or a failed removal never loses the duty.
 
 The ``*_in`` functions take the caller's connection and write inside the caller's transaction. They name no workflow,
 model, engine or modality.
@@ -32,8 +37,14 @@ CREATE TABLE IF NOT EXISTS media_input_effect (
   effect_id TEXT PRIMARY KEY,
   owner_key TEXT NOT NULL,
   asset_id TEXT NOT NULL,
-  created_asset INTEGER NOT NULL,
   created REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS media_input_effect_asset ON media_input_effect(asset_id);
+CREATE TABLE IF NOT EXISTS media_input_created (
+  asset_id TEXT NOT NULL,
+  owner_key TEXT NOT NULL,
+  created REAL NOT NULL,
+  PRIMARY KEY (asset_id, owner_key)
 );
 CREATE TABLE IF NOT EXISTS media_input_lease (
   lease_id TEXT PRIMARY KEY,
@@ -41,7 +52,6 @@ CREATE TABLE IF NOT EXISTS media_input_lease (
   owner_key TEXT NOT NULL,
   holder_kind TEXT NOT NULL CHECK(holder_kind IN ('job', 'request')),
   holder_id TEXT NOT NULL,
-  created_asset INTEGER NOT NULL,
   created REAL NOT NULL,
   released_at REAL
 );
@@ -61,38 +71,42 @@ def _has_tables(conn: sqlite3.Connection) -> bool:
 
 
 def begin_effect_in(conn: sqlite3.Connection, effect_id: str, *, owner_key: str, asset_id: str,
-                    created_asset: bool, now: float) -> None:
-    """The marker for one ingest, written before the file is stored. ``asset_id`` is the id the store will give."""
+                    asset_exists: Callable[[], bool], now: float) -> bool:
+    """The marker for one ingest, written before the file is stored. ``asset_id`` is the id the store will give.
+
+    The ingest owes the file's removal when ``asset_exists()`` says the file is not there, or when a row for the same
+    file is still waiting for the sweep. The answer comes from inside this write transaction, and the sweep removes
+    files inside its own, so the two cannot interleave: a file seen here stays until this marker is gone. Returns
+    whether this owner now owes the removal."""
     _require_transaction(conn)
+    present = asset_exists()
+    owed = not present or conn.execute(
+        "SELECT 1 FROM media_input_created WHERE asset_id = ? LIMIT 1", (asset_id,)
+    ).fetchone() is not None
+    if owed:
+        conn.execute(
+            "INSERT OR IGNORE INTO media_input_created (asset_id, owner_key, created) VALUES (?, ?, ?)",
+            (asset_id, owner_key, now),
+        )
     conn.execute(
-        "INSERT INTO media_input_effect (effect_id, owner_key, asset_id, created_asset, created) VALUES (?, ?, ?, ?, ?)",
-        (effect_id, owner_key, asset_id, int(created_asset), now),
+        "INSERT INTO media_input_effect (effect_id, owner_key, asset_id, created) VALUES (?, ?, ?, ?)",
+        (effect_id, owner_key, asset_id, now),
     )
+    return owed
 
 
 def lease_in(conn: sqlite3.Connection, lease_id: str, *, asset_id: str, owner_key: str, holder_kind: str,
-             holder_id: str, created_asset: bool, now: float, effect_id: str | None = None) -> None:
+             holder_id: str, now: float, effect_id: str | None = None) -> None:
     """Hold ``asset_id`` for a holder. With ``effect_id``, the ingest marker is deleted in the same transaction."""
     _require_transaction(conn)
     if holder_kind not in HOLDER_KINDS:
         raise ValueError(f"holder_kind must be one of {HOLDER_KINDS}")
     if not holder_id:
         raise ValueError("holder_id: expected a non-empty string")
-    # A file that another live ingest created is shared with it, so it also goes when the last of them lets it go.
-    # Without this, the holder that created it could release first and nobody would remove the file.
-    shared = conn.execute(
-        "SELECT 1 FROM media_input_lease WHERE asset_id = ? AND released_at IS NULL AND created_asset = 1 "
-        "UNION ALL SELECT 1 FROM media_input_effect WHERE asset_id = ? AND created_asset = 1 AND effect_id IS NOT ? LIMIT 1",
-        (asset_id, asset_id, effect_id),
-    ).fetchone() is not None
-    if effect_id is not None:
-        # The sweep may have found this file unheld and left it for this ingest (``discard_unheld``): the duty passes on.
-        row = conn.execute("SELECT created_asset FROM media_input_effect WHERE effect_id = ?", (effect_id,)).fetchone()
-        shared = shared or bool(row and row[0])
     conn.execute(
-        "INSERT INTO media_input_lease (lease_id, asset_id, owner_key, holder_kind, holder_id, created_asset, created) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (lease_id, asset_id, owner_key, holder_kind, holder_id, int(created_asset or shared), now),
+        "INSERT INTO media_input_lease (lease_id, asset_id, owner_key, holder_kind, holder_id, created) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (lease_id, asset_id, owner_key, holder_kind, holder_id, now),
     )
     if effect_id is not None:
         conn.execute("DELETE FROM media_input_effect WHERE effect_id = ?", (effect_id,))
@@ -134,10 +148,16 @@ def release_owners_in(conn: sqlite3.Connection, owner_keys: Iterable[str], *, no
 
 @dataclass(frozen=True)
 class Discard:
-    """A stored file that nothing holds any more, and that the ingest created."""
+    """An owner's claim on a stored file that the ingest created, and that nothing holds any more."""
 
     asset_id: str
     owner_key: str
+
+
+_HELD = (
+    "EXISTS (SELECT 1 FROM media_input_lease l WHERE l.asset_id = {a} AND l.released_at IS NULL) "
+    "OR EXISTS (SELECT 1 FROM media_input_effect e WHERE e.asset_id = {a})"
+)
 
 
 def sweep_in(
@@ -145,37 +165,19 @@ def sweep_in(
 ) -> list[Discard]:
     """Release what has no live holder, delete released lease rows and stale markers, and say which files to remove.
 
-    - A marker older than ``effect_grace_s`` is a crash between the marker and the lease: the marker goes, and the file
-      it named is a discard if the ingest created it and no lease holds it.
+    - A marker older than ``effect_grace_s`` is a crash between the marker and the lease: the marker goes.
     - A request lease older than ``request_ttl_s`` is released: its request is gone.
     - A job lease whose job row does not exist, and is older than ``effect_grace_s``, is released: the job was never
       created, or was deleted by a path that did not release.
-    - A released lease row is deleted. A file it created is a discard when no live lease holds it.
+    - A released lease row is deleted.
+    - A ``media_input_created`` row whose file no unreleased lease and no pending marker holds is a discard. The row
+      stays until ``MediaInputLedger.discard_unheld`` has removed the claim, so a crash or a failure retries.
 
     The caller removes the files after this transaction commits, with ``MediaInputLedger.sweep``, which checks each file
     again in its own transaction before it removes it.
     """
     _require_transaction(conn)
-    discards: dict[tuple[str, str], Discard] = {}
-
-    def consider(asset_id: str, owner_key: str, created_asset: int) -> None:
-        if not created_asset:
-            return
-        live = conn.execute(
-            "SELECT 1 FROM media_input_lease WHERE asset_id = ? AND released_at IS NULL LIMIT 1", (asset_id,)
-        ).fetchone()
-        pending = conn.execute(
-            "SELECT 1 FROM media_input_effect WHERE asset_id = ? LIMIT 1", (asset_id,)
-        ).fetchone()
-        if live is None and pending is None:
-            discards[(asset_id, owner_key)] = Discard(asset_id, owner_key)
-
-    for effect_id, owner_key, asset_id, created_asset in conn.execute(
-        "SELECT effect_id, owner_key, asset_id, created_asset FROM media_input_effect WHERE created < ?",
-        (now - effect_grace_s,),
-    ).fetchall():
-        conn.execute("DELETE FROM media_input_effect WHERE effect_id = ?", (effect_id,))
-        consider(asset_id, owner_key, created_asset)
+    conn.execute("DELETE FROM media_input_effect WHERE created < ?", (now - effect_grace_s,))
     conn.execute(
         "UPDATE media_input_lease SET released_at = ? WHERE released_at IS NULL AND holder_kind = 'request' AND created < ?",
         (now, now - request_ttl_s),
@@ -186,12 +188,14 @@ def sweep_in(
     ).fetchall():
         if conn.execute("SELECT 1 FROM media_jobs WHERE job_id = ?", (holder_id,)).fetchone() is None:
             conn.execute("UPDATE media_input_lease SET released_at = ? WHERE lease_id = ?", (now, lease_id))
-    for lease_id, asset_id, owner_key, created_asset in conn.execute(
-        "SELECT lease_id, asset_id, owner_key, created_asset FROM media_input_lease WHERE released_at IS NOT NULL"
-    ).fetchall():
-        conn.execute("DELETE FROM media_input_lease WHERE lease_id = ?", (lease_id,))
-        consider(asset_id, owner_key, created_asset)
-    return list(discards.values())
+    conn.execute("DELETE FROM media_input_lease WHERE released_at IS NOT NULL")
+    return [
+        Discard(asset_id, owner_key)
+        for asset_id, owner_key in conn.execute(
+            "SELECT c.asset_id, c.owner_key FROM media_input_created c "
+            f"WHERE NOT ({_HELD.format(a='c.asset_id')}) ORDER BY c.created, c.asset_id, c.owner_key"
+        ).fetchall()
+    ]
 
 
 class MediaInputLedger:
@@ -217,16 +221,19 @@ class MediaInputLedger:
                 raise
             conn.commit()
 
-    def begin_effect(self, effect_id: str, *, owner_key: str, asset_id: str, created_asset: bool) -> None:
+    def begin_effect(self, effect_id: str, *, owner_key: str, asset_id: str,
+                     asset_exists: Callable[[], bool]) -> bool:
+        """Write the marker, and the owner's removal duty when the file is not there, in one write transaction.
+        ``asset_exists`` is called inside it. Returns whether the owner owes the removal."""
         with self._write() as conn:
-            begin_effect_in(conn, effect_id, owner_key=owner_key, asset_id=asset_id,
-                            created_asset=created_asset, now=self._clock())
+            return begin_effect_in(conn, effect_id, owner_key=owner_key, asset_id=asset_id,
+                                   asset_exists=asset_exists, now=self._clock())
 
     def lease(self, lease_id: str, *, asset_id: str, owner_key: str, holder_kind: str, holder_id: str,
-              created_asset: bool, effect_id: str | None = None) -> None:
+              effect_id: str | None = None) -> None:
         with self._write() as conn:
             lease_in(conn, lease_id, asset_id=asset_id, owner_key=owner_key, holder_kind=holder_kind,
-                     holder_id=holder_id, created_asset=created_asset, now=self._clock(), effect_id=effect_id)
+                     holder_id=holder_id, now=self._clock(), effect_id=effect_id)
 
     def release_holder(self, holder_kind: str, holder_id: str) -> int:
         with self._write() as conn:
@@ -249,26 +256,25 @@ class MediaInputLedger:
             return sweep_in(conn, now=self._clock(), effect_grace_s=effect_grace_s, request_ttl_s=request_ttl_s)
 
     def discard_unheld(self, found: Iterable[Discard], discard: Callable[[str, str], None]) -> int:
-        """Second half: remove each file, but only if nothing holds it *now*. A lease or ingest marker can land after
-        the scan committed, so the check and the removal share one write transaction per file: a writer that comes
-        later waits for the lock and then sees the file gone, and one that came earlier is seen by the check. A file
-        that is held after all stays, and its holder inherits the duty to remove it (``created_asset`` is set), so
-        it is not left behind when the holder lets go. Returns how many files were discarded. A failed ``discard``
-        raises and leaves the file; the rows of the files before it are already committed. Callers pass a
-        ``discard`` that does not raise for a file that is already gone."""
+        """Second half: remove each owner's claim, but only if nothing holds the file *now*. A lease or ingest marker
+        can land after the scan committed, so the check, the removal and the deletion of the duty row share one write
+        transaction per claim: a writer that comes later waits for the lock and then sees the file gone, and one that
+        came earlier is seen by the check. A file that is held after all stays, and its row stays with it, so the
+        next pass removes it when the holder lets go. Returns how many claims were discarded. A failed ``discard``
+        raises, rolls back its own row and leaves the file; the claims before it are already committed. Callers pass
+        a ``discard`` that does not raise for a file that is already gone."""
         removed = 0
         for item in found:
             with self._write() as conn:
-                held = conn.execute(
-                    "UPDATE media_input_lease SET created_asset = 1 WHERE asset_id = ? AND released_at IS NULL",
-                    (item.asset_id,),
-                ).rowcount
-                pending = conn.execute(
-                    "UPDATE media_input_effect SET created_asset = 1 WHERE asset_id = ?", (item.asset_id,),
-                ).rowcount
-                if held or pending:
+                owed = conn.execute(
+                    "SELECT 1 FROM media_input_created WHERE asset_id = ? AND owner_key = ?",
+                    (item.asset_id, item.owner_key),
+                ).fetchone()
+                if owed is None or conn.execute(f"SELECT {_HELD.format(a='?')}", (item.asset_id, item.asset_id)).fetchone()[0]:
                     continue
                 discard(item.asset_id, item.owner_key)
+                conn.execute("DELETE FROM media_input_created WHERE asset_id = ? AND owner_key = ?",
+                             (item.asset_id, item.owner_key))
                 removed += 1
         return removed
 
