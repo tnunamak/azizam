@@ -1,0 +1,372 @@
+diff --git a/proxy.py b/proxy.py
+index ea72be4b6..4076ce1e9 100755
+--- a/proxy.py
++++ b/proxy.py
+@@ -120,60 +120,61 @@ from gateway import exclusive_pool, mesh_api, mesh_manifest
+ from gateway.decision_routing import DecisionRuntime
+ from gateway import rerank as rerank_api
+ from gateway import stable_aliases
+ from gateway import model_metadata
+ from gateway import engine_check
+ from gateway.engine_connection import InferenceConnectionError, inference_connection
+ from gateway import speech_stream
+ from gateway.engine_protocol import inline_tts as tts_adapter
+ from gateway.engine_protocol import audio_graph, node_graph
+ from gateway.engine_protocol import reviewed as reviewed_adapters
+ from gateway.engine_protocol.types import JobRef, JobState
+ from gateway.engine_protocol.errors import (TransportFailure, ProtocolError, MappingError as ProtocolMappingError,
+     MalformedResponse as ProtocolMalformedResponse, UpstreamError as ProtocolUpstreamError)
+ from gateway.engine_protocol.types import StreamReply as ProtocolStreamReply
+ from gateway.engine_switch import SwitchUnavailable as ProtocolSwitchUnavailable
+ from gateway.engine_protocol.types import CanonicalRequest as AdapterRequest
+ from gateway.engine_protocol.types import Connection as AdapterConnection
+ from gateway.engine_protocol.types import Reply as AdapterReply
+ from gateway.engine_protocol.types import Timeouts as AdapterTimeouts
+ from gateway.engine_protocol.errors import UnsupportedByAdapter as ProtocolUnsupportedByAdapter
+ from gateway.engine_protocol import node_info
+ from gateway.engine_protocol import node_ui_graph
+ from gateway.engine_protocol.node_validation import validate_workflow_graph
+ from gateway.engine_protocol import chunked_stt
+ from gateway import custom_voices
+ from gateway import voice_audio
+ from gateway import voices_api
+ from gateway import a1111_api
+ from gateway import mcp_oauth, mcp_oauth_store, mcp_server, session_guard
+ from gateway.workflow_call import CallError
++from gateway.workflow_view import requirements_of
+ from gateway import binding_descriptors, binding_registry, identity_api, identity_scene
+ from gateway import likeness as likeness_module
+ from gateway import stt_chunking, stt_measurement
+ from gateway.lifecycle_drivers import SwapRecoveryFailed
+ from gateway.swap_drain import ServingLease, SwapDeferred, SwapDrain, SwapDrainSettings
+ from gateway.transition_executor import TriggerLease
+ from gateway.transition_runtime import TransitionRuntime
+ from gateway.transition_snapshot_steps import snapshot_steps
+ from gateway.transition_snapshots import DEFAULT_SNAPSHOT_BUDGET, LazySnapshotStore, PrivateSnapshotDir, SqliteSnapshotStore
+ from gateway.transition_gate import (
+     GateStore, TransitionPolicy, TransitionUnavailable, acquire_bounded, admit as _transition_admit, policy_for,
+     offering_effect, record_minted_lease, require_egress_lease, require_supported,
+ )
+ from gateway.alias_policy import (
+     AliasPolicyResolutionError,
+     ResolvedRequestTarget,
+     per_backend_transform_specs as _pure_per_backend_transform_specs,
+     resolve_request_target as _pure_resolve_request_target,
+     service_model_records as _pure_service_model_records,
+     transform_specs as _pure_transform_specs,
+ )
+ from gateway.admin_api import (
+     AdminAuthError,
+     AdminContext,
+     _require_admin,
+     create_admin_router,
+     registry_not_applied_response,
+ )
+ from gateway.settings_api import create_settings_router, instance_settings, prompt_memory_settings
+ from gateway import config_api
+@@ -14819,61 +14820,61 @@ def _gateway_catalog_finish(
+         if capability.intent == INTENT_VIDEO_GENERATE and limits_for_workflow(published_video_limits, capability.workflow or capability.resolved_workflow)
+         else capability
+         for capability in resolve_capability_targets(
+             canonicalize_workflow_capabilities(capabilities, _build_workflow_model_entries()), live_registry
+         )
+     ]
+ 
+     # The mesh row's facts. Its state joins later as live evidence (LIVE_PROBES), like every other row's.
+     capabilities.append(_mesh_facts(live_registry))
+     return capabilities
+ 
+ 
+ def _workflow_availability_services(registry: Mapping[str, Any]) -> dict[str, Any]:
+     """Add the on-demand sidecar declaration to the availability-only registry view."""
+     services = dict(registry.get("services") or {})
+     face_config = _identity_face_cfg()
+     if face_config:
+         services["faces"] = {"enabled": True, "name": str(face_config.get("name") or "Face service"),
+                              "config": dict(face_config)}
+     return {**registry, "services": services}
+ 
+ 
+ def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[str]:
+     """Engines that visible gateway-composed workflows declare they rely on."""
+     records = {record.id: record for record in GATEWAY_WORKFLOW_REGISTRY.records()}
+     out: set[str] = set()
+     for cap in capabilities:
+         if not cap.policy_available or cap.backend != "gateway":
+             continue
+         record = records.get(cap.workflow or cap.resolved_workflow or "")
+-        requirements = record.manifest.get("requires") if record else None
++        requirements = requirements_of(record.contract) if record else None
+         if isinstance(requirements, Mapping):
+             out.update(str(service) for service in requirements.get("services") or ())
+             for workflow_id in requirements.get("workflows") or ():
+                 required = records.get(str(workflow_id))
+                 if required:
+                     out.update(required.supported_backends)
+     return out
+ 
+ 
+ # Every capabilities and overview read asks about the same few services. Their rows are kept for the TTL below, and a
+ # read that finds a service cold shares the probe already in flight for it, so a read costs no HTTP probe or `systemctl`
+ # process unless a row has expired. The status grid keeps its own rows and deadlines.
+ _SERVICE_ROW_CACHE_TTL_S = 12.0
+ _SERVICE_ROW_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}  # service id -> (probe start, row)
+ _SERVICE_ROW_PROBES: dict[str, asyncio.Task] = {}  # service id -> the probe in flight that will answer it
+ 
+ 
+ def _service_row_key(row: Mapping[str, Any]) -> str:
+     return str(row.get("service_id") or row.get("key") or "")
+ 
+ 
+ async def _probe_service_rows(services: dict[str, Any], started: float) -> list[dict[str, Any]]:
+     owner = asyncio.current_task()
+     try:
+         rows = await status_endpoint._backend_grid({"backends": services})
+     finally:
+         # Unregister only the entries this task registered. A fallback probe registers none, so a newer probe for the
+         # same service may still be in flight when it finishes.
+         for key in services:
+             if _SERVICE_ROW_PROBES.get(key) is owner:
+@@ -16297,63 +16298,68 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
+         "remote": result.remote, "cost_usd": result.cost_usd, "usage": safe_usage_metadata,
+     }
+     _record_retention_receipt(receipt)
+ 
+ 
+ FRONTEND_TRANSLATORS.register_owned("typesafe", lambda app: decisions_api.register_decision_routes(
+     app, decisions_api.DecisionsApiDeps(
+         authenticate=lambda request, path: authenticate_request(request, path),
+         profile_for=_access_for_auth_context,
+         models_for=_decision_models_for,
+         dispatch=_dispatch_decision,
+         record_receipt=lambda auth, result: run_receipt_write(_record_decision_receipt, auth, result),
+         openai_decisions=_openai_decisions,
+     ),
+ ))
+ 
+ # --- A1111 /sdapi/v1 subset for SillyTavern (gateway/a1111_api.py) ------------
+ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a1111_routes(
+     app,
+     a1111_api.A1111Deps(
+         authenticate=lambda request, path: authenticate_request(request, path),
+         call=_mcp_internal_call,
+         catalog=_mcp_catalog,
+         aliases=lambda: _gateway_aliases_provider(),
+         owner_of=lambda auth: _asset_owner_key(auth if isinstance(auth, AuthContext) else None),
+     ),
+ ))
+ 
+ # --- Image to 3D: POST /v1/meshes/generate (gateway/mesh_api.py) -------------
+ # The manifest is bundled data; the lease manager is one per process (one gateway worker per physical pool).
+-MESH_MANIFEST = mesh_manifest.load_mesh_manifest(
+-    Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
+-)
++_MESH_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
++# The route reads its workflow record from the registry and runs the mesh frontend profile on its contract; the old mesh
++# validator reads the same file beside it as a check (CODE_TO_DATA_S3, S3.4; it goes in S3.9).
++_MESH_CHECK = mesh_manifest.load_mesh_manifest(_MESH_MANIFEST_PATH)
++_MESH_RECORD = GATEWAY_WORKFLOW_REGISTRY.get(_MESH_CHECK.id)
++if _MESH_RECORD is None:
++    raise mesh_manifest.MeshManifestError(f"workflow {_MESH_CHECK.id} is not in the registry")
++MESH_MANIFEST = mesh_api.mesh_workflow_from_record(_MESH_RECORD, checked_against=_MESH_CHECK)
+ MESH_LEASES = exclusive_pool.ExclusivePoolLeaseManager()
+ 
+ 
+ def _live_service_registry() -> dict | None:
+     try:
+         return ADMIN_STORE.get_service_registry()
+     except Exception:  # noqa: BLE001 - an unreadable registry fails the route closed, not the gateway
+         return None
+ 
+ 
+ def _mesh_open_receipt(auth: AuthContext, request_id: str, path: str) -> ReceiptLifecycleOwner:
+     identity = auth.identity
+     receipt = RouteReceipt(
+         protocol="openai.mesh", intent=mesh_api.MESH_INTENT, path=path, request_id=request_id,
+         app_profile=plan_ref(identity),
+         app_id=identity.app_id if identity else None,
+         api_key_name=identity.name if identity else None,
+         backend=MESH_MANIFEST.service_id, resolved_workflow=MESH_MANIFEST.id,
+         manifest_id=MESH_MANIFEST.id, manifest_version=MESH_MANIFEST.version,
+         manifest_hash=MESH_MANIFEST.manifest_hash,
+     )
+     return ReceiptLifecycleOwner(receipt)
+ 
+ 
+ def _mesh_route_policy(auth: AuthContext, row: Mapping[str, Any]) -> PolicyDecision:
+     """The same plan evaluation the other Try workflows run, from the route's own frontend tiers. Reads no receipt."""
+     tiers = row["runtime_policy"]
+     return evaluate_and_apply(auth.identity, make_policy_request(
+         protocol=mesh_api.MESH_PROTOCOL, intent=mesh_api.MESH_INTENT, workflow=MESH_MANIFEST.id,
+         backend=MESH_MANIFEST.service_id,
+@@ -17379,61 +17385,61 @@ app.include_router(create_settings_router(
+ # Owner API over the config sections (docs/design/CONFIG_HOMES.md, 7). The dependencies are looked up per request, so
+ # the layer, the registry and the reload are the ones running now.
+ app.include_router(config_api.create_config_router(
+     auth=ADMIN_AUTH, admin_path=lambda: ADMIN_DB_PATH, home=lambda: CONFIG_HOME,
+     registry=ADMIN_STORE.get_service_registry, reload=lambda: reload_runtime_config(),
+     startup_block=lambda section: _bootstrap_config.get(section) if isinstance(_bootstrap_config.get(section), Mapping) else None,
+ ))
+ app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
+ # Owner-defined categories and plans (design v3). Active rules tighten the
+ # runtime decision in runtime_auth.evaluate_and_apply (category_enforcement).
+ def _category_service_catalog() -> list[dict[str, Any]]:
+     """Configured policy targets, independent of the rules being edited.
+ 
+     Reuse the routing catalogs without health probes or caller-policy filtering.
+     Stable chat aliases are rewritten before policy, so publish their targets.
+     """
+     registry = ADMIN_STORE.get_service_registry()
+     entries: dict[str, dict[str, Any]] = {}
+ 
+     def add(stem: str, label: str | None, kind: str, intent: str) -> None:
+         if not stem:
+             return
+         entry = entries.setdefault(stem, {
+             "stem": stem, "label": label or stem, "kind": kind, "capabilities": [],
+         })
+         if intent not in entry["capabilities"]:
+             entry["capabilities"].append(intent)
+ 
+     for record in GATEWAY_WORKFLOW_REGISTRY.records():
+         if record.supported_backends:
+-            add(record.id, record.manifest.get("display_name"), "workflow", record.intent)
++            add(record.id, record.contract.get("display_name"), "workflow", record.intent)
+ 
+     backends = service_registry.runtime_backends(registry)
+     # Use the execution catalog's public names, including provider prefixes,
+     # and its enabled-model filtering before deriving protocol capabilities.
+     for model, (service, record) in litellm_public_model_records(registry).items():
+         routed = {**service, "config": {**service["config"], "models": [{"id": model}]}}
+         intents = {capability.intent for capability in registered_model_capabilities(
+             {"services": {service["id"]: routed}})}
+         # A declared OpenAI chat protocol is sufficient for an executable route;
+         # older service records need not repeat it in capability metadata.
+         if not intents:
+             intents.add("chat.completions")
+         label = record.get("display_name") or record.get("title") or model
+         for intent in sorted(intents):
+             add(model, label, "model", intent)
+     capabilities = build_local_capabilities(
+         config, backends=backends,
+         enabled_flags={"images": False, "videos": False, "audio": False},
+     )
+     for capability in capabilities:
+         if not capability.model or capability.workflow:
+             continue
+         if capability.backend not in backends or not backends[capability.backend].get("enabled", True):
+             continue
+         add(capability.model, capability.title, "model", capability.intent)
+         # The role catalog advertises both forms; chat accepts the bare name.
+         if capability.model.startswith("role:"):
+             add(capability.model.removeprefix("role:"), capability.title, "model", capability.intent)
+ 
+     for capability in build_alias_capabilities(_gateway_aliases_provider()):
+@@ -20845,92 +20851,79 @@ def _mark_backend_started(receipt: RouteReceipt | None) -> None:
+ 
+ def _apply_image_route_policy(
+     receipt: RouteReceipt,
+     auth_context: AuthContext,
+     *,
+     model: str | None = None,
+     workflow: str | None = None,
+     manifest: Mapping[str, Any] | None = None,
+ ) -> PolicyDecision:
+     metadata = _image_manifest_policy_metadata(manifest)
+     return evaluate_and_apply(
+         auth_context.identity,
+         make_policy_request(
+             protocol="openai.images",
+             intent=receipt.intent,
+             model=model,
+             workflow=workflow,
+             backend=receipt.backend,
+             capability_exposure=metadata["exposure"],
+             capability_trust_tier=metadata["trust_tier"],
+             capability_resource_tier=metadata["resource_tier"],
+             capability_tags=metadata["tags"],
+         ),
+         receipt,
+     )
+ 
+ 
+ def _image_manifest_policy_metadata(
+     manifest: Mapping[str, Any] | None,
+ ) -> dict[str, object]:
++    """The route's policy facts for the workflow a manifest names: the record-level facts a load makes from the stored
++    document (CODE_TO_DATA_S3, D2), with the old defaults filled in."""
+     if manifest is None:
+-        return {
+-            "exposure": "default",
+-            "trust_tier": "stable",
+-            "resource_tier": "batch",
+-            "tags": (),
+-        }
++        return _image_policy_metadata(None, trusted=True)
++    from gateway.workflow_convert import policy_facts_of, trusted_of
+ 
+-    trusted = bool(manifest.get("trusted", False))
+-    tags_raw = manifest.get("tags")
+-    tags: list[str] = []
+-    if isinstance(tags_raw, list):
+-        tags = [tag for tag in tags_raw if isinstance(tag, str) and tag]
+-    return {
+-        "exposure": _manifest_string_field(manifest, "exposure", "default"),
+-        "trust_tier": _manifest_string_field(
+-            manifest, "trust_tier", "stable" if trusted else "experimental"
+-        ),
+-        "resource_tier": _manifest_string_field(
+-            manifest, "resource_tier", "batch"
+-        ),
+-        "tags": tuple(dict.fromkeys(tags)),
+-    }
++    return _image_policy_metadata(policy_facts_of(manifest), trusted=trusted_of(manifest))
+ 
+ 
+-def _manifest_string_field(
+-    manifest: Mapping[str, Any], key: str, default: str
+-) -> str:
+-    value = manifest.get(key)
+-    if isinstance(value, str) and value:
+-        return value
+-    return default
++def _image_policy_metadata(facts: Any, *, trusted: bool) -> dict[str, object]:
++    """The policy facts of an image route, with the old defaults filled in where the record states none."""
++    if facts is None:
++        return {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "tags": ()}
++    return {
++        "exposure": facts.exposure or "default",
++        "trust_tier": facts.trust_tier or ("stable" if trusted else "experimental"),
++        "resource_tier": facts.resource_tier or "batch",
++        "tags": facts.tags,
++    }
+ 
+ 
+ def _policy_workflow_for_receipt(receipt: RouteReceipt | None) -> str | None:
+     if receipt is None:
+         return None
+     return receipt.manifest_id or receipt.resolved_workflow or receipt.requested_workflow
+ 
+ 
+ def _policy_denied_response(decision: PolicyDecision) -> Response:
+     """403 in the OpenAI error shape with the design §3.3 access code."""
+     reason = decision.reasons[0] if decision.reasons else "This isn't in your access plan."
+     error: dict[str, Any] = {"message": reason, "type": "access_error", "code": decision.code or "policy_denied"}
+     if decision.side:
+         error["details"] = {"side": decision.side, "plans": [s.split(":", 1)[1] for s in decision.sources
+                                                          if s.startswith("access_plan:")]}
+     return _gateway_refusal(Response(
+         content=json.dumps({"error": error}),
+         status_code=403,
+         media_type="application/json",
+     ), "authorization")
+ 
+ 
+ def _asset_content_route_policy(asset_id: str) -> dict[str, Any] | None:
+     parsed = _parse_asset_id(asset_id)
+     if parsed is None:
+         return None
+     kind, _ = parsed
+     return DERIVED._ASSET_CONTENT_ROUTE_POLICY_BY_KIND.get(kind)
+ 
+ 
