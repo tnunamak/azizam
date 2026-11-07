@@ -14,11 +14,12 @@ import copy
 import hashlib
 import json
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from gateway.manifests import MEDIA_INPUT_TYPES, ContractError
-from gateway.workflow_contract import CONTRACT_VERSION, Report, check_contract, report_from
+from gateway.workflow_contract import CONTRACT_VERSION, Report, check_contract
 
 log = logging.getLogger(__name__)
 
@@ -107,10 +108,10 @@ def _convert_input(at: tuple[str, ...], spec: dict[str, Any], note: Any) -> None
 CONFLICT = "conflict"
 
 
-def _flat_kind(out: Mapping[str, Any], block: Any) -> str | None:
-    """The key a binding with a transport block flattens to, or None when it is not flattened."""
+def _flat_kind(block: Any) -> str | None:
+    """The key a binding with a transport block would flatten to, or None when it has no transport kind."""
     transport = block.get("transport") if isinstance(block, dict) else None
-    if isinstance(transport, dict) and isinstance(transport.get("kind"), str) and transport["kind"] not in out["bindings"]:
+    if isinstance(transport, dict) and isinstance(transport.get("kind"), str):
         return transport["kind"]
     return None
 
@@ -123,10 +124,8 @@ def conversion_errors(notes: list[ConversionNote]) -> list[ContractError]:
 def convert_and_check(doc: Mapping[str, Any]) -> tuple[dict[str, Any], list[ConversionNote], Report]:
     """Convert a document, check the result, and add the conversion conflicts to the report."""
     converted, notes = convert_1_to_2(doc)
-    report = check_contract(converted)
-    extra = conversion_errors(notes)
-    if extra:
-        report = report_from([*report.errors, *extra])
+    # The conflicts join the raw errors before the cap, so one cap and one "more errors" marker apply.
+    report = check_contract(converted, extra_errors=conversion_errors(notes))
     return converted, notes, report
 
 
@@ -134,14 +133,18 @@ def _convert_bindings(out: dict[str, Any], note: Any) -> tuple[dict[str, Any], s
     """The new bindings, and the keys of those that had a transport block (a form POST to a service)."""
     bindings: dict[str, Any] = {}
     flattened: set[str] = set()
-    kinds = [_flat_kind(out, block) for block in out["bindings"].values()]
-    clashing = {kind for kind in kinds if kind is not None and kinds.count(kind) > 1}
+    kinds = {key: _flat_kind(block) for key, block in out["bindings"].items()}
+    # The target is found before the occupied keys are excluded. Bindings that would flatten to one key, or onto a key
+    # another binding already holds, would lose one of them: all of those stay as written, and the notes say so.
+    clashing = {
+        key for key, kind in kinds.items() if kind is not None and (
+            list(kinds.values()).count(kind) > 1 or (kind in out["bindings"] and kind != key))}
+    clashing |= {kind for key, kind in kinds.items() if key in clashing and kind in out["bindings"]}
     for key, block in out["bindings"].items():
-        kind = _flat_kind(out, block)
-        if kind in clashing:
-            # Two bindings would flatten to one key and one would be lost. Both stay as written, and the note says so.
-            note(("bindings", key), CONFLICT, f"another binding also flattens to {kind}; both stay unconverted")
-        elif kind is not None:
+        kind = kinds[key]
+        if key in clashing:
+            note(("bindings", key), CONFLICT, f"another binding also uses {kind or key}; both stay unconverted")
+        elif kind is not None and kind not in out["bindings"]:
             transport = block["transport"]
             block = {name: value for name, value in block.items() if name != "transport"}
             block["service"] = key
@@ -183,23 +186,27 @@ def _generate_seeds(out: dict[str, Any], flattened: set[str], note: Any) -> None
 MAX_LOGGED_ERRORS = 10
 _REPORTED: set[tuple[str, int]] = set()
 _REPORTED_LIMIT = 4096
+_REPORTED_LOCK = threading.Lock()
 
 
 def forget_reported() -> None:
     """Forget which documents were reported (a test wants a fresh report)."""
-    _REPORTED.clear()
+    with _REPORTED_LOCK:
+        _REPORTED.clear()
 
 
 def _first_report(manifest: Mapping[str, Any]) -> bool:
     """True once per (document digest, contract version) for the process; the later loads skip the work."""
     digest = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")).hexdigest()
     key = (digest, CONTRACT_VERSION)
-    if key in _REPORTED:
-        return False
-    if len(_REPORTED) >= _REPORTED_LIMIT:
-        _REPORTED.clear()
-    _REPORTED.add(key)
-    return True
+    # Membership, the capacity reset and the insert are one step: two threads must not both be first.
+    with _REPORTED_LOCK:
+        if key in _REPORTED:
+            return False
+        if len(_REPORTED) >= _REPORTED_LIMIT:
+            _REPORTED.clear()
+        _REPORTED.add(key)
+        return True
 
 
 def log_bundled_report(manifest: Mapping[str, Any], source: object = None) -> None:

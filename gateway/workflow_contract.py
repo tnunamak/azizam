@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
+from fractions import Fraction
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -85,8 +86,9 @@ class Report:
             raise ContractErrors(self.errors, self.primary, final=True)
 
 
-def check_contract(doc: Any, context: ContractContext | None = None) -> Report:
-    """Check a workflow document of schema version 2. Never raises for a bad document; read the report."""
+def check_contract(doc: Any, context: ContractContext | None = None, extra_errors: Iterable[ContractError] = ()) -> Report:
+    """Check a workflow document of schema version 2. Never raises for a bad document; read the report. ``extra_errors``
+    (errors found outside the check, e.g. by a converter) join the others before the cap is applied."""
     context = context or ContractContext()
     if not isinstance(doc, Mapping):
         return report_from([ContractError((), "type_mismatch", "a workflow document must be a mapping")])
@@ -99,7 +101,7 @@ def check_contract(doc: Any, context: ContractContext | None = None) -> Report:
     errors = ErrorCollector()
     errors.errors.extend(structural)
     _Semantic(context, [error.path for error in structural], errors).run(doc)
-    return report_from(errors.errors)
+    return report_from([*errors.errors, *extra_errors])
 
 
 def report_from(found: list[ContractError]) -> Report:
@@ -269,15 +271,19 @@ class _Semantic:
             self.errors.add(at, "bounds_empty", f"{low} is above {high}")
 
     def _numeric(self, at: tuple[PathPart, ...], spec: Mapping[str, Any]) -> None:
+        valid = True
         for key in ("minimum", "maximum", "step", "offset"):
             value = spec.get(key)
             if isinstance(value, float) and not math.isfinite(value):
                 self.errors.add(at + (key,), "number_not_finite", f"{key} must be a finite number")
+                valid = False
             elif spec["type"] == "integer" and key in ("minimum", "maximum") and value is not None \
                     and (isinstance(value, bool) or not isinstance(value, int)):
                 self.errors.add(at + (key,), "integer_expected", f"{key} of an integer input must be an integer")
+                valid = False
         self._ordered(at, spec, "minimum", "maximum")
-        if "generate" in spec:
+        # A generator check reasons about the bounds and the grid; with one of them broken, the field error is the report.
+        if "generate" in spec and valid:
             self._generator(at, spec)
 
     def _generator(self, at: tuple[PathPart, ...], spec: Mapping[str, Any]) -> None:
@@ -298,6 +304,8 @@ class _Semantic:
                 missing = True
         if missing:
             return
+        if not all(_is_number(rule[bound]) and _is_finite(rule[bound]) for bound in ("minimum", "maximum")):
+            return  # the schema layer reports a bound that is not a finite number
         low = max(rule["minimum"], spec.get("minimum", rule["minimum"]))
         high = min(rule["maximum"], spec.get("maximum", rule["maximum"]))
         if not _generates_a_value(spec, low, high):
@@ -340,40 +348,51 @@ class _Semantic:
                 self.errors.add(at + ("schema",), "asset_in_result_schema", "a result schema describes data, not media")
 
 
-_LATTICE_LOOKS = 4096
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_finite(value: Any) -> bool:
+    """Finiteness is only a question for a float; an int of any size is finite (math.isfinite would overflow on it)."""
+    return not isinstance(value, float) or math.isfinite(value)
 
 
 def _generates_a_value(spec: Mapping[str, Any], low: Any, high: Any) -> bool:
-    """True when some integer in ``low..high`` is also a value the input accepts (its enum, its step and offset). When the
-    answer is not found in a bounded search of a long grid, it is taken as yes: only a proven empty domain is refused."""
-    if low > high:
-        return False
-    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (low, high)):
+    """True when some integer in ``low..high`` is also a value the input accepts (its enum, its step and offset).
+    Decided with exact arithmetic: the grid ``offset + k*step`` is a congruence, solved, not searched. When the input
+    cannot be reasoned about (a step or offset that is not a number), the answer is yes: only a proven empty domain is refused."""
+    if not (_is_number(low) and _is_number(high) and _is_finite(low) and _is_finite(high)):
         return True
-    first, last = math.ceil(low), math.floor(high)
+    first, last = math.ceil(Fraction(low)), math.floor(Fraction(high))
     if first > last:
         return False
-
-    def fits(n: int) -> bool:
-        return validate_input_value("value", n, spec) is None
-
     enum = spec.get("enum")
     if isinstance(enum, list):
-        return any(isinstance(v, int) and not isinstance(v, bool) and first <= v <= last and fits(v) for v in enum)
+        return any(
+            isinstance(v, int) and not isinstance(v, bool) and first <= v <= last and validate_input_value("value", v, spec) is None
+            for v in enum
+        )
     step = spec.get("step")
-    if not isinstance(step, (int, float)) or isinstance(step, bool) or step <= 0:
+    if step is None:
         return True
     offset = spec.get("offset", 0)
-    if not isinstance(offset, (int, float)) or isinstance(offset, bool) or not math.isfinite(offset):
+    if not (_is_number(step) and _is_number(offset) and _is_finite(step) and _is_finite(offset)) or step <= 0:
         return True
-    start, end = math.ceil((first - offset) / step), math.floor((last - offset) / step)
-    if start > end:
-        return False
-    for k in range(start, min(end, start + _LATTICE_LOOKS) + 1):
-        point = offset + k * step
-        if point == round(point) and first <= round(point) <= last and fits(round(point)):
-            return True
-    return end - start >= _LATTICE_LOOKS
+    found = _first_on_grid(first, Fraction(step), Fraction(offset))
+    return found is not None and found <= last
+
+
+def _first_on_grid(first: int, step: Fraction, offset: Fraction) -> int | None:
+    """The least integer n >= first with n = offset + k*step for an integer k, or None when no integer is on the grid.
+    With D the common denominator, D*n = A (mod P) for the integers A = offset*D and P = step*D."""
+    denominator = math.lcm(step.denominator, offset.denominator)
+    target, period = int(offset * denominator), int(step * denominator)
+    divisor = math.gcd(denominator, period)
+    if target % divisor:
+        return None
+    modulus = period // divisor
+    residue = (target // divisor) * pow(denominator // divisor, -1, modulus) % modulus
+    return first + (residue - first) % modulus
 
 
 def _whole(value: Any) -> int | None:

@@ -5,6 +5,7 @@ the design names (a typo key, a string default on a seed, authority keys in the 
 from __future__ import annotations
 
 import copy
+from fractions import Fraction
 import logging
 import re
 import sys
@@ -15,7 +16,7 @@ import yaml
 
 from gateway import workflow_call
 from gateway.discovery import WorkflowRegistry
-from gateway.manifests import ContractErrors, bind_backend_request, load_workflow_manifest, validate_inputs
+from gateway.manifests import ContractErrors, bind_backend_request, load_workflow_manifest, validate_input_value, validate_inputs
 from gateway.workflow_contract import (
     GENERATORS,
     SCHEMA_PATH,
@@ -802,12 +803,17 @@ def test_one_flat_binding_still_converts():
     assert list(converted["bindings"]) == ["http-multipart"] and not [n for n in notes if n.operation == "conflict"]
 
 
-@pytest.mark.parametrize("count", [{"min": 3.0, "max": 2.0}, {"min": 1, "max": 17.0}, {"min": 17.0, "max": 20}])
-def test_an_integral_float_count_gets_the_same_meaning_as_an_integer(count):
+@pytest.mark.parametrize("count, expected", [
+    ({"min": 3.0, "max": 2.0}, [(("outputs", "picture", "count"), "count_invalid")]),
+    ({"min": 1.0, "max": 17.0}, [(("outputs", "picture", "count", "max"), "count_over_limit")]),
+    ({"min": 17.0, "max": 20.0}, [(("outputs", "picture", "count", "min"), "count_over_limit"),
+                                  (("outputs", "picture", "count", "max"), "count_over_limit")]),
+])
+def test_an_integral_float_count_gets_the_same_meaning_as_an_integer(count, expected):
     doc = base()
     doc["outputs"]["picture"]["count"] = count
     context = ContractContext(max_assets=16)
-    assert {code for _, code in pairs(doc, context)} & {"count_invalid", "count_over_limit"}
+    assert pairs(doc, context) == expected
 
 
 def test_a_float_count_with_a_fraction_is_left_to_the_schema():
@@ -839,6 +845,120 @@ def test_a_generator_whose_values_the_input_would_all_refuse_is_refused(extra, l
 ])
 def test_a_generator_with_one_value_the_input_accepts_is_valid(extra, low, high):
     assert pairs(generated(extra, low, high)) == []
+
+
+def test_a_grid_with_no_integer_on_it_is_refused_however_long_the_range():
+    # step 2 from 0.5 holds only halves; a bounded search of the first points used to call 0..10000 feasible.
+    assert pairs(generated({"step": 2, "offset": 0.5}, 0, 10000)) == [(("inputs", "n", "generate"), "generator_range_empty")]
+    assert pairs(generated({"step": 2, "offset": 0.5}, 0, 10**12)) == [(("inputs", "n", "generate"), "generator_range_empty")]
+
+
+@pytest.mark.parametrize("extra, low, high, feasible", [
+    ({"step": 3, "offset": 1}, 0, 10**9, True),
+    ({"step": 1000000, "offset": 7}, 8, 999999, False),
+    ({"step": 1000000, "offset": 7}, 8, 1000007, True),
+    ({"step": 0.5}, 3, 3, True),
+    ({"step": 1.5}, 1, 1, False),
+    ({"step": 1.5, "offset": 0.5}, 2, 2, True),
+    ({"step": 0.25, "offset": 0.75}, 0, 10**6, False),
+    ({"step": 4, "offset": 2.0}, 5, 6, True),
+])
+def test_feasibility_is_decided_exactly(extra, low, high, feasible):
+    from gateway.workflow_contract import _generates_a_value
+    assert _generates_a_value({"type": "integer", **extra}, low, high) is feasible
+
+
+@pytest.mark.parametrize("spec_extra", [{"step": 2, "offset": 0.5}, {"step": 1.5}, {"step": 3, "offset": 1}, {"step": 0.5, "offset": 0.25}])
+def test_the_exact_grid_and_the_validator_judge_a_sample_alike(spec_extra):
+    from gateway.workflow_contract import _first_on_grid
+    spec = {"type": "integer", **spec_extra}
+    first = _first_on_grid(-50, Fraction(spec["step"]), Fraction(spec.get("offset", 0)))
+    sample = range(-50, 50)
+    on_grid = {n for n in sample if validate_input_value("n", n, spec) is None}
+    assert (min(on_grid) if on_grid else None) == (first if first is not None and first < 50 else None)
+
+
+@pytest.mark.parametrize("field_, bad", [
+    ("maximum", 10**400),
+    ("step", 1e-320),
+    ("step", float("nan")),
+])
+def test_arithmetic_on_a_huge_or_odd_number_reports_instead_of_raising(field_, bad):
+    spec = {"type": "number", "minimum": 1, "maximum": 2, "generate": {"generator": "random_integer", "minimum": 1, "maximum": 2}}
+    spec[field_] = bad
+    found = pairs(with_input("x", spec))
+    if field_ == "step" and bad != bad:
+        assert found == [(("inputs", "x", "step"), "number_not_finite")]
+    else:
+        assert all(isinstance(code, str) for _, code in found)
+
+
+def test_a_huge_integer_bound_is_a_report_not_an_overflow():
+    spec = {"type": "integer", "generate": {"generator": "random_integer", "minimum": 1, "maximum": 10**400}}
+    assert pairs(with_input("x", spec)) == []
+    spec = {"type": "integer", "maximum": 10**400, "generate": {"generator": "random_integer", "minimum": 5, "maximum": 2}}
+    assert pairs(with_input("x", spec)) == [(("inputs", "x", "generate"), "generator_range_empty")]
+
+
+def test_a_tiny_step_over_a_range_is_decided_exactly():
+    spec = {"type": "number", "step": 1e-320, "generate": {"generator": "random_integer", "minimum": 1, "maximum": 2}}
+    assert pairs(with_input("x", spec)) == []
+
+
+def test_a_broken_field_hides_the_generator_check_that_depends_on_it():
+    spec = {"type": "number", "step": float("nan"), "generate": {"generator": "random_integer", "minimum": 1, "maximum": 2}}
+    assert pairs(with_input("x", spec)) == [(("inputs", "x", "step"), "number_not_finite")]
+
+
+def test_a_binding_that_would_flatten_onto_an_existing_key_keeps_both_and_says_so():
+    v1 = two_flat_bindings()
+    del v1["bindings"]["beta"]
+    v1["bindings"]["http-multipart"] = {"service": "other", "map": {}}
+    converted, notes, report = convert_and_check(v1)
+    assert converted["bindings"]["alpha"]["transport"]["path"] == "/a"
+    assert converted["bindings"]["http-multipart"] == {"service": "other", "map": {}}
+    assert [(e.path, e.code) for e in report.errors if e.code == "conversion_conflict"] == [
+        (("bindings", "alpha"), "conversion_conflict"), (("bindings", "http-multipart"), "conversion_conflict")]
+
+
+def test_structural_errors_and_conflicts_share_one_cap_and_one_marker():
+    v1 = two_flat_bindings()
+    converted, _ = convert_1_to_2(v1)
+    for index in range(105):
+        converted["inputs"][f"i{index:03d}"] = {"type": "integer", "maxium": 1}
+    from gateway.workflow_convert import conversion_errors
+    _, notes = convert_1_to_2(v1)
+    raw = check_contract(converted)
+    assert raw.errors[-1].code == "too_many_errors"
+    merged = check_contract(converted, extra_errors=conversion_errors(notes))
+    markers = [e for e in merged.errors if e.code == "too_many_errors"]
+    assert len(markers) == 1 and len(merged.errors) == 101
+    total = 105 + len(conversion_errors(notes))
+    assert markers[0].message == f"{total - 100} more errors are not listed"
+
+
+def test_two_threads_do_not_both_report_one_document(monkeypatch):
+    import threading
+    from gateway import workflow_convert
+    barrier = threading.Barrier(2)
+
+    class Probe(set):
+        def __contains__(self, item):
+            found = super().__contains__(item)
+            try:
+                barrier.wait(timeout=1)
+            except threading.BrokenBarrierError:
+                pass
+            return found
+
+    monkeypatch.setattr(workflow_convert, "_REPORTED", Probe())
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(workflow_convert._first_report({"id": "x"}))) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(results) == [False, True]
 
 
 def two_loads(tmp_path, caplog, document, times=1, level=logging.WARNING):
