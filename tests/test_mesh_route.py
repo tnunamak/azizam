@@ -118,6 +118,8 @@ class Harness:
         # The gateway's send check: a Response refuses the send just before the engine is called.
         self.egress_refusal: Any = None
         self.egress_asked: list[str] = []
+        # Whether the live registry holds the route's workflow record (an owner override may turn it off).
+        self.workflow_present = True
 
     def deps(self) -> MeshApiDeps:
         def authenticate(request: Request, path: str) -> Any:
@@ -157,6 +159,7 @@ class Harness:
             register_job_counter=self.register_job_counter,
             discard_output=self.discard_output,
             egress_refusal=self._egress,
+            workflow_available=lambda: self.workflow_present,
         )
 
     def _egress(self, service_id: str) -> Any:
@@ -373,6 +376,16 @@ def test_service_policy_refuses_before_the_body_without_retry_after(mutate) -> N
     assert response.json()["error"]["code"] == "service_unavailable"
     assert "retry-after" not in {k.lower() for k in response.headers}
     assert harness.downstream == []
+
+
+def test_a_route_whose_workflow_record_is_absent_or_disabled_is_unavailable() -> None:
+    harness = Harness()
+    harness.workflow_present = False
+    response = _post(_client(harness), **_multipart())
+    assert response.status_code == 503 and response.json()["error"]["code"] == "service_unavailable"
+    assert harness.downstream == [] and harness.receipts == []
+    harness.workflow_present = True  # the record is back: the same route serves again
+    assert _post(_client(harness), **_multipart()).status_code == 200
 
 
 def test_absent_service_is_unavailable() -> None:

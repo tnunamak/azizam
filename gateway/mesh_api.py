@@ -100,10 +100,12 @@ FRONTEND_ABSENT = "frontend record is absent"
 FRONTEND_DISABLED = "frontend record is disabled"
 SERVICE_ABSENT = "service is absent"
 SERVICE_DISABLED = "service is disabled"
+WORKFLOW_ABSENT = "workflow record is absent or disabled"
 # A route that is not set up, or that the owner turned off, is Off on every surface, not a fault: its evidence says so
 # in the availability vocabulary (availability.project_service).
 _SETUP_STATES = {FRONTEND_ABSENT: {"configured": False}, SERVICE_ABSENT: {"configured": False},
-                 FRONTEND_DISABLED: {"enabled": False}, SERVICE_DISABLED: {"enabled": False}}
+                 FRONTEND_DISABLED: {"enabled": False}, SERVICE_DISABLED: {"enabled": False},
+                 WORKFLOW_ABSENT: {"enabled": False}}
 
 
 @dataclass
@@ -316,6 +318,9 @@ class MeshApiDeps:
     # egress_refusal(service_id) -> a Response that refuses the send, or None; called just before the request is sent to the
     # engine (never for the health read). The gateway uses it to keep an unleased path out of a transition-enabled domain.
     egress_refusal: Callable[[str], Response | None] | None = None
+    # workflow_available() -> whether the live registry holds the route's workflow record now. A route whose record is
+    # absent or disabled answers unavailable; it is a state of the route, never a failure to start. None means always.
+    workflow_available: Callable[[], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -462,6 +467,9 @@ def register_mesh_routes(app: FastAPI, deps: MeshApiDeps) -> None:
         gate = await asyncio.to_thread(deps.authenticate, request, MESH_PATH)
         if isinstance(gate, Response):
             return gate
+        if deps.workflow_available is not None and not deps.workflow_available():
+            LOG.warning("mesh route refused: %s", WORKFLOW_ABSENT)
+            return _unavailable(request_id)
         facts = await registry_snapshot(deps)
         row, record_problem = route_row(facts.frontend_records(), manifest)
         if row is None:
@@ -903,8 +911,11 @@ async def pool_evidence(deps: MeshApiDeps) -> dict[str, dict[str, Any]]:
     turned off says so (``configured`` or ``enabled`` false). It acquires no capacity, dispatches nothing, and reports
     a reason rather than raising."""
     manifest = deps.manifest
+    workflow_present = deps.workflow_available is None or deps.workflow_available()
     deps = await registry_snapshot(deps)
     _, problem = route_row(deps.frontend_records(), manifest)
+    if not workflow_present:
+        problem = WORKFLOW_ABSENT
     observed_s = int(time.time())
     if problem is None:
         problem, spec, service = service_problem(deps.services(), manifest)

@@ -10,6 +10,7 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -126,7 +127,7 @@ def test_a_broken_record_is_stored_disabled_with_its_errors_and_never_dropped():
     row = _rows(plan)["owner.broken"]
     assert row.action == migration.CANNOT_CONVERT and row.errors
     kept = plan.stored["workflows"]["owner.broken"]
-    assert kept["enabled"] is False
+    assert kept["enabled"] is True  # the owner's own value; the migration block marks the quarantine
     assert kept["manifest"] == broken["manifest"]  # as it was: nothing lost
     assert kept["migration"]["step"] == migration.STEP and kept["migration"]["errors"]
     assert "policy" not in kept  # no facts: it needs configuration
@@ -216,7 +217,7 @@ def test_a_patch_over_a_release_record_with_no_known_schema_1_form_is_kept_disab
     plan = _plan({TRUSTED_ID: entry}, release, v1_release={})
     assert _rows(plan)[TRUSTED_ID].errors == (("/", "release_record_unknown"),)
     kept = plan.stored["workflows"][TRUSTED_ID]
-    assert kept["enabled"] is False and kept["manifest"] == entry["manifest"]
+    assert "enabled" not in kept and kept["manifest"] == entry["manifest"]
 
 
 # -- the frozen copy -------------------------------------------------------------------------------------------------------
@@ -317,7 +318,7 @@ def test_the_step_converts_stored_records_once_and_a_second_run_changes_nothing(
     assert after_first[1] == generation_before + 1
     stored = json.loads(after_first[0])["workflows"]
     assert stored["owner.flux"]["manifest"]["schema_version"] == 2
-    assert stored["owner.broken"]["enabled"] is False and stored["owner.broken"]["manifest"]["schema_version"] == 3
+    assert stored["owner.broken"]["enabled"] is True and stored["owner.broken"]["manifest"]["schema_version"] == 3
     assert admin_store.migration_step_recorded(migration.STEP, path=db)
     events = _audit(db)
     assert len(events) == 1  # one audit entry, from the one run
@@ -465,10 +466,10 @@ def test_one_malformed_record_does_not_stop_the_plan(name):
     rows = _rows(plan)
     assert rows["owner.fine"].action == migration.CONVERT_WHOLE
     assert plan.stored["workflows"]["owner.fine"]["manifest"]["schema_version"] == 2
-    # a malformed record is never dropped; if it cannot convert it is kept disabled, with codes only in the report
+    # a malformed record is never dropped; if it cannot convert it is kept as it was, with codes only in the report
     kept = plan.stored["workflows"]["owner.bad"]
     if rows["owner.bad"].action == migration.CANNOT_CONVERT:
-        assert kept["enabled"] is False and kept["manifest"] == _owner_record("owner.bad", bad)["manifest"]
+        assert kept["enabled"] is True and kept["manifest"] == _owner_record("owner.bad", bad)["manifest"]
         assert all(len(code) < 60 for _pointer, code in rows["owner.bad"].errors)
     assert SENTINEL not in json.dumps(plan.report())
 
@@ -488,7 +489,7 @@ def test_a_converter_exception_marks_the_record_cannot_convert_with_a_bounded_co
     assert row.action == migration.CANNOT_CONVERT
     assert row.errors == (("/", "conversion_failed"),)
     kept = plan.stored["workflows"]["owner.bad"]
-    assert kept["enabled"] is False and SENTINEL not in json.dumps(kept["migration"]) and SENTINEL not in json.dumps(plan.report())
+    assert kept["enabled"] is True and SENTINEL not in json.dumps(kept["migration"]) and SENTINEL not in json.dumps(plan.report())
     assert _rows(plan)["owner.fine"].action == migration.CONVERT_WHOLE
 
 
@@ -506,7 +507,7 @@ def test_a_malformed_record_does_not_abort_the_start_up_migration(tmp_path):
     registry = service_registry.ensure_service_registry(path=db, actor="test")
     stored = json.loads(_row(db)[0])["workflows"]
     assert stored["owner.fine"]["manifest"]["schema_version"] == 2
-    assert stored["owner.bad"]["enabled"] is False
+    assert stored["owner.bad"]["enabled"] is True
     assert admin_store.migration_step_recorded(migration.STEP, path=db)
     assert "owner.fine" in registry["workflows"]
 
@@ -611,7 +612,7 @@ def test_a_normalizer_error_is_stored_as_its_kind_only_and_the_other_records_go_
     monkeypatch.setattr(service_registry, "normalize_workflow_record", refuses_one)
     plan = _plan({"owner.bad": _owner_record("owner.bad", _v1()), "owner.fine": _owner_record("owner.fine", _v1())})
     bad = plan.stored["workflows"]["owner.bad"]
-    assert bad["enabled"] is False
+    assert bad["enabled"] is True
     assert [error["code"] for error in bad["migration"]["errors"]] == ["conversion_failed"]
     assert SENTINEL not in json.dumps(plan.stored) and SENTINEL not in json.dumps(plan.report())
     assert plan.stored["workflows"]["owner.fine"]["manifest"]["schema_version"] == 2
@@ -670,7 +671,7 @@ def test_a_patch_with_an_invalid_manifest_value_cannot_convert(manifest):
     row = _rows(plan)[TRUSTED_ID]
     assert row.action == migration.CANNOT_CONVERT and row.errors == (("/manifest", "manifest_not_object"),)
     kept = plan.stored["workflows"][TRUSTED_ID]
-    assert kept["enabled"] is False and kept["manifest"] == manifest and kept["migration"]["errors"]
+    assert "enabled" not in kept and kept["manifest"] == manifest and kept["migration"]["errors"]
 
 
 def test_a_patch_with_no_manifest_key_is_still_already_v2():
@@ -687,14 +688,14 @@ def test_a_failed_replacement_stays_a_replacement_and_is_disabled_inside_it():
     entry = plan.stored["workflows"][TRUSTED_ID]
     assert set(entry) == {layers.REPLACE_KEY}  # still the sole key, so a read takes it as a replacement
     replaced = entry[layers.REPLACE_KEY]
-    assert replaced["enabled"] is False and replaced["migration"]["errors"] and replaced["manifest"] == broken["manifest"]
+    assert replaced["enabled"] is True and replaced["migration"]["errors"] and replaced["manifest"] == broken["manifest"]
     # through layering: the effective record is the failed replacement, disabled, not a merge over the release record
     effective = layers.layer(plan.stored, release)["workflows"][TRUSTED_ID]
     assert effective == replaced
     assert "migration" in effective and effective["manifest"] == broken["manifest"]
     # and the plan over its own result changes nothing
     again = migration.plan_workflow_schema_2(plan.stored, release, v1_release=v1_release)
-    assert again.stored["workflows"][TRUSTED_ID][layers.REPLACE_KEY]["enabled"] is False
+    assert again.stored["workflows"][TRUSTED_ID][layers.REPLACE_KEY]["enabled"] is True
 
 
 def test_a_failed_replacement_survives_the_apply_and_the_readback(tmp_path):
@@ -703,7 +704,7 @@ def test_a_failed_replacement_survives_the_apply_and_the_readback(tmp_path):
     db = _db_with(tmp_path, {TRUSTED_ID: {layers.REPLACE_KEY: broken}})
     migration.ensure(path=db, actor="test", release=release)
     entry = json.loads(_row(db)[0])["workflows"][TRUSTED_ID]
-    assert set(entry) == {layers.REPLACE_KEY} and entry[layers.REPLACE_KEY]["enabled"] is False
+    assert set(entry) == {layers.REPLACE_KEY} and entry[layers.REPLACE_KEY]["enabled"] is True
 
 
 # -- the dry run -----------------------------------------------------------------------------------------------------------
@@ -843,7 +844,7 @@ def test_an_owner_who_edited_the_ace_prompt_cannot_convert():
     patch = {"manifest": {"inputs": {"prompt": {"default": "mine"}}}}
     plan = _plan({ACE_ID: patch}, release, v1_release=v1_release)
     assert _rows(plan)[ACE_ID].action == migration.CANNOT_CONVERT
-    assert plan.stored["workflows"][ACE_ID]["enabled"] is False
+    assert plan.stored["workflows"][ACE_ID].get("enabled") is None
     whole = _v1(ACE_ID)
     whole["inputs"]["prompt"]["label"] = "mine"
     plan = _plan({ACE_ID: _owner_record(ACE_ID, whole)})
@@ -955,9 +956,10 @@ def test_a_record_that_fails_the_contract_without_the_mark_still_fails_the_stric
     with pytest.raises(ValueError):
         service_registry.normalize_service_registry(_stored({"owner.bad": marked}))
     marked["migration"]["step"] = migration.STEP
-    marked["enabled"] = True  # a mark on an enabled record is not the migration's
-    with pytest.raises(ValueError):
-        service_registry.normalize_service_registry(_stored({"owner.bad": marked}))
+    for enabled in (True, False):  # the migration block alone marks the quarantine; the owner's own ``enabled`` is not read for it
+        marked["enabled"] = enabled
+        registry, left_out = service_registry.read_registry(_stored({"owner.bad": marked}))
+        assert [item.id for item in left_out] == ["owner.bad"] and "owner.bad" not in registry["workflows"]
 
 
 # -- the policy facts survive the migration -------------------------------------------------------------------------------
@@ -1115,7 +1117,7 @@ def test_a_scrub_that_makes_the_text_longer_is_still_capped():
 # -- an override the owner had turned off stays off ------------------------------------------------------------------------
 
 
-def _bundled_override_db(tmp_path, *, enabled: bool) -> Path:
+def _bundled_override_db(tmp_path, *, enabled: Any) -> Path:
     bad = _with_stated_capability()
     bad["inputs"]["x"] = {"type": []}
     record = _owner_record(PLAIN_ID, bad, overrides=PLAIN_ID, enabled=enabled)
@@ -1124,34 +1126,148 @@ def _bundled_override_db(tmp_path, *, enabled: bool) -> Path:
     return db
 
 
-@pytest.mark.parametrize("enabled", [True, False])
-def test_the_migration_keeps_whether_an_override_was_enabled(tmp_path, enabled):
+OFF_VALUES = [False, 0, "false", "off", "no", "0", []]
+ON_VALUES = [True, 1, "true", "yes", "on", None]
+
+
+@pytest.mark.parametrize("enabled", [True, False, "off", 0], ids=repr)
+def test_a_quarantined_record_keeps_the_owners_own_enabled_value(tmp_path, enabled):
     db = _bundled_override_db(tmp_path, enabled=enabled)
-    block = json.loads(_row(db)[0])["workflows"][PLAIN_ID]["migration"]
-    assert block["was_enabled"] is enabled and block["step"] == migration.STEP
+    record = json.loads(_row(db)[0])["workflows"][PLAIN_ID]
+    assert record["enabled"] == enabled and type(record["enabled"]) is type(enabled)
+    assert record["migration"]["step"] == migration.STEP and "was_enabled" not in record["migration"]
 
 
-def test_a_bundled_override_the_owner_had_disabled_stays_unavailable_after_migration_and_reload(tmp_path, monkeypatch):
-    import proxy
+def _kept_off(*, key: str = PLAIN_ID, record_id: str = PLAIN_ID, **fields) -> set[str]:
+    record = {"id": record_id, "migration": {"step": migration.STEP, "errors": []}, **fields}
+    return service_registry.workflow_ids_kept_off([service_registry.ExcludedRecord("workflows", key, record_id, "m", record)])
 
-    db = _bundled_override_db(tmp_path, enabled=False)
-    monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
-    service_registry.ensure_service_registry(path=db, actor="test")  # a second start reads the stored block again
-    assert proxy._load_gateway_workflow_registry().get(PLAIN_ID) is None
+
+@pytest.mark.parametrize("enabled", OFF_VALUES, ids=repr)
+def test_every_value_the_normalizer_reads_as_off_keeps_the_bundled_id_off(enabled):
+    assert _kept_off(enabled=enabled) == {PLAIN_ID}
+
+
+@pytest.mark.parametrize("enabled", ON_VALUES, ids=repr)
+def test_every_value_the_normalizer_reads_as_on_does_not_keep_the_bundled_id_off(enabled):
+    assert _kept_off(enabled=enabled) == set()
+    assert _kept_off() == set()  # absent reads as on
+
+
+def test_a_mismatched_key_and_id_never_suppresses_a_bundled_id():
+    assert _kept_off(key="owner.unrelated", record_id=PLAIN_ID, enabled=False) == set()
+    (item,) = service_registry.read_registry(_stored({"owner.unrelated": {
+        **_owner_record(PLAIN_ID, _v1(schema_version=1)), "enabled": False,
+        "migration": {"step": migration.STEP, "errors": []}}}))[1]
+    assert item.key == "owner.unrelated" and "not served either" not in item.error
+    assert _kept_off(key=PLAIN_ID, record_id=PLAIN_ID, enabled=False) == {PLAIN_ID}  # the same record under its own key
+
+
+def test_a_record_without_a_valid_migration_block_never_suppresses_a_bundled_id():
+    record = {"id": PLAIN_ID, "enabled": False}
+    for block in (None, {"step": "another-step"}, "workflow-schema-2", []):
+        stored = {**record, **({} if block is None else {"migration": block})}
+        assert service_registry.workflow_ids_kept_off(
+            [service_registry.ExcludedRecord("workflows", PLAIN_ID, PLAIN_ID, "m", stored)]) == set()
+
+
+_BOOT_SCRIPT = """
+import asyncio, json, os
+import proxy
+registry = proxy.GATEWAY_WORKFLOW_REGISTRY
+booted = {key: registry.get(key) is not None for key in json.loads(os.environ["BOOT_IDS"])}
+reloaded_error = None
+try:
+    proxy.reload_runtime_config()
+except Exception as error:  # reported, not raised: the test reads it
+    reloaded_error = f"{type(error).__name__}: {error}"
+reloaded = {key: registry.get(key) is not None for key in json.loads(os.environ["BOOT_IDS"])}
+evidence = asyncio.run(proxy._live_probe_evidence())
+print("RESULT" + json.dumps({"booted": booted, "reloaded": reloaded, "reload_error": reloaded_error,
+                             "mesh": proxy.MESH_MANIFEST.id, "evidence": evidence}))
+"""
+
+
+def _boot(tmp_path: Path, db: Path, ids: list[str]) -> dict:
+    """Start the gateway module in a fresh process over the stored registry in ``db``, then run a real reload."""
+    import os
+    import subprocess
+
+    env = dict(os.environ)
+    for name, filename in [("AZIZAM_METRICS_DB", "metrics.db"), ("AZIZAM_RECEIPTS_DB", "receipts.db"),
+                           ("AZIZAM_MEDIA_JOBS_DB", "media_jobs.db"), ("AZIZAM_RESPONSES_DB", "responses.db")]:
+        env[name] = str(tmp_path / filename)
+    env.update(AZIZAM_ADMIN_DB=str(db), PYTHONPATH=str(ROOT), HOME=str(tmp_path), BOOT_IDS=json.dumps(ids))
+    done = subprocess.run([sys.executable, "-c", _BOOT_SCRIPT], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=180)
+    assert done.returncode == 0, done.stderr[-2000:]
+    return json.loads(next(line for line in done.stdout.splitlines() if line.startswith("RESULT"))[len("RESULT"):])
+
+
+@pytest.mark.parametrize("enabled", [False, "off"], ids=repr)
+def test_a_disabled_bundled_override_stays_unavailable_at_boot_and_after_a_real_reload(tmp_path, enabled):
+    db = _bundled_override_db(tmp_path, enabled=enabled)
     (item,) = [e for e in service_registry.load_service_registry_exclusions(path=db) if e.id == PLAIN_ID]
     assert "not served either" in item.error and "is served in the meantime" not in item.error
+    result = _boot(tmp_path, db, [PLAIN_ID])
+    assert result["booted"] == {PLAIN_ID: False} and result["reload_error"] is None and result["reloaded"] == {PLAIN_ID: False}
 
 
-def test_a_bundled_override_the_migration_disabled_gets_the_bundled_version(tmp_path, monkeypatch):
-    import proxy
-    from gateway.discovery import bundled_workflow_manifests
-
+def test_a_bundled_override_the_owner_left_on_gets_the_bundled_version_at_boot_and_after_a_real_reload(tmp_path):
     db = _bundled_override_db(tmp_path, enabled=True)
-    monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
-    served = proxy._load_gateway_workflow_registry().get(PLAIN_ID)
-    assert served is not None and served.manifest == bundled_workflow_manifests()[PLAIN_ID]
     (item,) = [e for e in service_registry.load_service_registry_exclusions(path=db) if e.id == PLAIN_ID]
     assert "is served in the meantime" in item.error
+    result = _boot(tmp_path, db, [PLAIN_ID])
+    assert result["booted"] == {PLAIN_ID: True} and result["reload_error"] is None and result["reloaded"] == {PLAIN_ID: True}
+
+
+def _mesh_override_db(tmp_path) -> tuple[Path, str]:
+    mesh_id = str(yaml.safe_load((ROOT / "manifests" / "workflows" / "mesh.generate.trellis-2.yml").read_text(encoding="utf-8"))["id"])
+    document = {**yaml.safe_load((ROOT / "manifests" / "workflows" / "mesh.generate.trellis-2.yml").read_text(encoding="utf-8")),
+                "schema_version": 1}
+    document.setdefault("inputs", {})["x"] = {"type": []}  # cannot convert, so the migration quarantines the record
+    record = {"id": mesh_id, "source": "ui", "enabled": False, "editable": True, "overrides": mesh_id, "manifest": document}
+    db = _db_with(tmp_path, {mesh_id: record})
+    service_registry.ensure_service_registry(path=db, actor="test")
+    return db, mesh_id
+
+
+def test_a_disabled_mesh_override_does_not_stop_the_gateway_and_the_route_answers_unavailable(tmp_path):
+    db, mesh_id = _mesh_override_db(tmp_path)
+    assert json.loads(_row(db)[0])["workflows"][mesh_id]["migration"]["step"] == migration.STEP  # quarantined, owner-disabled
+    result = _boot(tmp_path, db, [mesh_id])
+    assert result["booted"] == {mesh_id: False} and result["reload_error"] is None and result["reloaded"] == {mesh_id: False}
+    assert result["mesh"] == mesh_id
+    (answer,) = result["evidence"].values()
+    assert answer["available"] is False and answer["enabled"] is False
+
+
+# -- the registry and its left-out records are one read ---------------------------------------------------------------------
+
+
+def test_the_loader_reads_the_stored_registry_once_so_a_writer_between_reads_cannot_split_it(tmp_path, monkeypatch):
+    import proxy
+
+    db = _bundled_override_db(tmp_path, enabled=True)  # quarantined, left on: the bundled version is served meanwhile
+    monkeypatch.setattr(proxy, "ADMIN_DB_PATH", db)
+    stored = json.loads(_row(db)[0])
+    off = copy.deepcopy(stored)
+    off["workflows"][PLAIN_ID]["enabled"] = False  # the writer turns the quarantined override off
+    real, reads = admin_store.get_service_registry_json_with_generation, []
+
+    def read_then_write(**kwargs):
+        value = real(**kwargs)
+        reads.append(value["operator_settings_generation"])
+        if len(reads) == 1:
+            with sqlite3.connect(db) as conn:
+                conn.execute("UPDATE operator_settings SET value_json = ? WHERE key = 'service_registry'", (json.dumps(off),))
+                conn.execute("UPDATE operator_settings_generations SET operator_settings_generation = operator_settings_generation + 1 "
+                             "WHERE setting_key = 'service_registry'")
+        return value
+
+    monkeypatch.setattr(admin_store, "get_service_registry_json_with_generation", read_then_write)
+    served = proxy._load_gateway_workflow_registry().get(PLAIN_ID)
+    assert len(reads) == 1  # registry and left-out records come from the same read
+    assert served is not None  # the state the one read saw: the override was left on, so the bundled version stands
 
 
 # -- a replacement that does not validate changes nothing ------------------------------------------------------------------
@@ -1168,6 +1284,22 @@ def test_an_invalid_replacement_leaves_the_row_the_block_and_the_generation_unch
         store.replace_excluded_record(section="workflows", record_id="owner.bad", record=still_bad,
                                       actor=_owner_actor(), expected_generation=before[1])
     assert _row(db) == before
+    assert json.loads(before[0])["workflows"]["owner.bad"]["migration"]["step"] == migration.STEP
+    assert [e.id for e in service_registry.load_service_registry_exclusions(path=db)] == ["owner.bad"]
+
+
+def test_an_invalid_schema_2_replacement_leaves_the_row_the_block_and_the_generation_unchanged(tmp_path):
+    db = _marked_db(tmp_path)
+    before = _row(db)
+    store = _store_of(db)
+    for breakage in ({"inputs": {"x": {"type": []}}}, {"typical_seconds": SENTINEL}, {"inputs": [SENTINEL]}):
+        still_bad = _fixed_record(db, inline=False)
+        assert still_bad["manifest"]["schema_version"] == 2  # a schema 2 document with invalid content
+        still_bad["manifest"].update(breakage)
+        with pytest.raises(ValueError):
+            store.replace_excluded_record(section="workflows", record_id="owner.bad", record=still_bad,
+                                          actor=_owner_actor(), expected_generation=before[1])
+        assert _row(db) == before
     assert json.loads(before[0])["workflows"]["owner.bad"]["migration"]["step"] == migration.STEP
     assert [e.id for e in service_registry.load_service_registry_exclusions(path=db)] == ["owner.bad"]
 

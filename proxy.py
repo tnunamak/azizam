@@ -14192,10 +14192,10 @@ def _load_gateway_workflow_registry(*, strict: bool = False) -> WorkflowRegistry
         registry = WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR)
         try:
             # Stored workflows are read record by record; a registry that cannot be read at all costs only them.
-            admin_registry = service_registry.load_service_registry(path=ADMIN_DB_PATH)
-            if admin_registry is not None:
-                for kept_off in service_registry.workflow_ids_kept_off(
-                        service_registry.load_service_registry_exclusions(path=ADMIN_DB_PATH)):
+            loaded = service_registry.load_service_registry_and_exclusions(path=ADMIN_DB_PATH)  # one read of the stored document
+            if loaded is not None:
+                admin_registry, left_out = loaded
+                for kept_off in service_registry.workflow_ids_kept_off(left_out):
                     registry.discard(kept_off)  # the owner had turned this override off before the migration
                 for record in service_registry.workflow_records_from_registry(admin_registry):
                     registry.add_manifest(
@@ -16325,9 +16325,12 @@ _MESH_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "workflows
 # The route reads its workflow record from the registry (the schema 2 contract) and runs the mesh frontend profile on it
 # (CODE_TO_DATA_S3, D9). The file names the record; the route holds no copy of its content.
 _MESH_WORKFLOW_ID = str(yaml.safe_load(_MESH_MANIFEST_PATH.read_text(encoding="utf-8"))["id"])
-_MESH_RECORD = GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID)
+# The live registry may hold no mesh record (the owner turned an override off, or it is left out): the route then answers
+# unavailable (``MESH_DEPS.workflow_available``). Its identity for the catalog and receipts then comes from the bundled file.
+_MESH_RECORD = (GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID)
+                or WorkflowRegistry.from_directory(_MANIFEST_WORKFLOWS_DIR).get(_MESH_WORKFLOW_ID))
 if _MESH_RECORD is None:
-    raise mesh_manifest.MeshManifestError(f"workflow {_MESH_WORKFLOW_ID} is not in the registry")
+    raise mesh_manifest.MeshManifestError(f"workflow {_MESH_WORKFLOW_ID} is not bundled")
 MESH_MANIFEST = mesh_api.mesh_workflow_from_record(_MESH_RECORD)
 MESH_LEASES = exclusive_pool.ExclusivePoolLeaseManager()
 
@@ -16415,6 +16418,7 @@ def _upload_as_output_input(upload: Any, data: bytes) -> asset_types.OutputInput
 
 MESH_DEPS = mesh_api.MeshApiDeps(
     manifest=MESH_MANIFEST,
+    workflow_available=lambda: GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) is not None,
     authenticate=lambda request, path: authenticate_request(request, path),
     frontend_records=lambda: route_registry.protocol_frontend_records(
         registry=_live_service_registry(), proxy_config=runtime().config),

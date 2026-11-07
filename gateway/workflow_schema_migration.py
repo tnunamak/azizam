@@ -18,7 +18,7 @@ What the plan does with each stored record of the ``workflows`` section, which i
   frozen copy, ``gateway/migration_data/workflow_schema_1_release.json``.
 * **already-v2**: a record whose document is schema 2 is not touched.
 * **cannot-convert**: the converted record does not pass the checks a load makes, or there is no schema 1 release record to
-  apply a patch to. It is kept as it was, stored disabled, with its error list under ``migration``. It is never dropped.
+  apply a patch to. It is kept as it was, with its error list under ``migration``. It is never dropped.
   A document that fails the checks is left out of a load and shown with the registry's left-out records; it never runs.
 
 A converted record also states its policy facts (``exposure``, ``trust_tier``, ``resource_tier``, ``tags``), which a schema 1
@@ -181,10 +181,10 @@ _OMIT: Any = object()
 
 
 def _failed_entry(entry: Any, failures: list[Failure]) -> Any:
-    """What is stored for a record that cannot convert: as it was, disabled, with the reasons.
+    """What is stored for a record that cannot convert: as it was, with the reasons.
 
     A ``$replace`` envelope stays the only key of its entry (a registry read takes an entry as a replacement only then):
-    the flag and the reasons go into the replaced document."""
+    the reasons go into the replaced document."""
     if not isinstance(entry, Mapping):
         return copy.deepcopy(entry)
     if set(entry) == {layers.REPLACE_KEY}:
@@ -192,13 +192,9 @@ def _failed_entry(entry: Any, failures: list[Failure]) -> Any:
             return copy.deepcopy(dict(entry))
         return {layers.REPLACE_KEY: _failed_entry(entry[layers.REPLACE_KEY], failures)}
     kept = copy.deepcopy(dict(entry))
-    kept["enabled"] = False
-    # ``was_enabled`` keeps the owner's own choice: a record the owner had turned off and one this step turns off look the
-    # same afterwards, and the bundled version of the id must not come back for the first.
-    earlier = entry.get("migration")  # a record this step marked before keeps the choice it recorded then
-    was_enabled = earlier.get("was_enabled") is not False if isinstance(earlier, Mapping) and earlier.get("step") == STEP \
-        else entry.get("enabled") is not False
-    kept["migration"] = {"step": STEP, "was_enabled": was_enabled, "errors": [
+    # The record keeps the owner's own ``enabled``: the ``migration`` block alone marks the quarantine and keeps it out of the
+    # registry. A bundled id the owner had turned off stays off (``service_registry.workflow_ids_kept_off``).
+    kept["migration"] = {"step": STEP, "errors": [
         {"pointer": item.pointer, "code": item.code, "message": item.message} for item in failures[:MAX_STORED_ERRORS]]}
     return kept
 

@@ -233,6 +233,23 @@ def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any]
     return registry
 
 
+def load_service_registry_and_exclusions(
+    *, path: Path = admin_store.DB_PATH,
+) -> tuple[dict[str, Any], list["ExcludedRecord"]] | None:
+    """The registry in use and the records it leaves out, both from one read of the stored document, so a writer cannot
+    land between them. ``None`` when nothing is stored."""
+    record = admin_store.get_service_registry_json_with_generation(path=path)
+    if record is None:
+        return None
+    snapshot, excluded, default_timestamp = _normalized_registry_snapshot(
+        record["operator_settings_generation"], record["value_json"], release_digest(),
+    )
+    registry = copy.deepcopy(snapshot)
+    if default_timestamp:
+        registry["updated_at"] = int(time.time())
+    return registry, [replace(item, record=copy.deepcopy(item.record)) for item in excluded]
+
+
 def load_service_registry_exclusions(*, path: Path = admin_store.DB_PATH) -> list[ExcludedRecord]:
     """The stored records ``load_service_registry`` leaves out, each with its reason; none for a healthy registry."""
     record = admin_store.get_service_registry_json_with_generation(path=path)
@@ -299,9 +316,10 @@ _ERROR_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")  # a stored code is ac
 
 
 def _left_by_workflow_migration(raw: Any) -> list[str] | None:
-    """The error codes of a stored workflow record the schema 2 migration marked (stored disabled, with a ``migration``
-    block that names the step), or ``None`` for any other record. The codes only: the stored messages may quote a value."""
-    if not isinstance(raw, Mapping) or raw.get("enabled") is not False:
+    """The error codes of a stored workflow record the schema 2 migration marked (a ``migration`` block that names the
+    step; the record keeps the owner's own ``enabled``), or ``None`` for any other record. The codes only: the stored
+    messages may quote a value."""
+    if not isinstance(raw, Mapping):
         return None
     block = raw.get("migration")
     if not isinstance(block, Mapping) or block.get("step") != WORKFLOW_SCHEMA_2_STEP:
@@ -312,6 +330,13 @@ def _left_by_workflow_migration(raw: Any) -> list[str] | None:
     return list(dict.fromkeys(codes))[:5]
 
 
+def _kept_off_override(stored_key: str, record_id: str, raw: Any) -> bool:
+    """Whether a stored record is a migration-quarantined override that the owner has turned off: stored under its own id,
+    with a valid migration block, and an ``enabled`` that the registry's own parser reads as false."""
+    return (stored_key == record_id and _left_by_workflow_migration(raw) is not None
+            and not bool_from_config(raw.get("enabled"), True))
+
+
 def _bounded_scrubbed(message: str, record: Mapping[str, Any]) -> str:
     """The message with every value the record holds redacted, then cut to 300 characters. The scrub runs on the whole
     text, so a cut can never leave the start of a value the scrub would have redacted."""
@@ -320,17 +345,12 @@ def _bounded_scrubbed(message: str, record: Mapping[str, Any]) -> str:
 
 
 def workflow_ids_kept_off(excluded: Iterable["ExcludedRecord"]) -> set[str]:
-    """Ids of bundled workflows the owner had turned off before the schema 2 migration left their override out.
+    """Ids of bundled workflows whose override the owner had turned off and the schema 2 migration left out.
 
     The bundled version of such an id stays unavailable, as it was before the migration."""
     bundled = bundled_workflow_manifests()
-    off: set[str] = set()
-    for item in excluded:
-        if item.section != "workflows" or item.id not in bundled or _left_by_workflow_migration(item.record) is None:
-            continue
-        if item.record["migration"].get("was_enabled") is False:
-            off.add(item.id)
-    return off
+    return {item.id for item in excluded
+            if item.section == "workflows" and item.id in bundled and _kept_off_override(item.key, item.id, item.record)}
 
 
 def read_registry(value: Mapping[str, Any]) -> tuple[dict[str, Any], list[ExcludedRecord]]:
@@ -471,9 +491,9 @@ def _read_registry(value: Mapping[str, Any], *, strict: bool) -> tuple[dict[str,
                     # The migration kept a record it could not convert, disabled, so the owner can fix it. It is not an
                     # error of the read, even a strict one: it is left out of the registry and listed as needing configuration.
                     bundled = record_id in bundled_workflow_manifests()
-                    was_off = isinstance(raw.get("migration"), Mapping) and raw["migration"].get("was_enabled") is False
+                    was_off = _kept_off_override(str(raw_key), record_id, raw)
                     message = (f"{NEEDS_CONFIGURATION_CODE}: the schema 2 migration could not convert this workflow; it stays "
-                               "disabled until you save a schema 2 document for it."
+                               "out of use until you save a schema 2 document for it."
                                + (" It was disabled before the migration, so the bundled version is not served either."
                                   if bundled and was_off else
                                   " The bundled version of this workflow is served in the meantime." if bundled else "")
