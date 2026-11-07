@@ -331,6 +331,55 @@ def test_package_hash_includes_workflow_package_uri_artifact(tmp_path: Path) -> 
     assert before != after
 
 
+DEMO_PACKAGE_DIR = Path(__file__).resolve().parent.parent / "extensions" / "bundled" / "demo-image-package"
+DEMO_ARTIFACT = "workflows/test-demo-image.json"
+
+
+def _demo_package_copy(tmp_path: Path) -> Path:
+    """A copy of the shipped schema 2 demo package, whose workflow binding names a package:// artifact."""
+    import shutil
+
+    package_dir = tmp_path / "demo"
+    shutil.copytree(DEMO_PACKAGE_DIR, package_dir)
+    assert f"package://{DEMO_ARTIFACT}" in (package_dir / "objects" / "workflow.yml").read_text(encoding="utf-8")
+    return package_dir
+
+
+def test_the_whole_package_review_refuses_a_missing_workflow_artifact(tmp_path: Path) -> None:
+    package_dir = _demo_package_copy(tmp_path)
+    (package_dir / DEMO_ARTIFACT).unlink()
+
+    review = review_local_directory_package(package_dir)
+
+    assert not review["ok"]
+    assert any(f"package artifact not found: package://{DEMO_ARTIFACT}" in error for error in review["errors"])
+
+
+def test_the_whole_package_review_refuses_a_workflow_artifact_outside_the_package(tmp_path: Path) -> None:
+    package_dir = _demo_package_copy(tmp_path)
+    (tmp_path / "outside.json").write_text("{}", encoding="utf-8")
+    workflow = package_dir / "objects" / "workflow.yml"
+    workflow.write_text(workflow.read_text(encoding="utf-8").replace(f"package://{DEMO_ARTIFACT}", "package://../outside.json"),
+                        encoding="utf-8")
+
+    review = review_local_directory_package(package_dir)
+
+    # The schema 2 contract refuses it first; the artifact step's own traversal check is the second line.
+    assert not review["ok"]
+    assert any("a template reference must be a canonical relative path" in error for error in review["errors"]), review["errors"]
+
+
+def test_the_package_hash_changes_with_the_bytes_of_its_workflow_artifact(tmp_path: Path) -> None:
+    package_dir = _demo_package_copy(tmp_path)
+    before = review_local_directory_package(package_dir)
+    artifact = package_dir / DEMO_ARTIFACT
+    artifact.write_bytes(artifact.read_bytes().rstrip() + b" \n")
+    after = review_local_directory_package(package_dir)
+
+    assert before["ok"] and after["ok"], (before.get("errors"), after.get("errors"))
+    assert before["package_hash"] != after["package_hash"]
+
+
 @pytest.mark.parametrize("kind", ["uri", "code"])
 def test_package_directory_refuses_outside_symlink_without_reading_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str,
