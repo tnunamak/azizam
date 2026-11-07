@@ -539,6 +539,35 @@ def update_retention(request_id: str, entry: Mapping[str, Any], *, path: Path = 
         return True
 
 
+def merge_job_metadata(job_id: str, entries: Mapping[str, Any], *, path: Path = DB_PATH) -> int:
+    """Set ``entries`` in the ``metadata`` of every stored receipt that belongs to ``job_id``. Idempotent: the same
+    entries written twice are the same write. The result is checked by the same guard as any receipt. Returns how many
+    receipts were updated (0 when none is stored yet)."""
+    if not job_id:
+        raise ValueError("job_id is required")
+    if not path.exists():
+        return 0
+    updated = 0
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            stored = conn.execute("SELECT request_id, receipt_json FROM receipts WHERE job_id = ?", (job_id,)).fetchall()
+            for request_id, raw in stored:
+                data = _safe_loads(raw)
+                if not isinstance(data, Mapping):
+                    raise ValueError("cannot update malformed stored receipt")
+                data = {**data, "metadata": {**(data.get("metadata") or {}), **entries}}
+                _assert_safe(data)
+                conn.execute("UPDATE receipts SET receipt_json = ? WHERE request_id = ?",
+                             (json.dumps(data, ensure_ascii=False, sort_keys=True), request_id))
+                updated += 1
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    return updated
+
+
 def update_cost(
     request_id: str,
     cost: Mapping[str, Any],

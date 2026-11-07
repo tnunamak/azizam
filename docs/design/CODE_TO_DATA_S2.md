@@ -228,6 +228,168 @@ Every step is additive and keeps the current route path as the default. Each ste
 - The pinned contract now carries the manifest header (`schema_version`, `id`, `intent`) next to the inputs and outputs,
   because the compile validates it. The job goldens moved only by that blob.
 
+### S2.3 as built
+
+The code is `gateway/result_bundle.py`, with three additive tables on the jobs database (`result_stage`, `result_json`,
+`result_bundle`). The schema version does not change.
+
+- **Staging.** `result_stage(job_id, attempt, name, ref, state, kind, count, bytes, sha256, items_json, created)`. A
+  result is `json` (the value is in `result_json`, keyed by `ref`) or `assets` (a list of
+  `{asset_ref, media_type, size_bytes}`, no bytes). Staging a name that an earlier attempt already published is refused.
+  Staging for a job that erasure has already covered is refused, so a late worker cannot write a value after erasure.
+- **Publication.** `publish_in` runs inside `media_jobs.update_status`, through a new `before_commit(conn, job)` hook. The
+  hook runs after the transition is checked and written, and before the commit. A refused transition never runs it. In
+  that one transaction it checks the bundle limits, sets `results.bundle` in the envelope
+  (`definition_store.set_bundle_in`), writes the `result_bundle` row, marks the attempt's rows `published`, and marks
+  every other attempt's staged rows `aborted`. A pending cancel raises before the hook, so nothing is published while a
+  cancel has not settled. Any failure aborts the staged rows and fails the job with `result_refused`.
+- **Receipt.** The receipt lives in another database, so the link cannot join the transaction. `link_receipt` merges the
+  summary into the `metadata` of the job's work receipt (`receipt_store.merge_job_metadata`) and then sets
+  `receipt_linked_at`. It is idempotent by job id. The summary is `{bundle_version, bundle, envelope identity, results:
+  [{name, kind, count, size_bytes}]}`. It never holds a value. It sits in internal-tier receipt metadata, so the client
+  and admin receipt views do not change. No new receipt row is made.
+- **Startup scan.** `startup_scan` runs first in `_recover_media_jobs`. It deletes the stage rows and JSON values of
+  attempts that are neither running nor published, and links each published bundle that has no receipt.
+- **JSON store.** Values sit in `result_json` with the owner scope and the maker stamp of the job. `read_json` answers
+  `application/json` only to the maker (person, then credential, then connection) under the same owner scope; every
+  other case returns nothing. Retention is 30 days (`sweep`, called from the existing garbage-collection pass). Erasure
+  deletes values and unpublished rows. A published JSON row keeps its facts and loses its hash. No route produces JSON
+  yet; unit tests prove the store.
+- **Limits.** `workflow_execution.result_limits` in the runtime config (not in `proxy_config.yml`, so the config-homes
+  goldens do not move). Defaults: 64 assets, 256 MiB per asset, 1 GiB total, 4 MiB JSON, depth 32, 100 000 items, 1 000 000
+  characters per string. `LimitedAssetStore` wraps `AssetStore.save` and enforces count, per-asset and total bytes while
+  the stream is read; a lower cap from the caller still applies. JSON is checked for size, depth (before parsing, outside
+  strings), item count, string length, non-finite numbers and duplicate keys.
+- **Release.** Delete and the retention sweep release through `media_jobs._release_envelopes_in`, which now also calls
+  `result_bundle.release_in` in the same transaction as the job row. Person erasure, the kill switch and the cutoff all go
+  through `media_jobs.erase_prompt_derivatives`, which calls `result_bundle.erase_in`. `tests/test_result_bundle_release.py`
+  enumerates these paths from the code and fails if a new deleter appears.
+- **Audio route.** `_run_audio_media_job` checks the artifact sizes against the limits before it saves a file, then
+  finishes through `result_bundle.mirror_assets`. The bundle has one result, `assets`. The job view, the `assets` list and
+  the audio route goldens are unchanged. The bundle is published whether or not the flag is on; a job with no envelope
+  publishes a bundle and its summary carries no envelope identity.
+
+Goldens: `tests/fixtures/adapter_differential/audio_generate_job.json` moved on purpose, and only inside
+`$.media_jobs`, the dump of the internal jobs database (the envelope's `results.bundle` and the new `result_bundle`
+and `result_stage` rows). The client wire trace, the job view and the receipt goldens did not move.
+
+Decisions the design did not settle:
+- **No `results` field in the job view.** D4 adds `results: {name: {kind, count, href}}`. That field waits for S2.4,
+  when a route can produce a result that the client cannot already see as an asset. Nothing client-visible changed.
+- **The summary goes into the existing receipt.** The doc says the receipt carries envelope identity and each result's
+  name, kind, count and size. S2.3 adds that to the job's work receipt and does not add a receipt. The receipt goldens
+  did not move.
+- **The result name `assets`** is the default for a mirrored asset list. It is a name, not a vocabulary: no engine,
+  workflow, intent or modality name is in the module.
+- **A cancel that has not settled** aborts the attempt's stage at once and lets the cancel proceed. A crash before the
+  abort leaves `staged` rows; the startup scan deletes them.
+- **Link window.** A bundle whose receipt never appears is given up after 14 days (`media_jobs.REPLAY_WINDOW_S`), so the
+  scan does not retry it forever.
+- **Limits are optional config with code defaults.** Putting them in `proxy_config.yml` would move the config-homes
+  goldens; that is S2.4's call, with the selector fields.
+
+Left for S2.4 and later:
+- The image and video job routes. Their completion sites differ (several `update_status` calls with `add_assets` and
+  derived-asset paths), so a generic change was not small. They call `mirror_assets` in the next step, with their own
+  goldens.
+- The `results` field in the job view and the authenticated JSON read route (the read function exists).
+- The selectors that make a route produce a JSON result, and the streaming reader in the graph adapter that goes through
+  `LimitedAssetStore`.
+- Limits for history bytes, selector count, fetch time and concurrent fetches (D6). (Done in S2.4.)
+
+### S2.4 as built
+
+The code is `gateway/output_selectors.py` (the grammar, the checks, the legacy flag reader and the fetch gate), the
+selection functions in `gateway/engine_protocol/node_graph.py`, and the audio route in `proxy.py` (three small hunks and
+one helper). The module names no workflow, engine, model, intent or modality.
+
+- **Adapter descriptor, as data.** The adapter declares the selector form it accepts in a `result_selectors` block of its
+  protocol description (`registry/protocols/node-graph.yml`; the schema is `protocol.schema.json`). The block lists
+  `fields` (each `text` or `enum`, required or with a default), `identity` (the fields that say where a result is),
+  `template_node` (the field that names a node of the template) and `kind_field` (an enum field whose values map to a
+  result kind, `json` or `assets`). The compiler refuses the block unless the executor is a reviewed adapter that names a
+  binding. A malformed descriptor raises `DescriptorError`, so the description does not load.
+- **Selectors in the binding.** `selectors: {<result name>: {node, key, from: output_dir, decode: none|json,
+  take: all|first|single}}`. `validate_manifest` checks the shape against the descriptor at load: declared fields only,
+  the right types, required fields present, defaults filled, every named result a declared output, every output covered,
+  at most `max_selectors` selectors. `check_for_save` adds the contract rules: a binding of an adapter that takes
+  selectors must have them, a selector must not name an echo of a source or an input, two selectors must not have the
+  same identity, and two outputs of the same kind that cannot be told apart are refused. Each refusal has a code
+  (`selectors_missing`, `selector_echoes_source`, `selector_duplicate`, `results_ambiguous`, `selector_malformed`,
+  `selector_unknown_result`, `selector_missing_result`, `selector_unknown_node`, `selector_count`).
+  There is no workflow-save path yet, so `check_for_save` has no caller outside tests. The S4 registration route calls it.
+- **Selection.** `NodeGraphAdapter.collect(job, block, outputs, limits=..., legacy_allowed=...)` returns the files of
+  each named result. It reads only history entries of `type: output` (an entry with no type counts as output). A missing,
+  null or empty list for the selected node and key is one refusal, `result_missing`. The order follows the history.
+  A file that two entries name is kept once. `take: first` keeps the first file, `single` refuses any count but one, `all`
+  keeps every file. An entry that is not a plain file name, or that leaves the output directory, is refused with
+  `result_malformed`. A refused run delivers nothing.
+- **Legacy fallback.** `workflow_execution.legacy_output_collection` in the runtime config. It is on unless the value is
+  the literal `false`. When a binding has no selectors and the flag is on, `legacy_select` reads the output directory
+  only (never a source echo or a preview) and refuses what it would have to guess (`result_ambiguous`): a contract of
+  more than one result, or files that come from more than one place in the answer. With the flag off, a binding with no selectors
+  is refused with `selectors_missing`. Turn the flag off after every workflow in use carries selectors; the bundled
+  ones all do.
+- **Bundled workflows.** The 34 manifests that bind the graph engine now carry explicit selectors made from their graphs.
+  `tests/test_bundled_selectors.py` builds, for each one, the history its graph's save node would write (the node id and
+  the history key follow the node class), and shows that the selectors read the same files the old per-family collection
+  read. It builds a second history with a source echo and a preview ahead of the result, and shows the selectors and the
+  legacy path still read only the result, where the old image collection returned the echo too. Every bundled manifest
+  also passes `check_for_save` with its real template. Gateway-compose and the 3D service bindings take no selectors (see
+  below).
+- **Audio route.** `proxy_audio_generate` now reads its result through `adapter.collect`. A history with no file for the
+  selector is the same 502 "No audio output found" as before. Any other refusal is a 502 with a fixed message and the
+  refusal code in `error.code`; it names no value. The download runs inside `output_selectors.FETCH_GATE.slot(limits)`;
+  a fetch that waits or runs past the time limit is a 504 with `fetch_timeout`. The route sets
+  `response.selected_result` to the output name, and `_run_audio_media_job` passes it to `mirror_assets`, so the job's
+  bundle result is named by the contract's output (`audio` for the bundled audio workflows) and no longer `assets`.
+- **Limits (D6).** `ResultLimits` gains `max_selectors` (16), `max_history_bytes` (8 MiB), `fetch_timeout_s` (300) and
+  `max_concurrent_fetches` (8). They are trusted deployment config under `workflow_execution.result_limits` with code
+  defaults, never manifest values. `collect` refuses a history answer over `max_history_bytes` (`history_too_large`)
+  before it reads it and a binding over `max_selectors`. `FetchGate` holds at most `max_concurrent_fetches` fetches per
+  event loop, and the time limit covers the wait for a slot.
+
+Goldens: in `tests/fixtures/adapter_differential/` 21 traces moved on purpose, and only inside the internal stores: the
+receipt's `manifest_hash` (the manifests now hold selectors), and, for the four job scenarios that pin a definition,
+`$.media_jobs` (the binding blob, its digest and the envelope's source revision). `audio_generate_job.json` also shows
+the bundle result named `audio`. The client wire trace, the engine requests, the job view and every response did not move
+(checked path by path against the old goldens).
+
+Test changes: the audio fakes (`history_done` in the differential rig, the tangoflux, sa3, yue2 and ace-step route
+fakes, and the media-job end-to-end fake) used a stub node id and key. They now give the node and key of the real graph's
+save node, because a selector names them. `tests/test_result_bundle_audio.py` expects the result name `audio`.
+
+Decisions the design did not settle:
+- **The descriptor lives in the protocol description**, next to the other adapter data, so a new adapter ships its selector
+  form with its description and core reads it without a branch on the adapter.
+- **Grammar and field names** (`node`, `key`, `from`, `decode`, `take`) are the node-graph descriptor's. Core knows only
+  `identity`, `template_node` and `kind_field`.
+- **Limits are in the runtime config, not in `proxy_config.yml`.** Putting them in the file moves the config-homes goldens,
+  and the S2.3 limits already live in the runtime config. One home for all result limits, so the decision is the same.
+- **The legacy flag** is a runtime config key, on by default, and only a literal `false` turns it off.
+- **Missing, null and empty are one refusal** (`result_missing`), and a duplicate file is kept once.
+- **`take` per workflow type:** workflows that write several images use `all`; video and audio workflows use `first`.
+- **The bundle result name** is the contract's output name, not `assets`. This changes the S2.3 default for the audio route
+  only. `mirror_assets` keeps `assets` as the default for a route that names none.
+- **No `results` field in the job view.** It would be additive, but no route yet produces a result that the client cannot
+  see as an asset, so the field and the JSON read route stay for a later step. Nothing client-visible changed.
+- **The image and video routes keep the old collection.** Their completion sites differ (several status updates, derived
+  assets, batch rounds), so a generic change is not small. They are the next step.
+- **Gateway-compose and 3D service bindings take no selectors.** Those engines have no history to read; their descriptor
+  belongs with the http-v1 adapter.
+- **`check_for_save` has no caller yet** (see above).
+
+Left for S2.5 and later:
+- The image and video job routes: collect through `adapter.collect`, name their bundle results by output, and refresh
+  their goldens on purpose.
+- A selector descriptor for the http-v1 adapter, so a JSON-only or mixed contract runs through it and through a
+  graph fixture (acceptance items 1 and 4).
+- The `results` field in the job view and the authenticated JSON read route.
+- Reading a `json` result through `fetch_json` into the result store from a route, with the streaming reader through
+  `LimitedAssetStore`.
+- Turn the legacy flag off by default once no workflow in use lacks selectors, and delete the legacy collection.
+- The call to `check_for_save` from the registration route (S4).
+
 ## Done when: the S2 acceptance matrix
 
 1. **Data only.**

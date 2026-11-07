@@ -68,7 +68,7 @@ def _audio_scenario(filename: str, media_type: str) -> Any:
              "response": {"json": {"prompt_id": "p1"}}},
             {"id": "history", "match": {"method": "GET", "path": "/history/p1"},
              "response": {"json": {"p1": {"status": {"status_str": "success"},
-                                          "outputs": {"9": {"audio": [{"filename": filename,
+                                          "outputs": {"8": {"audio": [{"filename": filename,
                                                                        "type": "output"}]}}}}}},
             {"id": "view", "match": {"method": "GET", "path": "/view"},
              "response": {"headers": {"content-type": media_type},

@@ -41,7 +41,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Literal, Mapping
+from typing import Any, Callable, Iterable, Literal, Mapping
 from uuid import uuid4
 from gateway.ownership import stored_owner_key
 from gateway.job_envelope import JobEnvelope
@@ -440,6 +440,43 @@ CREATE TABLE IF NOT EXISTS job_envelope (
   job_id TEXT PRIMARY KEY,
   envelope_json TEXT NOT NULL,
   created REAL NOT NULL
+);
+
+-- Named results of a job: staged privately, then published with the job's terminal state (gateway/result_bundle.py owns
+-- the rules). They live here so every path that deletes or erases a job row can release them in the same transaction.
+CREATE TABLE IF NOT EXISTS result_stage (
+  job_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('staged', 'published', 'aborted')),
+  kind TEXT NOT NULL CHECK(kind IN ('json', 'assets')),
+  count INTEGER NOT NULL,
+  bytes INTEGER NOT NULL,
+  sha256 TEXT,
+  items_json TEXT,
+  created REAL NOT NULL,
+  PRIMARY KEY(job_id, attempt, name)
+);
+CREATE INDEX IF NOT EXISTS result_stage_state ON result_stage(state, created);
+CREATE TABLE IF NOT EXISTS result_json (
+  ref TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  owner_scope TEXT NOT NULL,
+  maker_person_id TEXT,
+  maker_credential_id TEXT,
+  maker_connection_id TEXT,
+  value BLOB NOT NULL,
+  created REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS result_json_job ON result_json(job_id);
+CREATE TABLE IF NOT EXISTS result_bundle (
+  job_id TEXT PRIMARY KEY,
+  attempt INTEGER NOT NULL,
+  bundle_ref TEXT NOT NULL,
+  summary_json TEXT NOT NULL,
+  published_at REAL NOT NULL,
+  receipt_linked_at REAL
 );
 """
 
@@ -971,18 +1008,19 @@ def delete_succeeded_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> int
 
 
 def _release_envelopes_in(conn: sqlite3.Connection, job_ids: Iterable[str]) -> None:
-    """Release each deleted job's envelope and references, in the transaction that deleted the job row.
+    """Release each deleted job's envelope, references and results, in the transaction that deleted the job row.
 
     Every function in this module that deletes ``media_jobs`` rows calls this
     (``tests/test_job_envelope_release.py`` scans the code for that). A database that predates the definition tables
     has no envelopes to release.
     """
-    from gateway import definition_store  # imports this module, so it cannot be imported at the top
+    from gateway import definition_store, result_bundle  # import this module, so they cannot be imported at the top
 
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='job_envelope'").fetchone() is None:
         return
     for job_id in job_ids:
         definition_store.release_in(conn, job_id)
+        result_bundle.release_in(conn, job_id)
 
 
 def delete_succeeded(job_ids: Iterable[str], *, path: Path = DB_PATH) -> int:
@@ -1150,6 +1188,7 @@ def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = 
         conn.commit()
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='media_jobs'").fetchone() is None:
             return 0
+        _erase_results(conn, owner_keys, before=int(before))
         cursor = ""
         while True:
             rows = conn.execute(
@@ -1187,6 +1226,19 @@ def erase_prompt_derivatives(owner_keys: set[str], *, before: int, path: Path = 
                     raise
             cursor = rows[-1][0]
     return count
+
+
+def _erase_results(conn: sqlite3.Connection, owner_keys: set[str], *, before: int) -> None:
+    """Erase the result values of these owners' jobs made up to ``before``, in one transaction (S2 design, D4)."""
+    from gateway import result_bundle  # imports this module, so it cannot be imported at the top
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        result_bundle.erase_in(conn, owner_keys, before=before)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def get(
@@ -1391,9 +1443,15 @@ def update_status(
     metadata_patch: Mapping[str, Any] | None = None,
     expected_status: str | None = None,
     now: int | None = None,
+    before_commit: Callable[[sqlite3.Connection, dict[str, Any]], object] | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any] | None:
     """Apply a status transition. Returns the updated internal job dict.
+
+    ``before_commit(conn, job)`` runs in the same transaction, after the transition is checked and written and before
+    the commit: the caller writes what must become visible with the new state (the result bundle, S2 design D4). If it
+    raises, nothing is committed. It never runs for a refused transition (an illegal one, or a success that a pending
+    cancel holds back).
 
     ``error_info`` holds the typed failure facts (``ERROR_FIELDS``) that go
     with ``error``; ``validate_error_info`` checks them.
@@ -1472,6 +1530,8 @@ def update_status(
 
         updated = _coerce_to_job(current)
         _write_job(conn, updated)
+        if before_commit is not None:
+            before_commit(conn, updated.to_dict("internal"))
         conn.commit()
     return updated.to_dict("internal")
 

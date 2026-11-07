@@ -538,7 +538,12 @@
 # feat/config-homes-c8b: +15 cases in tests/test_config_c8b_sections.py (videos and audio sections), +1 import-read scan case; measured 19837.
 # Train 12 (2026-11-06): C8a images and voices sections (+25), job refusal reasons (+16), C8b videos and audio sections (+16); measured 19905.
 # Train 12 gate fix: an unchanged restart warns about no section (+1); measured 19906.
-pytest = 19906
+# feat/code-to-data-s2-3 (2026-11-06): result bundle staging, publication, receipts, scan, JSON store, limits and audio route (+71); measured 19897.
+# S2.3 review fixes: a stale worker cannot stage files or publish after erasure (+2); measured 19899.
+# feat/code-to-data-s2-4 (2026-11-06): output selectors, adapter descriptor, bundled-selector proof and audio route selection (+261); measured 20160.
+# S2.4 review fix: a non-boolean legacy flag is named in a warning once (+1); measured 20161.
+# Train 13 (2026-11-06): S2.3 result bundles (+73) and S2.4 output selectors (+262) on train 12; summed 20241.
+pytest = 20241
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

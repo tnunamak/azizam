@@ -404,7 +404,7 @@ def test_video_job_succeeds(tmp_path, record_testsuite_property):
 
 def _audio_comfy(rig, **kw):
     return _comfy(rig, comfy_exchanges(
-        history=history_done("audio", "tone_00001_.wav"), views=[(_wav(), "audio/wav")], **kw))
+        history=history_done("audios", "tone_00001_.wav", node="3"), views=[(_wav(), "audio/wav")], **kw))
 
 
 def test_audio_generate_sync(tmp_path, record_testsuite_property):

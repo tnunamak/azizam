@@ -78,6 +78,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/videos/video-ltx-2.5-keyframes.json
+    selectors:
+      video: {node: '60', key: images, from: output_dir, decode: none, take: first}
     map:
       prompt:
       - node: '5'

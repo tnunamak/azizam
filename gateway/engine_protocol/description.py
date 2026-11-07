@@ -25,6 +25,7 @@ import yaml
 from gateway.engine_protocol import mapping, pointer
 from gateway.engine_protocol.budgets import DEFAULT_BUDGETS, Budgets
 from gateway.engine_protocol.errors import DescriptionError
+from gateway.output_selectors import DescriptorError, SelectorDescriptor, parse_descriptor
 
 REGISTRY_DIR = Path(__file__).resolve().parent.parent.parent / "registry" / "protocols"
 SCHEMA_PATH = REGISTRY_DIR / "protocol.schema.json"
@@ -173,6 +174,7 @@ class ProtocolDescription:
     label: str = ""
     binding: str = ""
     retention_facts: tuple[Mapping[str, Any], ...] = ()
+    result_selectors: SelectorDescriptor | None = None
 
     @property
     def adapter_id(self) -> str | None:
@@ -321,6 +323,15 @@ class _Compiler:
         if doc.get("serves") and not executor.startswith("adapter:"):
             self.bad("serves", "only a reviewed adapter answers for a record that names no protocol; an http-v1 description is selected by name")
         operations = {name: self._operation(name, op, executor) for name, op in doc["operations"].items()}
+        selectors = None
+        if "result_selectors" in doc:
+            if not executor.startswith("adapter:") or not doc.get("binding"):
+                self.bad("result_selectors", "only a reviewed adapter that names a binding takes output selectors")
+            else:
+                try:
+                    selectors = parse_descriptor(doc["result_selectors"])
+                except DescriptorError as exc:
+                    self.bad("result_selectors", str(exc))
         if self.problems:
             raise DescriptionError(self.source, self.problems)
         return ProtocolDescription(
@@ -329,6 +340,7 @@ class _Compiler:
             serves=tuple(doc.get("serves") or ()), label=str(doc.get("label") or ""),
             binding=str(doc.get("binding") or ""),
             retention_facts=tuple(copy.deepcopy(doc.get("retention_facts") or ())),
+            result_selectors=selectors,
         )
 
     def _advice(self, rows: list) -> tuple[Advice, ...]:

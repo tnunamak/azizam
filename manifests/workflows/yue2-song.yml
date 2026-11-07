@@ -40,6 +40,8 @@ outputs:
 bindings:
   comfyui:
     workflow: workflows/audio/yue2-song.json
+    selectors:
+      audio: {node: '10', key: audio, from: output_dir, decode: none, take: first}
     map:
       tags:
       - node: '2'

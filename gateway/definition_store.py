@@ -158,6 +158,30 @@ def envelope_in(conn: sqlite3.Connection, job_id: str, generators: Mapping[str, 
         raise DefinitionUnavailable(f"job {job_id}: the stored envelope cannot be read: {exc}") from exc
 
 
+def set_bundle_in(conn: sqlite3.Connection, job_id: str, bundle_ref: str) -> bool:
+    """Record the job's result bundle in its envelope (``results.bundle``), in the caller's transaction.
+
+    Returns False when the job has no envelope (a job accepted without a pin still publishes a bundle). Setting the
+    same reference again is a no-op; a different one raises ``EnvelopeConflict``: a job publishes one bundle.
+    """
+    _require_transaction(conn)
+    row = conn.execute("SELECT envelope_json FROM job_envelope WHERE job_id = ?", (job_id,)).fetchone()
+    if row is None:
+        return False
+    try:
+        data = json.loads(row[0])
+        recorded = data["results"]["bundle"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise DefinitionUnavailable(f"job {job_id}: the stored envelope cannot be read: {exc}") from exc
+    if recorded == bundle_ref:
+        return True
+    if recorded is not None:
+        raise EnvelopeConflict(f"job {job_id}: a different result bundle is already recorded")
+    data["results"]["bundle"] = bundle_ref
+    conn.execute("UPDATE job_envelope SET envelope_json = ? WHERE job_id = ?", (_canonical(data), job_id))
+    return True
+
+
 def clear_generated_in(conn: sqlite3.Connection, job_id: str) -> None:
     """Rewrite the job's envelope with ``generated`` empty (erasure and forget). No-op without an envelope.
 
