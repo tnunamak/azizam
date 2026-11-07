@@ -34,6 +34,7 @@ NOT_SINKS = BUILTIN_ERRORS | {"describe_error", "client_error", "upstream_error_
 ALLOWED: dict[str, str] = {
     "gateway/engine_check.py::_run_check": "the owner's engine check quotes what the server said to the owner; the key is scrubbed from every "
                                            "spelling and an administrator on the owner's stored key sees nothing (guarded_fetch, WITHHELD_TEXT)",
+    "gateway/engine_protocol/node_graph.py::NodeGraphAdapter.results": "the wrong-type reason names a media type that engine_protocol.assets.served_media_type took from its allowlist or its sniffer table, and the type the manifest declares; it holds no text the engine wrote",
     "gateway/engine_protocol/node_graph.py::NodeGraphAdapter.submit": "the text goes into the error's `excerpt`, which no str, repr or log line shows",
     "gateway/workflow_call.py::error_from": "the reply parsed is the gateway's own route answer, already built by gateway.client_errors",
     "proxy.py::create_response": "`upstream` is the gateway's own /v1/chat/completions answer (an engine's words are already replaced there)",
