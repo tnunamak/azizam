@@ -577,6 +577,46 @@ def test_a_snapshot_from_before_a_concurrent_completion_is_not_returned(tmp_path
     assert migrated["workflows"]["owner.flux"]["manifest"]["schema_version"] == 2
 
 
+def test_a_start_that_finishes_between_the_marker_read_and_the_registry_read_is_not_migrated_again(tmp_path, monkeypatch):
+    # The broken record stays schema 1 after the first run, so a second plan over the converted registry would write again.
+    db = _db_with(tmp_path, {"owner.flux": _owner_record("owner.flux", _v1()),
+                             "owner.broken": _owner_record("owner.broken", _v1(schema_version=3))})
+    real_ensure = migration.ensure
+    real_read = admin_store.get_service_registry_json_with_generation
+    state = {"n": 0}
+
+    def other_start_finishes_first(*, path):
+        state["n"] += 1
+        if state["n"] == 1:
+            monkeypatch.undo()  # the other start sees the real functions
+            real_ensure(path=db, actor="other")
+        return real_read(path=path)
+
+    _value, generation_before = _row(db)
+    monkeypatch.setattr(admin_store, "get_service_registry_json_with_generation", other_start_finishes_first)
+    migrated = migration.ensure(path=db, actor="test")
+    assert migrated == service_registry._stored_document(_row(db)[0])
+    assert _row(db)[1] == generation_before + 1
+    assert [entry["actor_id"] for entry in _audit(db)] == ["other"]
+
+
+def test_a_normalizer_error_is_stored_as_its_kind_only_and_the_other_records_go_on(monkeypatch):
+    real = service_registry.normalize_workflow_record
+
+    def refuses_one(record_id, record):
+        if record_id == "owner.bad":
+            raise ValueError(f"refused because of {SENTINEL}")
+        return real(record_id, record)
+
+    monkeypatch.setattr(service_registry, "normalize_workflow_record", refuses_one)
+    plan = _plan({"owner.bad": _owner_record("owner.bad", _v1()), "owner.fine": _owner_record("owner.fine", _v1())})
+    bad = plan.stored["workflows"]["owner.bad"]
+    assert bad["enabled"] is False
+    assert [error["code"] for error in bad["migration"]["errors"]] == ["conversion_failed"]
+    assert SENTINEL not in json.dumps(plan.stored) and SENTINEL not in json.dumps(plan.report())
+    assert plan.stored["workflows"]["owner.fine"]["manifest"]["schema_version"] == 2
+
+
 def test_the_retries_are_bounded_and_exhausting_them_raises(tmp_path, monkeypatch):
     for workflows in ({"owner.flux": _owner_record("owner.flux", _v1())}, {}):  # a write conflicts; a no-change record conflicts
         db = _db_with(tmp_path / str(len(workflows)), workflows) if (tmp_path / str(len(workflows))).mkdir() is None else None

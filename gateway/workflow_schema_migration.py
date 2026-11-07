@@ -124,10 +124,9 @@ def _convert_record(record_id: str, entry: Mapping[str, Any]) -> tuple[dict[str,
         candidate.pop(key, None)
     if failures:
         return None, failures, []
-    try:
-        normalized = service_registry.normalize_workflow_record(record_id, candidate)
-    except Exception as error:  # noqa: BLE001 - what a load refuses a record for is what a load would raise
-        return None, [Failure("/", str(getattr(error, "code", type(error).__name__)), str(error)[:300])], []
+    # A load that refuses the record raises here; the caller turns that into a cannot-convert row whose message holds the
+    # kind of error only (the error text may quote a stored value).
+    normalized = service_registry.normalize_workflow_record(record_id, candidate)
     normalized.setdefault("policy", facts)  # a loader that keeps the facts has put them there already
     changed = {str(note.path[0]) for note in notes if note.path} | set(stated)
     return normalized, [], [*sorted(changed), "policy"]
@@ -374,8 +373,10 @@ def ensure(*, path: Path, actor: str = "system", release: Mapping[str, Any] | No
 
     release = service_registry.release_registry() if release is None else release
     for _attempt in range(3):
-        # The marker is read before the registry: a registry read after a marker that says "done" is at least as new as the
-        # step's own write, so a concurrent start that finished first is never answered with a snapshot from before it.
+        # The marker is read before the registry and again after it. A "done" before the read means the read is at least as
+        # new as the step's own write, so it is returned. A "done" only after the read means another start finished in
+        # between: the read may be from before or after its write, so read again. A start that finishes after the second
+        # marker read moves the generation, so the write below conflicts and the next attempt sees "done".
         done = admin_store.migration_step_recorded(STEP, path=path)
         record = admin_store.get_service_registry_json_with_generation(path=path)
         if record is None or not service_registry._parses_as_object(record["value_json"]):
@@ -383,6 +384,8 @@ def ensure(*, path: Path, actor: str = "system", release: Mapping[str, Any] | No
         stored = service_registry._stored_document(record["value_json"])
         if done:
             return stored
+        if admin_store.migration_step_recorded(STEP, path=path):
+            continue
         generation = int(record["operator_settings_generation"])
         plan = plan_workflow_schema_2(stored, release, bundled_ids=frozenset(bundled_workflow_manifests()))
         if not plan.changes:
