@@ -8631,7 +8631,7 @@ async def _generate_images_with_adaptive_batching(
     output_background: Optional[str] = None,
     output_quality: Optional[str] = None,
     output_size: Optional[str] = None,
-    legacy_seed_field: str = "seed",
+    legacy_seed_field: str | None = None,
     made_from: tuple[asset_types.OutputInput, ...] = (),
 ) -> Response:
     """Submit `ceil(n / max_batch)` rounds and aggregate `n_requested` images.
@@ -21482,7 +21482,7 @@ def _reseed_image_workflow(
     seed: int | None,
     *,
     meta: Mapping[str, Any] | None = None,
-    legacy_seed_field: str = "seed",
+    legacy_seed_field: str | None = None,
     identity: ManifestIdentity | None = None,
 ) -> tuple[dict[str, Any], int | None]:
     """Use manifest bindings, or the legacy metadata path for graphs without one."""
@@ -21491,7 +21491,7 @@ def _reseed_image_workflow(
         if node and node in workflow:
             if seed is None:
                 seed = random.randint(0, 2**32 - 1)
-            workflow[node].get("inputs", {})[legacy_seed_field] = int(seed)
+            workflow[node].get("inputs", {})[legacy_seed_field or "seed"] = int(seed)
             return workflow, int(seed)
     binding = ((manifest or {}).get("bindings") or {}).get(DERIVED._GRAPH_BINDING) or {}
     mapping = binding.get("map") or {}
