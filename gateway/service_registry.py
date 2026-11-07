@@ -199,6 +199,15 @@ def release_digest() -> str:
     return _release_digest(*_release_key(None))
 
 
+def effective_registry(stored: Mapping[str, Any]) -> tuple[dict[str, Any], list["ExcludedRecord"]]:
+    """The registry in use: a stored document (the owner's patches) layered over the release records, then read.
+
+    Every reader of the stored row goes through this. The row alone holds only the owner's changes, so a
+    service patched there can lack fields, such as ``base_url``, that its release record supplies.
+    """
+    return read_registry(registry_layers.layer(stored, release_registry()))
+
+
 def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any] | None:
     record = admin_store.get_service_registry_json_with_generation(path=path)
     if record is None:
@@ -235,7 +244,7 @@ def _normalized_registry_snapshot(
     # records it was layered over. No TTL or process-local writer notification.
     # Match get_operator_setting's treatment of damaged/non-object JSON.
     value = _stored_document(document)
-    registry, excluded = read_registry(registry_layers.layer(value, release_registry()))
+    registry, excluded = effective_registry(value)
     for record in excluded:
         # Once per stored document, not once per request: this body runs only when the cache misses.
         print(f"[service_registry] ERROR: {record.section} record {record.id!r} is left out of the registry: {record.error}", flush=True)

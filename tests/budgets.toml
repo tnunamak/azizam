@@ -569,7 +569,9 @@
 # C9 merged with main (train 14): measured 20285.
 # C9 merge review fix: a derived patch is undone in a snapshot published inside its block (+3); measured 20288.
 # Train 16 (2026-11-06): C9 merged with train 15 (20526 + the 16 cases C9 added to train 14); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20542.
-pytest = 20542
+# Sidecar hotfix (2026-11-06): +1 case, the sidecar reads owner patches over the release records: 20527.
+# Train 16 candidate: C9 (20542) plus the sidecar hotfix case: 20543.
+pytest = 20543
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
