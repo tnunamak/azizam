@@ -124,12 +124,16 @@ def package_record_arguments(workflow_id: str, package_root: Path) -> dict[str, 
 
     if "facts" not in inspect.signature(WorkflowRegistry.add_manifest).parameters:
         return {}
+    from gateway.extension_packages import review_local_directory_package
     from gateway.manifests import Provenance
     from gateway.workflow_policy import release_facts
 
+    # The same two things the installer records on a package's workflow (``imported_registry_records``): the id the package
+    # states and the hash of its reviewed content. The row applies only when that hash is the shipped package's.
+    review = review_local_directory_package(package_root)
     package_id = (yaml.safe_load((package_root / "extension.yml").read_text(encoding="utf-8")) or {}).get("id")
     return {"provenance": Provenance(trusted=False, source="package"),
-            "facts": release_facts(workflow_id, package_id=package_id, from_package=True)}
+            "facts": release_facts(workflow_id, package_id=package_id, package_hash=review.get("package_hash"), from_package=True)}
 
 
 def main(argv: list[str]) -> int:

@@ -2601,8 +2601,10 @@ def normalize_workflow_record(workflow_id: str, raw: Mapping[str, Any]) -> dict[
 def _release_facts_of(workflow_id: str, source: str, provenance: Any) -> Any:
     """The release's facts for a stored workflow. A record an installed package wrote (source ``imported``) gets a row that
     names the package it came from; any other record gets a row that names none."""
-    package_id = provenance.get("package_id") if isinstance(provenance, Mapping) else None
+    stated = provenance if isinstance(provenance, Mapping) else {}
+    package_id, package_hash = stated.get("package_id"), stated.get("package_hash")
     return release_facts(workflow_id, package_id=package_id if isinstance(package_id, str) else None,
+                         package_hash=package_hash if isinstance(package_hash, str) else None,
                          from_package=source == "imported")
 
 

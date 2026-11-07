@@ -20,6 +20,7 @@ import yaml
 
 POLICY_PATH = Path(__file__).resolve().parent.parent / "registry" / "workflow_policy.yml"
 FACT_NAMES = ("exposure", "trust_tier", "resource_tier", "tags")
+BUNDLED_PACKAGES_DIR = Path(__file__).resolve().parent.parent / "extensions" / "bundled"
 PACKAGE_KEY = "package"  # an optional key of a policy row: the id of the one package the row was written for
 NEEDS_CONFIGURATION_CODE = "needs_configuration"
 NEEDS_CONFIGURATION_MESSAGE = "This workflow needs configuration: its policy facts are not set."
@@ -118,22 +119,50 @@ def _loaded(path: Path | None) -> tuple[dict[str, PolicyFacts], dict[str, str]]:
 
 
 def release_policy(path: Path | None = None) -> dict[str, PolicyFacts]:
-    """The facts the release ships, by workflow id. A file that is missing or broken raises ``PolicyFileError``."""
-    return _loaded(path)[0]
+    """The facts the release ships for the workflows it holds itself, by workflow id: the rows that name no package. A row
+    that names a package is not here (``release_facts`` gives it to that package alone). A file that is missing or broken
+    raises ``PolicyFileError``."""
+    facts, scopes = _loaded(path)
+    return {workflow_id: row for workflow_id, row in facts.items() if workflow_id not in scopes}
+
+
+def shipped_package_hash(package_id: str, root: Path | None = None) -> str | None:
+    """The reviewed hash of the package of this id that the release ships (a directory of ``root``, by default
+    ``extensions/bundled``), or ``None`` when it ships none or the shipped one does not review clean. The hash is the
+    installer's own (``extension_packages``): it covers every file of the package."""
+    from gateway.extension_packages import MANIFEST_NAME, review_local_directory_package
+
+    base = Path(root or BUNDLED_PACKAGES_DIR)
+    for directory in sorted(base.iterdir()) if base.is_dir() else []:
+        try:
+            declared = (yaml.safe_load((directory / MANIFEST_NAME).read_text(encoding="utf-8")) or {}).get("id")
+            if declared == package_id:
+                review = review_local_directory_package(directory)
+                return str(review["package_hash"]) if review.get("ok") else None
+        except (OSError, ValueError, yaml.YAMLError, AttributeError):
+            continue
+    return None
 
 
 def release_facts(workflow_id: str, path: Path | None = None, *, package_id: str | None = None,
-                  from_package: bool = False) -> PolicyFacts | None:
+                  package_hash: str | None = None, from_package: bool = False,
+                  packages_root: Path | None = None) -> PolicyFacts | None:
     """The facts the release ships for one workflow, or ``None`` (the workflow then needs configuration).
 
     The one rule for whose workflow a row belongs to: a workflow that an installed package declares (``from_package``) gets
-    a row only when the row names that package (``package_id``, the id the package states); a workflow the package does
-    not declare gets a row only when the row names no package. So a package that declares the id of another workflow
-    borrows nothing from the release's file."""
+    a row only when the row names that package (``package_id``, the id the package states) **and** the package is the one
+    the release ships: its reviewed hash (``package_hash``, the one the installer recorded) equals that of the shipped
+    package of that id. A package id alone proves nothing; the content hash does. A workflow the package does not declare
+    gets a row only when the row names no package. So a package that declares the id of another workflow, or the id of the
+    shipped package with other content, borrows nothing from the release's file."""
     try:
         facts, scopes = _loaded(path)
     except PolicyFileError:
         return None   # a policy file that cannot be read states nothing: every workflow needs configuration
     scope = scopes.get(workflow_id)
-    belongs = scope is not None and scope == package_id if from_package else scope is None
+    if from_package:
+        belongs = (scope is not None and scope == package_id and bool(package_hash)
+                   and package_hash == shipped_package_hash(scope, packages_root))
+    else:
+        belongs = scope is None
     return facts.get(workflow_id) if belongs else None

@@ -29,6 +29,7 @@ import random
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -298,37 +299,65 @@ def build_corpus(documents: dict[str, dict[str, Any]], limit: int = 48) -> dict[
 GENERATED_CONSTRAINTS = ("type", "enum", "minimum", "maximum", "step", "offset")  # what the input check reads of a generated input
 
 
-def generator_grid(workflow_id: str, name: str, spec: dict[str, Any]) -> tuple[int, int, int] | None:
-    """The values a generate rule can give that the input check accepts, as (first value, distance between values, how many):
-    the rule's range cut by the input's bounds and laid on the input's grid (``step``, from ``offset``; the check reads the
-    offset only with a step). ``None`` when no value is left. The generator must be a reviewed one (``GENERATORS``)."""
+def _exact_bound(workflow_id: str, name: str, what: str, value: Any) -> Fraction:
+    exact = exact_number(value)
+    if exact is None:
+        raise ValueError(f"{workflow_id} input {name}: the {what} {value!r} is not a number the equality gate can use")
+    return exact
+
+
+def generator_values(workflow_id: str, name: str, spec: dict[str, Any]) -> Sequence[int] | None:
+    """The whole numbers a generate rule can give that the input check accepts, in order (a ``range``, or a list when the
+    input has an ``enum``): the rule's range cut by the input's bounds, laid on the input's grid (``step`` from ``offset``,
+    both exact fractions; the check reads the offset only with a step) and cut by the enum. ``None`` when no value is left.
+    The generator must be a reviewed one (``GENERATORS``). A form this function does not handle (a type that is not
+    integer or number, a bound, step or offset that is not a number, a zero or negative step) raises, naming the input."""
     rule = spec["generate"]
     if rule.get("generator") not in GENERATORS:
         raise ValueError(f"{workflow_id} input {name}: no reviewed generator {rule.get('generator')!r}")
-    low = max(int(rule.get("minimum", 0)), int(spec.get("minimum", rule.get("minimum", 0))))
-    high = min(int(rule["maximum"]), int(spec.get("maximum", rule["maximum"])))
+    if spec.get("type") not in ("integer", "number"):
+        raise ValueError(f"{workflow_id} input {name}: a generated input of type {spec.get('type')!r} is not supported by the equality gate")
+    low = _exact_bound(workflow_id, name, "generator minimum", rule.get("minimum", 0))
+    high = _exact_bound(workflow_id, name, "generator maximum", rule["maximum"])
+    if spec.get("minimum") is not None:
+        low = max(low, _exact_bound(workflow_id, name, "input minimum", spec["minimum"]))
+    if spec.get("maximum") is not None:
+        high = min(high, _exact_bound(workflow_id, name, "input maximum", spec["maximum"]))
+    low, high = math.ceil(low), math.floor(high)
     step, offset = Fraction(1), Fraction(0)
     if spec.get("step") is not None:
-        step, offset = exact_number(spec["step"]), exact_number(spec.get("offset", 0))
-        if step is None or offset is None or step <= 0:
-            return None   # the input check refuses every value of this input
-    first, last = math.ceil((low - offset) / step), math.floor((high - offset) / step)
-    if first > last or (offset + first * step).denominator != 1 or step.denominator != 1:
+        step = _exact_bound(workflow_id, name, "step", spec["step"])
+        offset = _exact_bound(workflow_id, name, "offset", spec.get("offset", 0))
+        if step <= 0:
+            raise ValueError(f"{workflow_id} input {name}: the step {spec['step']!r} is not positive")
+    # Whole numbers x with (x - offset) / step whole: x = x0 + p * t, with step = p / q in lowest terms.
+    p, q = step.numerator, step.denominator
+    if q % offset.denominator:
+        return None   # offset + k * step is never whole
+    k0 = (-offset.numerator * (q // offset.denominator) * pow(p, -1, q)) % q
+    x0 = int(offset + k0 * step)
+    first = x0 + p * -((x0 - low) // p)   # the least x0 + p * t that is >= low
+    values: Sequence[int] = range(first, high + 1, p)
+    if isinstance(spec.get("enum"), list):
+        values = sorted({v for v in spec["enum"] if isinstance(v, int) and not isinstance(v, bool) and v in values})
+    if not values:
         return None
-    return int(offset + first * step), int(step), last - first + 1
+    if any(validate_input_value(name, value, spec) for value in (values[0], values[-1])):
+        raise ValueError(f"{workflow_id} input {name}: the equality gate computed a generated value the input check refuses")
+    return values
 
 
 def generator_range(workflow_id: str, name: str, spec: dict[str, Any]) -> tuple[int, int] | None:
-    """The least and the greatest value a generate rule can give (both on the input's grid), or ``None`` when it can give none."""
-    grid = generator_grid(workflow_id, name, spec)
-    return None if grid is None else (grid[0], grid[0] + grid[1] * (grid[2] - 1))
+    """The least and the greatest value a generate rule can give (both accepted by the input check), or ``None`` when it can give none."""
+    values = generator_values(workflow_id, name, spec)
+    return None if values is None else (values[0], values[-1])
 
 
 def generated_value(workflow_id: str, name: str, spec: dict[str, Any]) -> Any:
-    """What a generate rule gives: a draw from a random source seeded by the workflow and input, on the grid of values the
-    input accepts. A rule with no valid value gives none."""
-    grid = generator_grid(workflow_id, name, spec)
-    return None if grid is None else grid[0] + grid[1] * random.Random(f"{workflow_id}:{name}").randrange(grid[2])
+    """What a generate rule gives: a draw from a random source seeded by the workflow and input, from the values the
+    input check accepts. A rule with no valid value gives none."""
+    values = generator_values(workflow_id, name, spec)
+    return None if values is None else values[random.Random(f"{workflow_id}:{name}").randrange(len(values))]
 
 
 def generator_rules(documents: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:

@@ -32,6 +32,7 @@ from gateway.workflow_policy import (
     parse_policy_text,
     release_facts,
     release_policy,
+    shipped_package_hash,
 )
 from tests.support.access import access_context
 from tests.support.config_snapshot import derived_patch
@@ -58,11 +59,13 @@ DEMO = "image.generate.test-demo-package"
 def test_the_release_file_states_the_facts_of_every_bundled_workflow_and_the_demo_package_and_nothing_else():
     bundled = {yaml.safe_load(path.read_text(encoding="utf-8"))["id"] for path in BUNDLED.glob("*.yml")}
     policy = release_policy()
-    assert set(policy) == bundled | {DEMO} and len(policy) == 39
-    assert {facts.exposure for key, facts in policy.items() if key != DEMO} == {"default"}
-    assert {(facts.trust_tier, facts.resource_tier, facts.tags) for key, facts in policy.items() if key != DEMO} == {("stable", "batch", ())}
+    assert set(policy) == bundled and len(policy) == 38   # the demo package's row is a package row: not a bundled workflow's
+    assert {facts.exposure for facts in policy.values()} == {"default"}
+    assert {(facts.trust_tier, facts.resource_tier, facts.tags) for facts in policy.values()} == {("stable", "batch", ())}
     # The shipped demo package keeps the facts its schema 1 file stated, so it stays runnable with the same exposure.
-    assert policy[DEMO] == PolicyFacts("opt_in", "experimental", "batch", ("test", "demo"))
+    shipped = shipped_package_hash(DEMO_PACKAGE)
+    assert shipped and release_facts(DEMO, package_id=DEMO_PACKAGE, package_hash=shipped, from_package=True) == PolicyFacts(
+        "opt_in", "experimental", "batch", ("test", "demo"))
 
 
 def test_the_facts_equal_what_the_old_readers_gave_a_bundled_document_that_stated_none():
@@ -295,13 +298,45 @@ DEMO_PACKAGE_DIR = ROOT / "extensions" / "bundled" / "demo-image-package"
 
 
 def test_a_row_that_names_a_package_belongs_to_that_package_alone():
-    """The one rule: a package's workflow gets a row only when the row names that package; any other workflow, only a row that names none."""
-    assert release_facts(DEMO, package_id=DEMO_PACKAGE, from_package=True) == PolicyFacts("opt_in", "experimental", "batch", ("test", "demo"))
-    assert release_facts(DEMO, package_id="another-package", from_package=True) is None
-    assert release_facts(DEMO, package_id=None, from_package=True) is None
+    """The one rule: a package's workflow gets a row only when the row names that package and the package is the shipped one;
+    any other workflow, only a row that names none."""
+    shipped = shipped_package_hash(DEMO_PACKAGE)
+    demo = PolicyFacts("opt_in", "experimental", "batch", ("test", "demo"))
+    assert release_facts(DEMO, package_id=DEMO_PACKAGE, package_hash=shipped, from_package=True) == demo
+    assert release_facts(DEMO, package_id="another-package", package_hash=shipped, from_package=True) is None
+    assert release_facts(DEMO, package_id=None, package_hash=shipped, from_package=True) is None
     assert release_facts(DEMO) is None   # not a package's workflow: the row is not its
-    assert release_facts(TILE, package_id=DEMO_PACKAGE, from_package=True) is None   # a package cannot take a bundled row
+    assert release_facts(TILE, package_id=DEMO_PACKAGE, package_hash=shipped, from_package=True) is None   # a package cannot take a bundled row
     assert release_facts(TILE) is not None
+
+
+def test_the_package_id_alone_does_not_win_a_row_the_hash_of_the_shipped_package_does():
+    """The same id with other content (or no hash) borrows nothing; a hash that is only shaped like the shipped one does not either."""
+    shipped = shipped_package_hash(DEMO_PACKAGE)
+    assert shipped and len(shipped) == 64
+    for hash_ in (None, "", "0" * 64, shipped.upper(), shipped + "0", shipped[:-1]):
+        assert release_facts(DEMO, package_id=DEMO_PACKAGE, package_hash=hash_, from_package=True) is None, hash_
+
+
+def test_a_package_the_release_does_not_ship_has_no_shipped_hash(tmp_path):
+    assert shipped_package_hash("not-a-shipped-package") is None
+    assert shipped_package_hash(DEMO_PACKAGE, tmp_path) is None   # an empty folder of packages
+    assert shipped_package_hash(DEMO_PACKAGE, tmp_path / "absent") is None
+
+
+def test_a_row_that_names_a_package_is_not_given_to_a_workflow_the_bundled_directory_loader_reads(tmp_path):
+    """A bundled (non-package) workflow file that carries the id of a package's row gets no facts from that row, so it needs configuration."""
+    assert DEMO not in release_policy()
+    folder = tmp_path / "workflows"
+    folder.mkdir()
+    document = yaml.safe_load(next(BUNDLED.glob("*.yml")).read_text(encoding="utf-8"))
+    document["id"] = DEMO
+    (folder / "same-id.yml").write_text(yaml.safe_dump(document), encoding="utf-8")
+    registry = WorkflowRegistry.from_directory(folder)
+    served = registry.get(DEMO)
+    assert registry.errors == [] and served is not None and served.facts is None and served.needs_configuration
+    # the loader still gives a real bundled workflow its row, so the check above is not an empty one
+    assert WorkflowRegistry.from_directory(BUNDLED).get(TILE).facts is not None
 
 
 def test_a_row_may_name_one_package_as_text_and_nothing_else_is_added_to_it():
@@ -356,6 +391,24 @@ def test_the_installed_demo_package_gets_its_facts_and_a_package_that_declares_i
     borrowed = _served(impostor_db, monkeypatch)
     assert borrowed is not None and borrowed.facts is None   # served, closed: it needs configuration
     assert summarize_workflow(borrowed, "client")["needs_configuration"] is True
+
+
+def test_a_package_of_the_demos_id_with_other_content_borrows_no_row_through_the_installer(tmp_path, monkeypatch):
+    """Same package id, installed from another folder, workflow file changed: the installer records another hash, so no row."""
+    same_id = _impostor(tmp_path, package_id=DEMO_PACKAGE)
+    (same_id / "extension.yml").write_text((same_id / "extension.yml").read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8")
+    db, _, _ = _install(tmp_path / "db", monkeypatch, same_id)
+    served = _served(db, monkeypatch)
+    assert served is not None and served.facts is None and served.needs_configuration
+
+
+def test_a_copy_of_the_shipped_package_from_another_folder_is_the_same_package_and_gets_its_row(tmp_path, monkeypatch):
+    """Origin is content: the installer records the hash of the reviewed files, so identical bytes are the shipped package wherever they sit."""
+    copy = tmp_path / "elsewhere" / "copy"
+    shutil.copytree(DEMO_PACKAGE_DIR, copy)
+    db, _, _ = _install(tmp_path / "db", monkeypatch, copy)
+    served = _served(db, monkeypatch)
+    assert served is not None and served.facts == PolicyFacts("opt_in", "experimental", "batch", ("test", "demo"))
 
 
 def test_a_second_package_that_declares_the_id_of_an_installed_one_is_refused_as_a_duplicate(tmp_path, monkeypatch):

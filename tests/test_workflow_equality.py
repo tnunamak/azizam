@@ -520,6 +520,54 @@ def test_the_least_and_the_greatest_generated_value_lie_on_the_inputs_grid():
     assert eq.generator_range("w", "g", generated(minimum=3, maximum=3, step=2)) is None   # no grid value left
 
 
+@pytest.mark.parametrize(("constraints", "expected"), [
+    pytest.param({"step": 0.5}, list(range(0, 9)), id="fractional-step-has-every-integer"),
+    pytest.param({"step": 1.5, "offset": 0.5}, [2, 5, 8], id="fractional-step-and-offset"),
+    pytest.param({"step": 0.5, "offset": 0.25}, None, id="fractional-lattice-with-no-integer"),
+    pytest.param({"minimum": 1.5}, list(range(2, 9)), id="fractional-minimum-rounds-up"),
+    pytest.param({"maximum": 6.5}, list(range(0, 7)), id="fractional-maximum-rounds-down"),
+    pytest.param({"minimum": 1.5, "maximum": 1.9}, None, id="fractional-bounds-with-no-integer"),
+    pytest.param({"enum": [1, 7]}, [1, 7], id="enum"),
+    pytest.param({"enum": [1, 6, 9, 2.5, True, "x"], "step": 3}, [6], id="enum-cut-by-grid-range-and-type"),
+    pytest.param({"enum": [5, 6], "minimum": 6}, [6], id="enum-cut-by-bound"),
+    pytest.param({"enum": [20]}, None, id="enum-outside-the-rule-range"),
+    pytest.param({"step": 2, "offset": 1, "minimum": 2, "maximum": 6}, [3, 5], id="integer-step-unchanged"),
+])
+def test_the_generated_values_are_exactly_the_integers_the_input_check_accepts(constraints, expected):
+    spec = generated(**constraints)
+    values = eq.generator_values("w", "g", spec)
+    accepted = [n for n in range(-3, 12) if eq.validate_input_value("g", n, spec) is None and 0 <= n <= 8]
+    assert (None if values is None else list(values)) == expected
+    assert (expected or []) == accepted   # the checker agrees with the real input check on every integer of the rule's range
+    if expected:
+        assert eq.generator_range("w", "g", spec) == (expected[0], expected[-1])
+        drawn = {eq.generated_value("w", f"g{n}", spec) for n in range(60)}
+        assert drawn <= set(expected) and all(eq.validate_input_value("g", value, spec) is None for value in drawn)
+    else:
+        assert eq.generator_range("w", "g", spec) is None and eq.generated_value("w", "g", spec) is None
+
+
+@pytest.mark.parametrize("spec", [
+    pytest.param({"type": "string", "generate": {"generator": "random_integer", "maximum": 8}}, id="type"),
+    pytest.param(generated(step=0), id="zero-step"),
+    pytest.param(generated(step=-1), id="negative-step"),
+    pytest.param(generated(step="2"), id="text-step"),
+    pytest.param(generated(offset=True, step=2), id="boolean-offset"),
+    pytest.param(generated(minimum="1"), id="text-minimum"),
+    pytest.param(generated(maximum=float("inf")), id="infinite-maximum"),
+])
+def test_a_generated_input_the_helper_cannot_judge_fails_loudly_naming_the_workflow_and_input(spec):
+    with pytest.raises(ValueError, match="w input g"):
+        eq.generator_values("w", "g", spec)
+
+
+def test_a_big_range_is_not_walked_value_by_value():
+    spec = {"type": "integer", "step": 7, "offset": 3, "generate": {"generator": "random_integer", "minimum": 0, "maximum": 2**62}}
+    low, high = eq.generator_range("w", "g", spec)
+    assert (low, high) == (3, 3 + 7 * ((2**62 - 3) // 7)) and eq.validate_input_value("g", high, spec) is None
+    assert eq.validate_input_value("g", eq.generated_value("w", "g", spec), spec) is None
+
+
 def with_input_change(tmp_path_factory, change) -> Path:
     tree = make_tree(tmp_path_factory.mktemp("tree") / "tree")
     edit(tree, "flux2-klein.yml", lambda d: change(d["inputs"]["seed"]))
@@ -559,6 +607,10 @@ def test_the_hash_pattern_is_the_shape_of_a_real_manifest_hash():
     document = yaml.safe_load((ROOT / "manifests" / "workflows" / "flux2-klein.yml").read_text(encoding="utf-8"))
     digest = manifest_identity(document).manifest_hash
     assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", "summary:admin", digest, "b" * 64)
+    # Paired with the refusals that the old "any string" rule let through: a real digest that lost its shape is not accepted.
+    for broken in (digest.upper(), digest[:-1], digest + "0", digest + "\n", digest[:-1] + "g", "sha256:" + digest):
+        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", "summary:admin", digest, broken) is None, broken
+        assert allowed_reason("image.generate.flux2-klein", "/manifest_hash", "summary:admin", broken, digest) is None, broken
 
 
 def test_a_drop_matches_numbers_and_booleans_by_type():
