@@ -22,6 +22,7 @@ import httpx
 from starlette.requests import Request
 
 import proxy
+from tests.registry_test_helpers import seed_registry_document
 from tests.support.access import access_context
 from tests.support.stt_pcm import pcm_bytes, planning_pcm, write_pcm
 from gateway import stt_chunking
@@ -1879,20 +1880,8 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
         self.assertNotIn(hostile, stored)
         self.assertEqual(receipt.accepted_inputs, ["prompt", "file"])
 
-    def test_registry_seed_and_existing_record_backfill_keep_operator_chunk_limits(self) -> None:
-        bootstrap = {
-            "backends": {
-                "stt": {
-                    "host": "127.0.0.1",
-                    "port": 5092,
-                    "capabilities": ["audio", "transcriptions"],
-                    "chunking": {"spool_dir": "data/stt-spool", "max_segments": 16},
-                }
-            }
-        }
-        seeded = service_registry.build_service_registry_seed(bootstrap)
-        self.assertEqual(seeded["services"]["stt"]["config"]["chunking"]["max_segments"], 16)
-        existing = service_registry.build_service_registry_seed({
+    def test_a_stored_record_keeps_the_operator_chunk_limits_when_the_registry_is_applied(self) -> None:
+        stored = seed_registry_document({
             "backends": {
                 "stt": {
                     "host": "127.0.0.1",
@@ -1902,10 +1891,8 @@ class HotReloadAndCapabilityTests(unittest.TestCase):
                 }
             }
         })
-        backfilled = service_registry.backfill_seed_catalog_metadata(existing, proxy_config=bootstrap)
-        effective = service_registry.apply_service_registry_to_config(bootstrap, backfilled)
+        effective = service_registry.apply_service_registry_to_config({}, stored)
         self.assertEqual(effective["backends"]["stt"]["chunking"]["max_segments"], 4)
-        self.assertEqual(effective["backends"]["stt"]["chunking"]["spool_dir"], "data/stt-spool")
 
 
 def _write_silenced_wav(path: Path) -> None:

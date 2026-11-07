@@ -65,7 +65,7 @@ CONFIG_SPECS: tuple[ConfigSpec, ...] = (
     ConfigSpec(("proxy",), "Proxy server", "proxy/network", FILE, RESTART, "Keep bootstrap listener settings in YAML."),
     ConfigSpec(("server",), "Server network", "proxy/network", FILE, RESTART, "Keep bind and deployment shape in files."),
     ConfigSpec(("network",), "Network policy", "proxy/network", MIXED, RESTART, "Expose safe runtime overrides only when operators need them."),
-    ConfigSpec(("backends",), "Service/provider registry seed", "services/providers", FILE, READ_ONLY, "Seed/provisioning input only; DB/UI service registry is the live operator surface."),
+    ConfigSpec(("backends",), "Service/provider registry (not read)", "services/providers", FILE, READ_ONLY, "Not read: the DB/UI service registry (release records under the owner's data) is the live operator surface."),
     ConfigSpec(("providers",), "Provider registry seed", "services/providers", FILE, READ_ONLY, "Seed/provisioning input only; DB/UI service registry is the live operator surface."),
     ConfigSpec(("models",), "Model catalog seed", "model routing", FILE, READ_ONLY, "Seed/provisioning input only; UI-managed targets and aliases live in admin.db."),
     ConfigSpec(("model_routing",), "Model routing bootstrap", "model routing", FILE, ADVANCED, "Keep model directories and compatibility sources in files; UI owns runtime target routing."),

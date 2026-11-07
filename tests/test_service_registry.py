@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.registry_test_helpers import seed_registry_document
 from gateway import admin_store, service_registry
-from tests.registry_test_helpers import write_service_registry_for_test
+from tests.registry_test_helpers import write_legacy_registry_for_test, write_service_registry_for_test
 
 
 
@@ -183,10 +184,8 @@ def test_remote_provider_empty_provider_id_falls_back_to_service_id() -> None:
     assert service["config"]["provider_id"] == "open-router"
 
 
-def _run_concurrent_ensure(
-    *, proxy_config: dict, path: Path, monkeypatch: pytest.MonkeyPatch
-) -> list[dict]:
-    original_get = admin_store.get_service_registry_with_generation
+def _run_concurrent_ensure(*, path: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    original_get = admin_store.get_service_registry_json_with_generation
     original_write = admin_store.write_service_registry_with_audit
     first_reads = threading.Barrier(2)
     mutex = threading.Lock()
@@ -217,9 +216,7 @@ def _run_concurrent_ensure(
 
     def worker() -> None:
         try:
-            result = service_registry.ensure_service_registry(
-                proxy_config, path=path, actor="boot"
-            )
+            result = service_registry.ensure_service_registry(path=path, actor="boot")
             with mutex:
                 results.append(result)
         except BaseException as exc:  # assertion below makes failures visible
@@ -227,7 +224,7 @@ def _run_concurrent_ensure(
                 errors.append(exc)
 
     with monkeypatch.context() as patcher:
-        patcher.setattr(admin_store, "get_service_registry_with_generation", synchronized_get)
+        patcher.setattr(admin_store, "get_service_registry_json_with_generation", synchronized_get)
         patcher.setattr(admin_store, "write_service_registry_with_audit", counted_write)
         threads = [threading.Thread(target=worker, daemon=True) for _ in range(2)]
         try:
@@ -250,14 +247,8 @@ def _run_concurrent_ensure(
 def test_concurrent_seed_retries_real_sqlite_cas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
-    catalog_dir = tmp_path / "catalog"
-    catalog_dir.mkdir()
 
-    results = _run_concurrent_ensure(
-        proxy_config={"registry": {"catalog_dir": str(catalog_dir)}, "backends": {}},
-        path=db,
-        monkeypatch=monkeypatch,
-    )
+    results = _run_concurrent_ensure(path=db, monkeypatch=monkeypatch)
 
     assert len(results) == 2
     record = admin_store.get_service_registry_with_generation(path=db)
@@ -266,16 +257,11 @@ def test_concurrent_seed_retries_real_sqlite_cas(tmp_path: Path, monkeypatch: py
     assert len(admin_store.list_audit(action_prefix="operator.service_registry.seed", path=db)) == 1
 
 
-def test_concurrent_backfill_retries_real_sqlite_cas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_concurrent_layering_retries_real_sqlite_cas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two boots that both find a whole-document registry migrate it once; the loser retries on a fresh read."""
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
-    catalog_dir = tmp_path / "catalog"
-    catalog_dir.mkdir()
-    (catalog_dir / "services.yml").write_text(
-        "records:\n  - id: existing\n    name: Existing\n    source: ui\n    config:\n      seeded_field: seeded-value\n",
-        encoding="utf-8",
-    )
-    write_service_registry_for_test(
+    write_legacy_registry_for_test(
         {
             "schema_version": 1,
             "services": {
@@ -293,20 +279,14 @@ def test_concurrent_backfill_retries_real_sqlite_cas(tmp_path: Path, monkeypatch
         path=db,
     )
 
-    proxy_config = {"registry": {"catalog_dir": str(catalog_dir)}, "backends": {}}
-    results = _run_concurrent_ensure(
-        proxy_config=proxy_config, path=db, monkeypatch=monkeypatch
-    )
+    results = _run_concurrent_ensure(path=db, monkeypatch=monkeypatch)
 
     assert len(results) == 2
     record = admin_store.get_service_registry_with_generation(path=db)
     assert record is not None
     assert record["operator_settings_generation"] == 2
-    assert (
-        record["value"]["services"]["existing"]["config"]["seeded_field"]
-        == "seeded-value"
-    )
-    assert len(admin_store.list_audit(action_prefix="operator.service_registry.upgrade", path=db)) == 1
+    assert record["value"]["services"]["existing"]["config"]["base_url"] == "http://127.0.0.1:9000/v1"
+    assert len(admin_store.list_audit(action_prefix="operator.service_registry.layering", path=db)) == 1
 
 
 def test_protocol_frontends_are_seed_data_not_python_defaults(tmp_path: Path) -> None:
@@ -327,7 +307,7 @@ records:
         encoding="utf-8",
     )
 
-    registry = service_registry.build_service_registry_seed(
+    registry = seed_registry_document(
         {"registry": {"catalog_dir": str(tmp_path)}, "backends": {}}
     )
 
@@ -336,7 +316,7 @@ records:
 
 
 def test_litellm_substrate_service_is_seed_data() -> None:
-    registry = service_registry.build_service_registry_seed({"backends": {}})
+    registry = seed_registry_document({"backends": {}})
 
     service = registry["services"]["litellm"]
     assert service["kind"] == "llm-substrate"
@@ -368,20 +348,21 @@ def test_litellm_detection_does_not_treat_every_llm_execution_provider_as_substr
     )
 
 
-def test_litellm_substrate_service_backfills_existing_registries() -> None:
-    registry = service_registry.backfill_seed_catalog_metadata(
-        {
-            "services": {"comfyui": {"id": "comfyui", "name": "ComfyUI"}},
-            "protocol_frontends": {},
-        }
+def test_litellm_substrate_service_is_inherited_by_a_registry_that_lacks_it(tmp_path: Path) -> None:
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    write_legacy_registry_for_test(
+        {"services": {"comfyui": {"id": "comfyui", "name": "ComfyUI"}}, "protocol_frontends": {}}, path=db,
     )
+
+    registry = service_registry.ensure_service_registry(path=db)
 
     assert "comfyui" in registry["services"]
     assert registry["services"]["litellm"]["kind"] == "llm-substrate"
 
 
 def test_protocol_frontend_metadata_is_preserved_for_discovery() -> None:
-    registry = service_registry.build_service_registry_seed(
+    registry = seed_registry_document(
         {
             "protocol_frontends": {
                 "custom": {
@@ -402,8 +383,10 @@ def test_protocol_frontend_metadata_is_preserved_for_discovery() -> None:
     assert frontend["public_discovery"]["endpoints"] == ["/custom/v1/run"]
 
 
-def test_seed_metadata_backfills_older_builtin_protocol_records() -> None:
-    registry = service_registry.backfill_seed_catalog_metadata(
+def test_older_builtin_protocol_records_read_with_the_release_metadata(tmp_path: Path) -> None:
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    write_legacy_registry_for_test(
         {
             "services": {},
             "protocol_frontends": {
@@ -414,8 +397,11 @@ def test_seed_metadata_backfills_older_builtin_protocol_records() -> None:
                     "routes": ["/openai/v1", "/v1"],
                 }
             },
-        }
+        },
+        path=db,
     )
+
+    registry = service_registry.ensure_service_registry(path=db)
 
     frontend = registry["protocol_frontends"]["openai"]
     assert frontend["public_discovery"]["compatibility"] == "openai-compatible"
@@ -423,7 +409,7 @@ def test_seed_metadata_backfills_older_builtin_protocol_records() -> None:
 
 
 def test_service_kind_is_data_not_inferred_from_capability_names() -> None:
-    registry = service_registry.build_service_registry_seed(
+    registry = seed_registry_document(
         {
             "backends": {
                 "chatty": {
@@ -443,7 +429,7 @@ def test_service_kind_is_data_not_inferred_from_capability_names() -> None:
 
 
 def test_proxy_config_can_seed_custom_protocol_frontends() -> None:
-    registry = service_registry.build_service_registry_seed(
+    registry = seed_registry_document(
         {
             "protocol_frontends": {
                 "custom": {
@@ -804,7 +790,7 @@ def test_list_resource_summaries_sorted_by_priority() -> None:
 
 
 def _seed_with_provisioned() -> dict:
-    return service_registry.build_service_registry_seed(
+    return seed_registry_document(
         {
             "backends": {
                 "tabby": {
@@ -883,7 +869,7 @@ def test_upsert_edit_allows_provisioned_records() -> None:
 
 def test_upsert_edit_rejects_managed_substrate_host_changes() -> None:
     # Managed-substrate rows (litellm) block endpoint/protocol changes.
-    reg = service_registry.build_service_registry_seed({"backends": {}})
+    reg = seed_registry_document({"backends": {}})
     assert service_registry.is_litellm_service_record("litellm", reg["services"]["litellm"])
     raw = service_registry.service_form_to_raw(
         {"name": "LiteLLM", "base_url": "http://127.0.0.1:9999/v1"}
@@ -899,7 +885,7 @@ def test_upsert_edit_rejects_managed_substrate_host_changes() -> None:
 
 def test_upsert_edit_allows_managed_substrate_rename() -> None:
     # Managed-substrate rows allow name, enabled, note changes.
-    reg = service_registry.build_service_registry_seed({"backends": {}})
+    reg = seed_registry_document({"backends": {}})
     raw = {"name": "LiteLLM Renamed", "enabled": True}
     reg2, rec = service_registry.upsert_service_in_registry(
         reg, service_id="litellm", raw=raw, replace=True
@@ -911,7 +897,7 @@ def test_upsert_edit_allows_managed_substrate_rename() -> None:
 
 def test_upsert_edit_persists_managed_note_in_canonical_config() -> None:
     """Managed metadata PATCH stores note in config without losing config data."""
-    reg = service_registry.build_service_registry_seed({"backends": {}})
+    reg = seed_registry_document({"backends": {}})
     original_config = dict(reg["services"]["litellm"]["config"])
 
     reg2, rec = service_registry.upsert_service_in_registry(
@@ -948,7 +934,7 @@ def test_remove_allows_any_non_managed_source() -> None:
 
 def test_remove_blocks_managed_substrate() -> None:
     # Only managed-substrate rows (litellm) are blocked from removal.
-    reg = service_registry.build_service_registry_seed({"backends": {}})
+    reg = seed_registry_document({"backends": {}})
     assert "litellm" in reg["services"]
     try:
         service_registry.remove_service_from_registry(reg, "litellm")
@@ -1191,7 +1177,7 @@ def test_nested_lifecycle_driver_survives_first_boot_seed() -> None:
     }
 
     registry = service_registry.normalize_service_registry(
-        service_registry.build_service_registry_seed(proxy_config)
+        seed_registry_document(proxy_config)
     )
     backends = service_registry.runtime_backends(registry)
 
@@ -1211,86 +1197,57 @@ def test_nested_lifecycle_driver_survives_first_boot_seed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Editability law: ensure_service_registry / backfill_seed_catalog_metadata
+# Editability law: ensure_service_registry reads the release under the owner's data
 # ---------------------------------------------------------------------------
+
+
+def _stored_registry(db: Path) -> dict:
+    return admin_store.get_operator_setting(service_registry.SERVICE_REGISTRY_SETTING_KEY, path=db)["value"]
 
 
 def test_remove_config_sourced_service_not_resurrected_on_reboot(tmp_path: Path) -> None:
     """After removal, a second ensure_service_registry call must NOT resurrect the row.
 
-    The DB registry is the source of truth after the one-time seed. Removing a
-    config-imported row marks the DB as intentional; YAML is never re-merged.
+    The DB registry is the source of truth; a startup file is never re-merged.
     """
-    proxy_config = {
-        "backends": {
-            "my-vllm": {
-                "name": "My vLLM",
-                "host": "127.0.0.1",
-                "port": 8000,
-                "capabilities": ["chat"],
-            }
-        }
-    }
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
-
-    # First boot: seeds the registry.
-    registry = service_registry.ensure_service_registry(proxy_config, path=db)
-    assert "my-vllm" in registry["services"]
-
-    # Operator removes the service.
-    updated = service_registry.remove_service_from_registry(registry, "my-vllm")
     write_service_registry_for_test(
-        updated,
-        updated_by="test",
+        seed_registry_document({"backends": {"my-vllm": {"name": "My vLLM", "host": "127.0.0.1", "port": 8000, "capabilities": ["chat"]}}}),
         path=db,
     )
 
-    # Second boot with the same proxy_config: must NOT re-add the removed row.
-    registry2 = service_registry.ensure_service_registry(proxy_config, path=db)
+    registry = service_registry.ensure_service_registry(path=db)
+    assert "my-vllm" in registry["services"]
+
+    updated = service_registry.remove_service_from_registry(registry, "my-vllm")
+    write_service_registry_for_test(updated, updated_by="test", path=db)
+
+    registry2 = service_registry.ensure_service_registry(path=db)
     assert "my-vllm" not in registry2["services"], (
         "ensure_service_registry must not resurrect a removed service"
     )
 
 
-def test_removed_seed_catalog_service_not_resurrected_on_reboot(tmp_path: Path) -> None:
-    catalog_dir = tmp_path / "catalog"
-    catalog_dir.mkdir()
-    (catalog_dir / "services.yml").write_text(
-        """
-records:
-  - id: openrouter
-    name: OpenRouter
-    source: builtin
-    kind: provider
-    enabled: true
-    capabilities: [openai]
-    config:
-      base_url: https://openrouter.test/api/v1
-""",
-        encoding="utf-8",
-    )
-    proxy_config = {"registry": {"catalog_dir": str(catalog_dir)}, "backends": {}}
+def test_removed_release_service_is_a_tombstone_and_not_resurrected_on_reboot(tmp_path: Path) -> None:
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
 
-    registry = service_registry.ensure_service_registry(proxy_config, path=db)
+    registry = service_registry.ensure_service_registry(path=db)
     assert "openrouter" in registry["services"]
 
     updated = service_registry.remove_service_from_registry(registry, "openrouter")
     write_service_registry_for_test(updated, updated_by="test", path=db)
 
-    reloaded = service_registry.ensure_service_registry(proxy_config, path=db)
+    reloaded = service_registry.ensure_service_registry(path=db)
 
     assert "openrouter" not in reloaded["services"]
-    stored = admin_store.get_operator_setting(
-        service_registry.SERVICE_REGISTRY_SETTING_KEY,
-        path=db,
-    )["value"]
+    stored = _stored_registry(db)
     assert "openrouter" not in stored["services"]
+    assert "openrouter" in stored["tombstones"]["services"]
 
 
-def test_existing_registry_model_rows_are_not_silently_upgraded_from_yaml(tmp_path: Path) -> None:
+def test_existing_registry_model_rows_are_not_silently_upgraded(tmp_path: Path) -> None:
     """Old DB shapes stay DB-owned and must fail closed until migrated."""
     old_config = {
         "backends": {
@@ -1302,45 +1259,26 @@ def test_existing_registry_model_rows_are_not_silently_upgraded_from_yaml(tmp_pa
             }
         }
     }
-    new_config = {
-        "backends": {
-            "kobold": {
-                "models": [
-                    {"id": "default", "model_group": "default", "upstream_model": "base.gguf"},
-                    {"id": "current", "model_group": "current", "upstream_model": "base.gguf", "base_model_id": "default"},
-                ]
-            }
-        }
-    }
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
-    old_registry = service_registry.build_service_registry_seed(old_config)
-    write_service_registry_for_test(
-        old_registry,
-        updated_by="test",
-        path=db,
-    )
+    write_service_registry_for_test(seed_registry_document(old_config), updated_by="test", path=db)
 
-    reloaded = service_registry.ensure_service_registry(new_config, path=db)
+    reloaded = service_registry.ensure_service_registry(path=db)
 
     config = reloaded["services"]["kobold"]["config"]
     assert [model["id"] for model in config["models"]] == ["default", "default-fast"]
     assert "model_policy_schema_version" not in config
 
 
-def test_backfill_seed_catalog_metadata_never_overwrites_operator_edits() -> None:
-    """backfill_seed_catalog_metadata fills missing fields only, never overwrites.
-
-    An operator rename (e.g. the litellm service) must survive a boot that
-    calls backfill_seed_catalog_metadata.
-    """
-    # Simulate an existing DB registry where the operator renamed litellm.
-    existing_registry = {
-        "schema_version": 1,
-        "services": {
-            "litellm": {
+def test_an_operator_rename_of_litellm_survives_the_layering_and_the_release_fills_the_rest(tmp_path: Path) -> None:
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    write_legacy_registry_for_test(
+        {
+            "schema_version": 1,
+            "services": {"litellm": {
                 "id": "litellm",
-                "name": "My Custom LiteLLM Name",  # operator edit
+                "name": "My Custom LiteLLM Name",
                 "kind": "llm-substrate",
                 "source": "builtin",
                 "editable": False,
@@ -1357,60 +1295,60 @@ def test_backfill_seed_catalog_metadata_never_overwrites_operator_edits() -> Non
                 "secret_refs": {},
                 "lifecycle": {"type": "external", "managed": False, "service_name": "litellm"},
                 "provenance": {},
-            }
+            }},
+            "protocol_frontends": {},
+            "workflows": {},
+            "capabilities": {},
         },
-        "protocol_frontends": {},
-        "workflows": {},
-        "capabilities": {},
-    }
-
-    result = service_registry.backfill_seed_catalog_metadata(existing_registry, proxy_config={})
-
-    # The operator's custom name must be preserved.
-    assert result["services"]["litellm"]["name"] == "My Custom LiteLLM Name", (
-        "backfill must not overwrite operator-edited name"
-    )
-    # Missing bundled config fields should still be added.
-    assert (
-        result["services"]["litellm"]["config"]["health_endpoint"]
-        == "/health/liveliness"
+        path=db,
     )
 
+    result = service_registry.ensure_service_registry(path=db)
 
-def test_backfill_seed_catalog_metadata_skips_different_source_records() -> None:
-    """A user-owned row with a seed-colliding id must not inherit builtin data."""
-    existing_registry = {
-        "schema_version": 1,
-        "services": {
-            "litellm": {
-                "id": "litellm",
-                "name": "User-owned service named litellm",
-                "kind": "provider",
-                "source": "ui",
-                "enabled": True,
-                "config": {"base_url": "http://example.invalid"},
-            }
+    assert result["services"]["litellm"]["name"] == "My Custom LiteLLM Name"
+    assert result["services"]["litellm"]["config"]["health_endpoint"] == "/health/liveliness"
+    patch = _stored_registry(db)["services"]["litellm"]
+    assert patch["name"] == "My Custom LiteLLM Name"
+    assert "health_endpoint" not in (patch.get("config") or {})
+
+
+def test_a_user_owned_row_with_a_release_id_does_not_inherit_release_data(tmp_path: Path) -> None:
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+    write_legacy_registry_for_test(
+        {
+            "schema_version": 1,
+            "services": {
+                "litellm": {
+                    "id": "litellm",
+                    "name": "User-owned service named litellm",
+                    "kind": "provider",
+                    "source": "ui",
+                    "enabled": True,
+                    "config": {"base_url": "http://example.invalid"},
+                }
+            },
+            "protocol_frontends": {},
+            "workflows": {},
+            "capabilities": {},
         },
-        "protocol_frontends": {},
-        "workflows": {},
-        "capabilities": {},
-    }
+        path=db,
+    )
 
-    result = service_registry.backfill_seed_catalog_metadata(existing_registry, proxy_config={})
+    service = service_registry.ensure_service_registry(path=db)["services"]["litellm"]
 
-    service = result["services"]["litellm"]
     assert service["source"] == "ui"
     assert service["kind"] == "provider"
     assert service["config"] == {"base_url": "http://example.invalid"}
 
 
-def test_ensure_service_registry_persists_seed_catalog_backfill(tmp_path: Path) -> None:
+def test_ensure_service_registry_persists_the_layered_form_once(tmp_path: Path) -> None:
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
-    existing_registry = {
-        "schema_version": 1,
-        "services": {
-            "litellm": {
+    write_legacy_registry_for_test(
+        {
+            "schema_version": 1,
+            "services": {"litellm": {
                 "id": "litellm",
                 "name": "LiteLLM",
                 "kind": "llm-substrate",
@@ -1429,26 +1367,24 @@ def test_ensure_service_registry_persists_seed_catalog_backfill(tmp_path: Path) 
                 "secret_refs": {},
                 "lifecycle": {"type": "external", "managed": False, "service_name": "litellm"},
                 "provenance": {},
-            }
+            }},
+            "protocol_frontends": {},
+            "workflows": {},
+            "capabilities": {},
         },
-        "protocol_frontends": {},
-        "workflows": {},
-        "capabilities": {},
-    }
-    write_service_registry_for_test(
-        existing_registry,
-        updated_by="test",
         path=db,
     )
 
-    result = service_registry.ensure_service_registry({}, path=db, actor="startup")
-    stored = admin_store.get_operator_setting(
-        service_registry.SERVICE_REGISTRY_SETTING_KEY,
-        path=db,
-    )["value"]
+    result = service_registry.ensure_service_registry(path=db, actor="startup")
+    stored = _stored_registry(db)
 
     assert result["services"]["litellm"]["config"]["health_endpoint"] == "/health/liveliness"
-    assert stored["services"]["litellm"]["config"]["health_endpoint"] == "/health/liveliness"
+    assert stored["layering"] == 1
+    assert "health_endpoint" not in (stored["services"].get("litellm", {}).get("config") or {})
+    assert admin_store.migration_step_recorded("config-homes-registry-layering", path=db)
+    generation = admin_store.get_service_registry_with_generation(path=db)["operator_settings_generation"]
+    service_registry.ensure_service_registry(path=db, actor="startup")
+    assert admin_store.get_service_registry_with_generation(path=db)["operator_settings_generation"] == generation
 
 
 def test_models_list_round_trips_through_form_to_raw_to_litellm(tmp_path: Path) -> None:
@@ -1476,7 +1412,7 @@ def test_models_list_round_trips_through_form_to_raw_to_litellm(tmp_path: Path) 
     ]
 
     # Upsert into registry.
-    seed = service_registry.build_service_registry_seed({"backends": {}})
+    seed = seed_registry_document({"backends": {}})
     registry, record = service_registry.upsert_service_in_registry(
         seed, service_id="my-tgw", raw=raw, source="ui"
     )
@@ -1497,7 +1433,7 @@ def test_models_list_round_trips_through_form_to_raw_to_litellm(tmp_path: Path) 
 
 def test_litellm_service_is_editable_false_managed_substrate() -> None:
     """litellm is the only editable=False record after the editability law."""
-    registry = service_registry.build_service_registry_seed({"backends": {}})
+    registry = seed_registry_document({"backends": {}})
     litellm_svc = registry["services"]["litellm"]
     assert litellm_svc["editable"] is False
     assert service_registry.is_litellm_service_record("litellm", litellm_svc)
@@ -1613,7 +1549,7 @@ def test_full_embeddings_record_round_trips_through_form_to_raw() -> None:
     ]
 
     # Upsert into a fresh registry — stored config must carry all fields.
-    seed = service_registry.build_service_registry_seed({"backends": {}})
+    seed = seed_registry_document({"backends": {}})
     registry, record = service_registry.upsert_service_in_registry(
         seed, service_id="embeddings", raw=raw, source="ui"
     )
@@ -1683,7 +1619,7 @@ def test_comfyui_protocol_fields_stored_in_config() -> None:
             "default_model": "my_workflow",
         }
     )
-    seed = service_registry.build_service_registry_seed({"backends": {}})
+    seed = seed_registry_document({"backends": {}})
     _registry, record = service_registry.upsert_service_in_registry(
         seed, service_id="comfyui", raw=raw, source="ui"
     )
@@ -1746,7 +1682,7 @@ def test_model_policy_records_round_trip_through_form_and_registry() -> None:
         }
     )
     registry, record = service_registry.upsert_service_in_registry(
-        service_registry.build_service_registry_seed({"backends": {}}),
+        seed_registry_document({"backends": {}}),
         service_id="models",
         raw=raw,
     )
@@ -1817,7 +1753,7 @@ def test_registry_rejects_invalid_model_policy_graphs(models: list[dict], match:
 def test_registry_write_rejects_an_invalid_model_policy_reference() -> None:
     with pytest.raises(ValueError, match="unknown base_model_id"):
         service_registry.upsert_service_in_registry(
-            service_registry.build_service_registry_seed({"backends": {}}),
+            seed_registry_document({"backends": {}}),
             service_id="service",
             raw={
                 "models": [

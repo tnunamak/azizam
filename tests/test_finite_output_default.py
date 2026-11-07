@@ -17,6 +17,7 @@ import pytest
 import yaml
 
 import proxy
+from tests.registry_test_helpers import seed_registry_document
 from tests.support.access import authenticated, access_context  # noqa: E402
 import responses_translator
 from gateway import service_registry
@@ -188,7 +189,7 @@ def _forward_current_to_fake_upstream(
 def test_bootstrap_seed_keeps_the_default_model_output_policy_as_data() -> None:
     root = Path(__file__).resolve().parent.parent
     bootstrap = yaml.safe_load((root / "proxy_config.yml").read_text(encoding="utf-8"))
-    registry = service_registry.build_service_registry_seed(bootstrap)
+    registry = seed_registry_document(bootstrap)
     models = registry["services"]["kobold"]["config"]["models"]
     default = next(model for model in models if model["id"] == "default")
     default_fast = next(model for model in models if model["id"] == "default-fast")

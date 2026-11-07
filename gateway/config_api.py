@@ -6,8 +6,10 @@ inherit, revert, export and import, and the one-time legacy import of a startup-
 ``admin_store.apply_config_change`` (one transaction: session, revisions, validation, rows, audit) and is followed by
 the gateway's own reload, so a request that starts after the response sees the new snapshot. There is no cache here.
 
-The service registry is not part of this API yet (C4). ``GET /admin/api/config/export`` keeps answering the registry's
-YAML; ``?format=v1`` answers ``build_export`` below, and C4 makes it the one export.
+The service registry's owner layer (the records the owner added, the patches of release records, the tombstones) is a
+member of the export (``registry``, design 6.1) and of the import (6.2: judged with the sections, written in the same
+transaction, so the import is all or nothing). ``GET /admin/api/config/export`` still answers the registry's YAML by
+default, which existing clients read; ``?format=v1`` answers ``build_export`` below.
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ from typing import Any, Callable, Mapping, Sequence
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, config_layers as layers, config_legacy_import, config_runtime, secret_refs
+from gateway import admin_store, config_layers as layers, config_legacy_import, config_runtime, registry_import, secret_refs
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
 from gateway.session_guard import SessionEnded
 
@@ -138,8 +140,10 @@ def build_export(
             rule = home.sections[name].index.rule_for(override.pointer)
             if rule is not None and rule.secret and secret_refs.is_ref(override.value):
                 secrets.append({"ref": override.value, "used_by": f"{name}{override.pointer}"})
+    part = registry_import.export_part(path)
     return layers.export_document(
-        state.rows, home.sections, exported_at=now, gateway_version=version, secrets=secrets,
+        state.rows, home.sections, exported_at=now, gateway_version=version, registry=part,
+        secrets=[*secrets, *registry_import.secrets_in(part)],
     )
 
 
@@ -253,8 +257,13 @@ def create_config_router(
     def run_change(
         ctx: AdminContext, items: list[admin_store.ConfigItem], *, if_match: Mapping[str, str], kind: str, origin: str,
         note: str | None, dry_run: bool, revert_of: str | None = None,
+        registry_write: Callable[[Any], None] | None = None,
     ) -> JSONResponse:
-        """Judge the change, then commit it and reload, or (dry run) report what it would do and write nothing."""
+        """Judge the change, then commit it and reload, or (dry run) report what it would do and write nothing.
+
+        ``registry_write`` writes the registry inside the same transaction, after the rows are judged: if anything later
+        refuses the change, the registry write goes with it.
+        """
         h = home()
         reg = registry()
         validate = h.write_validator(reg)
@@ -266,6 +275,8 @@ def create_config_router(
             validate(conn, rows_after)
             if dry_run:
                 raise _DryRunDone
+            if registry_write is not None:
+                registry_write(conn)
 
         sections = sorted({item.section for item in items})
         if dry_run:  # a dry run is how a client learns the revisions, so it does not need them
@@ -556,14 +567,67 @@ def create_config_router(
             if isinstance(planned, JSONResponse):
                 return planned
             items, report = planned
-            if not items:
+            document = body.get("document")
+            found = document.get("registry") if isinstance(document, Mapping) else None
+            wanted_registry = None
+            registry_revision = if_match.pop("registry", None)  # not a config section: its revision is the registry's ``os-N``
+            if found is not None:
+                wanted_registry = registry_import.plan(found, mode, path=db())
+                if isinstance(wanted_registry, str):
+                    return _error(422, "bad_export", wanted_registry)
+                if wanted_registry.problems:
+                    return _error(422, "config_invalid", f"{len(wanted_registry.problems)} problem(s) in the import",
+                                  problems=wanted_registry.problems)
+                report = {**report, "registry": wanted_registry.report(),
+                          "needs_secret": [*report["needs_secret"], *wanted_registry.needs_secret]}
+            writes_registry = wanted_registry is not None and wanted_registry.changed
+            if writes_registry and not dry_run:
+                if registry_revision is None:
+                    return _error(428, "revision_required", "Send If-Match with the revision of registry.", sections=["registry"])
+                if registry_revision.removeprefix("os-") != str(wanted_registry.generation):
+                    return _error(412, "revision_mismatch", "The registry changed since it was read.",
+                                  section="registry", current=f"os-{wanted_registry.generation}")
+            if not items and not writes_registry:
                 return _ok({"dry_run": dry_run, "change_id": None, "entry_count": 0, "diff": [], "valid": True,
                             "problems": [], "revisions": {}, **report})
-            response = run_change(ctx, items, if_match=if_match, kind="import", origin="import",
-                                  note=note, dry_run=dry_run)
+            if not items:  # the registry alone: one write, its own audit fact
+                if dry_run:
+                    return _ok({"dry_run": True, "change_id": None, "entry_count": 0, "diff": [], "valid": True,
+                                "problems": [], "revisions": {"registry": f"os-{wanted_registry.generation}"}, **report})
+                try:
+                    written = admin_store.write_service_registry_with_audit(
+                        wanted_registry.stored, expected_generation=wanted_registry.generation, updated_by=ctx.subject,
+                        audit_action="operator.service_registry.import", audit_actor_kind=ctx.actor_kind,
+                        audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
+                        audit_target_kind="operator_setting", audit_target_id="service_registry",
+                        audit_metadata={"mode": mode, "changed": len(wanted_registry.changed_ids)},
+                        session=ctx.browser_session, path=db(), stored_form=True)
+                except admin_store.OperatorSettingsGenerationConflict:
+                    return _error(412, "revision_mismatch", "The registry changed since it was read.", section="registry")
+                except SessionEnded as error:
+                    return store_error(error)
+                try:
+                    reload()
+                except Exception as error:  # noqa: BLE001 - the registry is stored; the old snapshot keeps serving
+                    return _ok({"change_id": None, "entry_count": 0, **report,
+                                "revisions": {"registry": f"os-{written['operator_settings_generation']}"},
+                                "reload": {"status": "failed", "error": type(error).__name__}}, status=202)
+                return _ok({"change_id": None, "entry_count": 0, **report,
+                            "revisions": {"registry": f"os-{written['operator_settings_generation']}"},
+                            "reload": {"status": "ok"}})
+
+            def write_registry(conn: Any) -> None:
+                admin_store.write_service_registry_in_transaction(
+                    conn, wanted_registry.stored, updated_by=ctx.subject, expected_generation=wanted_registry.generation,
+                    now=int(datetime.now(timezone.utc).timestamp()), stored_form=True)
+
+            response = run_change(ctx, items, if_match=if_match, kind="import", origin="import", note=note,
+                                  dry_run=dry_run, registry_write=write_registry if writes_registry else None)
             payload = json.loads(response.body)
             if "error" in payload:
                 return response
+            if writes_registry:
+                payload["revisions"] = {**payload.get("revisions", {}), "registry": f"os-{wanted_registry.generation + (0 if dry_run else 1)}"}
             return _ok({**payload, **report}, status=response.status_code)
 
         return await asyncio.to_thread(build)

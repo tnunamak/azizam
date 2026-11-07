@@ -26,6 +26,7 @@ REGISTRY_WRITERS = {
 
 # Routes that reach a registry writer and no browser sign-in asks for the write.
 NOT_STARTED_BY_A_BROWSER = {
+    ("POST", "/admin/api/config/import"): "judged inside admin_store.apply_config_change, which checks the sign-in in the same transaction before the registry write",
     ("POST", "/admin/api/config/reload"): "re-reads the registry and seeds a missing one at start; no actor, session=None",
 }
 

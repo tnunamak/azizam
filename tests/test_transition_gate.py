@@ -4,6 +4,7 @@ and the registry refusal of a domain step T1.1 cannot gate (gateway/transition_g
 from __future__ import annotations
 
 import asyncio
+import copy
 import sqlite3
 import time
 
@@ -438,46 +439,26 @@ def test_a_member_of_a_domain_that_is_not_enabled_may_declare_any_of_these() -> 
     assert service_registry._read_registry(_registry(("svc", record)), strict=True)[0]["services"]
 
 
-# -- the check runs again after backfill and on the projected map (F2) --------------------------------------
+# -- the check runs on the projected map, and the one-time layering never replaces a declared block (F2) ----
 
 
 def _backfilled(registry: dict, seeds: dict) -> dict:
-    return service_registry.backfill_seed_catalog_metadata(registry, proxy_config={"backends": seeds})
+    """The old boot backfill, as the layering migration emulates it, applied to ``registry`` with release ``seeds``."""
+    from gateway import registry_migration
+
+    out = copy.deepcopy(registry)
+    registry_migration._backfill_service_metadata(out["services"], seeds)
+    return out
 
 
 def test_a_backfill_never_replaces_a_declared_residency_block_key_by_key() -> None:
     declared = _llm(gateway_lifecycle=True, residency={"domain": "gpu1", **PASS})
     seed = _llm(gateway_lifecycle=True, residency={"domain": "elsewhere", "transition": {"enabled": True},
                                                   "load": "on_demand", "idle_owner": "gateway"})
-    out = _backfilled(_registry(("svc", declared)), {"svc": {**seed["config"], "enabled": True}})
+    out = _backfilled(_registry(("svc", declared)), {"svc": seed})
     block = out["services"]["svc"].get("residency") or out["services"]["svc"]["config"]["residency"]
     assert block["domain"] == "gpu1", "a declared key is never replaced"
     assert block["transition"] == PASS["transition"], "a declared transition block is never replaced or extended"
-
-
-def test_a_backfill_that_leaves_a_member_unfit_is_refused() -> None:
-    """The domain check ran on the stored record; the merge changes it afterwards, so it runs again on the result."""
-    stored = _llm(gateway_lifecycle=True, residency={"domain": "gpu1", **PASS})
-    registry = service_registry.normalize_service_registry(_registry(("svc", stored)))
-    registry["services"]["svc"]["config"]["process"] = {"driver": "process", "command": ["serve"]}
-    with pytest.raises(ValueError, match="gateway-owned lifecycle"):
-        service_registry.backfill_normalized_registry(registry)
-
-
-def test_a_partial_boot_leaves_out_a_service_the_backfill_made_unfit(monkeypatch) -> None:
-    stored = _llm(gateway_lifecycle=True, residency={"domain": "gpu1", **PASS})
-    healthy = _llm()
-    real = service_registry._backfill_in_place
-
-    def merge_a_process_driver(out, *, proxy_config=None):
-        real(out, proxy_config=proxy_config)
-        out["services"]["svc"]["config"]["process"] = {"driver": "process", "command": ["serve"]}
-        return out
-
-    monkeypatch.setattr(service_registry, "_backfill_in_place", merge_a_process_driver)
-    served, left_out = service_registry.servable_registry_with_backfill(_registry(("svc", stored), ("ok", healthy)))
-    assert "svc" not in served["services"] and "ok" in served["services"]
-    assert "gateway-owned lifecycle" in left_out["svc"]
 
 
 def test_the_projected_backend_map_is_checked_at_every_publish() -> None:

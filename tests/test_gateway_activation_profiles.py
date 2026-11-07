@@ -7,8 +7,8 @@ from unittest.mock import patch
 import yaml
 
 import proxy
+from tests.registry_test_helpers import seed_registry_document
 from gateway.litellm_substrate import compile_litellm_config_from_registry
-from gateway.service_registry import build_service_registry_seed
 from tests.support.config_snapshot import section_published
 
 
@@ -97,7 +97,7 @@ def test_context_catalog_reads_a_distinct_profile_limit_from_config() -> None:
 
 def test_seeded_litellm_compilation_keeps_unique_profile_internal_aliases() -> None:
     config = yaml.safe_load((ROOT / "proxy_config.yml").read_text())
-    compiled = compile_litellm_config_from_registry(build_service_registry_seed(config))
+    compiled = compile_litellm_config_from_registry(seed_registry_document(config))
 
     entry = next(
         item for item in compiled["model_list"] if item["model_name"] == "coder-q8"

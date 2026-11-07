@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 import proxy
+from tests.registry_test_helpers import seed_registry_document
 from tests.support.access import authenticated  # noqa: E402
 from gateway import admin_store, service_registry
 from gateway.transforms import REGISTRY, TransformContext, run_request_pipeline
@@ -254,13 +255,12 @@ def test_migration_scope_generation_and_opt_out(tmp_path):
     admin_store.init_db(db)
     assert snapshot(db) == opted_out
     # Normalization/backfill must not reattach after an operator removes it.
-    runtime = {"backends": {"local": {**prototype["config"], "transforms": ["reasoning-effort-final-chat"]}}}
-    assert service_registry.ensure_service_registry(runtime, path=db)["services"]["local"]["config"]["transforms"] == []
+    assert service_registry.ensure_service_registry(path=db)["services"]["local"]["config"]["transforms"] == []
     with sqlite3.connect(db) as conn:
         value = json.loads(snapshot(db)[0])
         del value["services"]["local"]["config"]["transforms"]
         conn.execute("UPDATE operator_settings SET value_json=? WHERE key='service_registry'", (json.dumps(value),))
-    assert "transforms" not in service_registry.ensure_service_registry(runtime, path=db)["services"]["local"]["config"]
+    assert "transforms" not in service_registry.ensure_service_registry(path=db)["services"]["local"]["config"]
 
 
 @pytest.mark.parametrize("request_path", ["/v1/chat/completions", "/v1/completions"])
@@ -285,10 +285,10 @@ def test_errors_and_nonchat_match_old_code(tmp_path, request_path, extra):
 def test_fresh_seed_declares_opt_in_as_data():
     import yaml
     config = yaml.safe_load((Path(__file__).parents[1] / "proxy_config.yml").read_text())
-    seed = service_registry.build_service_registry_seed(config)
+    seed = seed_registry_document(config)
     for service_id in ("kobold",):
         assert "reasoning-effort-final-chat" in seed["services"][service_id]["config"]["transforms"]
-    custom = service_registry.build_service_registry_seed({"backends": {"custom": {"capabilities": ["chat"], "port": 5111}}})
+    custom = seed_registry_document({"backends": {"custom": {"capabilities": ["chat"], "port": 5111}}})
     assert "transforms" not in custom["services"]["custom"]["config"]
 
 

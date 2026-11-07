@@ -57,6 +57,11 @@ reason = "Windows Job Object semantics; runs only on Windows"
 
 [[skip]]
 framework = "pytest"
+case = "tests/test_registry_rollback.py::test_the_code_before_the_step_boots_on_the_migrated_database_and_rebuilds_its_copies"
+reason = "needs AZIZAM_PREVIOUS_CHECKOUT, a checkout of the commit before C4; run it by hand before a C4 deploy"
+
+[[skip]]
+framework = "pytest"
 case = "tests/test_fresh_instance_bootstrap.py::TestFreshInstanceBootstrap::test_harness_db_is_not_live_db"
 reason = "the sandbox hides the live database by design"
 

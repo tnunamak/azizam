@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from tests.registry_test_helpers import seed_registry_document
 from gateway import accounts, admin_store, category_enforcement, service_registry  # noqa: E402
 from tests.support.app_keys import issue_app_key
 from gateway.admin_api import AdminContext, create_admin_router  # noqa: E402
@@ -638,13 +639,19 @@ class AdminRuntimeTests(unittest.TestCase):
         )
 
         reopened = AdminSQLiteStore(self.db)
-        self.assertEqual(reopened.get_service_registry(), registry)
+        read = reopened.get_service_registry()
+        # A read shows the release's managed LiteLLM row too: no write hides it. The record the owner sent is as sent.
+        self.assertEqual(sorted(read["services"]), ["litellm", "local-comfy"])
+        self.assertEqual(read["services"]["local-comfy"], registry["services"]["local-comfy"])
+        self.assertEqual(read["protocol_frontends"]["gateway-native"], registry["protocol_frontends"]["gateway-native"])
         stored = admin_store.get_operator_setting(
             SERVICE_REGISTRY_SETTING_KEY,
             path=self.db,
         )
         self.assertIsNotNone(stored)
-        self.assertEqual(stored["value"], registry)  # type: ignore[index]
+        # What is stored is the owner's data: the one record sent, and the release record the owner left out, hidden.
+        self.assertEqual(sorted(stored["value"]["services"]), ["local-comfy"])  # type: ignore[index]
+        self.assertEqual(stored["value"]["tombstones"]["services"], ["openrouter"])  # type: ignore[index]
         actions = [event["action"] for event in admin_store.list_audit(path=self.db)]
         self.assertIn("operator.service_registry.update", actions)
 
@@ -1012,7 +1019,7 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         self.assertEqual(registry["services"]["explicit-schema"]["config"]["model_policy_schema_version"], 0)
 
     def test_existing_unversioned_models_are_not_implicitly_migrated(self) -> None:
-        seed = service_registry.build_service_registry_seed({"backends": {
+        seed = seed_registry_document({"backends": {
             "legacy": {"protocol": "openai-compatible", "host": "engine", "port": 18001,
                        "models": [{"model_group": "chat", "upstream_model": "engine-model"}]},
         }})
@@ -1027,7 +1034,7 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         self.assertNotIn("model_policy_schema_version", registry["services"]["legacy"]["config"])
 
     def test_v2_partial_patch_preserves_process_and_observations(self) -> None:
-        seed = service_registry.build_service_registry_seed({"backends": {
+        seed = seed_registry_document({"backends": {
             "legacy": {"protocol": "openai-compatible", "host": "engine", "port": 18001,
                        "lifecycle": {"driver": "command", "driver_config": {
                            "start": ["start"], "stop": ["stop"]}}},
@@ -1045,7 +1052,7 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         self.assertNotIn("lifecycle", after["config"])
 
     def test_v2_legacy_lifecycle_edit_changes_process(self) -> None:
-        seed = service_registry.build_service_registry_seed({"backends": {
+        seed = seed_registry_document({"backends": {
             "legacy": {"protocol": "openai-compatible", "host": "engine", "port": 18001,
                        "lifecycle": {"driver": "command", "driver_config": {"start": ["old"]}}},
         }})
@@ -1062,7 +1069,7 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         backends = {name: {"protocol": "openai-compatible", "host": name, "port": 18001,
                            "lifecycle": {"type": "systemd", "managed": True, "service_name": "old.service"}}
                     for name in ("rename-unit", "keep-unit", "keep-managed")}
-        seed = service_registry.build_service_registry_seed({"backends": backends})
+        seed = seed_registry_document({"backends": backends})
         write_service_registry_for_test(seed, path=self.db)
         cases = (
             ("rename-unit", {"service_name": "new.service"}, {"type": "systemd", "managed": True, "service_name": "new.service"}),
@@ -1102,7 +1109,7 @@ class ServicePatchRoundTripTests(unittest.TestCase):
 
     def test_managed_note_round_trips_through_patch_api_and_registry(self) -> None:
         """The API stores managed notes at config.note without dropping config."""
-        seed = service_registry.build_service_registry_seed({"backends": {}})
+        seed = seed_registry_document({"backends": {}})
         original_config = dict(seed["services"]["litellm"]["config"])
         write_service_registry_for_test(seed, path=self.db)
         admin_key, _, _ = create_admin_service_account_key("owner-cli", path=self.db)

@@ -744,9 +744,8 @@ def test_proxy_runtime_in_a_real_request_keeps_the_snapshot_it_started_with_whil
 def test_the_generation_in_the_key_is_the_one_of_the_registry_the_config_was_built_from(live):  # noqa: F811
     from gateway import service_registry
 
-    service_registry.ensure_service_registry(proxy._bootstrap_config, path=live)
+    registry = service_registry.ensure_service_registry(path=live)  # what a load builds its config from
     stored = admin_store.get_service_registry_with_generation(path=live)
-    registry = stored["value"]
     assert proxy._generation_of_registry(registry) == stored["operator_settings_generation"]
     moved = copy.deepcopy(registry)
     moved["services"]["a-newer-service"] = copy.deepcopy(next(iter(registry["services"].values())))

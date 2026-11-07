@@ -403,7 +403,10 @@ test("library filters dates, pages forward and preserves prior items", async ({
   await page.getByRole("combobox", { name: "Date created", exact: true }).click();
   await page.getByRole("option", { name: "Last 7 days" }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("start=");
+  // The option list closes first. An Escape that lands while it is still closing goes to the list, not the panel.
+  await expect(page.getByRole("listbox")).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("combobox", { name: "Date created", exact: true })).toHaveCount(0);
   await page
     .getByRole("button", { name: /Open A clean product render/ })
     .click();

@@ -34,7 +34,7 @@ def _write_winner(path):
 
 def _stale_first_reads(monkeypatch, reads):
     """Make the first `reads` registry reads return the pre-winner snapshot."""
-    real_get = admin_store.get_service_registry_with_generation
+    real_get = admin_store.get_service_registry_json_with_generation
     seen = []
 
     def get(*, path):
@@ -43,7 +43,7 @@ def _stale_first_reads(monkeypatch, reads):
             return None
         return real_get(path=path)
 
-    monkeypatch.setattr(admin_store, "get_service_registry_with_generation", get)
+    monkeypatch.setattr(admin_store, "get_service_registry_json_with_generation", get)
     return seen
 
 
@@ -53,19 +53,16 @@ def test_startup_lost_seed_race_keeps_the_winner_and_audits_one_seed(monkeypatch
     _write_winner(path)
     reads = _stale_first_reads(monkeypatch, 1)
 
-    result = sr.ensure_service_registry({"backends": {}}, path=path, actor="test-boot")
+    result = sr.ensure_service_registry(path=path, actor="test-boot")
 
     assert len(reads) == 2
     durable = admin_store.get_service_registry_with_generation(path=path)
     assert result == durable["value"]
     assert result["services"]["operator-service"]["config"]["operator_value"] == "must survive"
-    assert durable["operator_settings_generation"] == 2
+    assert durable["operator_settings_generation"] == 1
     assert sorted(
         (e["action"], e["actor_id"]) for e in admin_store.list_audit(path=path)
-    ) == [
-        ("operator.service_registry.seed", "other-boot"),
-        ("operator.service_registry.upgrade", "test-boot"),
-    ]
+    ) == [("operator.service_registry.seed", "other-boot")]
 
 
 def test_startup_conflicts_stop_after_three_fresh_attempts(monkeypatch, tmp_path):
@@ -77,7 +74,8 @@ def test_startup_conflicts_stop_after_three_fresh_attempts(monkeypatch, tmp_path
     reads = _stale_first_reads(monkeypatch, 99)
 
     with pytest.raises(RuntimeError, match="bounded startup retry"):
-        sr.ensure_service_registry({"backends": {}}, path=path, actor="test-boot")
+        sr.ensure_service_registry(path=path, actor="test-boot")
 
     assert len(reads) == 3
+    monkeypatch.undo()
     assert real_get(path=path) == before

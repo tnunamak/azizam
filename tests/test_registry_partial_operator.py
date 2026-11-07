@@ -10,6 +10,7 @@ the gateway boots, and go through the app: no registry problem is faked.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 
 import pytest
@@ -43,8 +44,10 @@ def _stored(db) -> dict:
 
 def _running_partial(live, monkeypatch, services: dict, **sections):
     """Store the registry as a hand edit left it, boot on it, and return an owner client of that gateway."""
+    # The managed LiteLLM row cannot be removed, so it is stored switched off: these requests go straight to the engines.
+    litellm = {**copy.deepcopy(service_registry.release_registry()["services"]["litellm"]), "enabled": False}
     write_service_registry_for_test(
-        {"schema_version": 1, "services": services, "protocol_frontends": sections.get("protocol_frontends", {}),
+        {"schema_version": 1, "services": {**services, "litellm": litellm}, "protocol_frontends": sections.get("protocol_frontends", {}),
          "workflows": {}, "capabilities": {}},
         path=live,
     )
@@ -92,7 +95,7 @@ def test_the_service_registry_page_loads_and_shows_the_excluded_record_apart(liv
 
     assert response.status_code == 200, response.text[:300]
     body = response.json()
-    assert set(body["service_registry"]["services"]) == {"good-engine"}
+    assert set(body["service_registry"]["services"]) == {"good-engine", "litellm"}  # litellm: the inherited release row
     [excluded] = body["excluded"]
     assert excluded["id"] == "bad-engine" and excluded["error"]
     # What the operator needs to fix it: the record as stored, with only its secret slots hidden (decision D21).
@@ -190,7 +193,7 @@ def test_removing_a_good_engine_does_not_remove_the_excluded_one(live, monkeypat
     response = client.delete("/admin/api/operator/services/good-engine", headers=_if_match(live))
 
     assert response.status_code == 200, response.text[:300]
-    assert set(_stored(live)["services"]) == {"bad-engine"}
+    assert set(_stored(live)["services"]) == {"bad-engine", "litellm"}
 
 
 def test_the_operator_can_fix_the_excluded_service_by_editing_it(live, monkeypatch):

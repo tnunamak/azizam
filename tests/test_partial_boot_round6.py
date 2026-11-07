@@ -98,8 +98,8 @@ def test_a_partial_boot_serves_the_earlier_claimant_of_a_shared_alias(live):
 # --- MED-2: a partial boot still backfills the managed LiteLLM row -------------------------------------
 
 
-def test_a_partial_boot_serves_litellm_when_the_store_predates_its_row(live):
-    _boot(live)  # a healthy boot seeds the store as an install does
+def test_a_partial_boot_serves_litellm_when_the_store_holds_no_row_for_it(live):
+    _boot(live)  # a healthy boot starts the store as an install does
     document = admin_store.get_service_registry_with_generation(path=live)["value"]
     document["services"].pop("litellm", None)
     document["services"]["junk-engine"] = JUNK
@@ -112,7 +112,9 @@ def test_a_partial_boot_serves_litellm_when_the_store_predates_its_row(live):
     assert "litellm" in config["backends"]  # chat is not answered 503 litellm_unconfigured
     after = admin_store.get_service_registry_with_generation(path=live)
     assert after["operator_settings_generation"] == generation, "a partial boot must not rewrite the store"
-    assert after["value"]["services"]["junk-engine"] == JUNK and "litellm" not in after["value"]["services"]
+    stored = admin_store.get_operator_setting("service_registry", path=live)["value"]
+    assert stored["services"]["junk-engine"] == JUNK and "litellm" not in stored["services"]
+    assert "litellm" not in stored["tombstones"].get("services", []), "no write hides the managed substrate"
 
 
 # --- LOW-1: a failed reload during a partial boot is stale, with the new error, and still names what is left out ---
