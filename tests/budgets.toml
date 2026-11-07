@@ -573,7 +573,8 @@
 # Train 16 candidate: C9 (20542) plus the sidecar hotfix case: 20543.
 # S3.1 contract errors (2026-11-07): +231 cases (tests/test_contract_errors.py over the corpus in tests/contract_error_corpus.py); measured with scripts/run-hermetic-pytest.sh --collect-only -q: 20774.
 # S3.1 review fixes: +13 (six reviewed corpus cases in two parametrized tests, one crash-guard test): 20787.
-pytest = 20787
+# S3.2 workflow contract (2026-11-07): +150 cases (tests/test_workflow_contract.py: rules, 38 bundled conversions, controls, converter, command); expected 20937, measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+pytest = 20937
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

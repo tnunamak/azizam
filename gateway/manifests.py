@@ -180,6 +180,10 @@ def load_workflow_manifest(path: str | Path) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         raise ManifestError(f"manifest {manifest_path} must be a mapping")
     validate_manifest(manifest)
+    # Report only (CODE_TO_DATA_S3, S3.2): the schema 2 check is logged, nothing is refused. S3.5 makes it the check.
+    from gateway.workflow_convert import log_bundled_report
+
+    log_bundled_report(manifest, manifest_path)
     return manifest
 
 
