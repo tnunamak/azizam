@@ -233,6 +233,49 @@ def test_env_map_can_come_from_admin_db_service_registry(tmp_path: Path) -> None
     }
 
 
+def test_sidecar_reads_owner_patches_over_the_release_records(tmp_path: Path) -> None:
+    """The stored row holds only the owner's patches; the release record supplies the rest, such as base_url.
+
+    A patch that turns on the bundled remote provider names no base_url. Read alone it fails to compile
+    ("remote provider requires an explicit api_base"), which kept the LiteLLM sidecar from starting.
+    """
+    from gateway.litellm_substrate import compile_litellm_config_from_registry
+    from gateway.provider_sidecar import _read_service_registry
+    from gateway.service_registry import release_registry
+
+    release = release_registry()["services"]["openrouter"]
+    db_path = tmp_path / "admin.db"
+    _write_registry_json(
+        db_path,
+        {
+            "schema_version": 1,
+            "layering": 1,
+            "services": {
+                "openrouter": {
+                    "id": "openrouter",
+                    "enabled": True,
+                    # A merge patch: null drops the release's env reference for the stored key.
+                    "config": {"api_key_env": None, "api_key_secret_id": "sec_openrouter"},
+                    "secret_refs": {"api_key_secret_id": "sec_openrouter"},
+                }
+            },
+        },
+    )
+    put_provider_secret(
+        "sec_openrouter", "sk-live-secret", db_path=db_path, approved_origin=release["config"]["base_url"],
+    )
+
+    registry = _read_service_registry(db_path)
+
+    assert registry is not None
+    service = registry["services"]["openrouter"]
+    assert service["enabled"] is True
+    assert service["config"]["base_url"] == release["config"]["base_url"]
+    compile_litellm_config_from_registry(registry)
+    env_name = secret_env_name_for_provider("openrouter", "sec_openrouter")
+    assert build_sidecar_env(db_path=db_path, base_env={})[env_name] == "sk-live-secret"
+
+
 def test_run_exec_uses_secret_env_without_putting_secret_in_argv(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

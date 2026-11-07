@@ -27,7 +27,7 @@ from gateway.litellm_substrate import (
     secret_env_name_for_provider,
 )
 from gateway.secret_store import credential_origin_from_url, get_provider_secret
-from gateway.service_registry import service_base_url
+from gateway.service_registry import effective_registry, service_base_url
 
 
 def provider_secret_env_map_from_registry(registry: Mapping[str, Any]) -> dict[str, str]:
@@ -265,6 +265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _read_service_registry(db_path: Path) -> dict[str, Any] | None:
+    """The registry the gateway uses: the stored row is only the owner's patches over the release records."""
     if not db_path.exists():
         return None
     with closing(sqlite3.connect(db_path)) as conn:
@@ -279,7 +280,10 @@ def _read_service_registry(db_path: Path) -> dict[str, Any] | None:
         value = json.loads(str(row[0]))
     except json.JSONDecodeError:
         return None
-    return value if isinstance(value, dict) else None
+    if not isinstance(value, dict):
+        return None
+    registry, _excluded = effective_registry(value)
+    return registry
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
