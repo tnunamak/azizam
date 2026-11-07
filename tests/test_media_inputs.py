@@ -10,6 +10,7 @@ import ast
 import asyncio
 import hashlib
 import sqlite3
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -516,7 +517,7 @@ def test_the_sweep_never_removes_a_file_that_existed_before_the_ingest(db, clock
 
 def test_a_marker_inside_the_grace_period_survives_the_sweep(db, clock):
     resolver, assets, _ = build(db, clock)
-    resolver._ledger.begin_effect("mie_live", owner_key="alice", asset_id="img_" + "1" * 64, created_asset=True)
+    resolver._ledger.begin_effect("mie_live", owner_key="alice", asset_id="img_" + "1" * 64, asset_exists=lambda: False)
     assets.files["img_" + "1" * 64] = PNG
     clock.now += 60
     assert resolver.sweep() == 0 and rows(db, "media_input_effect") == 1
@@ -581,7 +582,7 @@ def test_a_lease_granted_after_the_scan_keeps_its_file(db, clock):
     resolver.resolve_asset(person("alice"), asset, holder=other, destination=LOCAL, accepts=IMAGES)
     assert ledger.discard_unheld(found, assets.discard) == 0
     assert asset in assets.files
-    # The late holder inherits the duty: when it lets go, the next pass removes the file.
+    # The duty row stays with the file: when the late holder lets go, the next pass removes it.
     resolver.release(other)
     assert resolver.sweep() == 1 and asset not in assets.files
 
@@ -593,12 +594,12 @@ def test_an_ingest_marker_written_after_the_scan_keeps_its_file(db, clock):
     found = ledger.sweep_scan()
     assert [item.asset_id for item in found] == [asset]
     # A second ingest of the same bytes starts after the scan: it writes its marker, then the lease.
-    ledger.begin_effect("mie_late", owner_key="alice", asset_id=asset, created_asset=False)
+    ledger.begin_effect("mie_late", owner_key="alice", asset_id=asset, asset_exists=lambda: True)
     assert ledger.discard_unheld(found, assets.discard) == 0
     assert asset in assets.files
     holder = Holder("request", "r_late")
     ledger.lease("mil_late", asset_id=asset, owner_key="alice", holder_kind=holder.kind, holder_id=holder.id,
-                 created_asset=False, effect_id="mie_late")
+                 effect_id="mie_late")
     resolver.release(holder)
     assert resolver.sweep() == 1 and asset not in assets.files
 
@@ -627,3 +628,76 @@ def test_a_file_nothing_holds_at_discard_time_is_removed(db, clock):
     found = resolver._ledger.sweep_scan()
     assert resolver._ledger.discard_unheld(found, assets.discard) == 1
     assert asset not in assets.files
+
+
+# --- the duty to remove a file outlives its first holder ---------------------
+
+
+# Revert: ``discard_unheld`` hands the duty to the holder as a flag (and drops the other owner's removal).
+def test_a_second_owners_ingest_of_the_same_bytes_does_not_lose_the_first_owners_removal(db, clock):
+    resolver, assets, first = lease_one(db, clock, Holder("request", "r_alice"), owner="alice")
+    asset = first.ref.asset_id
+    resolver.release(Holder("request", "r_alice"))
+    ledger = resolver._ledger
+    found = ledger.sweep_scan()  # Alice's lease row is gone; her removal is the scan's to offer
+    assert [(item.asset_id, item.owner_key) for item in found] == [(asset, "alice")]
+    bob = Holder("request", "r_bob")
+    resolver.resolve_upload(person("bob"), PNG, holder=bob, destination=LOCAL, accepts=IMAGES)
+    assert ledger.discard_unheld(found, assets.discard) == 0 and asset in assets.files, "Bob holds it now"
+    resolver.release(bob)
+    resolver.sweep()
+    assert asset not in assets.files and assets.owners == {}, "both owners' claims are gone"
+    assert resolver.sweep() == 0
+    assert rows(db, "media_input_lease") == 0 and rows(db, "media_input_effect") == 0
+    assert rows(db, "media_input_created") == 0
+
+
+# Revert: the existence check in ``_ingest`` runs outside the transaction that writes the marker.
+def test_a_removal_cannot_run_between_the_existence_check_and_the_marker(db, clock):
+    resolver, assets, asset = released_upload(db, clock)
+    ledger = resolver._ledger
+    found = ledger.sweep_scan()
+    racer = threading.Thread(target=lambda: ledger.discard_unheld(found, assets.discard))
+    real_exists = assets.exists
+    fired: list[bool] = []
+
+    def exists_then_race(asset_id):
+        result = real_exists(asset_id)
+        if not fired:
+            fired.append(True)
+            # The sweep's removal starts right after the check. It finishes before the marker if nothing orders them.
+            racer.start()
+            racer.join(0.5)
+        return result
+
+    assets.exists = exists_then_race
+    bob = Holder("request", "r_bob")
+    resolver.resolve_upload(person("alice"), PNG, holder=bob, destination=LOCAL, accepts=IMAGES)
+    racer.join()
+    assets.exists = real_exists
+    assert fired and asset in assets.files, "the ingest's file is held"
+    resolver.release(bob)
+    resolver.sweep()
+    assert assets.files == {} and assets.owners == {}, "nothing is left"
+
+
+def test_an_erased_owners_upload_is_removed_by_the_sweep(db, clock):
+    holder = Holder("job", "mj_erased")
+    resolver, assets, resolved = lease_one(db, clock, holder, owner="alice")
+    media_jobs.erase_prompt_derivatives({"alice"}, before=2**31, path=db)
+    assert resolver.sweep() == 1 and resolved.ref.asset_id not in assets.files
+    assert rows(db, "media_input_created") == 0
+
+
+def test_a_failed_removal_keeps_its_duty_for_the_next_pass(db, clock):
+    resolver, assets, resolved = lease_one(db, clock, REQUEST)
+    resolver.release(REQUEST)
+    real = assets.discard
+
+    def fail(asset_id, owner_key):
+        raise Crash
+
+    with pytest.raises(Crash):
+        resolver._ledger.sweep(fail)
+    assert resolved.ref.asset_id in assets.files and rows(db, "media_input_created") == 1
+    assert resolver._ledger.sweep(real) == 1 and resolved.ref.asset_id not in assets.files
