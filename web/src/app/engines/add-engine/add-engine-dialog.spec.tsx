@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ApiError } from "@/lib/api";
 import { enginesApi, type CheckResult } from "@/lib/engines-api";
 import { check, definitions, renderWithClient } from "../__fixtures__/test-utils";
 import { AddEngineDialog } from "./add-engine-dialog";
@@ -335,6 +336,22 @@ describe("d, e, e2, e3: findings attached to their field", () => {
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     expect(create.mock.calls[0][0]).toMatchObject({ disabled: true });
     expect(create.mock.calls[0][0]).not.toHaveProperty("capabilities");
+  });
+
+  it("e1b: on the final step with nothing ticked the Add button is disabled", async () => {
+    const { user, dialog } = await failWith("oai_nocap");
+    await user.click(within(dialog).getByRole("button", { name: "Add anyway" }));
+    for (const box of within(dialog).getAllByRole("checkbox")) expect(box).not.toBeChecked();
+    // A kept-off add refused with a warning lands on the name step with nothing ticked (not a duplicate: that disables Add too).
+    vi.spyOn(enginesApi, "create").mockRejectedValue(
+      new ApiError("engine_check_warnings", "warn", 409, {
+        error: { code: "engine_check_warnings", message: "warn", field: "address" },
+        check: check("oai_nocap"),
+      }),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Add but keep off" }));
+    expect(await within(dialog).findByText("Name and create")).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Add anyway" })).toBeDisabled();
   });
 
   it("e2: a down server can be added kept off, with the owner's fix text", async () => {

@@ -62,6 +62,7 @@ from gateway import log_scrub, off_loop_spawn, runtime_secrets
 import asyncio
 import concurrent.futures
 import contextlib
+import json
 import os
 import subprocess
 import tempfile
@@ -414,7 +415,15 @@ def engine_read_request(
     base = connection.url
     if not base:
         return None
-    if endpoint == "/v1" or endpoint.startswith("/v1/"):
+    from gateway.engine_readiness import record_readiness_path
+
+    if endpoint == record_readiness_path(config):
+        # The readiness path the record's definition declares is a server-root path, whatever its first segment: it
+        # already holds the saved base path, so it is never joined onto the base a second time.
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(base)
+        url = urlunsplit((parts.scheme, parts.netloc, "", "", "")) + endpoint
+    elif endpoint == "/v1" or endpoint.startswith("/v1/"):
         from urllib.parse import urlsplit, urlunsplit
         base_path = urlsplit(base).path.rstrip("/")
         if base_path and (endpoint == base_path or endpoint.startswith(base_path + "/")):
@@ -511,12 +520,14 @@ async def _poll_health(svc: Mapping[str, Any], timeout_s: float) -> bool:
                 resp = await client.get(url, **_get_kwargs(headers, timeout=min(interval * 2, 5.0), extensions=engine_egress.probe()))
                 if resp.status_code == 200:
                     return True
-                if resp.status_code == 404 and fallback_key is not None and fallback_key not in _READINESS_FALLBACK:
+                if resp.status_code == 404 and fallback_key is not None:
                     # The default health path is absent (not a 5xx, 401 or timeout): read the route the engine's
-                    # definition declares once, and remember what it answers for this process.
-                    path = _declared_fallback_path(svc)
+                    # definition declares, and remember what it answers for this process. A poll that finds the
+                    # memo already written by a concurrent poll adopts it, so both polls agree.
+                    if fallback_key not in _READINESS_FALLBACK:
+                        _READINESS_FALLBACK[fallback_key] = _declared_fallback_path(svc) or ""
+                    path = _READINESS_FALLBACK[fallback_key]
                     alternative = _fallback_request(svc, path) if path else None
-                    _READINESS_FALLBACK[fallback_key] = path or ""
                     if alternative is not None and alternative[0] != url:
                         url, headers = alternative
                         continue
@@ -536,8 +547,13 @@ def _readiness_fallback_key(svc: Mapping[str, Any]) -> Optional[tuple[Any, ...]]
     """The memo key when ``svc`` has no declared readiness of its own: no process_ready, no health_endpoint."""
     if svc.get("health_endpoint") or not svc.get("definition"):
         return None
-    return (svc.get("definition"), svc.get("scheme"), svc.get("host"), svc.get("port"), svc.get("base_path"),
-            svc.get("path_prefix"), svc.get("base_url") or svc.get("api_base") or svc.get("default_base_url"))
+    # Every field of the record can change the readiness request (address parts, headers, credential references,
+    # the probe mode), so the key is a digest of the whole record: an edit gives a new key, two records at one
+    # address stay apart, and no credential value is kept in the key (a digest, held in memory only).
+    import hashlib
+
+    digest = hashlib.sha256(json.dumps(svc, sort_keys=True, default=repr).encode("utf-8")).hexdigest()
+    return (svc.get("definition"), digest)
 
 
 def _declared_fallback_path(svc: Mapping[str, Any]) -> Optional[str]:
@@ -561,6 +577,10 @@ def readiness_failure_text(svc: Mapping[str, Any]) -> Optional[str]:
     """
     if not isinstance(svc, Mapping) or process_config_driver(svc) in ("docker", "command", "process", "systemd", "http-load-unload"):
         return None
+    from gateway.engine_contract_view import observations_config
+
+    if observations_config(svc).get("process_ready"):
+        return "the engine did not report ready (its process_ready observation)"
     request = _health_request(svc)
     fallback_key = _readiness_fallback_key(svc)
     if fallback_key in _READINESS_FALLBACK and _READINESS_FALLBACK[fallback_key]:

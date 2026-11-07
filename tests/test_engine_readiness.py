@@ -179,6 +179,9 @@ def test_a_process_ready_observation_wins_and_reads_no_route(fake_upstreams):
     with patch("gateway.engine_observations.ObservationReader.read", new=AsyncMock(return_value=type("R", (), {"known": True, "value": False})())):
         assert _ready(svc) is False
     assert not fake.requests
+    # No readiness GET ran, so the failure text must not name one.
+    text = lifecycle_drivers.readiness_failure_text(svc)
+    assert "GET" not in text and "/health" not in text and "process_ready" in text
 
 
 @pytest.mark.parametrize("address, expected", [
@@ -187,16 +190,16 @@ def test_a_process_ready_observation_wins_and_reads_no_route(fake_upstreams):
     ("http://readiness.fk.test:8080/provider/v1", "http://readiness.fk.test:8080/provider/v1/models"),
 ])
 def test_the_fallback_reads_the_route_the_check_read_under_the_base_prefix(address, expected):
-    svc = _runtime(address, stored=False)
+    svc = {**_runtime(address, stored=False), "probe_with_inference_connection": True}  # what saving the connection sets
     assert lifecycle_drivers._fallback_request(svc, engine_readiness.record_readiness_path(svc))[0] == expected
-    stored = _runtime(address, stored=True, **{})
+    stored = {**_runtime(address, stored=True, **{}), "probe_with_inference_connection": True}
     # The stored endpoint is the same URL when the check read the route under this address.
     clean_path = engine_readiness.record_readiness_path(stored)
     assert lifecycle_drivers._health_request({**stored, "health_endpoint": clean_path})[0] == expected
 
 
 def test_an_extra_path_prefix_is_kept_and_not_doubled_when_the_stored_endpoint_names_it():
-    svc = _runtime("http://readiness.fk.test:8080/v1", stored=False, path_prefix="/openai")
+    svc = {**_runtime("http://readiness.fk.test:8080/v1", stored=False, path_prefix="/openai"), "probe_with_inference_connection": True}
     path = engine_readiness.record_readiness_path(svc)
     assert path == "/v1/openai/models"
     assert lifecycle_drivers._fallback_request(svc, path)[0] == "http://readiness.fk.test:8080/v1/openai/models"
@@ -249,3 +252,113 @@ def test_the_failure_text_follows_the_fallback_route_once_it_is_known():
 def test_an_engine_the_gateway_starts_keeps_its_could_not_start_text(driver):
     svc = {**_runtime(f"http://{HOST}/v1", stored=True), "lifecycle": {"driver": driver}, "process": {"driver": driver}}
     assert lifecycle_drivers.readiness_failure_text(svc) is None
+
+
+# -- review fixes (second pass) -----------------------------------------------------------------------------------------
+
+class _GatedClient:
+    """A stand-in HTTP client: /health answers 404 only after ``waiting`` polls have all asked for it; /v1/models answers 200."""
+
+    def __init__(self, waiting: int):
+        self.waiting, self.arrived, self.released, self.calls = waiting, 0, asyncio.Event(), []
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url, **kwargs):
+        path = httpx.URL(url).path
+        self.calls.append(path)
+        if path == "/health":
+            self.arrived += 1
+            if self.arrived >= self.waiting:
+                self.released.set()
+            await self.released.wait()
+            return httpx.Response(404)
+        return httpx.Response(200)
+
+
+def test_concurrent_first_polls_agree_on_the_fallback():
+    svc = _runtime(f"http://{HOST}:8080/v1", stored=False)
+    gate = _GatedClient(2)
+
+    async def both():
+        driver = lifecycle_drivers.ExternalDriver()
+        return await asyncio.gather(driver.ensure_ready(svc, timeout_s=0.0), driver.ensure_ready(svc, timeout_s=0.0))
+
+    with patch("gateway.lifecycle_drivers.engine_egress.async_client", gate), patch("gateway.lifecycle_drivers.engine_egress.probe", return_value={}):
+        assert asyncio.run(both()) == [True, True]
+    assert gate.calls.count("/health") == 2 and gate.calls.count("/v1/models") == 2
+
+
+def test_two_records_at_one_address_with_different_connections_do_not_share_a_memo():
+    one = _runtime(f"http://{HOST}:8080/v1", stored=False, api_key_env="KEY_ONE")
+    two = {**one, "headers": [{"name": "x-tenant", "value": "b"}]}
+    third = {**one, "probe_with_inference_connection": True}
+    keys = {lifecycle_drivers._readiness_fallback_key(item) for item in (one, two, third)}
+    assert len(keys) == 3
+    assert lifecycle_drivers._readiness_fallback_key(dict(one)) == lifecycle_drivers._readiness_fallback_key(one)
+    assert KEY not in repr(lifecycle_drivers._readiness_fallback_key({**one, "api_key": KEY}))
+    # B's own /health is read even though A already remembered its fallback.
+    lifecycle_drivers._READINESS_FALLBACK[lifecycle_drivers._readiness_fallback_key(one)] = "/v1/models"
+    assert lifecycle_drivers._readiness_fallback_key(two) not in lifecycle_drivers._READINESS_FALLBACK
+
+
+def test_editing_a_connection_drops_the_remembered_fallback(fake_upstreams):
+    fake = _server(fake_upstreams, health=404, models=200)
+    svc = _runtime(f"http://{HOST}/v1", stored=False)
+    assert _ready(svc) is True and len(fake.calls("health")) == 1
+    edited = {**svc, "headers": [{"name": "x-tenant", "value": "c"}]}
+    assert _ready(edited) is True
+    assert len(fake.calls("health")) == 2, "an edited record is read afresh, not served from the old memo"
+
+
+@pytest.mark.parametrize("address, expected", [
+    ("http://readiness.fk.test:8080/provider/v1", "http://readiness.fk.test:8080/provider/v1/models"),
+    ("http://readiness.fk.test:8080/proxy", "http://readiness.fk.test:8080/proxy/models"),
+])
+@pytest.mark.parametrize("explicit_base", ["base_url", "api_base"])
+def test_a_legacy_explicit_base_record_is_not_given_its_base_path_twice(address, expected, explicit_base):
+    svc = {**_runtime(address, stored=False), explicit_base: address, "probe_with_inference_connection": True}
+    path = engine_readiness.record_readiness_path(svc)
+    assert lifecycle_drivers._fallback_request(svc, path)[0] == expected
+    assert lifecycle_drivers._health_request({**svc, "health_endpoint": path})[0] == expected
+
+
+def test_an_owner_set_health_endpoint_keeps_its_relative_meaning_under_an_explicit_base():
+    address = "http://readiness.fk.test:8080/provider/v1"
+    svc = {**_runtime(address, stored=False), "base_url": address, "probe_with_inference_connection": True, "health_endpoint": "/healthz"}
+    assert lifecycle_drivers._health_request(svc)[0] == f"{address}/healthz"
+
+
+def _egress_record():
+    return {"enabled": True, "residency": {"transition": {"enabled": True, "activation": "pass_through"}},
+            "config": {"definition": "openai-compatible", "base_path": "/v1", "host": "127.0.0.1", "port": 59151,
+                       "base_url": "http://127.0.0.1:59151/v1"}}
+
+
+def test_the_readiness_route_is_allowed_exactly_once_and_not_under_the_base_prefix():
+    projection = engine_egress.project({"engine": _egress_record()})
+    allowed = projection.probe_paths["127.0.0.1:59151"]
+    assert "/v1/models" in allowed and "/health" in allowed and "/v1/health" in allowed
+    assert "/v1/v1/models" not in allowed
+
+
+def test_a_marked_get_of_the_doubled_readiness_route_is_refused():
+    from gateway.transition_gate import TransitionUnavailable
+
+    previous = engine_egress._live
+    engine_egress.install(engine_egress.project({"engine": _egress_record()}))
+    try:
+        def send(path):
+            engine_egress.check_request(httpx.Request("GET", f"http://127.0.0.1:59151{path}", extensions=engine_egress.probe()))
+        send("/v1/models")  # declared: allowed without a lease
+        with pytest.raises(TransitionUnavailable):
+            send("/v1/v1/models")
+    finally:
+        engine_egress.install(previous)
