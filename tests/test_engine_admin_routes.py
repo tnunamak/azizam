@@ -1323,20 +1323,16 @@ def test_an_engine_with_no_health_route_that_the_wizard_verified_answers_chat(ga
 
 
 def test_an_older_record_with_no_stored_endpoint_falls_back_to_the_definitions_route_when_health_is_absent(gateway, fake_upstreams, monkeypatch):
-    from gateway import lifecycle_drivers
-
-    lifecycle_drivers._READINESS_FALLBACK.clear()
     owner, owner_id, *_ = owner_and_admin(gateway)
     fake = _wizard_added_engine_with_no_health_route(gateway, owner, fake_upstreams, monkeypatch)
     _set_health_endpoint(gateway, None)
     answered = _chat_through_gateway(gateway, owner, owner_id, fake_upstreams, "qwen3-32b")
     assert answered.status_code == 200, answered.text
-    assert len(fake.calls("health")) == 1, "the default /health was tried once, answered 404, and the result was remembered"
+    assert len(fake.calls("health")) == 1, "the default /health was tried once and answered 404"
     second = owner.post("/openai/v1/chat/completions", headers=answered.request.headers and {"authorization": answered.request.headers["authorization"]},
                         json={"model": "qwen3-32b", "messages": [{"role": "user", "content": "again"}]})
     assert second.status_code == 200, second.text
-    assert len(fake.calls("health")) == 1
-    lifecycle_drivers._READINESS_FALLBACK.clear()
+    assert len(fake.calls("health")) == 2, "nothing is remembered: every check reads /health first"
 
 
 def test_an_engine_that_does_not_answer_its_readiness_route_fails_naming_that_route_and_no_address(gateway, fake_upstreams, monkeypatch):

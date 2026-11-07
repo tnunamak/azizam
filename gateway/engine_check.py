@@ -28,6 +28,7 @@ import ssl
 import time
 import zlib
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
 from urllib.parse import quote, urlsplit
 
@@ -37,6 +38,7 @@ import httpx
 from gateway import transforms
 from gateway.capability_ids import offered_model_kinds
 from gateway.engine_definitions import EngineCatalog
+from gateway.engine_readiness import safe_probe_path
 from gateway import engine_egress
 
 DEFAULT_CAP_BYTES = 64 * 1024
@@ -480,6 +482,27 @@ def join_url(base: str, path: str) -> str:
     return base.rstrip("/") + (path if path.startswith("/") else f"/{path}")
 
 
+def _plain_route(url: str) -> bool:
+    """True when ``url`` has no ``?`` or ``#`` (even an empty query or fragment, which ends the path the client sends)
+    and a path the HTTP client sends as written (``safe_probe_path``)."""
+    if "?" in url or "#" in url:
+        return False
+    return safe_probe_path(urlsplit(url).path or "/") is not None
+
+
+def check_base(address: str, prefix: str) -> str:
+    """The URL the check builds its routes on: the normalised ``address`` with the draft's path prefix.
+
+    A dot segment, encoded separator, query or fragment in the address or the prefix would let the HTTP client send a
+    route other than the one shown, so such a base is refused, as the readiness poll refuses such a ``base_path``.
+    """
+    base = join_url(address, prefix) if prefix else address
+    if _plain_route(base):
+        return base
+    field = "address" if not _plain_route(address) else "path_prefix"
+    raise DraftError("Use a plain path, with no '.' or '..' part, encoded slash, query or fragment.", field=field)
+
+
 def comparable_address(address: str) -> str:
     """One spelling per address, so a duplicate is found whatever the case or default port."""
     parts = urlsplit(address.strip())
@@ -678,19 +701,22 @@ def _route_url(ctx: _Ctx, path: str, frm: str = "address") -> str:
 
 def _primary_url(ctx: _Ctx) -> tuple[str, str]:
     probe = ctx.definition["probes"]["primary"]
-    return probe["method"], _route_url(ctx, probe["path"], probe["from"])
+    url = _route_url(ctx, probe["path"], probe["from"])
+    if safe_probe_path(probe["path"]) is None or not _plain_route(url):
+        raise DraftError("The engine definition declares a readiness path that cannot be checked safely.", field="address")
+    return probe["method"], url
 
 
 def call_line(definition: Mapping[str, Any], values: Mapping[str, Any]) -> str:
     """The request the check makes first, as the dialog shows it: "GET http://…/models"."""
     try:
         address = normalize_address(values.get("address"))
+        base = check_base(address, str(values.get("path_prefix") or "").strip())
+        # The same URL the check sends (``_primary_url``): a probe from the origin ignores the path prefix.
+        method, url = _primary_url(SimpleNamespace(definition=definition, address=base, origin=origin_of(address)))
     except DraftError:
         return ""
-    probe = definition["probes"]["primary"]
-    base = origin_of(address) if probe["from"] == "origin" else address
-    prefix = str(values.get("path_prefix") or "")
-    return f"{probe['method']} {join_url(join_url(base, prefix) if prefix else base, probe['path'])}"
+    return f"{method} {url}"
 
 
 MODEL_LIST_CAP_BYTES = 1024 * 1024
@@ -923,7 +949,7 @@ async def _run_check(
     fields = {f["key"]: f for f in definition["fields"]}
     address = normalize_address(values.get("address"), placeholder=fields["address"].get("placeholder", ""))
     prefix = str(values.get("path_prefix") or "").strip()
-    check_address = join_url(address, prefix) if prefix else address
+    check_address = check_base(address, prefix)
     timeout_s = definition.get("timeouts", {}).get("probe_s", DEFAULT_TIMEOUT_S)
     fetch = guarded_fetch(fetch, key, viewer_role=viewer_role)
     ctx = _Ctx(
@@ -1252,12 +1278,14 @@ async def run_real_test(
     test = catalog.data["real_tests"][cap["real_test"]]
     headers = _auth_headers(key.value, values)
     prefix = str(values.get("path_prefix") or "").strip()
-    base = join_url(address, prefix) if prefix else address
+    base = check_base(address, prefix)
     if definition["probes"].get("route_base"):
         route_base = join_url(origin_of(address), definition["probes"]["route_base"])
         url = join_url(join_url(route_base, prefix), cap["route"]["path"])
     else:
         url = join_url(base, cap["route"]["path"])
+    if not _plain_route(url):
+        raise DraftError("This kind of server declares a route that cannot be tested safely.", field="capability")
     slots = {"model": model or ""}
     body = _substitute(test.get("body") or {}, slots)
     # The request adjustments the engine will run with: the draft's, or the kind's default for a new engine.

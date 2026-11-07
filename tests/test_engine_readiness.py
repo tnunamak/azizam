@@ -79,13 +79,6 @@ def test_a_new_record_stores_only_a_readiness_path_the_check_read_and_got_200_fo
 
 
 
-@pytest.fixture(autouse=True)
-def _fresh_fallback_memory():
-    lifecycle_drivers._READINESS_FALLBACK.clear()
-    yield
-    lifecycle_drivers._READINESS_FALLBACK.clear()
-
-
 # -- the driver -----------------------------------------------------------------------------------------------------
 
 def _runtime(address: str, *, stored: bool, **values) -> dict:
@@ -118,15 +111,47 @@ def _paths(fake, exchange_id):
     return [request.path for request in fake.calls(exchange_id)]
 
 
-def test_an_older_record_falls_back_once_to_the_definitions_route_when_health_answers_404(fake_upstreams):
+def test_an_older_record_falls_back_to_the_definitions_route_when_health_answers_404(fake_upstreams):
     fake = _server(fake_upstreams, health=404, models=200)
     svc = _runtime(f"http://{HOST}/v1", stored=False)
     assert "health_endpoint" not in svc
     assert _ready(svc) is True
     assert _paths(fake, "health") == ["/health"] and _paths(fake, "models") == ["/v1/models"]
-    # Remembered for the process: the next check goes straight to the route that answered.
+    # Nothing is remembered: the next check reads /health first again.
     assert _ready(svc) is True
-    assert len(fake.calls("health")) == 1 and len(fake.calls("models")) == 2
+    assert len(fake.calls("health")) == 2 and len(fake.calls("models")) == 2
+
+
+def _switching_client(health_statuses):
+    """A stand-in HTTP client: /health answers the next status in ``health_statuses`` per call; /v1/models always 200."""
+    calls, statuses = [], list(health_statuses)
+
+    class Client:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, **kwargs):
+            path = httpx.URL(url).path
+            calls.append(path)
+            return httpx.Response(statuses.pop(0) if path == "/health" else 200)
+
+    return Client(), calls
+
+
+@pytest.mark.parametrize("later", [503, 401, 403, 500])
+def test_a_remembered_404_does_not_keep_an_engine_ready_once_health_answers_otherwise(later):
+    svc = _runtime(f"http://{HOST}:8080/v1", stored=False)
+    client, calls = _switching_client([404, later])
+    with patch("gateway.lifecycle_drivers.engine_egress.async_client", client), patch("gateway.lifecycle_drivers.engine_egress.probe", return_value={}):
+        assert _ready(svc) is True
+        assert _ready(svc) is False
+    assert calls == ["/health", "/v1/models", "/health"]
 
 
 def test_a_record_with_a_stored_endpoint_never_reads_health(fake_upstreams):
@@ -146,7 +171,6 @@ def test_a_real_unhealthy_or_locked_answer_on_health_does_not_fall_back(fake_ups
     fake = _server(fake_upstreams, health=status, models=200)
     assert _ready(_runtime(f"http://{HOST}/v1", stored=False)) is False
     assert not fake.calls("models"), "only a 404 (route absent) may fall back"
-    assert lifecycle_drivers._READINESS_FALLBACK == {}
 
 
 def test_a_timeout_on_health_does_not_fall_back(fake_upstreams):
@@ -158,7 +182,7 @@ def test_a_timeout_on_health_does_not_fall_back(fake_upstreams):
         client.return_value.__aenter__ = AsyncMock(return_value=session)
         client.return_value.__aexit__ = AsyncMock(return_value=False)
         assert _ready(svc) is False
-    assert not fake.calls("models") and lifecycle_drivers._READINESS_FALLBACK == {}
+    assert not fake.calls("models")
 
 
 def test_a_fallback_route_that_is_down_or_absent_too_fails(fake_upstreams):
@@ -241,11 +265,9 @@ def test_the_failure_text_for_an_engine_the_gateway_does_not_start_names_the_rou
     assert HOST not in text and "8080" not in text
 
 
-def test_the_failure_text_follows_the_fallback_route_once_it_is_known():
+def test_the_failure_text_for_an_older_record_names_both_routes_it_reads():
     svc = _runtime(f"http://{HOST}:8080/v1", stored=False)
-    assert lifecycle_drivers.readiness_failure_text(svc).endswith("(GET /health)")
-    lifecycle_drivers._READINESS_FALLBACK[lifecycle_drivers._readiness_fallback_key(svc)] = "/v1/models"
-    assert lifecycle_drivers.readiness_failure_text(svc).endswith("(GET /v1/models)")
+    assert lifecycle_drivers.readiness_failure_text(svc).endswith("(GET /health, then GET /v1/models if that is absent)")
 
 
 @pytest.mark.parametrize("driver", ["command", "docker", "systemd", "process", "http-load-unload"])
@@ -283,7 +305,7 @@ class _GatedClient:
         return httpx.Response(200)
 
 
-def test_concurrent_first_polls_agree_on_the_fallback():
+def test_concurrent_polls_each_read_health_then_the_fallback():
     svc = _runtime(f"http://{HOST}:8080/v1", stored=False)
     gate = _GatedClient(2)
 
@@ -294,28 +316,6 @@ def test_concurrent_first_polls_agree_on_the_fallback():
     with patch("gateway.lifecycle_drivers.engine_egress.async_client", gate), patch("gateway.lifecycle_drivers.engine_egress.probe", return_value={}):
         assert asyncio.run(both()) == [True, True]
     assert gate.calls.count("/health") == 2 and gate.calls.count("/v1/models") == 2
-
-
-def test_two_records_at_one_address_with_different_connections_do_not_share_a_memo():
-    one = _runtime(f"http://{HOST}:8080/v1", stored=False, api_key_env="KEY_ONE")
-    two = {**one, "headers": [{"name": "x-tenant", "value": "b"}]}
-    third = {**one, "probe_with_inference_connection": True}
-    keys = {lifecycle_drivers._readiness_fallback_key(item) for item in (one, two, third)}
-    assert len(keys) == 3
-    assert lifecycle_drivers._readiness_fallback_key(dict(one)) == lifecycle_drivers._readiness_fallback_key(one)
-    assert KEY not in repr(lifecycle_drivers._readiness_fallback_key({**one, "api_key": KEY}))
-    # B's own /health is read even though A already remembered its fallback.
-    lifecycle_drivers._READINESS_FALLBACK[lifecycle_drivers._readiness_fallback_key(one)] = "/v1/models"
-    assert lifecycle_drivers._readiness_fallback_key(two) not in lifecycle_drivers._READINESS_FALLBACK
-
-
-def test_editing_a_connection_drops_the_remembered_fallback(fake_upstreams):
-    fake = _server(fake_upstreams, health=404, models=200)
-    svc = _runtime(f"http://{HOST}/v1", stored=False)
-    assert _ready(svc) is True and len(fake.calls("health")) == 1
-    edited = {**svc, "headers": [{"name": "x-tenant", "value": "c"}]}
-    assert _ready(edited) is True
-    assert len(fake.calls("health")) == 2, "an edited record is read afresh, not served from the old memo"
 
 
 @pytest.mark.parametrize("address, expected", [
@@ -362,3 +362,114 @@ def test_a_marked_get_of_the_doubled_readiness_route_is_refused():
             send("/v1/v1/models")
     finally:
         engine_egress.install(previous)
+
+
+# -- path confinement ----------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("path", [
+    "/v1/../admin", "/../admin", "/v1/./models", "/v1/..", "/v1/.",
+    "/v1/%2e%2e/admin", "/v1/%2E%2E/admin", "/v1/.%2e/admin", "/v1%2fmodels", "/v1%2Fmodels", "/v1%5cmodels", "/v1%5Cmodels",
+    "/v1\\models", "/v1/models?x=1", "/v1/models#frag", "//v1/models", "/v1//models", "/v1/models//",
+])
+def test_a_probe_path_with_a_dot_segment_encoding_or_separator_trick_builds_no_probe(path):
+    assert engine_readiness.safe_probe_path(path) is None
+    definition = {"probes": {"primary": {"method": "GET", "path": path, "from": "origin"}}}
+    assert engine_readiness.readiness_path(definition, {}) is None
+    assert engine_readiness.readiness_path({"probes": {"primary": {"method": "GET", "path": path, "from": "address"}}}, {"base_path": "/v1"}) is None
+
+
+@pytest.mark.parametrize("path", ["/health", "/v1/models", "/api/tags", "/v1/openai/models", "/models.json", "/v1.1/models"])
+def test_an_ordinary_probe_path_still_builds_a_probe(path):
+    assert engine_readiness.safe_probe_path(path) == path
+    definition = {"probes": {"primary": {"method": "GET", "path": path, "from": "origin"}}}
+    assert engine_readiness.readiness_path(definition, {}) == path
+
+
+def test_a_base_path_with_a_dot_segment_builds_no_probe():
+    definition = {"probes": {"primary": {"method": "GET", "path": "/models", "from": "address"}}}
+    assert engine_readiness.readiness_path(definition, {"base_path": "/v1/../admin"}) is None
+    assert engine_readiness.readiness_path(definition, {"base_path": "/v1"}) == "/v1/models"
+
+
+def test_the_add_engine_check_builds_no_url_from_an_unsafe_probe_path():
+    from gateway import engine_check
+
+    unsafe = {"probes": {"primary": {"method": "GET", "path": "/../admin", "from": "address", "kind": "model_list", "id": "x"}}}
+    assert engine_check.call_line(unsafe, {"address": "http://h.test:8080/v1"}) == ""
+    ctx = type("Ctx", (), {"definition": unsafe, "address": "http://h.test:8080/v1", "origin": "http://h.test:8080"})()
+    with pytest.raises(engine_check.DraftError):
+        engine_check._primary_url(ctx)
+    safe = {"probes": {"primary": {"method": "GET", "path": "/models", "from": "address"}}}
+    assert engine_check.call_line(safe, {"address": "http://h.test:8080/v1"}) == "GET http://h.test:8080/v1/models"
+
+
+@pytest.mark.parametrize(("address", "prefix", "field"), [
+    ("http://h.test:8080/v1/../admin", "", "address"),
+    ("http://h.test:8080/v1/%2e%2e/admin", "", "address"),
+    ("http://h.test:8080//admin", "", "address"),
+    ("http://h.test:8080", "/../admin", "path_prefix"),
+    ("http://h.test:8080/v1", "/./admin", "path_prefix"),
+    ("http://h.test:8080/v1", "%2fadmin", "path_prefix"),
+    ("http://h.test:8080/v1", "/x?y=1", "path_prefix"),
+    ("http://h.test:8080/v1", "/x#y", "path_prefix"),
+    ("http://h.test:8080/v1", "/x?", "path_prefix"),
+    ("http://h.test:8080/v1", "/x#", "path_prefix"),
+    ("http://h.test:8080/v1?", "", "address"),
+    ("http://h.test:8080/v1#", "", "address"),
+])
+def test_the_add_engine_check_refuses_an_address_or_prefix_the_client_would_normalise(address, prefix, field):
+    from gateway import engine_check
+
+    safe = {"probes": {"primary": {"method": "GET", "path": "/models", "from": "address"}}}
+    with pytest.raises(engine_check.DraftError) as refused:
+        engine_check.check_base(address, prefix)
+    assert refused.value.field == field
+    assert engine_check.call_line(safe, {"address": address, "path_prefix": prefix}) == ""
+    ctx = type("Ctx", (), {"definition": safe, "address": address + prefix, "origin": "http://h.test:8080"})()
+    with pytest.raises(engine_check.DraftError):
+        engine_check._primary_url(ctx)
+
+
+def test_the_add_engine_check_keeps_a_plain_address_and_prefix():
+    from gateway import engine_check
+
+    safe = {"probes": {"primary": {"method": "GET", "path": "/models", "from": "address"}}}
+    assert engine_check.check_base("http://h.test:8080", "/v1") == "http://h.test:8080/v1"
+    assert engine_check.check_base("http://h.test:8080/api", "v1") == "http://h.test:8080/api/v1"
+    assert engine_check.check_base("http://h.test:8080", "") == "http://h.test:8080"
+    line = engine_check.call_line(safe, {"address": "http://h.test:8080/api", "path_prefix": "/v1"})
+    assert line == "GET http://h.test:8080/api/v1/models"
+
+
+@pytest.mark.parametrize(("address", "prefix"), [
+    ("http://h.test:8080/v1", "/x#"), ("http://h.test:8080/v1", "/x?"),
+    ("http://h.test:8080/v1#", ""), ("http://h.test:8080/v1?", ""),
+])
+def test_a_real_test_sends_nothing_when_an_empty_query_or_fragment_would_cut_its_route(address, prefix):
+    import asyncio
+
+    from gateway import engine_check
+    from gateway.engine_definitions import load_engine_catalog
+
+    sent = []
+
+    async def fetch(*args, **kwargs):
+        sent.append(args)
+        raise AssertionError("the real test reached the network")
+
+    catalog = load_engine_catalog()
+    with pytest.raises(engine_check.DraftError):
+        asyncio.run(engine_check.run_real_test(
+            catalog, catalog.definition("openai-compatible"), {"address": address, "path_prefix": prefix}, "chat",
+            key=engine_check.KeyInput(), fetch=fetch, model="m"))
+    assert sent == []
+
+
+def test_the_call_line_shows_the_url_the_check_sends_for_a_probe_from_the_origin():
+    from gateway import engine_check
+
+    origin_probe = {"probes": {"primary": {"method": "GET", "path": "/api/tags", "from": "origin"}}}
+    values = {"address": "http://h.test:8080/api", "path_prefix": "/v1"}
+    ctx = type("Ctx", (), {"definition": origin_probe, "address": "http://h.test:8080/api/v1", "origin": "http://h.test:8080"})()
+    assert engine_check._primary_url(ctx) == ("GET", "http://h.test:8080/api/tags")
+    assert engine_check.call_line(origin_probe, values) == "GET http://h.test:8080/api/tags"
