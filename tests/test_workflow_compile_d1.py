@@ -80,6 +80,52 @@ def test_unknown_and_out_of_range_inputs_are_refused_by_name():
     assert missing.value.param == "prompt"
 
 
+# --- S3.10: the audio duration default stays at the route edge -------------------------------------------------------
+
+
+def _manifest_without_duration_default(*, required: bool) -> dict[str, Any]:
+    manifest = copy.deepcopy(_manifest("sa3-small-sfx"))
+    manifest["inputs"]["duration"] = {"type": "number", "required": required}
+    return manifest
+
+
+def test_generic_compile_leaves_an_optional_duration_without_a_default_unset():
+    manifest = _manifest_without_duration_default(required=False)
+    template = _template(manifest)
+    targets = _map_targets(manifest, "duration")
+    assert targets, "the boundary fixture must bind duration"
+    for node, name in targets:
+        template[node]["inputs"][name] = 4
+
+    graph = compile_workflow(manifest, "comfyui", template, {"prompt": "a bell"})
+
+    for node, name in targets:
+        assert graph[node]["inputs"][name] == 4, "generic compile supplied the audio route's duration default"
+
+
+def test_generic_compile_refuses_a_required_duration_without_a_default_by_name():
+    manifest = _manifest_without_duration_default(required=True)
+
+    with pytest.raises(InputRefused) as missing:
+        compile_workflow(manifest, "comfyui", _template(manifest), {"prompt": "a bell"})
+
+    assert missing.value.param == "duration"
+
+
+def test_the_audio_route_supplies_its_duration_default_only_in_the_effective_manifest():
+    manifest = _manifest_without_duration_default(required=False)
+    targets = _map_targets(manifest, "duration")
+    assert targets, "the boundary fixture must bind duration"
+
+    effective = effective_manifest(manifest, AudioLimits())
+    assert effective["inputs"]["duration"]["default"] == 30
+    assert "default" not in manifest["inputs"]["duration"], "the route changed the generic manifest"
+    graph = compile_workflow(effective, "comfyui", _template(manifest), {"prompt": "a bell"})
+
+    for node, name in targets:
+        assert graph[node]["inputs"][name] == 30, "the effective audio default did not bind"
+
+
 # --- criterion 2: the aliases belong to the route edge ----------------------------------------------------------------
 
 LIMITS = AudioLimits(default_duration=30, min_seconds=1, max_seconds=30)
