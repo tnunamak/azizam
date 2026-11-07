@@ -26,6 +26,7 @@ from gateway.toolcall_detection import (
     TOOLCALL_MARKERS,
     ToolcallStreamDetector,
     advisory_for_backend,
+    advisory_header_value,
     detect_unlifted_toolcalls,
     normalize_toolcall_args,
     normalize_toolcall_finish_reason,
@@ -265,6 +266,18 @@ class TestAdvisoryForBackend:
             for _, family in TOOLCALL_MARKERS:
                 msg = advisory_for_backend(hint, family)
                 assert "\n" not in msg, f"newline in advisory for {hint}/{family}: {msg!r}"
+
+
+def test_the_advisory_header_value_is_ascii_on_one_line() -> None:
+    """HTTP header values are latin-1; a character outside it made the response fail with 500."""
+    built_in = advisory_header_value(advisory_for_backend("engine-1", "hermes_or_qwen"))
+    built_in.encode("ascii")
+    assert "tool_calls" in built_in and "engine-1" in built_in
+    operator = advisory_header_value(advisory_for_backend(
+        "engine-1", "hermes_or_qwen", operator_advisory="Turn on the parser \u2014 see the server\u2019s guide.\nThen restart."))
+    operator.encode("ascii")
+    assert "\n" not in operator and "\r" not in operator
+    assert "Turn on the parser - see the server's guide. Then restart." in operator
 
 
 # ---------------------------------------------------------------------------

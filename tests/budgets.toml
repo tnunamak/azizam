@@ -592,7 +592,7 @@
 # Voice quality probe without a configured engine (2026-11-07): +1 case.
 # Failed gate runs keep their e2e evidence, with a hard cap and no symlink followed (2026-11-07): +17 cases.
 # Train 19: 21135 + 1 + 1 + 17 = 21154.
-pytest = 21154
+pytest = 21156
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

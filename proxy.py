@@ -328,6 +328,7 @@ from gateway.transforms import (
 from gateway.toolcall_detection import (
     detect_unlifted_toolcalls as _detect_unlifted_toolcalls,
     advisory_for_backend as _toolcall_advisory_for_backend,
+    advisory_header_value as _toolcall_advisory_header_value,
     request_had_tools as _request_had_tools,
     normalize_toolcall_args as _normalize_toolcall_args,
     normalize_toolcall_finish_reason as _normalize_toolcall_finish_reason,
@@ -31087,7 +31088,7 @@ async def _forward_current_loaded_openai_request(
                                     _tc_family,
                                     _tc_advisory,
                                 )
-                                response_headers["x-azizam-toolcall-advisory"] = _tc_advisory
+                                response_headers["x-azizam-toolcall-advisory"] = _toolcall_advisory_header_value(_tc_advisory)
                         content = json.dumps(response_json).encode()
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     pass
@@ -31515,7 +31516,7 @@ async def _forward_litellm_proxy_request(
                                     _tc_family,
                                     _tc_advisory,
                                 )
-                                response_headers["x-azizam-toolcall-advisory"] = _tc_advisory
+                                response_headers["x-azizam-toolcall-advisory"] = _toolcall_advisory_header_value(_tc_advisory)
                         if (
                             request_path == "/v1/embeddings"
                             and requested_embedding_dimensions is not None
