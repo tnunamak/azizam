@@ -8,6 +8,7 @@ engine is a ``HandlerTransport`` that records every request it gets.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from types import SimpleNamespace
 
@@ -152,3 +153,28 @@ def test_a_binding_kind_without_a_registered_adapter_is_unavailable_and_calls_no
                     headers={"Prefer": "wait=5"})
     assert (response.status_code, response.json()["error"]["code"]) == (503, "binding_unavailable"), response.text
     assert engine.calls == []
+
+
+FACTS = {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "resource_class": "image", "tags": ["a"]}
+OWNER_ID = "owner.inline.demo"
+
+
+def owner_workflow(template_inline: bool, **record) -> dict:
+    """The bundled image workflow as an owner's own record; its graph travels inside the saved document if asked."""
+    manifest = copy.deepcopy(manifest_of(IMAGE_ID))
+    manifest["id"] = OWNER_ID
+    if template_inline:
+        manifest["bindings"]["comfyui"]["workflow"] = {"inline": template_of(manifest_of(IMAGE_ID))}
+    return {OWNER_ID: {"manifest": manifest, "policy": FACTS, "published": True, **record}}
+
+
+def test_a_workflow_with_an_inline_template_runs_that_template(world):  # W2: the run core runs what the save accepted
+    publish(world.db, owner_workflow(True))
+    source = manifest_of(IMAGE_ID)
+    engine = serve_engine(world, FakeGraphEngine(source, png_bytes((9, 9, 9)), "image/png", "out.png"))
+    response = call("post", f"/gateway/v1/workflows/{OWNER_ID}/run", json={"inputs": {"prompt": "a red fox"}},
+                    headers={"Prefer": "wait=20"})
+    assert response.status_code == 200 and response.json()["status"] == "succeeded", response.text
+    drawn = generated_of(world, response.json()["job_id"])
+    expected = compile_workflow(source, "comfyui", template_of(source), {"prompt": "a red fox", **drawn})
+    assert engine.prompts[0]["prompt"] == expected
