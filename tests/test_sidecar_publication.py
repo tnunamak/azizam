@@ -303,6 +303,12 @@ def test_watcher_does_not_trust_an_input_changed_in_the_last_seconds(tmp_path):
     assert _run_hash_gated_watcher(tmp_path, 6, age_s=-3600) == (6, 1)
 
 
+@pytest.mark.parametrize("setting", ["oops", "0", "-3", "007", "99999999999999999999"])
+def test_a_bad_refresh_setting_falls_back_to_the_default(tmp_path, setting):
+    # A bad value must not turn the refresh off: 61 polls hash at polls 1 and 61.
+    assert _run_hash_gated_watcher(tmp_path, 62, refresh_polls=setting) == (2, 1)
+
+
 def test_watcher_hashes_again_after_the_refresh_polls(tmp_path):
     # Polls 1, 5 and 9 hash.
     assert _run_hash_gated_watcher(tmp_path, 10, refresh_polls=4) == (3, 1)

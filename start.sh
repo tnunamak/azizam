@@ -157,13 +157,19 @@ if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
         LAST_HASH=""
         LAST_INPUTS=""
         HASH_POLLS=0
+        HASH_REFRESH_POLLS=${AZIZAM_LITELLM_HASH_REFRESH_POLLS:-60}
+        case $HASH_REFRESH_POLLS in
+            ''|*[!0-9]*|0*|?????????*)
+                echo "[start] AZIZAM_LITELLM_HASH_REFRESH_POLLS must be a whole number from 1 to 99999999; using 60." >&2
+                HASH_REFRESH_POLLS=60;;
+        esac
         while true; do
             while [ ! -s "$LITELLM_CONFIG_PATH" ]; do sleep 1; done
             # Read the inputs before the hash: a change after this read shows next poll.
             INPUTS="$(litellm_runtime_inputs)"
             HASH_POLLS=$((HASH_POLLS + 1))
             if [ -z "$LAST_HASH" ] || [ "$INPUTS" != "$LAST_INPUTS" ] \
-                || [ "$HASH_POLLS" -ge "${AZIZAM_LITELLM_HASH_REFRESH_POLLS:-60}" ] \
+                || [ "$HASH_POLLS" -ge "$HASH_REFRESH_POLLS" ] \
                 || ! litellm_runtime_inputs_settled; then
                 NEXT_HASH="$(litellm_runtime_hash)"
                 HASH_POLLS=0
