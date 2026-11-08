@@ -260,7 +260,13 @@ def _config_snapshot_of_one_test() -> Iterator[None]:
     saved_aliases = {name: getattr(module, name) for name in ("VIDEO_ALIASES", "AUDIO_ALIASES")} if module is not None else {}
     egress = sys.modules.get("gateway.engine_egress")
     saved_egress = egress._live if egress is not None else None
+    # A reload also swaps the registry snapshot (proxy.py `_publish_runtime_config`); the next test on this worker starts
+    # from the snapshot it found.
+    provider = getattr(module, "GATEWAY_REGISTRY_PROVIDER", None) if module is not None else None
+    saved_snapshot = provider.current() if provider is not None else None
     yield
+    if provider is not None and saved_snapshot is not None and provider.current() is not saved_snapshot:
+        provider.swap(saved_snapshot)
     if holder is not None and saved is not None:
         holder.publish(saved)
     if module is not None:
