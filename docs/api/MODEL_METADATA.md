@@ -71,6 +71,12 @@ as `unknown`. Each list request keeps the snapshot refreshing, so after a quiet 
   A service that is turned off, or that is a remote provider, still counts for this mapping (a turned-off service
   reads as `unavailable`). An alias target that maps to no service counts as `unknown`; an entry where nothing
   maps has no field.
+- An engine-operation alias (speech, transcriptions, rerank, decisions) resolves to an ordered list of engines,
+  each served by one registry service. It maps to the services of its engine candidates: the deployed candidates
+  when any is deployed, otherwise all of them. A candidate that is not deployed cannot answer a request, so it
+  does not keep the alias `available`. The several-services rule below then decides. A decision model name
+  maps the same way: an engine id, the model an engine serves, or a name that points at an engine, maps to that
+  engine's service. A decision provider's catalog names map to the provider's service.
 - Several services: `available` if any is available (ready, busy, degraded, or startable on demand),
   `unavailable` only if all are unavailable, otherwise `unknown`. A workflow that needs several services is
   `unavailable` if any is, even when another requirement cannot be resolved; it is `available` only when all are.
