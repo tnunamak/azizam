@@ -647,7 +647,8 @@
 # Train 28: 21931 (main) + S3.9 mesh validator deletion and its review fixes + engine alias availability + engine operations from metadata; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 22094.
 # Train 29: 22094 (main) + model marks that follow routes + launch-file sweep + unbound-input diagnostics; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 22103.
 # Train 30: 22103 (main) + reload-after-boot tests + e2e order hardening + App asset delete; measured with scripts/run-hermetic-pytest.sh --collect-only -q: 22110.
-pytest = 22110
+# Current route failover: +9 cases (tests/test_current_route_failover.py); 22110 + 9, measured with scripts/run-hermetic-pytest.sh --collect-only -q: 22119.
+pytest = 22119
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
