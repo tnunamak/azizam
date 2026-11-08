@@ -559,14 +559,12 @@ def _upload_refused(rig, response=None):
         exchange("upload-refused", "POST", "/upload/image", response or {"status": 500, "json": {"error": "disk full"}}, times=1, required=False)]))
 
 
-@ROW_PENDING
 def test_images_E14_image_upload_refused_502(tmp_path):
     old, row = pair(tmp_path, EDIT, form(), _upload_refused)
     old_has(old, "502 after a refused upload", status(old) == 502 and engine_answered(old, "POST", "/upload/image", 500))
     _edit_compare(old, row)
 
 
-@ROW_PENDING
 def test_images_E15_upload_without_filename_502(tmp_path):
     old, row = pair(tmp_path, EDIT, form(), lambda rig: _upload_refused(rig, {"json": {}}))
     old_has(old, "an error after an upload answer with no name", (status(old) or 0) >= 400 and engine_answered(old, "POST", "/upload/image", 200))
