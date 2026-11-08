@@ -47,6 +47,7 @@ def pair(tmp_path, path, request, setup, **kw):
 
 
 def ok(rig, n=1, **kw):
+    kw.setdefault("strict", False)       # a refusal scenario leaves the engine exchanges uncalled; the fake still refuses a stray call
     base._comfy(rig, comfy_exchanges(views=[(base._png((40 * i, 30, 200 - 40 * i)), "image/png") for i in range(n)], **kw))
 
 
@@ -176,7 +177,7 @@ def test_images_10_b64_json_answer(tmp_path):
 def test_images_11_url_answer(tmp_path):
     old, row = pair(tmp_path, GEN, body(response_format="url"), ok)
     old_has(old, "url", data_items(old) and "url" in data_items(old)[0])
-    assert_same(old, row, status, item_keys, ("url path", lambda o: [i["url"].split("?")[0].split("/", 3)[-1] for i in data_items(o)]))
+    assert_same(old, row, status, item_keys, ("url path", lambda o: [str(i.get("url")).split("?")[0].split("/", 3)[-1] for i in data_items(o)]))
 
 
 def test_images_12_batch_runs_rounds_until_n(tmp_path):
@@ -223,12 +224,9 @@ def test_images_18_poll_schedule(tmp_path):
 
 
 def test_images_19_out_of_memory_frees_models_and_retries(tmp_path):
-    oom = {"p1": {"status": {"status_str": "error", "completed": False, "messages": [
-        ["execution_error", {"node_type": "KSampler", "node_id": "7", "exception_message": "CUDA out of memory"}]]}, "outputs": {}}}
-
     def setup(rig):
-        base._comfy(rig, comfy_exchanges(views=[(base._png(), "image/png")], history=oom, strict=False,
-                                         extra=[exchange("free", "POST", "/free", {"json": {}}, times=1)]))
+        ok(rig, extra=[exchange("prompt-oom", "POST", "/prompt",
+                                {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, times=1)])
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "a /free call", any(path == "/free" for _m, path in engine(old)))
     assert_same(old, row, status, failure, engine_without_probes, ("freed header", lambda o: header(o, "x-comfyui-models-freed")),
@@ -290,7 +288,8 @@ def test_images_24_transient_history_errors_are_retried(tmp_path):
 
 def test_images_25_view_missing_fails_the_round(tmp_path):
     def setup(rig):
-        base._comfy(rig, comfy_exchanges(views=[], strict=False))
+        base._comfy(rig, comfy_exchanges(views=[(b"", "text/plain")], strict=False, extra=[
+            exchange("view-missing", "GET", "/view", {"status": 404, "json": {"error": "not found"}}, times=1)]))
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "an error", (status(old) or 0) >= 400)
     assert_same(old, row, status, failure, engine_without_probes)
