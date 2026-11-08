@@ -124,9 +124,11 @@ class RetryPolicy:
     max_s: float = RETRY_MAX_S
 
     def delay_after(self, exc: BaseException, attempt: int) -> float | None:
-        """Seconds to wait before the next attempt, or None when this failure settles the job: it is not retryable, or
+        """Seconds to wait before the next attempt, or None when this failure settles the job: the adapter did not name a
+        ``retry_reason`` (``retryable`` alone tells the caller it may ask again; it does not retry inside the job), or
         ``attempt`` was the last. An engine's ``retry_after_s`` wins over the doubling backoff; both stop at ``max_s``."""
-        if attempt >= self.max_attempts or not getattr(exc, "retryable", False):
+        reason = getattr(exc, "retry_reason", None)
+        if attempt >= self.max_attempts or not (isinstance(reason, str) and reason):
             return None
         given = getattr(exc, "retry_after_s", None)
         if isinstance(given, (int, float)) and not isinstance(given, bool) and given >= 0:

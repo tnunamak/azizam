@@ -265,6 +265,7 @@ class Flaky(Exception):
     """An engine failure the adapter marks retryable. ``retry_after_s`` is the engine's Retry-After."""
 
     def __init__(self, *, retry_after_s=None, status=503, retryable=True, reason="engine_busy"):
+        """``reason`` is the adapter's ``retry_reason``: without it the failure is final, whatever ``retryable`` says."""
         super().__init__("raw engine text http://engine.test:1")
         self.code, self.category, self.retryable = "upstream_unavailable", "upstream", retryable
         self.upstream_status, self.client_message = status, "The engine is busy"
@@ -350,7 +351,7 @@ def test_the_attempt_limit_is_binding_data_and_a_failure_that_is_not_retryable_i
     first = submit(core)
     run(core.execute_run(first.job_id))
     assert len(port.seen) == 2 and slept == [5]
-    core, port, slept = _retry_core(db, tmp_path, [Flaky(retryable=False)])
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(reason=None)])
     other = submit(core, idempotency_key="no-retry")
     run(core.execute_run(other.job_id))
     assert len(port.seen) == 1 and slept == [] and job_error(db, other.job_id)[0] == "failed"
