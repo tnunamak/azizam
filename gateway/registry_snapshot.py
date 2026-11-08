@@ -245,7 +245,8 @@ def _patched_entry(base: WorkflowRecord, record: Mapping[str, Any], generation: 
     return _entry(base.manifest, facts=_facts_of(base.facts),
                   provenance=Provenance(base.identity.trusted, base.identity.source) if base.identity else BUNDLED_PROVENANCE,
                   state=state, published=bool(record.get("published", True)), incarnation=BUNDLED_INCARNATION,
-                  record_revision=revision if isinstance(revision, int) and revision >= 1 else generation, overrides=None)
+                  record_revision=revision if isinstance(revision, int) and revision >= 1 else generation,
+                  overrides=str(base.manifest["id"]))   # the owner changed this id: the same marker a contract override has
 
 
 def _stored_facts(raw: Any) -> WorkflowFacts | None:
