@@ -73,8 +73,20 @@ def test_image_answer_form_is_read_from_each_wire_request() -> None:
             assert base64.b64decode(item["b64_json"]) == b"\x89PNG"
     refused = run_request("images-generations", json_request({"prompt": "p", "response_format": "gif"}), snap)
     assert isinstance(refused, Response) and refused.status_code == 400
-    no_urls = run_request("images-generations", json_request({"prompt": "p", "response_format": "url"}), snap)
-    assert isinstance(no_urls, Response) and no_urls.status_code == 400      # no URL renderer on this shape: say so
+    # No URL renderer on this shape: a request for URLs is refused when it is answered, never answered with bytes.
+    run = run_request("images-generations", json_request({"prompt": "p", "response_format": "url"}), snap)
+    view = submit(core, run, snap)
+    finish(core, view.job_id, "image", "image/png", b"x")
+    bare = asyncio.run(shape_of("images-generations").to_response(
+        core.jobs[view.job_id], ROWS["images-generations"], jobs=FakeJobService(core), caller=CALLER,
+        request=_carry({"response_format": "url"})))
+    assert bare.status_code == 400
+
+
+def _carry(answer):
+    request = json_request({})
+    request.state.answer_form = answer
+    return request
 
 
 def run_request_with(request, snap, row_id="images-generations"):

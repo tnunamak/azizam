@@ -93,13 +93,9 @@ class OpenAIImagesJson(Shape):
             return refuse("n must be an integer", "n")
         if not 1 <= count <= MAX_IMAGES:
             return refuse(f"n must be between 1 and {MAX_IMAGES}", "n")
-        form = fields.get("response_format")
-        if form in (None, ""):
-            form = "b64_json"
-        if form not in ANSWER_FORMS:
+        form = fields.get("response_format") or None
+        if form is not None and form not in ANSWER_FORMS:
             return _wire.error_response(400, "response_format must be 'b64_json' or 'url'")
-        if form == "url" and self.asset_url is None:
-            return _wire.error_response(400, "response_format 'url' is not available on this route", param="response_format")
         options: dict[str, Any] = {}
         for name, value in (("n", count), ("quality", quality), ("output_format", output_format), ("output_compression", compression),
                             ("background", background)):
@@ -109,11 +105,15 @@ class OpenAIImagesJson(Shape):
 
     async def render_success(self, view: RunJobView, jobs: JobService, caller: CallerContext,
                              answer: Mapping[str, Any] | None = None) -> Response:
-        form = (answer or {}).get("response_format") or "b64_json"
+        # An explicit form is what this request asked for; one that was not asked for is the URL when the deployment gives
+        # this shape a URL renderer, else the bytes.
+        form = (answer or {}).get("response_format") or ("url" if self.asset_url is not None else "b64_json")
+        if form == "url" and self.asset_url is None:
+            return _wire.error_response(400, "response_format 'url' is not available on this route", param="response_format")
         items = []
         for ref in self.media_refs(view):
             item: dict[str, Any] = {"asset_id": ref.asset_id, "media_type": ref.media_type}
-            if form == "url" and self.asset_url is not None:
+            if form == "url":
                 item["url"] = self.asset_url(ref, caller)
             else:
                 item["b64_json"] = base64.b64encode(self.read(view, ref, jobs, caller)).decode("ascii")
