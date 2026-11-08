@@ -59,7 +59,7 @@ def test_image_wire_options_are_checked(payload, param) -> None:
 def test_image_answer_form_is_read_from_each_wire_request() -> None:
     snap = snapshot("flux2-klein")
     core, jobs = FakeRunCore(), None
-    for form, expected in (("b64_json", "b64_json"), ("url", "url"), (None, "url"))   # none asked: the renderer the deployment gave:
+    for form, expected in (("b64_json", "b64_json"), ("url", "url"), (None, "url")):  # none asked: the deployment's renderer
         body = {"prompt": "p", **({"response_format": form} if form else {})}
         request = json_request(body)
         run = run_request_with(request, snap)
