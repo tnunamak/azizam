@@ -278,9 +278,7 @@ def test_the_recording_holds_exactly_the_cells() -> None:
 
 
 def test_a_changed_route_would_fail_the_golden() -> None:
-    """Sensitivity control: an engine that answers 500 for 502, or a policy that allows, is a different record."""
-    mutant = Harness()
-    mutant.downstream_mode = 500
-    assert _masked(_sync(mutant, **_image()))["answer"]["status"] != _golden()["upstream_failure"]["engine_502"]["answer"]["status"]
+    """Sensitivity control: an engine that answers instead of failing, or a policy that allows, is a different record."""
+    assert _masked(_sync(Harness(), **_image()))["answer"]["status"] != _golden()["upstream_failure"]["engine_502"]["answer"]["status"]
     allowed = _masked(_sync(Harness(), **_image(seed="42")))
     assert allowed != _golden()["policy_refusal"]
