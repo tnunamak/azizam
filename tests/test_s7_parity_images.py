@@ -36,17 +36,6 @@ VAR = "/v1/images/variations"
 JOB = "/gateway/v1/media/jobs/image-generations"
 BG = base.BG
 
-@pytest.fixture(autouse=True)
-def _leak_probe(request):
-    import threading, json as _j
-    before = {t.ident for t in threading.enumerate()}
-    yield
-    left = [t.name for t in threading.enumerate() if t.ident not in before and t.is_alive()]
-    if left:
-        with open("/home/tnunamak/.tmp/c2d-i/leaks.txt", "a") as f:
-            f.write(request.node.name + " " + _j.dumps(left) + "\n")
-
-
 NEEDS_RH = pytest.mark.xfail(strict=True, reason="needs RH open_receipt")
 # The row path does not yet match the old route: builder I's steps 2-4 (node-graph runner, result-processing stages,
 # VRAM and batching hooks, the route move) turn these green, and remove the mark on each one that passes.
