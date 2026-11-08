@@ -258,6 +258,127 @@ def test_s7_recovery_preserves_poll_and_committed_bundle_precedence(db, tmp_path
     assert port.engine_calls == 0
 
 
+# ------------------------------------------------------------------------------------------- M13: job retry
+
+
+class Flaky(Exception):
+    """An engine failure the adapter marks retryable. ``retry_after_s`` is the engine's Retry-After."""
+
+    def __init__(self, *, retry_after_s=None, status=503, retryable=True, reason="engine_busy"):
+        super().__init__("raw engine text http://engine.test:1")
+        self.code, self.category, self.retryable = "upstream_unavailable", "upstream", retryable
+        self.upstream_status, self.client_message = status, "The engine is busy"
+        self.retry_after_s, self.retry_reason = retry_after_s, reason
+
+
+def _retry_port(db, failures):
+    class RetryPort(Port):
+        def __init__(self, db):
+            super().__init__(db)
+            self.failures = list(failures)
+            self.seen = []
+
+        async def run_adapter(self, ctx):
+            self.seen.append((ctx.pin, dict(ctx.generated), dict(ctx.inputs)))
+            if self.failures:
+                raise self.failures.pop(0)
+            await super().run_adapter(ctx)
+
+    return RetryPort(db)
+
+
+def _retry_core(db, tmp_path, failures, **binding):
+    contract = {**CONTRACT, "bindings": {"fake": binding, "other": {}}}
+    port = _retry_port(db, failures)
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    core, port, _ = make_core(db, tmp_path, workflow_snapshot(contract), port, sleep=sleep)
+    return core, port, slept
+
+
+def workflow_snapshot(contract):
+    from types import MappingProxyType
+    from tests.workflow_runtime_fakes import FakeSnapshot
+    return FakeSnapshot(1, MappingProxyType({"demo.run": entry(contract)}))
+
+
+def _events(db, job_id, kind):
+    return [e["payload"] for e in media_jobs.events(job_id, audience="internal", limit=100, path=db) if e["event_type"] == kind]
+
+
+def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(db, tmp_path):
+    """S7 6.6 (M13), images-J22: a retryable failure is retried on the same job, with the same pin and generated values.
+    The delay is base 5 s doubling to a 30 s cap; a Retry-After wins (capped at the max); each retry leaves the old
+    event; the attempt limit is 3 and the last failure settles the job."""
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky(retry_after_s=2)])
+    view = submit(core)
+    run(core.execute_run(view.job_id))
+    job = media_jobs.get(view.job_id, path=db)
+    assert job["status"] == "succeeded" and len(port.seen) == 3 and slept == [5, 2]
+    assert all(seen[0] == port.seen[0][0] for seen in port.seen)
+    assert all(seen[1:] == port.seen[0][1:] for seen in port.seen)
+    retries = _events(db, view.job_id, "retry")
+    assert retries == [
+        {"phase": "retrying", "status": "running", "progress": 20, "attempt": 1, "total": 3, "http_status": 503,
+         "reason": "engine_busy", "retry_after_s": 5},
+        {"phase": "retrying", "status": "running", "progress": 30, "attempt": 2, "total": 3, "http_status": 503,
+         "reason": "engine_busy", "retry_after_s": 2}]
+    assert job["metadata"]["attempts"] == 2 and job["metadata"]["last_http_status"] == 503
+    assert job["metadata"]["last_retry_reason"] == "engine_busy"
+
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky(), Flaky(), Flaky()])
+    again = submit(core, idempotency_key="exhaust")
+    run(core.execute_run(again.job_id))
+    assert len(port.seen) == 3 and slept == [5, 10]
+    status, message, code, upstream = job_error(db, again.job_id)
+    assert (status, message, code, upstream) == ("failed", "The engine is busy", "upstream_unavailable", 503)
+
+
+def test_the_delay_doubles_to_the_cap_and_a_retry_after_is_capped(db, tmp_path):
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky(), Flaky(retry_after_s=99), Flaky()],
+                                    retry={"max_attempts": 5, "base_s": 5, "max_s": 12})
+    view = submit(core)
+    run(core.execute_run(view.job_id))
+    assert slept == [5, 10, 12, 12] and len(port.seen) == 5
+
+
+def test_the_attempt_limit_is_binding_data_and_a_failure_that_is_not_retryable_is_not_retried(db, tmp_path):
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky(), Flaky()], retry={"max_attempts": 2})
+    first = submit(core)
+    run(core.execute_run(first.job_id))
+    assert len(port.seen) == 2 and slept == [5]
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(retryable=False)])
+    other = submit(core, idempotency_key="no-retry")
+    run(core.execute_run(other.job_id))
+    assert len(port.seen) == 1 and slept == [] and job_error(db, other.job_id)[0] == "failed"
+
+
+def test_a_retry_stops_when_a_cancel_was_asked_or_the_caller_is_gone(db, tmp_path):
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky()])
+    view = submit(core)
+
+    async def sleep(seconds):
+        media_jobs.update_status(view.job_id, "running", path=db, metadata_patch={"cancel_requested_at": 1})
+
+    core._sleep = sleep
+    run(core.execute_run(view.job_id))
+    assert len(port.seen) == 1
+    assert job_error(db, view.job_id)[:2] == ("failed", "Cancellation was requested; the backend stop could not be confirmed")
+
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky()])
+    gone = submit(core, idempotency_key="gone")
+
+    async def sleep_then_revoke(seconds):
+        port.caller_gone = True
+
+    core._sleep = sleep_then_revoke
+    run(core.execute_run(gone.job_id))
+    assert len(port.seen) == 1 and job_error(db, gone.job_id)[0] == "failed"
+
+
 # ------------------------------------------------------------------------------------- M7: JobService.delete
 
 

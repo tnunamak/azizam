@@ -112,6 +112,42 @@ RECOVERY_FAILURE_TEXT: Mapping[str, str] = {
 }
 
 
+RETRY_CANCEL_UNCONFIRMED = "Cancellation was requested; the backend stop could not be confirmed"
+# The job-retry rule the old image routes used (S7 parity M13). A binding overrides each value under ``retry``.
+RETRY_MAX_ATTEMPTS, RETRY_BASE_S, RETRY_MAX_S = 3, 5.0, 30.0
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    max_attempts: int = RETRY_MAX_ATTEMPTS
+    base_s: float = RETRY_BASE_S
+    max_s: float = RETRY_MAX_S
+
+    def delay_after(self, exc: BaseException, attempt: int) -> float | None:
+        """Seconds to wait before the next attempt, or None when this failure settles the job: it is not retryable, or
+        ``attempt`` was the last. An engine's ``retry_after_s`` wins over the doubling backoff; both stop at ``max_s``."""
+        if attempt >= self.max_attempts or not getattr(exc, "retryable", False):
+            return None
+        given = getattr(exc, "retry_after_s", None)
+        if isinstance(given, (int, float)) and not isinstance(given, bool) and given >= 0:
+            return min(float(given), self.max_s)
+        return min(self.base_s * (2 ** max(0, attempt - 1)), self.max_s)
+
+
+def retry_policy(binding: Mapping[str, Any]) -> RetryPolicy:
+    """The retry rule a pinned binding states under ``retry`` (``max_attempts``, ``base_s``, ``max_s``); a value that is
+    missing or not a sensible number keeps the default."""
+    given = binding.get("retry") if isinstance(binding, Mapping) else None
+    given = given if isinstance(given, Mapping) else {}
+
+    def number(name: str, default: float, minimum: float) -> float:
+        value = given.get(name)
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= minimum else default
+
+    return RetryPolicy(max_attempts=int(number("max_attempts", RETRY_MAX_ATTEMPTS, 1)),
+                       base_s=number("base_s", RETRY_BASE_S, 0), max_s=number("max_s", RETRY_MAX_S, 0))
+
+
 # ------------------------------------------------------------------------------------------------------- the port
 
 
@@ -350,8 +386,9 @@ class WorkflowRunCore:
         self, *, snapshots: SnapshotProvider, projections: Projections, port: RunPort, spool: JobSpool,
         path: Path | None = None, generate: Callable[..., Mapping[str, Any]] = generated_defaults.resolve_generated,
         claim_lease_s: float = CLAIM_LEASE_S, claim_wait_s: float = CLAIM_WAIT_S,
-        clock: Callable[[], float] = time.time,
+        clock: Callable[[], float] = time.time, sleep: Callable[[float], Any] = asyncio.sleep,
     ) -> None:
+        self._sleep = sleep
         self._snapshots = snapshots
         self._projections = projections
         self._port = port
@@ -612,26 +649,75 @@ class WorkflowRunCore:
             if problem is not None:
                 self._fail(job_id, *problem)
                 return
-        ctx = RunContext(
-            job_id=job_id, caller=caller, pin=pin, payload=payload,
-            inputs=dict((payload.get("body") or {}).get("inputs") or {}),
-            media={name: tuple(MediaRef(**item) for item in items) for name, items in (payload.get("media") or {}).items()},
-            generated={n: e["value"] for n, e in pin.envelope.generated.items() if "value" in e}, spool=self._spool,
-            request_id=str(job.get("request_id") or "") or None,
-            record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata))
-        try:
-            await port.run_adapter(ctx)
-        except asyncio.CancelledError:
-            raise
-        except media_jobs.CancellationPending:
-            with contextlib.suppress(Exception):
-                media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error="Canceled by requester", path=self._path)
-        except Exception as exc:  # noqa: BLE001 - settled as a failure; only the adapter's client_message reaches the job
-            self._fail(job_id, _code_of(exc), str(getattr(exc, "category", "") or "internal"),
-                       _client_message(exc), retryable=bool(getattr(exc, "retryable", False)),
-                       upstream_status=_upstream_status(exc))
-            return
+        policy = retry_policy(pin.binding)
+        attempt = 1
+        while True:
+            ctx = RunContext(
+                job_id=job_id, caller=caller, pin=pin, payload=payload,
+                inputs=dict((payload.get("body") or {}).get("inputs") or {}),
+                media={name: tuple(MediaRef(**item) for item in items) for name, items in (payload.get("media") or {}).items()},
+                generated={n: e["value"] for n, e in pin.envelope.generated.items() if "value" in e}, spool=self._spool,
+                request_id=str(job.get("request_id") or "") or None,
+                record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata))
+            try:
+                await port.run_adapter(ctx)
+            except asyncio.CancelledError:
+                raise
+            except media_jobs.CancellationPending:
+                with contextlib.suppress(Exception):
+                    media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error="Canceled by requester", path=self._path)
+            except Exception as exc:  # noqa: BLE001 - settled as a failure; only the adapter's client_message reaches the job
+                delay = policy.delay_after(exc, attempt)
+                if delay is None:
+                    self._fail(job_id, _code_of(exc), str(getattr(exc, "category", "") or "internal"),
+                               _client_message(exc), retryable=bool(getattr(exc, "retryable", False)),
+                               upstream_status=_upstream_status(exc))
+                    return
+                caller, payload, problem = await self._before_retry(job_id, exc, attempt, delay, policy)
+                if problem is not None:
+                    self._fail(job_id, *problem)
+                    return
+                attempt += 1
+                continue
+            break
         self._settle(job_id)
+
+    async def _before_retry(self, job_id: str, exc: BaseException, attempt: int, delay: float, policy: RetryPolicy) -> tuple[CallerContext | None, Mapping[str, Any] | None, tuple[str, str, str] | None]:
+        """Between two attempts of one job (S7 parity M13): leave the old retry event and facts, wait, then check again
+        that nobody asked for a cancel and that the caller can still use the gateway, and start the next attempt on the same
+        job. Returns ``(caller, payload, None)`` for the next attempt, or ``(None, None, (code, category, message))``."""
+        port = self._port
+        status = _upstream_status(exc)
+        progress = min(95, 10 + attempt * 10)
+        with contextlib.suppress(ValueError):
+            media_jobs.update_status(
+                job_id, media_jobs.STATUS_RUNNING, progress=progress, path=self._path,
+                metadata_patch={"attempts": attempt, "last_http_status": status,
+                                "last_retry_reason": getattr(exc, "retry_reason", None) or _code_of(exc)})
+        media_jobs.append_event(
+            job_id, "retry",
+            {"phase": "retrying", "status": media_jobs.STATUS_RUNNING, "progress": progress, "attempt": attempt,
+             "total": policy.max_attempts, "http_status": status,
+             "reason": getattr(exc, "retry_reason", None) or _code_of(exc), "retry_after_s": delay},
+            path=self._path)
+        with contextlib.suppress(Exception):
+            result_bundle.abort(job_id, result_bundle.attempt_of(
+                media_jobs.get(job_id, audience="internal", path=self._path) or {}), path=self._path)
+        await self._sleep(delay)
+        current = media_jobs.get(job_id, audience="internal", path=self._path) or {}
+        if media_jobs.is_terminal(str(current.get("status") or "failed")):
+            return None, None, ("job_settled", "internal", "The job ended while it waited to retry.")
+        if (current.get("metadata") or {}).get("cancel_requested_at"):
+            return None, None, ("cancel_unconfirmed", "capacity", RETRY_CANCEL_UNCONFIRMED)
+        payload = port.load_payload(job_id)
+        caller = port.caller_from_payload(payload) if payload is not None else None
+        if payload is None:
+            return None, None, (SPOOL_MISSING, "internal", "The job's request was not kept, so it cannot start.")
+        if caller is None:       # a retry runs as the caller is now: a revoked key or connection stops it here
+            return None, None, (CALLER_UNAVAILABLE, "authorization", "The account that asked for this job can no longer use the gateway.")
+        with contextlib.suppress(ValueError):
+            media_jobs.begin_attempt(job_id, path=self._path)
+        return caller, payload, None
 
     def _record_result_metadata(self, job_id: str, result_metadata: Mapping[str, Any]) -> None:
         """Keep the adapter's result metadata on the still-running job, as it gave it (the job store refuses unsafe
