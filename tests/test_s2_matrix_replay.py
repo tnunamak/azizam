@@ -93,9 +93,9 @@ def envelope_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     real = media_jobs._record_envelope
     calls: list[str] = []
 
-    def counted(conn, job_id, envelope, *, require):
+    def counted(conn, job_id, envelope, **kwargs):
         calls.append(job_id)
-        return real(conn, job_id, envelope, require=require)
+        return real(conn, job_id, envelope, **kwargs)
 
     monkeypatch.setattr(media_jobs, "_record_envelope", counted)
     return calls
