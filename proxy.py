@@ -26945,7 +26945,7 @@ def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
     if cached is None or cached[0] is not WORKFLOW_SNAPSHOTS or cached[1] is not WORKFLOW_PROJECTIONS:
         core = workflow_run.WorkflowRunCore(
             snapshots=WORKFLOW_SNAPSHOTS, projections=WORKFLOW_PROJECTIONS, port=_WORKFLOW_RUN_PORT,
-            spool=_workflow_job_spool(), path=media_jobs.DB_PATH)
+            spool=_workflow_job_spool(), path=media_jobs.DB_PATH, sleep=lambda delay: asyncio.sleep(delay))
         cached = _workflow_core_cache = (WORKFLOW_SNAPSHOTS, WORKFLOW_PROJECTIONS, core)
     return cached[2]
 
