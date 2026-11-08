@@ -26905,6 +26905,13 @@ async def _serve_frontend_row(row_id: str, request: Request, auth_context: AuthC
     core = _workflow_run_core()
     if row is None or core is None or WORKFLOW_SNAPSHOTS is None:
         return _workflow_run_response(RunRefused(503, "workflow_runtime_unavailable", "Workflow runs are not configured."))
+    # The runtime route policy is the row's own data, checked before the body is read or any upload is staged.
+    served = next((spec for spec in row.routes if request.url.path == spec.canonical or request.url.path in spec.aliases),
+                  row.routes[0])
+    policy_response = await asyncio.to_thread(
+        _enforce_runtime_route_policy, auth_context, served.canonical, policy=served.runtime_policy or None)
+    if policy_response is not None:
+        return policy_response
     shape = frontend_shapes.build_shape(row, **shape_options)
     snapshot = WORKFLOW_SNAPSHOTS.current()
     result_limits = _WORKFLOW_RUN_PORT.result_limits()

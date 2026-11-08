@@ -117,3 +117,13 @@ def test_the_bundled_rows_are_served_by_this_helper_only_when_the_row_exists(ser
         return await proxy._serve_frontend_row("no-such-row", request, None)
     response = asyncio.run(go())
     assert response.status_code == 503 and json.loads(response.body)["error"]["code"] == "workflow_runtime_unavailable"
+
+
+def test_a_caller_whose_plan_grants_no_media_is_refused_by_the_rows_policy_before_a_job_exists(served, monkeypatch):
+    from tests.support.access import authenticated, identity, plan_for
+    with authenticated(identity(plan_for(caps=("chat",)))):
+        response = post({"prompt": "a red fox"}, monkeypatch)
+    assert response.status_code == 403, response.text
+    error = response.json()["error"]
+    assert error["type"] == "access_error" and error["code"] == "not_in_access_plan"
+    assert served.seen == []

@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
 from gateway.workflow_kernel import selector_matches
 from gateway.workflow_runtime_types import (
@@ -33,7 +33,8 @@ def error_response(status: int, message: str, *, kind: str = "invalid_request_er
     if code:
         body["code"] = code
     body.update(extra)
-    return JSONResponse({"error": body}, status_code=status, headers=dict(headers or {}))
+    # Serialised with json.dumps' own separators, the bytes the gateway's refusals have always had.
+    return Response(json.dumps({"error": body}), status_code=status, media_type="application/json", headers=dict(headers or {}))
 
 
 def refused_response(refused: RunRefused) -> Response:
