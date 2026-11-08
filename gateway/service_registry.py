@@ -96,13 +96,13 @@ def ensure_service_registry(*, path: Path = admin_store.DB_PATH, actor: str = "s
                 print(f"[service_registry] ERROR: the stored {SERVICE_REGISTRY_SETTING_KEY!r} is not a JSON object; "
                       "it is left as stored and the release records are served. Restore it from a backup or import "
                       "a registry.", flush=True)
-                return _initialized_registry(
+                return normalize_service_registry(
                     registry_layers.layer(registry_layers.empty_stored(SERVICE_REGISTRY_SCHEMA_VERSION), release))
             stored = _stored_document(record["value_json"])
             if registry_layers.is_layered(stored):
                 if not admin_store.migration_step_recorded(registry_layers.LAYERING_STEP, path=path):
                     admin_store.record_migration_step(registry_layers.LAYERING_STEP, path=path)
-                return _initialized_registry(registry_layers.layer(_with_workflow_schema_2(stored, path, actor, release), release))
+                return normalize_service_registry(registry_layers.layer(_with_workflow_schema_2(stored, path, actor, release), release))
             from gateway import registry_migration
 
             plan = registry_migration.plan_layering(
@@ -135,19 +135,9 @@ def ensure_service_registry(*, path: Path = admin_store.DB_PATH, actor: str = "s
             )
         except admin_store.OperatorSettingsGenerationConflict:
             continue
-        return _initialized_registry(registry_layers.layer(_with_workflow_schema_2(stored, path, actor, release), release))
+        return normalize_service_registry(registry_layers.layer(_with_workflow_schema_2(stored, path, actor, release), release))
 
     raise RuntimeError("service registry changed during bounded startup retry")
-
-
-def _initialized_registry(layered: Mapping[str, Any]) -> dict[str, Any]:
-    """The registry start-up serves: read leniently, as every load does, so one record that does not validate (a stored
-    workflow a frontend profile refuses, say) is left out and reported, and every other record is still served. Only an
-    explicit save is strict (``normalize_service_registry``)."""
-    registry, excluded = read_registry(layered)
-    for record in excluded:
-        print(f"[service_registry] ERROR: {record.section} record {record.id!r} is left out of the registry: {record.error}", flush=True)
-    return registry
 
 
 def _with_workflow_schema_2(stored: dict[str, Any], path: Path, actor: str, release: Mapping[str, Any]) -> dict[str, Any]:

@@ -1823,15 +1823,21 @@ def _stored_with_refused_mesh_workflow(db: Path) -> tuple[str, str]:
     return SECOND_ID, good["id"]
 
 
-def test_start_up_serves_every_valid_workflow_and_leaves_out_the_one_a_frontend_profile_refuses(tmp_path: Path) -> None:
+def test_a_workflow_a_frontend_profile_refuses_is_left_out_by_the_servable_part_at_boot(tmp_path: Path) -> None:
+    # The initializer stays strict: the gateway's boot catches the failure and serves the servable part of the
+    # stored registry (proxy._boot_effective_runtime_config), which must keep the good workflow and name the refused one.
     db = tmp_path / "admin.db"
     admin_store.init_db(db)
     refused_id, good_id = _stored_with_refused_mesh_workflow(db)
 
-    registry = service_registry.ensure_service_registry(path=db, actor="startup")
+    with pytest.raises(Exception, match="cannot serve this workflow"):
+        service_registry.ensure_service_registry(path=db, actor="startup")
 
+    stored = admin_store.get_service_registry_with_generation(path=db)
+    registry, left_out = service_registry.servable_part_of_registry(stored["value"])
     assert good_id in registry["workflows"]
     assert refused_id not in registry["workflows"]
+    assert [name for name in left_out if refused_id in name], left_out
 
 
 def test_an_explicit_save_of_the_workflow_a_frontend_profile_refuses_still_fails(tmp_path: Path) -> None:
