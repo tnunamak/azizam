@@ -378,3 +378,20 @@ class EngineAgnosticTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_operations_of_matches_the_operation_metadata_by_type_and_inputs():
+    from gateway import stable_aliases
+    engines = stable_aliases.ENGINE_OPERATIONS
+    of = mm.operations_of
+    assert of("decision", ["text"], among=engines) == ("decisions",)
+    assert of("reranking", ["text"], among=engines) == ("rerank",)
+    assert of("audio", ["text"], among=engines) == ("speech",)
+    assert of("audio", ["audio"], among=engines) == ("transcriptions",)
+    # Unknown inputs, or inputs no operation takes, keep every operation of the type.
+    assert of("audio", None, among=engines) == ("speech", "transcriptions")
+    assert of("decision", ["text", "image"], among=engines) == ("decisions",)
+    # An ordinary entry belongs to no engine operation.
+    assert of("language", ["text"], among=engines) == ()
+    assert of(None, ["text"], among=engines) == ()
+    assert of("language", ["text"]) == ("chat",)
