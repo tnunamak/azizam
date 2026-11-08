@@ -447,6 +447,11 @@ class JobNotFound(Exception):
     """``job_not_found`` (404): absent, or not readable by this caller. One answer for both, so ids do not leak."""
 
 
+class JobDeleteConflict(Exception):
+    """``job_delete_conflict`` (409): the job could not be canceled first (a running job whose engine has not confirmed
+    the cancel), so it was not deleted and is unchanged."""
+
+
 class ResultUnavailable(Exception):
     """``result_unavailable`` (404 or 410 by ``reason``): not yet published, erased, expired, or not the caller's to
     read under the result-reader rule."""
@@ -526,6 +531,12 @@ class JobService(Protocol):
         ...
     def open_result(self, job_id: str, ref: ResultRef, caller: CallerContext) -> ResultContent:
         """The content under the result-reader rule. JobNotFound, ResultUnavailable."""
+        ...
+    def delete(self, job_id: str, caller: CallerContext) -> None:
+        """Delete one job (S7 parity 6.7). The caller who may cancel it may delete it. Cancels first; when the cancel is
+        not confirmed, raises JobDeleteConflict and keeps the job. Then persists a tombstone: the job is gone from get,
+        events, open_result and listing at once and after a restart, and is reaped after the retention window. A
+        job already deleted, absent or not the caller's raises JobNotFound."""
         ...
 
 

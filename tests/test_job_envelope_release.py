@@ -89,6 +89,7 @@ def test_the_paths_are_found_in_the_code():
     known = {
         "delete_succeeded_in": {"gateway/media_jobs.py:delete_succeeded", "gateway/prompt_memory.py:remove_missing_media"},
         "delete_succeeded": set(),
+        "reap_tombstones": {"gateway/workflow_run.py:delete"},
     }
     assert reached == known, f"a new caller deletes job rows: {reached}"
 
@@ -147,9 +148,16 @@ def delete_succeeded_alone(db: Path, doomed: str) -> None:
     assert media_jobs.delete_succeeded([doomed], path=db) == 1
 
 
+def reap_tombstones_after_the_window(db: Path, doomed: str) -> None:
+    media_jobs.tombstone_job(doomed, now=100, path=db)
+    assert media_jobs.reap_tombstones(before=99, path=db) == 0
+    assert media_jobs.reap_tombstones(before=100, path=db) == 1
+
+
 # One behavioural test per path the scan finds. The key is the function that holds the DELETE.
 DELETE_PATHS: dict[str, Callable[[Path, str], None]] = {
     "delete_succeeded_in": delete_succeeded_in_one_transaction,
+    "reap_tombstones": reap_tombstones_after_the_window,
 }
 
 

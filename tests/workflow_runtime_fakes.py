@@ -21,7 +21,7 @@ from gateway.workflow_kernel import (
 )
 from gateway.workflow_runtime_types import (
     IDEMPOTENCY_CONFLICT, KEEP, Actor, BindingDef, Commit, EntryState, FrontendRow, HistoryEntry, JobEvent,
-    JobNotFound, Keep, NameKind, NameOwner, RecoveryReport, RegistryConflict, RegistryRefused, ResultContent,
+    JobDeleteConflict, JobNotFound, Keep, NameKind, NameOwner, RecoveryReport, RegistryConflict, RegistryRefused, ResultContent,
     ResultRef, ResultUnavailable, RunJobView, RunRefused, RunRequest, WorkflowEntry, WorkflowFacts, WORKFLOW_EXISTS,
     WORKFLOW_NOT_FOUND,
 )
@@ -299,15 +299,25 @@ class FakeJobService:
 
     def __init__(self, core: FakeRunCore) -> None:
         self.core = core
+        self.deleted: set[str] = set()
+        self.cancel_fails: set[str] = set()      # job ids whose cancel is not confirmed
 
     def _view(self, job_id: str) -> RunJobView:
         view = self.core.jobs.get(job_id)
-        if view is None:
+        if view is None or job_id in self.deleted:
             raise JobNotFound(job_id)
         return view
 
     def get(self, job_id: str, caller: Any) -> RunJobView | None:
-        return self.core.jobs.get(job_id)
+        return None if job_id in self.deleted else self.core.jobs.get(job_id)
+
+    def delete(self, job_id: str, caller: Any) -> None:
+        view = self._view(job_id)
+        if view.status in ("queued", "running"):
+            if job_id in self.cancel_fails:
+                raise JobDeleteConflict(job_id)
+            self.core.jobs[job_id] = replace(view, status="canceled")
+        self.deleted.add(job_id)
 
     async def wait(self, job_id: str, caller: Any, timeout_s: float) -> RunJobView:
         return self._view(job_id)

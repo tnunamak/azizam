@@ -142,6 +142,14 @@
       "access": "content:job:read"
     },
     {
+      "path": "gateway/workflow_run.py",
+      "function": "_before_retry",
+      "source_sha256": "1e331fcaa308f5ab31f6bdbbfea3a44b0ce67d608a76cee34c02f9c4df685981",
+      "call": "append_event",
+      "event": "'retry'",
+      "access": "content:job:read"
+    },
+    {
       "path": "proxy.py",
       "function": "_submit_audio_media_job",
       "source_sha256": "da3dc921f12be3745fe3b891ac7037d8f34b9803572a7365b80577393f45efb5",
