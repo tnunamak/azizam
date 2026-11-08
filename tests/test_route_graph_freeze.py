@@ -14,6 +14,7 @@ from pathlib import Path
 
 import proxy
 import route_graph
+from gateway import registry_snapshot as rs
 
 FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 
@@ -186,10 +187,9 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
              "video.generate.minimax-h3-keyframes", "video.generate.minimax-h3-keyframes-mid",
              "video.generate.ltx-2.5-keyframes", "video.generate.ltx-2.5-keyframes-mid",
              "mesh.generate.trellis-2"}
-    records = proxy.GATEWAY_WORKFLOW_REGISTRY.records()
+    records = {record.id: record for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records() if record.id not in added}
     with monkeypatch.context() as patch:
-        patch.setattr(proxy.GATEWAY_WORKFLOW_REGISTRY, "records",
-                      lambda: [record for record in records if record.id not in added])
+        patch.setattr(proxy, "GATEWAY_REGISTRY_PROVIDER", rs.Provider(rs.build({}, rs.BundledRelease(records, ()), generation=1)))
         proxy.app.openapi_schema = None
         # The edit transport documents repeated image[] parts for pictures. The sign-in box (Login.remember) is
         # nullable: true keeps a name, false takes it off, null leaves the list alone. The remembered list's entry for
