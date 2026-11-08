@@ -1249,7 +1249,7 @@ def test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule(tmp_
     assert_same(v_old, v_row, sleeps, engine_without_probes)
 
 
-@pytest.mark.xfail(strict=True, reason="core job events: started, attempt and failed events and the failed-job message (K); retry delays, limit and retry events already match")
+@pytest.mark.xfail(strict=True, reason="the failed-job message: the old job stored a fixed sentence while the sync caller got the engine words (needs two texts, integrator decision); delays, limit and events match")
 def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(tmp_path):
     """Section 6.6: a retryable failure is retried on the same job up to the attempt limit, waiting 5 s then doubling
     to at most 30 s, and appends the retry event each time."""
