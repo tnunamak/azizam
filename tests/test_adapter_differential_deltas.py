@@ -81,6 +81,26 @@ def test_a_malformed_delta_fails(bad):
         listed.apply_deltas(GOLDEN, [bad])
 
 
+def test_a_remove_deletes_a_list_item_the_golden_holds():
+    golden = {"caller": [{"response": {"body": {"text": '{"items": [{"id": "a"}, {"id": "b"}]}'}}}]}
+    out = listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.body.text#$.items[1]",
+                                             {"id": "b"}, None, "the second call is a replay with no engine call")])
+    assert json.loads(out["caller"][0]["response"]["body"]["text"]) == {"items": [{"id": "a"}]}
+
+
+def test_a_remove_deletes_a_key_and_checks_its_old_value():
+    golden = {"caller": [{"response": {"status": 200, "extra": "x"}}]}
+    out = listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.extra", "x", None, "not on the new wire")])
+    assert out["caller"][0]["response"] == {"status": 200}
+    with pytest.raises(DeltaError, match="unmatched"):
+        listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.extra", "y", None, "not on the new wire")])
+
+
+def test_a_remove_with_a_new_value_is_malformed():
+    problems = Delta("remove", "$.caller[0].response.status", 200, 202, "r").problems()
+    assert any("no new value" in problem for problem in problems)
+
+
 def test_a_path_cannot_name_the_whole_trace_or_a_free_form():
     for path in ("$", "$.caller[x]", "$..caller"):
         with pytest.raises(DeltaError):
