@@ -26764,6 +26764,9 @@ class _WorkflowRunPort:
     def caller_from_payload(self, payload: Mapping[str, Any]) -> AuthContext | None:
         return _auth_context_from_image_job_payload(payload)
 
+    def resume_on_start(self) -> bool:
+        return _image_media_job_resume_on_start()
+
     # running
     def schedule(self, job_id: str) -> None:
         _schedule_workflow_run(job_id)
@@ -26785,7 +26788,8 @@ class _WorkflowRunPort:
         owner = _asset_owner_key(ctx.caller) if ctx.caller is not None else None
         adapter = reviewed_adapters.adapter_for_backend(
             record, next(iter(protocol.serves), ""),
-            assets=GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=owner))
+            assets=GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=owner,
+                                     origin=workflow_run.asset_origin(ctx.pin.contract, ctx.request_id)))
 
         def connection() -> AdapterConnection:
             _require_egress_lease(service_id)

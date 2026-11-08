@@ -398,6 +398,10 @@ class RunRequest:
     # size, output format and the like. The shape fills it; it is part of run identity and travels to the adapter in the
     # flat body under ``options``. An answer form that only changes rendering is not an option.
     options: Mapping[str, Any] = field(default_factory=dict)
+    # The wire fields the caller sent, in the order the shape read them, for the receipt's ``accepted_inputs`` (S7 parity
+    # M1). A wire field that is neither an input nor an option (an answer form, the model name) is listed here too. Not
+    # part of run identity. Empty: the receipt lists the options, then the inputs, then the media.
+    accepted_inputs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

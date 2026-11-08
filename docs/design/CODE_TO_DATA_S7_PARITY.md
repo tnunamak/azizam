@@ -195,6 +195,8 @@ and a reason. Nothing else may differ.
 - `restart_closes_receipt`: a sync request cut by a restart left no receipt row (images) or an `in_progress` row that
   reads as `stale_incomplete` (audio, video) (writers.md, images-R07); every row's receipt is now closed as
   `GATEWAY_RESTARTED` by startup recovery (M1).
+- `contract_manifest_hash`: a receipt's `manifest_hash` is the hash of the workflow's schema-2 contract, the record the
+  run used; the old routes hashed the old manifest file. `manifest_id` and `manifest_version` keep their values.
 - `recovery_text_unified`: where audio or video recovery text differs from the image text for the same outcome, the
   image text wins.
 

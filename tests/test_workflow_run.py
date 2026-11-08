@@ -93,6 +93,7 @@ class Port:
         self.schedule_error: Exception | None = None
         self.payloads: dict[str, dict] = {}
         self.engine_calls = 0
+        self.resume = True
         self.ran: list[RunContext] = []
         self.available = BindingAvailability(lambda binding: self.problem)
 
@@ -107,6 +108,7 @@ class Port:
     def target_refusal(self, e, caller): return self.target
     def dispatch_target_problem(self, e, caller): return self.dispatch_denied
     def result_limits(self): return ResultLimits()
+    def resume_on_start(self): return self.resume
 
     def admission_refusal(self, resource_class, caller, *, count_queue): return self.refusal
 
