@@ -537,4 +537,8 @@ class FrontendShape(Protocol):
     async def to_run_request(self, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
                              spool: RequestSpool) -> RunRequest | Response: ...
     async def to_response(self, outcome: RunJobView | RunRefused, row: FrontendRow, *, jobs: JobService,
-                          caller: CallerContext) -> Response: ...
+                          caller: CallerContext, request: Request) -> Response:
+        """``request`` is the wire request ``to_run_request`` read: the answer form a caller chose on the wire (an
+        images ``response_format``, an audio container) is read from it here, never from the job (integration
+        addendum, CODE_TO_DATA_S4_S8 13.2)."""
+        ...

@@ -237,3 +237,14 @@ def test_the_routes_need_an_admin(api):
     assert api.get("/admin/api/workflows").status_code == 401
     api.roles["current"] = AdminContext(subject="viewer", roles=frozenset({"viewer"}))
     assert api.post("/admin/api/workflows", json={"contract": owner_contract()}).status_code == 403
+
+
+def test_the_listing_offers_the_closed_fact_values_as_choices(api):  # I6 addendum: the web never spells a fact value
+    from gateway.capabilities import EXPOSURE_CLASSES, RESOURCE_TIERS, TRUST_TIERS
+    from gateway.workflow_policy import known_resource_classes
+
+    choices = api.get("/admin/api/workflows").json()["choices"]
+    assert choices["exposure"] == list(EXPOSURE_CLASSES)
+    assert choices["trust_tier"] == list(TRUST_TIERS)
+    assert choices["resource_tier"] == list(RESOURCE_TIERS)
+    assert set(known_resource_classes()) <= set(choices["resource_class"]) and choices["resource_class"]

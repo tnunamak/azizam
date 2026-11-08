@@ -713,3 +713,9 @@ deploy lists them.
 The interfaces are frozen at this commit. A later finding becomes a contract test that the owning builder makes pass,
 not a design round.
 
+Integration addenda (the design owner, on `release/c2d-int`):
+- `FrontendShape.to_response` takes the wire `request` as a keyword: the caller's answer form (images
+  `response_format`, the audio container) is read from it, since a job view holds result references only (builder D's
+  finding).
+- A `MediaRef` for a Library asset carries `asset_id` and no `spool_key`; the core fills its `digest` from the asset
+  at submit, before `run_identity` (builder D's finding; a contract test of the core).

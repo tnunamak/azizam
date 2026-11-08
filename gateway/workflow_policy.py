@@ -77,6 +77,12 @@ def _resource_class_data() -> tuple[dict[str, str], str]:
     return dict(document["by_intent"]), str(document["default"])
 
 
+def known_resource_classes() -> tuple[str, ...]:
+    """Every class the release data names, in order: the pick-list the owner view offers (I6 ``choices``)."""
+    by_intent, default = _resource_class_data()
+    return tuple(sorted({*by_intent.values(), default}))
+
+
 def resource_class_for_intent(intent: Any) -> str:
     """The class admission assumed for an intent before the fact was record data (the migration's only source)."""
     by_intent, default = _resource_class_data()

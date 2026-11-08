@@ -658,7 +658,8 @@
 # Code to data S6, builder C (2026-11-08): net +15 cases (test_workflow_run.py and test_workflow_run_route.py added; test_compile_from_pin.py, test_video_workflow_execution.py and NativeWorkflowRunTests removed); measured with --collect-only -q: 22188.
 # Code to data S7, builder D goldens: +75 cases in tests/test_adapter_differential_s7.py and +79 in tests/test_adapter_differential_s7_sensitivity.py.
 # Code to data S7, builder D shapes: +28 cases in tests/test_frontend_shapes.py (27 pass, 1 strict xfail that records an interface gap).
-pytest = 22480
+# Integration (2026-11-08): +1 test_workflow_owner_api.py (the choices field).
+pytest = 22481
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

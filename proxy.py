@@ -18,6 +18,7 @@ Features:
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway import engine_egress
 from gateway import registry_snapshot
+from gateway import workflow_projections, workflow_registry_store
 from gateway.workflow_projections import SnapshotRegistry
 from gateway.compat import get_env
 from gateway import client_errors, gateway_lifetime, log_egress, log_scrub, off_loop_spawn, private_tmp, request_forms
@@ -17618,6 +17619,25 @@ STT_MEASUREMENTS = stt_measurement.Measurements(ADMIN_STORE, _operator_stt_trans
                                                 preflight=_operator_stt_preflight, active=_operator_stt_owner_active)
 
 
+def _workflow_store_snapshot(document, _release, *, generation):
+    """The store's prospective snapshot, built by the same builder and bundled release the provider uses."""
+    return registry_snapshot.build(document, registry_snapshot.bundled_release(), generation=generation,
+                                   model_aliases=config.get("model_aliases"))
+
+
+# The owner's workflow store (CODE_TO_DATA_S4_S8 I2). Its writes reload through reload_runtime_config, the one reload
+# path, which swaps GATEWAY_REGISTRY_PROVIDER.
+WORKFLOW_REGISTRY_STORE = workflow_registry_store.WorkflowRegistryStore(
+    path=ADMIN_DB_PATH, definitions=definition_store.DefinitionStore(media_jobs.DB_PATH),
+    build_snapshot=_workflow_store_snapshot, config=lambda: config, on_changed=lambda: reload_runtime_config(),
+)
+
+
+def _workflow_owner_entry_problems(entry) -> list[dict[str, Any]]:
+    available = workflow_run.BindingAvailability(_workflow_binding_problem)
+    return [{"code": code} for code in workflow_projections.PROJECTIONS.entry_problems(entry, available)]
+
+
 app.include_router(
     create_admin_router(
         ADMIN_STORE,
@@ -17637,6 +17657,8 @@ app.include_router(
         frontend_status=lambda: FRONTEND_MOUNTS.status(),
         registry_problem=lambda: REGISTRY_APPLY_PROBLEM,
         transitions=lambda: TRANSITION_RUNTIME,
+        workflow_registry=WORKFLOW_REGISTRY_STORE,
+        workflow_entry_problems=_workflow_owner_entry_problems,
     )
 )
 
@@ -26527,9 +26549,9 @@ def _signed_asset_content_response(
 # CODE_TO_DATA_S4_S8 sections 5 and 7. The run core (gateway/workflow_run.py) decides; this block is the main module's
 # side of it: who the caller is, plan policy, admission, the execution payload, scheduling, and the engine adapter.
 
-# Late-bound by the integrator (the snapshot builder and the projections are other slices): None answers 503.
-WORKFLOW_SNAPSHOTS: Any = None
-WORKFLOW_PROJECTIONS: Any = None
+# The snapshot provider (S5) and the projections (S5). A test may set either to None: the route then answers 503.
+WORKFLOW_SNAPSHOTS: Any = GATEWAY_REGISTRY_PROVIDER
+WORKFLOW_PROJECTIONS: Any = workflow_projections.PROJECTIONS
 _WORKFLOW_RUN_SPOOL_ROOT = IMAGE_MEDIA_JOB_PAYLOAD_DIR.parent / "workflow-run-spool"
 _WORKFLOW_JOB_SPOOL = request_spool.JobSpool(_WORKFLOW_RUN_SPOOL_ROOT)
 _workflow_run_tasks: set[asyncio.Task] = set()

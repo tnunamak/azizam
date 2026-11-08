@@ -13,7 +13,8 @@ from typing import Any
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import egress
+from gateway import egress, workflow_policy
+from gateway.capabilities import EXPOSURE_CLASSES, RESOURCE_TIERS, TRUST_TIERS
 from gateway.workflow_registry_store import RegistryNotApplied, WorkflowIdIsBundled, WorkflowRegistryStore
 from gateway.workflow_runtime_types import (
     GENERATION_MISMATCH, ID_CLASH, KEEP, Actor, Commit, RegistryConflict, RegistryRefused, WorkflowEntry, WorkflowFacts,
@@ -84,6 +85,15 @@ def _save_body(body: Mapping[str, Any]) -> tuple[dict[str, Any], Any, str | None
     if overrides is not None and not isinstance(overrides, str):
         raise BodyError("overrides", "overrides is the id of the bundled workflow it replaces")
     return dict(contract), facts_from_body(body), overrides
+
+
+def fact_choices(entries: Any) -> dict[str, list[str]]:
+    """The closed value sets the owner view offers as pick-lists (I6 addendum). A class a stored record already states
+    is offered too, so the view can show it."""
+    classes = {*workflow_policy.known_resource_classes()}
+    classes.update(entry.facts.resource_class for entry in entries if entry.facts is not None)
+    return {"exposure": list(EXPOSURE_CLASSES), "trust_tier": list(TRUST_TIERS), "resource_tier": list(RESOURCE_TIERS),
+            "resource_class": sorted(classes)}
 
 
 def entry_view(entry: WorkflowEntry, problems: list[dict[str, Any]]) -> dict[str, Any]:
@@ -159,7 +169,8 @@ def register_workflow_owner_routes(
             return ctx
         snapshot = await asyncio.to_thread(store.snapshot)
         rows = [entry_view(entry, problems_of(entry)) for _id, entry in sorted(snapshot.workflows.items())]
-        return _plain({"workflows": rows, "revision": snapshot.revision}, etag=snapshot.revision)
+        return _plain({"workflows": rows, "revision": snapshot.revision,
+                       "choices": fact_choices(snapshot.workflows.values())}, etag=snapshot.revision)
 
     @router.post("/workflows/check")
     async def check_workflow(request: Request) -> JSONResponse:

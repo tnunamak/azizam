@@ -154,7 +154,7 @@ class Shape:
     # -- response -----------------------------------------------------------------------------------------------
 
     async def to_response(self, outcome: RunJobView | RunRefused, row: FrontendRow, *, jobs: JobService,
-                          caller: CallerContext) -> Response:
+                          caller: CallerContext, request: Any = None) -> Response:
         if isinstance(outcome, RunRefused):
             return _wire.refused_response(outcome)
         if row.mode == "job":
