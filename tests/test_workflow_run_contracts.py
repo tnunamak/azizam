@@ -64,7 +64,7 @@ class FakeGraphEngine:
 def publish(db, workflows: dict) -> None:
     """The registry the gateway serves: the engine as a service record, and the given owner workflows. Reloaded live."""
     registry = {"services": {proxy._GRAPH_BACKEND_ID: {"name": "Engine", "config": {
-        "connection": {"protocol": "node-graph", "base_url": f"http://{ENGINE_HOST}:{ENGINE_PORT}"}}}},
+        "host": ENGINE_HOST, "port": ENGINE_PORT}}},
         "workflows": workflows}
     write_service_registry_for_test(service_registry.normalize_service_registry(registry), path=db)
     proxy.reload_runtime_config()
