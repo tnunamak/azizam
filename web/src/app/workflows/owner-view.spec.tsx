@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ViewerContext, type Viewer } from "@/components/shell/session";
+import { resetSessionCache } from "@/lib/api";
 import { ownerApi, OwnerApiError } from "./owner-api";
 import { OwnerView } from "./owner-view";
 import WorkflowsPage from "./page";
@@ -46,6 +47,7 @@ function json(body: unknown, status = 200, tag: string | null = etag) {
 function serve(respond?: Respond) {
   const mock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const request = { url: String(input), init, method: init.method ?? "GET" };
+    if (request.url === "/admin/api/session") return json({ actor: { csrf_token: "csrf-1" } });
     requests.push(request);
     if (respond) return respond(request);
     if (request.url === "/admin/api/workflows" && request.method === "GET") return json(list);
@@ -70,7 +72,7 @@ async function open() {
 }
 const body = (request: Request) => request.init.body == null ? undefined : JSON.parse(String(request.init.body));
 const writes = () => requests.filter((request) => request.method !== "GET" && !request.url.endsWith("/check"));
-beforeEach(() => { requests = []; serve(); });
+beforeEach(() => { requests = []; resetSessionCache(); serve(); });
 afterEach(() => { cleanup(); for (const client of clients.splice(0)) client.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("owner workflow I6 client", () => {
@@ -111,6 +113,9 @@ describe("owner workflow I6 client", () => {
     expect(requests[0].init.credentials).toBe("same-origin");
     expect(new Headers(requests[0].init.headers).get("If-Match")).toBe(etag);
     if (payload !== undefined) expect(new Headers(requests[0].init.headers).get("Content-Type")).toBe("application/json");
+    // A browser session write needs the admin action and CSRF headers (the shared admin sender adds them).
+    expect(new Headers(requests[0].init.headers).get("x-azizam-admin-action")).toBe("1");
+    expect(new Headers(requests[0].init.headers).get("x-azizam-csrf")).toBe("csrf-1");
     expect(body(requests[0])).toEqual(payload);
   });
   test.each(routes)("$name refuses to write without a read ETag", async ({ invoke }) => {

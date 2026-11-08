@@ -1,4 +1,4 @@
-import { networkFetch } from "@/lib/network-error";
+import { adminExchange } from "@/lib/api";
 
 export type WorkflowState = "active" | "disabled";
 
@@ -273,19 +273,15 @@ async function request<T>(
   options: RequestOptions = {},
 ): Promise<{ data: T; response: Response }> {
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (options.body !== undefined) headers["Content-Type"] = "application/json";
   if (options.etag !== undefined) headers["If-Match"] = options.etag;
-  const response = await networkFetch(path, {
+  // The shared admin sender: writes carry the action and CSRF headers a browser session needs.
+  const { response, payload: value } = await adminExchange(path, {
     method: options.method ?? "GET",
-    credentials: "same-origin",
     headers,
     signal: options.signal,
-    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+    ...(options.body === undefined ? {} : { body: options.body }),
   });
-  let value: unknown;
-  try {
-    value = await response.json();
-  } catch {
+  if (value === null) {
     if (!response.ok) throw responseError(response.status, undefined);
     throw invalidResponse(response.status);
   }

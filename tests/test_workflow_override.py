@@ -227,3 +227,14 @@ def test_repairing_a_left_out_workflow_under_a_bundled_id_with_overrides_serves_
 
     assert repaired.status_code == 200, repaired.text
     assert _served_name() == OWNER_NAME
+
+
+def test_a_whole_registry_save_with_a_run_control_patch_of_a_bundled_id_is_a_claim(live, client):
+    # ``patch_of: <id>`` names the bundled id it changes, so it needs no ``overrides``; the bundled contract still serves.
+    registry = copy.deepcopy(proxy.ADMIN_STORE.get_service_registry())
+    registry.setdefault("workflows", {})[BUNDLED_ID] = {"patch_of": BUNDLED_ID, "state": "active", "published": False}
+
+    saved = _put(client, live, registry)
+
+    assert saved.status_code == 200, saved.text
+    assert _served_name() == _bundled_manifest()["display_name"]
