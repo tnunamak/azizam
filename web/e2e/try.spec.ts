@@ -53,8 +53,23 @@ async function prepareTryKey(page: import("@playwright/test").Page) {
   // chat box starts empty, so take its example first.
   await page.getByRole("button", { name: "Try an example" }).click();
   await takeExampleIfEmpty(page);
+  await runAndAwaitTryKey(page);
+}
+
+// Try keeps its key in page memory only, so every full navigation mints a fresh one at the first Run. Wait for that
+// mint itself (it can take a while on a busy machine), then for the summary it fills.
+async function runAndAwaitTryKey(page: import("@playwright/test").Page) {
+  // The first successful mint: the page's account requests retry once after renewing the session.
+  const minted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/me/api/try-key" &&
+      response.ok(),
+    { timeout: 30_000 },
+  );
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Key details")).toBeVisible({ timeout: 30_000 });
+  await minted;
+  await expect(page.getByText("Key details")).toBeVisible();
 }
 
 const TINY_PNG =
@@ -441,8 +456,7 @@ test("try query params select capability and preserve requested model", async ({
   );
   await page.goto("/try/?capability=decide");
   await takeExampleIfEmpty(page);
-  await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Key details")).toBeVisible();
+  await runAndAwaitTryKey(page);
   await expect(
     page.getByRole("tab", { name: "Choose an option" }),
   ).toHaveAttribute("aria-selected", "true");
@@ -452,8 +466,7 @@ test("try query params select capability and preserve requested model", async ({
 
   await page.goto("/try/?capability=chat&model=fast");
   await takeExampleIfEmpty(page);
-  await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Key details")).toBeVisible();
+  await runAndAwaitTryKey(page);
   await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -462,8 +475,7 @@ test("try query params select capability and preserve requested model", async ({
 
   await page.goto("/try/?capability=chat&model=chat");
   await takeExampleIfEmpty(page);
-  await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Key details")).toBeVisible();
+  await runAndAwaitTryKey(page);
   await expect(page.getByRole("combobox").first()).toContainText("chat model");
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "coder model",
