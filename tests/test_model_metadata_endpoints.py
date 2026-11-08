@@ -573,10 +573,11 @@ class RequestLoadedMetadataTests(unittest.TestCase):
 
     def test_a_path_backend_whose_loaded_path_is_gone_by_the_lookup_keeps_the_fallback(self) -> None:
         # The selector saw a served model; the loaded-state entry is gone when the listing maps it.
-        # The served name alone does not prove the weights, so nothing is inherited.
+        # The served name alone does not prove the weights, even when the engine serves the file's
+        # own path as its id (llama.cpp can), so nothing is inherited.
         _, fallbacks = self._distinct_metadata()
         self.loaded_paths.pop("kobold")
-        self._assert_aliases(self._list_selecting("kobold", "loaded-kobold"), fallbacks)
+        self._assert_aliases(self._list_selecting("kobold", QWEN_PATH), fallbacks)
 
     def test_a_non_path_backend_matches_only_the_record_serving_the_observed_id(self) -> None:
         source, fallbacks = self._distinct_metadata()
