@@ -104,6 +104,8 @@ CALLER_UNAVAILABLE = "caller_unavailable"
 BINDING_UNAVAILABLE = "binding_unavailable"
 INTERNAL_ERROR = "internal_error"
 FAILED_FALLBACK = "The job failed."
+UPSTREAM_FAILURE_COPY = "Media generation failed (upstream HTTP {status})."
+TIMEOUT_FAILURE_COPY = "The backend did not finish this job in time."
 
 # What a restart says about a job it cannot finish (S7 parity M12), keyed by the reason. One table for every kind of job.
 RESTART_PAYLOAD_MISSING = "Image media job payload missing after proxy restart"
@@ -394,9 +396,9 @@ class WorkflowRunCore:
         self, *, snapshots: SnapshotProvider, projections: Projections, port: RunPort, spool: JobSpool,
         path: Path | None = None, generate: Callable[..., Mapping[str, Any]] = generated_defaults.resolve_generated,
         claim_lease_s: float = CLAIM_LEASE_S, claim_wait_s: float = CLAIM_WAIT_S,
-        clock: Callable[[], float] = time.time, sleep: Callable[[float], Any] = asyncio.sleep,
+        clock: Callable[[], float] = time.time, sleep: Callable[[float], Any] | None = None,
     ) -> None:
-        self._sleep = sleep
+        self._sleep = sleep if sleep is not None else (lambda delay: asyncio.sleep(delay))     # resolved at call time
         self._snapshots = snapshots
         self._projections = projections
         self._port = port
@@ -661,9 +663,11 @@ class WorkflowRunCore:
         if job["status"] == media_jobs.STATUS_QUEUED:
             try:
                 media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
-                                         path=self._path)
+                                         progress=5, metadata_patch={"started_at": int(time.time())}, path=self._path)
             except ValueError:      # canceled, or taken by another worker, between the read and the write
                 return
+            media_jobs.append_event(job_id, "started", {"phase": "running", "status": media_jobs.STATUS_RUNNING, "progress": 5},
+                                    path=self._path)
         try:
             with media_jobs.connection(self._path) as conn:
                 pin = load_in(conn, job_id)
@@ -690,6 +694,9 @@ class WorkflowRunCore:
                 generated={n: e["value"] for n, e in pin.envelope.generated.items() if "value" in e}, spool=self._spool,
                 request_id=str(job.get("request_id") or "") or None,
                 record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata))
+            media_jobs.append_event(
+                job_id, "attempt", {"phase": "running", "status": media_jobs.STATUS_RUNNING, "progress": min(95, 5 + (attempt - 1) * 10),
+                                    "attempt": attempt, "total": policy.max_attempts}, path=self._path)
             try:
                 await port.run_adapter(ctx)
             except asyncio.CancelledError:
@@ -792,11 +799,15 @@ class WorkflowRunCore:
         category = category if category in media_jobs.ERROR_CATEGORIES else "internal"
         try:
             media_jobs.update_status(
-                job_id, media_jobs.STATUS_FAILED, error=message, path=self._path,
+                job_id, media_jobs.STATUS_FAILED, error=_stored_failure_text(category, message, upstream_status), path=self._path,
                 error_info={"error_code": code, "error_category": category, "retryable": retryable,
                             "upstream_http_status": upstream_status})
         except ValueError:
             log.info("job %s was already settled when it failed with %s", job_id, code)
+        else:
+            with contextlib.suppress(Exception):
+                media_jobs.append_event(job_id, "failed", {"phase": "failed", "status": media_jobs.STATUS_FAILED, "progress": 100,
+                                                           "http_status": upstream_status or 0}, path=self._path)
         self._port.drop_payload(job_id)
         self._spool.delete(job_id)
 
@@ -905,6 +916,16 @@ def _client_message(exc: BaseException) -> str:
     if not isinstance(message, str) or not message.strip():
         return FAILED_FALLBACK
     return log_scrub.scrub(message, limit=2000)
+
+
+def _stored_failure_text(category: str, message: str, upstream_status: int | None) -> str:
+    """The sentence a failed job stores. An engine's own words may echo a prompt, so an upstream failure or a timeout is
+    stored as the fixed copy the media jobs always used; the caller still gets the adapter's words on the sync answer."""
+    if category == "upstream":
+        return UPSTREAM_FAILURE_COPY.format(status=upstream_status or 502)
+    if category == "timeout":
+        return TIMEOUT_FAILURE_COPY
+    return message
 
 
 def _upstream_status(exc: BaseException) -> int | None:
