@@ -135,7 +135,7 @@ Notes:
 ## Dynamic aliases (`current`, `current-fast`)
 
 These aliases send requests to whichever local LLM is loaded. Inheritance follows the backend
-`current` would serve at that moment. A listing that includes either alias makes one observation with
+`current` would serve at that moment. A listing that includes either alias makes one invocation of
 the selector `current` routes with: it walks the LLM backends in priority order and skips a backend
 that is unhealthy, refused by an operator override, or has no model loaded. A backend the selector
 skips lends no metadata. The loaded model maps to declarations of that backend only, through chat
@@ -143,8 +143,9 @@ execution's activation resolver. A listing that includes neither alias makes no 
 
 Probe cost: the selector may health-check candidates, in priority order, up to the first servable
 one, and read the loaded model of that backend. Health answers are cached for about 10 seconds. The
-listing makes no other loaded-state probe. The member catalog makes no observation and uses the
-conservative fallback.
+listing then reads the loaded path for declaration matching on a path-identity backend. That read is
+normally cached, but it is not an atomic snapshot with the selector and may differ after cache expiry.
+The member catalog makes no observation and uses the conservative fallback.
 
 - The aliases inherit `type`, `architecture`, `tags` and `max_tokens` from the `model_metadata`
   declarations of those ids. Only declared ids count. When several are declared, the aliases claim
@@ -156,8 +157,8 @@ conservative fallback.
   policy data, not from the alias name.
 - `context_window`: a value observed from the running engine wins. Without one, the aliases take the
   smallest `context_window` configured on the loaded model's records, ahead of static alias values.
-- When no backend is servable, or no id of the served model is declared (for example `cydonia-24b`), the
-  aliases keep their own declaration: text in, text out, no tags.
+- When no backend is servable, no id of the served model is declared (for example `cydonia-24b`), or
+  the declaration match is ambiguous, the aliases keep their own declaration: text in, text out, no tags.
 - The inherited values win over the aliases' own `model_metadata`, which is only the fallback.
 - Clients may cache `/v1/models`. After a model swap, a client can see the previous model's values
   until it lists the models again.

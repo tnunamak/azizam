@@ -356,7 +356,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.assertEqual(proxy._declarations_for_loaded_model("kobold", QWEN_PATH), {"private-public"})
         self.assertEqual(asyncio.run(proxy._model_list_served_declarations()), {"private-public"})
 
-    def _served(self, *, headers=None):
+    def _served(self, *, headers=None, path="/v1/models"):
         """List the models once, counting selector calls; returns (entries, calls)."""
         real = proxy._first_servable_loaded_llm_target
         calls: list[str] = []
@@ -368,7 +368,132 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         with patch.object(proxy, "_first_servable_loaded_llm_target", spy):
             proxy._HEALTH_EVIDENCE_CACHE.clear()
             proxy._RESOURCE_FACT_CACHE.clear()
-            return self._list(), calls
+            response = self.client.get(path, headers=headers)
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            entries = payload["data"] if "data" in payload else [payload]
+            return {entry["id"]: entry for entry in entries}, calls
+
+    def _distinct_metadata(self) -> tuple[dict, dict[str, dict]]:
+        """Make retaining either alias's fallback observably wrong on inheritance."""
+        source = self.backends["kobold"]["models"][0]["model_metadata"]
+        source["max_tokens"] = 8192
+        fallbacks = {
+            "current": {"type": "embedding", "input_modalities": ["text"],
+                        "output_modalities": ["embedding"], "tags": [], "max_tokens": 257},
+            "current-fast": {"type": "audio", "input_modalities": ["text"],
+                             "output_modalities": ["audio"], "tags": [], "max_tokens": 513},
+        }
+        for record in self.backends["kobold"]["models"][1:]:
+            record["model_metadata"] = copy.deepcopy(fallbacks[record["id"]])
+        return copy.deepcopy(source), fallbacks
+
+    def _assert_complete_metadata(self, entry: dict, declaration: dict) -> None:
+        _assert_declared_metadata(self, entry, declaration)
+        self.assertEqual(entry["max_tokens"], declaration["max_tokens"])
+
+    def test_list_and_retrieve_routes_inherit_complete_metadata_once_per_request(self) -> None:
+        source, _ = self._distinct_metadata()
+        with patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+            for path, aliases in (
+                ("/v1/models", sorted(DYNAMIC)),
+                ("/openai/v1/models", sorted(DYNAMIC)),
+                ("/v1/models/current", ["current"]),
+                ("/v1/models/current-fast", ["current-fast"]),
+            ):
+                with self.subTest(path=path):
+                    listed, calls = self._served(path=path)
+                    self.assertEqual(calls, ["selector"])
+                    for alias in aliases:
+                        self._assert_complete_metadata(listed[alias], source)
+
+    def test_selector_exception_restores_complete_fallback_without_leaking_marker(self) -> None:
+        source, fallbacks = self._distinct_metadata()
+        with patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+            inherited, calls = self._served()
+            self.assertEqual(calls, ["selector"])
+            for alias in sorted(DYNAMIC):
+                self._assert_complete_metadata(inherited[alias], source)
+            marker = "synthetic-private-path-token-METADATA-FAILURE"
+            with patch.object(proxy, "_first_servable_loaded_llm_target",
+                              side_effect=RuntimeError(marker)) as selector:
+                response = self.client.get("/v1/models")
+            selector.assert_awaited_once()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn(marker, response.text)
+        listed = {entry["id"]: entry for entry in response.json()["data"]}
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self._assert_complete_metadata(listed[alias], fallbacks[alias])
+
+    def test_non_path_service_inherits_by_declared_served_id_without_path_lookup(self) -> None:
+        source, _ = self._distinct_metadata()
+        backend = self.backends["kobold"]
+        backend.pop("loaded_model_identity")
+        record = backend["models"][0]
+        record["upstream_model"] = record["id"]
+        record.pop("activation_model")
+        record.pop("model")
+
+        async def selected():
+            return SimpleNamespace(backend="kobold", model=record["id"]), None
+
+        with patch.object(proxy, "_first_servable_loaded_llm_target", selected), \
+                patch.object(proxy, "_policy_turns_reasoning_off", return_value=False), \
+                patch.object(proxy, "currently_loaded_model", wraps=proxy.currently_loaded_model) as lookup:
+            listed, calls = self._served()
+        self.assertEqual(calls, ["selector"])
+        self.assertNotIn("kobold", [call.args[0] for call in lookup.call_args_list])
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self._assert_complete_metadata(listed[alias], source)
+
+    def test_identical_served_ids_inherit_only_the_selected_backend_declaration(self) -> None:
+        source, _ = self._distinct_metadata()
+        other_source = self.backends["other"]["models"][0]["model_metadata"]
+        other_source["max_tokens"] = 2048
+        expected = {"kobold": source, "other": copy.deepcopy(other_source)}
+        for backend in self.backends.values():
+            backend.pop("loaded_model_identity")
+            record = backend["models"][0]
+            record["upstream_model"] = "shared-served-id"
+            record.pop("activation_model")
+            record.pop("model")
+        for backend in ("kobold", "other"):
+            with self.subTest(backend=backend):
+                async def selected():
+                    return SimpleNamespace(backend=backend, model="shared-served-id"), None
+
+                with patch.object(proxy, "_first_servable_loaded_llm_target", selected), \
+                        patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+                    listed, calls = self._served()
+                self.assertEqual(calls, ["selector"])
+                for alias in sorted(DYNAMIC):
+                    self._assert_complete_metadata(listed[alias], expected[backend])
+
+    def test_current_fast_only_plan_inherits_complete_metadata_with_one_selector_call(self) -> None:
+        source, _ = self._distinct_metadata()
+        narrow = authenticated(identity(plan_for("current-fast-only", models=["current-fast"])))
+        with narrow, patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+            listed, calls = self._served()
+        self.assertEqual(set(listed), {"current-fast"})
+        self.assertEqual(calls, ["selector"])
+        self._assert_complete_metadata(listed["current-fast"], source)
+
+    def test_member_catalog_keeps_fallback_while_request_inherits_loaded_metadata(self) -> None:
+        source, fallbacks = self._distinct_metadata()
+        with patch.object(proxy, "_policy_turns_reasoning_off", return_value=False):
+            listed, calls = self._served()
+        self.assertEqual(calls, ["selector"])
+        registry = proxy.ADMIN_STORE.get_service_registry()
+        with patch.object(proxy, "_first_servable_loaded_llm_target",
+                          side_effect=AssertionError("catalog must not select a loaded model")) as selector:
+            index = proxy._catalog_model_metadata(proxy._current_loaded_model_entries(), registry, [])
+        selector.assert_not_called()
+        for alias in sorted(DYNAMIC):
+            with self.subTest(alias=alias):
+                self._assert_complete_metadata(listed[alias], source)
+                self._assert_complete_metadata(index[alias], fallbacks[alias])
 
     def test_aliases_inherit_from_the_backend_current_serves(self) -> None:
         listed, calls = self._served()
@@ -418,18 +543,25 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         declarations = proxy._model_metadata_sources().declared
         _assert_declared_metadata(self, listed["current"], declarations("current"))
 
-    def test_current_fast_drops_reasoning_when_its_policy_turns_thinking_off(self) -> None:
-        with patch.object(proxy, "_policy_turns_reasoning_off", lambda model_id: model_id == "current-fast"):
-            listed, _ = self._served()
-        self.assertIn("reasoning", listed["current"]["tags"])
-        self.assertNotIn("reasoning", listed["current-fast"]["tags"])
-        self.assertIn("vision", listed["current-fast"]["tags"])
+    def test_reasoning_follows_alias_policy_in_both_directions_not_alias_spelling(self) -> None:
+        source, _ = self._distinct_metadata()
+        for disabled in ("current", "current-fast"):
+            with self.subTest(disabled=disabled):
+                with patch.object(proxy, "_policy_turns_reasoning_off", lambda model_id: model_id == disabled):
+                    listed, calls = self._served()
+                self.assertEqual(calls, ["selector"])
+                for alias in sorted(DYNAMIC):
+                    expected = copy.deepcopy(source)
+                    if alias == disabled:
+                        expected["tags"].remove("reasoning")
+                    self._assert_complete_metadata(listed[alias], expected)
 
     def test_no_observation_when_the_aliases_are_not_listed(self) -> None:
         hidden = authenticated(identity(plan_for("no-aliases", models=["private-public"])))
         with hidden:
             listed, calls = self._served()
         self.assertNotIn("current", listed)
+        self.assertNotIn("current-fast", listed)
         self.assertEqual(calls, [])
 
     @staticmethod
