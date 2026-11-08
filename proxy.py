@@ -11130,9 +11130,10 @@ def _input_accepts(manifest: Mapping[str, Any] | None, input_name: str) -> tuple
     """The media types the contract's asset input ``input_name`` accepts. The contract is the one source: nothing here
     guesses a type for an input it declares. Only an input the contract does not declare at all takes the wire's own, a picture;
     one declared with another shape is refused."""
-    spec = ((manifest or {}).get("inputs") or {}).get(input_name)
-    if spec is None:
+    inputs = (manifest or {}).get("inputs") or {}
+    if input_name not in inputs:
         return _IMAGE_WIRE_ACCEPTS
+    spec = inputs[input_name]
     if not isinstance(spec, Mapping) or spec.get("type") != "asset":
         # Declared, but not as a picture the wire can carry: the contract decides, so this field is refused.
         raise _InputReferenceError(f"{input_name} is not declared as an asset input in this workflow")

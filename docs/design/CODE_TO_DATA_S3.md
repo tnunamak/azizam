@@ -194,7 +194,8 @@ upload, and its leases end on every exit.
   owns the request limits); declared per-input `max_bytes` is not enforced, only the resolver-wide limits; a request that
   names no workflow extension does not load the contract on the video create route, so that route keeps the wire's list; the
   extension path reports a container of assets as rejected text with no structured code (`media_not_resolved` is on
-  `bind_backend_request` only).
+  `bind_backend_request` only); the extension preflight holds every input's bytes until the uploads end, so its peak memory
+  is the sum of the declared inputs' sizes, as on the `image[]` edit route, and no request-wide byte budget bounds it.
 - Deferred: resolving a reference nested in a list or object. A container that holds assets is refused at intake and at bind
   (`media_not_resolved`), so a required media-container workflow can be saved but not run on these routes. The per-leaf
   media type check and the atomic upload of nested references come with that resolver.

@@ -193,7 +193,7 @@ def test_a_refused_second_multipart_extension_input_leaves_no_upload_behind_for_
 
 
 @pytest.mark.parametrize("spec", [{"type": "string"}, {"type": "array", "items": {"type": "asset", "accepts": ["image/*"]}},
-                                  {"type": "object", "properties": {}}, "not a mapping"])
+                                  {"type": "object", "properties": {}}, "not a mapping", None])
 def test_a_picture_field_declared_as_something_else_is_refused(spec):
     doc = {"inputs": {"image": spec}}
     with pytest.raises(proxy._InputReferenceError):
