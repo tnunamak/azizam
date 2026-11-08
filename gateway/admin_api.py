@@ -1829,8 +1829,15 @@ def create_admin_router(
         from gateway.transition_admin import register_transition_routes
         register_transition_routes(router, runtime=transitions, guard=_guard, read_json=_read_json_body)
     if workflow_registry is not None:
-        from gateway.workflow_owner_api import register_workflow_owner_routes
-        register_workflow_owner_routes(router, store=workflow_registry, guard=_guard, read_json=_read_json_body,
+        from gateway.workflow_owner_api import BodyRefused, register_workflow_owner_routes
+
+        async def _owner_read_json(request: Request) -> dict[str, Any]:
+            try:
+                return await _read_json_body(request)
+            except _RouteError as error:
+                raise BodyRefused(error.as_response()) from error
+
+        register_workflow_owner_routes(router, store=workflow_registry, guard=_guard, read_json=_owner_read_json,
                                        entry_problems=workflow_entry_problems)
     from gateway.retention_fact_api import register_routes as register_retention_fact_routes
     register_retention_fact_routes(router, store=store, guard=_guard, read_json=_read_json_body)

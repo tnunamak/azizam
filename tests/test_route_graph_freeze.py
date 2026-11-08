@@ -223,7 +223,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-08 for DELETE /v1/assets/{asset_id} and its /openai alias (see ADDED_PATHS): only those two
         # operations differ (tests/fixtures/headless_openapi.json shows the same two additions).
         # Before it the digest was c04460c153937fb6b086116d42f692ec19787ae0bc3582e798ca1586d07dab66.
-        assert route_graph.openapi_digest(proxy.app) == "28327686fc98f347d83bbd9c8a44d8d1f173670e2b2e4dfd4d80dd787bc008b9"
+        # Re-captured 2026-11-08 for the nine /admin/api/workflows owner operations (see ADDED_PATHS): only those six
+        # paths are new (tests/fixtures/headless_openapi.json shows the same additions and nothing else).
+        # Before it the digest was 28327686fc98f347d83bbd9c8a44d8d1f173670e2b2e4dfd4d80dd787bc008b9.
+        assert route_graph.openapi_digest(proxy.app) == "501d3455a95314eebd75d7a9972ce40144aff1c0280aaaf6ce97baa426107bd8"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
