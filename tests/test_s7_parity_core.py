@@ -264,7 +264,8 @@ def test_a_run_gives_the_adapter_the_request_the_job_answers(db, tmp_path):
     """writers-34: the origin names the request, which is the job's request id."""
     core, port, job_id = _queued_job(db, tmp_path)
     with media_jobs.connection(db) as conn:
-        conn.execute("UPDATE media_jobs SET job_json = json_set(job_json, '$.request_id', 'req-7') WHERE job_id = ?", (job_id,))
+        conn.execute("UPDATE media_jobs SET request_id = 'req-7', job_json = json_set(job_json, '$.request_id', 'req-7') "
+                     "WHERE job_id = ?", (job_id,))
     run(core.execute_run(job_id))
     assert port.ran[0].request_id == "req-7"
 
