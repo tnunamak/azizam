@@ -258,3 +258,22 @@ def test_a_finished_run_names_the_contract_binding_and_template_it_ran(  # W5: t
     assert envelope.template == digest(template_file)
     assert store.read_blob(envelope.template) == template_file          # the very bytes are kept, not only named
     assert (view["binding_key"], view["record_revision"]) == (envelope.binding_key, envelope.record_revision)
+
+
+def test_every_bundled_template_path_is_still_the_path_its_manifest_names(world):  # W2: the snapshot reads the same field
+    from gateway import binding_descriptors
+    descriptors = binding_descriptors.cached_shipped_binding_descriptors()
+    checked = 0
+    for workflow_id, manifest in discovery_manifests().items():
+        entry = proxy.WORKFLOW_SNAPSHOTS.current().get(workflow_id)
+        for key, block in manifest["bindings"].items():
+            descriptor = descriptors.get(key)
+            path = binding_descriptors.template_path(descriptor, block) if descriptor else None
+            ref = entry.bindings[key].template
+            assert (ref.path if ref else None) == path, (workflow_id, key)
+            checked += path is not None
+    assert checked >= 30
+
+
+def discovery_manifests() -> dict:
+    return discovery.bundled_workflow_manifests()
