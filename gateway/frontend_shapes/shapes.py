@@ -188,7 +188,7 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
 
     shape_id = "openai.images.multipart"
     body = "multipart"
-    files = "one"
+    files = "any"                  # an edit may take several pictures (a workflow with more than one required asset)
     standard_fields = image_extensions.STANDARD_IMAGE_EDIT_FIELDS
     not_object_text = "The request body must be a JSON object"
     intent = "image.edit"
@@ -264,6 +264,7 @@ class OpenAIImagesVariations(OpenAIImagesMultipart):
     """``/v1/images/variations``: one picture and no prompt, the narrowest of the image wires."""
 
     shape_id = "openai.images.variations"
+    files = "one"
     standard_fields = image_extensions.STANDARD_IMAGE_VARIATIONS_FIELDS
 
     def check_count(self, count: int) -> Response | None:
