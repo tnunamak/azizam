@@ -21,6 +21,7 @@ from gateway.frontend_shapes.shapes import (
     ImageJobs,
     OpenAIImagesJson,
     OpenAIImagesMultipart,
+    OpenAIImagesVariations,
     OpenAIVideoCreate,
     OpenAIVideoEdit,
 )
