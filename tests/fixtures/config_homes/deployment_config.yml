@@ -1008,6 +1008,14 @@ videos:
     # timeout (comfyui.video_timeout, 1800 s) is far above this.
     video-ltx-2.5-t2v:
       file: workflows/videos/video-ltx-2.5-t2v.json
+      node_roles:
+        prompt_node: "5"
+        negative_prompt_node: "6"
+        size_node: ["20", "21"]
+        length_nodes: ["22"]
+        frame_rate_nodes: ["23"]
+        seed_nodes: ["30", "31"]
+        save_node: "60"
       i2v_workflow: video-ltx-2.5-i2v
       chain_workflow: video-ltx-2.5-long  # seconds > max_seconds, or `shots`, runs the chain
       min_seconds: 1
@@ -1018,6 +1026,17 @@ videos:
       frame_rate: 24
     video-ltx-2.5-i2v:
       file: workflows/videos/video-ltx-2.5-i2v.json
+      node_roles:
+        prompt_node: "5"
+        negative_prompt_node: "6"
+        size_node: ["20", "21"]
+        length_nodes: ["22"]
+        frame_rate_nodes: ["23"]
+        seed_nodes: ["30", "31"]
+        save_node: "60"
+        image_node: "70"
+        image_strength_node: "79"
+        image_strength_default: 0.7
       chain_workflow: video-ltx-2.5-long
       requires_input_reference: true
       min_seconds: 1
@@ -1030,6 +1049,15 @@ videos:
     # 960x544 5 s = 120-250 s (t2v), 185 s (i2v), well under video_timeout.
     video-minimax-h3-t2v:
       file: workflows/videos/video-minimax-h3-t2v.json
+      node_roles:
+        prompt_node: "9"
+        size_node: ["6", "7"]
+        length_nodes: ["8"]
+        frame_rate_nodes: ["17"]
+        seed_nodes: ["10"]
+        save_node: "18"
+        steps_node: "12"
+        prompt_field: "prompt"
       i2v_workflow: video-minimax-h3-i2v
       chain_workflow: video-minimax-h3-long  # seconds > max_seconds, or `shots`, runs the chain
       min_seconds: 2
@@ -1041,6 +1069,16 @@ videos:
       length_offset: 5
     video-minimax-h3-i2v:
       file: workflows/videos/video-minimax-h3-i2v.json
+      node_roles:
+        prompt_node: "9"
+        size_node: ["6", "7"]
+        length_nodes: ["8"]
+        frame_rate_nodes: ["17"]
+        seed_nodes: ["10"]
+        save_node: "18"
+        steps_node: "12"
+        image_node: "20"
+        prompt_field: "prompt"
       chain_workflow: video-minimax-h3-long
       requires_input_reference: true
       min_seconds: 2
@@ -1057,6 +1095,17 @@ videos:
     # these are single-segment clips.
     video-ltx-2.5-keyframes:
       file: workflows/videos/video-ltx-2.5-keyframes.json
+      node_roles:
+        prompt_node: "5"
+        negative_prompt_node: "6"
+        size_node: ["20", "21"]
+        length_nodes: ["22"]
+        frame_rate_nodes: ["23"]
+        seed_nodes: ["30", "31"]
+        save_node: "60"
+        image_node: "70"
+        image_strength_node: "79"
+        image_strength_default: 0.7
       requires_input_reference: true
       requires_extensions: true
       min_seconds: 1
@@ -1067,6 +1116,20 @@ videos:
       frame_rate: 24
     video-ltx-2.5-keyframes-mid:
       file: workflows/videos/video-ltx-2.5-keyframes-mid.json
+      node_roles:
+        prompt_node: "5"
+        negative_prompt_node: "6"
+        size_node: ["20", "21"]
+        length_nodes: ["22"]
+        frame_rate_nodes: ["23"]
+        seed_nodes: ["30", "31"]
+        save_node: "60"
+        image_node: "70"
+        image_strength_node: "79"
+        image_strength_default: 0.7
+        mid_frame_index_node: "126"
+        mid_frame_strength_node: "125"
+        mid_frame_node: "120"
       requires_input_reference: true
       requires_extensions: true
       min_seconds: 1
@@ -1077,6 +1140,16 @@ videos:
       frame_rate: 24
     video-minimax-h3-keyframes:
       file: workflows/videos/video-minimax-h3-keyframes.json
+      node_roles:
+        prompt_node: "9"
+        size_node: ["6", "7"]
+        length_nodes: ["8"]
+        frame_rate_nodes: ["17"]
+        seed_nodes: ["10"]
+        save_node: "18"
+        steps_node: "12"
+        image_node: "20"
+        prompt_field: "prompt"
       requires_input_reference: true
       requires_extensions: true
       min_seconds: 2
@@ -1088,6 +1161,16 @@ videos:
       length_offset: 5
     video-minimax-h3-keyframes-mid:
       file: workflows/videos/video-minimax-h3-keyframes-mid.json
+      node_roles:
+        prompt_node: "9"
+        size_node: ["6", "7"]
+        length_nodes: ["8"]
+        frame_rate_nodes: ["17"]
+        seed_nodes: ["10"]
+        save_node: "18"
+        steps_node: "12"
+        image_node: "20"
+        prompt_field: "prompt"
       requires_input_reference: true
       requires_extensions: true
       min_seconds: 2
@@ -1107,6 +1190,25 @@ videos:
     # have at least 81 frames; longer clips use their first 81 frames.
     video-scail-2-replace:
       file: workflows/videos/video-scail-2-replace.json
+      node_roles:
+        prompt_node: "10"
+        video_node: "1"
+        size_node: ["20", "21"]
+        length_nodes: ["22"]
+        seed_nodes: ["30"]
+        save_node: "60"
+        prompt_field: "value"
+        first_frame_node: "70"
+        track_node: "18"
+        color_mask_node: "23"
+        probe_node: "71"
+        point_detect_node: "72"
+        sam_model_node: "15"
+        reference_raw_node: "2"
+        reference_text_node: "17"
+        reference_detect_node: "19"
+        reference_cropped_node: "6"
+        fit_canvas_node: "108"
       subject_select: true  # subject_index / source_point_*; warns when several people are tracked
       requires_extensions: true
       source_video_input: source_video
@@ -1119,7 +1221,7 @@ videos:
       length_step: 4
       length_offset: 1
       max_length: 81
-    # LTX-2.5 long video. Built in code (gateway/video_extend.py), not from a
+    # LTX-2.5 long video. Composed from a chain template (workflows/videos/chains/ltx25_chain.json), not from a
     # template file: a first segment (or a source video) followed by added
     # segments, each conditioned on the last ~1 s (a latent guide), with its own
     # prompt. Single stage (no x2 upscale), 960x512 by default. Serves
@@ -1128,15 +1230,15 @@ videos:
     video-ltx-2.5-long:
       builder: ltx25_chain
       # One-segment reference graph, bound by the manifest only; requests build
-      # their graph in code (gateway/video_extend.py) and never load this file.
+      # their graph from the chain template and never load this file.
       file: workflows/videos/video-ltx-2.5-long.json
       min_seconds: 1
       max_seconds: 40
       max_size: 1280x720
       default_size: 960x512
       frame_rate: 24
-    # MiniMax H3 long video (license as above). Built in code by the `h3_chain`
-    # engine (gateway/video_extend_h3.py): segments of up to `chain_segment_seconds`,
+    # MiniMax H3 long video (license as above). Composed by the `h3_chain`
+    # chain template (workflows/videos/chains/h3_chain.json): segments of up to `chain_segment_seconds`,
     # each pinned to the video so far (latent tail inside a request, decoded tail
     # + audio when extending an existing video) with the H3 Motion Context nodes.
     # Serves `h3-long`, `minimax-h3-long`, `shots` and `seconds` past 10 s on

@@ -141,9 +141,8 @@ class KeyframeDataTests(unittest.TestCase):
             self.assertNotIn("chain_workflow", cfg)
             for key in ("max_seconds", "max_size", "frame_rate", "length_step", "length_offset", "size_multiple"):
                 self.assertEqual(cfg.get(key), workflows[parent].get(key), (model, key))
-            meta = _graph(model)["_meta"]
-            self.assertEqual(meta["name"], model)
-            self.assertIn("inputs", _graph(model)[meta["image_node"]])
+            roles = cfg["node_roles"]
+            self.assertIn("inputs", _graph(model)[roles["image_node"]])
 
     def test_short_names_resolve(self) -> None:
         for alias, model in (
@@ -166,8 +165,9 @@ class KeyframeDataTests(unittest.TestCase):
             self.assertTrue(added, model)
             # nothing the parent graph had is gone, and the sampling settings are untouched
             self.assertTrue(set(theirs) <= set(ours), model)
-            for key in ("model_file", "frame_rate", "default_steps", "max_seconds", "default_size"):
-                self.assertEqual(ours["_meta"].get(key), theirs["_meta"].get(key), (model, key))
+            workflows = proxy.config["videos"]["workflows"]
+            for key, value in workflows[parent]["node_roles"].items():
+                self.assertEqual(workflows[model]["node_roles"].get(key), value, (model, key))
 
     def test_h3_last_picture_is_cropped_like_the_first_and_fed_to_last_frame(self) -> None:
         for model in ("video-minimax-h3-keyframes", "video-minimax-h3-keyframes-mid"):
@@ -227,7 +227,7 @@ class KeyframeDataTests(unittest.TestCase):
         self.assertEqual(g["109"]["inputs"]["latent"], ["46", 0])
         self.assertEqual(g["47"]["inputs"]["samples"], ["109", 2])
         # the first-frame strength of stage 2 is still the one the route's image_strength sets
-        self.assertEqual(g["_meta"]["image_strength_node"], "79")
+        self.assertEqual(proxy.config["videos"]["workflows"]["video-ltx-2.5-keyframes-mid"]["node_roles"]["image_strength_node"], "79")
         self.assertEqual(g["76"]["inputs"]["strength"], ["79", 0])
         self.assertEqual(g["79"]["inputs"]["value"], 0.7)
 
@@ -718,7 +718,7 @@ class FirstFrameOnlyParityTests(KeyframeRouteBase):
 
     def _expected(self, parent: str, edits: dict[str, dict[str, object]]) -> dict:
         graph = _graph(parent)
-        graph.pop("_meta")
+        graph.pop("_meta", None)
         for node, fields in edits.items():
             graph[node]["inputs"].update(fields)
         return graph

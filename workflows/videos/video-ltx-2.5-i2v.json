@@ -1,34 +1,4 @@
 {
- "_meta": {
-  "name": "video-ltx-2.5-i2v",
-  "description": "LTX-2.5 22B distilled image-to-video with synchronized audio. Two-stage: stage 1 at half resolution (8 steps, euler_ancestral, CFG 1), x2 spatial latent upscale, stage 2 refine (3 steps), tiled VAE decode. int8_convrot transformer + Gemma-4 12B int8_convrot encoder. Frames = seconds*fps+1. License: LTX-2.x Community License. Width/height MUST be multiples of 64 (stage 1 runs at half size, must be /32): 960x512, 1024x576, 1280x704. 960x544 silently becomes 960x512. Tested: 5 s 960x512 = 45 s warm, 1280x704 = 139 s.",
-  "model_file": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
-  "frame_rate": 24,
-  "default_steps": 8,
-  "max_seconds": 10,
-  "default_size": "960x512",
-  "prompt_node": "5",
-  "negative_prompt_node": "6",
-  "size_node": [
-   "20",
-   "21"
-  ],
-  "length_nodes": [
-   "22"
-  ],
-  "frame_rate_nodes": [
-   "23"
-  ],
-  "seed_nodes": [
-   "30",
-   "31"
-  ],
-  "save_node": "60",
-  "image_node": "70",
-  "image_strength_node": "79",
-  "max_size": "1280x704",
-  "image_strength_default": 0.7
- },
  "1": {
   "class_type": "UNETLoader",
   "inputs": {
