@@ -26763,10 +26763,16 @@ class _WorkflowRunPort:
         adapter sees (``PinnedRuntime``); the job's inputs, generated values and media go in the request body. The
         result bundle is committed by ``engine_protocol.jobs.run`` itself."""
         from gateway.engine_protocol import jobs as protocol_jobs
+        from gateway.engine_protocol.media import GatewayAssetStore
         engine = _workflow_engine(ctx.pin.envelope.binding_key)
         if engine is None:
             raise ProtocolError("No reviewed adapter is registered for this job.", code="adapter_not_registered")
-        service_id, record, protocol, adapter = engine
+        service_id, record, protocol, _ = engine
+        # The result files are kept for the person who asked, so the adapter is built over that person's asset store.
+        owner = _asset_owner_key(ctx.caller) if ctx.caller is not None else None
+        adapter = reviewed_adapters.adapter_for_backend(
+            record, next(iter(protocol.serves), ""),
+            assets=GatewayAssetStore(store=store_asset_bytes, path_for=asset_cache_path, owner=owner))
 
         def connection() -> AdapterConnection:
             _require_egress_lease(service_id)

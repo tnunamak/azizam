@@ -15,6 +15,7 @@ only place their ids are written next to their code.
 
 from __future__ import annotations
 
+import inspect
 import threading
 import time
 from pathlib import Path
@@ -44,9 +45,9 @@ def _inline_tts(_doc: Any) -> EngineAdapter:
     return inline_tts.InlineTtsAdapter()
 
 
-def _node_graph(doc: Any) -> EngineAdapter:
+def _node_graph(doc: Any, assets: Any = None) -> EngineAdapter:
     from gateway.engine_protocol import node_graph
-    return node_graph.NodeGraphAdapter(doc)
+    return node_graph.NodeGraphAdapter(doc, assets=assets)
 
 
 def _chunked_stt(doc: Any) -> EngineAdapter:
@@ -121,8 +122,20 @@ def protocol_for_backend(record: Mapping[str, Any], capability: str) -> descript
     return found[0]
 
 
-def _build(doc: description.ProtocolDescription) -> EngineAdapter:
+def _with_assets(factory: AdapterFactory, assets: Any) -> AdapterFactory:
+    """``factory`` as a factory of adapters that keep results in ``assets``, when the factory takes a store."""
+    if "assets" not in inspect.signature(factory).parameters:
+        return factory
+    return lambda doc: factory(doc, assets=assets)  # type: ignore[call-arg]
+
+
+def _build(doc: description.ProtocolDescription, assets: Any = None) -> EngineAdapter:
     adapter_id = doc.adapter_id or ""
+    if assets is not None:      # an adapter bound to one caller's store is never shared
+        registry = AdapterRegistry({doc.id: doc}, assets=assets)
+        for known, factory in {**_BUILTIN_FACTORIES, **_FACTORIES}.items():
+            registry.register(known, _with_assets(factory, assets))
+        return registry.adapter_for(doc.id)
     with _LOCK:
         cached = _BUILT.get((adapter_id, id(doc)))
         if cached is not None:
@@ -139,8 +152,9 @@ def _build(doc: description.ProtocolDescription) -> EngineAdapter:
     return built
 
 
-def adapter_for_backend(record: Mapping[str, Any], capability: str) -> EngineAdapter:
+def adapter_for_backend(record: Mapping[str, Any], capability: str, *, assets: Any = None) -> EngineAdapter:
     """The reviewed adapter a backend record selects for ``capability`` (cached per description).
+    With ``assets``, a fresh adapter that keeps the result files in that store (not cached).
 
     A description that names an adapter nobody registered, or one of another interface version, is skipped for the
     next candidate, ending at the shipped description.
@@ -148,7 +162,7 @@ def adapter_for_backend(record: Mapping[str, Any], capability: str) -> EngineAda
     refusal: ProtocolError | None = None
     for doc in _candidates(record, capability):
         try:
-            return _build(doc)
+            return _build(doc, assets)
         except ProtocolError as error:
             refusal = error
     raise refusal or ProtocolError(f"No reviewed adapter is registered for '{capability}'.", code="adapter_not_registered")
