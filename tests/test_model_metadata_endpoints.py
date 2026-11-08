@@ -51,31 +51,17 @@ def _fake_decision_models(*_args, **_kwargs):
     ]
 
 
+async def _no_servable_target(*_args, **_kwargs):
+    return None, None
+
+
 async def _no_context_probe(*_args, **_kwargs):
     return None
 
 
 QWEN_PATH = "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+OTHER_PATH = "/media/windows/AI Models/LLMs/GGUF/Plain-Text-8B-Q4_K_M.gguf"
 LOADED_ID = QWEN_PATH.rsplit("/", 1)[-1]
-
-
-def _loaded(path: str | None):
-    """A fake `_current_loaded_llm_model_ids` for the kobold file at `path` (None: nothing loaded)."""
-    ids: set[str] = set()
-    declarations: set[str] = set()
-    if path:
-        name = Path(path).name
-        ids = {*proxy.USE_LOADED_MODEL_ALIASES, path, name}
-        ids |= proxy._role_catalog_ids_for_loaded_path(backend="kobold", loaded_path=path, loaded_model_id=name)
-        declarations = proxy._declarations_for_loaded_model("kobold", path)
-
-    async def fake(*_args, **kwargs):
-        metadata_ids = kwargs.get("metadata_ids")
-        if metadata_ids is not None:
-            metadata_ids.update(declarations)
-        return set(ids)
-
-    return fake
 
 
 def _assert_declared_metadata(test: unittest.TestCase, entry: dict, declaration: dict) -> None:
@@ -112,7 +98,7 @@ def _start_model_list_patches(test: unittest.TestCase, *, real_loaded_state: boo
     if not real_loaded_state:
         patches.extend([
             patch.object(proxy, "_probed_context_window", _no_context_probe),
-            patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(None)),
+            patch.object(proxy, "_first_servable_loaded_llm_target", _no_servable_target),
         ])
     for patcher in patches:
         patcher.start()
@@ -260,7 +246,8 @@ class RequestLoadedMetadataTests(unittest.TestCase):
     def setUp(self) -> None:
         _start_model_list_patches(self, real_loaded_state=True)
         self.requests: list[tuple[str, str]] = []
-        self.active = "kobold"
+        self.healthy = {"kobold", "other"}
+        self.loaded_paths = {"kobold": QWEN_PATH, "other": OTHER_PATH}
         # A text-only fallback exposes stale inheritance after a backend switch
         # and accidental loaded-state inheritance for catalog-only profiles.
         fallback = {"type": "language", "input_modalities": ["text"],
@@ -280,6 +267,16 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                            *[{"id": alias, "context_window": 202752,
                               "model_metadata": copy.deepcopy(fallback)} for alias in sorted(DYNAMIC)],
                        ]},
+            "other": {"base_url": "http://other.test", "health_endpoint": "/health",
+                      "priority": 2, "state_type": "llama_cpp",
+                      "loaded_model_identity": "path",
+                      "protocol": "openai-compatible",
+                      "capabilities": ["chat", "openai"], "models": [
+                          {"id": "plain-text", "upstream_model": "loaded-other",
+                           "activation_model": OTHER_PATH, "model": "deployment-other",
+                           "model_metadata": {"type": "language", "input_modalities": ["text"],
+                                              "output_modalities": ["text"], "tags": ["tool-use"]}},
+                      ]},
         }
         self.backends["kobold"]["models"][0]["model_metadata"].update(
             input_modalities=["text", "image"], tags=["vision", "reasoning", "tool-use"])
@@ -297,7 +294,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
             derived_patch("LLM_BACKEND_HOSTS", {
                 name: record["base_url"] for name, record in self.backends.items()}),
             patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry),
-            patch.object(proxy, "currently_loaded_model", return_value=QWEN_PATH),
+            patch.object(proxy, "currently_loaded_model", side_effect=lambda backend: self.loaded_paths.get(backend)),
             patch.object(proxy, "_MODEL_CONTEXT_CACHE", {}),
             patch.object(proxy, "_litellm_models_payload", self._catalog_payload),
             patch.object(proxy.httpx, "AsyncClient",
@@ -313,14 +310,14 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.requests.append((request.url.host, request.url.path))
         backend = request.url.host.removesuffix(".test")
         if request.url.path == "/health":
-            return httpx.Response(200 if backend == self.active else 503)
+            return httpx.Response(200 if backend in self.healthy else 503)
         self.assertEqual(request.url.path, "/v1/models")
         return httpx.Response(200, json={"data": [{"id": f"loaded-{backend}", "context_window": 8192}]})
 
     async def _catalog_payload(self, *args, **kwargs):
         payload = await _fake_litellm_payload(*args, **kwargs)
         payload["data"].extend({"id": model_id, "object": "model", "created": 0}
-                               for model_id in (LOADED_ID, "private-public"))
+                               for model_id in (LOADED_ID, "private-public", "plain-text"))
         return payload
 
     def _payload(self, *, headers: dict | None = None) -> dict:
@@ -350,7 +347,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return {item["id"]: item for item in response.json()["data"]}
 
-    def test_registry_activation_model_inherits_without_duplicate_role(self) -> None:
+    def test_served_id_differs_from_the_declaration_the_activation_path_names(self) -> None:
         target = self._route_current()
         self.assertEqual(target.model, "loaded-kobold")
         self.assertEqual(proxy._roles(), {})
@@ -359,13 +356,85 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.assertNotEqual(self.backends["kobold"]["models"][0]["model"], target.model)
         activation = proxy._configured_litellm_local_model_target("private-public", service_id="kobold")
         self.assertEqual(activation.model, QWEN_PATH)
+        # The selector's observation names the declaration through the loaded path.
+        self.assertEqual(target.loaded_path, QWEN_PATH)
+        self.assertEqual(proxy._declarations_for_loaded_model("kobold", target.loaded_path), {"private-public"})
 
-    def test_listing_keeps_declared_metadata_without_a_loaded_state_lookup(self) -> None:
-        listed = self._list()
+    def _served(self, *, headers=None):
+        """List the models once, counting selector calls; returns (entries, calls)."""
+        real = proxy._first_servable_loaded_llm_target
+        calls: list[str] = []
+
+        async def spy(*args, **kwargs):
+            calls.append("selector")
+            return await real(*args, **kwargs)
+
+        with patch.object(proxy, "_first_servable_loaded_llm_target", spy):
+            proxy._HEALTH_EVIDENCE_CACHE.clear()
+            proxy._RESOURCE_FACT_CACHE.clear()
+            return self._list(), calls
+
+    def test_aliases_inherit_from_the_backend_current_serves(self) -> None:
+        listed, calls = self._served()
+        self.assertEqual(calls, ["selector"])
         for alias in DYNAMIC:
-            _assert_declared_metadata(
-                self, listed[alias], proxy._model_metadata_sources().declared(alias))
-        self.assertEqual(self.requests, [])
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias]["architecture"]["input_modalities"], ["text", "image"])
+                self.assertIn("vision", listed[alias]["tags"])
+
+    def test_no_inheritance_from_a_backend_the_selector_skips(self) -> None:
+        refuse = proxy.openai_error_response("refused", status_code=503, error_type="service_unavailable")
+        with patch.object(proxy, "_service_availability_response",
+                          side_effect=lambda backend, **_kw: refuse if backend == "kobold" else None):
+            listed, calls = self._served()
+        self.assertEqual(calls, ["selector"])
+        for alias in DYNAMIC:
+            with self.subTest(alias=alias):
+                self.assertEqual(listed[alias]["architecture"]["input_modalities"], ["text"])
+                self.assertNotIn("vision", listed[alias]["tags"])
+                self.assertEqual(listed[alias]["tags"], ["tool-use"])
+
+    def test_no_inheritance_from_a_drained_backend(self) -> None:
+        self.healthy = {"other"}
+        listed, _ = self._served()
+        for alias in DYNAMIC:
+            with self.subTest(alias=alias):
+                self.assertNotIn("vision", listed[alias]["tags"])
+                self.assertEqual(listed[alias]["tags"], ["tool-use"])
+
+    def test_an_empty_backend_is_skipped_for_the_next_loaded_one(self) -> None:
+        self.loaded_paths["kobold"] = None
+        listed, _ = self._served()
+        self.assertNotIn("vision", listed["current"]["tags"])
+
+    def test_alias_keeps_its_own_declaration_when_nothing_is_servable(self) -> None:
+        self.healthy = set()
+        listed, calls = self._served()
+        self.assertEqual(calls, ["selector"])
+        declarations = proxy._model_metadata_sources().declared
+        for alias in DYNAMIC:
+            with self.subTest(alias=alias):
+                _assert_declared_metadata(self, listed[alias], declarations(alias))
+
+    def test_served_model_with_no_declaration_keeps_the_alias_declaration(self) -> None:
+        self.loaded_paths["kobold"] = "/media/windows/AI Models/LLMs/GGUF/Undeclared-24B.gguf"
+        listed, _ = self._served()
+        declarations = proxy._model_metadata_sources().declared
+        _assert_declared_metadata(self, listed["current"], declarations("current"))
+
+    def test_current_fast_drops_reasoning_when_its_policy_turns_thinking_off(self) -> None:
+        with patch.object(proxy, "_policy_turns_reasoning_off", lambda model_id: model_id == "current-fast"):
+            listed, _ = self._served()
+        self.assertIn("reasoning", listed["current"]["tags"])
+        self.assertNotIn("reasoning", listed["current-fast"]["tags"])
+        self.assertIn("vision", listed["current-fast"]["tags"])
+
+    def test_no_observation_when_the_aliases_are_not_listed(self) -> None:
+        hidden = authenticated(identity(plan_for("no-aliases", models=["private-public"])))
+        with hidden:
+            listed, calls = self._served()
+        self.assertNotIn("current", listed)
+        self.assertEqual(calls, [])
 
     def test_context_probe_cache_is_honored(self) -> None:
         # Listing performs no loaded-state lookup, but the context-window
@@ -396,11 +465,6 @@ UI_ICON_FOR_CAPABILITY = {
 
 class ModelsPageAgreesWithModelListTests(unittest.TestCase):
     """The Models page classification and `/v1/models` `type` never disagree for one id."""
-
-    def setUp(self) -> None:
-        patcher = patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(QWEN_PATH))
-        patcher.start()
-        self.addCleanup(patcher.stop)
 
     def _catalog_rows(self) -> list[dict]:
         registry = proxy.ADMIN_STORE.get_service_registry()
@@ -435,9 +499,6 @@ class ModelsPageAgreesWithModelListTests(unittest.TestCase):
 
     def test_catalog_rows_have_the_type_v1_models_lists(self) -> None:
         _start_model_list_patches(self)
-        loaded = patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(QWEN_PATH))
-        loaded.start()
-        self.addCleanup(loaded.stop)
         response = TestClient(proxy.app).get("/v1/models")
         self.assertEqual(response.status_code, 200, response.text)
         listed = {entry["id"]: entry for entry in response.json()["data"]}
