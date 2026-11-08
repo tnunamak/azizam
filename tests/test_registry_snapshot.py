@@ -312,3 +312,17 @@ def test_the_fake_store_and_the_real_snapshot_agree_on_what_a_save_would_clash_w
     store = FakeStore({CONTRACT["id"]: fake_entry(CONTRACT)})
     clash = store.check(contract("x.y", aliases=["poster-generate-demo"]), workflow_id="x.y", snapshot=snap)
     assert [p.code for p in clash.errors] == [ID_CLASH]
+
+
+def test_load_current_reads_the_stored_document_and_uses_its_generation_as_the_revision(tmp_path):
+    from gateway import admin_store
+
+    path = tmp_path / "admin.db"
+    admin_store.init_db(path)
+    first = rs.load_current(path)
+    assert first.revision == 0 and len(first.workflows) == 38
+    written = admin_store.get_service_registry_with_generation(path=path)
+    value = dict(written["value"]) if written else {"services": {}}
+    result = admin_store.write_service_registry(value, expected_generation=written["operator_settings_generation"] if written else 0, path=path)
+    second = rs.load_current(path)
+    assert second.revision == result["operator_settings_generation"] and second.digest == first.digest

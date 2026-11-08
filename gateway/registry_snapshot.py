@@ -432,6 +432,17 @@ def build(document: Mapping[str, Any] | None, bundled: BundledRelease | Mapping[
                     names=names, _intents=MappingProxyType({k: tuple(v) for k, v in intents.items()}))
 
 
+def load_current(path: Any, *, model_aliases: Mapping[str, Any] | None = None) -> Snapshot:
+    """The snapshot of the service-registry document stored at ``path``: the revision is its CAS generation. Raises
+    ``SnapshotBuildError`` when the revision does not build, so the caller keeps the snapshot it serves."""
+    from gateway import admin_store, service_registry
+
+    record = admin_store.get_service_registry_json_with_generation(path=path)
+    document = service_registry.load_service_registry(path=path) or {}
+    generation = int(record["operator_settings_generation"]) if record else 0
+    return build(document, bundled_release(), generation=generation, model_aliases=model_aliases)
+
+
 # --------------------------------------------------------------------------------------------------------- provider
 
 
