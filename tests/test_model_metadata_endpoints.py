@@ -155,6 +155,11 @@ class ModelListEndpointTests(unittest.TestCase):
         with_metadata = self._list()
         with patch.object(mm, "annotate_entries", lambda *_a, **_k: None):
             without_metadata = self._list()
+        # An engine-backed entry is marked from its metadata `type` (docs/api/MODEL_METADATA.md), so the mark is the
+        # one field the metadata pass may change; tests/test_models_availability.py owns it.
+        for payload in (with_metadata, without_metadata):
+            for entry in payload["data"]:
+                entry.pop("azizam_availability", None)
         self.assertEqual(_strip_contract_fields(with_metadata), without_metadata)
 
     def test_anthropic_list_is_unchanged(self) -> None:

@@ -13,9 +13,7 @@ from gateway.manifests import (
     ManifestError,
     validate_manifest,
 )
-from gateway.mesh_manifest import MeshManifestError
 from tests.contract_error_corpus import (
-    BAD_BINDING,
     BAD_INPUT,
     CASES,
     EXPECTED_ERRORS,
@@ -26,7 +24,7 @@ from tests.contract_error_corpus import (
     edited,
 )
 
-RAISED_BEFORE = {"ManifestError": ManifestError, "SelectorError": sel.SelectorError, "MeshManifestError": MeshManifestError}
+RAISED_BEFORE = {"ManifestError": ManifestError, "SelectorError": sel.SelectorError}
 
 
 def raised(case: str) -> ContractErrors:

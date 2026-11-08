@@ -585,6 +585,8 @@ LITELLM_PID_FILE=$WORK/child.pid
 LITELLM_RUNTIME_HASH_FILE=$WORK/runtime-hash
 AZIZAM_ADMIN_DB_PATH=unused
 AZIZAM_LITELLM_RECEIPT_TIMEOUT_S=$2
+# Unset first: the special SECONDS also counts real time, so a slow host would add a second.
+unset SECONDS
 SECONDS=0
 SLEEPS=0
 python3() { :; }
