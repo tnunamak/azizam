@@ -585,6 +585,11 @@ class FrontendRow:
     # The answer form a request that names none gets (``runtime_policy.default_answer``); one of the forms the row's shape
     # accepts. None: the shape's own rule.
     default_answer: str | None = None
+    # The words the request receipt of this row uses (``runtime_policy.receipt_words``). "outcome": succeeded, failed,
+    # cancelled, the reason recorded as ``terminal_reason`` and the workflow id as the workflow. "http": ok, rejected,
+    # error by the answer's HTTP status, no terminal reason, and the workflow named without its intent prefix, as the
+    # image routes always wrote them.
+    receipt_words: Literal["outcome", "http"] = "outcome"
 
 
 class FrontendShape(Protocol):

@@ -3,6 +3,7 @@ rendering a refusal. Nothing here names an intent, a workflow, a model or an eng
 
 from __future__ import annotations
 
+import contextvars
 import json
 from dataclasses import dataclass
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
@@ -32,6 +33,23 @@ FORM_MAX_FILES = 100                # the file parts the parser takes; a part wi
 FORM_PART_BYTES = 1 << 20           # the most one text part may hold, and all the text parts together
 FORM_PART_HEAD_BYTES = 8 << 10      # the boundary and headers around one part
 WORKFLOW_AMBIGUOUS = "workflow_ambiguous"
+
+
+_NOTES: contextvars.ContextVar[list[tuple[str, str, str | None]]] = contextvars.ContextVar("input_notes")
+
+
+def begin_notes() -> list[tuple[str, str, str | None]]:
+    """Start the list of inputs this request's shape accepts, ignores or refuses; the row server writes it to the receipt."""
+    notes: list[tuple[str, str, str | None]] = []
+    _NOTES.set(notes)
+    return notes
+
+
+def note(name: str, *, rejected: str | None = None, ignored: str | None = None) -> None:
+    """The shape met input ``name``: accepted, or refused (``rejected`` is the reason), or ignored (``ignored``)."""
+    notes = _NOTES.get(None)
+    if notes is not None:
+        notes.append((name, "rejected" if rejected else "ignored" if ignored else "accepted", rejected or ignored))
 
 
 def error_response(status: int, message: str, *, kind: str = "invalid_request_error", code: str | None = None,

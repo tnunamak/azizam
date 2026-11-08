@@ -27037,7 +27037,22 @@ _RUN_RECEIPT_OWNERS: dict[str, "_RunReceiptOwner"] = {}
 
 
 class _RunReceiptOwner(ReceiptLifecycleOwner):
-    """A request receipt for a run. A handed-off owner is kept here so the run core can close it by request id."""
+    """A request receipt for a run. A handed-off owner is kept here so the run core can close it by request id.
+
+    With ``http_words`` the receipt closes with the words the image routes always wrote: ok, rejected or error by the
+    HTTP status of the answer (a closing the run core does is told by the job's outcome), and no terminal reason."""
+
+    def __init__(self, receipt: RouteReceipt, *, http_words: bool = False) -> None:
+        super().__init__(receipt, record_reason=not http_words)
+        self._http_words = http_words
+
+    def report(self, *, status: str, reason: str, http: int | None = None) -> None:
+        if self._http_words:
+            if http is not None:
+                status = "ok" if http < 400 else "rejected" if http < 500 else "error"
+            else:
+                status = {"succeeded": "ok", "failed": "error"}.get(status, status)
+        super().report(status=status, reason=reason)
 
     def handoff(self) -> "_RunReceiptOwner":
         super().handoff()
@@ -27054,15 +27069,28 @@ def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -
     return _RunReceiptOwner(RouteReceipt(
         protocol=row.receipt_protocol, intent=row_routes.route_intent(row, path), path=path, request_id=request_id,
         app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
-        api_key_name=identity.name if identity else None))
+        api_key_name=identity.name if identity else None), http_words=row.receipt_words == "http")
+
+
+def _record_row_inputs(owner: _RunReceiptOwner, notes: Any) -> None:
+    for name, kind, reason in notes:
+        _record_image_input(owner.receipt, name, rejected_reason=(reason or kind) if kind == "rejected" else None,
+                            ignored_reason=(reason or kind) if kind == "ignored" else None)
 
 
 def _name_row_receipt(owner: _RunReceiptOwner, workflow_id: str, record_revision: int | None,
                       contract_digest: str | None) -> None:
-    owner.receipt.resolved_workflow = workflow_id
-    owner.receipt.attach_manifest(manifest_id=workflow_id,
-                                  manifest_version=None if record_revision is None else str(record_revision),
-                                  manifest_hash=contract_digest)
+    receipt = owner.receipt
+    version = None if record_revision is None else str(record_revision)
+    name = workflow_id
+    if owner._http_words:
+        # The image routes named the workflow by what follows its intent, and its version was the contract's own.
+        name = workflow_id.removeprefix(f"{receipt.intent}.")
+        receipt.requested_workflow = name
+        entry = WORKFLOW_SNAPSHOTS.current().get(workflow_id) if WORKFLOW_SNAPSHOTS is not None else None
+        version = str(entry.contract.get("version")) if entry is not None and entry.contract.get("version") else version
+    receipt.resolved_workflow = name
+    receipt.attach_manifest(manifest_id=workflow_id, manifest_version=version, manifest_hash=contract_digest)
 
 
 def _pinned_of_job(job_id: str) -> Any:
@@ -27087,6 +27115,7 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     open_receipt=_open_row_receipt,
     name_receipt=_name_row_receipt,
     pinned=_pinned_of_job,
+    record_inputs=_record_row_inputs,
 )
 
 

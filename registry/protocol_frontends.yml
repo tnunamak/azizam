@@ -901,6 +901,7 @@ frontends:
     shape: openai.images.json
     mode: sync
     receipt_protocol: openai.images
+    receipt_opens: before_policy
     strictness: exact
     lists_as_model: true
     selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "image/*"}}}
@@ -908,11 +909,12 @@ frontends:
       - methods: [POST]
         canonical: /v1/images/generations
         aliases: [/openai/v1/images/generations]
-        runtime_policy: {default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+        runtime_policy: {receipt_words: http, default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
   - id: images-edits
     shape: openai.images.multipart
     mode: sync
     receipt_protocol: openai.images
+    receipt_opens: before_policy
     strictness: exact
     lists_as_model: true
     selects: {match: {inputs: {prompt: {type: string}, source_image: {media_type: "image/*"}}, outputs: {media_type: "image/*"}}}
@@ -920,28 +922,30 @@ frontends:
       - methods: [POST]
         canonical: /v1/images/edits
         aliases: [/openai/v1/images/edits]
-        runtime_policy: {default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.edit, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+        runtime_policy: {receipt_words: http, default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.edit, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
   - id: images-variations
     shape: openai.images.variations
     mode: sync
     receipt_protocol: openai.images
+    receipt_opens: before_policy
     strictness: exact
     selects: {match: {inputs: {source_image: {media_type: "image/*"}}, outputs: {media_type: "image/*"}}}
     routes:
       - methods: [POST]
         canonical: /v1/images/variations
         aliases: [/openai/v1/images/variations]
-        runtime_policy: {default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.edit, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+        runtime_policy: {receipt_words: http, default_answer: b64_json, job_retries: none, protocol: openai.images, intent: image.edit, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
   - id: image-jobs
     shape: openai.images.jobs
     mode: job
     receipt_protocol: openai.images
+    receipt_opens: before_policy
     strictness: exact
     selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "image/*"}}}
     routes:
       - methods: [POST]
         canonical: /gateway/v1/media/jobs/image-generations
-        runtime_policy: {default_answer: b64_json, job_failure_text: category_copy, protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+        runtime_policy: {receipt_words: http, default_answer: b64_json, job_failure_text: category_copy, protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
   - id: audio-generate
     shape: openai.audio.json
     mode: sync

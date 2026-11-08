@@ -144,6 +144,7 @@ class Shape:
     async def to_run_request(self, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
                              spool: RequestSpool) -> RunRequest | Response:
         uploads: list[tuple[str, Any]] = []
+        request.state.input_notes = _wire.begin_notes()
         if self.body == "multipart":
             read = await _wire.split_form(request, self.form_limits(row, snapshot, spool), self.unreadable_form)
             if isinstance(read, Response):

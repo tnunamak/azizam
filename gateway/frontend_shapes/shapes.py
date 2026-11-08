@@ -63,9 +63,17 @@ class OpenAIImagesJson(Shape):
         resolver = DEFAULT_WORKFLOWS.get(self.shape_id)
         return resolver() if resolver is not None else None
 
+    def front(self, fields: Mapping[str, Any]) -> Response | None:
+        """Hook: the first checks of the wire, in the order its clients met them, and the inputs they accept."""
+        _wire.note("model")
+        _wire.note("size")
+        return None
+
     def precheck(self, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
         if not fields.get("prompt"):
+            _wire.note("prompt", rejected="missing")
             return _wire.error_response(400, "prompt is required")
+        _wire.note("prompt")
         return None
 
     def no_such_model(self, target: str) -> Response | None:
@@ -101,6 +109,8 @@ class OpenAIImagesJson(Shape):
 
         unknown = image_extensions.detect_unknown_top_level_fields({**fields, **dict.fromkeys(upload_names)}, self.standard_fields)
         if unknown:
+            for name, reason in unknown.items():
+                _wire.note(name, rejected=reason)
             name, message = next(iter(unknown.items()))
             return _wire.error_response(400, message, param=name, code="unknown_parameter")
         extensions = fields.get("extensions")
@@ -113,31 +123,52 @@ class OpenAIImagesJson(Shape):
                 return refuse("extensions must be a JSON object string", "extensions", "invalid_json")
             fields["extensions"] = extensions
 
+        refused = self.front(fields)
+        if refused is not None:
+            return refused
         background, problem = image_output.parse_image_background(fields.get("background"))
         if problem:
+            _wire.note("background", rejected=problem)
             return refuse(problem, "background", "invalid_value")
+        if fields.get("background") is not None:
+            _wire.note("background")
         output_format, problem = image_output.parse_output_format(fields.get("output_format"))
         if problem:
+            _wire.note("output_format", rejected=problem)
             return refuse(problem, "output_format", "invalid_value")
+        if sent("output_format"):
+            _wire.note("output_format")
         conflict = image_output.background_format_conflict(background or "auto", output_format)
         if conflict:
+            _wire.note("background", rejected="conflicts_with_output_format")
             return refuse(conflict, "background", "invalid_value")
         compression, problem = image_output.parse_output_compression(fields.get("output_compression"), output_format)
         if problem:
+            _wire.note("output_compression", rejected=problem)
             return refuse(problem, "output_compression", "invalid_value")
+        if sent("output_compression"):
+            _wire.note("output_compression")
         quality, problem = image_output.parse_quality(fields.get("quality"))
         if problem:
+            _wire.note("quality", rejected=problem)
             return refuse(problem, "quality", "invalid_value")
+        if sent("quality"):
+            _wire.note("quality")
         count = fields.get("n", 1)
         if isinstance(count, str) and count.strip().lstrip("+-").isdigit():     # a form field is text
             count = int(count)
         if isinstance(count, bool) or not isinstance(count, int):
+            _wire.note("n", rejected="not_integer")
             return refuse("n must be an integer", "n")
         if not 1 <= count <= MAX_IMAGES:
+            _wire.note("n", rejected="out_of_range")
             return refuse(f"n must be between 1 and {MAX_IMAGES}", "n")
+        _wire.note("n")
         form = fields.get("response_format") or None
         if form is not None and form not in ANSWER_FORMS:
+            _wire.note("response_format", rejected="unsupported_value")
             return _wire.error_response(400, "response_format must be 'b64_json' or 'url'")
+        _wire.note("response_format")
         options: dict[str, Any] = {}
         for name, value in (("n", count), ("quality", quality), ("output_format", output_format), ("output_compression", compression),
                             ("background", background)):
@@ -193,14 +224,23 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     def unreadable_form(self) -> Response:
         return client_errors.client_error(400, "invalid_form", error_type="invalid_request_error")
 
-    def precheck(self, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
+    def front(self, fields: Mapping[str, Any]) -> Response | None:
         if read_size(fields.get("size")) is False:
+            _wire.note("size", rejected="invalid_dimensions")
             return _wire.error_response(400, "size must be 'auto' or WIDTHxHEIGHT with positive integers", param="size",
                                         code=None, null_code=True)
-        count = len([name for name, _ in uploads if name in IMAGE_PARTS])
-        if count == 0:
+        _wire.note("model")
+        if fields.get("size"):
+            _wire.note("size")
+        return None
+
+    def precheck(self, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
+        names = [name for name, _ in uploads if name in IMAGE_PARTS]
+        if not names:
+            _wire.note(IMAGE_PARTS[1], rejected="missing")
             return _wire.error_response(400, "image is required")
-        return self.check_count(count)
+        _wire.note(IMAGE_PARTS[0] if IMAGE_PARTS[0] in names else IMAGE_PARTS[1])
+        return self.check_count(len(names))
 
     def check_count(self, count: int) -> Response | None:
         return None
@@ -239,19 +279,30 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
     def postcheck(self, entry: WorkflowEntry, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
         name = entry.id.removeprefix(f"{entry.contract.get('intent')}.")
         if _wire.entry_required(entry, "prompt") is True and not fields.get("prompt"):
+            _wire.note("prompt", rejected="missing")
             return _wire.error_response(400, "prompt is required")
+        if fields.get("prompt"):
+            _wire.note("prompt")
+        elif not _wire.declared(entry, "prompt"):
+            _wire.note("prompt", ignored="workflow does not use prompt")
         pictures = len([part for part, _ in uploads if part in IMAGE_PARTS])
         slots = [asset for asset in _wire.asset_input_names(entry) if asset != MASK_PART]
         needed = len([asset for asset in slots if _wire.entry_required(entry, asset) is True])
         if pictures < needed:
+            _wire.note(IMAGE_PARTS[0], rejected="missing_required_image")
             return _wire.error_response(400, f"workflow {name} requires at least {needed} input image(s); {pictures} were provided",
                                         param="image[]", code="missing_required_image")
         if pictures > len(slots):
+            _wire.note(IMAGE_PARTS[0], rejected="too_many_images")
             return _wire.error_response(400, f"workflow {name} accepts at most {len(slots)} input image(s); {pictures} were provided",
                                         param="image[]", code="too_many_images")
-        if _wire.entry_required(entry, MASK_PART) is True and not any(part == MASK_PART for part, _ in uploads):
+        masked = any(part == MASK_PART for part, _ in uploads)
+        if _wire.entry_required(entry, MASK_PART) is True and not masked:
+            _wire.note(MASK_PART, rejected="missing")
             return _wire.error_response(400, f"mask is required for workflow input {MASK_PART}", param=MASK_PART,
                                         code="missing_required_parameter")
+        if masked:
+            _wire.note(MASK_PART)
         return None
 
 
