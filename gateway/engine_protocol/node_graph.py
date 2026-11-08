@@ -562,6 +562,18 @@ class NodeGraphAdapter:
             raise MalformedResponse("No prompt_id returned")
         return JobRef(op, str(prompt_id))
 
+    def compile(self, op: str, request: CanonicalRequest) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The graph a manifest-backed request compiles to, and the prompt body that carries it: ``(graph, payload)``. A
+        round that polls the prompt names nodes of ``graph`` in a failure."""
+        manifest = request.params.get("manifest")
+        if not isinstance(manifest, Mapping):
+            raise UnknownOperation(f"The node-graph adapter submits {GRAPH_SUBMIT}, or an operation that carries a "
+                                   f"manifest; '{op}' carries none.")
+        pinned = request.params.get("template")
+        template = self._pinned_template(pinned) if pinned is not None else self._template(manifest)
+        graph = compile_workflow(manifest, self.binding, template, request.body)
+        return graph, build_submit_payload(graph, self._derive_ui, client_id=self.client_id)
+
     def _workflow_payload(self, op: str, request: CanonicalRequest) -> dict[str, Any]:
         """The prompt body of a manifest-backed request, compiled now from the request: the graph, this adapter's client
         id and any UI twin. Nothing is cached on the request, so the body is read at the moment it is sent."""
