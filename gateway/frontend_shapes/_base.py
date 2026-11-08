@@ -119,11 +119,20 @@ class Shape:
                 taken[part] = free.pop(0)
         return taken
 
+    def form_limits(self, row: FrontendRow, snapshot: RegistrySnapshot, spool: RequestSpool) -> _wire.FormLimits:
+        """The most one form may hold: as many file parts as the wire carries (one, or as many as the most asset inputs
+        a workflow the row selects declares), each as large as the spool accepts."""
+        if self.files == "one":
+            file_slots = 1
+        else:
+            file_slots = max((len(_wire.asset_input_names(entry)) for entry in _wire.candidates(snapshot, row)), default=0)
+        return _wire.FormLimits(file_slots=file_slots, max_file_bytes=getattr(spool, "max_file_bytes", None))
+
     async def to_run_request(self, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
                              spool: RequestSpool) -> RunRequest | Response:
         uploads: list[tuple[str, Any]] = []
         if self.body == "multipart":
-            read = await _wire.split_form(request)
+            read = await _wire.split_form(request, self.form_limits(row, snapshot, spool))
             if isinstance(read, Response):
                 return read
             fields, uploads = read

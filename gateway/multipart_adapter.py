@@ -60,6 +60,7 @@ LOG = logging.getLogger("azizam.multipart")
 MAX_FILE_BYTES = 25 * MIB
 MAX_ANSWER_BYTES = 512 * MIB
 _HEALTH_TIMEOUT_S = 5.0
+MAX_PROBE_BODY_BYTES = 1 * MIB  # an observer's JSON answer; a health answer's body is never read
 _DEFAULT_TIMEOUT_S = 900.0
 
 SUBMISSION_UNKNOWN = "submission_unknown"
@@ -136,16 +137,34 @@ def observer_problem(services: Mapping[str, Mapping[str, Any]], spec: ExclusiveP
     return None, url
 
 
+class _ProbeBodyTooLarge(Exception):
+    pass
+
+
+async def _probe_get(client: httpx.AsyncClient, url: str, *, timeout: float, read_body: bool) -> tuple[int, bytes]:
+    """One GET bounded in total time and, when its body is read, in bytes. The body is streamed, never buffered
+    whole; a health answer is judged on its status and its body is dropped unread."""
+    async with asyncio.timeout(timeout):
+        async with client.stream("GET", url, timeout=timeout, extensions=engine_egress.probe()) as response:
+            body = bytearray()
+            if read_body and response.status_code == 200:
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > MAX_PROBE_BODY_BYTES:
+                        raise _ProbeBodyTooLarge
+            return response.status_code, bytes(body)
+
+
 async def read_observer(client: httpx.AsyncClient, spec: ExclusivePoolSpec, url: str) -> Any:
     """The observer's JSON answer. Anything but a 200 with JSON is ``PoolObserverError``."""
     try:
-        response = await client.get(url, timeout=spec.timeout_seconds, extensions=engine_egress.probe())
-    except httpx.HTTPError as error:
+        status, body = await _probe_get(client, url, timeout=spec.timeout_seconds, read_body=True)
+    except (httpx.HTTPError, TimeoutError, _ProbeBodyTooLarge) as error:
         raise PoolObserverError("observer did not answer") from error
-    if response.status_code != 200:
+    if status != 200:
         raise PoolObserverError("observer did not answer")
     try:
-        return response.json()
+        return json.loads(body)
     except ValueError as error:
         raise PoolObserverError("observer answer is not JSON") from error
 
@@ -168,20 +187,20 @@ async def probe_pool(host: PoolProbeHost, spec: ExclusivePoolSpec, service: Mapp
         return problem
     async with host.client_factory() as client:
         try:
-            health = await client.get(base + str(config.get("health_endpoint") or "/health"),
-                                      timeout=_HEALTH_TIMEOUT_S, extensions=engine_egress.probe())
+            health_status, _ = await _probe_get(client, base + str(config.get("health_endpoint") or "/health"),
+                                                timeout=_HEALTH_TIMEOUT_S, read_body=False)
         except Exception:  # noqa: BLE001 - any failure to ask is one bounded reason, never the raw error
             return "service health did not answer"
-        if not 200 <= health.status_code < 300:
+        if not 200 <= health_status < 300:
             return "service health did not answer with 2xx"
         try:
-            observed = await client.get(url, timeout=spec.timeout_seconds, extensions=engine_egress.probe())
+            observed_status, observed_body = await _probe_get(client, url, timeout=spec.timeout_seconds, read_body=True)
         except Exception:  # noqa: BLE001
             return "observer did not answer"
-        if observed.status_code != 200:
+        if observed_status != 200:
             return "observer did not answer with 200"
         try:
-            document = observed.json()
+            document = json.loads(observed_body)
         except ValueError:
             return "observer answer is not JSON"
     try:
@@ -367,11 +386,11 @@ def _body(binding: Any) -> Mapping[str, Any]:
 
 async def _healthy(client: httpx.AsyncClient, base: str, config: Mapping[str, Any]) -> bool:
     try:
-        response = await client.get(base + str(config.get("health_endpoint") or "/health"),
-                                    timeout=_HEALTH_TIMEOUT_S, extensions=engine_egress.probe())
-    except httpx.HTTPError:
+        status, _ = await _probe_get(client, base + str(config.get("health_endpoint") or "/health"),
+                                     timeout=_HEALTH_TIMEOUT_S, read_body=False)
+    except (httpx.HTTPError, TimeoutError):
         return False
-    return 200 <= response.status_code < 300
+    return 200 <= status < 300
 
 
 def _run_error(error: MultipartFailure) -> RunError:

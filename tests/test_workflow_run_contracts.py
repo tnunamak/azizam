@@ -52,6 +52,8 @@ class FakeGraphEngine:
         if request.method == "POST" and path == "/prompt":
             self.prompts.append(json.loads(request.content))
             return httpx.Response(200, json={"prompt_id": "p1"})
+        if request.method == "POST" and path == "/upload/image":
+            return httpx.Response(200, json={"name": "staged-input.png", "subfolder": "", "type": "input"})
         if request.method == "GET" and path == "/history/p1":
             return httpx.Response(200, json={"p1": {"status": {"status_str": "success", "completed": True, "messages": []},
                                                     "outputs": self._outputs}})
@@ -334,3 +336,187 @@ def test_the_type_of_an_upload_is_measured_from_its_bytes_not_taken_from_the_cal
     assert accepted.status_code in (200, 202), accepted.text
     ref = seen["ref"]
     assert (ref.media_type, ref.wire_media_type) == ("image/png", "application/octet-stream")
+
+
+# -- Adversarial edges of W2/W7 and dispatch control (CODE_TO_DATA_S4_S8 5.2, 5.7; rows 4, 9, 29) -------------------------
+
+@pytest.mark.parametrize(
+    ("body", "measured", "declared"),
+    [
+        pytest.param(lambda: png_bytes((2, 4, 6)), "image/png", "video/mp4", id="png-declared-video"),
+        pytest.param(mp4_bytes, "video/mp4", "image/png", id="video-declared-png"),
+        pytest.param(lambda: png_bytes((2, 4, 6)), "image/png", "application/octet-stream", id="png-declared-unknown"),
+        pytest.param(mp4_bytes, "video/mp4", "application/octet-stream", id="video-declared-unknown"),
+    ],
+)
+def test_mismatched_upload_types_keep_measured_and_wire_types_separate(tmp_path, body, measured, declared):
+    """Exercise the real spool with signatures split across chunks, not a supplied measurement stub."""
+    data = body()
+    spool = request_spool.FileRequestSpool(tmp_path, max_bytes=len(data) + 1)
+
+    async def chunks():
+        for offset in range(0, len(data), 3):
+            yield data[offset:offset + 3]
+
+    try:
+        ref = asyncio.run(spool.stage("source", chunks(), filename="wrong-extension.txt", wire_media_type=declared))
+        assert (ref.media_type, ref.wire_media_type) == (measured, declared)
+        assert (ref.size, ref.digest) == (len(data), digest(data))
+        staged = [path for path in (tmp_path / "staging").rglob("*") if path.is_file()]
+        assert len(staged) == 1 and staged[0].read_bytes() == data
+    finally:
+        spool.release()
+    assert not [path for path in tmp_path.rglob("*") if path.is_file()]
+
+
+@pytest.mark.parametrize(
+    ("body", "declared", "accepted"),
+    [
+        pytest.param(lambda: png_bytes((2, 4, 6)), "video/mp4", True, id="png-accepted-despite-video-label"),
+        pytest.param(mp4_bytes, "image/png", False, id="video-refused-despite-png-label"),
+        pytest.param(lambda: b"unrecognised binary\x00\x01\x02", "image/png", False, id="unknown-declared-png"),
+        pytest.param(lambda: b"unrecognised binary\x00\x01\x02", "video/mp4", False, id="unknown-declared-video"),
+        pytest.param(lambda: b"unrecognised binary\x00\x01\x02", "application/octet-stream", False, id="unknown-declared-unknown"),
+    ],
+)
+def test_image_upload_validation_uses_bytes_in_both_directions(world, monkeypatch, body, declared, accepted):
+    """The real route validates measured bytes before scheduling; no product failure is hidden by an adapter stub."""
+    scheduled = []
+    engine = serve_engine(world, FakeGraphEngine(manifest_of(IMAGE_ID), png_bytes((9, 9, 9)), "image/png", "out.png"))
+    monkeypatch.setattr(proxy._WORKFLOW_RUN_PORT, "schedule", scheduled.append)
+    response = upload(body(), declared)
+    if accepted:
+        assert response.status_code in (200, 202), response.text
+        view = response.json()
+        assert view["status"] == "queued" and scheduled == [view["job_id"]]
+        payload = proxy._WORKFLOW_RUN_PORT.load_payload(view["job_id"])
+        ref = payload["media"]["source_image"][0]
+        assert (ref["media_type"], ref["wire_media_type"]) == ("image/png", declared)
+    else:
+        assert response.status_code in (415, 422), response.text
+        assert scheduled == []
+        assert not [path for path in (world.tmp / "spool").rglob("*") if path.is_file()]
+    assert engine.calls == []
+
+
+def _inline_template_boundary(metric, limit, excess):
+    """A structural fixture, not an executable graph: exactly limit or limit+1 in one independent dimension."""
+    if metric == "bytes":
+        template = {"node": {"padding": ""}}
+        template["node"]["padding"] = "x" * (limit + excess - len(canonical_bytes(template)))
+        assert len(canonical_bytes(template)) == limit + excess
+        return template
+    if metric == "nodes":
+        template = {str(index): {} for index in range(limit + excess)}
+        assert len(template) == limit + excess
+        return template
+    template = 0
+    for _ in range(limit + excess):
+        template = {"nested": template}
+    return template
+
+
+@pytest.mark.parametrize("configured", [False, True], ids=["code-ceilings", "lowered-config"])
+@pytest.mark.parametrize("metric", ["bytes", "nodes", "depth"])
+@pytest.mark.parametrize("excess", [0, 1], ids=["at-limit", "one-over"])
+def test_each_inline_template_bound_has_an_inclusive_edge(configured, metric, excess):
+    """Check the real structural bound function independently of graph validity (matrix row 9)."""
+    from gateway.workflow_registry_store import bound_problems, bounds_from_config, template_depth
+    from gateway.workflow_runtime_types import BOUND_EXCEEDED
+
+    config = {"workflow_execution": {"bounds": {
+        "max_template_bytes": 256, "max_nodes": 8, "max_depth": 6,
+    }}} if configured else {}
+    bounds = bounds_from_config(config)
+    limit = {"bytes": bounds.max_template_bytes, "nodes": bounds.max_nodes, "depth": bounds.max_depth}[metric]
+    template = _inline_template_boundary(metric, limit, excess)
+    measured = {"bytes": len(canonical_bytes(template)), "nodes": len(template), "depth": template_depth(template)}
+    assert measured[metric] == limit + excess
+    assert all(measured[name] <= ceiling for name, ceiling in (
+        ("bytes", bounds.max_template_bytes), ("nodes", bounds.max_nodes), ("depth", bounds.max_depth),
+    ) if name != metric)
+    contract = copy.deepcopy(manifest_of(IMAGE_ID))
+    contract["bindings"]["comfyui"]["workflow"] = {"inline": template}
+    problems = bound_problems(contract, bounds)
+    if excess:
+        assert len(problems) == 1, problems
+        problem = problems[0]
+        assert problem.code == BOUND_EXCEEDED
+        assert problem.path == ("bindings", "comfyui", "workflow", "inline")
+        assert str(limit + 1) in problem.message and str(limit) in problem.message
+    else:
+        assert problems == []
+
+
+@pytest.mark.parametrize(("workflow_id", "inputs", "media", "media_type", "filename"), CASES)
+@pytest.mark.parametrize("change", ["disable", "unpublish"])
+def test_owner_control_changes_between_submit_and_dispatch_for_each_capability(
+        world, monkeypatch, workflow_id, inputs, media, media_type, filename, change):
+    """5.2 and matrix rows 4/17: disable stops effects; unpublish hides new work but does not revoke admitted work."""
+    manifest = copy.deepcopy(manifest_of(workflow_id))
+    owner_id = "owner.queued." + workflow_id
+    manifest["id"] = owner_id
+    incarnation = "queued-control-" + workflow_id
+    record = {"manifest": manifest, "policy": {**FACTS, "resource_class": media_type.split("/")[0]},
+              "state": "active", "published": True, "incarnation": incarnation, "record_revision": 1}
+    publish(world.db, {owner_id: record})
+    engine = serve_engine(world, FakeGraphEngine(manifest, media(), media_type, filename))
+    scheduled = []
+    monkeypatch.setattr(proxy._WORKFLOW_RUN_PORT, "schedule", scheduled.append)
+    url = f"/gateway/v1/workflows/{owner_id}/run"
+    response = call("post", url, json={"inputs": inputs})
+    assert response.status_code in (200, 202), response.text
+    queued = response.json()
+    assert queued["status"] == "queued" and scheduled == [queued["job_id"]]
+    job_id = queued["job_id"]
+    definitions = DefinitionStore(world.media)
+    pin = definitions.envelope(job_id)
+    assert pin.incarnation == incarnation
+    assert engine.calls == []
+
+    # Change only run control, preserving identity so a false workflow_deleted cannot make this test pass.
+    record["record_revision"] = 2
+    record["state" if change == "disable" else "published"] = "disabled" if change == "disable" else False
+    publish(world.db, {owner_id: record})
+    current = proxy.WORKFLOW_SNAPSHOTS.current().get(owner_id)
+    assert current.incarnation == incarnation
+    assert current.state == ("disabled" if change == "disable" else "active")
+    assert current.published is (change != "unpublish")
+
+    refused = call("post", url, json={"inputs": inputs})
+    expected = (409, "workflow_disabled") if change == "disable" else (404, "workflow_not_found")
+    assert (refused.status_code, refused.json()["error"]["code"]) == expected, refused.text
+    assert scheduled == [job_id] and engine.calls == []
+
+    asyncio.run(proxy._run_workflow_job(job_id))
+    job = media_jobs.get(job_id, path=world.media)
+    if change == "disable":
+        assert (job["status"], job["error_code"]) == ("failed", "workflow_disabled"), job
+        assert engine.calls == []
+    else:
+        # Design 5.2 check 4 and its table explicitly do not re-check published at dispatch.
+        assert job["status"] == "succeeded", job
+        assert len(engine.prompts) == 1
+        expected_graph = compile_workflow(manifest, "comfyui", template_of(manifest), {**inputs, **generated_of(world, job_id)})
+        assert engine.prompts[0]["prompt"] == expected_graph
+        assert engine.calls.count("POST /prompt") == 1
+        retained = definitions.envelope(job_id)
+        assert (retained.contract, retained.binding, retained.template) == (pin.contract, pin.binding, pin.template)
+
+
+def test_an_uploaded_source_image_reaches_the_engine_through_the_real_adapter(world):  # c2d-W-contracts-review-1108
+    """The file a run was given is part of the request the adapter sends: the engine must receive its bytes, and the
+    compiled prompt must name the file it holds, not leave the asset input without a value."""
+    manifest = manifest_of(EDIT_ID)
+    engine = serve_engine(world, FakeGraphEngine(manifest, png_bytes((9, 9, 9)), "image/png", "out.png"))
+    data = png_bytes((1, 2, 3))
+    response = call("post", f"/gateway/v1/workflows/{EDIT_ID}/run", data={"inputs": json.dumps({"prompt": "edit"})},
+                    files={"source_image": ("a.png", data, "image/png")}, headers={"Prefer": "wait=20"})
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "succeeded", (response.text, engine.calls)
+    sent = b"".join(request.content for request in engine.requests)
+    assert data in sent, engine.calls
+    # The prompt names the file the engine holds for this run.
+    assert engine.calls.index("POST /upload/image") < engine.calls.index("POST /prompt")
+    node = manifest["bindings"]["comfyui"]["map"]["source_image"][0]
+    assert engine.prompts[0]["prompt"][node["node"]]["inputs"][node["input"]] == "staged-input.png"

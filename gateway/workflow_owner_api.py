@@ -16,7 +16,12 @@ from fastapi.responses import JSONResponse
 from gateway import egress, workflow_policy
 from gateway.capabilities import EXPOSURE_CLASSES, RESOURCE_TIERS, TRUST_TIERS
 from gateway.session_guard import SessionEnded
-from gateway.workflow_registry_store import RegistryNotApplied, WorkflowIdIsBundled, WorkflowRegistryStore
+from gateway.workflow_registry_store import (
+    BundledWorkflowRemoved,
+    RegistryNotApplied,
+    WorkflowIdIsBundled,
+    WorkflowRegistryStore,
+)
 from gateway.workflow_runtime_types import (
     GENERATION_MISMATCH, ID_CLASH, KEEP, Actor, Commit, RegistryConflict, RegistryRefused, WorkflowEntry, WorkflowFacts,
 )
@@ -135,6 +140,15 @@ def register_workflow_owner_routes(
         return {**entry_view(entry, problems_of(entry)), "contract": json.loads(json.dumps(dict(_thaw(entry.contract)))),
                 "facts": facts, "overrides": entry.overrides, "incarnation": entry.incarnation, "history": history}
 
+    def held_detail(workflow_id: str, record: Mapping[str, Any], problems: Any, serving: WorkflowEntry | None
+                    ) -> dict[str, Any]:
+        """A stored workflow the serving view leaves out: its stored contract, why it is held, and, apart, the
+        bundled workflow that serves in its place (if any)."""
+        history = [{**dataclasses.asdict(row)} for row in store.history(workflow_id, limit=HISTORY_SHOWN)]
+        return {"id": workflow_id, "held_out": True, "hold_problems": [_with_clean(problem.as_dict()) for problem in problems],
+                "contract": json.loads(json.dumps(record.get("manifest"))), "history": history,
+                "serving": detail(serving) if serving is not None else None}
+
     async def run(request: Request, work: Callable[[Actor, Any], Commit], *, created: bool = False,
                   needs_match: bool = True, read_body: bool = True) -> JSONResponse:
         ctx = await asyncio.to_thread(guard, request)
@@ -159,6 +173,10 @@ def register_workflow_owner_routes(
         except WorkflowIdIsBundled as error:
             return egress.error_with_projection(status.HTTP_409_CONFLICT, "id_is_bundled", str(error),
                                                 {"bundled_workflow": error.bundled} if error.bundled else {})
+        except BundledWorkflowRemoved as error:
+            return _error(status.HTTP_409_CONFLICT, "bundled_workflow_removed",
+                          f"workflow {error.workflow_id!r} is no longer a bundled workflow; its run-control revision "
+                          "cannot be restored")
         except RegistryRefused as error:
             return _refused([problem.as_dict() for problem in error.problems])
         except RegistryNotApplied as error:
@@ -208,6 +226,12 @@ def register_workflow_owner_routes(
             return ctx
         snapshot = await asyncio.to_thread(store.snapshot)
         entry = snapshot.get(workflow_id)
+        problems = snapshot.held_out.get(workflow_id)
+        if problems is not None:   # stored but left out of the serving view: the owner reads the document to repair it
+            stored = await asyncio.to_thread(store.get_record, workflow_id)
+            if stored is not None:
+                return _plain({"workflow": await asyncio.to_thread(held_detail, workflow_id, stored, problems, entry)},
+                              etag=snapshot.revision)
         if entry is None:
             return _error(status.HTTP_404_NOT_FOUND, "workflow_not_found", "there is no workflow with this id")
         return _plain({"workflow": await asyncio.to_thread(detail, entry)}, etag=snapshot.revision)
