@@ -1,9 +1,4 @@
 {
-  "_meta": {
-    "name": "video-minimax-h3-long",
-    "description": "Single-segment (10 s) reference graph of the MiniMax H3 long-video chain, for manifest runs. /v1/videos builds the real multi-segment graph in code (gateway/video_extend_h3.py); a test keeps this file in sync with the builder.",
-    "frame_rate": 24
-  },
   "unet": {
     "class_type": "UNETLoader",
     "inputs": {

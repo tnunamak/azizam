@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from gateway import video_extend, video_extend_h3
+from gateway import video_extend
 from gateway.video_extend import ChainSpec, Segment, SourceVideo
 
 GOLDEN = Path(__file__).parent / "fixtures" / "s7_video_chain" / "graphs.json"

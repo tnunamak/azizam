@@ -1,0 +1,720 @@
+{
+ "id": "h3_chain",
+ "binding": {
+  "model_family": "minimax-h3",
+  "stride_reason": "h3_17np5_frame_grid",
+  "frame_step": 17,
+  "frame_offset": 5,
+  "default_context_frames": 22,
+  "context_windows": [
+   56,
+   39,
+   22,
+   5
+  ],
+  "min_shot_seconds": 2.0,
+  "options": [
+   "state_ledger",
+   "context_seconds"
+  ],
+  "filename_prefix": "video/ltx-2.5-long",
+  "negative_default": "",
+  "source_check": {
+   "fps": 24.0,
+   "tolerance": 0.5,
+   "message": "the source video is {fps:g} fps; H3 extends 24 fps video. Re-encode it at 24 fps, or extend it with ltx-2.5-long"
+  },
+  "node_prefix": "s{index}_",
+  "rule": [
+   {
+    "variant": "first",
+    "index": 0,
+    "source": false
+   },
+   {
+    "variant": "added_from_source",
+    "index": 0,
+    "source": true
+   },
+   {
+    "variant": "added"
+   }
+  ]
+ },
+ "template": {
+  "shared": {
+   "unet": {
+    "class_type": "UNETLoader",
+    "inputs": {
+     "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+     "weight_dtype": "default"
+    }
+   },
+   "model": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+     "model": [
+      "unet",
+      0
+     ],
+     "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+     "strength_model": 1.0
+    }
+   },
+   "vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+     "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+    }
+   },
+   "avae": {
+    "class_type": "VAELoader",
+    "inputs": {
+     "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    }
+   },
+   "clip": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+     "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+     "type": "minimax",
+     "device": "default"
+    }
+   },
+   "sampler": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+     "sampler_name": "res_multistep"
+    }
+   },
+   "sigmas": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+     "model": [
+      "model",
+      0
+     ],
+     "scheduler": "simple",
+     "steps": 8,
+     "denoise": 1.0
+    }
+   }
+  },
+  "source": {
+   "nodes": {
+    "src_file": {
+     "class_type": "LoadVideo",
+     "inputs": {
+      "file": "$source_file"
+     }
+    },
+    "src_parts": {
+     "class_type": "GetVideoComponents",
+     "inputs": {
+      "video": [
+       "src_file",
+       0
+      ]
+     }
+    },
+    "src_scale": {
+     "class_type": "ImageScale",
+     "inputs": {
+      "image": [
+       "src_parts",
+       0
+      ],
+      "upscale_method": "lanczos",
+      "width": "$width",
+      "height": "$height",
+      "crop": "center"
+     },
+     "if": "scaled"
+    },
+    "src_audio": {
+     "class_type": "TrimAudioDuration",
+     "inputs": {
+      "audio": [
+       "src_parts",
+       1
+      ],
+      "start_index": 0.0,
+      "duration": "$source_seconds"
+     },
+     "if": "sound"
+    }
+   },
+   "exports": {
+    "frames": {
+     "$if": "scaled",
+     "then": [
+      "src_scale",
+      0
+     ],
+     "else": [
+      "src_parts",
+      0
+     ]
+    },
+    "sound": {
+     "$if": "sound",
+     "then": [
+      "src_audio",
+      0
+     ]
+    }
+   }
+  },
+  "variants": {
+   "first": {
+    "nodes": {
+     "image": {
+      "class_type": "LoadImage",
+      "inputs": {
+       "image": "$first_frame_file"
+      },
+      "if": "first_frame"
+     },
+     "fit": {
+      "class_type": "ImageScale",
+      "inputs": {
+       "image": [
+        "@image",
+        0
+       ],
+       "upscale_method": "lanczos",
+       "width": "$width",
+       "height": "$height",
+       "crop": "center"
+      },
+      "if": "first_frame"
+     },
+     "cond": {
+      "class_type": "MiniMaxH3ImageToVideo",
+      "inputs": {
+       "clip": [
+        "clip",
+        0
+       ],
+       "vae": [
+        "vae",
+        0
+       ],
+       "prompt": "$prompt",
+       "width": "$width",
+       "height": "$height",
+       "length": "$frames",
+       "first_frame": {
+        "$if": "first_frame",
+        "then": [
+         "@fit",
+         0
+        ]
+       }
+      }
+     },
+     "guider": {
+      "class_type": "BasicGuider",
+      "inputs": {
+       "model": [
+        "model",
+        0
+       ],
+       "conditioning": [
+        "@cond",
+        0
+       ]
+      }
+     },
+     "noise": {
+      "class_type": "RandomNoise",
+      "inputs": {
+       "noise_seed": "$seed"
+      }
+     },
+     "sample": {
+      "class_type": "SamplerCustomAdvanced",
+      "inputs": {
+       "noise": [
+        "@noise",
+        0
+       ],
+       "guider": [
+        "@guider",
+        0
+       ],
+       "sampler": [
+        "sampler",
+        0
+       ],
+       "sigmas": [
+        "sigmas",
+        0
+       ],
+       "latent_image": [
+        "@cond",
+        1
+       ]
+      }
+     },
+     "decode": {
+      "class_type": "VAEDecode",
+      "inputs": {
+       "samples": [
+        "@sample",
+        0
+       ],
+       "vae": [
+        "vae",
+        0
+       ]
+      }
+     },
+     "adecode": {
+      "class_type": "VAEDecodeAudio",
+      "inputs": {
+       "samples": [
+        "@sample",
+        0
+       ],
+       "vae": [
+        "avae",
+        0
+       ]
+      },
+      "if": "sound"
+     },
+     "trim": {
+      "class_type": "MiniMaxH3MotionContextTrim",
+      "inputs": {
+       "images": [
+        "@decode",
+        0
+       ],
+       "trim_frames": 0,
+       "fps": "$fps",
+       "match_tail": true,
+       "audio": {
+        "$if": "sound",
+        "then": [
+         "@adecode",
+         0
+        ]
+       }
+      }
+     }
+    },
+    "unit": {
+     "sample": "sample",
+     "decode": "decode"
+    },
+    "exports": {
+     "frames": [
+      "@trim",
+      0
+     ],
+     "sound": {
+      "$if": "sound",
+      "then": [
+       "@trim",
+       1
+      ]
+     },
+     "latent": [
+      "@sample",
+      0
+     ]
+    }
+   },
+   "added": {
+    "nodes": {
+     "cond": {
+      "class_type": "MiniMaxH3ImageToVideo",
+      "inputs": {
+       "clip": [
+        "clip",
+        0
+       ],
+       "vae": [
+        "vae",
+        0
+       ],
+       "prompt": "$prompt",
+       "width": "$width",
+       "height": "$height",
+       "length": "$sampled_frames"
+      }
+     },
+     "ctx": {
+      "class_type": "MiniMaxH3MotionContext",
+      "inputs": {
+       "conditioning": [
+        "@cond",
+        0
+       ],
+       "vae": [
+        "vae",
+        0
+       ],
+       "latent": [
+        "@cond",
+        1
+       ],
+       "context_length": "$context_text",
+       "audio_context_length": 24,
+       "context_latent": "$latent_in"
+      }
+     },
+     "guider": {
+      "class_type": "BasicGuider",
+      "inputs": {
+       "model": [
+        "model",
+        0
+       ],
+       "conditioning": [
+        "@ctx",
+        0
+       ]
+      }
+     },
+     "noise": {
+      "class_type": "RandomNoise",
+      "inputs": {
+       "noise_seed": "$seed"
+      }
+     },
+     "sample": {
+      "class_type": "SamplerCustomAdvanced",
+      "inputs": {
+       "noise": [
+        "@noise",
+        0
+       ],
+       "guider": [
+        "@guider",
+        0
+       ],
+       "sampler": [
+        "sampler",
+        0
+       ],
+       "sigmas": [
+        "sigmas",
+        0
+       ],
+       "latent_image": [
+        "@cond",
+        1
+       ]
+      }
+     },
+     "decode": {
+      "class_type": "VAEDecode",
+      "inputs": {
+       "samples": [
+        "@sample",
+        0
+       ],
+       "vae": [
+        "vae",
+        0
+       ]
+      }
+     },
+     "adecode": {
+      "class_type": "VAEDecodeAudio",
+      "inputs": {
+       "samples": [
+        "@sample",
+        0
+       ],
+       "vae": [
+        "avae",
+        0
+       ]
+      },
+      "if": "sound"
+     },
+     "trim": {
+      "class_type": "MiniMaxH3MotionContextTrim",
+      "inputs": {
+       "images": [
+        "@decode",
+        0
+       ],
+       "trim_frames": [
+        "@ctx",
+        1
+       ],
+       "fps": "$fps",
+       "match_tail": true,
+       "audio": {
+        "$if": "sound",
+        "then": [
+         "@adecode",
+         0
+        ]
+       }
+      }
+     },
+     "cat": {
+      "class_type": "ImageBatch",
+      "inputs": {
+       "image1": "$frames_in",
+       "image2": [
+        "@trim",
+        0
+       ]
+      }
+     }
+    },
+    "unit": {
+     "sample": "sample",
+     "decode": "decode"
+    },
+    "exports": {
+     "frames": [
+      "@cat",
+      0
+     ],
+     "sound": {
+      "$if": "sound",
+      "then": [
+       "@trim",
+       1
+      ]
+     },
+     "latent": [
+      "@sample",
+      0
+     ]
+    }
+   },
+   "added_from_source": {
+    "nodes": {
+     "cond": {
+      "class_type": "MiniMaxH3ImageToVideo",
+      "inputs": {
+       "clip": [
+        "clip",
+        0
+       ],
+       "vae": [
+        "vae",
+        0
+       ],
+       "prompt": "$prompt",
+       "width": "$width",
+       "height": "$height",
+       "length": "$sampled_frames"
+      }
+     },
+     "tail": {
+      "class_type": "ImageFromBatch",
+      "inputs": {
+       "image": "$frames_in",
+       "batch_index": "$context_start",
+       "length": "$context"
+      }
+     },
+     "ctx": {
+      "class_type": "MiniMaxH3MotionContext",
+      "inputs": {
+       "conditioning": [
+        "@cond",
+        0
+       ],
+       "vae": [
+        "vae",
+        0
+       ],
+       "latent": [
+        "@cond",
+        1
+       ],
+       "context_length": "$context_text",
+       "audio_context_length": 24,
+       "context_frames": [
+        "@tail",
+        0
+       ],
+       "audio_vae": {
+        "$if": "sound",
+        "then": [
+         "avae",
+         0
+        ]
+       },
+       "context_audio": {
+        "$if": "sound",
+        "then": "$source_sound"
+       }
+      }
+     },
+     "guider": {
+      "class_type": "BasicGuider",
+      "inputs": {
+       "model": [
+        "model",
+        0
+       ],
+       "conditioning": [
+        "@ctx",
+        0
+       ]
+      }
+     },
+     "noise": {
+      "class_type": "RandomNoise",
+      "inputs": {
+       "noise_seed": "$seed"
+      }
+     },
+     "sample": {
+      "class_type": "SamplerCustomAdvanced",
+      "inputs": {
+       "noise": [
+        "@noise",
+        0
+       ],
+       "guider": [
+        "@guider",
+        0
+       ],
+       "sampler": [
+        "sampler",
+        0
+       ],
+       "sigmas": [
+        "sigmas",
+        0
+       ],
+       "latent_image": [
+        "@cond",
+        1
+       ]
+      }
+     },
+     "decode": {
+      "class_type": "VAEDecode",
+      "inputs": {
+       "samples": [
+        "@sample",
+        0
+       ],
+       "vae": [
+        "vae",
+        0
+       ]
+      }
+     },
+     "adecode": {
+      "class_type": "VAEDecodeAudio",
+      "inputs": {
+       "samples": [
+        "@sample",
+        0
+       ],
+       "vae": [
+        "avae",
+        0
+       ]
+      },
+      "if": "sound"
+     },
+     "trim": {
+      "class_type": "MiniMaxH3MotionContextTrim",
+      "inputs": {
+       "images": [
+        "@decode",
+        0
+       ],
+       "trim_frames": [
+        "@ctx",
+        1
+       ],
+       "fps": "$fps",
+       "match_tail": true,
+       "audio": {
+        "$if": "sound",
+        "then": [
+         "@adecode",
+         0
+        ]
+       }
+      }
+     },
+     "cat": {
+      "class_type": "ImageBatch",
+      "inputs": {
+       "image1": "$frames_in",
+       "image2": [
+        "@trim",
+        0
+       ]
+      }
+     }
+    },
+    "unit": {
+     "sample": "sample",
+     "decode": "decode"
+    },
+    "exports": {
+     "frames": [
+      "@cat",
+      0
+     ],
+     "sound": {
+      "$if": "sound",
+      "then": [
+       "@trim",
+       1
+      ]
+     },
+     "latent": [
+      "@sample",
+      0
+     ]
+    }
+   }
+  },
+  "finish": {
+   "sound_join": {
+    "id": "audio_cat{k}",
+    "class_type": "AudioConcat",
+    "first": "audio1",
+    "next": "audio2",
+    "inputs": {
+     "direction": "after"
+    }
+   },
+   "nodes": {
+    "create": {
+     "class_type": "CreateVideo",
+     "inputs": {
+      "images": "$frames_out",
+      "fps": "$fps",
+      "audio": {
+       "$if": "sound_out",
+       "then": "$sound_out"
+      }
+     }
+    },
+    "save": {
+     "class_type": "SaveVideo",
+     "inputs": {
+      "video": [
+       "create",
+       0
+      ],
+      "filename_prefix": "$filename_prefix",
+      "format": "mp4",
+      "codec": "auto"
+     }
+    }
+   },
+   "save_node": "save"
+  }
+ }
+}

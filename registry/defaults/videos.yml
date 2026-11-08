@@ -10,6 +10,14 @@ chain_segment_seconds: 8
 workflows:
   video-ltx-2.5-t2v:
     file: workflows/videos/video-ltx-2.5-t2v.json
+    node_roles:
+      prompt_node: "5"
+      negative_prompt_node: "6"
+      size_node: ["20", "21"]
+      length_nodes: ["22"]
+      frame_rate_nodes: ["23"]
+      seed_nodes: ["30", "31"]
+      save_node: "60"
     i2v_workflow: video-ltx-2.5-i2v
     chain_workflow: video-ltx-2.5-long
     min_seconds: 1
@@ -20,6 +28,17 @@ workflows:
     frame_rate: 24
   video-ltx-2.5-i2v:
     file: workflows/videos/video-ltx-2.5-i2v.json
+    node_roles:
+      prompt_node: "5"
+      negative_prompt_node: "6"
+      size_node: ["20", "21"]
+      length_nodes: ["22"]
+      frame_rate_nodes: ["23"]
+      seed_nodes: ["30", "31"]
+      save_node: "60"
+      image_node: "70"
+      image_strength_node: "79"
+      image_strength_default: 0.7
     chain_workflow: video-ltx-2.5-long
     requires_input_reference: true
     min_seconds: 1
@@ -30,6 +49,15 @@ workflows:
     frame_rate: 24
   video-minimax-h3-t2v:
     file: workflows/videos/video-minimax-h3-t2v.json
+    node_roles:
+      prompt_node: "9"
+      size_node: ["6", "7"]
+      length_nodes: ["8"]
+      frame_rate_nodes: ["17"]
+      seed_nodes: ["10"]
+      save_node: "18"
+      steps_node: "12"
+      prompt_field: "prompt"
     i2v_workflow: video-minimax-h3-i2v
     chain_workflow: video-minimax-h3-long
     min_seconds: 2
@@ -41,6 +69,16 @@ workflows:
     length_offset: 5
   video-minimax-h3-i2v:
     file: workflows/videos/video-minimax-h3-i2v.json
+    node_roles:
+      prompt_node: "9"
+      size_node: ["6", "7"]
+      length_nodes: ["8"]
+      frame_rate_nodes: ["17"]
+      seed_nodes: ["10"]
+      save_node: "18"
+      steps_node: "12"
+      image_node: "20"
+      prompt_field: "prompt"
     chain_workflow: video-minimax-h3-long
     requires_input_reference: true
     min_seconds: 2
@@ -52,6 +90,17 @@ workflows:
     length_offset: 5
   video-ltx-2.5-keyframes:
     file: workflows/videos/video-ltx-2.5-keyframes.json
+    node_roles:
+      prompt_node: "5"
+      negative_prompt_node: "6"
+      size_node: ["20", "21"]
+      length_nodes: ["22"]
+      frame_rate_nodes: ["23"]
+      seed_nodes: ["30", "31"]
+      save_node: "60"
+      image_node: "70"
+      image_strength_node: "79"
+      image_strength_default: 0.7
     requires_input_reference: true
     requires_extensions: true
     min_seconds: 1
@@ -62,6 +111,20 @@ workflows:
     frame_rate: 24
   video-ltx-2.5-keyframes-mid:
     file: workflows/videos/video-ltx-2.5-keyframes-mid.json
+    node_roles:
+      prompt_node: "5"
+      negative_prompt_node: "6"
+      size_node: ["20", "21"]
+      length_nodes: ["22"]
+      frame_rate_nodes: ["23"]
+      seed_nodes: ["30", "31"]
+      save_node: "60"
+      image_node: "70"
+      image_strength_node: "79"
+      image_strength_default: 0.7
+      mid_frame_index_node: "126"
+      mid_frame_strength_node: "125"
+      mid_frame_node: "120"
     requires_input_reference: true
     requires_extensions: true
     min_seconds: 1
@@ -72,6 +135,16 @@ workflows:
     frame_rate: 24
   video-minimax-h3-keyframes:
     file: workflows/videos/video-minimax-h3-keyframes.json
+    node_roles:
+      prompt_node: "9"
+      size_node: ["6", "7"]
+      length_nodes: ["8"]
+      frame_rate_nodes: ["17"]
+      seed_nodes: ["10"]
+      save_node: "18"
+      steps_node: "12"
+      image_node: "20"
+      prompt_field: "prompt"
     requires_input_reference: true
     requires_extensions: true
     min_seconds: 2
@@ -83,6 +156,16 @@ workflows:
     length_offset: 5
   video-minimax-h3-keyframes-mid:
     file: workflows/videos/video-minimax-h3-keyframes-mid.json
+    node_roles:
+      prompt_node: "9"
+      size_node: ["6", "7"]
+      length_nodes: ["8"]
+      frame_rate_nodes: ["17"]
+      seed_nodes: ["10"]
+      save_node: "18"
+      steps_node: "12"
+      image_node: "20"
+      prompt_field: "prompt"
     requires_input_reference: true
     requires_extensions: true
     min_seconds: 2
@@ -94,6 +177,25 @@ workflows:
     length_offset: 5
   video-scail-2-replace:
     file: workflows/videos/video-scail-2-replace.json
+    node_roles:
+      prompt_node: "10"
+      video_node: "1"
+      size_node: ["20", "21"]
+      length_nodes: ["22"]
+      seed_nodes: ["30"]
+      save_node: "60"
+      prompt_field: "value"
+      first_frame_node: "70"
+      track_node: "18"
+      color_mask_node: "23"
+      probe_node: "71"
+      point_detect_node: "72"
+      sam_model_node: "15"
+      reference_raw_node: "2"
+      reference_text_node: "17"
+      reference_detect_node: "19"
+      reference_cropped_node: "6"
+      fit_canvas_node: "108"
     subject_select: true
     requires_extensions: true
     source_video_input: source_video
