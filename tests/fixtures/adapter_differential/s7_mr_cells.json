@@ -1,0 +1,611 @@
+{
+ "admission_refusal": {
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "first": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "id": "JOB",
+    "object": "media.job",
+    "request_id": "req-test",
+    "status": "running"
+   },
+   "location": "/gateway/v1/media/jobs/JOB",
+   "request_id": "req-test",
+   "retry_after": null,
+   "status": 202
+  },
+  "job": {
+   "assets": 1,
+   "cancel_requested": false,
+   "error": null,
+   "status": "succeeded"
+  },
+  "receipts": [
+   {
+    "exc": null,
+    "outcome": [
+     "failed",
+     "capacity"
+    ],
+    "request_id": "req-test-2"
+   },
+   {
+    "exc": null,
+    "outcome": [
+     "succeeded",
+     "succeeded"
+    ],
+    "request_id": "req-test"
+   }
+  ],
+  "second": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "resource_unavailable",
+     "message": "The GPU is busy. Try again shortly.",
+     "type": "invalid_request_error"
+    }
+   },
+   "location": null,
+   "request_id": "req-test-2",
+   "retry_after": "30",
+   "status": 503
+  },
+  "stored": [
+   "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz"
+  ]
+ },
+ "cancel_finished": {
+  "after": {
+   "assets": 1,
+   "cancel_requested": false,
+   "error": null,
+   "status": "succeeded"
+  },
+  "before": {
+   "assets": 1,
+   "cancel_requested": false,
+   "error": null,
+   "status": "succeeded"
+  },
+  "cancel": {
+   "refused": "This job has already finished"
+  },
+  "cancel_again": {
+   "refused": "This job has already finished"
+  },
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "receipts": [
+   {
+    "exc": null,
+    "outcome": [
+     "succeeded",
+     "succeeded"
+    ],
+    "request_id": "req-test"
+   }
+  ],
+  "stored": [
+   "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz"
+  ],
+  "submit": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "id": "JOB",
+    "object": "media.job",
+    "request_id": "req-test",
+    "status": "running"
+   },
+   "location": "/gateway/v1/media/jobs/JOB",
+   "request_id": "req-test",
+   "retry_after": null,
+   "status": 202
+  }
+ },
+ "cancel_queued": {
+  "after": {
+   "assets": 0,
+   "cancel_requested": true,
+   "error": "Canceled by requester",
+   "status": "canceled"
+  },
+  "cancel": {
+   "cancel_requested": true,
+   "status": "running"
+  },
+  "cancel_again": {
+   "cancel_requested": true,
+   "status": "running"
+  },
+  "claims_left": 0,
+  "during": {
+   "assets": 0,
+   "cancel_requested": true,
+   "error": null,
+   "status": "running"
+  },
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "pool_held_after": false,
+  "receipts": [
+   {
+    "exc": null,
+    "outcome": [
+     "cancelled",
+     "cancelled"
+    ],
+    "request_id": "req-test"
+   }
+  ],
+  "stored": [],
+  "submit": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "id": "JOB",
+    "object": "media.job",
+    "request_id": "req-test",
+    "status": "running"
+   },
+   "location": "/gateway/v1/media/jobs/JOB",
+   "request_id": "req-test",
+   "retry_after": null,
+   "status": 202
+  }
+ },
+ "disconnect": {
+  "after": {
+   "assets": 1,
+   "cancel_requested": false,
+   "error": null,
+   "status": "succeeded"
+  },
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "receipts": [
+   {
+    "exc": null,
+    "outcome": [
+     "succeeded",
+     "succeeded"
+    ],
+    "request_id": "req-test"
+   }
+  ],
+  "status": 202,
+  "stored": [
+   "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz"
+  ],
+  "while_running": {
+   "job": {
+    "assets": 0,
+    "cancel_requested": false,
+    "error": null,
+    "status": "running"
+   },
+   "pool_held": true,
+   "receipts": 0
+  }
+ },
+ "policy_refusal": {
+  "answer": {
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "MODEL_NOT_IN_PLAN",
+     "message": "This isn't in your access plan.",
+     "type": "invalid_request_error"
+    }
+   },
+   "location": null,
+   "request_id": "req-test",
+   "retry_after": null,
+   "status": 403
+  },
+  "claims_left": 0,
+  "engine_requests": [],
+  "receipts": []
+ },
+ "replay_conflict": {
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJzZWVkIg0KDQo0Mg0KLS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   },
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJzZWVkIg0KDQo0Mw0KLS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "first": {
+   "body": "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+   "content_type": "model/gltf-binary",
+   "json": null,
+   "location": null,
+   "request_id": "req-test",
+   "retry_after": null,
+   "status": 200
+  },
+  "receipts": [
+   {
+    "exc": null,
+    "outcome": [
+     "succeeded",
+     "succeeded"
+    ],
+    "request_id": "req-test"
+   },
+   {
+    "exc": null,
+    "outcome": [
+     "succeeded",
+     "succeeded"
+    ],
+    "request_id": "req-test-2"
+   }
+  ],
+  "second": {
+   "body": "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+   "content_type": "model/gltf-binary",
+   "json": null,
+   "location": null,
+   "request_id": "req-test-2",
+   "retry_after": null,
+   "status": 200
+  }
+ },
+ "replay_same": {
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJzZWVkIg0KDQo0Mg0KLS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   },
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJzZWVkIg0KDQo0Mg0KLS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "first": {
+   "body": "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+   "content_type": "model/gltf-binary",
+   "json": null,
+   "location": null,
+   "request_id": "req-test",
+   "retry_after": null,
+   "status": 200
+  },
+  "receipts": [
+   {
+    "exc": null,
+    "outcome": [
+     "succeeded",
+     "succeeded"
+    ],
+    "request_id": "req-test"
+   },
+   {
+    "exc": null,
+    "outcome": [
+     "succeeded",
+     "succeeded"
+    ],
+    "request_id": "req-test-2"
+   }
+  ],
+  "second": {
+   "body": "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+   "content_type": "model/gltf-binary",
+   "json": null,
+   "location": null,
+   "request_id": "req-test-2",
+   "retry_after": null,
+   "status": 200
+  }
+ },
+ "success": {
+  "answer": {
+   "body": "Z2xURgIAAABtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVzbW9kZWwtYnl0ZXNtb2RlbC1ieXRlc21vZGVsLWJ5dGVz",
+   "content_type": "model/gltf-binary",
+   "json": null,
+   "location": null,
+   "request_id": "req-test",
+   "retry_after": null,
+   "status": 200
+  },
+  "claims_left": 0,
+  "engine_requests": [
+   {
+    "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJzZWVkIg0KDQo0Mg0KLS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+    "content_type": "multipart/form-data; boundary=BOUNDARY",
+    "method": "POST",
+    "url": "http://127.0.0.1:8890/generate"
+   }
+  ],
+  "receipts": [
+   {
+    "exc": null,
+    "outcome": [
+     "succeeded",
+     "succeeded"
+    ],
+    "request_id": "req-test"
+   }
+  ]
+ },
+ "upstream_failure": {
+  "engine_502": {
+   "answer": {
+    "body": null,
+    "content_type": "application/json",
+    "json": {
+     "error": {
+      "code": "upstream_error",
+      "message": "The mesh service failed to produce a model.",
+      "type": "invalid_request_error"
+     }
+    },
+    "location": null,
+    "request_id": "req-test",
+    "retry_after": null,
+    "status": 502
+   },
+   "claims_left": 0,
+   "engine_requests": [
+    {
+     "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8890/generate"
+    }
+   ],
+   "receipts": [
+    {
+     "exc": null,
+     "outcome": [
+      "failed",
+      "upstream"
+     ],
+     "request_id": "req-test"
+    }
+   ]
+  },
+  "engine_unreachable": {
+   "answer": {
+    "body": null,
+    "content_type": "application/json",
+    "json": {
+     "error": {
+      "code": "upstream_unavailable",
+      "message": "The mesh service could not be reached.",
+      "type": "invalid_request_error"
+     }
+    },
+    "location": null,
+    "request_id": "req-test",
+    "retry_after": null,
+    "status": 502
+   },
+   "claims_left": 0,
+   "engine_requests": [
+    {
+     "body": "LS1CT1VOREFSWQ0KQ29udGVudC1EaXNwb3NpdGlvbjogZm9ybS1kYXRhOyBuYW1lPSJyZXNvbHV0aW9uIg0KDQoxMDI0DQotLUJPVU5EQVJZDQpDb250ZW50LURpc3Bvc2l0aW9uOiBmb3JtLWRhdGE7IG5hbWU9ImltYWdlIjsgZmlsZW5hbWU9ImlucHV0LnBuZyINCkNvbnRlbnQtVHlwZTogaW1hZ2UvcG5nDQoNColQTkcNChoKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANCi0tQk9VTkRBUlktLQ0K",
+     "content_type": "multipart/form-data; boundary=BOUNDARY",
+     "method": "POST",
+     "url": "http://127.0.0.1:8890/generate"
+    }
+   ],
+   "receipts": [
+    {
+     "exc": null,
+     "outcome": [
+      "failed",
+      "connect"
+     ],
+     "request_id": "req-test"
+    }
+   ]
+  }
+ },
+ "validation_refusal": {
+  "missing_image": {
+   "answer": {
+    "body": null,
+    "content_type": "application/json",
+    "json": {
+     "error": {
+      "code": "missing_image",
+      "message": "the image part is required",
+      "param": "image",
+      "type": "invalid_request_error"
+     }
+    },
+    "location": null,
+    "request_id": "req-test",
+    "retry_after": null,
+    "status": 400
+   },
+   "claims_left": 0,
+   "engine_requests": [],
+   "receipts": [
+    {
+     "exc": null,
+     "outcome": [
+      "failed",
+      "missing_image"
+     ],
+     "request_id": "req-test"
+    }
+   ]
+  },
+  "not_multipart": {
+   "answer": {
+    "body": null,
+    "content_type": "application/json",
+    "json": {
+     "error": {
+      "code": "invalid_multipart",
+      "message": "The request body is not valid multipart form data.",
+      "type": "invalid_request_error"
+     }
+    },
+    "location": null,
+    "request_id": "req-test",
+    "retry_after": null,
+    "status": 400
+   },
+   "claims_left": 0,
+   "engine_requests": [],
+   "receipts": [
+    {
+     "exc": null,
+     "outcome": [
+      "failed",
+      "invalid_multipart"
+     ],
+     "request_id": "req-test"
+    }
+   ]
+  },
+  "seed_negative": {
+   "answer": {
+    "body": null,
+    "content_type": "application/json",
+    "json": {
+     "error": {
+      "code": "invalid_input",
+      "message": "seed is outside its range",
+      "param": "seed",
+      "type": "invalid_request_error"
+     }
+    },
+    "location": null,
+    "request_id": "req-test",
+    "retry_after": null,
+    "status": 400
+   },
+   "claims_left": 0,
+   "engine_requests": [],
+   "receipts": [
+    {
+     "exc": null,
+     "outcome": [
+      "failed",
+      "invalid_input"
+     ],
+     "request_id": "req-test"
+    }
+   ]
+  }
+ },
+ "wait_timeout": {
+  "job": {
+   "answer": {
+    "body": null,
+    "content_type": "application/json",
+    "json": {
+     "id": "JOB",
+     "object": "media.job",
+     "request_id": "req-test",
+     "status": "running"
+    },
+    "location": "/gateway/v1/media/jobs/JOB",
+    "request_id": "req-test",
+    "retry_after": null,
+    "status": 202
+   },
+   "claims_left": 0,
+   "engine_requests": [],
+   "job": {
+    "assets": 0,
+    "cancel_requested": false,
+    "error": "The mesh service did not answer in time.",
+    "status": "failed"
+   },
+   "receipts": [
+    {
+     "exc": null,
+     "outcome": [
+      "failed",
+      "timeout"
+     ],
+     "request_id": "req-test"
+    }
+   ],
+   "stored": []
+  },
+  "sync": {
+   "answer": {
+    "body": null,
+    "content_type": "application/json",
+    "json": {
+     "error": {
+      "code": "upstream_timeout",
+      "message": "The mesh service did not answer in time.",
+      "type": "invalid_request_error"
+     }
+    },
+    "location": null,
+    "request_id": "req-test",
+    "retry_after": null,
+    "status": 504
+   },
+   "claims_left": 0,
+   "engine_requests": [],
+   "receipts": [
+    {
+     "exc": null,
+     "outcome": [
+      "failed",
+      "timeout"
+     ],
+     "request_id": "req-test"
+    }
+   ],
+   "stored": []
+  }
+ }
+}
