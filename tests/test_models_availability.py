@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 import unittest
@@ -180,6 +181,62 @@ class ModelAvailabilityTests(unittest.TestCase):
         self.assertEqual(self._judge(entry, workflows=only_missing), {"state": "unknown"})
         self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-up"], [])}), {"state": "available"})
 
+    def test_a_workflow_is_judged_by_its_engine_even_when_it_declares_other_requirements(self) -> None:
+        # Bindings commonly declare the files and nodes they need but no services; the engine still decides.
+        def record(backends, requires):
+            contract = {"bindings": {"b": {"requires": requires}}} if requires is not None else {"bindings": {}}
+            return SimpleNamespace(id="wf", contract=contract, supported_backends=backends, manifest={})
+
+        entry = {"id": "wf-model", "azizam_workflow_id": "wf"}
+        files_only = {"models": [{"role": "checkpoint", "path": "checkpoints/x.safetensors"}], "custom_nodes": ["N"]}
+        for requires in (None, files_only):
+            with self.subTest(requires=requires):
+                self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-up"], requires)}), {"state": "available"})
+                self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-down"], requires)})["state"], "unavailable")
+                self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-down", "svc-up"], requires)}),
+                                 {"state": "available"})
+                self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-up"], requires)}, fresh=False),
+                                 {"state": "unknown"})
+        # The engine and each required service must all be there at once.
+        with_service = dict(files_only, services=["svc-down"])
+        self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-up"], with_service)})["state"], "unavailable")
+        self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-down"], dict(files_only, services=["svc-up"]))})
+                         ["state"], "unavailable")
+        self.assertEqual(self._judge(entry, workflows={"wf": record(["svc-up"], dict(files_only, services=["svc-unseen"]))}),
+                         {"state": "unknown"})
+        # A required workflow's engine is required too.
+        two = {"wf": record(["svc-up"], {"workflows": ["dep"]}),
+               "dep": SimpleNamespace(id="dep", contract={"bindings": {}}, supported_backends=["svc-down"], manifest={})}
+        self.assertEqual(self._judge(entry, workflows=two)["state"], "unavailable")
+        # Each backend is one way to run it, judged with its own binding's requirements: a down engine does not hide a
+        # composed binding whose services are up, and a backend nothing can be judged for reads as unknown.
+        def mixed(engine, composed_services):
+            contract = {"bindings": {engine: {"requires": files_only}, "gateway": {"requires": {"services": composed_services}}}}
+            return {"wf": SimpleNamespace(id="wf", contract=contract, supported_backends=[engine, "gateway"], manifest={})}
+
+        self.assertEqual(self._judge(entry, workflows=mixed("svc-down", ["svc-up"])), {"state": "available"})
+        self.assertEqual(self._judge(entry, workflows=mixed("svc-up", ["svc-down"])), {"state": "available"})
+        self.assertEqual(self._judge(entry, workflows=mixed("svc-down", ["svc-down-too"]))["state"], "unavailable")
+        self.assertEqual(self._judge(entry, workflows=mixed("svc-down", [])), {"state": "unknown"})
+        # A backend that is no registry service (the gateway composing it) leaves the requirements to decide.
+        self.assertEqual(self._judge(entry, workflows={"wf": record(["gateway"], {"services": ["svc-up"]})}),
+                         {"state": "available"})
+        self.assertIsNone(self._judge(entry, workflows={"wf": record(["gateway"], files_only)}))
+
+    def test_every_bundled_workflow_on_a_known_engine_gets_a_state(self) -> None:
+        records = {record.id: record for record in proxy.GATEWAY_WORKFLOW_REGISTRY.records()}
+        engines = {str(b) for record in records.values() for b in record.supported_backends} - {"gateway"}
+        self.assertTrue(engines)
+        registry = {"services": {sid: {"enabled": True, "config": {}} for sid in engines}}
+        evidence = {sid: {"status": "up"} for sid in engines}
+        unmarked = [
+            workflow_id for workflow_id, record in records.items()
+            if set(map(str, record.supported_backends)) & engines
+            and self._judge({"id": workflow_id, "azizam_workflow_id": workflow_id}, workflows=records,
+                            evidence=evidence, records=registry) is None
+        ]
+        self.assertEqual(unmarked, [])
+
     def test_disabled_service_is_unavailable_and_still_not_in_the_routing_index(self) -> None:
         registry = {"services": {
             **REGISTRY["services"],
@@ -205,6 +262,60 @@ class ModelAvailabilityTests(unittest.TestCase):
         self.assertEqual(index[proxy.normalize_model_id(prefixed)], ["svc-remote"])
         # The local model's own name must not borrow the remote service: a down local model stays unavailable.
         self.assertEqual(index["same"], ["svc-local"])
+
+    def test_a_lifecycle_routed_model_is_judged_by_the_backend_that_serves_it(self) -> None:
+        # The catalog service declares the model; lifecycle routing sends it to another backend.
+        record = {"id": "routed-model", "upstream_model": "routed-model", "gateway_backend": "svc-engine"}
+        catalog_cfg = {"protocol": "openai", "gateway_lifecycle": True, "models": [record]}
+        engine_cfg = {"protocol": "openai", "model": "engine-own-model"}
+        registry = {"services": {"svc-catalog": {"enabled": True, "config": catalog_cfg},
+                                 "svc-engine": {"enabled": True, "config": engine_cfg}}}
+        self.assertEqual(litellm_public_model_service_ids(registry)["routed-model"], ["svc-engine"])
+        # The record's own flag routes it the same way when the service config has none.
+        own_flag = {"services": {"svc-catalog": {"enabled": True, "config": {
+            "protocol": "openai", "models": [dict(record, gateway_lifecycle=True)]}}}}
+        self.assertEqual(litellm_public_model_service_ids(own_flag)["routed-model"], ["svc-engine"])
+        # Without lifecycle routing the declaring service answers, whatever the record names.
+        plain = {"services": {"svc-catalog": {"enabled": True, "config": {"protocol": "openai", "models": [record]}}}}
+        self.assertEqual(litellm_public_model_service_ids(plain)["routed-model"], ["svc-catalog"])
+        # A turned-off declaring service routes nothing, so it still judges its own models.
+        off = {"services": {**registry["services"], "svc-catalog": {"enabled": False, "config": catalog_cfg}}}
+        self.assertEqual(litellm_public_model_service_ids(off, include_disabled=True)["routed-model"], ["svc-catalog"])
+        # The runtime-config part of the index must not add the declaring service back, not even through the
+        # service's own model name when a record already names it.
+        for runtime_cfg in (catalog_cfg, dict(catalog_cfg, model_id="routed-model")):
+            with self.subTest(runtime_cfg=sorted(runtime_cfg)), patch.dict(proxy.config, {"backends": {"svc-catalog": runtime_cfg}}):
+                self.assertEqual(REAL_INDEX(registry)["routed-model"], ["svc-engine"])
+        with patch.dict(proxy.config, {"backends": {"svc-catalog": dict(catalog_cfg, model_id="own-name")}}):
+            self.assertEqual(REAL_INDEX(registry)["own-name"], ["svc-catalog"])
+        for catalog, engine, expected in (("down", "up", "available"), ("up", "down", "unavailable")):
+            self.status = {"generated_at": int(time.time()), "backends": [
+                {"service_id": "svc-catalog", "status": catalog}, {"service_id": "svc-engine", "status": engine}]}
+            with self.subTest(catalog=catalog, engine=engine), \
+                    patch.dict(proxy.config, {"backends": {"svc-catalog": catalog_cfg}}), \
+                    patch.object(proxy, "_model_service_ids_index", REAL_INDEX), \
+                    patch.object(proxy, "_litellm_models_payload", AsyncMock(return_value={
+                        "object": "list", "data": [{"id": "routed-model", "object": "model", "owned_by": "openai"}]})), \
+                    patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry):
+                self.assertEqual(self._entries()["routed-model"]["azizam_availability"]["state"], expected)
+                self.assertEqual("routed-model" in self._entries("?available=true"), expected == "available")
+
+    def test_the_status_snapshot_is_read_on_the_event_loop(self) -> None:
+        # A read from a worker thread cannot restart a stopped status refresher; a read on the loop can.
+        seen: list[bool] = []
+
+        def read():
+            try:
+                asyncio.get_running_loop()
+                seen.append(True)
+            except RuntimeError:
+                seen.append(False)
+            return self.status
+
+        with patch.object(proxy, "_cached_status_payload_for_availability", read):
+            self.assertEqual(self._entries()["down-model"]["azizam_availability"]["state"], "unavailable")
+        self.assertTrue(seen)
+        self.assertTrue(all(seen), seen)
 
     def test_busy_and_degraded_services_count_as_available(self) -> None:
         records = {"services": {sid: {"enabled": True, "config": {}} for sid in ("busy", "bad", "gone")}}
@@ -235,6 +346,10 @@ class ModelAvailabilityTests(unittest.TestCase):
         out = proxy._annotate_model_availability(data, only_available=False)
         self.assertNotIn("azizam_availability", out[0])
         self.assertEqual(out[1]["azizam_availability"]["state"], "unavailable")
+        with patch.object(proxy.ADMIN_STORE, "get_service_registry", side_effect=RuntimeError("unreadable")):
+            out = proxy._annotate_model_availability(
+                [{"id": "down-model", "azizam_availability": dict(stale)}], only_available=True)
+        self.assertEqual(out, [{"id": "down-model"}])
 
     def test_service_mapping_is_built_once_per_request(self) -> None:
         names = {f"model-{i}": ["svc-down", "svc-up", "svc-unseen"] for i in range(25)}
