@@ -178,3 +178,30 @@ def test_a_workflow_with_an_inline_template_runs_that_template(world):  # W2: th
     drawn = generated_of(world, response.json()["job_id"])
     expected = compile_workflow(source, "comfyui", template_of(source), {"prompt": "a red fox", **drawn})
     assert engine.prompts[0]["prompt"] == expected
+
+
+MCP_META = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": {"name": "t", "version": "1"},
+            "io.modelcontextprotocol/clientCapabilities": {}}
+
+
+def surfaces(world) -> dict[str, bool]:
+    """Whether the workflow shows on each place a caller learns of workflows: the App catalog, OpenAPI, MCP."""
+    catalog = call("get", "/gateway/v1/workflows")
+    openapi = call("get", "/openapi.json")
+    mcp = call("post", "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "capabilities", "arguments": {}, "_meta": MCP_META}},
+        headers={"mcp-protocol-version": "2026-07-28", "mcp-method": "tools/call", "mcp-name": "capabilities"})
+    assert catalog.status_code == openapi.status_code == mcp.status_code == 200, (catalog.text, mcp.text)
+    return {"catalog": OWNER_ID in catalog.text, "openapi": OWNER_ID in openapi.text, "mcp": OWNER_ID in mcp.text}
+
+
+def test_a_published_workflow_shows_on_every_surface_and_an_unpublished_one_on_none(world):  # rows 2 and 4
+    publish(world.db, owner_workflow(False))
+    assert surfaces(world) == {"catalog": True, "openapi": True, "mcp": True}
+    publish(world.db, owner_workflow(False, published=False))
+    assert surfaces(world) == {"catalog": False, "openapi": False, "mcp": False}
+    engine = serve_engine(world, FakeGraphEngine(manifest_of(IMAGE_ID), png_bytes((9, 9, 9)), "image/png", "out.png"))
+    refused = call("post", f"/gateway/v1/workflows/{OWNER_ID}/run", json={"inputs": {"prompt": "x"}})
+    assert refused.status_code in (403, 404, 409), refused.text
+    assert engine.calls == []
