@@ -123,7 +123,7 @@ from gateway.workflow_runtime_types import JobNotFound, MediaRef, RunRefused
 from gateway import media_input_assets, media_input_leases, media_inputs
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
-from gateway import exclusive_pool, mesh_api, mesh_manifest
+from gateway import exclusive_pool, mesh_api, mesh_manifest, multipart_adapter, row_routes, workflow_adapters
 from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
@@ -16567,7 +16567,7 @@ FRONTEND_TRANSLATORS.register_owned("a1111", lambda app: a1111_api.register_a111
     ),
 ))
 
-# --- Image to 3D: POST /v1/meshes/generate (gateway/mesh_api.py) -------------
+# --- Image to 3D: the 3D rows over the run core (gateway/row_routes.py, gateway/multipart_adapter.py) ---
 # The manifest is bundled data; the lease manager is one per process (one gateway worker per physical pool).
 _MESH_MANIFEST_PATH = Path(__file__).resolve().parent / "manifests" / "workflows" / "mesh.generate.trellis-2.yml"
 # The route reads its workflow record from the registry (the schema 2 contract) and runs the mesh frontend profile on it
@@ -16606,36 +16606,6 @@ def _live_service_registry() -> dict | None:
         return None
 
 
-def _mesh_open_receipt(
-    auth: AuthContext, request_id: str, path: str, manifest: mesh_api.MeshWorkflow,
-) -> ReceiptLifecycleOwner:
-    """The receipt of one mesh request, naming the record that request read (not a newer one adopted since)."""
-    identity = auth.identity
-    receipt = RouteReceipt(
-        protocol="openai.mesh", intent=mesh_api.MESH_INTENT, path=path, request_id=request_id,
-        app_profile=plan_ref(identity),
-        app_id=identity.app_id if identity else None,
-        api_key_name=identity.name if identity else None,
-        backend=manifest.service_id, resolved_workflow=manifest.id,
-        manifest_id=manifest.id, manifest_version=manifest.version,
-        manifest_hash=manifest.manifest_hash,
-    )
-    return ReceiptLifecycleOwner(receipt)
-
-
-def _mesh_route_policy(auth: AuthContext, row: Mapping[str, Any], manifest: mesh_api.MeshWorkflow) -> PolicyDecision:
-    """The same plan evaluation the other Try workflows run, from the route's own frontend tiers and the record the
-    request read. Reads no receipt."""
-    tiers = row["runtime_policy"]
-    return evaluate_and_apply(auth.identity, make_policy_request(
-        protocol=mesh_api.MESH_PROTOCOL, intent=mesh_api.MESH_INTENT, workflow=manifest.id,
-        backend=manifest.service_id,
-        capability_exposure=tiers["capability_exposure"],
-        capability_trust_tier=tiers["capability_trust_tier"],
-        capability_resource_tier=tiers["capability_resource_tier"],
-    ))
-
-
 def store_workflow_output(auth: Any, output: asset_types.WorkflowOutput) -> str:
     """Store a file a workflow made, and the files it was given, with what made it (``origin`` in its sidecar).
 
@@ -16665,13 +16635,6 @@ def store_workflow_output(auth: Any, output: asset_types.WorkflowOutput) -> str:
         origin={key: value for key, value in origin.items() if value or key == "takes_text"})
 
 
-def _mesh_job_owner(auth: Any) -> dict[str, Any]:
-    """The caller fields of a mesh media job, from the authenticated App (as the identity job stamps its own)."""
-    identity = auth.identity if isinstance(auth, AuthContext) else None
-    return {"app_profile": plan_ref(identity), "api_key_name": identity.name if identity else None,
-            "app_id": identity.app_id if identity else None, "owner_key_hash": identity.key_hash if identity else None}
-
-
 def _upload_as_output_input(upload: Any, data: bytes) -> asset_types.OutputInput:
     """A file a caller uploaded to a workflow, as the store keeps it: its name and the media type it was sent with,
     else the one its suffix gives, else a picture (what an image route is given)."""
@@ -16687,26 +16650,31 @@ def _upload_as_output_input(upload: Any, data: bytes) -> asset_types.OutputInput
 MESH_DEPS = mesh_api.MeshApiDeps(
     current_manifest=current_mesh_workflow,
     workflow_available=lambda: GATEWAY_WORKFLOW_REGISTRY.get(_MESH_WORKFLOW_ID) is not None,
-    authenticate=lambda request, path: authenticate_request(request, path),
     frontend_records=lambda: route_registry.protocol_frontend_records(
         registry=_live_service_registry(), proxy_config=runtime().config),
     services=lambda: (_live_service_registry() or {}).get("services") or {},
-    open_receipt=_mesh_open_receipt,
-    leases=MESH_LEASES,
-    egress_refusal=_egress_refusal_response,
     client_factory=lambda: engine_egress.async_client(follow_redirects=False),
-    new_request_id=new_request_id,
-    route_policy=_mesh_route_policy,
-    store_output=lambda auth, output: store_workflow_output(auth, output),
-    jobs=mesh_api.MeshJobDeps(
-        path=lambda: media_jobs.DB_PATH,
-        owner=lambda auth: _mesh_job_owner(auth),
-        response=lambda job, request: _image_media_job_response(job, request, status_code=202),
-    ),
-    register_job_counter=lambda name, counter: DRAIN_STATE.register_job_counter(name, counter),
-    discard_output=lambda asset_id: _LIBRARY_ASSET_DELETER(asset_id),
 )
-FRONTEND_TRANSLATORS.register_owned("mesh", lambda app: mesh_api.register_mesh_routes(app, MESH_DEPS))
+# The multipart runner: the pool lease, the observer and the service call behind the binding the protocol description names.
+MULTIPART_HOST = multipart_adapter.MultipartHost(
+    services=lambda: MESH_DEPS.services(),
+    leases=MESH_LEASES,
+    client_factory=lambda: MESH_DEPS.client_factory(),
+    require_egress=_require_egress_lease,
+    store_output=lambda auth, output: store_workflow_output(auth, output),
+    read_asset=lambda asset_id, caller: _WORKFLOW_RUN_PORT.read_asset(asset_id, caller),
+    jobs_path=lambda: media_jobs.DB_PATH,
+    limits=lambda: result_bundle.limits_from_config(runtime().config),
+)
+workflow_adapters.register(multipart_adapter.runner(MULTIPART_HOST))
+
+
+def _mount_3d_rows(app: FastAPI) -> None:
+    """The routes of the 3D frontend rows, over the run core."""
+    row_routes.mount_rows(app, _ROW_ROUTE_DEPS, ("mesh-generations", "mesh-glb"))
+
+
+FRONTEND_TRANSLATORS.register_owned("mesh", _mount_3d_rows)
 
 
 def _mesh_facts(live_registry: Mapping[str, Any] | None) -> Capability:
@@ -26062,16 +26030,6 @@ async def gateway_image_generations_media_job(request: Request):
     return response
 
 
-def _mesh_job_content(job: Mapping[str, Any]) -> Response:
-    """A finished mesh job's content is the model itself (the sync route's answer), not a list of handles."""
-    asset_id = next((a.get("asset_id") for a in job.get("assets") or [] if isinstance(a, Mapping) and a.get("asset_id")), None)
-    path = asset_cache_path(asset_id) if isinstance(asset_id, str) else None
-    if path is None:
-        return JSONResponse({"error": {"message": "media job has no model asset", "type": "api_error",
-                                       "code": "media_job_assets_missing"}}, status_code=502)
-    return FileResponse(path, media_type=mesh_api.MESH_MEDIA_TYPE, headers={"x-asset-id": str(asset_id)})
-
-
 async def gateway_media_job_content(job_id: str, request: Request):
     """Return signed output asset handles for a completed gateway media job."""
     auth_context = _gateway_auth_context(
@@ -26141,8 +26099,6 @@ async def gateway_media_job_content(job_id: str, request: Request):
         }, status_code=503 if retryable else 410,
            headers={"Retry-After": "5"} if retryable else None)
     intent = str(job.get("intent") or "")
-    if intent == mesh_api.MESH_INTENT:
-        return _mesh_job_content(job)  # the plan was checked above, with the other kinds
     if intent == "image.generate":
         payload = _openai_image_payload_from_media_job(job)
         missing_message = "media job has no image assets"
@@ -26609,6 +26565,9 @@ def _workflow_engine(adapter_id: str) -> tuple[str, Mapping[str, Any], Any, Any]
 
 def _workflow_binding_problem(binding: Any) -> str | None:
     """Whether this deployment can run ``binding`` (I3): its adapter is registered for a configured service."""
+    runner = workflow_adapters.for_binding(binding.adapter_id)
+    if runner is not None:
+        return runner.binding_problem(binding)
     return None if _workflow_engine(binding.adapter_id) is not None else workflow_run.BINDING_UNAVAILABLE
 
 
@@ -26708,6 +26667,9 @@ class _WorkflowRunPort:
 
     # what the job pins
     def adapter_identity(self, entry: Any, binding_key: str, binding: Any) -> workflow_run.AdapterIdentity:
+        runner = workflow_adapters.for_binding(binding_key)
+        if runner is not None:
+            return runner.identity(entry, binding_key, binding)
         engine = _workflow_engine(binding.adapter_id)
         if engine is None:
             raise ValueError(workflow_run.BINDING_UNAVAILABLE)
@@ -26753,6 +26715,9 @@ class _WorkflowRunPort:
         adapter sees (``PinnedRuntime``); the job's inputs, generated values and media go in the request body. The
         result bundle is committed by ``engine_protocol.jobs.run`` itself."""
         from gateway.engine_protocol import jobs as protocol_jobs
+        runner = workflow_adapters.for_adapter(ctx.pin.envelope.adapter_id)
+        if runner is not None:
+            return await runner.run(ctx)
         engine = _workflow_engine(ctx.pin.envelope.adapter_id)
         if engine is None:
             raise ProtocolError("No reviewed adapter is registered for this job.", code="adapter_not_registered")
@@ -26867,6 +26832,25 @@ def _workflow_run_response(result: Any, *, status_code: int | None = None) -> Re
         status_code=status_code or (202 if created or result.status in ("queued", "running") else 200),
         media_type="application/json",
         headers={"Location": f"/gateway/v1/media/jobs/{result.job_id}"})
+
+
+def _new_row_spool() -> request_spool.FileRequestSpool:
+    limits = _WORKFLOW_RUN_PORT.result_limits()
+    return request_spool.FileRequestSpool(
+        _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(limits, "max_asset_bytes", 256 * 1024 * 1024))
+
+
+# What the mounted frontend rows read from this module (gateway/row_routes.py).
+_ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
+    authenticate=lambda request, path: authenticate_request(request, path),
+    enforce_policy=lambda auth, path: _enforce_runtime_route_policy(auth, path),
+    core=_workflow_run_core,
+    snapshot=lambda: WORKFLOW_SNAPSHOTS.current(),
+    jobs=_workflow_job_service,
+    new_spool=_new_row_spool,
+    scope=lambda request, spool: request_spool.request_scope(request, spool),
+    refused=_workflow_run_response,
+)
 
 
 @app.post("/gateway/v1/workflows/{workflow_id}/run")

@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import proxy
-from tests.test_mesh_route import Harness
+from tests.support.mesh_harness import Harness
 
 
 def fake_mesh_pool():
