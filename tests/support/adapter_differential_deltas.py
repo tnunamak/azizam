@@ -63,7 +63,10 @@ class Delta:
                 out.append(str(error))
             if kept:
                 out.append(f"{self.path}: {kept[0]!r} is kept identical by a moved route; fix the shape, not the golden")
-        if any(isinstance(value, (dict, list)) for value in (self.old, self.new)):
+        # A remove of a list item names that whole item as its old value (a replay drops one engine call or one
+        # listed job); every other delta names one leaf value, so it cannot hide a change inside a subtree.
+        removes_list_item = self.kind == "remove" and self.path.endswith("]")
+        if any(isinstance(value, (dict, list)) for value in (self.new,) + (() if removes_list_item else (self.old,))):
             out.append(f"{self.path}: a delta names one value, not a subtree")
         return out
 

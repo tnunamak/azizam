@@ -68,6 +68,14 @@ def test_a_delta_on_one_value_in_a_body_still_applies():
     assert out["caller"][0]["response"]["status"] == 202
 
 
+def test_only_a_list_item_remove_may_name_a_whole_object():
+    golden = {"caller": [{"response": {"body": {"meta": {"a": 1}}}}], "engine_requests": [{"method": "POST"}]}
+    with pytest.raises(DeltaError, match="not a subtree"):
+        listed.apply_deltas(golden, [Delta("remove", "$.caller[0].response.body.meta", {"a": 1}, None, "r")])
+    with pytest.raises(DeltaError, match="kept identical"):
+        listed.apply_deltas(golden, [Delta("remove", "$.engine_requests[0]", {"method": "POST"}, None, "r")])
+
+
 # 3 -- clock checks read the raw JSON text and the raw SQL row ---------------------------------------------------------
 
 @pytest.mark.parametrize("body", [
