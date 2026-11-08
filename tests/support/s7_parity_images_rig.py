@@ -100,13 +100,16 @@ def observe(tmp_path: Path, path: str, request: dict[str, Any] | Callable[[Gatew
 
         async def drive() -> None:
             target = ROW_PREFIX + path if row else path
-            if callable(request):
-                box["response"] = await request(rig)
-            else:
-                box["response"] = await rig.call(method, target, label=f"{suffix} {path}", **request)
-            if then is not None:
-                box["extra"] = await then(rig, box["response"])
+            try:
+                if callable(request):
+                    box["response"] = await request(rig)
+                else:
+                    box["response"] = await rig.call(method, target, label=f"{suffix} {path}", **request)
+                if then is not None:
+                    box["extra"] = await then(rig, box["response"])
+            except Exception as error:  # noqa: BLE001 - a route that crashes is an observation, not a test error
+                box["exception"] = f"{type(error).__name__}: {str(error)[:200]}"
 
         asyncio.run(drive())
         trace = json.loads(json.dumps(rig.trace()))
-    return Obs(trace=trace, response=box.get("response"), extra=box.get("extra") or {})
+    return Obs(trace=trace, response=box.get("response"), extra={**(box.get("extra") or {}), **({"exception": box["exception"]} if "exception" in box else {})})

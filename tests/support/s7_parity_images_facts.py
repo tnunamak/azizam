@@ -124,8 +124,10 @@ Reader = Callable[[Obs], Any]
 
 def assert_same(old: Obs, row: Obs, *readers: Reader | tuple[str, Reader]) -> None:
     """Every reader gives the same fact for the old route and the row. The old route must have answered at all."""
-    assert old.trace["caller"], "the old route did not answer: the scenario is wrong"
+    assert old.trace["caller"] and "exception" not in old.extra, f"the old route did not answer: the scenario is wrong ({old.extra.get('exception')})"
     problems = []
+    if "exception" in row.extra:
+        problems.append(f"the row path crashed: {row.extra['exception']}")
     for reader in readers:
         label, read = reader if isinstance(reader, tuple) else (getattr(reader, "__name__", "fact"), reader)
         before, after = read(old), read(row)
