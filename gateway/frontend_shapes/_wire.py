@@ -27,6 +27,7 @@ from gateway.workflow_runtime_types import (
 
 CHUNK = 1 << 16
 FORM_MAX_FIELDS = 100               # the text parts of one form; a form with more is refused while it is read
+FORM_MAX_FILES = 100                # the file parts the parser takes; a part with no input to fill is then named in a 400
 FORM_PART_BYTES = 1 << 20           # the most one text part may hold (the form parser's own default)
 FORM_PART_HEAD_BYTES = 8 << 10      # the boundary and headers around one part
 WORKFLOW_AMBIGUOUS = "workflow_ambiguous"
@@ -86,13 +87,14 @@ class FormLimits:
     """What one multipart form may hold. The body budget follows from the three: every file part at its largest, every
     text part at its largest, and the framing around each part."""
 
-    max_files: int
+    file_slots: int                 # the file parts the wire can use; the byte budget has room for this many
     max_file_bytes: int | None      # None: the shape's spool states no per-file size, so only the counts bound the read
     max_fields: int = FORM_MAX_FIELDS
+    max_files: int = FORM_MAX_FILES
 
     @property
     def body_budget(self) -> float:
-        files = self.max_files * (self.max_file_bytes + FORM_PART_HEAD_BYTES) if self.max_file_bytes is not None else float("inf")
+        files = self.file_slots * (self.max_file_bytes + FORM_PART_HEAD_BYTES) if self.max_file_bytes is not None else float("inf")
         return files + self.max_fields * (FORM_PART_BYTES + FORM_PART_HEAD_BYTES)
 
 

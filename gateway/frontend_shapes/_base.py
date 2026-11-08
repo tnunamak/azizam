@@ -123,10 +123,10 @@ class Shape:
         """The most one form may hold: as many file parts as the wire carries (one, or as many as the most asset inputs
         a workflow the row selects declares), each as large as the spool accepts."""
         if self.files == "one":
-            max_files = 1
+            file_slots = 1
         else:
-            max_files = max((len(_wire.asset_input_names(entry)) for entry in _wire.candidates(snapshot, row)), default=0)
-        return _wire.FormLimits(max_files=max_files, max_file_bytes=getattr(spool, "max_file_bytes", None))
+            file_slots = max((len(_wire.asset_input_names(entry)) for entry in _wire.candidates(snapshot, row)), default=0)
+        return _wire.FormLimits(file_slots=file_slots, max_file_bytes=getattr(spool, "max_file_bytes", None))
 
     async def to_run_request(self, request: Request, row: FrontendRow, snapshot: RegistrySnapshot, *,
                              spool: RequestSpool) -> RunRequest | Response:

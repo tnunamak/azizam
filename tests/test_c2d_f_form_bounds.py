@@ -47,7 +47,7 @@ def chunked_form(parts: list[tuple[str, str | None, int]]) -> tuple[Request, lis
         if piece is None:
             return {"type": "http.disconnect"}
         taken[0] += len(piece)
-        return {"type": "http.request", "body": piece, "more_body": True}
+        return {"type": "http.request", "body": piece, "more_body": piece is not pieces[-1]}
 
     scope = {"type": "http", "method": "POST", "path": "/", "query_string": b"", "headers": [
         (b"content-type", f"multipart/form-data; boundary={BOUNDARY}".encode())]}
@@ -58,7 +58,7 @@ def _split(request: Request, limits: _wire.FormLimits):
     return asyncio.run(_wire.split_form(request, limits))
 
 
-LIMITS = _wire.FormLimits(max_files=1, max_file_bytes=BLOCK * 4, max_fields=3)
+LIMITS = _wire.FormLimits(file_slots=1, max_file_bytes=BLOCK * 4, max_fields=3)
 
 
 def test_an_oversized_file_is_refused_with_413_after_reading_only_up_to_the_budget() -> None:
