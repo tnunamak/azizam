@@ -79,7 +79,7 @@ def library(tmp_path, monkeypatch):
         signed_url_builder=lambda request, asset_id, mode: f"http://testserver/v1/assets/{asset_id}/content?md={mode}",
         asset_path_resolver=proxy.asset_cache_path,
         asset_media_type_resolver=proxy.asset_media_type,
-        asset_deleter=lambda asset_id: False,
+        asset_deleter=lambda asset_id, **_: False,
         asset_catalog_provider=me_media.create_asset_catalog_provider(proxy.IMAGE_CACHE_DIR),
         asset_metadata_reader=proxy._read_asset_metadata,
         admin_db_path=admin, media_jobs_path=jobs, receipts_path=receipts, prompt_memory_path=jobs,

@@ -115,6 +115,7 @@ class MemberImageRouteProbe(unittest.IsolatedAsyncioTestCase):
             metadata_reader=proxy._read_asset_metadata,
             asset_path_resolver=proxy.asset_cache_path,
             metadata_path_resolver=proxy._asset_metadata_path,
+            metadata_writer=proxy._write_asset_metadata,
         )
         self.assertTrue(deleter(asset_id))
         self.assertIsNone(proxy.asset_cache_path(asset_id) and proxy.asset_cache_path(asset_id).exists() or None)

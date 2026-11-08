@@ -672,13 +672,13 @@ def test_background_removal_leases_an_enabled_domain(gate, monkeypatch) -> None:
     async def active() -> str:
         return BACKEND
 
-    async def model_for(_host: str) -> str:
+    async def model_for(_backend: str) -> str:
         return "fake-p-a"
 
     monkeypatch.setattr(proxy, "_image_background_removal_enabled", lambda: True)
     monkeypatch.setattr(proxy, "get_active_backend", active)
     monkeypatch.setattr(proxy, "_is_local_swap_backend", lambda name: name == BACKEND)
-    monkeypatch.setattr(proxy, "effective_llm_model_for_host", model_for)
+    monkeypatch.setattr(proxy, "current_llm_model_for_backend", model_for)
     install_async_client_stub(monkeypatch, post)
     decision = _run(proxy.decide_image_background_removal("a logo for a bakery", auth_context=proxy.NO_AUTH_CONTEXT))
     assert decision.source == "llm" and seen == [1], "the call was sent under one domain lease"

@@ -69,6 +69,7 @@ class RemoveMissingTests(unittest.TestCase):
     _asset_path, _meta_path = base.MeMediaRouterTests._asset_path, base.MeMediaRouterTests._meta_path
     _asset_metadata, _catalog = base.MeMediaRouterTests._asset_metadata, base.MeMediaRouterTests._catalog
     _delete_unshared, _write_asset = base.MeMediaRouterTests._delete_unshared, base.MeMediaRouterTests._write_asset
+    _write_meta = base.MeMediaRouterTests._write_meta
     _receipt, _job = base.MeMediaRouterTests._receipt, base.MeMediaRouterTests._job
 
     def remove_missing(self):

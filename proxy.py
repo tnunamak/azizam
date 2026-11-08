@@ -3914,7 +3914,8 @@ async def _prepare_litellm_local_llm_request(
         and has_vision_content(body.get("messages"))
     )
     if vision_needed and not target_backend:
-        active = await get_active_backend()
+        vision_target, _ = await _first_servable_loaded_llm_target()
+        active = vision_target.backend if vision_target else None
         # vision_capable_llm_backends() answers the membership question: which
         # backends in DERIVED.LLM_BACKEND_HOSTS carry the "vision" capability?  For
         # a backend declaring vision=True, [] otherwise.  The mmproj
@@ -4092,16 +4093,16 @@ def _current_model_unavailable_response(backend: str) -> Response:
     )
 
 
-async def _current_loaded_llm_target(
-    auth_context: AuthContext,
+async def _first_servable_loaded_llm_target(
     *,
-    enforce_gateway_policy: bool = True,
+    local_swap_only: bool = False,
 ) -> tuple[CurrentLoadedLlmTarget | None, Response | None]:
-    """Resolve `current` to the first healthy, allowed backend that has a loaded model.
+    """Return the first healthy, allowed LLM backend that has a loaded model.
 
     Candidates keep priority order. A healthy candidate that is refused (not an LLM
     backend, operator availability override) or has no loaded model is skipped; the
-    first refusal is returned when no later candidate qualifies.
+    first refusal is returned when no later candidate qualifies. With `local_swap_only`,
+    a candidate that is not a local-swap backend is skipped without a refusal.
     """
     active = await get_active_backend()
     if not active:
@@ -4115,6 +4116,8 @@ async def _current_loaded_llm_target(
     later = candidates[candidates.index(active) + 1:] if active in candidates else []
     first_refusal: Response | None = None
     for position, backend in enumerate([active, *later]):
+        if local_swap_only and not _is_local_swap_backend(backend):
+            continue
         # `active` already answered healthy; a later candidate is probed only when it is reached.
         if position and not await check_service_health(backend):
             continue
@@ -4140,6 +4143,15 @@ async def _current_loaded_llm_target(
         if first_refusal is None:
             first_refusal = refusal
     return None, first_refusal
+
+
+async def _current_loaded_llm_target(
+    auth_context: AuthContext,
+    *,
+    enforce_gateway_policy: bool = True,
+) -> tuple[CurrentLoadedLlmTarget | None, Response | None]:
+    """Resolve `current` to the first healthy, allowed backend that has a loaded model."""
+    return await _first_servable_loaded_llm_target()
 
 
 async def refresh_openai_model_aliases() -> int:
@@ -7479,17 +7491,12 @@ async def decide_image_background_removal(
     if not prompt:
         return _background_removal_fallback("empty_prompt")
 
-    active = await get_active_backend()
-    # Generic: any local-swap LLM backend resolves its host from DERIVED.LLM_BACKEND_HOSTS.
-    target_host = DERIVED.LLM_BACKEND_HOSTS.get(active) if active else None
-    if active and _is_local_swap_backend(active) and target_host:
-        service = active
-    else:
+    target, _ = await _first_servable_loaded_llm_target(local_swap_only=True)
+    if target is None:
         return _background_removal_fallback("llm_unavailable", "no active LLM backend")
-
-    model_id = await effective_llm_model_for_host(target_host)
-    if not model_id:
-        model_id = default_model_for_operation("chat", "default")
+    service = target.backend
+    target_host = target.host
+    model_id = target.model
 
     headers = configured_downstream_headers(auth_context, service)
     # enable_thinking=False suppresses thinking (engine-agnostic kwarg — the load-bearing mechanism).
@@ -14708,10 +14715,14 @@ async def _current_loaded_llm_model_ids(
     Metadata uses the identity observed here, without another loaded-state read.
     Its declaration matching must not expand the availability ids.
     """
-    try:
-        active = active_backend or await get_active_backend()
-    except Exception:
-        active = None
+    active = None
+    if metadata_ids is not None:
+        # Only metadata needs the active backend; the id set comes from every
+        # path-identity backend, so plain id reads skip the health probe.
+        try:
+            active = active_backend or await get_active_backend()
+        except Exception:
+            active = None
 
     ids: set[str] = set()
     loaded_paths: dict[str, str] = {}
@@ -15964,6 +15975,7 @@ _LIBRARY_ASSET_DELETER = me_media.conservative_asset_deleter(
     metadata_reader=_read_asset_metadata,
     asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
     metadata_path_resolver=_asset_metadata_path,
+    metadata_writer=_write_asset_metadata,
     prompt_memory_path=lambda: media_jobs.DB_PATH,
 )
 
@@ -26257,6 +26269,7 @@ def _delete_owned_asset(asset_id: str, auth_context: AuthContext) -> Response:
         actor_id=app_id or getattr(identity, "credential_id", None) or getattr(identity, "key_hash", None),
         actor_label=getattr(identity, "name", None), job_id=None,
         asset_deleter=_LIBRARY_ASSET_DELETER, admin_db_path=ADMIN_STORE.path, prompt_memory_path=media_jobs.DB_PATH,
+        owner_keys=_asset_read_owner_keys(auth_context),
     )
     return JSONResponse({"id": asset_id, "object": "gateway.asset", "deleted": True, "physical_removed": removed})
 
@@ -29873,11 +29886,9 @@ async def _ollama_loaded_model_summaries(
     if (await asyncio.to_thread(_litellm_runtime_config)).enabled:
         return []
 
-    try:
-        active = await get_active_backend()
-    except Exception:
-        active = None
-    loaded_ids = await _current_loaded_llm_model_ids(active)
+    # The ids come from every path-identity backend, so no single backend owns
+    # them; `/api/ps` reports names and sizes only.
+    loaded_ids = await _current_loaded_llm_model_ids()
 
     summaries: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -29888,10 +29899,8 @@ async def _ollama_loaded_model_summaries(
         entry: dict[str, Any] = {
             "id": name,
             "object": "model",
-            "owned_by": active or "azizam",
             "created": _entry_created_ts(loaded_id if loaded_id.startswith("/") else None),
             "azizam_loaded": True,
-            "azizam_backend": active or "",
         }
         if loaded_id.startswith("/"):
             try:

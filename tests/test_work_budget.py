@@ -45,7 +45,7 @@ class UsageFixture:
             signed_url_builder=lambda request, asset_id, mode: f"http://t/{mode}/{asset_id}",
             asset_path_resolver=lambda asset_id: self.cache / f"{asset_id.split('_', 1)[1]}.mp3",
             asset_media_type_resolver=lambda asset_id, path: "audio/mpeg",
-            asset_deleter=lambda asset_id: False,
+            asset_deleter=lambda asset_id, **_: False,
             asset_catalog_provider=lambda: list(self.assets),
             asset_metadata_reader=lambda asset_id: {
                 "owner_key_hashes": [ownership.principal_key("app", self.apps[0]["id"])]},
