@@ -203,12 +203,12 @@ async def read_run_request(request, workflow_id: str, *, spool: FileRequestSpool
                 media.setdefault(name, []).append(staged)
         try:
             inputs = json.loads(raw_inputs) if raw_inputs else {}
-        except ValueError:
+        except (ValueError, RecursionError):  # nested past the parser's depth is not valid JSON either
             return _invalid("invalid_request", "inputs is not valid JSON")
     elif content_type in ("application/json", ""):
         try:
             body = await request.json()
-        except ValueError:
+        except (ValueError, RecursionError):
             return _invalid("invalid_request", "the body is not valid JSON")
         if not isinstance(body, Mapping) or set(body) - _BODY_KEYS:
             return _invalid("invalid_request", "the body takes only inputs and binding")
