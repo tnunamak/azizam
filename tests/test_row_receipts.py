@@ -272,6 +272,44 @@ def test_a_replayed_async_request_closes_its_own_receipt_and_the_job_closes_the_
     assert len(receipts(SYNC)) == 2
 
 
+# ------------------------------------------------------------------------------------------------ S7 parity 6.2, 6.4
+def test_s7_same_key_replays_after_backend_becomes_unavailable(rig):
+    async def go(c):
+        headers = {**ASYNC, "Idempotency-Key": "K"}
+        first = await c.post(SYNC, headers=headers, **form())
+        await settle(c, job_id_of(first))
+        calls = len(rig.downstream)
+        rig.services["trellis"]["enabled"] = False
+        again = await c.post(SYNC, headers=headers, **form())
+        fresh = await c.post(SYNC, headers={**ASYNC, "Idempotency-Key": "K2"}, **form())
+        return first, again, fresh, calls
+
+    first, again, fresh, calls = run_async(go)
+    assert again.status_code in (200, 202)
+    assert job_id_of(again) == job_id_of(first)
+    assert len(rig.downstream) == calls
+    assert fresh.status_code == 503
+
+
+def test_s7_combined_refusals_follow_the_row_order(rig):
+    """Authentication, route policy, body validation, service state: the first that applies answers."""
+    rig.services["trellis"]["enabled"] = False
+    bad_body = dict(files={"seed": (None, "1")})
+
+    async def go(c):
+        with authenticated(identity(plan_for(caps=("chat",)))):
+            policy = await c.post(RAW, **bad_body)
+        body = await c.post(RAW, **bad_body)
+        service = await c.post(RAW, **form())
+        return policy, body, service
+
+    policy, body, service = run_async(go)
+    assert policy.status_code == 403
+    assert body.status_code in (400, 422)
+    assert service.status_code == 503
+    assert rig.downstream == []
+
+
 # ------------------------------------------------------------------------------------------------ (c) recovery
 def test_a_run_receipt_left_open_by_a_stopped_gateway_is_closed_as_restarted(rig):
     request_id = "req_" + "e" * 32

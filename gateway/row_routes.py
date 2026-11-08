@@ -146,8 +146,9 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
             facts = run_facts(entry)
             setattr(request.state, request_history_capture.RUN_STATE_KEY, facts)
         run_request = dataclasses.replace(run_request, request_id=request_id)
-        refused = await asyncio.to_thread(core.target_gate, run_request.workflow_id, caller, snapshot=snapshot)
-        outcome = refused if refused is not None else await core.submit_run(run_request, caller, snapshot=snapshot)
+        # No separate gate call: ``submit_run`` gates a new job after it resolves the idempotency claim, so a replay of a
+        # finished job still answers that job when its backend has become unavailable (S7 parity 6.2).
+        outcome = await core.submit_run(run_request, caller, snapshot=snapshot)
     if isinstance(outcome, RunRefused):
         owner.report(status="failed", reason=outcome.code)
         return await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
