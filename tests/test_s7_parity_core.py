@@ -176,6 +176,23 @@ def test_a_failure_without_a_client_message_says_the_fixed_sentence_and_never_th
     assert job_error(db, view.job_id)[:2] == ("failed", "The job failed.")
 
 
+def test_a_client_message_never_carries_a_registered_secret_to_the_caller(db, tmp_path):
+    """Dot review of K, finding 1: the adapter's text is stored and shown, so a secret value in it is removed first."""
+    from gateway import log_scrub
+    log_scrub.hold("test:client-message", ["tok-S7-CLIENT-MESSAGE-SECRET"])
+    try:
+        port = failing_port(db, code="engine_failed", category="upstream", retryable=False, upstream_status=502,
+                            message="Engine refused /prompt?token=tok-S7-CLIENT-MESSAGE-SECRET")
+        core, port, _ = make_core(db, tmp_path, snapshot(), port)
+        view = submit(core)
+        run(core.execute_run(view.job_id))
+        status, text = job_error(db, view.job_id)[:2]
+    finally:
+        log_scrub.forget("test:client-message")
+    assert status == "failed"
+    assert "tok-S7-CLIENT-MESSAGE-SECRET" not in text and "[removed]" in text
+
+
 # ------------------------------------------------------------------------------------------ M12: restart recovery
 
 

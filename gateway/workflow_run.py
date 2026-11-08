@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from gateway import generated_defaults, media_jobs, result_bundle
+from gateway import generated_defaults, log_scrub, media_jobs, result_bundle
 from gateway.definition_store import DefinitionUnavailable
 from gateway.job_envelope import UNTRACKED, build_job_envelope
 from gateway.manifests import ContractError, ManifestError, validate_inputs
@@ -899,9 +899,12 @@ def _ref_dict(ref: MediaRef) -> dict[str, Any]:
 
 
 def _client_message(exc: BaseException) -> str:
-    """The text a failed job shows its caller: the adapter's own ``client_message``, else the fixed sentence."""
+    """The text a failed job shows its caller: the adapter's own ``client_message``, else the fixed sentence. The text is
+    stored and shown, so every registered secret value is removed from it first, whichever adapter wrote it."""
     message = getattr(exc, "client_message", None)
-    return message if isinstance(message, str) and message.strip() else FAILED_FALLBACK
+    if not isinstance(message, str) or not message.strip():
+        return FAILED_FALLBACK
+    return log_scrub.scrub(message, limit=2000)
 
 
 def _upstream_status(exc: BaseException) -> int | None:
