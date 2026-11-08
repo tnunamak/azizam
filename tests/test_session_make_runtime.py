@@ -345,9 +345,6 @@ class SessionMakeRuntimeTests(unittest.TestCase):
         self.assertEqual(len(canceled), 60)
         self.assertEqual((proxy._image_media_job_tasks, self.runtime._gates), (set(), {}))
 
-    # Not strict: it fails in some runs and passes in others (a race), so a pass says nothing yet.
-    @pytest.mark.xfail(strict=False, reason="K4: a resumed job canceled while it waits sometimes stays running; it must "
-                                            "always settle canceled (same cause as test_r16_regressions cancel_before_start)")
     def test_a_resumed_job_canceled_while_it_waits_settles_as_canceled(self) -> None:
         # After a restart a job resumes as running but still waits for a turn.
         jobs_db = media_jobs.DB_PATH

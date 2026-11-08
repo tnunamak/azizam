@@ -20,8 +20,7 @@ from tests.support.fake_upstream import fake_upstreams  # noqa: F401 - the fixtu
 from tests.support.registry_provider import provider_of
 
 
-@pytest.mark.parametrize('cancel_before_start', [False, pytest.param(True, marks=pytest.mark.xfail(strict=True, reason=(
-    'K4: a running job whose cancel was asked before the worker started stays running; it must settle canceled')))])
+@pytest.mark.parametrize('cancel_before_start', [False, True])
 def test_make_database_cancel_always_settles(tmp_path, cancel_before_start):
     path = tmp_path / 'jobs.db'
     media_jobs.init_db(path)
