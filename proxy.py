@@ -14469,7 +14469,11 @@ def _build_registry_snapshot(model_aliases: Mapping[str, Any] | None, *, strict:
         return registry_snapshot.build({}, registry_snapshot.bundled_release(), generation=0, model_aliases=model_aliases)
 
 
-GATEWAY_REGISTRY_PROVIDER = registry_snapshot.Provider(_build_registry_snapshot(config.get("model_aliases")))
+def _boot_registry_snapshot() -> registry_snapshot.Snapshot:
+    return _build_registry_snapshot(config.get("model_aliases"))
+
+
+GATEWAY_REGISTRY_PROVIDER = registry_snapshot.Provider(_boot_registry_snapshot())
 
 
 @app.middleware("http")
