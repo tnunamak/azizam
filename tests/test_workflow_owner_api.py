@@ -4,7 +4,6 @@ of ``tests/test_workflow_registry_store.py`` until ``registry_snapshot.build`` l
 from __future__ import annotations
 
 import copy
-import json
 
 import pytest
 from fastapi import FastAPI
@@ -16,7 +15,7 @@ from gateway.admin_runtime import AdminSQLiteStore
 from gateway.definition_store import DefinitionStore
 from gateway.workflow_registry_store import WorkflowRegistryStore
 from tests.registry_test_helpers import write_service_registry_for_test
-from tests.test_workflow_registry_store import BUNDLED_ID, FACTS, _template, _with_inline, build_snapshot, owner_contract
+from tests.test_workflow_registry_store import BUNDLED_ID, _template, _with_inline, build_snapshot, owner_contract
 
 OWNER = AdminContext(subject="owner-1", roles=frozenset({"owner"}), actor_kind="user", actor_label="Owner")
 FACTS_BODY = {"exposure": "default", "trust_tier": "stable", "resource_tier": "batch", "resource_class": "image",
@@ -166,10 +165,14 @@ def test_ids_with_one_token_are_422_id_clash_in_both_orders(api):  # rows 8 and 
 
 
 def _registry_with_alias(client, alias_id: str) -> dict:
-    registry = service_registry.normalize_service_registry({})
-    registry["services"] = {"svc": {"id": "svc", "name": "svc", "kind": "engine",
-                                    "config": {"models": [{"id": "svc-model"}, {"id": alias_id, "base_model_id": "svc-model"}]}}}
-    return registry
+    """The registry as the owner reads it, with one more model alias on a service that serves a model."""
+    registry = client.get("/admin/api/operator/service-registry").json()["service_registry"]
+    for service in registry["services"].values():
+        models = (service.get("config") or {}).get("models")
+        if models and models[0].get("id"):
+            models.append({"id": alias_id, "base_model_id": models[0]["id"]})
+            return registry
+    pytest.skip("this build's release registry serves no model to alias")
 
 
 def test_a_model_alias_whose_token_equals_a_workflow_id_is_422_through_the_whole_document_put(api):  # row 22
@@ -180,14 +183,13 @@ def test_a_model_alias_whose_token_equals_a_workflow_id_is_422_through_the_whole
     assert response.json()["error"]["code"] == "id_clash"
     fine = api.put("/admin/api/operator/service-registry", json=_registry_with_alias(api, "fresh-alias"),
                    headers={"If-Match": os_n(api)})
-    assert fine.status_code in (200, 400), fine.text      # a different alias is not a clash
+    assert fine.status_code == 200, fine.text      # a different alias is not a clash
 
 
 def test_a_workflow_whose_id_equals_an_existing_alias_is_refused(api):  # row 8, the other direction
     response = api.put("/admin/api/operator/service-registry", json=_registry_with_alias(api, "Owner-Test-Demo"),
                        headers={"If-Match": os_n(api)})
-    if response.status_code != 200:
-        pytest.skip("the minimal service record is not accepted by this build")
+    assert response.status_code == 200, response.text
     clash = create(api)
     assert clash.status_code == 422 and clash.json()["error"]["code"] == "id_clash"
 
@@ -237,4 +239,3 @@ def test_the_routes_need_an_admin(api):
     assert api.get("/admin/api/workflows").status_code == 401
     api.roles["current"] = AdminContext(subject="viewer", roles=frozenset({"viewer"}))
     assert api.post("/admin/api/workflows", json={"contract": owner_contract()}).status_code == 403
-    assert json.loads(api.get("/admin/api/workflows").text if False else "{}") == {}
