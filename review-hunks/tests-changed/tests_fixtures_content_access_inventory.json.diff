@@ -1,0 +1,42 @@
+diff --git a/tests/fixtures/content_access_inventory.json b/tests/fixtures/content_access_inventory.json
+index 38e1581c5..e80fb68b5 100644
+--- a/tests/fixtures/content_access_inventory.json
++++ b/tests/fixtures/content_access_inventory.json
+@@ -80,7 +80,7 @@
+     {
+       "path": "proxy.py",
+       "function": "_run_audio_media_job",
+-      "source_sha256": "129590c78a6bb247611c7767cb2c096ab99b565c6d741e08a359a91937b68d15",
++      "source_sha256": "0a46df384c2f5eac1706c9f0f2e68a3ec3c9fcc314dd9ec1207a99e4e24681fa",
+       "call": "append_event",
+       "event": "'completed'",
+       "access": "content:job:read"
+@@ -133,10 +133,18 @@
+       "event": "'progress'",
+       "access": "content:job:read"
+     },
++    {
++      "path": "gateway/workflow_run.py",
++      "function": "_create",
++      "source_sha256": "e2cf1ff3e04274305d837cff55edf0fac563182cbab9219543f6a6e081617c21",
++      "call": "append_event",
++      "event": "'queued'",
++      "access": "content:job:read"
++    },
+     {
+       "path": "proxy.py",
+       "function": "_submit_audio_media_job",
+-      "source_sha256": "397422050c2e810dba9c5eea635793a4cf15fa48f3d078c1a069401558871bc4",
++      "source_sha256": "da3dc921f12be3745fe3b891ac7037d8f34b9803572a7365b80577393f45efb5",
+       "call": "append_event",
+       "event": "'queued'",
+       "access": "content:job:read"
+@@ -176,7 +184,7 @@
+     {
+       "path": "proxy.py",
+       "function": "_run_audio_media_job",
+-      "source_sha256": "129590c78a6bb247611c7767cb2c096ab99b565c6d741e08a359a91937b68d15",
++      "source_sha256": "0a46df384c2f5eac1706c9f0f2e68a3ec3c9fcc314dd9ec1207a99e4e24681fa",
+       "call": "append_event",
+       "event": "'started'",
+       "access": "content:job:read"

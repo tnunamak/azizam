@@ -1,0 +1,23 @@
+diff --git a/tests/budgets.toml b/tests/budgets.toml
+index 320185b17..c3eaa08e7 100644
+--- a/tests/budgets.toml
++++ b/tests/budgets.toml
+@@ -653,7 +653,8 @@
+ # Then +6 (inheritance on every route, a selector failure, a non-path service, identical served ids, a current-fast-only plan, the member catalog); measured: 22148.
+ # Then +4 (a path backend never matches by served name; a gone loaded path; a non-path backend's served id with a distractor record; the deployment-name default); measured: 22152.
+ # Code to data S4-S8 interfaces (2026-11-08): +21 cases in test_workflow_runtime_types.py (the frozen interface file, the kernel and the fakes' contracts).
+-pytest = 22173
++# Code to data S6, builder C (2026-11-08): net +15 cases (test_workflow_run.py and test_workflow_run_route.py added; test_compile_from_pin.py, test_video_workflow_execution.py and NativeWorkflowRunTests removed); measured with --collect-only -q: 22188.
++pytest = 22188
+ # Train r92: Try picture-upload specs, 3103 measured.
+ # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
+ # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.
+@@ -899,7 +900,7 @@ ad_hoc_upstream_fake_files = 46
+ # Train 18 with S3.3: 818 + (-2) = 816.
+ # S3.5 base (2026-11-07): main plus S3.4; measured with scripts/run-hermetic-pytest.sh --collect-only -q.
+ # S3.9 (2026-11-08): -10 where the mesh validator's own type and intent checks left with gateway/mesh_manifest.py's validator.
+-domain_literals = 802
++domain_literals = 792
+ # Config values proxy.py reads at import, one key per source section (tests/test_import_time_config_reads.py,
+ # scripts/config_import_reads.py; docs/design/CONFIG_HOMES.md 1.2). 97 on 2026-11-05, after the review fix of the scan:
+ # a lambda or def body is pruned (it does not run at import), and class bodies, defaults, decorators, calls through
