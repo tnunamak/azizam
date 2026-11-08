@@ -106,7 +106,7 @@ def test_unhealthy_first_overridden_second_loaded_third():
     assert model_calls == ["c"]
 
 
-def test_candidate_missing_from_hosts_is_skipped_and_first_refusal_kept():
+def test_candidate_missing_from_hosts_is_skipped():
     target, error, _, _ = _resolve(
         healthy={"a", "b"},
         models={"a": "model-a", "b": "model-b"},

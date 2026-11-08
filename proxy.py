@@ -4111,19 +4111,13 @@ async def _current_loaded_llm_target(
             error_type="service_unavailable",
             code="current_model_unavailable",
         )
-    first_refusal: Response | None = None
-    remaining: list[str] = []
     candidates = _llm_backend_candidates()
-    if active in candidates:
-        remaining = candidates[candidates.index(active) + 1:]
-    pending: list[str] = [active]
-    while pending or remaining:
-        if pending:
-            backend = pending.pop(0)
-        else:
-            backend = remaining.pop(0)
-            if not await check_service_health(backend):
-                continue
+    later = candidates[candidates.index(active) + 1:] if active in candidates else []
+    first_refusal: Response | None = None
+    for position, backend in enumerate([active, *later]):
+        # `active` already answered healthy; a later candidate is probed only when it is reached.
+        if position and not await check_service_health(backend):
+            continue
         refusal: Response | None
         if backend not in DERIVED.LLM_BACKEND_HOSTS:
             refusal = openai_error_response(
