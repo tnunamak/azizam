@@ -719,7 +719,9 @@ class WorkflowRunCore:
             except Exception as exc:  # noqa: BLE001 - settled as a failure; only the adapter's client_message reaches the job
                 delay = policy.delay_after(exc, attempt)
                 if delay is None:
-                    category = str(getattr(exc, "category", "") or "internal")
+                    # A category is a word from the job store's list; anything else an exception carries reads as internal.
+                    category = next((known for known in sorted(media_jobs.ERROR_CATEGORIES)
+                                     if known == getattr(exc, "category", None)), "internal")
                     text, code = media_job_shape.stored_failure(
                         str((job.get("metadata") or {}).get("failure_text") or "adapter"), category, _client_message(exc),
                         _code_of(exc), _upstream_status(exc))
