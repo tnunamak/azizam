@@ -204,7 +204,7 @@ class AudioJobRefusalReasonTests(unittest.IsolatedAsyncioTestCase):
             proxy,
             _dispatch_admission_response=lambda *a, **kw: None,
             _service_availability_response=lambda *a, **kw: None,
-            _resolve_audio_workflow=lambda model: ("fake-audio", {"min_seconds": 5, "max_seconds": 30}),
+            _resolve_audio_workflow=lambda model: ("tangoflux", {"min_seconds": 5, "max_seconds": 30}),
             _load_audio_workflow_manifest=lambda name: audio_manifest(name, {"prompt": [("1", "text")],
                                                                           "duration": [("1", "seconds")]}),
         ):
