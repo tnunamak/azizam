@@ -25,7 +25,7 @@ from tests.support.access import authenticated, identity, plan_for
 from tests.support.gateway import gateway_client
 from tests.test_adapter_differential_s7_mesh_rows import (  # noqa: F401  (rig is a fixture)
     ASYNC, RAW, SYNC, Gate, form, job_id_of, rig, settle)
-from tests.test_request_history_capture import _kept_rows
+from tests.test_request_history_capture import _kept_rows, _mint_member_key
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = "mesh.generate.trellis-2"
@@ -40,8 +40,20 @@ def run_async(scenario):
     return asyncio.run(go())
 
 
+_BEFORE: set[str] = set()
+
+
+@pytest.fixture(autouse=True)
+def _only_this_tests_receipts():
+    """The receipt store outlives a test (its path is bound at import); count only what this test wrote."""
+    _BEFORE.clear()
+    _BEFORE.update(r["request_id"] for r in receipt_store.recent(limit=5000))
+    yield
+
+
 def receipts(path: str | None = None) -> list[dict[str, Any]]:
-    return [r for r in receipt_store.recent(limit=200) if path is None or r.get("path") == path]
+    return [r for r in receipt_store.recent(limit=5000)
+            if r["request_id"] not in _BEFORE and (path is None or r.get("path") == path)]
 
 
 async def closed(request_id: str, bound_s: float = GATE_BOUND_S) -> dict[str, Any]:
@@ -68,6 +80,7 @@ def remembered(rig, monkeypatch):
         person["id"], remember=True,
         retention=retention.bundled().member_defaults(retention.REQUEST_HISTORY)["retention"],
         group=retention.GROUP_REQUEST_HISTORY, path=proxy.ADMIN_DB_PATH)
+    _mint_member_key(proxy.ADMIN_DB_PATH, person["id"])  # a personal App key: the only kind whose requests have a person
     return rig
 
 
