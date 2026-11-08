@@ -402,7 +402,7 @@ def cell_validation_refusal(h: Harness) -> dict[str, Any]:
     async def go(c):
         return {
             "seed_negative": answer(await c.post(RAW, **form("-1"))),
-            "missing_image": answer(await c.post(RAW, data={"seed": "1"}, files={"other": ("x.txt", b"x", "text/plain")})),
+            "missing_image": answer(await c.post(RAW, files={"seed": (None, "1")})),
             "not_multipart": answer(await c.post(RAW, content=b"not a multipart body",
                                                  headers={"content-type": "multipart/form-data; boundary=zz"})),
             "not_a_picture": answer(await c.post(RAW, files={"image": ("photo.png", b"plain text", "image/png")})),
