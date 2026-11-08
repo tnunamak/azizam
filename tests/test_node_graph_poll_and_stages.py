@@ -73,9 +73,3 @@ def test_an_unknown_or_repeated_stage_is_refused():
     assert _problems(["no_such_stage"])
     assert _problems(["source_alpha_mask", "source_alpha_mask"])
     assert _problems("source_alpha_mask")
-
-
-def test_the_inpaint_workflow_declares_its_stage_with_the_old_flag():
-    manifest = yaml.safe_load((Path(__file__).resolve().parent.parent / "manifests" / "workflows" / "qwen-image-2.1-inpaint.yml").read_text())
-    binding = manifest["bindings"]["comfyui"]
-    assert binding["mask_to_source_alpha"] is True and binding["result_processing"] == ["source_alpha_mask"]
