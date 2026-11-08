@@ -44,14 +44,9 @@ _BEFORE: set[str] = set()
 
 
 @pytest.fixture(autouse=True)
-def _only_this_tests_receipts():
+def _only_this_tests_receipts(request):
     """The receipt store outlives a test (its path is bound at import); count only what this test wrote."""
     _BEFORE.clear()
-    yield
-
-
-@pytest.fixture(autouse=True)
-def _note_receipts_before(request):
     if "rig" in request.fixturenames:
         request.getfixturevalue("rig")
         _BEFORE.update(r["request_id"] for r in receipt_store.recent(limit=5000))
