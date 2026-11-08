@@ -300,7 +300,6 @@ def test_images_22_engine_failures_at_submit(tmp_path, name, setup):
     assert_same(old, row, status, failure, engine_without_probes)
 
 
-@ROW_PENDING
 def test_images_23_execution_error_502(tmp_path):
     old, row = pair(tmp_path, GEN, body(), EXEC_ERROR)
     old_has(old, "502", status(old) == 502)
@@ -316,7 +315,6 @@ def test_images_24_transient_history_errors_are_retried(tmp_path):
     assert_same(old, row, status, failure, engine_without_probes, sleeps)
 
 
-@ROW_PENDING
 def test_images_25_view_missing_fails_the_round(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(views=[(b"", "text/plain")], strict=False, extra=[
@@ -689,7 +687,6 @@ def test_images_V08_offset_inpaint_success_headers(tmp_path):
     assert_same(old, row, status, ("headers", lambda o: headers_with(o, "x-image")))
 
 
-@ROW_PENDING
 def test_images_V09_tile_composition_error_maps_to_502(tmp_path):
     failed = {"p1": {"status": {"status_str": "error", "completed": False, "messages": [
         ["execution_error", {"node_type": "N", "node_id": "7", "exception_message": "gateway tile composition error"}]]}, "outputs": {}}}
@@ -820,7 +817,6 @@ def test_images_J07_job_metadata(tmp_path):
     assert_same(old, row, ("job rows", _job_rows))
 
 
-@ROW_PENDING
 def test_images_J08_job_id_forms(tmp_path):
     def kind(o):
         ids = [j["job_id"] for j in media_jobs(o)]
@@ -874,7 +870,6 @@ def test_images_J12_accepted_202_with_links(tmp_path):
     assert_same(old, row, status, ("links", link))
 
 
-@ROW_PENDING
 def test_images_J13_a_queued_event_then_scheduling(tmp_path):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get("/events"), run=False)
     old_has(old, "events", doc(old, 1))
@@ -948,7 +943,6 @@ def test_images_J22_oom_retries_with_events(tmp_path):
     assert_same(old, row, engine_without_probes, sleeps, ("jobs", lambda o: [j["status"] for j in media_jobs(o)]), ("events", lambda o: doc(o, 1)))
 
 
-@ROW_PENDING
 def test_images_J23_job_engine_traffic_matches_the_sync_path(tmp_path):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get())
     sync = observe(tmp_path / "sync", GEN, body(), ok, row=False)
@@ -956,7 +950,6 @@ def test_images_J23_job_engine_traffic_matches_the_sync_path(tmp_path):
     assert_same(old, row, engine_without_probes, sleeps)
 
 
-@ROW_PENDING
 def test_images_J24_concurrency_is_bounded(tmp_path):
     def two(use_row):
         async def go(rig):
@@ -992,7 +985,6 @@ def test_images_J25_unknown_job_404(tmp_path):
     assert_same(old, row, status, failure)
 
 
-@ROW_PENDING
 def test_images_J28_cancel_route_answers(tmp_path):
     async def after(rig, job_id):
         await rig.call("POST", f"/gateway/v1/media/jobs/{job_id}/cancel", label="cancel the finished job", json_body={})
@@ -1019,7 +1011,6 @@ def test_images_J30_content_shape(tmp_path):
     assert_same(old, row, ("status", lambda o: status(o, 1)), ("item keys", lambda o: item_keys(o, 1)), ("top keys", lambda o: top_keys(o, 1)))
 
 
-@ROW_PENDING
 def test_images_J31_progress_when_the_job_starts(tmp_path):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get())
     assert_same(old, row, ("progress", lambda o: (doc(o, 1) or {}).get("progress")))
@@ -1067,7 +1058,6 @@ def test_images_R01_startup_scan_resumes_or_fails_the_job(tmp_path):
     assert_same(old, row, ("job states", _states), ("polls", lambda o: _job_doc(o, 1)))
 
 
-@ROW_PENDING
 def test_images_R02_payload_missing_after_restart(tmp_path):
     def mutate(rig, job_id):
         proxy._delete_image_media_job_payload(job_id)
@@ -1084,7 +1074,6 @@ def test_images_R03_recovery_turned_off(tmp_path):
     assert_same(old, row, ("job states", _states))
 
 
-@ROW_PENDING
 def test_images_R04_restart_during_cancellation(tmp_path):
     def mutate(rig, job_id):
         proxy.media_jobs.request_cancel(job_id, path=proxy.media_jobs.DB_PATH) if hasattr(proxy.media_jobs, "request_cancel") else None
@@ -1134,14 +1123,12 @@ def test_images_F02_prompt_http_500(tmp_path):
     assert_same(old, row, status, failure)
 
 
-@ROW_PENDING
 def test_images_F03_prompt_without_id(tmp_path):
     old, row = pair(tmp_path, GEN, body(), NO_PROMPT_ID)
     old_has(old, "a 5xx", (status(old) or 0) >= 500)
     assert_same(old, row, status, failure)
 
 
-@ROW_PENDING
 def test_images_F04_execution_error(tmp_path):
     old, row = pair(tmp_path, GEN, body(), EXEC_ERROR)
     old_has(old, "502", status(old) == 502)
@@ -1165,7 +1152,6 @@ def test_images_F06_out_of_memory_stays_out_of_memory(tmp_path):
     assert_same(old, row, status, failure, engine_without_probes)
 
 
-@ROW_PENDING
 def test_images_F07_view_missing(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(views=[(b"", "text/plain")], strict=False, extra=[
