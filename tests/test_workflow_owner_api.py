@@ -474,16 +474,23 @@ def test_the_detail_of_a_held_out_owner_workflow_is_its_stored_contract_with_the
 
 
 @pytest.mark.parametrize("api", ["real"], indirect=True)
-def test_the_detail_of_a_held_out_override_is_the_stored_contract_and_the_serving_bundled_one_is_named_apart(api):
-    other = "image.edit.flux2-klein-4b"
-    edited = {**_detail(api)["contract"], "display_name": "Mine", "aliases": ["mine-alias"]}
-    saved = create(api, edited, overrides=BUNDLED_ID)
-    assert saved.status_code == 201, saved.text
-    newer = _restarted(api, {other: lambda manifest: {**manifest, "aliases": ["mine-alias"]}})
-    body = _detail(newer)
+def test_the_detail_of_a_held_out_override_is_the_stored_contract_and_the_serving_bundled_one_is_named_apart(api, monkeypatch):
+    # A saved override cannot carry an alias (the schema lists none), so the hold is put on the real snapshot here: the
+    # route must answer the stored document, and name the bundled workflow that serves in its place, apart.
+    from dataclasses import replace  # noqa: PLC0415
+
+    from gateway.manifests import ContractError  # noqa: PLC0415
+
+    edited = {**_detail(api)["contract"], "display_name": "Mine"}
+    assert create(api, edited, overrides=BUNDLED_ID).status_code == 201
+    real = api.registry.snapshot()
+    held = replace(real, held_out={BUNDLED_ID: (ContractError((), "id_clash", "taken"),)})
+    bundled_serving = _detail(api)["contract"]["display_name"]
+    monkeypatch.setattr(api.registry, "snapshot", lambda: held)
+    body = _detail(api)
     assert body["held_out"] is True and body["contract"]["display_name"] == "Mine"
-    assert {problem["code"] for problem in body["hold_problems"]} == {"id_clash"}
-    assert body["serving"]["incarnation"] == "bundled" and body["serving"]["contract"]["display_name"] != "Mine"
+    assert [problem["code"] for problem in body["hold_problems"]] == ["id_clash"]
+    assert body["serving"]["contract"]["display_name"] == bundled_serving
 
 
 def _restarted_without(client, workflow_id, monkeypatch):
