@@ -279,11 +279,33 @@ is deleted.
 
 ## 4. Prior art
 
-Prior-art research for the registry questions (pinning, CAS, update/disable/delete while queued, restart, rollback, cache
-invalidation, clash rules, bounds, publish versus save) across Replicate, fal, Modal, AWS Lambda, Temporal, Argo,
-GitHub Actions, n8n, Windmill, Kubernetes and Envoy is in progress on the dot. Its divan entry is linked here when it
-lands. Until then, each decision below that cites a system says what it relies on, and the review checks it against the
-entry. Decisions that rest on the repo's own patterns say so.
+The registry questions were compared across 12 systems (Replicate, fal, Modal, AWS Lambda, Temporal, Argo Workflows,
+GitHub Actions, n8n, Windmill, Kubernetes, Envoy xDS, Comfy Registry) in the divan entry
+`system-design/live-versioned-registries-separate-definition-identity-routing-and-execution-control-and-disagree-on-what-happens-to-queued-and-running-work.md`
+(2026-11-08, a documentation comparison, not an execution test). What this design takes from it:
+
+- **Identity, route and run control are separate objects** (Lambda versions and aliases, Replicate versions and
+  deployments, Windmill hashes and path heads). Here: the content digest is the identity (5.1), the workflow id is the
+  route, and `state`/`published` are run control (5.2, 5.9).
+- **Disable has no common meaning.** Replicate's deployment disable cancels in-flight work; GitHub's workflow disable
+  leaves existing runs alone; a Kubernetes Job suspend deletes active Pods. So 5.2 states its own rule and the reason.
+- **Retry is a new decision point.** n8n offers the original or the current definition; Windmill lets a restart pick a
+  version; Temporal recovers pinned runs separately from routing rollback. 5.4 names which definition each restart uses.
+- **CAS protects authors, not executions** (Lambda RevisionId, GitHub replacement SHA, Kubernetes resourceVersion). 5.3
+  uses CAS for edits only; the run-time state check of 5.2 is a separate rule.
+- **Rollback is another change** (Modal new deployment, Git revert, n8n restore then publish). 5.5 restore writes a new
+  revision.
+- **Argo Secure mode errors a running workflow when its template changes.** This design does not copy it: a running job
+  finishes on its pin (5.2).
+- **Bounds evidence:** GitHub workflow files at most 500 KB, reusable workflows 10 levels deep and 50 unique; Argo
+  objects under 1 MB including status, recursion 100 by default. The 512 KiB / 2,000 nodes / depth 32 bounds of 5.7 sit
+  inside these.
+- **Publication is not always separate from save** (Lambda `$LATEST` is invocable unpublished; n8n settings edits
+  republish). 5.9 makes save and publish separate and says what unpublished means.
+- **No system has an atomic revocation check before every external effect.** 5.2 checks once, before the first effect;
+  it claims no more than that.
+- **Cache invalidation guarantees are mostly undocumented**; Replicate keeps the schema per version. 5.8 keys every
+  derived view by the snapshot digest, so no invalidation step exists to forget.
 
 ## 5. S4: the live versioned registry
 
@@ -292,9 +314,9 @@ entry. Decisions that rest on the repo's own patterns say so.
 A job pins content, not a revision. The envelope's definitions are content digests in `definition_store`; the job holds
 them with a `job:<id>` reference until it finishes. `source_revision` records `entry.record_revision` for audit and for
 the receipt, but execution never reads the registry at that revision. Why: a pin by content survives registry rollback,
-restore and restart with no history lookup, and the blob store already exists (S2). This is how Replicate predictions
-pin a model version id and how a GitHub Actions run reads the workflow file at its triggering commit (to be confirmed by
-the research entry).
+restore and restart with no history lookup, and the blob store already exists (S2). Precedent: a Replicate prediction names a version id; a
+GitHub Actions run reads the workflow at its triggering SHA; a Lambda durable execution stays on its version when the
+alias moves (section 4).
 
 ### 5.2 Update, disable and delete while queued or running
 
@@ -308,7 +330,9 @@ the research entry).
 
 Why disable and delete stop a queued job: they are the owner's stop, the same kind of decision as a revoked key, and S2
 already checks revocation at run before effects. Why a running job finishes: there is no safe preemption point in a
-graph engine run; cancel is the explicit tool. The state check reads the current snapshot (`snapshot().get(id)`), the
+graph engine run; cancel is the explicit tool. This is the GitHub rule (disable leaves existing runs), applied at the
+queue boundary: a job that has not started any effect is not yet a run. Replicate's cancel-on-disable is the rejected
+alternative, because an owner who wants that has the cancel route. The state check reads the current snapshot (`snapshot().get(id)`), the
 only live registry read at run time.
 
 ### 5.3 Compare-and-swap
@@ -327,6 +351,11 @@ At startup, `recover_runs` calls `classify_recovery` (S2 D3) for every unfinishe
 - an envelope whose `envelope_version` the build does not know: fail with `envelope_version_unsupported`.
 
 Resume runs `execute_run`, so the disable, delete and revocation checks of 5.2 apply after a restart too.
+
+Restart after a crash uses the pin. "Run again" (an owner or App asking for a finished or failed job to be repeated) is a
+new `submit_run` against the current definition; it is a new job with a new pin and says so in its receipt. There is no
+"rerun on the old definition" in this train: an owner who wants that restores the old version first (5.5). This is the
+n8n choice reduced to one default; the other side is listed in section 12.
 
 ### 5.5 Rollback
 
@@ -503,8 +532,10 @@ Rollback note: queued jobs pinned with envelope v2 fail on the previous build (5
 
 ## 12. Open questions
 
-1. Unpublish while queued (5.2): run or stop? The draft runs it, because the caller was admitted; the research entry
-   may show a stronger precedent either way.
+1. Unpublish while queued (5.2): run or stop? The draft runs it, because the caller was admitted. The research entry
+   found no precedent for unpublish at the queue boundary (n8n unpublish stops triggers; its effect on queued
+   executions is unverified), so this stays a judgement call.
+5. "Run again on the original definition" (5.4) is not offered. n8n offers both; add it later only if owners ask.
 2. The history depth (20) and the bounded cache size (16) are first guesses, set as data.
 3. Whether a synchronous OpenAI images call through a job adds latency the goldens notice; measured on the integration
    branch before the train.
