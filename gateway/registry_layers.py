@@ -33,6 +33,9 @@ LAYERING_VERSION = 1
 TOMBSTONES_KEY = "tombstones"
 BASES_KEY = "bases"
 REPLACE_KEY = "$replace"
+# A stored workflow record that holds only the run control of a bundled workflow (state, publication, revision) and names
+# the bundled id here. It holds no contract: the release's contract and facts serve under it.
+RUN_CONTROL_PATCH_KEY = "patch_of"
 # A stored patch of a release record also names the record: the keys the code before the layer needs to read a stored row
 # as the release record it copies (a rollback then rebuilds the row from the release). A merge changes nothing, since each
 # equals the release value; ``field_names`` leaves them out of a report.
