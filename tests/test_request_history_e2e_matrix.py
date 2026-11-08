@@ -29,7 +29,7 @@ import proxy
 import responses_store
 from gateway import (
     admin_store, browser_sessions, media_jobs, prompt_memory, receipt_store,
-    request_history, request_history_capture, retention,
+    request_history, request_history_capture, request_spool, retention,
 )
 from gateway.admin_oidc import encode_session_cookie
 from gateway.runtime_auth import hash_api_key
@@ -44,6 +44,7 @@ from tests.test_request_history_capture import _kept_rows, _mint_member_key
 NAMESPACE = "com.azizam.prompts"
 FORGET = {NAMESPACE: {"mode": "forget"}}
 MARKER = "matrix harmless request text"
+MP4_HEAD = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"  # the run route measures an upload's type from its bytes
 MODEL = "garage-chat"
 LIMIT = int(retention.bundled().data["kinds"][retention.REQUEST_HISTORY]["max_record_bytes"])
 
@@ -75,15 +76,13 @@ SHAPES = [
     Shape("near_limit", wire="near_limit"),
     Shape("over_limit", wire="over_limit"),
 ]
-#: K5: the run route takes the S6 form now (``inputs`` and ``binding`` value parts, then file parts) and answers 202
-#: with a job; this matrix still sends the old synchronous form. K5 moves the shape to the new form and keeps every
-#: guarantee here, the forget control in the body included.
-_RUN_FORM_PENDING = pytest.mark.xfail(strict=True, reason="K5: workflow_upload sends the old run-route form (422)")
+# An extra file part no input accepts: the run route refuses it with 422 (media_not_accepted), where the others ignore it.
+_ALLOWED_UPLOAD_STATUSES = {"audio_upload": {200, 400, 413, 502}, "image_edit_upload": {200, 400, 413, 502},
+                            "workflow_upload": {200, 400, 413, 422, 502}}
 
 
 def _params(shapes):
-    return [pytest.param(shape, id=shape.name, marks=_RUN_FORM_PENDING if shape.name == "workflow_upload" else ())
-            for shape in shapes]
+    return [pytest.param(shape, id=shape.name) for shape in shapes]
 
 
 def _canaries() -> dict[str, str]:
@@ -156,6 +155,11 @@ def world(fake_upstreams, monkeypatch, tmp_path):
     prompt_memory.init_db(path=media)
     receipt_store.init_db(receipts)
     monkeypatch.setattr(media_jobs, "DB_PATH", media)
+    # The run route keeps the job's uploads and payload under the suite's own paths (the checkout is read-only).
+    monkeypatch.setattr(proxy, "_WORKFLOW_RUN_SPOOL_ROOT", tmp_path / "run-spool")
+    monkeypatch.setattr(proxy, "_WORKFLOW_JOB_SPOOL", request_spool.JobSpool(tmp_path / "run-spool"))
+    monkeypatch.setattr(proxy, "_workflow_core_cache", None)
+    monkeypatch.setattr(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", tmp_path / "payloads")
     with sqlite3.connect(receipts) as conn:
         conn.execute("DELETE FROM receipts")
     # Responses' conversation store is also owned by this hermetic pytest run.
@@ -221,7 +225,7 @@ def world(fake_upstreams, monkeypatch, tmp_path):
                 # The save node of the workflow each shape runs: the rife video one, the qwen image edit one.
                 "6" if video else "10": {"images": [{"filename": filename, "type": "output"}]}}}})
         if request.url.path == "/view":
-            return httpx.Response(200, content=b"rendered-video" if video else comfy_png(),
+            return httpx.Response(200, content=MP4_HEAD + b"rendered-video" if video else comfy_png(),
                                   headers={"content-type": "video/mp4" if video else "image/png"})
         pytest.fail("unexpected graph HTTP path")
 
@@ -242,7 +246,9 @@ def world(fake_upstreams, monkeypatch, tmp_path):
         "id": proxy._GRAPH_BACKEND_ID, "config": {"base_url": "http://matrix-graph.fk.test"}})
     write_service_registry_for_test(registry, path=db)
     cfg = copy.deepcopy(proxy.config)
-    cfg["backends"] = {"matrix-speech": speech}
+    graph_engine = {"name": "Matrix graph engine", "host": "matrix-graph.fk.test", "port": 80, "enabled": True,
+                    "protocol": "node-graph", "capabilities": ["images", "videos"]}
+    cfg["backends"] = {"matrix-speech": speech, proxy._GRAPH_BACKEND_ID: graph_engine}
     cfg["model_aliases"]["transcriptions"] = {
         "engines": {"matrix-speech": {"service": "matrix-speech", "model": "matrix-speech"}},
         "stable": {},
@@ -261,6 +267,7 @@ def world(fake_upstreams, monkeypatch, tmp_path):
     # Metadata encoding is outside retention; keep this video fixture independent of ffmpeg.
     monkeypatch.setattr(proxy.media_delivery, "deliver_bytes", lambda data, *_a, **_kw: data)
     monkeypatch.setattr(proxy.media_delivery, "attach_provenance", lambda data, *_a, **_kw: data)
+    monkeypatch.setattr(proxy.media_metadata, "strip_metadata", lambda data, *_a, **_kw: data)  # stored result files
     return w
 
 
@@ -314,8 +321,11 @@ async def _send(w: World, shape: Shape, *, forget: str | None = None,
                 data.update(prompt=json.dumps(payload), response_format="b64_json", background="opaque")
                 files = {"image": ("input.png", comfy_png(), "image/png")}
             else:
-                data.update(multiplier="2")
-                files = {"source_video": ("sample.mp4", b"input-video-bytes", "video/mp4")}
+                # The S6 run form: an ``inputs`` JSON part, the control parts beside it, then the file parts. The job
+                # is awaited so the engine call and the result are part of what this shape proves.
+                data["inputs"] = json.dumps({"multiplier": 2})
+                headers["prefer"] = "wait=30"
+                files = {"source_video": ("sample.mp4", MP4_HEAD + b"input-video-bytes", "video/mp4")}
             files.update(extra_files or {})
             if forget == "body":
                 controls.update(FORGET)
@@ -357,6 +367,8 @@ def _run(w, shape, **kwargs):
     assert response.status_code == expected, f"{shape.name}: unexpected status {response.status_code}"
     if shape.name != "gzip_json" and not refused_form:
         assert w.calls, "positive control: no inference HTTP call"
+    if shape.name == "workflow_upload":      # the run route answers 200 for a job that ended, so the job must have worked
+        assert response.json()["status"] == "succeeded", "the run did not finish: " + json.dumps(response.json())
     if shape.stream:
         assert response.content, "stream was not consumed"
         expected_type = "application/x-ndjson" if shape.name.startswith("ollama") else "text/event-stream"
@@ -668,7 +680,7 @@ def test_upload_part_headers_are_included_in_the_capture_memory_bound(world, sha
     monkeypatch.setattr(request_history.BodyCapture, "feed", feed)
     extra = {"x" * header_bytes: ("extra.bin", b"x", "application/octet-stream")}
     response = asyncio.run(_send(world, shape, extra_files=extra))
-    assert response.status_code in {200, 400, 413, 502}
+    assert response.status_code in _ALLOWED_UPLOAD_STATUSES[shape.name]
     assert captures
     assert max(metadata_sizes) <= LIMIT, f"capture metadata bytes={max(metadata_sizes)}, limit={LIMIT}"
     # The limit is on captured content and metadata, independent of upload size.
@@ -699,7 +711,7 @@ def test_upload_part_list_has_an_aggregate_capture_budget(world, shape, part_cou
     extra = {f"extra-{index}-" + "x" * 4000: ("part.bin", b"x", "application/octet-stream")
              for index in range(part_count)}
     response = asyncio.run(_send(world, shape, extra_files=extra))
-    assert response.status_code in {200, 400, 413, 502}
+    assert response.status_code in _ALLOWED_UPLOAD_STATUSES[shape.name]
     assert captures and any(capture.body.total > 0 for capture in captures)
     metadata_bytes = max(sum(len(json.dumps(item).encode()) for item in capture.body._files)
                          for capture in captures)

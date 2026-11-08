@@ -11,7 +11,9 @@ from fastapi.testclient import TestClient
 import proxy
 from gateway import admin_store, identity_api, media_jobs, prompt_memory, receipt_store
 from tests.test_identity_api import BINDING, GOOD, PHOTO, TEMPLATE, FakeClient
+from tests.support.gateway import gateway_client
 from tests.test_prompt_memory_final_cleanup import household
+from tests.test_request_history_e2e_matrix import MP4_HEAD, SHAPES, fake_upstreams, world  # noqa: F401
 from tests.test_audio_media_job_integration import _StubJsonRequest
 from tests.test_me_prompt_memory import _client
 from tests.test_identity_api import build
@@ -32,15 +34,29 @@ def test_identity_rejects_malformed_extensions_clearly(route, extensions):
     assert "JSON object" in result.json()["error"]["message"]
 
 
-@pytest.mark.xfail(strict=True, reason="K4: the sync run path this drove is gone (S6); rewrite it on the job route: a run "
-                   "with extensions as a JSON string and forget keeps no prompt, workflow or provenance tag in the result")
-def test_video_edit_accepts_json_extensions_field(household):
-    from tests.test_media_provenance import NativeWorkflowRunTests
-    response, _raw = asyncio.run(NativeWorkflowRunTests()._run({"extensions": json.dumps(FORGET)}))
-    assert response.status_code == 200, response.body
-    assert response.media_type == "video/mp4"
-    tags = proxy.media_metadata.read_media_tags(response.body, ".mp4")
-    assert not {"prompt", "workflow", "azizam_provenance"}.intersection(tags)
+def test_video_edit_accepts_json_extensions_field(world):
+    """The run route takes ``extensions`` as a JSON string part, reads the forget in it, and the finished result file
+    carries no prompt, workflow or provenance tag."""
+    world.shape = next(shape for shape in SHAPES if shape.name == "workflow_upload")   # the fake engine renders a video
+
+    async def run():
+        async with gateway_client() as client:
+            return await client.post(
+                "/gateway/v1/workflows/video.edit.rife-interpolate/run",
+                files={"inputs": (None, json.dumps({"multiplier": 2})), "extensions": (None, json.dumps(FORGET)),
+                       "source_video": ("sample.mp4", MP4_HEAD + b"input-video-bytes", "video/mp4")},
+                headers={"authorization": "Bearer " + world.key, "prefer": "wait=30"})
+    response = asyncio.run(run())
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "succeeded"
+    asset_id = body["results"][0]["asset_id"]
+    result = proxy.asset_cache_path(asset_id).read_bytes()
+    assert result == MP4_HEAD + b"rendered-video", "positive control: the engine's file is the result"
+    # The fake engine's file is not decodable video, so the tag check reads bytes: nothing was written into the file.
+    assert not [tag for tag in (b"prompt", b"workflow", b"azizam_provenance") if tag in result]
+    with sqlite3.connect(world.media) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM asset_prompts").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("intent,extract", [

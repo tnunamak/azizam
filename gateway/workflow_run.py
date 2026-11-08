@@ -600,7 +600,8 @@ class WorkflowRunCore:
                 incarnation=entry.incarnation, binding_key=binding_key, record_revision=entry.record_revision)
             adopted.update(self._spool.adopt(record.job_id, dict(req.media)))
             port.save_payload(record.job_id, {
-                "body": {"inputs": plain(req.inputs), **({"options": plain(req.options)} if req.options else {})}, "auth": port.caller_payload(caller),
+                "body": {"inputs": plain(req.inputs), **({"options": plain(req.options)} if req.options else {}),
+                         **({"extensions": plain(req.extensions)} if req.extensions else {})}, "auth": port.caller_payload(caller),
                 "media": {name: [_ref_dict(ref) for ref in refs] for name, refs in adopted.items()}}, caller)
             return envelope
 
