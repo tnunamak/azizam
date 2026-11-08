@@ -64,7 +64,19 @@ def _row(raw: Mapping[str, Any]) -> FrontendRow:
                    for route in raw.get("routes") or ())
     if not routes:
         raise RowError(f"{row_id}: a row needs at least one route")
+    texts = {route.runtime_policy.get("job_failure_text", "adapter") for route in routes}
+    if len(texts) != 1 or not texts <= {"adapter", "category_copy"}:
+        raise RowError(f"{row_id}: runtime_policy.job_failure_text must be adapter or category_copy, the same on every route")
+    retries = {route.runtime_policy.get("job_retries", "binding") for route in routes}
+    if len(retries) != 1 or not retries <= {"binding", "none"}:
+        raise RowError(f"{row_id}: runtime_policy.job_retries must be binding or none, the same on every route")
+    answers = {route.runtime_policy.get("default_answer") for route in routes}
+    shape_forms = SHAPE_CLASSES[raw["shape"]].answer_forms
+    if len(answers) != 1 or not answers <= {None, *shape_forms}:
+        raise RowError(f"{row_id}: runtime_policy.default_answer must be one of {sorted(shape_forms) or 'none (the shape has no answer forms)'}, "
+                       "the same on every route")
     return FrontendRow(id=row_id, shape=raw["shape"], routes=routes, selects=dict(selects), mode=raw["mode"],
+                       job_failure_text=next(iter(texts)), job_retries=next(iter(retries)), default_answer=next(iter(answers)),
                        receipt_protocol=str(raw.get("receipt_protocol") or ""),
                        strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)),
                        receipt_opens=_receipt_opens(row_id, raw))

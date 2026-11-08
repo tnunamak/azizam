@@ -22,12 +22,14 @@ import secrets
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
 from gateway import generated_defaults, log_scrub, media_jobs, result_bundle
 from gateway.definition_store import DefinitionUnavailable
+from gateway.frontend_shapes import media_job as media_job_shape
 from gateway.job_envelope import UNTRACKED, build_job_envelope
 from gateway.manifests import ContractError, ManifestError, validate_inputs
 from gateway.pinned_definitions import PinnedDefinitions, load_in
@@ -46,6 +48,13 @@ log = logging.getLogger(__name__)
 
 # The job store's intent and mode for a job made by this core. The job's workflow id is the workflow it runs.
 RUN_INTENT = "workflow.run"
+
+
+def is_run_job(job: Mapping[str, Any] | None) -> bool:
+    """A job the run core owns. Its row intent is the route's declared one (or ``RUN_INTENT``); the mode is always the run's."""
+    if not job:
+        return False
+    return job.get("intent") == RUN_INTENT or (job.get("metadata") or {}).get("mode") == RUN_INTENT
 # How a job's terminal status closes the request receipt it carries (status, reason); a failed job uses its error code.
 RECEIPT_OUTCOMES = {
     media_jobs.STATUS_SUCCEEDED: ("succeeded", "succeeded"),
@@ -395,9 +404,9 @@ class WorkflowRunCore:
         self, *, snapshots: SnapshotProvider, projections: Projections, port: RunPort, spool: JobSpool,
         path: Path | None = None, generate: Callable[..., Mapping[str, Any]] = generated_defaults.resolve_generated,
         claim_lease_s: float = CLAIM_LEASE_S, claim_wait_s: float = CLAIM_WAIT_S,
-        clock: Callable[[], float] = time.time, sleep: Callable[[float], Any] = asyncio.sleep,
+        clock: Callable[[], float] = time.time, sleep: Callable[[float], Any] | None = None,
     ) -> None:
-        self._sleep = sleep
+        self._sleep = sleep if sleep is not None else (lambda delay: asyncio.sleep(delay))     # resolved at call time
         self._snapshots = snapshots
         self._projections = projections
         self._port = port
@@ -572,10 +581,10 @@ class WorkflowRunCore:
         binding = entry.bindings[binding_key]
         owner_hash, app_id, key_name = port.job_owner(caller)
         job = media_jobs.MediaJob(
-            intent=RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
+            intent=req.intent or RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
             api_key_name=key_name, request_id=req.request_id or "",
             metadata={"mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
-                      "frontend": req.frontend_id})
+                      "frontend": req.frontend_id, "failure_text": req.failure_text, "retries": req.retries})
         adopted: dict[str, tuple[MediaRef, ...]] = {}
 
         def prepare(record: media_jobs.MediaJob):
@@ -664,9 +673,11 @@ class WorkflowRunCore:
         if job["status"] == media_jobs.STATUS_QUEUED:
             try:
                 media_jobs.update_status(job_id, media_jobs.STATUS_RUNNING, expected_status=media_jobs.STATUS_QUEUED,
-                                         path=self._path)
+                                         progress=5, metadata_patch={"started_at": int(time.time())}, path=self._path)
             except ValueError:      # canceled, or taken by another worker, between the read and the write
                 return
+            media_jobs.append_event(job_id, "started", {"phase": "running", "status": media_jobs.STATUS_RUNNING, "progress": 5},
+                                    path=self._path)
         try:
             with media_jobs.connection(self._path) as conn:
                 pin = load_in(conn, job_id)
@@ -684,6 +695,8 @@ class WorkflowRunCore:
                 self._fail(job_id, *problem)
                 return
         policy = retry_policy(pin.binding)
+        if (job.get("metadata") or {}).get("retries") == "none":
+            policy = dataclasses.replace(policy, max_attempts=1)
         attempt = int(job.get("attempt_number") or 1)       # the durable number: a recovered job keeps its budget
         while True:
             ctx = RunContext(
@@ -693,6 +706,9 @@ class WorkflowRunCore:
                 generated={n: e["value"] for n, e in pin.envelope.generated.items() if "value" in e}, spool=self._spool,
                 request_id=str(job.get("request_id") or "") or None,
                 record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata))
+            media_jobs.append_event(
+                job_id, "attempt", {"phase": "running", "status": media_jobs.STATUS_RUNNING, "progress": min(95, 5 + (attempt - 1) * 10),
+                                    "attempt": attempt, "total": policy.max_attempts}, path=self._path)
             try:
                 await port.run_adapter(ctx)
             except asyncio.CancelledError:
@@ -703,8 +719,11 @@ class WorkflowRunCore:
             except Exception as exc:  # noqa: BLE001 - settled as a failure; only the adapter's client_message reaches the job
                 delay = policy.delay_after(exc, attempt)
                 if delay is None:
-                    self._fail(job_id, _code_of(exc), str(getattr(exc, "category", "") or "internal"),
-                               _client_message(exc), retryable=bool(getattr(exc, "retryable", False)),
+                    category = str(getattr(exc, "category", "") or "internal")
+                    text, code = media_job_shape.stored_failure(
+                        str((job.get("metadata") or {}).get("failure_text") or "adapter"), category, _client_message(exc),
+                        _code_of(exc), _upstream_status(exc))
+                    self._fail(job_id, code, category, text, retryable=bool(getattr(exc, "retryable", False)),
                                upstream_status=_upstream_status(exc))
                     return
                 caller, payload, problem = await self._before_retry(job_id, exc, attempt, delay, policy)
@@ -806,6 +825,10 @@ class WorkflowRunCore:
                             "upstream_http_status": upstream_status})
         except ValueError:
             log.info("job %s was already settled when it failed with %s", job_id, code)
+        else:
+            with contextlib.suppress(Exception):
+                media_jobs.append_event(job_id, "failed", {"phase": "failed", "status": media_jobs.STATUS_FAILED, "progress": 100,
+                                                           "http_status": upstream_status or 0}, path=self._path)
         self._port.drop_payload(job_id)
         self._spool.delete(job_id)
 
@@ -862,7 +885,7 @@ class WorkflowRunCore:
             counts[outcome] = counts.get(outcome, 0) + 1
 
         for job in media_jobs.unfinished(path=self._path):
-            if job.get("intent") != RUN_INTENT:
+            if not is_run_job(job):
                 continue
             job_id = str(job["job_id"])
             with media_jobs.connection(self._path) as conn:
@@ -974,7 +997,7 @@ class WorkflowJobService:
 
     def _readable(self, job_id: str, caller: CallerContext) -> dict[str, Any]:
         job = media_jobs.get(job_id, audience="internal", path=self._path)
-        if (job is None or job.get("intent") != RUN_INTENT or not self._port.can_read(job, caller)
+        if (job is None or not is_run_job(job) or not self._port.can_read(job, caller)
                 or media_jobs.tombstoned(job_id, path=self._path)):
             raise JobNotFound(job_id)
         return job

@@ -136,7 +136,7 @@
     {
       "path": "gateway/workflow_run.py",
       "function": "_create",
-      "source_sha256": "8060f432099ad4d113e10084fa98b1fa0c800d44e78fa3151dbb6686dbbdeaed",
+      "source_sha256": "f2aa83ad947627235e11c195d4067cd1a5df179f7925d14efcfdc0479b6074a3",
       "call": "append_event",
       "event": "'queued'",
       "access": "content:job:read"
@@ -147,6 +147,30 @@
       "source_sha256": "48d200a49a43f91b2f48cbc6082380b3b9219324c6c243dc7eb838a87c9e8d79",
       "call": "append_event",
       "event": "'retry'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_run",
+      "source_sha256": "7e346108e53ec52299064bb63aaf3fa68fe5d0bb915fa295de709f0d33b6d61b",
+      "call": "append_event",
+      "event": "'started'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_run",
+      "source_sha256": "7e346108e53ec52299064bb63aaf3fa68fe5d0bb915fa295de709f0d33b6d61b",
+      "call": "append_event",
+      "event": "'attempt'",
+      "access": "content:job:read"
+    },
+    {
+      "path": "gateway/workflow_run.py",
+      "function": "_fail",
+      "source_sha256": "fb7894099478d42d0c038eef22df52c62f25198f5d39a258af80897960b170c9",
+      "call": "append_event",
+      "event": "'failed'",
       "access": "content:job:read"
     },
     {

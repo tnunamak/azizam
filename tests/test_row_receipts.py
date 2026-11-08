@@ -430,3 +430,18 @@ def test_the_row_module_names_no_domain_literal():
     source = (ROOT / "gateway" / "row_routes.py").read_text(encoding="utf-8")
     words = r"\b(image|video|audio|sfx|music|mesh|trellis|flux|comfy|llama|vllm|ollama|whisper|tts|stt)\b"
     assert re.findall(words, source, flags=re.I) == []
+
+
+def test_route_intent_is_the_one_value_for_receipt_and_job_row():
+    """The receipt and the job row file under the matched route's declared intent; a route with none keeps the run intent."""
+    import dataclasses
+    from gateway import frontend_shapes, row_routes, workflow_run
+    rows = {row.id: row for row in frontend_shapes.bundled_rows()}
+    jobs_route = rows["image-jobs"].routes[0]
+    assert row_routes.route_intent(rows["image-jobs"], jobs_route.canonical) == "image.generate"
+    bare = dataclasses.replace(jobs_route, runtime_policy={})
+    assert row_routes.route_intent(dataclasses.replace(rows["image-jobs"], routes=(bare,)), jobs_route.canonical) == workflow_run.RUN_INTENT
+    # A run job is recognised by its mode, whatever intent its route filed it under; other jobs are not.
+    assert workflow_run.is_run_job({"intent": "image.generate", "metadata": {"mode": workflow_run.RUN_INTENT}})
+    assert workflow_run.is_run_job({"intent": workflow_run.RUN_INTENT})
+    assert not workflow_run.is_run_job({"intent": "image.generate", "metadata": {"mode": "async_image_generation"}})

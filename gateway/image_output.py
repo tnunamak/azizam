@@ -180,3 +180,18 @@ def encode_image_bytes(
 
 def _exif_kwargs(exif: bytes | None) -> dict[str, bytes]:
     return {"exif": exif} if exif else {}
+
+
+def parse_image_background(value: Any) -> tuple[str | None, str | None]:
+    """Parse OpenAI's image `background` option.
+
+    Returns (value, error). None and empty string mean OpenAI's default: auto.
+    """
+    if value is None or value == "":
+        return "auto", None
+    if not isinstance(value, str):
+        return None, "background must be one of 'transparent', 'opaque', or 'auto'"
+    normalized = value.strip().lower()
+    if normalized in ("transparent", "opaque", "auto"):
+        return normalized, None
+    return None, "background must be one of 'transparent', 'opaque', or 'auto'"

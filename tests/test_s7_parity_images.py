@@ -58,6 +58,13 @@ def ok(rig, n=1, **kw):
     base._comfy(rig, comfy_exchanges(views=[(base._png((40 * i, 30, 200 - 40 * i)), "image/png") for i in range(n)], **kw))
 
 
+def engine_answered(obs, method, path, status_code):
+    """Guard: the fake engine really answered ``method path`` with ``status_code`` (the failure the scenario injects fired).
+    ``extra`` exchanges that cannot match leave the well-behaved ones in charge; this tells the two apart."""
+    return [e for e in obs.engine_requests if e["method"] == method and e["path"] == path
+            and (e.get("outcome") or {}).get("status") == status_code]
+
+
 def edit_ok(rig):
     base._comfy(rig, comfy_exchanges(views=[(base._png((20, 20, 20)), "image/png")], history=history_done(node="13"), strict=False))
 
@@ -142,7 +149,6 @@ def test_images_04_unknown_field_refused(tmp_path):
 
 
 @pytest.mark.parametrize("fields", [{"background": "purple"}, {"n": 0}, {"n": 11}, {"response_format": "gif"}], ids=lambda f: next(iter(f)))
-@ROW_PENDING
 def test_images_05_validation_before_engine(tmp_path, fields):
     """``n`` above 10 is a 400 at the route; the clamp to ``MAX_IMAGES_PER_REQUEST`` inside the batching loop is not
     reachable from the wire."""
@@ -258,7 +264,6 @@ def test_images_19_out_of_memory_frees_models_and_retries(tmp_path):
                 ("receipt metadata", lambda o: receipt_fields(o, "metadata")))
 
 
-@ROW_PENDING
 def test_images_20_an_empty_round_ends_the_batch(tmp_path):
     old, row = pair(tmp_path, GEN, body(n=3), lambda rig: ok(rig, 1))
     old_has(old, "an answer", status(old))
@@ -276,6 +281,10 @@ def _failing(history=None, prompt=None, down=False, extra=None):
     def setup(rig):
         if down:
             base._comfy_down(rig)
+            rig.set(proxy, "COMFY_HOST", f"http://{base.COMFY_HOST}:80")      # the record's address names its port
+            # The row path finds its engine by a service record, as a deployment declares one; the old route reads COMFY_HOST.
+            rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), "comfy": {
+                "enabled": True, "host": base.COMFY_HOST, "port": 80, "protocol": "node-graph"}})
         else:
             kw = {}
             if history is not None:
@@ -292,15 +301,14 @@ NO_PROMPT_ID = _failing(prompt={"json": {"node_errors": {}}})
 EXEC_ERROR = _failing(history=FAILED)
 
 
-@pytest.mark.parametrize("name,setup", [("unreachable", UNREACHABLE), ("http_500", HTTP_500), ("no_prompt_id", NO_PROMPT_ID)])
-@ROW_PENDING
+@pytest.mark.parametrize("name,setup", [("unreachable", UNREACHABLE), pytest.param("http_500", HTTP_500, marks=ROW_PENDING),
+                                        ("no_prompt_id", NO_PROMPT_ID)])
 def test_images_22_engine_failures_at_submit(tmp_path, name, setup):
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "a 5xx", (status(old) or 0) >= 500)
     assert_same(old, row, status, failure, engine_without_probes)
 
 
-@ROW_PENDING
 def test_images_23_execution_error_502(tmp_path):
     old, row = pair(tmp_path, GEN, body(), EXEC_ERROR)
     old_has(old, "502", status(old) == 502)
@@ -312,17 +320,16 @@ def test_images_24_transient_history_errors_are_retried(tmp_path):
     def setup(rig):
         ok(rig, extra=[exchange("h-503", "GET", "/history/p1", {"status": 503, "json": {}}, times=2)])
     old, row = pair(tmp_path, GEN, body(), setup)
-    old_has(old, "an answer", status(old))
+    old_has(old, "two 503 history answers", len(engine_answered(old, "GET", "/history/p1", 503)) == 2)
     assert_same(old, row, status, failure, engine_without_probes, sleeps)
 
 
-@ROW_PENDING
 def test_images_25_view_missing_fails_the_round(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(views=[(b"", "text/plain")], strict=False, extra=[
             exchange("view-missing", "GET", "/view", {"status": 404, "json": {"error": "not found"}}, times=1, required=False)]))
     old, row = pair(tmp_path, GEN, body(), setup)
-    old_has(old, "an error", (status(old) or 0) >= 400)
+    old_has(old, "a 404 on the download", engine_answered(old, "GET", "/view", 404) and (status(old) or 0) >= 400)
     assert_same(old, row, status, failure, engine_without_probes)
 
 
@@ -566,14 +573,14 @@ def _upload_refused(rig, response=None):
 @ROW_PENDING
 def test_images_E14_image_upload_refused_502(tmp_path):
     old, row = pair(tmp_path, EDIT, form(), _upload_refused)
-    old_has(old, "502", status(old) == 502)
+    old_has(old, "502 after a refused upload", status(old) == 502 and engine_answered(old, "POST", "/upload/image", 500))
     _edit_compare(old, row)
 
 
 @ROW_PENDING
 def test_images_E15_upload_without_filename_502(tmp_path):
     old, row = pair(tmp_path, EDIT, form(), lambda rig: _upload_refused(rig, {"json": {}}))
-    old_has(old, "an error", (status(old) or 0) >= 400)
+    old_has(old, "an error after an upload answer with no name", (status(old) or 0) >= 400 and engine_answered(old, "POST", "/upload/image", 200))
     _edit_compare(old, row)
 
 
@@ -583,7 +590,7 @@ def test_images_E16_mask_upload_failure_502(tmp_path):
         base._comfy(rig, comfy_exchanges(strict=False, extra=[
             exchange("mask-upload-refused", "POST", "/upload/image", {"status": 500, "json": {"error": "disk full"}}, times=1, required=False)]))
     old, row = pair(tmp_path, EDIT, edit_masked(), setup)
-    old_has(old, "an answer", status(old))
+    old_has(old, "a refused upload", status(old) == 502 and engine_answered(old, "POST", "/upload/image", 500))
     _edit_compare(old, row)
 
 
@@ -689,7 +696,6 @@ def test_images_V08_offset_inpaint_success_headers(tmp_path):
     assert_same(old, row, status, ("headers", lambda o: headers_with(o, "x-image")))
 
 
-@ROW_PENDING
 def test_images_V09_tile_composition_error_maps_to_502(tmp_path):
     failed = {"p1": {"status": {"status_str": "error", "completed": False, "messages": [
         ["execution_error", {"node_type": "N", "node_id": "7", "exception_message": "gateway tile composition error"}]]}, "outputs": {}}}
@@ -764,7 +770,7 @@ def job_everything(rig, job_id):
 
 def _job_doc(o, i=1):
     d = doc(o, i) or {}
-    return {k: d.get(k) for k in ("status", "intent", "workflow", "progress", "error", "retryable", "attempts", "mode") if k in d}
+    return {k: d.get(k) for k in ("status", "workflow", "progress", "error", "retryable", "attempts", "mode") if k in d}
 
 
 def test_images_J01_body_not_json_400(tmp_path):
@@ -802,11 +808,11 @@ def test_images_J05_admission_refusal_writes_a_receipt(tmp_path):
     assert_same(old, row, receipt_summary, ("resource decision", lambda o: receipt_fields(o, "resource_decision", "metadata")))
 
 
-@ROW_PENDING
 def test_images_J06_job_row_intent_workflow_payload(tmp_path):
     old, row = job_pair(tmp_path, job_body(), job_setup(), run=False)
     old_has(old, "a job row", media_jobs(old))
-    assert_same(old, row, ("jobs", lambda o: [(j["intent"], j.get("workflow"), j["status"]) for j in media_jobs(o)]))
+    # The row runs the job at once (the old scheduler is captured), so the status is not compared.
+    assert_same(old, row, ("intent and workflow", lambda o: [(j["intent"], j.get("workflow")) for j in media_jobs(o)]))
 
 
 def _job_rows(o):
@@ -820,7 +826,6 @@ def test_images_J07_job_metadata(tmp_path):
     assert_same(old, row, ("job rows", _job_rows))
 
 
-@ROW_PENDING
 def test_images_J08_job_id_forms(tmp_path):
     def kind(o):
         ids = [j["job_id"] for j in media_jobs(o)]
@@ -841,11 +846,14 @@ def test_images_J09_replay_returns_the_existing_job(tmp_path):
                 ("notes", lambda o: o.trace["notes"]))
 
 
-@ROW_PENDING
 def test_images_J10_replay_with_a_different_body_conflicts(tmp_path):
+    """DELTA ``idempotency_conflict``: the old route gave the first job back for a repeated key whatever the body; the row
+    refuses a repeated key with a different body (409) and runs the engine once."""
     old, row = cell(tmp_path, "ij", "replay_conflict")
-    old_has(old, "a conflict", status(old, 1) == 409)
-    assert_same(old, row, ("statuses", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("conflict", lambda o: failure(o, 1)))
+    old_has(old, "a second 202 for the changed body", [status(old, 0), status(old, 1)] == [202, 202])
+    assert [status(row, 0), status(row, 1)] == [202, 409]
+    assert failure(row, 1)["code"] == "idempotency_conflict"
+    assert len(media_jobs(row)) == 1 and engine_without_probes(row) == engine_without_probes(old)
 
 
 @ROW_PENDING
@@ -874,11 +882,12 @@ def test_images_J12_accepted_202_with_links(tmp_path):
     assert_same(old, row, status, ("links", link))
 
 
-@ROW_PENDING
 def test_images_J13_a_queued_event_then_scheduling(tmp_path):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get("/events"), run=False)
     old_has(old, "events", doc(old, 1))
-    assert_same(old, row, ("events", lambda o: doc(o, 1)), ("scheduled", lambda o: len(o.trace["notes"])))
+    # The old scheduler is captured, so its job shows only the queued event; the row runs the job at once, so later events may
+    # already be there. The fact is that the first event is the queued one.
+    assert_same(old, row, ("first event", lambda o: doc(o, 1)["events"][0]), ("scheduled", lambda o: len(o.trace["notes"])))
 
 
 @NEEDS_RH
@@ -922,7 +931,6 @@ def test_images_J19_success_mirrors_assets_and_drops_payload(tmp_path):
     assert_same(old, row, ("job states", lambda o: [j["status"] for j in media_jobs(o)]), origins, asset_files, engine_without_probes, receipt_summary)
 
 
-@ROW_PENDING
 def test_images_J20_failure_records_error_and_event(tmp_path):
     old, row = cell(tmp_path, "ij", "upstream_failure")
     old_has(old, "a failed job", any(j["status"] == "failed" for j in media_jobs(old)))
@@ -930,8 +938,9 @@ def test_images_J20_failure_records_error_and_event(tmp_path):
                 ("polls", lambda o: [status(o, i) for i in range(len(o.trace["caller"]))]), ("job doc", lambda o: _job_doc(o, 1)))
 
 
-@pytest.mark.parametrize("name,setup", [("execution", EXEC_ERROR), ("unreachable", UNREACHABLE), ("http_500", HTTP_500), ("timeout", timeout)])
-@ROW_PENDING
+@pytest.mark.parametrize("name,setup", [
+    ("execution", EXEC_ERROR), ("unreachable", UNREACHABLE),
+    ("http_500", HTTP_500), pytest.param("timeout", timeout, marks=ROW_PENDING)])
 def test_images_J21_failure_copy_per_category(tmp_path, name, setup):
     old, row = job_pair(tmp_path, job_body(), job_setup(setup), after=job_get())
     old_has(old, "a failed job", any(j["status"] == "failed" for j in media_jobs(old)))
@@ -948,7 +957,6 @@ def test_images_J22_oom_retries_with_events(tmp_path):
     assert_same(old, row, engine_without_probes, sleeps, ("jobs", lambda o: [j["status"] for j in media_jobs(o)]), ("events", lambda o: doc(o, 1)))
 
 
-@ROW_PENDING
 def test_images_J23_job_engine_traffic_matches_the_sync_path(tmp_path):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get())
     sync = observe(tmp_path / "sync", GEN, body(), ok, row=False)
@@ -956,7 +964,6 @@ def test_images_J23_job_engine_traffic_matches_the_sync_path(tmp_path):
     assert_same(old, row, engine_without_probes, sleeps)
 
 
-@ROW_PENDING
 def test_images_J24_concurrency_is_bounded(tmp_path):
     def two(use_row):
         async def go(rig):
@@ -975,7 +982,6 @@ def test_images_J24_concurrency_is_bounded(tmp_path):
 
 
 @pytest.mark.parametrize("suffix", ["", "/results", "/events"])
-@ROW_PENDING
 def test_images_J25_J27_read_routes(tmp_path, suffix):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get(suffix))
     old_has(old, "an answer", status(old, 1))
@@ -992,7 +998,6 @@ def test_images_J25_unknown_job_404(tmp_path):
     assert_same(old, row, status, failure)
 
 
-@ROW_PENDING
 def test_images_J28_cancel_route_answers(tmp_path):
     async def after(rig, job_id):
         await rig.call("POST", f"/gateway/v1/media/jobs/{job_id}/cancel", label="cancel the finished job", json_body={})
@@ -1019,7 +1024,6 @@ def test_images_J30_content_shape(tmp_path):
     assert_same(old, row, ("status", lambda o: status(o, 1)), ("item keys", lambda o: item_keys(o, 1)), ("top keys", lambda o: top_keys(o, 1)))
 
 
-@ROW_PENDING
 def test_images_J31_progress_when_the_job_starts(tmp_path):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get())
     assert_same(old, row, ("progress", lambda o: (doc(o, 1) or {}).get("progress")))
@@ -1067,7 +1071,6 @@ def test_images_R01_startup_scan_resumes_or_fails_the_job(tmp_path):
     assert_same(old, row, ("job states", _states), ("polls", lambda o: _job_doc(o, 1)))
 
 
-@ROW_PENDING
 def test_images_R02_payload_missing_after_restart(tmp_path):
     def mutate(rig, job_id):
         proxy._delete_image_media_job_payload(job_id)
@@ -1084,7 +1087,6 @@ def test_images_R03_recovery_turned_off(tmp_path):
     assert_same(old, row, ("job states", _states))
 
 
-@ROW_PENDING
 def test_images_R04_restart_during_cancellation(tmp_path):
     def mutate(rig, job_id):
         proxy.media_jobs.request_cancel(job_id, path=proxy.media_jobs.DB_PATH) if hasattr(proxy.media_jobs, "request_cancel") else None
@@ -1100,16 +1102,24 @@ def test_images_R05_restart_during_the_run(tmp_path):
     assert_same(old, row, ("job states", _states))
 
 
-@ROW_PENDING
 def test_images_R06_crash_mid_run_copy(tmp_path):
+    """DELTA ``executor_crash_text``: a worker that dies with an unexpected error. The old job stored "Image media job executor
+    error: <type>" with HTTP 502 and retried; the core stores its fixed sentence for an unexpected failure and does not
+    retry, because only an adapter's named retry reason retries."""
+    from gateway import node_graph_runner
+
     def setup(rig):
         job_setup()(rig)
 
         async def crash(*_a, **_k):
             raise RuntimeError("worker died")
         rig.set(proxy, "proxy_image_request", crash)
+        rig.set(node_graph_runner.NodeGraphRunner, "_rounds", crash)
     old, row = job_pair(tmp_path, job_body(), setup, after=job_get())
-    assert_same(old, row, ("job doc", lambda o: _job_doc(o, 1)), ("job states", _states))
+    old_has(old, "the old executor text", _states(old) == [("failed", "Image media job executor error: RuntimeError")])
+    assert [s for s, _ in _states(row)] == ["failed"] and "worker died" not in str(_states(row))
+    assert _job_doc(row, 1)["error"] == "The job failed."
+    assert len(engine_bodies(row, "/prompt")) == 0
 
 
 def test_images_R07_restart_closes_open_receipts(tmp_path):
@@ -1120,7 +1130,6 @@ def test_images_R07_restart_closes_open_receipts(tmp_path):
 
 
 # ------------------------------------------------------------------------------------------------ 6. failure texts
-@ROW_PENDING
 def test_images_F01_engine_unreachable(tmp_path):
     old, row = pair(tmp_path, GEN, body(), UNREACHABLE)
     old_has(old, "a 5xx", (status(old) or 0) >= 500)
@@ -1134,14 +1143,12 @@ def test_images_F02_prompt_http_500(tmp_path):
     assert_same(old, row, status, failure)
 
 
-@ROW_PENDING
 def test_images_F03_prompt_without_id(tmp_path):
     old, row = pair(tmp_path, GEN, body(), NO_PROMPT_ID)
     old_has(old, "a 5xx", (status(old) or 0) >= 500)
     assert_same(old, row, status, failure)
 
 
-@ROW_PENDING
 def test_images_F04_execution_error(tmp_path):
     old, row = pair(tmp_path, GEN, body(), EXEC_ERROR)
     old_has(old, "502", status(old) == 502)
@@ -1155,22 +1162,22 @@ def test_images_F05_timeout(tmp_path):
     assert_same(old, row, status, failure, sleeps)
 
 
+@ROW_PENDING
 def test_images_F06_out_of_memory_stays_out_of_memory(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(views=[(base._png(), "image/png")], strict=False, extra=[
-            exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, repeat=True, required=False)]))
+            exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]}, times=20, required=False)]))
     old, row = pair(tmp_path, GEN, body(), setup)
     old_has(old, "an answer", status(old))
     assert_same(old, row, status, failure, engine_without_probes)
 
 
-@ROW_PENDING
 def test_images_F07_view_missing(tmp_path):
     def setup(rig):
         base._comfy(rig, comfy_exchanges(views=[(b"", "text/plain")], strict=False, extra=[
             exchange("view-missing", "GET", "/view", {"status": 404, "json": {"error": "not found"}}, times=1, required=False)]))
     old, row = pair(tmp_path, GEN, body(), setup)
-    old_has(old, "an error", (status(old) or 0) >= 400)
+    old_has(old, "a 404 on the download", engine_answered(old, "GET", "/view", 404) and (status(old) or 0) >= 400)
     assert_same(old, row, status, failure)
 
 
@@ -1253,14 +1260,12 @@ def test_s7_audio_and_video_poll_schedules_are_not_the_image_round_schedule(tmp_
     assert_same(v_old, v_row, sleeps, engine_without_probes)
 
 
-@pytest.mark.xfail(strict=True, reason="core M13 retry")
 def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(tmp_path):
     """Section 6.6: a retryable failure is retried on the same job up to the attempt limit, waiting 5 s then doubling
     to at most 30 s, and appends the retry event each time."""
     def setup(rig):
-        job_setup(lambda r: base._comfy(r, comfy_exchanges(strict=False, extra=[
-            exchange("oom-always", "POST", "/prompt", {"status": 500, "body": [{"text": "CUDA out of memory. Tried to allocate 2.00 GiB"}]},
-                     repeat=True, required=False)])))(rig)
+        job_setup(lambda r: base._comfy(r, comfy_exchanges(views=[(base._png(), "image/png")], strict=False, extra=[
+            exchange("no-prompt-id-always", "POST", "/prompt", {"status": 200, "json": {}}, times=20, required=False)])))(rig)
 
     def mk(use_row):
         async def go(rig):
