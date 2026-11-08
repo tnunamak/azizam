@@ -86,6 +86,34 @@ _INPUT_HASH = re.compile(r'("input_hash"\s*:\s*)"([0-9a-f]{64})"')
 VOLATILE_DIGEST_KEYS = frozenset({"input_hash"})
 
 
+_MEDIA_VALUE = re.compile(r'("(?:b64_json|audio|data)"\s*:\s*")([A-Za-z0-9+/=]{8,})(")')
+_MEDIA_HELD = "\0media:%d\0"
+_KEY_BEFORE = re.compile(r'"([A-Za-z0-9_]+)"\s*:\s*"$')
+
+
+def _hold_media_values(text: str) -> tuple[str, list[str]]:
+    """The base64 of a media field is bytes, not ids: no id pattern may rewrite it (N6)."""
+    held: list[str] = []
+
+    def hold(match: "re.Match[str]") -> str:
+        held.append(match.group(2))
+        return match.group(1) + _MEDIA_HELD % (len(held) - 1) + match.group(3)
+
+    return _MEDIA_VALUE.sub(hold, text), held
+
+
+def _restore_media_values(text: str, held: list[str]) -> str:
+    for index, value in enumerate(held):
+        text = text.replace(_MEDIA_HELD % index, value)
+    return text
+
+
+def _after_time_key(text: str, start: int) -> bool:
+    """Whether the string that starts at ``start`` is the value of a time key (``created_at``, ``expires`` ...)."""
+    found = _KEY_BEFORE.search(text[max(0, start - 80):start])
+    return bool(found) and _time_key(found.group(1))
+
+
 def _time_key(key: str | None) -> bool:
     return bool(key) and (key in VOLATILE_TIME_KEYS or key.endswith(VOLATILE_TIME_SUFFIXES))
 
@@ -141,21 +169,26 @@ class Normalizer:
             table[value] = len(table) + 1
         return f"<{kind}:{table[value]}>"
 
-    def text(self, value: str) -> str:
+    def text(self, value: str, *, payload: bool = False) -> str:
+        """``payload``: the text is something the caller or the gateway sent in a request body. A date-time in it is
+        masked only under a time key; anywhere else it is the sender's own text, compared exactly."""
+        self.problems.extend(raw_json_clock_problems(value))
         for root in self._roots:
             value = value.replace(root, "<tmp>")
+        value, media = _hold_media_values(value)
         value = _SIG.sub("sig=<sig>", value)
         value = _EXPIRES.sub("expires=<expires>", value)
         value = _REQ_ID.sub(lambda m: self.token("req", m.group(0)), value)
         value = _JOB_ID.sub(self._job_token, value)
         value = _UUID.sub(lambda m: self.token("uuid", m.group(0)), value)
         value = _HEX32.sub(lambda m: self.token("hex32", m.group(0)), value)
-        value = _ISO_TIME.sub("<iso-time>", value)
+        value = _ISO_TIME.sub(lambda m: "<iso-time>" if not payload or _after_time_key(value, m.start()) else m.group(0), value)
         value = _NEUTRAL_HTTP_DATE.sub("<http-date>", value)
         value = _NUMBER_AFTER_KEY.sub(self._number_after_key, value)
         keep_input, keep_request = self._exact_hashes(value)
         value = _INPUT_HASH.sub(self._hash_sub(keep_input, '"<digest>"'), value)
-        return _REQUEST_HASH.sub(self._hash_sub(keep_request, '"<random-hash>"'), value)
+        value = _REQUEST_HASH.sub(self._hash_sub(keep_request, '"<random-hash>"'), value)
+        return _restore_media_values(value, media)
 
     @staticmethod
     def _hash_sub(keep: list[bool], token: str):
@@ -285,7 +318,7 @@ def sort_json_keys(text: str) -> str:
 
 
 def describe_body(content: bytes | None, content_type: str | None, norm: Normalizer, *,
-                  unordered_json: bool = False) -> dict[str, Any]:
+                  unordered_json: bool = False, payload: bool = False) -> dict[str, Any]:
     """An exact, readable description of body bytes.
 
     ``unordered_json`` sorts the keys of a JSON body first, for a document the gateway builds by
@@ -294,12 +327,13 @@ def describe_body(content: bytes | None, content_type: str | None, norm: Normali
     Text and JSON keep their exact characters (so key order and spacing show), with
     volatile values normalised. Binary is its length, sha256 and first bytes.
     Multipart bodies are split into parts; the random boundary becomes a fixed token.
+    ``payload`` marks a request body: its date-times are the sender's text unless a time key holds them.
     """
     if not content:
         return {"kind": "empty"}
     main, params = _content_type_parts(content_type)
     if main.startswith("multipart/") and params.get("boundary"):
-        return _describe_multipart(content, params["boundary"], norm)
+        return _describe_multipart(content, params["boundary"], norm, payload=payload)
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError:
@@ -309,7 +343,7 @@ def describe_body(content: bytes | None, content_type: str | None, norm: Normali
         kind = "json" if (main.endswith(_JSON_TYPES) or _looks_json(text)) else "text"
         if unordered_json and kind == "json":
             text = sort_json_keys(text)
-        return {"kind": kind, "text": norm.text(text)}
+        return {"kind": kind, "text": norm.text(text, payload=payload)}
     return binary_summary(content)
 
 
@@ -353,7 +387,7 @@ def _looks_json(text: str) -> bool:
     return True
 
 
-def _describe_multipart(content: bytes, boundary: str, norm: Normalizer) -> dict[str, Any]:
+def _describe_multipart(content: bytes, boundary: str, norm: Normalizer, *, payload: bool = False) -> dict[str, Any]:
     token = BOUNDARY_TOKEN.encode()
     marker = b"--" + boundary.encode()
     pieces = content.split(marker)
@@ -371,7 +405,7 @@ def _describe_multipart(content: bytes, boundary: str, norm: Normalizer) -> dict
             parts.append({"malformed": binary_summary(piece)})
             continue
         trailing = rest.endswith(b"\r\n")
-        payload = rest[:-2] if trailing else rest
+        payload_bytes = rest[:-2] if trailing else rest
         header_text = head.decode("latin-1")
         part_type = ""
         for line in header_text.split("\r\n"):
@@ -379,7 +413,7 @@ def _describe_multipart(content: bytes, boundary: str, norm: Normalizer) -> dict
                 part_type = line.split(":", 1)[1].strip()
         parts.append({
             "headers": norm.text(header_text.replace(boundary, BOUNDARY_TOKEN)),
-            "body": describe_body(payload, part_type or None, norm),
+            "body": describe_body(payload_bytes, part_type or None, norm, payload=payload),
             "crlf_after_body": trailing,
         })
     _ = token
@@ -401,7 +435,7 @@ def describe_request_headers(headers: Iterable[tuple[str, str]], norm: Normalize
         if lowered in _DROPPED_REQUEST_HEADERS:
             continue
         if lowered in _SECRET_HEADERS:
-            out[lowered] = "<present>"
+            _add_header(out, lowered, "<present>")
             continue
         if lowered == "content-type":
             main, params = _content_type_parts(value)
@@ -445,7 +479,7 @@ def describe_response_headers(headers: Iterable[tuple[str, str]], norm: Normaliz
         if lowered in _DROPPED_RESPONSE_HEADERS:
             continue
         if lowered in _TIME_RESPONSE_HEADERS:
-            out[lowered] = "<http-date>"
+            _add_header(out, lowered, "<http-date>")
             continue
         _add_header(out, lowered, norm.text(value))
     return dict(sorted(out.items()))
@@ -492,6 +526,7 @@ def dump_sqlite(path: Path, norm: Normalizer, *, skip_tables: Iterable[str] = ()
             if not fetched:
                 continue  # a table other tests created and left empty is not part of this scenario
             for raw in fetched:
+                norm.problems.extend(clock_problems(dict(zip(columns, raw))))
                 row: dict[str, Any] = {}
                 for column, cell in zip(columns, raw):
                     if isinstance(cell, bytes):
@@ -565,6 +600,30 @@ def clock_problems(mapping: Mapping[str, Any]) -> list[str]:
         a, b = mapping.get(first), mapping.get(second)
         if _is_number(a) and _is_number(b) and b < a:
             out.append(f"{second} ({b}) is before {first} ({a})")
+    return out
+
+
+def raw_json_clock_problems(text: str) -> list[str]:
+    """The clock problems of every object in a JSON text, read before any number in it is masked (N2)."""
+    stripped = text.lstrip()
+    if not stripped or stripped[0] not in "{[" or ("_at" not in text and "created" not in text):
+        return []
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        return []
+    out: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, Mapping):
+            out.extend(clock_problems(node))
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(parsed)
     return out
 
 
@@ -693,6 +752,19 @@ def first_difference(expected: Any, actual: Any, path: str = "$") -> tuple[str, 
     return None if expected == actual else (path, expected, actual)
 
 
+def traces_differ(expected: Any, actual: Any) -> bool:
+    """Whether two traces differ anywhere. A value of another type differs (``False`` is not ``0``, ``1`` is not
+    ``1.0``), which Python's ``==`` does not say."""
+    return first_difference(expected, actual) is not None
+
+
+def with_job_prefixes(trace: dict[str, Any], norm: Normalizer) -> dict[str, Any]:
+    """The trace with the prefix of each job, in token order. The masked text keeps one token for a job whatever its
+    prefix, so this is where a route that renames its job ids shows (N1)."""
+    trace["job_prefixes"] = norm.job_prefixes()
+    return trace
+
+
 def _top_entry(path: str) -> str:
     """``$.engine_requests[3].body`` -> ``$.engine_requests[3]``."""
     match = re.match(r"^(\$\.[A-Za-z_]+(?:\[\d+\])?)", path)
@@ -767,13 +839,15 @@ def compare_golden(name: str, trace: Mapping[str, Any], *, fixture_dir: Path | N
                 f"docs/verification/ENGINE_W6B_DIFFERENTIAL.md and review it.")
     expected = json.loads(golden.read_text(encoding="utf-8"))
     actual = json.loads(text)
+    if "job_prefixes" not in expected:    # a golden recorded before the prefixes were kept is compared on the rest
+        actual.pop("job_prefixes", None)
     from tests.support import adapter_differential_deltas as listed
 
     try:  # the scenario's named differences (empty for a scenario that has none), applied to the OLD trace
         expected = listed.apply_deltas(expected, tuple(listed.MANIFEST.get(name, ()) if deltas is None else deltas))
     except listed.DeltaError as error:
         return f"{name}: {error}"
-    if expected == actual:
+    if not traces_differ(expected, actual):
         return ""
     return readable_diff(name, expected, actual)
 

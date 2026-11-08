@@ -17,6 +17,7 @@ Features:
 
 from gateway.capability_ids import INNER_HOP_ADMISSION, INNER_HOP_ENDPOINTS, INTENT_CAPABILITIES, inner_hop_endpoints_for
 from gateway import engine_egress
+from gateway.frontend_shapes import media_job as media_job_shape
 from gateway import registry_snapshot
 from gateway import workflow_projections, workflow_registry_store
 from gateway.workflow_projections import SnapshotRegistry
@@ -8202,7 +8203,8 @@ def _chain_failure_error(record: Mapping[str, Any] | None, job: Mapping[str, Any
     chain = (record or {}).get("chain") if isinstance(record, Mapping) else None
     if not isinstance(chain, Mapping):
         return error
-    index = video_extend.segment_of_node(chain.get("units") or [], node_graph.execution_error_node_id(job) or "")
+    index = video_extend.segment_of_node(chain.get("units") or [], node_graph.execution_error_node_id(job) or "",
+                                         node_prefix=chain.get("node_prefix"))
     if index is None:
         return error
     total = int(chain.get("segments") or 0)
@@ -12905,6 +12907,7 @@ async def _submit_video_chain(
         "segment_frames": [s.frames for s in segments],
         "shots": len(shots),
         "units": built.units,
+        "node_prefix": engine.binding.node_prefix,
         "total_frames": built.total_frames,
         "fps": fps,
         "context_seconds": context_seconds,
@@ -17534,7 +17537,7 @@ def _workflow_store_snapshot(document, _release, *, generation):
 # The owner's workflow store (CODE_TO_DATA_S4_S8 I2). Its writes reload through reload_runtime_config, the one reload
 # path, which swaps GATEWAY_REGISTRY_PROVIDER.
 WORKFLOW_REGISTRY_STORE = workflow_registry_store.WorkflowRegistryStore(
-    path=ADMIN_DB_PATH, definitions=definition_store.DefinitionStore(media_jobs.DB_PATH),
+    path=lambda: ADMIN_DB_PATH, definitions=definition_store.DefinitionStore(media_jobs.DB_PATH),
     build_snapshot=_workflow_store_snapshot, config=lambda: config, on_changed=lambda: reload_runtime_config(),
 )
 
@@ -23490,13 +23493,6 @@ def _image_response_error(response: Response) -> tuple[str, str | None]:
     return f"image generation failed with HTTP {response.status_code}", None
 
 
-_JOB_FAILURE_COPY = {
-    "authorization": ("not_in_access_plan", "This workflow isn't in your access plan."),
-    "invalid_input": ("invalid_input", "The gateway did not accept this job's inputs."),
-    "capacity": ("capacity", "The gateway is too busy to run this job now. Try again later."),
-    "timeout": ("timeout", "The backend did not finish this job in time."),
-    "safety": ("content_policy_violation", "The backend refused this job's content."),
-}
 # Error codes a job may copy from a refusal: the gateway's own and the standard
 # OpenAI ones. Any other code, even a plain token, may carry words from a prompt
 # a backend echoed, so it becomes the category's default code.
@@ -23555,7 +23551,7 @@ def _media_job_failure(response: Response) -> tuple[str, dict[str, Any]]:
             "error_code": code or "upstream_error", "error_category": "upstream",
             "retryable": status >= 500, "upstream_http_status": status,
         }
-    default_code, message = _JOB_FAILURE_COPY[category]
+    default_code, message = media_job_shape.JOB_FAILURE_COPY[category]
     if category == "capacity" and getattr(response, "gateway_refusal", None):
         message = _admission_refusal_message(response)
     elif category == "invalid_input" and getattr(response, "gateway_refusal", None):
@@ -23838,6 +23834,10 @@ def _request_shim_from_image_job_payload(payload: Mapping[str, Any]) -> _JsonBod
 def _recover_workflow_runs() -> None:
     """Section 5.4: decide what a restart does for each unfinished workflow run. Needs the run core; without one the
     runs wait for the next start (they are not failed: the integrator sets the hooks before serving)."""
+    # No task of a stopped gateway is left to close the receipt of a run it was serving.
+    for job in media_jobs.unfinished(path=media_jobs.DB_PATH):
+        if job.get("intent") == workflow_run.RUN_INTENT:
+            receipt_store.close_orphan(str(job.get("request_id") or ""))
     core = _workflow_run_core()
     if core is None:
         return
@@ -26477,11 +26477,30 @@ def _signed_asset_content_response(
 # The snapshot provider (S5) and the projections (S5). A test may set either to None: the route then answers 503.
 WORKFLOW_SNAPSHOTS: Any = GATEWAY_REGISTRY_PROVIDER
 WORKFLOW_PROJECTIONS: Any = workflow_projections.PROJECTIONS
-_WORKFLOW_RUN_SPOOL_ROOT = IMAGE_MEDIA_JOB_PAYLOAD_DIR.parent / "workflow-run-spool"
-_WORKFLOW_JOB_SPOOL = request_spool.JobSpool(_WORKFLOW_RUN_SPOOL_ROOT)
+# Built at first use, not at import, so no setting is read at import (config homes 1.2). A test may set any of them.
+_WORKFLOW_RUN_SPOOL_ROOT: Path | None = None
+_WORKFLOW_JOB_SPOOL: request_spool.JobSpool | None = None
 _workflow_run_tasks: set[asyncio.Task] = set()
 _workflow_run_scheduled: set[str] = set()
-_workflow_run_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
+_workflow_run_semaphore: asyncio.Semaphore | None = None
+
+
+def _workflow_run_spool_root() -> Path:
+    return _WORKFLOW_RUN_SPOOL_ROOT or IMAGE_MEDIA_JOB_PAYLOAD_DIR.parent / "workflow-run-spool"
+
+
+def _workflow_job_spool() -> request_spool.JobSpool:
+    global _WORKFLOW_JOB_SPOOL
+    if _WORKFLOW_JOB_SPOOL is None:
+        _WORKFLOW_JOB_SPOOL = request_spool.JobSpool(_workflow_run_spool_root())
+    return _WORKFLOW_JOB_SPOOL
+
+
+def _workflow_run_slots() -> asyncio.Semaphore:
+    global _workflow_run_semaphore
+    if _workflow_run_semaphore is None:
+        _workflow_run_semaphore = asyncio.Semaphore(IMAGE_MEDIA_JOB_CONCURRENCY)
+    return _workflow_run_semaphore
 _workflow_core_cache: tuple[Any, Any, Any] | None = None
 
 
@@ -26735,7 +26754,35 @@ class _WorkflowRunPort:
         # it. No operation of the protocol is picked by position.
         op = str(ctx.pin.contract["intent"])
         # The adapter compiles the pinned manifest over the typed inputs and the generated values the job drew.
-        await protocol_jobs.run(runtime_, op, {**dict(ctx.inputs), **dict(ctx.generated)}, job_id=ctx.job_id)
+        body = {**dict(ctx.inputs), **dict(ctx.generated)}
+        if ctx.media:
+            body.update(await self._stage_media(ctx, adapter, connection))
+        await protocol_jobs.run(runtime_, op, body, job_id=ctx.job_id)
+
+    async def _stage_media(self, ctx: workflow_run.RunContext, adapter: Any, connection: Callable[[], Any]) -> dict[str, str]:
+        """Each media input of the run, held by the engine, as the name the engine gives it. The files were accepted with
+        the job (staged in its spool, or named from the Library); an adapter that cannot take one refuses the run."""
+        stage = getattr(adapter, "stage_input", None)
+        if stage is None:
+            raise ProtocolError("The adapter for this job takes no input files.", code="media_input_unsupported")
+        staged: dict[str, str] = {}
+        for name, refs in ctx.media.items():
+            if len(refs) != 1:
+                raise ProtocolError("The adapter for this job takes one file for an input.", code="media_input_unsupported")
+            ref = refs[0]
+            if ref.spool_key is not None:
+                data = await asyncio.to_thread(ctx.spool.path(ctx.job_id, ref.spool_key).read_bytes)
+            else:
+                data = await asyncio.to_thread(self.read_asset, str(ref.asset_id), ctx.caller)
+                if data is None:
+                    raise ProtocolError("An input file is no longer available.", code="input_unavailable")
+            suffix = asset_types.suffix_for_media_type(ref.media_type)
+            try:
+                staged[name] = await stage(connection(), filename="input" + suffix, data=data,
+                                           media_type=ref.wire_media_type or ref.media_type)
+            except (TransportFailure, ProtocolUpstreamError) as exc:
+                raise ProtocolError("The engine did not take an input file.", code="asset_upload_failed") from exc
+        return staged
 
     def read_asset(self, asset_id: str, caller: AuthContext) -> bytes | None:
         path = asset_cache_path(asset_id)
@@ -26746,6 +26793,15 @@ class _WorkflowRunPort:
         if not owners or not decide_own(_asset_content_viewer(caller), owners):
             return None
         return path.read_bytes()
+
+
+    async def close_receipt(self, request_id: str, status: str, reason: str) -> None:
+        """Close the request receipt of a run whose row handed it off, now that the job has ended. A receipt no row
+        handed off (a sync request closes its own) is not held here, and nothing is done."""
+        owner = _RUN_RECEIPT_OWNERS.pop(request_id, None)
+        if owner is not None:
+            owner.report(status=status, reason=reason)
+            await owner.settle()
 
 
 _WORKFLOW_RUN_PORT = _WorkflowRunPort()
@@ -26887,7 +26943,7 @@ def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
     if cached is None or cached[0] is not WORKFLOW_SNAPSHOTS or cached[1] is not WORKFLOW_PROJECTIONS:
         core = workflow_run.WorkflowRunCore(
             snapshots=WORKFLOW_SNAPSHOTS, projections=WORKFLOW_PROJECTIONS, port=_WORKFLOW_RUN_PORT,
-            spool=_WORKFLOW_JOB_SPOOL, path=media_jobs.DB_PATH)
+            spool=_workflow_job_spool(), path=media_jobs.DB_PATH)
         cached = _workflow_core_cache = (WORKFLOW_SNAPSHOTS, WORKFLOW_PROJECTIONS, core)
     return cached[2]
 
@@ -26900,7 +26956,7 @@ async def _run_workflow_job(job_id: str) -> None:
     core = _workflow_run_core()
     if core is None:
         raise RuntimeError("the workflow run core is not configured")
-    async with _workflow_run_semaphore:
+    async with _workflow_run_slots():
         await core.execute_run(job_id)
 
 
@@ -26963,8 +27019,41 @@ def _new_row_spool() -> request_spool.FileRequestSpool:
     limits = _WORKFLOW_RUN_PORT.result_limits()
     # The bytes decide a file's type, as for every other upload: the declared type never makes a file something it is not.
     return request_spool.FileRequestSpool(
-        _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(limits, "max_asset_bytes", 256 * 1024 * 1024),
+        _workflow_run_spool_root(), max_bytes=getattr(limits, "max_asset_bytes", 256 * 1024 * 1024),
         measure=lambda head, _declared: media_inputs.measure(head).media_type)
+
+
+# Receipts that a row handed off to the run core, by request id, until the core closes them at the job's end.
+_RUN_RECEIPT_OWNERS: dict[str, "_RunReceiptOwner"] = {}
+
+
+class _RunReceiptOwner(ReceiptLifecycleOwner):
+    """A request receipt for a run. A handed-off owner is kept here so the run core can close it by request id."""
+
+    def handoff(self) -> "_RunReceiptOwner":
+        super().handoff()
+        _RUN_RECEIPT_OWNERS[self.receipt.request_id] = self
+        return self
+
+
+def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -> _RunReceiptOwner:
+    """The receipt of one row request. It opens before the body is read, so the record the row chooses is named later
+    (``_name_row_receipt``)."""
+    identity = auth.identity
+    # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
+    # activity read their capability from it. A route that declares none records the generic run intent.
+    route = next((r for r in row.routes if path == r.canonical or path in r.aliases), None)
+    intent = str((route.runtime_policy if route else {}).get("intent") or workflow_run.RUN_INTENT)
+    return _RunReceiptOwner(RouteReceipt(
+        protocol=row.receipt_protocol, intent=intent, path=path, request_id=request_id,
+        app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
+        api_key_name=identity.name if identity else None))
+
+
+def _name_row_receipt(owner: _RunReceiptOwner, entry: Any) -> None:
+    owner.receipt.resolved_workflow = entry.id
+    owner.receipt.attach_manifest(manifest_id=entry.id, manifest_version=str(entry.record_revision),
+                                  manifest_hash=entry.contract_digest)
 
 
 # What the mounted frontend rows read from this module (gateway/row_routes.py).
@@ -26977,6 +27066,9 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     new_spool=_new_row_spool,
     scope=lambda request, spool: request_spool.request_scope(request, spool),
     refused=_workflow_run_response,
+    new_request_id=new_request_id,
+    open_receipt=_open_row_receipt,
+    name_receipt=_name_row_receipt,
 )
 
 
@@ -26992,7 +27084,7 @@ async def _serve_frontend_row(row_id: str, request: Request, auth_context: AuthC
     snapshot = WORKFLOW_SNAPSHOTS.current()
     result_limits = _WORKFLOW_RUN_PORT.result_limits()
     spool = request_spool.FileRequestSpool(
-        _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
+        _workflow_run_spool_root(), max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
     with request_spool.request_scope(request, spool):
         run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
         if isinstance(run_request, Response):
@@ -27029,7 +27121,7 @@ async def run_video_manifest_workflow(workflow_id: str, request: Request):
         return _workflow_run_response(refused)
     result_limits = _WORKFLOW_RUN_PORT.result_limits()
     spool = request_spool.FileRequestSpool(
-        _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
+        _workflow_run_spool_root(), max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
     with request_spool.request_scope(request, spool):
         run_request = await request_spool.read_run_request(
             request, workflow_id, spool=spool, library_ref=lambda asset_id: _workflow_library_ref(asset_id, auth_context),

@@ -102,6 +102,10 @@ class FileRequestSpool:
         self._measure = measure
         self._released = False
 
+    @property
+    def max_file_bytes(self) -> int:
+        return self._max_bytes
+
     async def stage(self, input_name: str, chunks: AsyncIterator[bytes], *, filename: str | None,
                     wire_media_type: str | None) -> MediaRef | RunRefused:
         """Stream one file in and measure it. Over-size (413) and an unknown type (415) keep no bytes."""

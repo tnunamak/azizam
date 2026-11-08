@@ -70,6 +70,15 @@ class WorkflowIdIsBundled(Exception):
         self.bundled = copy.deepcopy(dict(bundled)) if isinstance(bundled, Mapping) else None
 
 
+class BundledWorkflowRemoved(Exception):
+    """A restore would write back a run-control patch for an id the release no longer ships (HTTP 409
+    ``bundled_workflow_removed``). The patch names a bundled workflow; with none, there is nothing to patch."""
+
+    def __init__(self, workflow_id: str) -> None:
+        super().__init__(f"workflow {workflow_id!r} is no longer a bundled workflow")
+        self.workflow_id = workflow_id
+
+
 class RegistryNotApplied(RuntimeError):
     """The change is saved (``commit``) but the running gateway could not apply it (a failed hot reload)."""
 
@@ -278,10 +287,11 @@ class WorkflowRegistryStore:
     layer (``service_registry.release_registry()``). ``on_changed`` is the gateway's hot reload
     (``reload_runtime_config``); ``config`` returns the runtime config the history depth and bounds are read from."""
 
-    def __init__(self, *, path: Path, definitions: DefinitionStore, build_snapshot: SnapshotBuilder,
+    def __init__(self, *, path: Path | Callable[[], Path], definitions: DefinitionStore, build_snapshot: SnapshotBuilder,
                  config: Callable[[], Mapping[str, Any]] = dict, on_changed: Callable[[], None] | None = None,
                  clock: Callable[[], float] = time.time) -> None:
-        self._path = Path(path)
+        # A callable is read at each use, so the gateway's admin.db path is not read at import (config homes 1.2).
+        self._path: Path | Callable[[], Path] = path if callable(path) else Path(path)
         self._definitions = definitions
         self._build = build_snapshot
         self._config = config
@@ -293,9 +303,12 @@ class WorkflowRegistryStore:
 
     # -- reading ---------------------------------------------------------------------------------------------------------
 
+    def _db(self) -> Path:
+        return Path(self._path()) if callable(self._path) else self._path
+
     def _read(self) -> tuple[dict[str, Any], int]:
         """The stored (owner-data) document and its generation. No stored registry is an empty document at 0."""
-        record = admin_store.get_service_registry_json_with_generation(path=self._path)
+        record = admin_store.get_service_registry_json_with_generation(path=self._db())
         if record is None or not service_registry._parses_as_object(record["value_json"]):
             return registry_layers.empty_stored(service_registry.SERVICE_REGISTRY_SCHEMA_VERSION), (
                 int(record["operator_settings_generation"]) if record else 0)
@@ -440,6 +453,8 @@ class WorkflowRegistryStore:
             then = past["record"]
             if service_registry.is_run_control_patch(then):
                 # A past revision that held run control only is written back as that patch.
+                if workflow_id not in self._bundled_ids() or base.get(workflow_id) is None:
+                    raise BundledWorkflowRemoved(workflow_id)
                 record = self._run_control_patch(base.get(workflow_id))
                 record["published"] = bool(then.get("published", True))
                 return record, "restore"
@@ -567,7 +582,7 @@ class WorkflowRegistryStore:
                         audit_metadata={"workflow_id": wid, "change": change,
                                         "record_revision": record["record_revision"] if record else None},
                         session=actor.browser_session,
-                        path=self._path,
+                        path=self._db(),
                         stored_form=True,
                         also_in_transaction=history.apply,
                     )

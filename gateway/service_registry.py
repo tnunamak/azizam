@@ -2888,7 +2888,10 @@ def registry_name_pairs(document: Mapping[str, Any], bundled: Iterable[str] | No
     stored = document.get("workflows") if isinstance(document.get("workflows"), Mapping) else {}
     shipped = bundled_workflow_manifests() if bundled is None else bundled
     ids = {str(workflow_id) for workflow_id in shipped}
-    ids.update(str(workflow_id) for workflow_id in stored)
+    shipped_ids = frozenset(ids)
+    # A run-control patch of an id the release no longer ships is inert (the snapshot omits it) and owns no name.
+    ids.update(str(workflow_id) for workflow_id, record in stored.items()
+               if not (is_run_control_patch(record) and str(workflow_id) not in shipped_ids))
     for workflow_id in sorted(ids):
         pairs.extend(workflow_name_pairs(workflow_id))
         record = stored.get(workflow_id)

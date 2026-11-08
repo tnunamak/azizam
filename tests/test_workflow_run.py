@@ -141,7 +141,12 @@ class Port:
     def read_asset(self, asset_id, caller): return b"asset-bytes" if asset_id == "asset-1" else None
 
 
+async def _no_wait(seconds: float) -> None:
+    """A retry between two attempts waits for no one in a test."""
+
+
 def make_core(db: Path, tmp_path: Path, snap: FakeSnapshot, port: Port | None = None, **kwargs):
+    kwargs.setdefault("sleep", _no_wait)
     port = port or Port(db)
     draws: list[int] = []
 

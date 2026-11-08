@@ -494,6 +494,7 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
     conn.executescript(media_input_leases.DDL)  # leases and ingest markers (gateway/media_input_leases.py)
     conn.executescript(RUN_CLAIM_DDL)
+    conn.executescript(TOMBSTONE_DDL)
     row = conn.execute("SELECT version FROM media_jobs_schema_version LIMIT 1").fetchone()
     previous_version = int(row[0]) if row is not None else None
     if row is None:
@@ -872,6 +873,50 @@ def release_run_claim(fence: RunClaimFence, *, path: Path = DB_PATH) -> bool:
             (fence.owner_scope, fence.maker, fence.key, fence.holder)).rowcount
         conn.commit()
     return gone == 1
+
+
+TOMBSTONE_DDL = """CREATE TABLE IF NOT EXISTS workflow_job_tombstone (
+  job_id TEXT PRIMARY KEY,
+  deleted_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS workflow_job_tombstone_at ON workflow_job_tombstone(deleted_at)"""
+
+
+def tombstone_job(job_id: str, *, now: int | None = None, path: Path = DB_PATH) -> None:
+    """Mark a job deleted. Readers that honour tombstones (``tombstoned``, ``recent``) stop showing it at once, and
+    ``reap_tombstones`` removes it after the retention window. Marking twice keeps the first time."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("INSERT OR IGNORE INTO workflow_job_tombstone(job_id, deleted_at) VALUES (?, ?)",
+                     (job_id, _now() if now is None else int(now)))
+        conn.commit()
+
+
+def tombstoned(job_id: str, *, path: Path = DB_PATH) -> bool:
+    with _conn(path) as conn:
+        return conn.execute("SELECT 1 FROM workflow_job_tombstone WHERE job_id=?", (job_id,)).fetchone() is not None
+
+
+def reap_tombstones(*, before: int, path: Path = DB_PATH) -> int:
+    """Remove every job tombstoned at or before ``before`` (a unix time), with its events, envelope, results and claim.
+    Returns how many jobs went."""
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            ids = [row[0] for row in conn.execute(
+                "SELECT job_id FROM workflow_job_tombstone WHERE deleted_at <= ?", (int(before),))]
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                marks = ",".join("?" for _ in chunk)
+                conn.execute(f"DELETE FROM media_job_events WHERE job_id IN ({marks})", chunk)
+                conn.execute(f"DELETE FROM media_jobs WHERE job_id IN ({marks})", chunk)
+                _release_envelopes_in(conn, chunk)
+                conn.execute(f"DELETE FROM workflow_job_tombstone WHERE job_id IN ({marks})", chunk)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return len(ids)
 
 
 def create(
@@ -1513,7 +1558,7 @@ def recent(
     if app_ids is not None or owner_key_hashes is not None:
         if not app_ids and not owner_key_hashes:
             return []
-    clauses: list[str] = []
+    clauses: list[str] = ["job_id NOT IN (SELECT job_id FROM workflow_job_tombstone)"]
     params: list[Any] = []
     if app_ids is not None or owner_key_hashes is not None:
         ownership = []

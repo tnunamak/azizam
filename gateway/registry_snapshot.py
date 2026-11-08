@@ -478,21 +478,28 @@ def _hold_out_clashing(entries: dict[str, WorkflowEntry], owned: set[str], fixed
     def key(problem: ContractError) -> tuple[str, str]:
         return problem.code, problem.message
 
-    found = clashes(entries)
-    if not found:
-        return {}
     held: dict[str, tuple[ContractError, ...]] = {}
-    for wid in sorted(owned):
-        remaining = {key(problem) for problem in clashes(other for other in entries if other != wid)}
-        mine = tuple(problem for problem in found if key(problem) not in remaining)
-        if mine:
-            held[wid] = mine
-    for wid in held:
-        if wid in release.workflows:
-            entries[wid] = _bundled_entry(release.workflows[wid], generation)
-        else:
-            del entries[wid]
-    return held
+    stored_ids = set(owned)
+    while True:
+        found = clashes(entries)
+        if not found:
+            return held
+        batch: dict[str, tuple[ContractError, ...]] = {}
+        for wid in sorted(stored_ids):
+            remaining = {key(problem) for problem in clashes(other for other in entries if other != wid)}
+            mine = tuple(problem for problem in found if key(problem) not in remaining)
+            if mine:
+                batch[wid] = mine
+        if not batch:      # a clash no stored workflow takes part in, or one only a pair of them can resolve, is for ``build``
+            return held
+        for wid in batch:
+            if wid in release.workflows:
+                entries[wid] = _bundled_entry(release.workflows[wid], generation)
+            else:
+                del entries[wid]
+        # The bundled workflow now serving in place of a held one is no longer stored, and its names may clash anew.
+        stored_ids -= batch.keys()
+        held.update(batch)
 
 
 def build(document: Mapping[str, Any] | None, bundled: BundledRelease | Mapping[str, WorkflowRecord], *, generation: int,

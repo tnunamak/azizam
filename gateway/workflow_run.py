@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from gateway import generated_defaults, media_jobs, result_bundle
+from gateway import generated_defaults, log_scrub, media_jobs, result_bundle
 from gateway.definition_store import DefinitionUnavailable
 from gateway.job_envelope import UNTRACKED, build_job_envelope
 from gateway.manifests import ContractError, ManifestError, validate_inputs
@@ -38,7 +38,7 @@ from gateway.workflow_kernel import execution_contract, run_identity
 from gateway.workflow_runtime_types import (
     ENVELOPE_VERSION_UNSUPPORTED, IDEMPOTENCY_CONFLICT, IDEMPOTENCY_IN_PROGRESS, PIN_NOT_RECORDED, SPOOL_MISSING,
     SERVICE_REASONS, SUBMISSION_UNKNOWN, WORKFLOW_DELETED, WORKFLOW_DISABLED, WORKFLOW_NOT_FOUND, AdapterAvailability, BindingDef,
-    CallerContext, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, ResultContent, ResultRef,
+    CallerContext, JobDeleteConflict, JobEvent, JobNotFound, MediaRef, Projections, RecoveryReport, ResultContent, ResultRef,
     ResultUnavailable, RunFailure, RunJobView, RunRefused, RunRequest, SnapshotProvider, WorkflowEntry,
 )
 
@@ -46,12 +46,19 @@ log = logging.getLogger(__name__)
 
 # The job store's intent and mode for a job made by this core. The job's workflow id is the workflow it runs.
 RUN_INTENT = "workflow.run"
+# How a job's terminal status closes the request receipt it carries (status, reason); a failed job uses its error code.
+RECEIPT_OUTCOMES = {
+    media_jobs.STATUS_SUCCEEDED: ("succeeded", "succeeded"),
+    media_jobs.STATUS_FAILED: ("failed", "failed"),
+    media_jobs.STATUS_CANCELED: ("cancelled", "cancelled"),
+}
 RESULT_METADATA_KEY = "result_metadata"      # where the adapter's result metadata sits in the job's metadata
 CLAIM_LEASE_S = 120.0       # the request timeout plus a margin: it only decides when a takeover may happen
 CLAIM_WAIT_S = 2.0          # how long a second request waits for the first to decide (section 7.2, step 1)
 CLAIM_POLL_S = 0.05
 RETRY_AFTER_S = 2
 WAIT_POLL_S = 0.1
+TOMBSTONE_RETENTION_S = 24 * 3600     # a deleted job is hidden at once and removed after this long
 
 # I7: the code's value of each key is its ceiling; the runtime config (section ``workflow_execution``) may only lower it.
 CONFIG_SECTION = "workflow_execution"
@@ -109,6 +116,44 @@ RECOVERY_FAILURE_TEXT: Mapping[str, str] = {
     "cancel_unconfirmed": RESTART_CANCEL_UNCONFIRMED,
     "submission_unknown": RESTART_NOT_RUN_AGAIN,
 }
+
+
+RETRY_CANCEL_UNCONFIRMED = "Cancellation was requested; the backend stop could not be confirmed"
+# The job-retry rule the old image routes used (S7 parity M13). A binding overrides each value under ``retry``.
+RETRY_MAX_ATTEMPTS, RETRY_BASE_S, RETRY_MAX_S = 3, 5.0, 30.0
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    max_attempts: int = RETRY_MAX_ATTEMPTS
+    base_s: float = RETRY_BASE_S
+    max_s: float = RETRY_MAX_S
+
+    def delay_after(self, exc: BaseException, attempt: int) -> float | None:
+        """Seconds to wait before the next attempt, or None when this failure settles the job: the adapter did not name a
+        ``retry_reason`` (``retryable`` alone tells the caller it may ask again; it does not retry inside the job), or
+        ``attempt`` was the last. An engine's ``retry_after_s`` wins over the doubling backoff; both stop at ``max_s``."""
+        reason = getattr(exc, "retry_reason", None)
+        if attempt >= self.max_attempts or not (isinstance(reason, str) and reason):
+            return None
+        given = getattr(exc, "retry_after_s", None)
+        if isinstance(given, (int, float)) and not isinstance(given, bool) and given >= 0:
+            return min(float(given), self.max_s)
+        return min(self.base_s * (2 ** max(0, attempt - 1)), self.max_s)
+
+
+def retry_policy(binding: Mapping[str, Any]) -> RetryPolicy:
+    """The retry rule a pinned binding states under ``retry`` (``max_attempts``, ``base_s``, ``max_s``); a value that is
+    missing or not a sensible number keeps the default."""
+    given = binding.get("retry") if isinstance(binding, Mapping) else None
+    given = given if isinstance(given, Mapping) else {}
+
+    def number(name: str, default: float, minimum: float) -> float:
+        value = given.get(name)
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= minimum else default
+
+    return RetryPolicy(max_attempts=int(number("max_attempts", RETRY_MAX_ATTEMPTS, 1)),
+                       base_s=number("base_s", RETRY_BASE_S, 0), max_s=number("max_s", RETRY_MAX_S, 0))
 
 
 # ------------------------------------------------------------------------------------------------------- the port
@@ -349,8 +394,9 @@ class WorkflowRunCore:
         self, *, snapshots: SnapshotProvider, projections: Projections, port: RunPort, spool: JobSpool,
         path: Path | None = None, generate: Callable[..., Mapping[str, Any]] = generated_defaults.resolve_generated,
         claim_lease_s: float = CLAIM_LEASE_S, claim_wait_s: float = CLAIM_WAIT_S,
-        clock: Callable[[], float] = time.time,
+        clock: Callable[[], float] = time.time, sleep: Callable[[float], Any] = asyncio.sleep,
     ) -> None:
+        self._sleep = sleep
         self._snapshots = snapshots
         self._projections = projections
         self._port = port
@@ -524,7 +570,7 @@ class WorkflowRunCore:
         owner_hash, app_id, key_name = port.job_owner(caller)
         job = media_jobs.MediaJob(
             intent=RUN_INTENT, workflow=entry.id, backend=profile.adapter_id, owner_key_hash=owner_hash, app_id=app_id,
-            api_key_name=key_name,
+            api_key_name=key_name, request_id=req.request_id or "",
             metadata={"mode": RUN_INTENT, "resource_class": profile.resource_class, "binding_key": binding_key,
                       "frontend": req.frontend_id})
         adopted: dict[str, tuple[MediaRef, ...]] = {}
@@ -563,6 +609,12 @@ class WorkflowRunCore:
     async def execute_run(self, job_id: str) -> None:
         """The worker. Decides from the job's state what it needs (the 5.4 table), then runs the checks of 5.2 in order,
         then the first effect."""
+        try:
+            await self._execute(job_id)
+        finally:
+            await self.close_receipt(job_id)
+
+    async def _execute(self, job_id: str) -> None:
         job = media_jobs.get(job_id, audience="internal", path=self._path)
         if job is None or media_jobs.is_terminal(str(job["status"])):
             return
@@ -573,6 +625,23 @@ class WorkflowRunCore:
             self._fail_at_restart(job_id, action)
         else:
             await self._run(job_id, checks=action == "resume")
+
+    async def close_receipt(self, job_id: str) -> None:
+        """When the job is terminal, tell the port to close the request receipt the job carries. A job still running (the
+        worker was cancelled) keeps it open; the port ignores a receipt it does not hold. Never raises."""
+        close = getattr(self._port, "close_receipt", None)
+        if close is None:
+            return
+        try:
+            job = media_jobs.get(job_id, audience="internal", path=self._path)
+            if job is None or not job.get("request_id") or not media_jobs.is_terminal(str(job["status"])):
+                return
+            status, reason = RECEIPT_OUTCOMES.get(str(job["status"]), ("failed", "failed"))
+            if status == "failed":
+                reason = str(job.get("error_code") or reason)
+            await close(str(job["request_id"]), status, reason)
+        except Exception:  # noqa: BLE001 - a receipt that does not close never changes the job
+            log.exception("job %s ended but its receipt was not closed", job_id)
 
     def _classify(self, job: Mapping[str, Any]) -> str:
         from gateway.workflow_envelope import classify_recovery
@@ -611,26 +680,75 @@ class WorkflowRunCore:
             if problem is not None:
                 self._fail(job_id, *problem)
                 return
-        ctx = RunContext(
-            job_id=job_id, caller=caller, pin=pin, payload=payload,
-            inputs=dict((payload.get("body") or {}).get("inputs") or {}),
-            media={name: tuple(MediaRef(**item) for item in items) for name, items in (payload.get("media") or {}).items()},
-            generated={n: e["value"] for n, e in pin.envelope.generated.items() if "value" in e}, spool=self._spool,
-            request_id=str(job.get("request_id") or "") or None,
-            record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata))
-        try:
-            await port.run_adapter(ctx)
-        except asyncio.CancelledError:
-            raise
-        except media_jobs.CancellationPending:
-            with contextlib.suppress(Exception):
-                media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error="Canceled by requester", path=self._path)
-        except Exception as exc:  # noqa: BLE001 - settled as a failure; only the adapter's client_message reaches the job
-            self._fail(job_id, _code_of(exc), str(getattr(exc, "category", "") or "internal"),
-                       _client_message(exc), retryable=bool(getattr(exc, "retryable", False)),
-                       upstream_status=_upstream_status(exc))
-            return
+        policy = retry_policy(pin.binding)
+        attempt = 1
+        while True:
+            ctx = RunContext(
+                job_id=job_id, caller=caller, pin=pin, payload=payload,
+                inputs=dict((payload.get("body") or {}).get("inputs") or {}),
+                media={name: tuple(MediaRef(**item) for item in items) for name, items in (payload.get("media") or {}).items()},
+                generated={n: e["value"] for n, e in pin.envelope.generated.items() if "value" in e}, spool=self._spool,
+                request_id=str(job.get("request_id") or "") or None,
+                record_result_metadata=lambda metadata: self._record_result_metadata(job_id, metadata))
+            try:
+                await port.run_adapter(ctx)
+            except asyncio.CancelledError:
+                raise
+            except media_jobs.CancellationPending:
+                with contextlib.suppress(Exception):
+                    media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED, error="Canceled by requester", path=self._path)
+            except Exception as exc:  # noqa: BLE001 - settled as a failure; only the adapter's client_message reaches the job
+                delay = policy.delay_after(exc, attempt)
+                if delay is None:
+                    self._fail(job_id, _code_of(exc), str(getattr(exc, "category", "") or "internal"),
+                               _client_message(exc), retryable=bool(getattr(exc, "retryable", False)),
+                               upstream_status=_upstream_status(exc))
+                    return
+                caller, payload, problem = await self._before_retry(job_id, exc, attempt, delay, policy)
+                if problem is not None:
+                    self._fail(job_id, *problem)
+                    return
+                attempt += 1
+                continue
+            break
         self._settle(job_id)
+
+    async def _before_retry(self, job_id: str, exc: BaseException, attempt: int, delay: float, policy: RetryPolicy) -> tuple[CallerContext | None, Mapping[str, Any] | None, tuple[str, str, str] | None]:
+        """Between two attempts of one job (S7 parity M13): leave the old retry event and facts, wait, then check again
+        that nobody asked for a cancel and that the caller can still use the gateway, and start the next attempt on the same
+        job. Returns ``(caller, payload, None)`` for the next attempt, or ``(None, None, (code, category, message))``."""
+        port = self._port
+        status = _upstream_status(exc)
+        progress = min(95, 10 + attempt * 10)
+        with contextlib.suppress(ValueError):
+            media_jobs.update_status(
+                job_id, media_jobs.STATUS_RUNNING, progress=progress, path=self._path,
+                metadata_patch={"attempts": attempt, "last_http_status": status,
+                                "last_retry_reason": getattr(exc, "retry_reason", None) or _code_of(exc)})
+        media_jobs.append_event(
+            job_id, "retry",
+            {"phase": "retrying", "status": media_jobs.STATUS_RUNNING, "progress": progress, "attempt": attempt,
+             "total": policy.max_attempts, "http_status": status,
+             "reason": getattr(exc, "retry_reason", None) or _code_of(exc), "retry_after_s": delay},
+            path=self._path)
+        with contextlib.suppress(Exception):
+            result_bundle.abort(job_id, result_bundle.attempt_of(
+                media_jobs.get(job_id, audience="internal", path=self._path) or {}), path=self._path)
+        await self._sleep(delay)
+        current = media_jobs.get(job_id, audience="internal", path=self._path) or {}
+        if media_jobs.is_terminal(str(current.get("status") or "failed")):
+            return None, None, ("job_settled", "internal", "The job ended while it waited to retry.")
+        if (current.get("metadata") or {}).get("cancel_requested_at"):
+            return None, None, ("cancel_unconfirmed", "capacity", RETRY_CANCEL_UNCONFIRMED)
+        payload = port.load_payload(job_id)
+        caller = port.caller_from_payload(payload) if payload is not None else None
+        if payload is None:
+            return None, None, (SPOOL_MISSING, "internal", "The job's request was not kept, so it cannot start.")
+        if caller is None:       # a retry runs as the caller is now: a revoked key or connection stops it here
+            return None, None, (CALLER_UNAVAILABLE, "authorization", "The account that asked for this job can no longer use the gateway.")
+        with contextlib.suppress(ValueError):
+            media_jobs.begin_attempt(job_id, path=self._path)
+        return caller, payload, None
 
     def _record_result_metadata(self, job_id: str, result_metadata: Mapping[str, Any]) -> None:
         """Keep the adapter's result metadata on the still-running job, as it gave it (the job store refuses unsafe
@@ -710,6 +828,8 @@ class WorkflowRunCore:
         may have started it (a job that was running and never submitted is not run again either)."""
         if action == "interrupted_before_submit":
             return action
+        if action == "poll":        # the engine already has the job: polling it is not a resubmit, so no restart text applies
+            return None
         if not self._port.resume_on_start():
             return "recovery_off"
         if (job.get("metadata") or {}).get("cancel_requested_at"):
@@ -779,9 +899,12 @@ def _ref_dict(ref: MediaRef) -> dict[str, Any]:
 
 
 def _client_message(exc: BaseException) -> str:
-    """The text a failed job shows its caller: the adapter's own ``client_message``, else the fixed sentence."""
+    """The text a failed job shows its caller: the adapter's own ``client_message``, else the fixed sentence. The text is
+    stored and shown, so every registered secret value is removed from it first, whichever adapter wrote it."""
     message = getattr(exc, "client_message", None)
-    return message if isinstance(message, str) and message.strip() else FAILED_FALLBACK
+    if not isinstance(message, str) or not message.strip():
+        return FAILED_FALLBACK
+    return log_scrub.scrub(message, limit=2000)
 
 
 def _upstream_status(exc: BaseException) -> int | None:
@@ -833,13 +956,17 @@ def refusal_body(refused: RunRefused) -> dict[str, Any]:
 class WorkflowJobService:
     """``JobService`` over the job store. Who may read or cancel is the port's decision (the existing media-job rules)."""
 
-    def __init__(self, *, port: RunPort, path: Path | None = None) -> None:
+    def __init__(self, *, port: RunPort, path: Path | None = None,
+                 tombstone_retention_s: float = TOMBSTONE_RETENTION_S, clock: Callable[[], float] = time.time) -> None:
         self._port = port
         self._path = path or media_jobs.DB_PATH
+        self._retention_s = tombstone_retention_s
+        self._clock = clock
 
     def _readable(self, job_id: str, caller: CallerContext) -> dict[str, Any]:
         job = media_jobs.get(job_id, audience="internal", path=self._path)
-        if job is None or job.get("intent") != RUN_INTENT or not self._port.can_read(job, caller):
+        if (job is None or job.get("intent") != RUN_INTENT or not self._port.can_read(job, caller)
+                or media_jobs.tombstoned(job_id, path=self._path)):
             raise JobNotFound(job_id)
         return job
 
@@ -871,6 +998,20 @@ class WorkflowJobService:
                 self._port.drop_payload(job_id)
             job = current
         return job_view(job, self._path, disposition="replay")
+
+    def delete(self, job_id: str, caller: CallerContext) -> None:
+        job = self._readable(job_id, caller)
+        if not self._port.can_cancel(job, caller):
+            raise JobNotFound(job_id)
+        if not media_jobs.is_terminal(str(job["status"])):
+            with contextlib.suppress(ValueError):       # finished between the read and the cancel: the re-read decides
+                media_jobs.request_cancel(job_id, path=self._path)
+            job = media_jobs.get(job_id, audience="internal", path=self._path) or job
+            if not media_jobs.is_terminal(str(job["status"])):
+                raise JobDeleteConflict(job_id)
+        media_jobs.tombstone_job(job_id, now=int(self._clock()), path=self._path)
+        self._port.drop_payload(job_id)
+        media_jobs.reap_tombstones(before=int(self._clock() - self._retention_s), path=self._path)
 
     def events(self, job_id: str, caller: CallerContext, *, limit: int, after_id: int | None = None,
                after_sequence: int | None = None) -> tuple[JobEvent, ...]:

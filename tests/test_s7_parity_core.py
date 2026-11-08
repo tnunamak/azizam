@@ -88,6 +88,20 @@ def test_the_gate_asks_the_binding_the_request_chose(db, tmp_path):
     assert isinstance(chosen, RunRefused) and chosen.code == "service_disabled"
 
 
+def test_s7_same_key_replays_after_backend_becomes_unavailable(db, tmp_path):
+    """S7 6.2 (M4), core side: a matching claim answers before the service-state refusal; a new key still gets the 503
+    and no job."""
+    core, port, _ = make_core(db, tmp_path, snapshot())
+    first = submit(core, idempotency_key="same")
+    port.available = BindingAvailability(lambda binding: "service_unhealthy", lambda binding: 10)
+    again = submit(core, idempotency_key="same")
+    assert isinstance(again, RunJobView) and again.disposition == "replay" and again.job_id == first.job_id
+    fresh = submit(core, idempotency_key="new")
+    assert isinstance(fresh, RunRefused) and (fresh.http_status, fresh.code) == (503, "service_unhealthy")
+    with media_jobs.connection(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM media_jobs").fetchone()[0] == 1
+
+
 # ------------------------------------------------------------------------------------- M5: result metadata and failure
 
 
@@ -162,6 +176,23 @@ def test_a_failure_without_a_client_message_says_the_fixed_sentence_and_never_th
     assert job_error(db, view.job_id)[:2] == ("failed", "The job failed.")
 
 
+def test_a_client_message_never_carries_a_registered_secret_to_the_caller(db, tmp_path):
+    """Dot review of K, finding 1: the adapter's text is stored and shown, so a secret value in it is removed first."""
+    from gateway import log_scrub
+    log_scrub.hold("test:client-message", ["tok-S7-CLIENT-MESSAGE-SECRET"])
+    try:
+        port = failing_port(db, code="engine_failed", category="upstream", retryable=False, upstream_status=502,
+                            message="Engine refused /prompt?token=tok-S7-CLIENT-MESSAGE-SECRET")
+        core, port, _ = make_core(db, tmp_path, snapshot(), port)
+        view = submit(core)
+        run(core.execute_run(view.job_id))
+        status, text = job_error(db, view.job_id)[:2]
+    finally:
+        log_scrub.forget("test:client-message")
+    assert status == "failed"
+    assert "tok-S7-CLIENT-MESSAGE-SECRET" not in text and "[removed]" in text
+
+
 # ------------------------------------------------------------------------------------------ M12: restart recovery
 
 
@@ -212,6 +243,263 @@ def test_restart_reschedules_a_queued_job(db, tmp_path):
     core, port, job_id = _queued_job(db, tmp_path)
     core.recover_runs(0)
     assert port.scheduled == [job_id] and job_error(db, job_id)[0] == "queued"
+
+
+def _commit_bundle(db, job_id):
+    """A published bundle on a job that is not yet terminal: the crash window recovery's replay row covers."""
+    limits = ResultLimits()
+    with media_jobs.connection(db) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        result_bundle.stage_json_in(conn, job_id, 1, "result", b"{}", limits=limits)
+        result_bundle.publish_in(conn, job_id, 1, limits=limits)
+        conn.commit()
+
+
+@pytest.mark.parametrize("resume,cancel", [(True, False), (False, False), (True, True)])
+def test_s7_recovery_preserves_poll_and_committed_bundle_precedence(db, tmp_path, resume, cancel):
+    """S7 6.1 (M12): a committed bundle is replayed with no engine call, a recorded upstream id is polled with no new
+    submit, and only a job with neither gets the restart text; recovery off or a waiting cancel changes text, not outcome."""
+    core, port, _ = make_core(db, tmp_path, snapshot())
+    replayed, polled, bare = (submit(core, idempotency_key=f"k-{n}").job_id for n in range(3))
+    patch = {"cancel_requested_at": 1} if cancel else {}
+    media_jobs.update_status(replayed, "running", path=db)
+    media_jobs.update_status(polled, "running", path=db, metadata_patch={"protocol_job": "up-1", **patch})
+    media_jobs.update_status(bare, "running", path=db, metadata_patch=patch)
+    _commit_bundle(db, replayed)
+    port.resume = resume
+    port.scheduled.clear()
+    core.recover_runs(0)
+    assert job_error(db, replayed)[0] == "succeeded"
+    assert job_error(db, polled)[0] == "running" and port.scheduled == [polled]
+    assert job_error(db, bare)[0] == "failed"
+    assert port.engine_calls == 0
+
+
+# ------------------------------------------------------------------------------------------- M13: job retry
+
+
+class Flaky(Exception):
+    """An engine failure the adapter marks retryable. ``retry_after_s`` is the engine's Retry-After."""
+
+    def __init__(self, *, retry_after_s=None, status=503, retryable=True, reason="engine_busy"):
+        """``reason`` is the adapter's ``retry_reason``: without it the failure is final, whatever ``retryable`` says."""
+        super().__init__("raw engine text http://engine.test:1")
+        self.code, self.category, self.retryable = "upstream_unavailable", "upstream", retryable
+        self.upstream_status, self.client_message = status, "The engine is busy"
+        self.retry_after_s, self.retry_reason = retry_after_s, reason
+
+
+def _retry_port(db, failures):
+    class RetryPort(Port):
+        def __init__(self, db):
+            super().__init__(db)
+            self.failures = list(failures)
+            self.seen = []
+
+        async def run_adapter(self, ctx):
+            self.seen.append((ctx.pin, dict(ctx.generated), dict(ctx.inputs)))
+            if self.failures:
+                raise self.failures.pop(0)
+            await super().run_adapter(ctx)
+
+    return RetryPort(db)
+
+
+def _retry_core(db, tmp_path, failures, **binding):
+    contract = {**CONTRACT, "bindings": {"fake": binding, "other": {}}}
+    port = _retry_port(db, failures)
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    core, port, _ = make_core(db, tmp_path, workflow_snapshot(contract), port, sleep=sleep)
+    return core, port, slept
+
+
+def workflow_snapshot(contract):
+    from types import MappingProxyType
+    from tests.workflow_runtime_fakes import FakeSnapshot
+    return FakeSnapshot(1, MappingProxyType({"demo.run": entry(contract)}))
+
+
+def _events(db, job_id, kind):
+    return [e["payload"] for e in media_jobs.events(job_id, audience="internal", limit=100, path=db) if e["event_type"] == kind]
+
+
+def test_s7_image_job_retry_preserves_delay_events_and_attempt_limit(db, tmp_path):
+    """S7 6.6 (M13), images-J22: a retryable failure is retried on the same job, with the same pin and generated values.
+    The delay is base 5 s doubling to a 30 s cap; a Retry-After wins (capped at the max); each retry leaves the old
+    event; the attempt limit is 3 and the last failure settles the job."""
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky(retry_after_s=2)])
+    view = submit(core)
+    run(core.execute_run(view.job_id))
+    job = media_jobs.get(view.job_id, path=db)
+    assert job["status"] == "succeeded" and len(port.seen) == 3 and slept == [5, 2]
+    assert all(seen[0] == port.seen[0][0] for seen in port.seen)
+    assert all(seen[1:] == port.seen[0][1:] for seen in port.seen)
+    retries = _events(db, view.job_id, "retry")
+    assert retries == [
+        {"phase": "retrying", "status": "running", "progress": 20, "attempt": 1, "total": 3, "http_status": 503,
+         "reason": "engine_busy", "retry_after_s": 5},
+        {"phase": "retrying", "status": "running", "progress": 30, "attempt": 2, "total": 3, "http_status": 503,
+         "reason": "engine_busy", "retry_after_s": 2}]
+    assert job["metadata"]["attempts"] == 2 and job["metadata"]["last_http_status"] == 503
+    assert job["metadata"]["last_retry_reason"] == "engine_busy"
+
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky(), Flaky(), Flaky()])
+    again = submit(core, idempotency_key="exhaust")
+    run(core.execute_run(again.job_id))
+    assert len(port.seen) == 3 and slept == [5, 10]
+    status, message, code, upstream = job_error(db, again.job_id)
+    assert (status, message, code, upstream) == ("failed", "The engine is busy", "upstream_unavailable", 503)
+
+
+def test_the_delay_doubles_to_the_cap_and_a_retry_after_is_capped(db, tmp_path):
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky(), Flaky(retry_after_s=99), Flaky()],
+                                    retry={"max_attempts": 5, "base_s": 5, "max_s": 12})
+    view = submit(core)
+    run(core.execute_run(view.job_id))
+    assert slept == [5, 10, 12, 12] and len(port.seen) == 5
+
+
+def test_the_attempt_limit_is_binding_data_and_a_failure_that_is_not_retryable_is_not_retried(db, tmp_path):
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky(), Flaky()], retry={"max_attempts": 2})
+    first = submit(core)
+    run(core.execute_run(first.job_id))
+    assert len(port.seen) == 2 and slept == [5]
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(reason=None)])
+    other = submit(core, idempotency_key="no-retry")
+    run(core.execute_run(other.job_id))
+    assert len(port.seen) == 1 and slept == [] and job_error(db, other.job_id)[0] == "failed"
+
+
+def test_a_retry_stops_when_a_cancel_was_asked_or_the_caller_is_gone(db, tmp_path):
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky()])
+    view = submit(core)
+
+    async def sleep(seconds):
+        media_jobs.update_status(view.job_id, "running", path=db, metadata_patch={"cancel_requested_at": 1})
+
+    core._sleep = sleep
+    run(core.execute_run(view.job_id))
+    assert len(port.seen) == 1
+    assert job_error(db, view.job_id)[:2] == ("failed", "Cancellation was requested; the backend stop could not be confirmed")
+
+    core, port, slept = _retry_core(db, tmp_path, [Flaky(), Flaky()])
+    gone = submit(core, idempotency_key="gone")
+
+    async def sleep_then_revoke(seconds):
+        port.caller_gone = True
+
+    core._sleep = sleep_then_revoke
+    run(core.execute_run(gone.job_id))
+    assert len(port.seen) == 1 and job_error(db, gone.job_id)[0] == "failed"
+
+
+# ------------------------------------------------------------------------------------- M7: JobService.delete
+
+
+def _service(port, db, **kw):
+    return WorkflowJobService(port=port, path=db, **kw)
+
+
+def _finished_job(db, tmp_path, key="d"):
+    core, port, _ = make_core(db, tmp_path, snapshot())
+    view = submit(core, idempotency_key=key)
+    run(core.execute_run(view.job_id))
+    return core, port, view.job_id
+
+
+def test_delete_hides_a_finished_job_from_every_read_and_from_listing_after_a_restart(db, tmp_path):
+    """S7 6.7: tombstone persisted; get, events, open_result, wait and listing no longer show it."""
+    core, port, job_id = _finished_job(db, tmp_path)
+    service = _service(port, db)
+    ref = service.get(job_id, Caller()).results[0]
+    assert service.open_result(job_id, ref, Caller()) is not None
+    service.delete(job_id, Caller())
+    for fresh in (service, _service(port, db)):        # the second is a restart: a new service over the same store
+        assert fresh.get(job_id, Caller()) is None
+        with pytest.raises(workflow_run.JobNotFound):
+            fresh.events(job_id, Caller(), limit=10)
+        with pytest.raises(workflow_run.JobNotFound):
+            fresh.open_result(job_id, ref, Caller())
+        with pytest.raises(workflow_run.JobNotFound):
+            run(fresh.wait(job_id, Caller(), 0))
+        with pytest.raises(workflow_run.JobNotFound):
+            fresh.delete(job_id, Caller())
+    assert job_id not in [j["job_id"] for j in media_jobs.recent(50, path=db)]
+
+
+def test_delete_cancels_a_queued_job_first(db, tmp_path):
+    core, port, _ = make_core(db, tmp_path, snapshot())
+    job_id = submit(core).job_id
+    service = _service(port, db)
+    service.delete(job_id, Caller())
+    assert media_jobs.get(job_id, path=db)["status"] == "canceled" and service.get(job_id, Caller()) is None
+
+
+def test_a_cancel_that_is_not_confirmed_keeps_the_job_and_raises_a_conflict(db, tmp_path):
+    core, port, _ = make_core(db, tmp_path, snapshot())
+    job_id = submit(core).job_id
+    media_jobs.update_status(job_id, "running", path=db)
+    service = _service(port, db)
+    with pytest.raises(workflow_run.JobDeleteConflict):
+        service.delete(job_id, Caller())
+    assert service.get(job_id, Caller()).status == "running" and not media_jobs.tombstoned(job_id, path=db)
+
+
+def test_delete_by_a_caller_who_cannot_read_the_job_is_not_found_and_changes_nothing(db, tmp_path):
+    core, port, job_id = _finished_job(db, tmp_path)
+    with pytest.raises(workflow_run.JobNotFound):
+        _service(port, db).delete(job_id, Caller(scope="someone-else"))
+    assert not media_jobs.tombstoned(job_id, path=db)
+
+
+def test_a_deleted_job_is_reaped_after_the_retention_window_with_its_events_and_claim(db, tmp_path):
+    core, port, job_id = _finished_job(db, tmp_path)
+    now = [1_000_000.0]
+    service = _service(port, db, tombstone_retention_s=100, clock=lambda: now[0])
+    service.delete(job_id, Caller())
+    assert media_jobs.get(job_id, path=db) is not None                # hidden, not yet removed
+    now[0] += 99
+    media_jobs.reap_tombstones(before=int(now[0] - 100), path=db)
+    assert media_jobs.get(job_id, path=db) is not None
+    now[0] += 2
+    assert media_jobs.reap_tombstones(before=int(now[0] - 100), path=db) == 1
+    assert media_jobs.get(job_id, path=db) is None and not media_jobs.tombstoned(job_id, path=db)
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM media_job_events WHERE job_id=?", (job_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM workflow_run_claim WHERE job_id=?", (job_id,)).fetchone()[0] == 0
+
+
+def test_a_store_made_before_tombstones_gains_the_table_on_open(tmp_path):
+    old = tmp_path / "old.db"
+    media_jobs.init_db(old)
+    with sqlite3.connect(old) as conn:
+        conn.execute("DROP TABLE workflow_job_tombstone")
+    media_jobs.init_db(old)
+    media_jobs.tombstone_job("mj_x", path=old)
+    assert media_jobs.tombstoned("mj_x", path=old)
+
+
+def test_the_fake_job_service_deletes_like_the_real_one():
+    from tests.workflow_runtime_fakes import FakeJobService, FakeRunCore
+    from gateway.workflow_runtime_types import JobDeleteConflict, JobNotFound
+
+    core = FakeRunCore()
+    jobs = FakeJobService(core)
+    done = RunJobView(job_id="a", status="succeeded", disposition="new", workflow_id="w", record_revision=1, binding_key="b", created_at_s=0, updated_at_s=0)
+    live = RunJobView(job_id="b", status="running", disposition="new", workflow_id="w", record_revision=1, binding_key="b", created_at_s=0, updated_at_s=0)
+    core.jobs.update({"a": done, "b": live})
+    jobs.cancel_fails.add("b")
+    with pytest.raises(JobDeleteConflict):
+        jobs.delete("b", None)
+    assert jobs.get("b", None) is not None
+    jobs.delete("a", None)
+    assert jobs.get("a", None) is None
+    with pytest.raises(JobNotFound):
+        jobs.events("a", None, limit=1)
 
 
 # --------------------------------------------------------------------------------- M3: Library asset origin and names

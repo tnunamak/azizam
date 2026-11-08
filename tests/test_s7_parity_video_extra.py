@@ -13,7 +13,11 @@ item that already matches would fail as XPASS.
 from __future__ import annotations
 
 import asyncio
+import base64
 import sqlite3
+import subprocess
+import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -21,9 +25,24 @@ import pytest
 import proxy
 from tests.support.access import authenticated, everything, identity, plan_for
 from tests.support.adapter_differential_rig import GatewayRig
+from tests.support.config_snapshot import publish_section
 from tests.test_adapter_differential import _png, _video_comfy
 
 MARKER = "prompt-marker-7f3a9c"
+
+
+@lru_cache(maxsize=None)
+def long_mp4_bytes(color: str = "black") -> bytes:
+    """A 5 s clip. A remix or edit names a source, and a workflow refuses a request longer than its source; two
+    colours give two clips whose bytes can be told apart."""
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory) / "long.mp4"
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
+             f"color=c={color}:s=16x16:d=5:r=24", "-c:v", "mpeg4", str(output)],
+            capture_output=True, check=True,
+        )
+        return output.read_bytes()
 
 
 def _run(tmp_path: Path, name: str, setup, drive) -> GatewayRig:
@@ -759,3 +778,707 @@ def test_video_11_96_accepted_video_media_job_is_202_with_location(tmp_path):
     assert seen["status"] == 202, seen["body"]
     assert "location" in seen["headers"]
     assert "vidjob_" in seen["body"]
+
+
+# --------------------------------------------------------------------------- coverage gaps (c2d-av-golden-coverage-1108)
+#
+# Items from the A/V golden coverage review. Each pins what the route answers today; a row-path move that changes one
+# of these answers needs a manifest entry, not an edit to the expectation.
+
+def _comfy_with_failing_cancel(rig: GatewayRig, *, running_polls: int = 0) -> None:
+    """A fake engine whose cancel answers 500; the other exchanges are the video ones."""
+    from tests.support.adapter_differential_rig import comfy_exchanges, exchange, history_done
+    from tests.media_test_bytes import mp4_bytes
+    from tests.test_adapter_differential import _comfy
+    exchanges = comfy_exchanges(
+        views=[(mp4_bytes(), "video/mp4")], history=history_done("images", "clip.mp4", node="60"),
+        running_polls=running_polls, strict=False)
+    _comfy(rig, [exchange("cancel", "POST", "/api/jobs/p1/cancel", {"status": 500, "json": {"error": "fake"}},
+                          repeat=True, required=False) if item["id"] == "cancel" else item for item in exchanges])
+
+
+def test_video_pin_media_job_polls_the_engine_every_5_seconds(tmp_path, monkeypatch):
+    """S7 6.8: the video media job keeps its 5 s poll; audio and image keep their own schedules."""
+    delays: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def record_sleep(delay, *args, **kwargs):
+        delays.append(delay)
+        await real_sleep(0)
+
+    seen = {}
+
+    def setup(rig):
+        _comfy(rig, running_polls=2)
+        rig.set(proxy, "_schedule_video_media_job", lambda job_id: rig.scheduled.append(job_id) or True)
+
+    async def drive(rig):
+        monkeypatch.setattr(proxy.asyncio, "sleep", record_sleep)
+        response = await rig.call("POST", "/gateway/v1/media/jobs", json_body={
+            "intent": "video.generate", "request": {"prompt": "waves", "model": "ltx-2.5-t2v"}})
+        seen["accepted"] = response.status_code
+        await proxy._run_video_media_job(rig.scheduled[0])
+        seen["polls"] = [d for d in delays if d != 0]
+
+    _run(tmp_path, "s7-68-poll", setup, drive)
+    assert seen["accepted"] == 202
+    assert seen["polls"], "the job never polled the engine"
+    assert set(seen["polls"]) == {5.0}
+
+
+@pytest.mark.xfail(strict=True, reason="core JobService.delete")
+def test_s7_legacy_video_delete_survives_restart_and_cancel_failure_keeps_record(tmp_path):
+    """S7 6.7: a delete whose cancel fails answers 409 and keeps the job; a delete that succeeds stays deleted after a
+    restart. Red until the core's JobService.delete lands; the legacy reader may then mark an existing row deleted."""
+    from gateway import video_job_records
+    seen = {}
+
+    def setup(rig):
+        _comfy_with_failing_cancel(rig, running_polls=5)
+
+    async def drive(rig):
+        created = await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})
+        video_id = created.json()["id"]
+        failed = await rig.call("DELETE", f"/v1/videos/{video_id}", label="delete with a failing cancel")
+        seen["failed_status"] = failed.status_code
+        seen["kept_after_failure"] = (await rig.call("GET", f"/v1/videos/{video_id}")).status_code
+        video_job_records.save("p_legacy", {"owner_key_hash": "sha256:legacy", "created_at": 1, "status": "completed"},
+                               path=rig.media_jobs_db)
+        seen["legacy_delete"] = (await rig.call("DELETE", "/v1/videos/video_p_legacy")).status_code
+
+    _run(tmp_path, "s7-7-legacy-delete", setup, drive)
+    assert seen["failed_status"] == 409
+    assert seen["kept_after_failure"] == 200
+    assert seen["legacy_delete"] == 200
+
+
+def test_video_source_owner_boundary_answers_as_an_unknown_id(tmp_path):
+    """A source another key owns is refused as an unknown id: edit, remix and extension give the same 404 body
+    as for an id that does not exist, and no engine call is made for the foreign source."""
+    seen = {}
+
+    def setup(rig):
+        _comfy(rig)
+
+    async def drive(rig):
+        created = await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})
+        source = created.json()["id"]
+        before = len(rig.recorder.engine)
+        unknown = await rig.call("POST", "/v1/videos/edits", json_body={"prompt": "y", "video": {"id": "video_nope"}})
+        seen["unknown"] = (unknown.status_code, unknown.json())
+        other = identity(everything(), name="other-app", key_hash="sha256:other", app_id="app_other")
+        with authenticated(other):
+            edit = await rig.call("POST", "/v1/videos/edits", json_body={"prompt": "y", "video": {"id": source}})
+            remix = await rig.call("POST", f"/v1/videos/{source}/remix", json_body={"prompt": "y"})
+            extend = await rig.call("POST", "/v1/videos/extensions", json_body={"prompt": "y", "video": {"id": source}})
+        seen["edit"], seen["remix"], seen["extend"] = (
+            (edit.status_code, edit.json()), (remix.status_code, remix.json()), (extend.status_code, extend.json()))
+        seen["engine_calls_for_foreign"] = len(rig.recorder.engine) - before
+
+    _run(tmp_path, "av-owner", setup, drive)
+    assert seen["edit"] == seen["unknown"]
+    assert seen["remix"] == seen["unknown"]
+    assert seen["extend"] == seen["unknown"]
+    assert seen["engine_calls_for_foreign"] == 0
+
+
+@pytest.mark.parametrize(("video", "status", "param"), [
+    (None, 400, "video"),            # no video field at all
+    ({"id": "img_1"}, 400, None),    # a wire id that is not a video id
+])
+def test_video_edit_source_refusals_before_the_remix_check(tmp_path, video, status, param):
+    """The source is checked before the remix configuration: a missing or non-video source is a 400 even while
+    remix is unconfigured."""
+    seen = {}
+
+    def setup(rig):
+        _comfy(rig)
+
+    async def drive(rig):
+        body = {"prompt": "y"} if video is None else {"prompt": "y", "video": video}
+        response = await rig.call("POST", "/v1/videos/edits", json_body=body)
+        seen["status"], seen["error"] = response.status_code, response.json()["error"]
+
+    _run(tmp_path, "av-edit-source", setup, drive)
+    assert seen["status"] == status
+    if param:
+        assert seen["error"].get("param") == param
+
+
+@pytest.mark.parametrize("empty", [{"id": ""}, {"id": 5}])
+def test_video_edit_malformed_source_reaches_the_remix_check_today(tmp_path, empty):
+    """Pins an ordering the row path must keep or change deliberately: an empty or non-string ``video.id`` is not
+    validated as a source before the remix configuration answers 501."""
+    seen = {}
+
+    def setup(rig):
+        _comfy(rig)
+
+    async def drive(rig):
+        response = await rig.call("POST", "/v1/videos/edits", json_body={"prompt": "y", "video": empty})
+        seen["status"], seen["code"] = response.status_code, response.json()["error"].get("code")
+
+    _run(tmp_path, "av-edit-malformed", setup, drive)
+    assert seen["status"] == 501
+    assert seen["code"] == "video_remix_not_configured"
+
+
+@pytest.mark.parametrize(("body", "status", "message_part"), [
+    ({"seconds": "2"}, 200, None),                    # numeric string is coerced
+    ({"seconds": 0}, 400, "between 1.0 and 10.0"),
+    ({"seconds": -1}, 400, "between 1.0 and 10.0"),
+    ({"seconds": "bad"}, 400, "must be a number"),
+    ({"prompt": "   "}, 400, "prompt is required"),
+    ({"prompt": ["a"]}, 400, "prompt must be a string"),
+])
+def test_video_create_field_validation_today(tmp_path, body, status, message_part):
+    """Each field refusal or coercion the old create route makes today (golden-coverage gap 3)."""
+    seen = {}
+
+    def setup(rig):
+        _comfy(rig)
+
+    async def drive(rig):
+        response = await rig.call("POST", "/v1/videos", json_body={"prompt": "x", "model": "ltx-2.5-t2v", **body})
+        seen["status"], seen["text"] = response.status_code, response.text
+        seen["engine"] = len(rig.recorder.engine)
+
+    _run(tmp_path, "av-create-validation", setup, drive)
+    assert seen["status"] == status
+    if message_part:
+        assert message_part in seen["text"]
+        assert seen["engine"] == 0, "a refused create reached the engine"
+
+
+def test_video_create_size_is_clamped_to_the_nearest_supported_size(tmp_path):
+    """An unparsable size is not refused: the create answers 200 with the default-clamped size (1024x704)."""
+    seen = {}
+
+    def setup(rig):
+        _comfy(rig)
+
+    async def drive(rig):
+        response = await rig.call("POST", "/v1/videos", json_body={"prompt": "x", "model": "ltx-2.5-t2v", "size": "bad"})
+        seen["status"], seen["size"] = response.status_code, response.json().get("size")
+
+    _run(tmp_path, "av-create-size", setup, drive)
+    assert seen["status"] == 200
+    assert seen["size"] == "1024x704"
+
+
+def test_video_create_non_string_model_is_an_unhandled_500_today(tmp_path):
+    """Pins a defect, not a behaviour to keep: a numeric ``model`` makes the old create route raise and answer a bare
+    500 "Internal Server Error", with no engine call. The row path may only change this with a manifest entry."""
+    seen = {}
+
+    def setup(rig):
+        _comfy(rig)
+
+    async def drive(rig):
+        response = await rig.call("POST", "/v1/videos", json_body={"prompt": "x", "model": 17})
+        seen["status"], seen["text"] = response.status_code, response.text
+        seen["engine"] = len(rig.recorder.engine)
+
+    _run(tmp_path, "av-create-model-int", setup, drive)
+    assert seen["status"] == 500
+    assert seen["engine"] == 0
+
+
+def test_video_create_default_and_canonical_model_names(tmp_path):
+    """No model resolves to the canonical name; the short name is echoed; an unknown name is 404 model_not_found."""
+    seen = {}
+
+    def setup(rig):
+        _comfy(rig)
+
+    async def drive(rig):
+        omitted = await rig.call("POST", "/v1/videos", json_body={"prompt": "x"})
+        short = await rig.call("POST", "/v1/videos", json_body={"prompt": "x", "model": "ltx-2.5-t2v"})
+        unknown = await rig.call("POST", "/v1/videos", json_body={"prompt": "x", "model": "nope-model"})
+        seen["omitted"] = (omitted.status_code, omitted.json()["model"])
+        seen["short"] = (short.status_code, short.json()["model"])
+        seen["unknown"] = (unknown.status_code, unknown.json()["error"].get("code"), unknown.json()["error"].get("param"))
+
+    _run(tmp_path, "av-create-models", setup, drive)
+    assert seen["omitted"] == (200, "video-ltx-2.5-t2v")
+    assert seen["short"] == (200, "ltx-2.5-t2v")
+    assert seen["unknown"] == (404, "model_not_found", "model")
+
+
+def test_openai_alias_create_answers_as_the_canonical_route(tmp_path):
+    """The /openai/v1 alias of create answers 200 with a video id and the same model echo as the canonical route."""
+    seen = {}
+
+    def setup(rig):
+        _comfy(rig)
+
+    async def drive(rig):
+        canonical = await rig.call("POST", "/v1/videos", json_body={"prompt": "x", "model": "ltx-2.5-t2v"})
+        alias = await rig.call("POST", "/openai/v1/videos", json_body={"prompt": "x", "model": "ltx-2.5-t2v"})
+        seen["canonical"] = (canonical.status_code, canonical.json()["model"], canonical.json()["id"].startswith("video_"))
+        seen["alias"] = (alias.status_code, alias.json()["model"], alias.json()["id"].startswith("video_"))
+
+    _run(tmp_path, "av-alias", setup, drive)
+    assert seen["alias"] == seen["canonical"]
+
+
+@pytest.mark.parametrize("failure", ["refused", "no_prompt_id"])
+def test_video_engine_submit_failures_are_502_and_store_nothing(tmp_path, failure):
+    """Engine prompt refusals and a prompt answer without an id: 502, and no video is stored."""
+    from tests.support.adapter_differential_rig import comfy_exchanges, exchange, history_done
+    from tests.test_adapter_differential import _comfy
+    from tests.media_test_bytes import mp4_bytes
+    seen = {}
+
+    def setup(rig):
+        prompt = (exchange("prompt", "POST", "/prompt", {"status": 500, "json": {"error": "fake"}}, repeat=True, required=False)
+                  if failure == "refused" else
+                  exchange("prompt", "POST", "/prompt", {"json": {"noid": True}}, repeat=True, required=False))
+        exchanges = comfy_exchanges(views=[(mp4_bytes(), "video/mp4")], history=history_done("images", "clip.mp4", node="60"),
+                                    strict=False)
+        _comfy(rig, [prompt if item["id"] == "prompt" else item for item in exchanges])
+
+    async def drive(rig):
+        response = await rig.call("POST", "/v1/videos", json_body={"prompt": "x", "model": "ltx-2.5-t2v"})
+        seen["status"], seen["message"] = response.status_code, response.json()["error"]["message"]
+        seen["listed"] = (await rig.call("GET", "/v1/videos")).json()["data"]
+
+    _run(tmp_path, f"av-submit-{failure}", setup, drive)
+    assert seen["status"] == 502
+    assert seen["listed"] == []
+    if failure == "refused":
+        assert seen["message"] == "ComfyUI: The engine refused this request."
+    else:
+        assert seen["message"] == "No prompt_id returned"
+
+
+def test_video_completed_status_with_missing_output_still_answers_completed(tmp_path):
+    """Pins a mismatch: status says completed (100%) while the engine's /view answers 404, so content answers 502.
+    The row path must keep it or change it with a manifest entry, never by editing this expectation silently."""
+    from tests.support.adapter_differential_rig import comfy_exchanges, exchange, history_done
+    from tests.test_adapter_differential import _comfy
+    seen = {}
+
+    def setup(rig):
+        exchanges = comfy_exchanges(history=history_done("images", "clip.mp4", node="60"), strict=False)
+        exchanges.append(exchange("view", "GET", "/view", {"status": 404, "json": {"error": "gone"}}, repeat=True, required=False))
+        _comfy(rig, exchanges)
+
+    async def drive(rig):
+        created = await rig.call("POST", "/v1/videos", json_body={"prompt": "x", "model": "ltx-2.5-t2v"})
+        video_id = created.json()["id"]
+        status = await rig.call("GET", f"/v1/videos/{video_id}")
+        seen["status"] = (status.status_code, status.json()["status"], status.json()["progress"])
+        content = await rig.call("GET", f"/v1/videos/{video_id}/content")
+        seen["content"] = content.status_code
+
+    _run(tmp_path, "av-missing-output", setup, drive)
+    assert seen["status"] == (200, "completed", 100)
+    assert seen["content"] == 502
+
+
+# --------------------------------------------------------------------------- gap 1: configured edit and remix
+
+REFERENCE_IMAGE = "data:image/png;base64," + base64.b64encode(_png()).decode()
+REMIX_EXTENSIONS = {"com.azizam.workflow": {"reference_image": REFERENCE_IMAGE}}
+SOURCE_CLIP = long_mp4_bytes("black")
+CHILD_CLIP = long_mp4_bytes("white")
+
+
+def _configured_remix(rig: GatewayRig) -> None:
+    """Configure remix the way an owner does: ``videos.remix_workflow`` names a workflow, and the ``video-remix`` model
+    resolves to a shipped workflow with a source-video input. The shipped ``video-scail-2-replace`` is that workflow;
+    it needs a reference image and at most 4 s, which the remix request supplies."""
+    values = dict(proxy.runtime().config.get("videos") or {})
+    publish_section(rig.monkeypatch, "videos", {**values, "remix_workflow": "video-remix"})
+    rig.set(proxy, "VIDEO_ALIASES", {**proxy.VIDEO_ALIASES, "video-remix": "video-scail-2-replace"})
+
+
+def _scripted_engine(rig: GatewayRig, steps, *, upload: dict | None = None, node: str = "60", unread=()) -> None:
+    """A fake engine that answers each submission in order with its own prompt id, history and download. ``node`` is the
+    graph's SaveVideo node: ``60`` for the t2v graph, ``save`` for the long (chain) graph that extensions run.
+
+    ``steps``: ``(prompt_id, clip, outcome)``, outcome ``"done"`` (history succeeds, ``/view`` answers ``clip``) or
+    ``"failed"`` (history fails; no download is made). ``unread`` names steps whose output the test never downloads.
+    Housekeeping and uploads come from the standard script.
+    """
+    from tests.support.adapter_differential_rig import comfy_exchanges, exchange, history_done, hex_body
+    from tests.test_adapter_differential import _comfy
+    from tests.test_adapter_differential_s7 import FAILED_HISTORY
+    base = [item for item in comfy_exchanges(strict=False) if item["id"] not in {"prompt", "history", "view"}]
+    if upload is not None:
+        base = [exchange("upload", "POST", "/upload/image", upload, repeat=True, required=False)
+                if item["id"] == "upload" else item for item in base]
+    ordered = []
+    for index, (prompt_id, clip, outcome) in enumerate(steps):
+        # The first step is the source, a t2v graph; the rest are the graph the test runs (``node``).
+        step_node = "60" if index == 0 else node
+        ordered.append(exchange(f"prompt-{prompt_id}", "POST", "/prompt", {"json": {"prompt_id": prompt_id}}))
+        history = (history_done("images", f"{prompt_id}.mp4", node=step_node, prompt_id=prompt_id) if outcome == "done"
+                   else {prompt_id: FAILED_HISTORY["p1"]})
+        ordered.append(exchange(f"history-{prompt_id}", "GET", f"/history/{prompt_id}", {"json": history},
+                                repeat=True, required=False))
+        if outcome == "done":
+            # Matched by file name, and repeatable: a content read downloads again from the engine.
+            ordered.append(exchange(f"view-{prompt_id}", "GET", "/view", hex_body(clip, "video/mp4"),
+                                    query={"filename": f"{prompt_id}.mp4", "type": "output"}, repeat=True,
+                                    required=prompt_id not in unread))
+    _comfy(rig, base + ordered)
+
+
+@pytest.mark.parametrize("route", ["edit", "remix"])
+def test_video_configured_edit_and_remix_make_a_distinct_child_and_keep_the_source(tmp_path, route):
+    """Gap 1 (success): with remix configured, an edit or remix of an owned source submits a real child (its own id),
+    the child's bytes are the engine's second output, and the source's bytes and lineage are unchanged."""
+    seen = {}
+
+    def setup(rig):
+        _configured_remix(rig)
+        _scripted_engine(rig, [("p1", SOURCE_CLIP, "done"), ("p2", CHILD_CLIP, "done")])
+
+    async def drive(rig):
+        source = (await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})).json()["id"]
+        body = {"prompt": "make it dusk", "seconds": 4, "extensions": REMIX_EXTENSIONS}
+        if route == "edit":
+            answer = await rig.call("POST", "/v1/videos/edits", json_body={**body, "video": {"id": source}})
+        else:
+            answer = await rig.call("POST", f"/v1/videos/{source}/remix", json_body=body)
+        seen["answer"] = (answer.status_code, answer.json())
+        child = answer.json()["id"]
+        seen["child_status"] = (await rig.call("GET", f"/v1/videos/{child}")).json()["status"]
+        seen["child_bytes"] = (await rig.call("GET", f"/v1/videos/{child}/content")).content
+        seen["source_bytes"] = (await rig.call("GET", f"/v1/videos/{source}/content")).content
+        seen["source_id"] = source
+
+    _run(tmp_path, f"av-configured-{route}", setup, drive)
+    status, answer = seen["answer"]
+    assert status == 200, answer
+    assert answer["id"] != seen["source_id"]
+    assert answer["remixed_from_video_id"] == seen["source_id"]
+    assert seen["child_status"] == "completed"
+    # The delivered bytes are MP4s written by the gateway (the engine's clip, re-muxed; provenance is gap 9), and the
+    # child's are not the source's.
+    assert seen["child_bytes"][4:8] == b"ftyp" and seen["source_bytes"][4:8] == b"ftyp"
+    assert seen["child_bytes"] != seen["source_bytes"]
+
+
+@pytest.mark.parametrize("route", ["edit", "remix"])
+def test_video_configured_edit_and_remix_child_failure_is_a_failed_child_not_a_source(tmp_path, route):
+    """Gap 1 (failure): the child's engine history fails. The child is failed, has no content, and the source is still
+    playable. A failed source generation would not satisfy this test: the source completed first."""
+    seen = {}
+
+    def setup(rig):
+        _configured_remix(rig)
+        _scripted_engine(rig, [("p1", SOURCE_CLIP, "done"), ("p2", None, "failed")])
+
+    async def drive(rig):
+        source = (await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})).json()["id"]
+        body = {"prompt": "make it dusk", "seconds": 4, "extensions": REMIX_EXTENSIONS}
+        if route == "edit":
+            answer = await rig.call("POST", "/v1/videos/edits", json_body={**body, "video": {"id": source}})
+        else:
+            answer = await rig.call("POST", f"/v1/videos/{source}/remix", json_body=body)
+        seen["answer"] = answer.status_code
+        child = answer.json().get("id")
+        child_status = await rig.call("GET", f"/v1/videos/{child}")
+        seen["child"] = (child_status.status_code, child_status.json().get("status"),
+                         bool(child_status.json().get("error")))
+        seen["child_content"] = (await rig.call("GET", f"/v1/videos/{child}/content")).status_code
+        seen["source_content"] = (await rig.call("GET", f"/v1/videos/{source}/content")).content
+
+    _run(tmp_path, f"av-configured-fail-{route}", setup, drive)
+    assert seen["answer"] == 200
+    assert seen["child"] == (200, "failed", True)
+    assert seen["child_content"] != 200
+    assert seen["source_content"][4:8] == b"ftyp"
+
+
+# --------------------------------------------------------------------------- gap 4: extension completion
+
+SOURCE_FOR_EXTENSION = long_mp4_bytes("black")
+FIRST_EXTENSION = long_mp4_bytes("white")
+SECOND_EXTENSION = long_mp4_bytes("red")
+THIRD_EXTENSION = long_mp4_bytes("green")
+
+
+def test_video_extend_complete_chain_keeps_lineage_and_the_source(tmp_path):
+    """Gap 4: source p1 -> extension p2 (7 s, one segment) -> an extension of p2 asked before p2's output is read (p3) ->
+    an extension of p2 after its output is read (p4). Every extension answers 200 with lineage to p2 and completes; the
+    source's bytes are the same at the end. Each submission has its own scripted engine step."""
+    seen = {}
+
+    def setup(rig):
+        _scripted_engine(rig, [("p1", SOURCE_FOR_EXTENSION, "done"), ("p2", FIRST_EXTENSION, "done"),
+                               ("p3", SECOND_EXTENSION, "done"), ("p4", THIRD_EXTENSION, "done")],
+                         node="save", unread=("p3",))
+
+    async def drive(rig):
+        source = (await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})).json()["id"]
+        before = (await rig.call("GET", f"/v1/videos/{source}/content")).content
+        first = await rig.call("POST", "/v1/videos/extensions",
+                               json_body={"video": {"id": source}, "prompt": "more waves", "seconds": "2"})
+        first_id = first.json()["id"]
+        seen["first"] = (first.status_code, first.json().get("extended_from_video_id"), first.json().get("total_seconds"),
+                         first.json().get("segments"))
+        seen["first_status"] = (await rig.call("GET", f"/v1/videos/{first_id}")).json().get("status")
+        posts_before = _engine_paths(rig).count("POST /prompt")
+        early = await rig.call("POST", "/v1/videos/extensions",
+                               json_body={"video": {"id": first_id}, "prompt": "before reading", "seconds": "2"})
+        early_id = early.json().get("id")
+        seen["early"] = (early.status_code, early.json().get("extended_from_video_id"))
+        seen["early_submissions"] = _engine_paths(rig).count("POST /prompt") - posts_before
+        first_content = (await rig.call("GET", f"/v1/videos/{first_id}/content")).content
+        seen["first_content_is_mp4"] = first_content[4:8] == b"ftyp"
+        second = await rig.call("POST", "/v1/videos/extensions",
+                                json_body={"video": {"id": first_id}, "prompt": "even more", "seconds": "2"})
+        second_id = second.json().get("id")
+        seen["second"] = (second.status_code, second.json().get("extended_from_video_id"))
+        seen["second_status"] = (await rig.call("GET", f"/v1/videos/{second_id}")).json().get("status")
+        second_content = (await rig.call("GET", f"/v1/videos/{second_id}/content")).content
+        seen["second_content_is_mp4"] = second_content[4:8] == b"ftyp"
+        seen["ids"] = (source, first_id, early_id, second_id)
+        seen["source_after"] = (await rig.call("GET", f"/v1/videos/{source}/content")).content
+        seen["before"] = before
+
+    _run(tmp_path, "av-extend-chain", setup, drive)
+    source, first_id, early_id, second_id = seen["ids"]
+    assert seen["first"] == (200, source, 7.0, 1)
+    assert seen["first_status"] == "completed"
+    assert seen["early"] == (200, first_id)
+    assert seen["early_submissions"] == 1
+    assert seen["first_content_is_mp4"]
+    assert seen["second"] == (200, first_id)
+    assert seen["second_status"] == "completed"
+    assert seen["second_content_is_mp4"]
+    assert len({source, first_id, early_id, second_id}) == 4
+    assert seen["source_after"] == seen["before"]
+
+
+def test_video_extend_prepare_failure_submits_no_child(tmp_path):
+    """Gap 4: the source is fetched and staged for the engine, and the engine refuses the upload. No child is submitted
+    and no child is stored."""
+    seen = {}
+
+    def setup(rig):
+        _scripted_engine(rig, [("p1", SOURCE_FOR_EXTENSION, "done")],
+                         upload={"status": 500, "json": {"error": "fake upload refused"}})
+
+    async def drive(rig):
+        source = (await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})).json()["id"]
+        before = len([p for p in _engine_paths(rig) if p == "POST /prompt"])
+        answer = await rig.call("POST", "/v1/videos/extensions",
+                                json_body={"video": {"id": source}, "prompt": "more", "seconds": "2"})
+        # Defect 4 (pinned): an engine upload refusal surfaces as a bare 500 text, not the JSON error envelope.
+        seen["answer"] = (answer.status_code, answer.text)
+        seen["child_prompts"] = len([p for p in _engine_paths(rig) if p == "POST /prompt"]) - before
+        seen["listed"] = [item["id"] for item in (await rig.call("GET", "/v1/videos")).json()["data"]]
+        seen["source_content"] = (await rig.call("GET", f"/v1/videos/{source}/content")).status_code
+
+    _run(tmp_path, "av-extend-prepare", setup, drive)
+    assert seen["answer"] == (500, "Internal Server Error")
+    assert seen["child_prompts"] == 0
+    assert len(seen["listed"]) == 1
+    assert seen["source_content"] == 200
+
+
+def test_video_extend_child_failure_keeps_the_source_playable(tmp_path):
+    """Gap 4: the extension's engine history fails. The child is failed with an error and no content, and the source
+    still plays."""
+    seen = {}
+
+    def setup(rig):
+        _scripted_engine(rig, [("p1", SOURCE_FOR_EXTENSION, "done"), ("p2", None, "failed")], node="save")
+
+    async def drive(rig):
+        source = (await rig.call("POST", "/v1/videos", json_body={"prompt": "waves", "model": "ltx-2.5-t2v"})).json()["id"]
+        answer = await rig.call("POST", "/v1/videos/extensions",
+                                json_body={"video": {"id": source}, "prompt": "more", "seconds": "2"})
+        child = answer.json().get("id")
+        status = await rig.call("GET", f"/v1/videos/{child}")
+        seen["child"] = (answer.status_code, status.json().get("status"), bool(status.json().get("error")))
+        seen["child_content"] = (await rig.call("GET", f"/v1/videos/{child}/content")).status_code
+        seen["source_content"] = (await rig.call("GET", f"/v1/videos/{source}/content")).content[4:8]
+
+    _run(tmp_path, "av-extend-child-fail", setup, drive)
+    assert seen["child"] == (200, "failed", True)
+    assert seen["child_content"] != 200
+    assert seen["source_content"] == b"ftyp"
+
+
+def _route_shape(answer):
+    """What a client can compare across the canonical and the /openai/v1 alias: the status, and for an extension the
+    lineage and length fields (ids and seeds differ per submission, so they are not compared)."""
+    if answer.status_code != 200:
+        return (answer.status_code, answer.text)
+    body = answer.json()
+    return (200, body.get("object"), body.get("extended_from_video_id"), body.get("total_seconds"), body.get("segments"),
+            body.get("azizam_resolved_model"), body.get("status"))
+
+
+@pytest.mark.parametrize("route", ["edit", "remix", "extend"])
+def test_video_canonical_and_alias_routes_answer_alike(tmp_path, route):
+    """Gap 10: each video route answers the same through its canonical path and its /openai/v1 alias. Edit and remix are
+    unconfigured here (501 both ways); extend completes (200 both ways) from the same source."""
+    seen = {}
+    paths = {
+        "edit": ("/v1/videos/edits", "/openai/v1/videos/edits"),
+        "remix": ("/v1/videos/{source}/remix", "/openai/v1/videos/{source}/remix"),
+        "extend": ("/v1/videos/extensions", "/openai/v1/videos/extensions"),
+    }
+    bodies = {
+        "edit": lambda source: {"prompt": "make it blue", "video": {"id": source}},
+        "remix": lambda source: {"prompt": "again"},
+        "extend": lambda source: {"video": {"id": source}, "prompt": "more", "seconds": "2"},
+    }
+
+    def setup(rig):
+        if route == "extend":
+            _scripted_engine(rig, [("p1", SOURCE_FOR_EXTENSION, "done"), ("p2", FIRST_EXTENSION, "done"),
+                                   ("p3", SECOND_EXTENSION, "done")], node="save", unread=("p2", "p3"))
+        else:
+            _comfy(rig)
+
+    async def drive(rig):
+        source = (await rig.call("POST", "/v1/videos", json_body=_created())).json()["id"]
+        canonical, alias = (path.format(source=source) for path in paths[route])
+        seen["canonical"] = _route_shape(await rig.call("POST", canonical, json_body=bodies[route](source)))
+        seen["alias"] = _route_shape(await rig.call("POST", alias, json_body=bodies[route](source)))
+
+    _run(tmp_path, f"av-parity-{route}", setup, drive)
+    assert seen["canonical"] == seen["alias"]
+    if route == "extend":
+        assert seen["canonical"][0] == 200
+        assert seen["canonical"][2] is not None  # extended_from_video_id: the lineage answer on both paths
+    else:
+        assert seen["canonical"][0] == 501
+        assert "video_remix_not_configured" in seen["canonical"][1]
+
+
+KEY = {"Idempotency-Key": "k-gap8"}
+
+
+def test_video_replay_overlap_with_the_same_key_submits_twice_today(tmp_path):
+    """Gap 8 (overlap): the same key and body sent while the first engine acceptance is held for 30 virtual seconds.
+    Today the second request is not deduplicated: it submits its own prompt while the first is still held, and both
+    answer 200 with their own ids. Pins that baseline (two prompts, two ids). The intended one-work behaviour is
+    video-05's strict xfail."""
+    from tests.support.adapter_differential_rig import comfy_exchanges, exchange
+    from tests.test_adapter_differential import _comfy
+    seen = {}
+
+    def setup(rig):
+        base = [item for item in comfy_exchanges(strict=False) if item["id"] not in {"prompt", "history", "view"}]
+        _comfy(rig, base + [
+            exchange("prompt-held", "POST", "/prompt", {"wait_before_headers": 30, "json": {"prompt_id": "p1"}}, times=1),
+            exchange("prompt-second", "POST", "/prompt", {"json": {"prompt_id": "p2"}}, times=1),
+        ])
+
+    async def drive(rig):
+        body = {"prompt": "waves", "model": "ltx-2.5-t2v"}
+        held = asyncio.create_task(rig.call("POST", "/v1/videos", json_body=body, headers=KEY))
+        await rig.fakes.clock.until_waiting()
+        second = asyncio.create_task(rig.call("POST", "/v1/videos", json_body=body, headers=KEY))
+        for _ in range(200):
+            await asyncio.sleep(0)
+            if sum(1 for p in _engine_paths(rig) if p == "POST /prompt") == 2:
+                break
+        seen["prompts_while_held"] = sum(1 for p in _engine_paths(rig) if p == "POST /prompt")
+        rig.fakes.clock.advance(31)
+        first = await held
+        other = await second
+        seen["first"] = (first.status_code, first.json().get("id"))
+        seen["second"] = (other.status_code, other.json().get("id"))
+        seen["prompts"] = sum(1 for p in _engine_paths(rig) if p == "POST /prompt")
+
+    _run(tmp_path, "av-replay-overlap", setup, drive)
+    assert seen["prompts_while_held"] == 2
+    assert seen["first"] == (200, "video_p1")
+    assert seen["second"] == (200, "video_p2")
+    assert seen["prompts"] == 2
+
+
+@pytest.mark.parametrize("terminal", ["failed", "cancelled"])
+def test_video_replay_after_a_terminal_job_with_the_same_key_submits_again(tmp_path, terminal):
+    """Gap 8 (terminal): a job with the key ends, its engine history failed or the job was deleted while queued. The same
+    key and body sent again submits a new prompt and gets a new id. Pins today's answer: the key does not replay the
+    terminal job."""
+    seen = {}
+
+    def setup(rig):
+        if terminal == "failed":
+            _scripted_engine(rig, [("p1", SOURCE_CLIP, "failed"), ("p2", CHILD_CLIP, "done")], unread=("p2",))
+        else:
+            _scripted_engine(rig, [("p1", SOURCE_CLIP, "done"), ("p2", CHILD_CLIP, "done")], unread=("p1", "p2"))
+
+    async def drive(rig):
+        body = {"prompt": "waves", "model": "ltx-2.5-t2v"}
+        first = await rig.call("POST", "/v1/videos", json_body=body, headers=KEY)
+        first_id = first.json()["id"]
+        if terminal == "failed":
+            seen["first_status"] = (await rig.call("GET", f"/v1/videos/{first_id}")).json().get("status")
+        else:
+            seen["deleted"] = (await rig.call("DELETE", f"/v1/videos/{first_id}")).status_code
+        second = await rig.call("POST", "/v1/videos", json_body=body, headers=KEY)
+        seen["second"] = (second.status_code, second.json().get("id"))
+        seen["prompts"] = sum(1 for p in _engine_paths(rig) if p == "POST /prompt")
+
+    _run(tmp_path, f"av-replay-{terminal}", setup, drive)
+    assert seen["second"] == (200, "video_p2")
+    assert seen["prompts"] == 2
+    if terminal == "failed":
+        assert seen["first_status"] == "failed"
+    else:
+        assert seen["deleted"] == 200
+
+
+@pytest.mark.parametrize("plan", ["full", "none"])
+def test_video_provenance_embeds_the_prompt_only_when_the_plan_allows(tmp_path, plan):
+    """Gap 9 (provenance output): full metadata needs the maker, a kept prompt and no ``never_keep``. With all three, the
+    delivered MP4 carries the generation's prompt. With media metadata off, the bytes carry no prompt text."""
+    import json
+    import re
+    from gateway import admin_store
+    seen = {}
+
+    def setup(rig):
+        _comfy(rig)
+        if plan == "full":
+            admin_db = rig.tmp / "admin.db"
+            admin_store.init_db(admin_db)
+            person = admin_store.upsert_oidc_user("issuer", "provenance-maker", path=admin_db)
+            admin_store.put_operator_setting(
+                "prompt_memory", {"default_remember": True, "never_keep": False, "retention_cap": "3_months"}, path=admin_db)
+            rig.set(proxy.ADMIN_STORE, "path", admin_db)
+            rig._exit.enter_context(authenticated(identity(
+                everything(media_metadata="full", receipt_detail="full"), person_id=person["id"])))
+
+    async def drive(rig):
+        created = await rig.call("POST", "/v1/videos", json_body={"prompt": "make it dusk", "model": "ltx-2.5-t2v"})
+        seen["video_id"] = created.json()["id"]
+        seen["status"] = (await rig.call("GET", f"/v1/videos/{seen['video_id']}")).json().get("status")
+        content = await rig.call("GET", f"/v1/videos/{seen['video_id']}/content")
+        seen["content"] = (content.status_code, content.content, content.text[:200])
+
+    _run(tmp_path, f"av-provenance-{plan}", setup, drive)
+    code, body, text = seen["content"]
+    video_id = seen["video_id"]
+    assert seen["status"] == "completed"
+    assert code == 200, text
+    assert body[4:8] == b"ftyp"
+    if plan == "full":
+        record = re.search(rb"\{[^\x00]*azizam\.provenance[^\x00]*\}", body)
+        assert record is not None
+        provenance = json.loads(record.group(0))
+        assert provenance["schema"] == "azizam.provenance/1"
+        assert provenance["kind"] == "video"
+        assert provenance["request_id"] == provenance["receipt"].rsplit("/", 1)[1] == video_id
+        assert provenance["requested_model"] == "ltx-2.5-t2v"
+        assert provenance["resolved_model"] == "video-ltx-2.5-t2v"
+        assert provenance["workflow_id"] == "video.generate.video-ltx-2.5-t2v"
+        assert provenance["parameters"]["size"] == "960x512"
+        assert isinstance(provenance["seed"], int)
+        assert b"make it dusk" not in body  # the prompt is kept for the maker, not written into the file
+    else:
+        assert b"azizam.provenance" not in body
+        assert b"make it dusk" not in body

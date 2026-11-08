@@ -392,6 +392,8 @@ class RunRequest:
     idempotency_key: str | None = None
     wait_s: float = 0.0
     frontend_id: str = "workflows"
+    # The request receipt this run closes when its job ends (a row that answered with the job). None: no receipt.
+    request_id: str | None = None
     # Transport options the caller chose on the wire that change what the engine is asked for (S7 parity M2): the count,
     # size, output format and the like. The shape fills it; it is part of run identity and travels to the adapter in the
     # flat body under ``options``. An answer form that only changes rendering is not an option.
@@ -443,6 +445,11 @@ class JobEvent:
 
 class JobNotFound(Exception):
     """``job_not_found`` (404): absent, or not readable by this caller. One answer for both, so ids do not leak."""
+
+
+class JobDeleteConflict(Exception):
+    """``job_delete_conflict`` (409): the job could not be canceled first (a running job whose engine has not confirmed
+    the cancel), so it was not deleted and is unchanged."""
 
 
 class ResultUnavailable(Exception):
@@ -524,6 +531,12 @@ class JobService(Protocol):
         ...
     def open_result(self, job_id: str, ref: ResultRef, caller: CallerContext) -> ResultContent:
         """The content under the result-reader rule. JobNotFound, ResultUnavailable."""
+        ...
+    def delete(self, job_id: str, caller: CallerContext) -> None:
+        """Delete one job (S7 parity 6.7). The caller who may cancel it may delete it. Cancels first; when the cancel is
+        not confirmed, raises JobDeleteConflict and keeps the job. Then persists a tombstone: the job is gone from get,
+        events, open_result and listing at once and after a restart, and is reaped after the retention window. A
+        job already deleted, absent or not the caller's raises JobNotFound."""
         ...
 
 

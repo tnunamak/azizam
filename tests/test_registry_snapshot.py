@@ -410,3 +410,34 @@ def test_the_write_time_name_check_reads_the_dynamic_aliases_as_the_snapshot_doe
     elsewhere = {"decisions": {**aliases["decisions"], "engines": {"oracle-decider": {"service": "other", "model": "m"}}}}
     monkeypatch.setattr(service_registry, "_dynamic_model_aliases", lambda: elsewhere)
     assert name_clashes(service_registry.registry_name_pairs({"services": services}, bundled=()))
+
+
+def test_holding_out_a_workflow_whose_bundled_fallback_clashes_again_holds_the_next_one_too():
+    # c2d-held-clash-review-1108 (1): the bundled workflow restored in place of a held override owns an alias that a
+    # second stored workflow holds. The hold-out repeats until no stored workflow is in a clash.
+    bundled = bundled_of(contract("bundle.one", aliases=["legacy-x"]))
+    release = rs.BundledRelease(bundled.workflows, (row("newly-held", "/v1/things"),))
+    document = {"workflows": {
+        "bundle.one": {**stored("bundle.one", overrides="bundle.one"), "manifest": contract("bundle.one", aliases=["newly-held"])},
+        "owner.two": {**stored("owner.two"), "manifest": contract("owner.two", aliases=["legacy-x"])},
+        "safe.three": stored("safe.three")}}
+    snap = rs.build(document, release, generation=1)
+    assert sorted(snap.held_out) == ["bundle.one", "owner.two"]
+    assert snap.get("safe.three") is not None and snap.get("owner.two") is None
+    assert snap.get("bundle.one").incarnation == "bundled"
+    assert snap.names.owner("workflow_alias", "legacy-x").id == "bundle.one"
+
+
+def test_an_orphan_run_control_patch_owns_no_name_in_the_write_check_or_the_snapshot():
+    # c2d-R-patch-review-1108 (2): a patch of a workflow the release dropped is inert; the write-time name check and
+    # the snapshot agree that nobody holds its id.
+    from gateway import service_registry
+
+    document = {"workflows": {"gone.workflow": {rs.RUN_CONTROL_PATCH_KEY: "gone.workflow", "state": "active",
+                                                "published": False, "record_revision": 2}}}
+    owners = {owner.id for _name, owner in service_registry.registry_name_pairs(document, bundled=[])}
+    assert "gone.workflow" not in owners
+    assert build(document).names.owner("workflow", "gone.workflow") is None
+    # With the release still shipping the id, the patch's workflow holds its names as before.
+    held = {owner.id for _name, owner in service_registry.registry_name_pairs(document, bundled=["gone.workflow"])}
+    assert "gone.workflow" in held
