@@ -19,6 +19,9 @@ FIXTURE = Path(__file__).parent / "fixtures" / "route_graph_frozen.json"
 
 # Deliberate additions since the freeze: path prefix -> reason.
 ADDED_PATHS: dict[str, str] = {
+    "/v1/assets/{asset_id}": "an App key deletes an asset its accountable person made (DELETE; owner-scoped, a signed content URL is no "
+                             "right to delete); tests/test_app_asset_delete.py covers it",
+    "/openai/v1/assets/{asset_id}": "the /openai alias of DELETE /v1/assets/{asset_id}; tests/test_app_asset_delete.py covers it",
     "/internal/litellm/local": "the gateway lifecycle hop serves completions and embeddings next to chat (one route per endpoint "
                                "in capability_ids.INNER_HOP_ENDPOINTS), and a POST no route serves answers 404 endpoint_not_served "
                                "before the key check; tests/test_litellm_inner_hop_endpoints.py covers them",
@@ -216,7 +219,10 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
         # Re-captured 2026-11-07 for the optional ``available`` query parameter of GET /v1/models and /openai/v1/models;
         # only those two operations gained it (tests/fixtures/headless_openapi.json shows the same two additions).
         # Before it the digest was 7477383af059713a1d122d88f92404d7d99fd15096a742415ac3ebf954dfce77.
-        assert route_graph.openapi_digest(proxy.app) == "c04460c153937fb6b086116d42f692ec19787ae0bc3582e798ca1586d07dab66"
+        # Re-captured 2026-11-08 for DELETE /v1/assets/{asset_id} and its /openai alias (see ADDED_PATHS): only those two
+        # operations differ (tests/fixtures/headless_openapi.json shows the same two additions).
+        # Before it the digest was c04460c153937fb6b086116d42f692ec19787ae0bc3582e798ca1586d07dab66.
+        assert route_graph.openapi_digest(proxy.app) == "28327686fc98f347d83bbd9c8a44d8d1f173670e2b2e4dfd4d80dd787bc008b9"
     proxy.app.openapi_schema = None
     # Full document, including the generated schema of the reviewed POST /v1/meshes/generate addition (see ADDED_PATHS).
     # Before that addition the frozen digest was 99fc456823370bfd1bfd469a58deede6a16d0f32b771c0936e3374c7adca4355.
@@ -247,4 +253,6 @@ def test_the_openapi_document_is_unchanged(monkeypatch) -> None:
     # e782277147ec386ed5430f191856ffd940638666bc1e32d1a1a0cc0451d9ef46.
     # Re-captured 2026-11-07 for the ``available`` query parameter of GET /v1/models and /openai/v1/models: only those two
     # operations differ. Before it the frozen digest was 393a003ccd60cc336183786a350a2267d28d806460d04d5e38639471bcd80b6c.
+    # Re-captured 2026-11-08 for DELETE /v1/assets/{asset_id} and its /openai alias: only those two operations differ.
+    # Before it the frozen digest was e22f458536ecd05d42ccd8386fd4219befe891c3a3c79b380bd84e14a6f902ea.
     assert route_graph.openapi_digest(proxy.app) == _frozen()["openapi_sha256"]

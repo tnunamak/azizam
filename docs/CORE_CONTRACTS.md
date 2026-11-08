@@ -498,6 +498,16 @@ or where a route explicitly accepts an input reference, such as video
 minted them; signed content URLs require a valid HMAC signature and expiration,
 but not the original bearer token.
 
+An App key deletes an asset it made with `DELETE /v1/assets/{asset_id}` (also under
+`/openai/v1`). It answers `200` with `{"id": "<asset_id>", "object": "gateway.asset",
+"deleted": true, "physical_removed": true}`, the shape of OpenAI file deletes. Only an owner
+deletes: the key must pass the same owner check as the owner-scoped asset read. A signed
+content URL is a bearer capability to read and grants no delete. An unknown asset and an
+asset the key does not own both answer `404 asset_not_found`, so ids cannot be probed.
+The delete removes the file, the accountable person's kept prompt for it and writes one audit
+row naming the App, as the browser Library Delete does. A file with several owners is kept
+(`physical_removed: false`).
+
 This is the bridge between authentication, routing, credential provisioning,
 and user-facing compatibility.
 

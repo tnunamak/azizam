@@ -20724,6 +20724,86 @@
         "summary": "Ollama Version"
       }
     },
+    "/openai/v1/assets/{asset_id}": {
+      "delete": {
+        "description": "Delete an asset this App (or its accountable person) made; the same work as the browser Delete.",
+        "operationId": "assets_delete_openai_v1_assets__asset_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "title": "Asset Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "deleted": {
+                      "enum": [
+                        true
+                      ],
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "enum": [
+                        "gateway.asset"
+                      ],
+                      "type": "string"
+                    },
+                    "physical_removed": {
+                      "description": "False when other owners still hold the file, which is kept.",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "object",
+                    "deleted"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The asset is deleted."
+          },
+          "404": {
+            "description": "asset_not_found: no such asset, or it is not owned by this App's accountable person."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Assets Delete"
+      }
+    },
     "/openai/v1/assets/{asset_id}/content": {
       "get": {
         "description": "Serve a cached generated asset referenced by a signed URL.",
@@ -27815,6 +27895,86 @@
           }
         ],
         "summary": "Systemone"
+      }
+    },
+    "/v1/assets/{asset_id}": {
+      "delete": {
+        "description": "Delete an asset this App (or its accountable person) made; the same work as the browser Delete.",
+        "operationId": "assets_delete_v1_assets__asset_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "asset_id",
+            "required": true,
+            "schema": {
+              "title": "Asset Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "deleted": {
+                      "enum": [
+                        true
+                      ],
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "enum": [
+                        "gateway.asset"
+                      ],
+                      "type": "string"
+                    },
+                    "physical_removed": {
+                      "description": "False when other owners still hold the file, which is kept.",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "object",
+                    "deleted"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The asset is deleted."
+          },
+          "404": {
+            "description": "asset_not_found: no such asset, or it is not owned by this App's accountable person."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AppKeyBearer": []
+          },
+          {
+            "AppKeyApiKey": []
+          },
+          {
+            "AppKeyXApiKey": []
+          }
+        ],
+        "summary": "Assets Delete"
       }
     },
     "/v1/assets/{asset_id}/content": {

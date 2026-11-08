@@ -26202,6 +26202,49 @@ async def assets_content(asset_id: str, request: Request):
     )
 
 
+ASSETS_DELETE_OPENAPI = {"responses": {"200": {"description": "The asset is deleted.", "content": {"application/json": {"schema": {
+    "type": "object", "required": ["id", "object", "deleted"],
+    "properties": {"id": {"type": "string"}, "object": {"type": "string", "enum": ["gateway.asset"]},
+                   "deleted": {"type": "boolean", "enum": [True]},
+                   "physical_removed": {"type": "boolean", "description": "False when other owners still hold the file, which is kept."}}}}}},
+    "404": {"description": "asset_not_found: no such asset, or it is not owned by this App's accountable person."}}}
+
+
+async def assets_delete(asset_id: str, request: Request):
+    """Delete an asset this App (or its accountable person) made; the same work as the browser Delete."""
+    auth_context = await asyncio.to_thread(authenticate_request, request, "/v1/assets/{asset_id}")
+    if isinstance(auth_context, Response):
+        return auth_context
+    return await asyncio.to_thread(_delete_owned_asset, asset_id, auth_context)
+
+
+def _delete_owned_asset(asset_id: str, auth_context: AuthContext) -> Response:
+    """Only an owner deletes: the signed content URL is a bearer capability to read, never to delete.
+
+    Unknown, malformed and not-owned ids all answer ``asset_not_found`` so ids cannot be probed.
+    """
+    not_found = JSONResponse(PublicFailure("asset_not_found", 404, asset_id=asset_id).body(), status_code=404)
+    cache_path = asset_cache_path(asset_id)
+    if auth_context.identity is None or cache_path is None or not cache_path.exists():
+        return not_found
+    owners = {str(o) for o in _read_asset_metadata(asset_id).get("owner_key_hashes") or [] if isinstance(o, str)}
+    from gateway.content_access import decide_own
+    # The same owner rule as the owner-scoped asset read (`_asset_access_allowed`), without its no-owner exception:
+    # an asset nobody owns is not deleted by a caller.
+    if not owners or not decide_own(_asset_content_viewer(auth_context), owners):
+        return not_found
+    identity = auth_context.identity
+    app_id = getattr(identity, "app_id", None)
+    removed = me_media.remove_asset(
+        asset_id, person_id=getattr(identity, "person_id", None),
+        actor_kind="app" if app_id else "api_key",
+        actor_id=app_id or getattr(identity, "credential_id", None) or getattr(identity, "key_hash", None),
+        actor_label=getattr(identity, "name", None), job_id=None,
+        asset_deleter=_LIBRARY_ASSET_DELETER, admin_db_path=ADMIN_STORE.path, prompt_memory_path=media_jobs.DB_PATH,
+    )
+    return JSONResponse({"id": asset_id, "object": "gateway.asset", "deleted": True, "physical_removed": removed})
+
+
 @app.get("/gateway/v1/assets/{asset_id}")
 async def gateway_asset_metadata(asset_id: str, request: Request):
     """Return gateway-native metadata for a generated asset handle."""
@@ -34061,6 +34104,7 @@ FRONTEND_TRANSLATORS.register("identity", {
                                  response_class=Response, auth=operation_security.SIGNED_URL),
     "assets.content": SelfAuthOp(assets_content, frozenset({"GET"}), openapi_extra=SIGNED_IMAGE_CONTENT_OPENAPI,
                                  response_class=Response, auth=operation_security.SIGNED_URL),
+    "assets.delete": SelfAuthOp(assets_delete, frozenset({"DELETE"}), openapi_extra={**ASSETS_DELETE_OPENAPI}, auth=operation_security.APP_KEY),
     "videos.create": SelfAuthOp(videos_create, frozenset({"POST"}), openapi_extra=VIDEOS_CREATE_OPENAPI, auth=operation_security.APP_KEY),
     "videos.retrieve": SelfAuthOp(videos_status, frozenset({"GET"}), openapi_extra=VIDEOS_STATUS_OPENAPI, auth=operation_security.APP_KEY),
     "videos.content": SelfAuthOp(videos_content, frozenset({"GET"}), openapi_extra=VIDEOS_CONTENT_OPENAPI,

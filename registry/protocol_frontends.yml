@@ -124,6 +124,14 @@ records:
         canonical: /v1/assets/{asset_id}/content
         alias: /openai/v1/assets/{asset_id}/content
         runtime_policy: {protocol: openai.images, intent: image.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
+      - methods: [DELETE]
+        translator: identity
+        intent: assets.delete
+        canonical: /v1/assets/{asset_id}
+      - methods: [DELETE]
+        translator: identity
+        intent: assets.delete
+        canonical: /openai/v1/assets/{asset_id}
       - methods: [POST]
         translator: identity
         intent: videos.create
