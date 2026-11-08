@@ -22,6 +22,8 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 
+from gateway.extensions import ExtensionError, multipart_extensions
+from gateway.video_inputs import parse_bracket_form
 from gateway.workflow_call import sniff
 from gateway.workflow_runtime_types import MEDIA_PATH_UNSUPPORTED, MediaRef, RunRefused, RunRequest
 
@@ -156,7 +158,8 @@ def request_scope(request, spool: FileRequestSpool):
 # ------------------------------------------------------------------------------------------------- the run request
 
 _NESTED = re.compile(r"[.\[\]/]")
-_BODY_KEYS = frozenset({"inputs", "binding"})
+_BODY_KEYS = frozenset({"inputs", "binding", "extensions"})
+_BRACKET_CONTROL = "extensions["
 _CHUNK = 64 * 1024
 
 
@@ -177,8 +180,11 @@ async def read_run_request(request, workflow_id: str, *, spool: FileRequestSpool
                            idempotency_key: str | None, wait_s: float) -> RunRequest | RunRefused:
     """The wire request of the generic run route as a ``RunRequest``.
 
-    JSON: ``{"inputs": {...}, "binding": "<key>"?}``. Multipart: a text part ``inputs`` holding that JSON object, a text
-    part ``binding``, and one file part per media input (a repeated name is a multi-item input). A media input may be a
+    JSON: ``{"inputs": {...}, "binding": "<key>"?, "extensions": {...}?}``. Multipart: a text part ``inputs`` holding
+    that JSON object, a text part ``binding``, the controls (a text part ``extensions`` holding a JSON object, and the
+    bracket form ``extensions[<namespace>][<key>]``, which the routes take over the JSON object), and one file part per
+    media input (a repeated name is a multi-item input). The controls are read as every other job route reads them:
+    ``multipart_extensions`` for the JSON part, ``parse_bracket_form`` for the bracket parts. A media input may be a
     library asset ``{"asset_id": "..."}`` in ``inputs``; ``library_ref(asset_id)`` returns its ``MediaRef`` or None when
     the caller may not read it. A file part addressed below a top-level name is ``media_path_unsupported``.
     """
@@ -186,10 +192,18 @@ async def read_run_request(request, workflow_id: str, *, spool: FileRequestSpool
     media: dict[str, list[MediaRef]] = {}
     if content_type == "multipart/form-data":
         from gateway import request_forms
-        form = await request_forms.read_form(request)
+        try:
+            form = await request_forms.read_form(request)
+        except Exception:      # a malformed form or one over a form limit: the caller's mistake, as on the other form routes
+            return _invalid("invalid_form", "the multipart form is malformed or exceeds a form limit", status=400)
         raw_inputs, binding = _text(form.get("inputs")), _text(form.get("binding"))
+        brackets: list[tuple[str, str]] = []
         for name in form.keys():
-            if name in _BODY_KEYS:
+            if name in _BODY_KEYS or name.startswith(_BRACKET_CONTROL):
+                if any(_text(part) is None for part in form.getlist(name)):
+                    return _invalid("invalid_request", f"{name}: a control must be a value part, not a file")
+                if name.startswith(_BRACKET_CONTROL):
+                    brackets.extend((name, str(part)) for part in form.getlist(name))
                 continue
             for part in form.getlist(name):
                 if _text(part) is not None:
@@ -205,16 +219,25 @@ async def read_run_request(request, workflow_id: str, *, spool: FileRequestSpool
             inputs = json.loads(raw_inputs) if raw_inputs else {}
         except (ValueError, RecursionError):  # nested past the parser's depth is not valid JSON either
             return _invalid("invalid_request", "inputs is not valid JSON")
+        try:
+            controls = multipart_extensions(form.get("extensions"))
+            extensions = parse_bracket_form([("extensions", controls), *brackets]).get("extensions", {})
+        except (ExtensionError, ValueError) as exc:
+            return _invalid("invalid_extensions", str(exc), status=400)
     elif content_type in ("application/json", ""):
         try:
             body = await request.json()
         except (ValueError, RecursionError):
             return _invalid("invalid_request", "the body is not valid JSON")
         if not isinstance(body, Mapping) or set(body) - _BODY_KEYS:
-            return _invalid("invalid_request", "the body takes only inputs and binding")
+            return _invalid("invalid_request", "the body takes only inputs, binding and extensions")
         inputs, binding = body.get("inputs", {}), body.get("binding")
         if binding is not None and not isinstance(binding, str):
             return _invalid("invalid_request", "binding must be a string")
+        try:
+            extensions = multipart_extensions(body.get("extensions"))
+        except ExtensionError:
+            return _invalid("invalid_extensions", "extensions must be a JSON object", status=400)
     else:
         return _invalid("unsupported_media_type", "send JSON or multipart/form-data", status=415)
     if not isinstance(inputs, Mapping):
@@ -229,4 +252,5 @@ async def read_run_request(request, workflow_id: str, *, spool: FileRequestSpool
         else:
             plain[str(name)] = value
     return RunRequest(workflow_id=workflow_id, inputs=plain, media={n: tuple(r) for n, r in media.items()},
-                      binding_key=binding or None, idempotency_key=idempotency_key or None, wait_s=wait_s)
+                      binding_key=binding or None, idempotency_key=idempotency_key or None, wait_s=wait_s,
+                      extensions=extensions)

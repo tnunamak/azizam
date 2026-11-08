@@ -391,6 +391,9 @@ class RunRequest:
     binding_key: str | None = None
     idempotency_key: str | None = None
     wait_s: float = 0.0
+    # The request controls, by namespace (``extensions`` on the wire): the prompt-memory control reaches the job's
+    # payload, where the prompt-memory rules decide what is kept. Not part of run identity.
+    extensions: Mapping[str, Any] = field(default_factory=dict)
     frontend_id: str = "workflows"
     # The request receipt this run closes when its job ends (a row that answered with the job). None: no receipt.
     request_id: str | None = None
