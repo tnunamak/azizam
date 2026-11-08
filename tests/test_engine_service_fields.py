@@ -188,6 +188,8 @@ class TestVisionViaAux:
     def _prepare(self, service_id: str, *, aux_loaded: bool | None, **fields):
         with patch.object(proxy, "config", {"backends": {service_id: _vision_service(**fields)}}), derived_patch("LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5051"}
         ), patch.object(proxy, "get_active_backend", AsyncMock(return_value=service_id)), patch.object(
+            proxy, "current_llm_model_for_backend", AsyncMock(return_value="loaded-model")
+        ), patch.object(
             proxy, "loaded_aux_present", return_value=aux_loaded
         ), patch.object(proxy, "vision_capable_llm_backends", return_value=[]):
             return asyncio.run(proxy._prepare_litellm_local_llm_request(
@@ -216,6 +218,8 @@ class TestVisionViaAux:
             loaded = patch.object(proxy, "loaded_aux_present", return_value=True)
             with patch.object(proxy, "config", {"backends": {service_id: _vision_service(**fields)}}), derived_patch("LLM_BACKEND_HOSTS", {service_id: "http://127.0.0.1:5051"}
             ), patch.object(proxy, "get_active_backend", AsyncMock(return_value=service_id)), patch.object(
+                proxy, "current_llm_model_for_backend", AsyncMock(return_value="loaded-model")
+            ), patch.object(
                 proxy, "vision_capable_llm_backends", return_value=[]
             ), loaded as present:
                 asyncio.run(proxy._prepare_litellm_local_llm_request(

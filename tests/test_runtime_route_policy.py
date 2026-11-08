@@ -1105,6 +1105,8 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ), patch.object(
             proxy, "get_active_backend", AsyncMock(return_value="kobold")
         ), patch.object(
+            proxy, "current_llm_model_for_backend", AsyncMock(return_value="loaded-model")
+        ), patch.object(
             proxy, "loaded_aux_present", return_value=True
         ), patch.object(
             proxy, "ensure_target", AsyncMock(return_value=True)
