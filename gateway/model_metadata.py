@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Mapping
 
+from gateway.manifests import asset_leaf_specs
+
 MODEL_TYPES: tuple[str, ...] = (
     "language", "embedding", "reranking", "image", "video", "audio", "decision",
 )
@@ -434,7 +436,7 @@ def _asset_inputs(manifest: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     inputs = manifest.get("inputs")
     if not isinstance(inputs, Mapping):
         return []
-    return [spec for spec in inputs.values() if isinstance(spec, Mapping) and spec.get("type") == "asset"]
+    return [leaf for spec in inputs.values() for leaf in asset_leaf_specs(spec)]
 
 
 def _asset_input_modality(spec: Mapping[str, Any], *, default: str | None) -> str | None:

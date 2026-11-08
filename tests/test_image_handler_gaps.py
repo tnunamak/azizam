@@ -72,7 +72,7 @@ class ImageHandlerGapTests(IsolatedAsyncioTestCase):
             "capability": "image",
             "inputs": {
                 "prompt": {"type": "string"},
-                "source_image": {"type": "asset"},
+                "source_image": {"type": "asset", "accepts": ["image/*"]},
                 "seed": {"type": "integer", "minimum": 0, "generate": {
                     "generator": "random_integer", "minimum": 0, "maximum": 4294967295}},
             },

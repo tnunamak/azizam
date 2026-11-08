@@ -343,7 +343,7 @@ from gateway.video_limits import limits_for_workflow, video_limits
 from gateway.app_key_openapi import augment_app_key_openapi
 from gateway import operation_security
 from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
-from gateway.workflow_openapi import advertised_inputs_schema, workflow_catalog
+from gateway.workflow_openapi import VIDEO_REFERENCE_INPUT, advertised_inputs_schema, workflow_catalog
 from gateway.discovery_metadata import (
     build_gateway_discovery_metadata,
     build_llms_txt,
@@ -391,6 +391,7 @@ from gateway.manifests import (
     ManifestError,
     ManifestIdentity,
     Provenance,
+    accepts_of,
     bind_backend_request,
     load_workflow_manifest,
     manifest_identity,
@@ -9757,12 +9758,14 @@ async def proxy_graph_image_edit_request(
             resolver = _media_input_resolver()
             edit_destination = _media_input_destination(_GRAPH_BACKEND_ID)
             try:
-                for content in uploaded_contents:
+                for part_accepts, content in zip(_edit_part_accepts(manifest, len(uploaded_contents)), uploaded_contents):
                     await asyncio.to_thread(
                         resolver.check_upload, auth_context, content, destination=edit_destination,
-                        accepts=_MEDIA_INPUT_IMAGE)
+                        accepts=part_accepts)
             except media_inputs.MediaInputError as exc:
                 return _refuse_edit_image(receipt, exc)
+            except _InputReferenceError as exc:
+                return _refuse_edit_image(receipt, media_inputs.MediaInputError(media_inputs.INVALID, str(exc)))
             image_content = uploaded_contents[0]
             # What the caller gave the workflow, before any mask is applied: the result keeps these as its sources.
             made_from = [_upload_as_output_input(image_file, image_content)]
@@ -11190,7 +11193,35 @@ def _resolve_cached_image_asset(
     return media_delivery.deliver_bytes(path.read_bytes(), path.suffix, "none"), f"{asset_id}{path.suffix or '.png'}"
 
 
-_MEDIA_INPUT_IMAGE = ("image/*",)
+# What the OpenAI-shaped image and video fields (``image[]``, ``input_reference``) accept when the workflow's contract
+# declares no input for the picture: the wire carries pictures. A contract that declares the input decides instead.
+_IMAGE_WIRE_ACCEPTS = ("image/*",)
+
+
+def _edit_part_accepts(manifest: Mapping[str, Any] | None, count: int) -> list[tuple[str, ...]]:
+    """What each ``image[]`` part of an edit request accepts, in submission order: the first part is the contract's
+    ``source_image``, and each later part is the next input the binding marks ``route_bound_inputs``, in the order the
+    contract lists its inputs (the order the OpenAPI projection advertises). A part with no input of its own takes the wire's."""
+    bound = set(_manifest_required_route_bound_inputs(manifest, DERIVED._GRAPH_BINDING))
+    inputs = (manifest or {}).get("inputs") or {}
+    names = ["source_image"] + [
+        name for name, spec in inputs.items()
+        if name in bound and name != "source_image" and isinstance(spec, Mapping) and spec.get("type") == "asset"]
+    return [_input_accepts(manifest, names[index]) if index < len(names) else _IMAGE_WIRE_ACCEPTS for index in range(count)]
+
+
+def _input_accepts(manifest: Mapping[str, Any] | None, input_name: str) -> tuple[str, ...]:
+    """The media types the contract's asset input ``input_name`` accepts. The contract is the one source: nothing here
+    guesses a type for an input it declares. Only an input the contract does not declare at all takes the wire's own, a picture;
+    one declared with another shape is refused."""
+    inputs = (manifest or {}).get("inputs") or {}
+    if input_name not in inputs:
+        return _IMAGE_WIRE_ACCEPTS
+    spec = inputs[input_name]
+    if not isinstance(spec, Mapping) or spec.get("type") != "asset":
+        # Declared, but not as a picture the wire can carry: the contract decides, so this field is refused.
+        raise _InputReferenceError(f"{input_name} is not declared as an asset input in this workflow")
+    return accepts_of(spec)
 
 
 def _end_request_media_inputs(holder: media_inputs.Holder) -> None:
@@ -11209,21 +11240,24 @@ async def _with_request_media_inputs(run: Callable[[media_inputs.Holder], Awaita
         await asyncio.to_thread(_end_request_media_inputs, holder)
 
 
-def _resolve_reference_upload(data: bytes, auth_context: AuthContext | None, holder: media_inputs.Holder) -> bytes:
+def _resolve_reference_upload(
+    data: bytes, auth_context: AuthContext | None, holder: media_inputs.Holder, accepts: tuple[str, ...],
+) -> bytes:
     """Bytes the caller sent as an input_reference (a data: URI, base64 or an uploaded part), through the resolver."""
     try:
         return _media_input_resolver().resolve_upload(
             auth_context, data, holder=holder, destination=_media_input_destination(_GRAPH_BACKEND_ID),
-            accepts=_MEDIA_INPUT_IMAGE,
+            accepts=accepts,
         ).data
     except media_inputs.MediaInputError as exc:
         raise _InputReferenceError(exc.message) from exc
 
 
 async def _resolve_reference_asset(
-    asset_id: str, auth_context: AuthContext | None, holder: media_inputs.Holder,
+    asset_id: str, auth_context: AuthContext | None, holder: media_inputs.Holder, accepts: tuple[str, ...],
 ) -> tuple[bytes, str]:
-    data, filename, _media_type = await asyncio.to_thread(_resolve_image_extension_asset, asset_id, auth_context, holder)
+    data, filename, _media_type = await asyncio.to_thread(
+        _resolve_image_extension_asset, asset_id, auth_context, holder, accepts)
     return data, filename
 
 
@@ -11233,10 +11267,11 @@ async def _resolve_input_reference(
     *,
     request: Request | None = None,
     holder: media_inputs.Holder | None = None,
+    accepts: tuple[str, ...],
 ) -> tuple[bytes, str]:
     """Resolve an OpenAI-shaped input_reference into (bytes, filename).
 
-    Every kind goes through the media input resolver (S2.6b): it measures the bytes, refuses what is not an image,
+    Every kind goes through the media input resolver (S2.6b): it measures the bytes, refuses what ``accepts`` does not list,
     runs the read and disclosure checks, and holds a lease for ``holder`` (a request holder the caller releases when
     its request ends). Without a holder the lease lasts only for this call.
 
@@ -11252,7 +11287,7 @@ async def _resolve_input_reference(
     """
     if holder is None:
         return await _with_request_media_inputs(
-            lambda own: _resolve_input_reference(value, auth_context, request=request, holder=own))
+            lambda own: _resolve_input_reference(value, auth_context, request=request, holder=own, accepts=accepts))
     if value is None:
         raise _InputReferenceError("input_reference is empty")
 
@@ -11261,13 +11296,13 @@ async def _resolve_input_reference(
     if isinstance(value, dict):
         asset_id = value.get("asset_id")
         if isinstance(asset_id, str):
-            return await _resolve_reference_asset(asset_id.strip(), auth_context, holder)
+            return await _resolve_reference_asset(asset_id.strip(), auth_context, holder, accepts)
         for key in ("image_url", "url", "input_image"):
             inner = value.get(key)
             if isinstance(inner, dict):
                 inner = inner.get("url") or inner.get("image_url")
             if isinstance(inner, str):
-                return await _resolve_input_reference(inner, auth_context, request=request, holder=holder)
+                return await _resolve_input_reference(inner, auth_context, request=request, holder=holder, accepts=accepts)
         raise _InputReferenceError(
             "input_reference dict missing a recognizable image_url/url field"
         )
@@ -11280,9 +11315,9 @@ async def _resolve_input_reference(
         raise _InputReferenceError("input_reference is empty")
 
     if s.startswith("asset:"):
-        return await _resolve_reference_asset(s[len("asset:"):].strip(), auth_context, holder)
+        return await _resolve_reference_asset(s[len("asset:"):].strip(), auth_context, holder, accepts)
     if s.startswith("img_"):
-        return await _resolve_reference_asset(s, auth_context, holder)
+        return await _resolve_reference_asset(s, auth_context, holder, accepts)
 
     # HTTP(S) URL: fetched by the gateway's media ingestion, which the resolver is given and calls.
     if s.startswith(("http://", "https://")):
@@ -11296,7 +11331,7 @@ async def _resolve_input_reference(
         try:
             resolved = await _media_input_resolver(fetch=fetch).resolve_url(
                 auth_context, s, holder=holder, destination=_media_input_destination(_GRAPH_BACKEND_ID),
-                accepts=_MEDIA_INPUT_IMAGE,
+                accepts=accepts,
             )
         except media_inputs.MediaInputError as exc:
             if exc.code == media_inputs.FETCH_FAILED and exc.__cause__ is not None:
@@ -11320,7 +11355,7 @@ async def _resolve_input_reference(
                     ext = "jpg" if mime == "jpeg" else mime
         except Exception as e:
             raise _InputReferenceError(f"failed to decode data: URI: {e}") from e
-        return await asyncio.to_thread(_resolve_reference_upload, data, auth_context, holder), f"input_reference.{ext}"
+        return await asyncio.to_thread(_resolve_reference_upload, data, auth_context, holder, accepts), f"input_reference.{ext}"
 
     # Raw base64 fallback. Only accept if it decodes to non-trivial bytes.
     try:
@@ -11328,7 +11363,7 @@ async def _resolve_input_reference(
     except Exception:
         data = b""
     if len(data) >= 64:  # Heuristic: any image is bigger than 64 bytes.
-        return await asyncio.to_thread(_resolve_reference_upload, data, auth_context, holder), "input_reference.png"
+        return await asyncio.to_thread(_resolve_reference_upload, data, auth_context, holder, accepts), "input_reference.png"
 
     # Check after base64: JPEG base64 commonly starts with '/'. No branch
     # treats a public string as a local filename or opens the supplied path.
@@ -11505,8 +11540,10 @@ async def _resolve_video_workflow_asset(
     auth_context: AuthContext | None,
     request: Request | None = None,
     holder: media_inputs.Holder | None = None,
+    accepts: tuple[str, ...] = (),
 ) -> tuple[bytes, str, str]:
-    """Resolve one workflow asset to (bytes, filename, content_type).
+    """Resolve one workflow asset to (bytes, filename, content_type). ``accepts`` is the contract input's list for a
+    picture; a video is not yet measured by the resolver, so it does not use it.
 
     Accepted values: a gateway video id (`video_...` or `{"video_id": ...}`,
     video inputs only), an `asset_id` (images only), an http(s) URL, a data:
@@ -11545,7 +11582,7 @@ async def _resolve_video_workflow_asset(
         mime = fetched.content_type if fetched.content_type != "application/octet-stream" else "video/mp4"
         return fetched.data, f"source{video_inputs.suffix_for_video(fetched.filename, mime)}", mime
     try:
-        data, name = await _resolve_input_reference(value, auth_context, request=request, holder=holder)
+        data, name = await _resolve_input_reference(value, auth_context, request=request, holder=holder, accepts=accepts)
     except _InputReferenceError as exc:
         raise _VideoAssetError(f"{param}: {exc}", param=param, echoes_input=True) from exc
     suffix = Path(name).suffix.lower()
@@ -11604,7 +11641,7 @@ async def _resolve_video_workflow_assets(
         kind = "video" if name == source_input else "image"
         data, filename, mime = await _resolve_video_workflow_asset(
             value, kind=kind, param=f"{ext_param}.{name}", auth_context=auth_context, request=request,
-            holder=holder,
+            holder=holder, accepts=accepts_of(spec),
         )
         if not data:
             raise _VideoAssetError(f"{name} is empty", param=f"{ext_param}.{name}")
@@ -12429,6 +12466,7 @@ async def _proxy_graph_video_create(
                 auth_context,
                 request=request,
                 holder=media_holder,
+                accepts=_input_accepts(video_manifest, VIDEO_REFERENCE_INPUT),
             )
         except _InputReferenceError as e:
             return Response(
@@ -12873,7 +12911,8 @@ async def _submit_video_chain(
         if body.get("input_reference"):
             try:
                 image_bytes, image_name = await _resolve_input_reference(
-                    body["input_reference"], auth_context, request=request, holder=media_holder)
+                    body["input_reference"], auth_context, request=request, holder=media_holder,
+                    accepts=_input_accepts(_find_video_manifest(workflow_name, workflow_cfg), VIDEO_REFERENCE_INPUT))
             except _InputReferenceError as exc:
                 return _json_error(400, str(exc), param="input_reference")
             first_frame_image = await _upload_graph_input(image_bytes, image_name, "image/png", auth_context)
@@ -22378,7 +22417,7 @@ _IMAGE_ASSET_REFUSALS = {
 
 
 def _resolve_image_extension_asset(
-    asset_id: str, auth_context: AuthContext | None, holder: media_inputs.Holder,
+    asset_id: str, auth_context: AuthContext | None, holder: media_inputs.Holder, accepts: tuple[str, ...],
 ) -> tuple[bytes, str, str]:
     """An image extension input named by asset id, through the media input resolver: the caller's read access, the
     measured type, the disclosure check for the engine, and a lease. Returns (bytes, filename, media type)."""
@@ -22388,7 +22427,7 @@ def _resolve_image_extension_asset(
     try:
         resolved = _media_input_resolver().resolve_asset(
             auth_context, asset_id, holder=holder, destination=_media_input_destination(_GRAPH_BACKEND_ID),
-            accepts=("image/*",),
+            accepts=accepts,
         )
     except media_inputs.MediaInputError as exc:
         raise _InputReferenceError(_IMAGE_ASSET_REFUSALS.get(exc.code, exc.message)) from exc
@@ -22440,84 +22479,93 @@ async def _upload_image_workflow_extension_assets(
         return updated, allow_error
     next_block = dict(block)
     uploaded_any = False
+    # Every supplied input is read and checked (syntax, ownership, disclosure, size, measured type against its accepts)
+    # before the first one goes to the engine, so a refused input leaves no upload behind for the others.
+    pending: list[tuple[str, str | None, bytes, str, str]] = []
+    made_upload = False  # an uploaded file was measured and may have made a stored copy
     holder = media_inputs.Holder("request", getattr(receipt, "request_id", None) or f"req_{uuid.uuid4().hex}")
-    for input_name, value in block.items():
-        field_name = _extension_asset_multipart_field(value)
-        asset_id = _extension_asset_id(value)
-        if field_name is None and asset_id is None:
-            continue
+    try:
+        for input_name, value in block.items():
+            field_name = _extension_asset_multipart_field(value)
+            asset_id = _extension_asset_id(value)
+            if field_name is None and asset_id is None:
+                continue
 
-        input_key = str(input_name)
-        spec = inputs.get(input_key)
-        if field_name is not None and field_name not in allowed_fields:
-            continue
-        if input_key not in supported or not isinstance(spec, Mapping):
-            return updated, _image_extension_error_response(
-                receipt,
-                f"{input_key} is not a supported asset extension input",
-                param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
-            )
-        if spec.get("type") != "asset":
-            return updated, _image_extension_error_response(
-                receipt,
-                f"{input_key} is not an asset extension input",
-                param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
-            )
-
-        if asset_id is not None:
-            try:
-                content, filename, content_type = await asyncio.to_thread(
-                    _resolve_image_extension_asset, asset_id, auth_context, holder)
-            except _InputReferenceError as exc:
+            input_key = str(input_name)
+            spec = inputs.get(input_key)
+            if field_name is not None and field_name not in allowed_fields:
+                continue
+            if input_key not in supported or not isinstance(spec, Mapping):
                 return updated, _image_extension_error_response(
                     receipt,
-                    str(exc),
+                    f"{input_key} is not a supported asset extension input",
                     param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
                 )
-        else:
-            upload = form.get(field_name)
-            read = getattr(upload, "read", None)
-            if upload is None or not callable(read):
+            if spec.get("type") != "asset":
                 return updated, _image_extension_error_response(
                     receipt,
-                    f"multipart field {field_name!r} is required for {input_key}",
+                    f"{input_key} is not an asset extension input",
                     param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
                 )
 
-            try:
-                content = await read()
-            except Exception as exc:  # noqa: BLE001
-                return updated, _image_extension_error_response(
-                    receipt,
-                    f"could not read multipart field {field_name!r}: {exc}",
-                    param=field_name,
-                )
+            if asset_id is not None:
+                try:
+                    content, filename, content_type = await asyncio.to_thread(
+                        _resolve_image_extension_asset, asset_id, auth_context, holder, accepts_of(spec))
+                except _InputReferenceError as exc:
+                    return updated, _image_extension_error_response(
+                        receipt,
+                        str(exc),
+                        param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
+                    )
+            else:
+                upload = form.get(field_name)
+                read = getattr(upload, "read", None)
+                if upload is None or not callable(read):
+                    return updated, _image_extension_error_response(
+                        receipt,
+                        f"multipart field {field_name!r} is required for {input_key}",
+                        param=f"extensions.{WORKFLOW_EXTENSION_NAMESPACE}.{input_key}",
+                    )
 
-            # The bytes are measured and checked by the resolver; the name and type that came with them are only what
-            # the engine is told, as before.
-            try:
-                content = (await asyncio.to_thread(
-                    _media_input_resolver().resolve_upload, auth_context, content, holder=holder,
-                    destination=_media_input_destination(_GRAPH_BACKEND_ID), accepts=_MEDIA_INPUT_IMAGE)).data
-            except media_inputs.MediaInputError as exc:
-                return updated, _image_extension_error_response(receipt, exc.message, param=field_name)
-            filename = getattr(upload, "filename", None) or f"{field_name}.png"
-            content_type = getattr(upload, "content_type", None) or "image/png"
-        try:
+                try:
+                    content = await read()
+                except Exception as exc:  # noqa: BLE001
+                    return updated, _image_extension_error_response(
+                        receipt,
+                        f"could not read multipart field {field_name!r}: {exc}",
+                        param=field_name,
+                    )
+
+                # The bytes are measured and checked by the resolver; the name and type that came with them are only what
+                # the engine is told, as before.
+                try:
+                    made_upload = True
+                    content = (await asyncio.to_thread(
+                        _media_input_resolver().resolve_upload, auth_context, content, holder=holder,
+                        destination=_media_input_destination(_GRAPH_BACKEND_ID), accepts=accepts_of(spec))).data
+                except media_inputs.MediaInputError as exc:
+                    return updated, _image_extension_error_response(receipt, exc.message, param=field_name)
+                filename = getattr(upload, "filename", None) or f"{field_name}.png"
+                content_type = getattr(upload, "content_type", None) or "image/png"
+            pending.append((input_key, field_name, content, filename, content_type))
+
+        for input_key, field_name, content, filename, content_type in pending:
             uploaded_filename, upload_error = await _upload_graph_image_bytes(
                 client, headers, content, filename=filename, media_type=content_type,
             )
-        finally:
-            # The engine has the bytes, or the run is over. A file an upload made goes with its lease.
-            await asyncio.to_thread(
-                _media_input_resolver().release if asset_id is not None else _end_request_media_inputs, holder)
-        if upload_error is not None:
-            return updated, upload_error
+            if upload_error is not None:
+                return updated, upload_error
 
-        next_block[input_key] = str(uploaded_filename)
-        uploaded_any = True
-        if field_name is not None:
-            _record_image_input(receipt, field_name)
+            next_block[input_key] = str(uploaded_filename)
+            uploaded_any = True
+            if field_name is not None:
+                _record_image_input(receipt, field_name)
+    finally:
+        # The engine has the bytes, or the run is over. A stored asset's lease is released; a file an upload made
+        # goes with its lease.
+        end = _end_request_media_inputs if made_upload else _media_input_resolver().release
+        await asyncio.to_thread(end, holder)
 
     if uploaded_any:
         next_extensions = dict(extensions)

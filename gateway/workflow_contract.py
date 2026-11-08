@@ -29,7 +29,7 @@ import jsonschema
 
 from gateway.manifests import (
     SCHEMA_VERSION_MESSAGE, SUPPORTED_SCHEMA_VERSIONS, ContractError, ContractErrors, ErrorCollector, PathPart, exact_number,
-    validate_input_value)
+    media_bearing, validate_input_value, value_problems)
 from gateway.result_bundle import ResultLimits
 from gateway.workflow_call import SNIFFED_MEDIA_TYPES
 
@@ -345,7 +345,7 @@ class _Semantic:
         schema = output.get("schema")
         if isinstance(schema, Mapping):
             self.spec(at + ("schema",), schema, 1)
-            if _holds_asset(schema):
+            if media_bearing(schema):
                 self.errors.add(at + ("schema",), "asset_in_result_schema", "a result schema describes data, not media")
 
 
@@ -406,66 +406,3 @@ def _whole(value: Any) -> int | None:
     if isinstance(value, float) and math.isfinite(value) and value.is_integer():
         return int(value)
     return None
-
-
-def _holds_asset(spec: Mapping[str, Any]) -> bool:
-    if spec.get("type") == "asset":
-        return True
-    # A broken document is checked too, so a subtree of the wrong shape is skipped here; the schema layer reports it.
-    properties = spec.get("properties")
-    children = (list(properties.values()) if isinstance(properties, Mapping) else []) + [spec.get("items")]
-    return any(isinstance(child, Mapping) and _holds_asset(child) for child in children)
-
-
-# --------------------------------------------------------------------------------------------------- value checks
-
-
-def value_problems(spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...]) -> Iterable[tuple[tuple[PathPart, ...], str, str]]:
-    """Why ``value`` does not fit ``spec``: ``(path, code, message)`` for each problem, nested ones with their own path.
-    A default is held to this, and a caller's value will be (S3.7). A message never holds the value."""
-    kind = spec.get("type")
-    if kind == "object":
-        yield from _object_problems(spec, value, at)
-    elif kind == "array":
-        yield from _array_problems(spec, value, at)
-    else:
-        reason = validate_input_value("the value", value, spec)
-        if reason is None and kind == "string":
-            reason = _length_reason(spec, value)
-        if reason is not None:
-            yield at, "value_invalid", reason
-
-
-def _length_reason(spec: Mapping[str, Any], value: str) -> str | None:
-    if "min_length" in spec and len(value) < spec["min_length"]:
-        return f"the value must have at least {spec['min_length']} characters"
-    if "max_length" in spec and len(value) > spec["max_length"]:
-        return f"the value must have at most {spec['max_length']} characters"
-    return None
-
-
-def _object_problems(spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...]) -> Iterable[tuple[tuple[PathPart, ...], str, str]]:
-    if not isinstance(value, dict):
-        yield at, "value_invalid", "the value must be an object"
-        return
-    properties = spec.get("properties")
-    if properties is None:  # opaque
-        return
-    for key in value:
-        if key not in properties:
-            yield at + (key,), "unknown_field", "the object has a field its input does not list"
-    for name, child in properties.items():
-        if name in value:
-            yield from value_problems(child, value[name], at + (name,))
-        elif child.get("required"):
-            yield at + (name,), "required_missing", f"the object is missing the required field {name}"
-
-
-def _array_problems(spec: Mapping[str, Any], value: Any, at: tuple[PathPart, ...]) -> Iterable[tuple[tuple[PathPart, ...], str, str]]:
-    if not isinstance(value, list):
-        yield at, "value_invalid", "the value must be a list"
-        return
-    if len(value) < spec.get("min_items", 0) or len(value) > spec["max_items"]:
-        yield at, "value_invalid", "the list has too few or too many items"
-    for index, item in enumerate(value):
-        yield from value_problems(spec["items"], item, at + (index,))
