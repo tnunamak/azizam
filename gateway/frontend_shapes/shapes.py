@@ -38,6 +38,7 @@ class OpenAIImagesJson(Shape):
     files = "none"
     output_prefix = "image/"
     timeout_code = "image_generation_timeout"
+    wire_codes = frozenset({timeout_code, "image_client_disconnected"})
     # Wire fields that shape the picture or its encoding, not the workflow's inputs: the answer's encoding and size are
     # read from the wire request when it is rendered.
     transport_fields = Shape.transport_fields | frozenset({

@@ -58,13 +58,15 @@ def coerce(entry: WorkflowEntry, name: str, value: Any) -> Any:
     return value
 
 
-def failure_response(failure: RunFailure | None, *, fallback: str, retry_after_s: int | None = None) -> Response:
+def failure_response(failure: RunFailure | None, *, fallback: str, retry_after_s: int | None = None,
+                     wire_codes: frozenset[str] | None = None) -> Response:
     if failure is None:
         return _wire.error_response(500, fallback, kind="api_error")
     status = failure.upstream_status if failure.category == "upstream" and failure.upstream_status else \
         _STATUS_BY_CATEGORY.get(failure.category, 500)
     response = _wire.error_response(status if status >= 400 else 502, failure.message,
-                                    kind="invalid_request_error" if status < 500 else "api_error", code=failure.code)
+                                    kind="invalid_request_error" if status < 500 else "api_error",
+                                    code=failure.code if wire_codes is None or failure.code in wire_codes else None)
     if retry_after_s is not None and failure.retryable:
         response.headers["Retry-After"] = client_errors.retry_after(str(retry_after_s)) or str(retry_after_s)
     return response
@@ -92,6 +94,9 @@ class Shape:
     transport_fields: ClassVar[frozenset[str]] = frozenset({"model", "response_format", "user"})
     honours_idempotency_key: ClassVar[bool] = True
     timeout_code: ClassVar[str] = "generation_timeout"
+    # The failure codes this wire carries. None: every code the core gives. A wire whose clients never saw the core's
+    # codes lists the few it did send; any other failure is told by its status and message alone.
+    wire_codes: ClassVar[frozenset[str] | None] = None
     # Whether a workflow this shape refuses is refused at save, when no other row serves it (a single-purpose wire).
     save_gate: ClassVar[bool] = False
 
@@ -182,7 +187,7 @@ class Shape:
             return _wire.error_response(404, "Job not found", code="job_not_found")
         if view.status == "failed":
             return failure_response(view.failure, fallback="The job failed",
-                                    retry_after_s=self.retry_after(view, jobs, caller))
+                                    retry_after_s=self.retry_after(view, jobs, caller), wire_codes=self.wire_codes)
         if view.status == "canceled":
             return _wire.error_response(409, "The job was canceled", code="job_canceled")
         if view.status != "succeeded":
