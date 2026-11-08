@@ -160,7 +160,7 @@ def from_contract(manifest: Mapping[str, Any] | None) -> ModelMetadata | None:
     inputs: list[str] = []
     declared = manifest.get("inputs")
     if isinstance(declared, Mapping):
-        if any(isinstance(spec, Mapping) and spec.get("type") != "asset" for spec in declared.values()):
+        if any(isinstance(spec, Mapping) and spec.get("type") == "string" for spec in declared.values()):
             inputs.append(INPUT_MODALITIES[0])
     inputs.extend(_asset_input_modality(spec) or "" for spec in _asset_inputs(manifest))
     outputs = _manifest_output_modalities(manifest)
