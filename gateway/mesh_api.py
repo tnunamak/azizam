@@ -186,7 +186,11 @@ def _input_problems(name: Any, spec: Any, mapped: bool) -> list[str]:
     if not isinstance(kind, str) or kind not in _ROUTE_TYPES:
         return [f"input {name} has a type the route cannot read"]
     if kind == "asset":
-        return []  # the picture's acceptance is checked by the profile, for the one required picture
+        # The picture's acceptance is checked by the profile, for the one required picture. Its byte cap is read only as
+        # an integer (``max_image_bytes``); the grammar also admits 1.0, which the route would silently ignore.
+        if spec.get("max_bytes") is not None and not _is_int(spec["max_bytes"]):
+            return [f"input {name} max_bytes must be an integer"]
+        return []
     problems: list[str] = []
     if spec.get("required") is True:
         problems.append(f"input {name} cannot be required: only the picture is")

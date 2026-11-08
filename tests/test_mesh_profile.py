@@ -403,3 +403,29 @@ def test_the_profile_refusal_code_is_stable() -> None:
     with pytest.raises(ContractErrors) as caught:
         frontend_profiles.check(edited(second_picture))
     assert caught.value.primary.code == "frontend_profile_refused"
+
+
+@pytest.mark.parametrize("cap", [1.0, 2048.0, True, False])
+def test_the_picture_byte_cap_must_be_an_integer(cap: Any) -> None:
+    """The grammar admits 1.0 for ``max_bytes`` (a whole float is an integer to it); the route reads only an int, so a float
+    cap would be dropped and 25 MiB served. The profile refuses it. A bool is refused by the grammar itself."""
+    doc = edited(at(("inputs", "image", "max_bytes"), cap))
+    if isinstance(cap, bool):
+        assert refused(doc).primary.path == ("inputs", "image", "max_bytes")
+        return
+    enforce_contract(doc)   # not an error of the general grammar
+    error = refused_by_profile(doc)
+    assert "max_bytes must be an integer" in str(error)
+
+
+def test_an_integer_picture_byte_cap_is_enforced_and_accepted() -> None:
+    doc = edited(at(("inputs", "image", "max_bytes"), 1024))
+    enforce_contract(doc)
+    assert mesh_api.mesh_profile_errors(doc) == []
+    assert mesh_api.mesh_workflow(doc, "h").max_image_bytes == 1024
+
+
+def refused_by_profile(doc: dict[str, Any]) -> Exception:
+    with pytest.raises(ContractErrors) as caught:
+        frontend_profiles.check(doc)
+    return caught.value
