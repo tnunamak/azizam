@@ -26951,8 +26951,12 @@ def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -
     """The receipt of one row request. It opens before the body is read, so the record the row chooses is named later
     (``_name_row_receipt``)."""
     identity = auth.identity
+    # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
+    # activity read their capability from it. A route that declares none records the generic run intent.
+    route = next((r for r in row.routes if path == r.canonical or path in r.aliases), None)
+    intent = str((route.runtime_policy if route else {}).get("intent") or workflow_run.RUN_INTENT)
     return _RunReceiptOwner(RouteReceipt(
-        protocol=row.receipt_protocol, intent=workflow_run.RUN_INTENT, path=path, request_id=request_id,
+        protocol=row.receipt_protocol, intent=intent, path=path, request_id=request_id,
         app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
         api_key_name=identity.name if identity else None))
 

@@ -136,6 +136,9 @@ def test_a_sync_success_opens_one_receipt_and_closes_it_succeeded(rig):
     # The receipt names the record the row chose, and the row's wire.
     assert receipt["resolved_workflow"] == WORKFLOW
     assert receipt["protocol"]
+    # The intent is the route's declared one (the old 3D route recorded mesh.generate), not the core's run intent:
+    # usage reads the capability from it.
+    assert receipt["intent"] == "mesh.generate"
 
 
 def test_an_async_success_is_closed_by_the_core_when_the_job_ends(rig):
