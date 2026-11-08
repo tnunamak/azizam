@@ -74,6 +74,9 @@ def _long_mp4() -> bytes:
 def _comfy(rig, exchanges, name="comfy"):
     fake = rig.engine(name, scenario("comfyui", f"{rig.name}-comfy", exchanges), host=COMFY_HOST)
     rig.set(proxy, "COMFY_HOST", fake.base_url)
+    # The engine is declared as a deployment declares one: a service record the run core finds by its protocol.
+    rig.monkeypatch.setitem(proxy.config, "backends", {**(proxy.config.get("backends") or {}), name: {
+        "enabled": True, "host": COMFY_HOST, "port": 80, "protocol": "node-graph"}})
     return fake
 
 

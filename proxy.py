@@ -118,6 +118,8 @@ from gateway import video_job_records, prompt_metadata_migration
 from gateway import realtime_proxy
 from gateway import definition_store, generated_defaults, job_envelope, output_selectors, pinned_definitions, result_bundle
 from gateway import pinned_runtime, request_spool, workflow_run
+from gateway import frontend_shapes
+from gateway.frontend_shapes import shapes as frontend_wire_shapes
 from gateway.engine_protocol.types import ResultContext
 from gateway.workflow_runtime_types import JobNotFound, MediaRef, RunRefused
 from gateway import media_input_assets, media_input_leases, media_inputs
@@ -3499,6 +3501,11 @@ def is_openai_model_alias(model_name: str) -> bool:
     return infer_openai_model_category(model_name) is not None
 
 
+def _image_default_model() -> str:
+    """The workflow a generation request runs when it names none: the deployment's configured default."""
+    return DERIVED.COMFY_DEFAULT_MODEL
+
+
 def default_model_for_operation(operation: str, requested_model: str = "") -> str:
     configured_default = model_compat_defaults().get(operation)
     if configured_default:
@@ -3513,7 +3520,7 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
     if operation == "translations":
         return stt_backend_model()
     if operation == "images":
-        return DERIVED.COMFY_DEFAULT_MODEL
+        return _image_default_model()
     if operation == "image_edits":
         return image_edit_default_model()
     if operation == "videos":
@@ -9152,7 +9159,7 @@ async def proxy_graph_image_request(
         return metadata_error
 
     prompt = body.get("prompt", "")
-    requested_model = body.get("model", DERIVED.COMFY_DEFAULT_MODEL)
+    requested_model = body.get("model", _image_default_model())
     model = requested_model
     requested_size = body.get("size")
     size = requested_size or "1024x1024"
@@ -23485,7 +23492,7 @@ def _safe_image_media_job_metadata(
         "mode": "async_image_generation",
         "request_hash": request_hash,
         "idempotency": idempotency,
-        "requested_model": str(body.get("model", DERIVED.COMFY_DEFAULT_MODEL))[:160],
+        "requested_model": str(body.get("model", _image_default_model()))[:160],
         "size": str(body.get("size", "1024x1024"))[:32],
         "n": max(1, min(n_value, 10)),
         "response_format": "url",
@@ -25883,7 +25890,7 @@ async def gateway_image_generations_media_job(request: Request):
         return response
     if protocol_target is not None:
         receipt.backend = protocol_target.engine_id
-    model = str(body.get("model", DERIVED.COMFY_DEFAULT_MODEL))
+    model = str(body.get("model", _image_default_model()))
     manifest = _find_image_manifest("image.generate", model)
     if receipt is not None:
         receipt.requested_workflow = model
@@ -26548,7 +26555,7 @@ def _workflow_engine(adapter_id: str) -> tuple[str, Mapping[str, Any], Any, Any]
     from gateway.engine_protocol import reviewed
     from gateway.engine_protocol.errors import ProtocolError
     for doc in protocol_description.load_registry().values():
-        if doc.adapter_id != adapter_id:
+        if adapter_id not in (doc.adapter_id, doc.binding):      # a binding is keyed by the description's binding name
             continue
         for service_id, record in (config.get("backends") or {}).items():
             if not isinstance(record, Mapping) or _backend_address(record) is None:
@@ -26752,6 +26759,9 @@ class _WorkflowRunPort:
 
 _WORKFLOW_RUN_PORT = _WorkflowRunPort()
 
+# The wire shapes hold no deployment setting: the default workflow of the generation wire is read from configuration here.
+frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesJson.shape_id] = _image_default_model
+
 
 def _workflow_run_core() -> workflow_run.WorkflowRunCore | None:
     """The production run core over the injected snapshot provider and projections, or None until both are set."""
@@ -26853,6 +26863,27 @@ _ROW_ROUTE_DEPS = row_routes.RowRouteDeps(
     scope=lambda request, spool: request_spool.request_scope(request, spool),
     refused=_workflow_run_response,
 )
+
+
+async def _serve_frontend_row(row_id: str, request: Request, auth_context: AuthContext, **shape_options: Any) -> Response:
+    """Answer one request on a frontend row (section 8): the row's shape reads the wire into a run request, the core runs
+    it (``submit_run``), and the shape renders the answer in its own vocabulary. Nothing here depends on what the row
+    serves."""
+    row = next((candidate for candidate in frontend_shapes.bundled_rows() if candidate.id == row_id), None)
+    core = _workflow_run_core()
+    if row is None or core is None or WORKFLOW_SNAPSHOTS is None:
+        return _workflow_run_response(RunRefused(503, "workflow_runtime_unavailable", "Workflow runs are not configured."))
+    shape = frontend_shapes.build_shape(row, **shape_options)
+    snapshot = WORKFLOW_SNAPSHOTS.current()
+    result_limits = _WORKFLOW_RUN_PORT.result_limits()
+    spool = request_spool.FileRequestSpool(
+        _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(result_limits, "max_asset_bytes", 256 * 1024 * 1024))
+    with request_spool.request_scope(request, spool):
+        run_request = await shape.to_run_request(request, row, snapshot, spool=spool)
+        if isinstance(run_request, Response):
+            return run_request
+        view = await core.submit_run(run_request, auth_context, snapshot=snapshot)
+    return await shape.to_response(view, row, jobs=_workflow_job_service(), caller=auth_context, request=request)
 
 
 @app.post("/gateway/v1/workflows/{workflow_id}/run")

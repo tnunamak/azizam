@@ -661,7 +661,8 @@
 # Integration (2026-11-08): +1 test_workflow_owner_api.py (the choices field).
 # Builder D2, mesh goldens: +13 cases in tests/test_adapter_differential_s7_mesh.py (11 cells, the cell-set check, one sensitivity control).
 # Builder D3, oracle profile 2: +20 cases in test_adapter_differential_normalizer.py, +13 in test_adapter_differential_deltas.py.
-pytest = 22527
+# Builder D5, image routes onto rows: +3 cases in test_frontend_shapes.py (short-form names, the deployment default, wire fields), +4 in test_frontend_row_serving.py.
+pytest = 22534
 # Train r92: Try picture-upload specs, 3103 measured.
 # W1 (one way to end a session in the browser): +39 vitest cases in session-end.spec.ts and
 # session-cover.spec.tsx, -3 sign-out cases moved out of reauth-transport.spec.tsx; 3139 measured.

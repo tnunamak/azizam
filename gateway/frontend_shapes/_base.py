@@ -132,7 +132,7 @@ class Shape:
             if isinstance(read, Response):
                 return read
             fields = read
-        target = _wire.pop_str(fields, "model")
+        target = _wire.pop_str(fields, "model") or self.default_target()
         servable = lambda entry: not self.profile(entry.contract)  # noqa: E731
         pool = _wire.candidates(snapshot, row, servable)
         supplied = [*fields, *(name for entry in pool for name in _wire.asset_input_names(entry) if uploads)]
@@ -154,6 +154,10 @@ class Shape:
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
         """Hook: a shape sets inputs the wire spells differently (``size`` as width and height)."""
         return inputs
+
+    def default_target(self) -> str | None:
+        """The workflow a request that names no model runs: the deployment's default for this wire, or None."""
+        return None
 
     # -- response -----------------------------------------------------------------------------------------------
 
