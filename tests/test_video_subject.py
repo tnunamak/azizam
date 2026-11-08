@@ -40,6 +40,28 @@ class SubjectHelperTests(unittest.TestCase):
         with self.assertRaisesRegex(vs.SubjectRoleError, "track_node"):
             vs.check_roles(roles, _graph())
 
+    def test_an_added_role_id_may_not_collide_with_a_generated_fit_node(self) -> None:
+        for key in ("point_detect_node", "fit_canvas_node"):
+            for generated in vs.FIT_IDS:
+                with self.assertRaisesRegex(vs.SubjectRoleError, "generated"):
+                    vs.check_roles({**ROLES, key: generated}, _graph())
+
+    def test_the_generated_ids_are_exactly_what_the_fit_adds(self) -> None:
+        g = _graph()
+        before = set(g)
+        vs.add_reference_fit(g, ROLES)
+        self.assertEqual(set(g) - before - {ROLES["fit_canvas_node"]}, set(vs.FIT_IDS))
+
+    def test_the_two_added_role_ids_may_not_be_equal(self) -> None:
+        with self.assertRaisesRegex(vs.SubjectRoleError, "fit_canvas_node"):
+            vs.check_roles({**ROLES, "fit_canvas_node": ROLES["point_detect_node"]}, _graph())
+
+    def test_a_graph_that_holds_a_generated_id_is_refused(self) -> None:
+        g = _graph()
+        g["90"] = {"class_type": "Other", "inputs": {}}
+        with self.assertRaisesRegex(vs.SubjectRoleError, "generated"):
+            vs.check_roles(ROLES, g)
+
     def test_a_role_naming_no_node_or_an_existing_added_node_is_refused(self) -> None:
         with self.assertRaisesRegex(vs.SubjectRoleError, "color_mask_node"):
             vs.check_roles({**ROLES, "color_mask_node": "9999"}, _graph())

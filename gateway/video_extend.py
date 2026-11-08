@@ -18,6 +18,7 @@ Frame arithmetic, with the grid ``frame_step`` and ``frame_offset`` from the bin
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -201,13 +202,19 @@ def engine_for(builder: str | None) -> ChainEngine | None:
     return ENGINES.get(str(builder or ""))
 
 
-def segment_of_node(units: Sequence[Mapping[str, str]], node_id: str, *, progress_only: bool = False) -> int | None:
+def segment_of_node(units: Sequence[Mapping[str, str]], node_id: str, *, node_prefix: str | None = None,
+                    progress_only: bool = False) -> int | None:
     """Index of the added-segment unit that owns ``node_id`` (None if shared).
 
-    ``progress_only`` matches only a unit's sampler and decoder nodes. The engine may run a later segment's text encode
-    before an earlier segment's sampler, so progress and the finished-segment count must not follow other nodes.
+    A unit's sampler and decoder nodes always match. Any other node of a segment matches by ``node_prefix`` (the
+    binding's, with ``{index}``) unless ``progress_only``: the engine may run a later segment's text encode before an
+    earlier segment's sampler, so progress and the finished-segment count must not follow other nodes.
     """
     for index, unit in enumerate(units):
-        if node_id in unit.values() or (not progress_only and node_id.startswith(f"s{index}_")):
+        if node_id in unit.values():
             return index
-    return None
+    if node_prefix is None or progress_only:
+        return None
+    head, _, tail = node_prefix.partition("{index}")
+    match = re.match(re.escape(head) + r"(\d+)" + re.escape(tail), node_id)
+    return int(match.group(1)) if match and int(match.group(1)) < len(units) else None

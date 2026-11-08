@@ -228,8 +228,8 @@ class GraphTests(unittest.TestCase):
     def test_segment_of_node_maps_progress_nodes(self) -> None:
         built = self._chain([("a", 5), ("b", 5), ("c", 5)])
         self.assertEqual(ve.segment_of_node(built.units, "s1_sample"), 1)
-        self.assertEqual(ve.segment_of_node(built.units, "s2_ctx"), 2)
-        self.assertEqual(ve.segment_of_node(built.units, "s2_trim"), 2)
+        self.assertEqual(ve.segment_of_node(built.units, "s2_ctx", node_prefix="s{index}_"), 2)
+        self.assertEqual(ve.segment_of_node(built.units, "s2_trim", node_prefix="s{index}_"), 2)
         self.assertIsNone(ve.segment_of_node(built.units, "unet"))
 
 
@@ -239,8 +239,8 @@ class ProgressOrderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_later_segments_encode_does_not_move_progress(self) -> None:
         built = H3.build(_spec(_plan([("a", 5), ("b", 5)])))
-        self.assertIsNone(ve.segment_of_node(built.units, "s1_cond", progress_only=True))
-        self.assertEqual(ve.segment_of_node(built.units, "s1_cond"), 1)  # errors still name the segment
+        self.assertIsNone(ve.segment_of_node(built.units, "s1_cond", node_prefix="s{index}_", progress_only=True))
+        self.assertEqual(ve.segment_of_node(built.units, "s1_cond", node_prefix="s{index}_"), 1)  # errors still name the segment
         pid = "pppppppp-0000-0000-0000-000000000001"
         graph = built.graph
         with patch.dict(proxy._video_chain_units, {pid: built.units}), \

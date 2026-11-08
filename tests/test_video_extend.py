@@ -262,6 +262,7 @@ class ExtensionRouteTests(RemixReplaceBase):
         from gateway import video_job_records
         stored = video_job_records.load_all(path=media_jobs.DB_PATH)[NEW_PROMPT_ID]
         self.assertEqual(stored["chain"]["segment_frames"], [192])
+        self.assertEqual(stored["chain"]["node_prefix"], "s{index}_")
         status = self.client.get(f"/v1/videos/{NEW_ID}").json()
         self.assertEqual(status["extended_from_video_id"], SOURCE_ID)
         self.assertEqual(status["remixed_from_video_id"], SOURCE_ID)
@@ -409,6 +410,14 @@ class FailureInfoTests(unittest.TestCase):
         self.assertAlmostEqual(error["completed_seconds"], (193 + 144) / 24, places=2)
         self.assertIn("segment 3 of 4", error["message"])
         self.assertIn("no partial video", error["message"])
+
+    def test_a_failure_in_a_node_that_is_not_a_sampler_names_its_segment_by_the_recorded_prefix(self) -> None:
+        units = [{"sample": f"q{i}.gen", "decode": f"q{i}.dec"} for i in range(3)]
+        record = {"chain": {"segments": 3, "units": units, "node_prefix": "q{index}.", "fps": 24.0,
+                            "segment_frames": [193, 144, 144]}}
+        job = {"status": {"messages": [["execution_error", {"node_id": "q1.cat", "exception_message": "boom"}]]}}
+        error = proxy._chain_failure_error(record, job, "ComfyUI node q1.cat: boom")
+        self.assertEqual((error["failed_segment"], error["segments_completed"]), (2, 1))
 
     def test_error_outside_a_segment_keeps_the_plain_message(self) -> None:
         record = {"chain": {"segments": 2, "units": [{"sample": "s0_sample", "decode": "s0_decode"},
