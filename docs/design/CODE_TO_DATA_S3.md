@@ -294,7 +294,8 @@ were already in the S3.2 contract; the registry is checked against the contract'
   recursive validation does not imply recursive generation or persistence.
 - **Legal integer domain.** Save-time feasibility, sampling and deployment narrowing share one exact domain:
   the intersected bounds, enum and step/offset grid. A grid is first value, period and count, not an expanded list.
-  Sampling draws a uniform index into this domain. Non-numeric step/offset retains the legacy plain-range fallback;
+  A plain range asks the source for the value; a grid or an enum asks for a uniform index into the domain, so the
+  pinned-source tests and every bundled draw keep their exact ranges. Non-numeric step/offset retains the legacy plain-range fallback;
   it is not a proof of emptiness and runtime validation can still refuse malformed constraints.
 - **When it draws.** At accept, after idempotency resolution and before the envelope is written. A same-key replay
   returns the existing job and draws nothing. The block `{input: {generator, value}}` is stored in the envelope's

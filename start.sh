@@ -107,6 +107,12 @@ if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
     LITELLM_PID=""
 
     start_litellm() {
+        local receipt_timeout=${AZIZAM_LITELLM_RECEIPT_TIMEOUT_S:-120} receipt_started
+        case $receipt_timeout in
+            ''|*[!0-9]*|0*|?????????*)
+                echo "[start] AZIZAM_LITELLM_RECEIPT_TIMEOUT_S must be a whole number from 1 to 99999999; using 120." >&2
+                receipt_timeout=120;;
+        esac
         rm -f "$LITELLM_RUNTIME_HASH_FILE"
         if [ -n "${LITELLM_LAUNCH_CONFIG_PATH:-}" ]; then
             rm -f "$LITELLM_LAUNCH_CONFIG_PATH"
@@ -116,6 +122,7 @@ if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
             --launch-config "$LITELLM_LAUNCH_CONFIG_PATH" --runtime-hash-file "$LITELLM_RUNTIME_HASH_FILE" -- \
             litellm --config "$LITELLM_LAUNCH_CONFIG_PATH" --host 127.0.0.1 --port 4011 &
         LITELLM_PID=$!
+        receipt_started=$SECONDS
         echo "$LITELLM_PID" > "$LITELLM_PID_FILE"
         while [ ! -s "$LITELLM_RUNTIME_HASH_FILE" ]; do
             if ! kill -0 "$LITELLM_PID" >/dev/null 2>&1; then
@@ -123,15 +130,28 @@ if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
                 echo "[start] LiteLLM sidecar failed before acknowledging its registry snapshot." >&2
                 return 1
             fi
+            if [ $((SECONDS - receipt_started)) -ge "$receipt_timeout" ]; then
+                # A child ignoring TERM must not hold this watcher indefinitely.
+                kill -KILL "$LITELLM_PID" >/dev/null 2>&1 || true
+                wait "$LITELLM_PID" >/dev/null 2>&1 || true
+                echo "[start] LiteLLM sidecar timed out before acknowledging its registry snapshot." >&2
+                return 1
+            fi
             sleep 0.1
         done
     }
 
     litellm_runtime_hash() {
-        {
-            sha256sum "$LITELLM_CONFIG_PATH" | cut -d' ' -f1
-            python3 -m gateway.provider_sidecar fingerprint --db "$AZIZAM_ADMIN_DB_PATH"
-        } | sha256sum | cut -d' ' -f1
+        local config_hash fingerprint runtime_hash
+        config_hash="$(sha256sum < "$LITELLM_CONFIG_PATH")" || return 1
+        config_hash=${config_hash%% *}
+        fingerprint="$(python3 -m gateway.provider_sidecar fingerprint --db "$AZIZAM_ADMIN_DB_PATH")" || return 1
+        [[ $config_hash =~ ^[0-9a-f]{64}$ && $fingerprint =~ ^[0-9a-f]{64}$ ]] || return 1
+        # Exactly the receipt format: two lowercase hex digests, each with a newline.
+        runtime_hash="$(printf '%s\n%s\n' "$config_hash" "$fingerprint" | sha256sum)" || return 1
+        runtime_hash=${runtime_hash%% *}
+        [[ $runtime_hash =~ ^[0-9a-f]{64}$ ]] || return 1
+        printf '%s\n' "$runtime_hash"
     }
 
     # Each hash starts a Python that spends about 0.7 s of CPU on imports, so
@@ -157,21 +177,47 @@ if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
         LAST_HASH=""
         LAST_INPUTS=""
         HASH_POLLS=0
+        HASH_UNAVAILABLE=""
+        HASH_REFRESH_POLLS=${AZIZAM_LITELLM_HASH_REFRESH_POLLS:-60}
+        case $HASH_REFRESH_POLLS in
+            ''|*[!0-9]*|0*|?????????*)
+                echo "[start] AZIZAM_LITELLM_HASH_REFRESH_POLLS must be a whole number from 1 to 99999999; using 60." >&2
+                HASH_REFRESH_POLLS=60;;
+        esac
         while true; do
             while [ ! -s "$LITELLM_CONFIG_PATH" ]; do sleep 1; done
             # Read the inputs before the hash: a change after this read shows next poll.
-            INPUTS="$(litellm_runtime_inputs)"
+            # stat fails on the optional -wal and -journal files when they are absent but still prints the
+            # others; that partial output is the signature, so its status must not stop the watcher.
+            INPUTS="$(litellm_runtime_inputs)" || :
             HASH_POLLS=$((HASH_POLLS + 1))
             if [ -z "$LAST_HASH" ] || [ "$INPUTS" != "$LAST_INPUTS" ] \
-                || [ "$HASH_POLLS" -ge "${AZIZAM_LITELLM_HASH_REFRESH_POLLS:-60}" ] \
+                || [ "$HASH_POLLS" -ge "$HASH_REFRESH_POLLS" ] \
                 || ! litellm_runtime_inputs_settled; then
-                NEXT_HASH="$(litellm_runtime_hash)"
-                HASH_POLLS=0
+                # Show the first failure's error; keep a long outage from filling the log.
+                if [ -n "$HASH_UNAVAILABLE" ]; then
+                    NEXT_HASH="$(litellm_runtime_hash 2>/dev/null)" || NEXT_HASH=""
+                else
+                    NEXT_HASH="$(litellm_runtime_hash)" || NEXT_HASH=""
+                fi
+                if [ -z "$NEXT_HASH" ]; then
+                    # An unreadable input is not a new runtime: keep the child, but
+                    # still restart it below if it died, and retry the hash next poll.
+                    [ -n "$HASH_UNAVAILABLE" ] || echo "[start] LiteLLM runtime hash unavailable; keeping the running child and retrying next poll." >&2
+                    HASH_UNAVAILABLE=1
+                    NEXT_HASH=$LAST_HASH
+                    HASH_POLLS=$HASH_REFRESH_POLLS
+                else
+                    [ -z "$HASH_UNAVAILABLE" ] || echo "[start] LiteLLM runtime hash is available again." >&2
+                    HASH_UNAVAILABLE=""
+                    HASH_POLLS=0
+                fi
             else
                 NEXT_HASH=$LAST_HASH
             fi
             LAST_INPUTS=$INPUTS
-            if [ "$NEXT_HASH" != "$LAST_HASH" ] || ! kill -0 "${LITELLM_PID:-0}" >/dev/null 2>&1; then
+            # No tracked child always means a launch, even while the hash is unavailable.
+            if [ -z "$LITELLM_PID" ] || [ "$NEXT_HASH" != "$LAST_HASH" ] || ! kill -0 "$LITELLM_PID" >/dev/null 2>&1; then
                 if [ -n "$LITELLM_PID" ]; then
                     kill "$LITELLM_PID" >/dev/null 2>&1 || true
                     wait "$LITELLM_PID" >/dev/null 2>&1 || true
@@ -179,7 +225,9 @@ if [ "$AZIZAM_MANAGE_LITELLM" != "false" ]; then
                 if start_litellm; then
                     LAST_HASH="$(cat "$LITELLM_RUNTIME_HASH_FILE")"
                 else
+                    # Every failed start has reaped its child; a stale PID could be reused by another process.
                     LAST_HASH=""
+                    LITELLM_PID=""
                 fi
             fi
             sleep "${AZIZAM_LITELLM_RELOAD_INTERVAL:-2}"
