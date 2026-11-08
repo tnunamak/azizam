@@ -352,3 +352,185 @@ wait "$LITELLM_PID"
     result = subprocess.run(["bash", "-c", script, "launch-test", str(tmp_path)],
                             capture_output=True, text=True, check=True, timeout=10)
     assert result.stdout.splitlines() == ["acknowledged", "snapshot"]
+
+
+
+@pytest.mark.parametrize("failure", ["failed", "empty", "missing-config"])
+def test_runtime_hash_rejects_an_unavailable_part(tmp_path, failure):
+    # Catch the old pipeline hiding a failed/empty fingerprint or config digest.
+    source = (ROOT / "start.sh").read_text()
+    start = source.index("    litellm_runtime_hash() {")
+    end = source.index("\n    watch_litellm_config()", start)
+    config = tmp_path / "selected.yaml"
+    if failure != "missing-config":
+        config.write_text("exists")
+    script = '''
+LITELLM_CONFIG_PATH=$1
+AZIZAM_ADMIN_DB_PATH=unused
+failure=$2
+python3() {
+    [ "$failure" = empty ] && return 0
+    printf '%064d\\n' 0
+    [ "$failure" != failed ]
+}
+''' + source[start:end] + '\nlitellm_runtime_hash\n'
+    result = subprocess.run(["bash", "-c", script, "hash-failure", str(config), failure],
+                            capture_output=True, text=True, timeout=2)
+    assert result.returncode != 0
+    assert result.stdout == ""
+
+
+def test_runtime_hash_preserves_two_digest_receipt_bytes(tmp_path):
+    # Catch a success-path format change while making the two input reads fail-safe.
+    import hashlib
+    config = tmp_path / "selected.yaml"
+    config.write_bytes(b"fixture config\n")
+    fingerprint = "a" * 64
+    expected = hashlib.sha256((hashlib.sha256(config.read_bytes()).hexdigest() + "\n" + fingerprint + "\n").encode()).hexdigest()
+    source = (ROOT / "start.sh").read_text()
+    start = source.index("    litellm_runtime_hash() {")
+    end = source.index("\n    watch_litellm_config()", start)
+    script = 'LITELLM_CONFIG_PATH=$1\nAZIZAM_ADMIN_DB_PATH=unused\nFIXTURE_FINGERPRINT=$2\npython3() { echo "$FIXTURE_FINGERPRINT"; }\n' + source[start:end] + '\nlitellm_runtime_hash\n'
+    result = subprocess.run(["bash", "-c", script, "receipt-bytes", str(config), fingerprint],
+                            capture_output=True, text=True, check=True, timeout=2)
+    assert result.stdout == expected + "\n"
+
+
+@pytest.mark.parametrize("failure", ["failed", "empty"])
+def test_watcher_keeps_child_and_hash_then_recovers_without_launch(tmp_path, failure):
+    # Catch treating an unreadable fingerprint as a new hash, or forgetting to retry it.
+    source = (ROOT / "start.sh").read_text()
+    start = source.index("    litellm_runtime_hash() {")
+    end = source.index("\n    watch_litellm_config {AZIZAM_PRIVATE_TMPDIR_LOCK_FD}>&- &", start)
+    config = tmp_path / "selected.yaml"
+    config.write_text("exists")
+    script = '''
+WORK=$1
+failure=$2
+LITELLM_CONFIG_PATH=$WORK/selected.yaml
+AZIZAM_ADMIN_DB_PATH=$WORK/admin.db
+LITELLM_RUNTIME_HASH_FILE=$WORK/runtime-hash
+LITELLM_PID=""
+POLL=0
+AZIZAM_LITELLM_HASH_REFRESH_POLLS=2
+python3() {
+    echo call >> "$WORK/fingerprints"
+    if [ "$POLL" -eq 2 ]; then
+        [ "$failure" = empty ] && return 0
+        printf '%064d\\n' 0
+        return 1
+    fi
+    printf '%064d\\n' 0
+}
+start_litellm() {
+    echo launch >> "$WORK/launches"
+    echo "$NEXT_HASH" > "$LITELLM_RUNTIME_HASH_FILE"
+    LITELLM_PID=123
+}
+kill() { [ "$1" = -0 ] || echo kill >> "$WORK/kills"; }
+wait() { :; }
+sleep() {
+    echo "$LAST_HASH" >> "$WORK/observed-hashes"
+    POLL=$((POLL + 1))
+    if [ "$POLL" -eq 4 ]; then trap - EXIT INT TERM; exit 0; fi
+}
+''' + source[start:end] + '''
+litellm_runtime_inputs() { echo stable; }
+litellm_runtime_inputs_settled() { return 0; }
+watch_litellm_config
+'''
+    result = subprocess.run(["bash", "-c", script, "hash-recovery", str(tmp_path), failure],
+                            capture_output=True, text=True, check=True, timeout=2)
+    assert (tmp_path / "launches").read_text().splitlines() == ["launch"]
+    assert not (tmp_path / "kills").exists()
+    hashes = (tmp_path / "observed-hashes").read_text().splitlines()
+    assert len(hashes) == 4 and len(set(hashes)) == 1 and len(hashes[0]) == 64
+    assert len((tmp_path / "fingerprints").read_text().splitlines()) == 3
+    assert result.stderr.splitlines() == [
+        "[start] LiteLLM runtime hash unavailable; keeping the running child and retrying next poll.",
+        "[start] LiteLLM runtime hash is available again.",
+    ]
+
+
+def test_a_long_hash_outage_logs_once_and_still_restarts_a_dead_child(tmp_path):
+    # Catch skipping the liveness check while the hash is unavailable, or logging every poll.
+    source = (ROOT / "start.sh").read_text()
+    start = source.index("    litellm_runtime_hash() {")
+    end = source.index("\n    watch_litellm_config {AZIZAM_PRIVATE_TMPDIR_LOCK_FD}>&- &", start)
+    (tmp_path / "selected.yaml").write_text("exists")
+    script = '''
+WORK=$1
+LITELLM_CONFIG_PATH=$WORK/selected.yaml
+AZIZAM_ADMIN_DB_PATH=$WORK/admin.db
+LITELLM_RUNTIME_HASH_FILE=$WORK/runtime-hash
+LITELLM_PID=""
+POLL=0
+AZIZAM_LITELLM_HASH_REFRESH_POLLS=60
+python3() {
+    if [ "$POLL" -ge 1 ]; then echo "fingerprint failed" >&2; return 1; fi
+    printf '%064d\\n' 0
+}
+start_litellm() {
+    echo launch >> "$WORK/launches"
+    echo "$NEXT_HASH" > "$LITELLM_RUNTIME_HASH_FILE"
+    LITELLM_PID=123
+}
+kill() {
+    if [ "$1" = -0 ]; then [ "$POLL" -ne 3 ]; return; fi
+    echo kill >> "$WORK/kills"
+}
+wait() { :; }
+sleep() {
+    POLL=$((POLL + 1))
+    if [ "$POLL" -eq 6 ]; then trap - EXIT INT TERM; exit 0; fi
+}
+''' + source[start:end] + '''
+litellm_runtime_inputs() { echo "changed-$POLL"; }
+litellm_runtime_inputs_settled() { return 0; }
+watch_litellm_config
+'''
+    result = subprocess.run(["bash", "-c", script, "hash-outage", str(tmp_path)],
+                            capture_output=True, text=True, check=True, timeout=10)
+    # The first launch, then one relaunch when the child is found dead at poll 3.
+    assert (tmp_path / "launches").read_text().splitlines() == ["launch", "launch"]
+    assert result.stderr.splitlines() == [
+        "fingerprint failed",
+        "[start] LiteLLM runtime hash unavailable; keeping the running child and retrying next poll.",
+    ]
+
+
+@pytest.mark.parametrize("setting, bound", [("2", 2), ("", 120), ("oops", 120), ("0", 120),
+                                            ("-1", 120), ("007", 120), ("1.5", 120), ("999999999", 120)])
+def test_start_litellm_bounds_missing_receipt_and_validates_timeout(tmp_path, setting, bound):
+    # Catch an infinite live-child receipt wait, including malformed timeout settings.
+    source = (ROOT / "start.sh").read_text()
+    start = source.index("    start_litellm() {")
+    end = source.index("\n    litellm_runtime_hash()", start)
+    script = '''
+WORK=$1
+LITELLM_CONFIG_PATH=$WORK/shared.yaml
+LITELLM_PID_FILE=$WORK/child.pid
+LITELLM_RUNTIME_HASH_FILE=$WORK/runtime-hash
+AZIZAM_ADMIN_DB_PATH=unused
+AZIZAM_LITELLM_RECEIPT_TIMEOUT_S=$2
+SECONDS=0
+SLEEPS=0
+python3() { :; }
+kill() { [ "$1" = -0 ] || echo "killed:$1" >> "$WORK/events"; }
+wait() { echo reaped >> "$WORK/events"; }
+sleep() {
+    SLEEPS=$((SLEEPS + 1))
+    SECONDS=$((SECONDS + 1))
+    if [ "$SLEEPS" -gt 121 ]; then echo unbounded; exit 99; fi
+}
+''' + source[start:end] + '''
+if start_litellm; then echo unexpected-success; exit 1; fi
+echo "sleeps:$SLEEPS"
+'''
+    result = subprocess.run(["bash", "-c", script, "receipt-timeout", str(tmp_path), setting],
+                            capture_output=True, text=True, check=True, timeout=1)
+    assert result.stdout.splitlines() == [f"sleeps:{bound}"]
+    assert (tmp_path / "events").read_text().splitlines() == ["killed:-KILL", "reaped"]
+    lines = result.stderr.splitlines()
+    assert lines[-1] == "[start] LiteLLM sidecar timed out before acknowledging its registry snapshot."
+    assert len(lines) == (1 if setting in ("2", "") else 2)
