@@ -127,18 +127,34 @@ Notes:
   image and a source video) must declare `media_type` on each one.
 - Output modalities come from the manifest's `outputs.*.media_type` when present.
 - Alias targets resolve against the whole catalog before access plan filtering, so visibility does not
-  change how static alias targets resolve. Dynamic aliases inherit only when this request already
-  observes a loaded identity for filtering.
+  change how static alias targets resolve. Dynamic aliases inherit from the backend `current` would
+  serve (see "Dynamic aliases").
 - Context windows keep their existing lookup (`_annotate_model_context_windows`); this contract only
   passes them through.
 
 ## Dynamic aliases (`current`, `current-fast`)
 
-These aliases send requests to whichever local LLM is loaded. When access plan filtering already
-observes the loaded identity in this model-list request, metadata uses that same observation.
-Declared service models match through chat execution's activation resolver. Metadata adds no
-health or loaded-state probes and no cache. Access plans that do not need loaded-state filtering,
-and catalog consumers without that observation, use the conservative fallback.
+These aliases send requests to whichever local LLM is loaded. Inheritance follows the backend
+`current` would serve at that moment. A listing that includes either alias makes one invocation of
+the selector `current` routes with: it walks the LLM backends in priority order and skips a backend
+that is unhealthy, refused by an operator override, or has no model loaded. A backend the selector
+skips lends no metadata. The loaded model maps to declarations of that backend only:
+
+- A backend with `loaded_model_identity: path` matches on the loaded file path, through chat
+  execution's activation resolver. Its served name is never used, because a name does not prove
+  which weights are loaded. If the loaded path is gone when the listing maps it, nothing matches.
+- Any other backend reports the id it serves. That id matches the records whose deployment asks the
+  engine for it: `upstream_model`, else `deployment`, else `model`, else `id`, the same rule that
+  builds the deployment. Ids compare without surrounding spaces and ignoring case, as model ids do
+  elsewhere in the gateway.
+
+A listing that includes neither alias makes no observation.
+
+Probe cost: the selector may health-check candidates, in priority order, up to the first servable
+one, and read the loaded model of that backend. Health answers are cached for about 10 seconds. The
+listing then reads the loaded path for declaration matching on a path-identity backend. That read is
+normally cached, but it is not an atomic snapshot with the selector and may differ after cache expiry.
+The member catalog makes no observation and uses the conservative fallback.
 
 - The aliases inherit `type`, `architecture`, `tags` and `max_tokens` from the `model_metadata`
   declarations of those ids. Only declared ids count. When several are declared, the aliases claim
@@ -150,14 +166,15 @@ and catalog consumers without that observation, use the conservative fallback.
   policy data, not from the alias name.
 - `context_window`: a value observed from the running engine wins. Without one, the aliases take the
   smallest `context_window` configured on the loaded model's records, ahead of static alias values.
-- When nothing is loaded, or no id of the loaded model is declared (for example `cydonia-24b`), the
+- When no backend is servable, no id of the served model is declared (for example `cydonia-24b`), a
+  path backend's loaded path is gone or matches no record, or the declaration match is ambiguous, the
   aliases keep their own declaration: text in, text out, no tags.
 - The inherited values win over the aliases' own `model_metadata`, which is only the fallback.
 - Clients may cache `/v1/models`. After a model swap, a client can see the previous model's values
   until it lists the models again.
 
-List and retrieve endpoints use the same request policy. The member catalog has no loaded-state
-filtering observation, so its dynamic aliases use the conservative fallback. Model-ID lists in
+List and retrieve endpoints use the same request policy. The member catalog has no selector
+observation, so its dynamic aliases use the conservative fallback. Model-ID lists in
 response metadata and alias target maps include only IDs visible in `data` under the caller's access plan.
 
 ## Operator declarations (`model_metadata`)
@@ -238,7 +255,7 @@ callers override, not a cap. The `vision` and `fast` aliases inherit from `defau
 |---|---|
 | `GET /v1/models`, `GET /openai/v1/models` | Annotated as above. |
 | `GET /v1/models/{id}` | Returns the same entry as the list. |
-| `GET /me/api/models/catalog` (member Models page) | Alias and model rows carry the same metadata contract. Dynamic aliases use the conservative fallback because this request has no loaded identity. The row's `capability`, `icon_key` and `io` come from those fields, see "Models page classification". |
+| `GET /me/api/models/catalog` (member Models page) | Alias and model rows carry the same metadata contract. Dynamic aliases use the conservative fallback because the member catalog makes no selector observation. The row's `capability`, `icon_key` and `io` come from those fields, see "Models page classification". |
 | `GET /anthropic/v1/models[/{id}]`, or `/v1/models` with `anthropic-version` | Anthropic shape, unchanged; none of these fields are added. |
 | Ollama `GET /api/tags` | Ollama shape, unchanged. |
 | `GET /v1/models` with a LiteLLM virtual key (delegated) | **Gap:** returns LiteLLM's raw payload unchanged, without these fields. Delegated keys are scoped by LiteLLM itself, and LiteLLM's `/v1/models` does not emit `model_info`, so the gateway does not rewrite that payload. Clients that need the metadata should use a gateway key. |

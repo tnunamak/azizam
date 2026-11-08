@@ -384,6 +384,7 @@ from gateway.litellm_substrate import (
     router_reply_timeout,
     litellm_public_model_records,
     litellm_public_model_service_ids,
+    record_served_model_id,
     serving_service_id,
     set_own_listen_port,
 )
@@ -14689,48 +14690,43 @@ def _role_catalog_ids_for_loaded_path(
 
 
 def _declarations_for_loaded_model(backend: str, loaded_model: str) -> set[str]:
-    """Match declarations using chat execution's activation resolver, without I/O."""
+    """Match the backend's declarations to what it has loaded, without I/O.
+
+    A backend that loads by path is matched on the activation path, by chat execution's activation
+    resolver. Any other backend reports the id it serves, matched to the records whose deployment
+    asks the engine for that id (record_served_model_id, the deployment compiler's own rule).
+    """
     service_cfg = (config.get("backends") or {}).get(backend, {})
     if not isinstance(service_cfg, Mapping):
         return set()
+    loaded = normalize_model_id(loaded_model)
+    ids: set[str] = set()
+    if not _backend_reports_loaded_model_as_path(backend):
+        for record in _service_model_records(service_cfg):
+            name = str(record.get("model_group") or record.get("id") or record.get("upstream_model") or "")
+            if name and name not in USE_LOADED_MODEL_ALIASES and normalize_model_id(record_served_model_id(record)) == loaded:
+                ids.add(name)
+        return ids
     names = {
         str(record.get("model_group") or record.get("id") or record.get("upstream_model") or "")
         for record in _service_model_records(service_cfg)
     }
     if service_cfg.get("model_id"):
         names.add(str(service_cfg["model_id"]))
-    ids: set[str] = set()
     for name in names - USE_LOADED_MODEL_ALIASES - {""}:
         target = _configured_litellm_local_model_target(name, service_id=backend)
-        if target and target.model and normalize_model_id(target.model) == normalize_model_id(loaded_model):
+        if target and target.model and normalize_model_id(target.model) == loaded:
             ids.add(name)
     return ids
 
 
-async def _current_loaded_llm_model_ids(
-    active_backend: str | None = None, *, metadata_ids: set[str] | None = None,
-) -> set[str]:
-    """Return main's availability ids; optionally pass declaration ids to metadata.
-
-    Metadata uses the identity observed here, without another loaded-state read.
-    Its declaration matching must not expand the availability ids.
-    """
-    active = None
-    if metadata_ids is not None:
-        # Only metadata needs the active backend; the id set comes from every
-        # path-identity backend, so plain id reads skip the health probe.
-        try:
-            active = active_backend or await get_active_backend()
-        except Exception:
-            active = None
-
+async def _current_loaded_llm_model_ids() -> set[str]:
+    """Return the ids of every model the path-identity backends have loaded."""
     ids: set[str] = set()
-    loaded_paths: dict[str, str] = {}
     for backend in _path_identity_backends():
         loaded_path = currently_loaded_model(backend)
         if not loaded_path:
             continue
-        loaded_paths[backend] = loaded_path
         ids.update(USE_LOADED_MODEL_ALIASES)
         ids.add(loaded_path)
         basename = os.path.basename(loaded_path)
@@ -14743,8 +14739,6 @@ async def _current_loaded_llm_model_ids(
                 loaded_model_id=basename,
             )
         )
-    if active in loaded_paths and metadata_ids is not None:
-        metadata_ids.update(_declarations_for_loaded_model(active, loaded_paths[active]))
     return {item for item in ids if item}
 
 
@@ -14841,7 +14835,6 @@ async def _filter_model_list_for_profile(
     data: list[Any],
     auth_context: AuthContext,
     *,
-    metadata_ids: set[str] | None = None,
     category_protocols: Mapping[str, str] | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
     metadata: dict[str, Any] = {}
@@ -27780,14 +27773,35 @@ def _policy_turns_reasoning_off(model_id: str) -> bool:
     return body.get("reasoning_effort") == "none"
 
 
+async def _model_list_served_declarations() -> set[str]:
+    """Declaration ids of the model `current` would serve: the one selector observation a listing makes.
+
+    Empty when nothing is servable, the probe fails, or no declaration matches. For a backend that
+    loads by path, the loaded path is the entry the selector just read in the cached loaded-state, so
+    no second probe runs; if that entry is gone, nothing matches (the served name does not prove
+    which weights are loaded).
+    """
+    try:
+        target, _ = await _first_servable_loaded_llm_target()
+        if target is None:
+            return set()
+        if _backend_reports_loaded_model_as_path(target.backend):
+            loaded = currently_loaded_model(target.backend)
+        else:
+            loaded = target.model
+        return _declarations_for_loaded_model(target.backend, loaded) if loaded else set()
+    except Exception:  # noqa: BLE001 - a failed probe leaves the aliases on their own declaration
+        return set()
+
+
 def _with_loaded_model_inheritance(
     sources: model_metadata.MetadataSources,
     loaded_ids: Iterable[str],
 ) -> tuple[model_metadata.MetadataSources, dict[str, int]]:
     """Let `current` / `current-fast` inherit the loaded model's declared metadata.
 
-    `loaded_ids` are declaration names resolved from the identity already
-    observed during profile filtering in this request. Returns the sources with `inherited` set
+    `loaded_ids` are declaration names of the backend `current` would serve,
+    from one selector observation for this request. Returns the sources with `inherited` set
     and {alias id: context window} from the loaded model's configured records
     (the smallest, as the records can use different context profiles). With
     nothing loaded, or no declaration for the loaded model, both are empty
@@ -28603,10 +28617,7 @@ async def list_models(request: Request):
     # Alias targets resolve against the whole catalog, so a caller's profile
     # does not change how static alias targets resolve.
     metadata_catalog = list(data)
-    metadata_ids: set[str] = set()
-    data, policy_metadata = await _filter_model_list_for_profile(
-        data, auth_context, metadata_ids=metadata_ids,
-    )
+    data, policy_metadata = await _filter_model_list_for_profile(data, auth_context)
 
     # Annotate each model entry with a description sourced from roles: or
     # models: in proxy_config.yml. Non-standard field — ignored by spec-
@@ -28665,7 +28676,13 @@ async def list_models(request: Request):
         **{model_id: model_metadata.ORIGIN_LLM_CATALOG for model_id in llm_catalog_ids},
         **{model_id: model_metadata.ORIGIN_DECISION for model_id in decision_ids},
     }
-    sources, inherited_windows = _with_loaded_model_inheritance((await asyncio.to_thread(_model_metadata_sources, origins)), metadata_ids)
+    # One selector observation, only when the listing includes an alias that follows it.
+    served_ids: set[str] = set()
+    if any(isinstance(item, dict) and item.get("id") in USE_LOADED_MODEL_ALIASES for item in data):
+        served_ids = await _model_list_served_declarations()
+    sources, inherited_windows = _with_loaded_model_inheritance(
+        await asyncio.to_thread(_model_metadata_sources, origins), served_ids,
+    )
     # A live-observed context window is more exact than a declared one.
     for item in data:
         if isinstance(item, dict) and item.get("id") in inherited_windows:

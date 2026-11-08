@@ -34,7 +34,7 @@ from gateway.models_catalog import build_models_catalog
 from gateway.policy import ALLOWED, PolicyDecision, PolicyRequest, evaluate
 from tests.support.access import access, access_context, identity as runtime_identity, plan_for
 from tests.test_category_visibility import OWNER, Who, _service, activate, rules
-from tests.test_model_metadata_endpoints import QWEN_PATH, _loaded, _start_model_list_patches
+from tests.test_model_metadata_endpoints import _start_model_list_patches
 from tests.test_runtime_route_policy import AUTH_HEADERS, authenticated_profile, litellm_registry
 
 ALLOW = PolicyDecision(decision=ALLOWED, sources=("plan",), reasons=("allowed",))
@@ -134,7 +134,6 @@ def test_every_name_v1_models_lists_is_a_row_of_the_models_page():
         _start_model_list_patches(_Case)
         # Real decision models, not the two fake ones the shared patches install.
         stack.enter_context(patch.object(proxy, "_decision_models_for", _REAL_DECISION_MODELS_FOR))
-        stack.enter_context(patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(QWEN_PATH)))
         listed = {entry["id"]: entry for entry in TestClient(proxy.app).get("/v1/models").json()["data"]}
         rows = _page_rows()
     missing = sorted(set(listed) - set(rows) - set(NOT_ROWS))

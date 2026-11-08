@@ -190,6 +190,19 @@ def _no_live_probes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_model_list_selector_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model listing makes no health probe by default; a test that wants the real observation
+    restores `proxy._model_list_served_declarations.real`."""
+    import proxy
+
+    async def no_target():
+        return set()
+
+    no_target.real = proxy._model_list_served_declarations  # type: ignore[attr-defined]
+    monkeypatch.setattr(proxy, "_model_list_served_declarations", no_target)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_media_delivery_context(monkeypatch: pytest.MonkeyPatch) -> None:
     """`media_delivery.begin` sets a ContextVar on the calling thread. A test that
     begins a delivery without a request scope would otherwise leak that context
