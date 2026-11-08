@@ -27765,6 +27765,15 @@ def _policy_turns_reasoning_off(model_id: str) -> bool:
     return body.get("reasoning_effort") == "none"
 
 
+async def _model_list_served_target() -> CurrentLoadedLlmTarget | None:
+    """The one selector observation a model listing makes; None when nothing is servable or the probe fails."""
+    try:
+        target, _ = await _first_servable_loaded_llm_target()
+    except Exception:  # noqa: BLE001 - a failed probe leaves the aliases on their own declaration
+        return None
+    return target
+
+
 def _with_loaded_model_inheritance(
     sources: model_metadata.MetadataSources,
     loaded_ids: Iterable[str],
@@ -28650,10 +28659,7 @@ async def list_models(request: Request):
     # One selector observation, only when the listing includes an alias that follows it.
     served_ids: set[str] = set()
     if any(isinstance(item, dict) and item.get("id") in USE_LOADED_MODEL_ALIASES for item in data):
-        try:
-            served_target, _ = await _first_servable_loaded_llm_target()
-        except Exception:  # noqa: BLE001 - a failed probe leaves the aliases on their own declaration
-            served_target = None
+        served_target = await _model_list_served_target()
         if served_target is not None:
             served_ids = _declarations_for_loaded_model(
                 served_target.backend, served_target.loaded_path or served_target.model,

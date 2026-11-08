@@ -51,10 +51,6 @@ def _fake_decision_models(*_args, **_kwargs):
     ]
 
 
-async def _no_servable_target(*_args, **_kwargs):
-    return None, None
-
-
 async def _no_context_probe(*_args, **_kwargs):
     return None
 
@@ -98,7 +94,6 @@ def _start_model_list_patches(test: unittest.TestCase, *, real_loaded_state: boo
     if not real_loaded_state:
         patches.extend([
             patch.object(proxy, "_probed_context_window", _no_context_probe),
-            patch.object(proxy, "_first_servable_loaded_llm_target", _no_servable_target),
         ])
     for patcher in patches:
         patcher.start()
@@ -296,6 +291,7 @@ class RequestLoadedMetadataTests(unittest.TestCase):
             patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry),
             patch.object(proxy, "currently_loaded_model", side_effect=lambda backend: self.loaded_paths.get(backend)),
             patch.object(proxy, "_MODEL_CONTEXT_CACHE", {}),
+            patch.object(proxy, "_model_list_served_target", proxy._model_list_served_target.real),
             patch.object(proxy, "_litellm_models_payload", self._catalog_payload),
             patch.object(proxy.httpx, "AsyncClient",
                          side_effect=lambda *args, **kwargs: original_client(
@@ -436,10 +432,14 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.assertNotIn("current", listed)
         self.assertEqual(calls, [])
 
+    @staticmethod
+    async def _no_target():
+        return None
+
     def test_context_probe_cache_is_honored(self) -> None:
         # The selector's own reads are held out; the context-window annotation
         # still probes once on a cold/expired cache.
-        selector = patch.object(proxy, "_first_servable_loaded_llm_target", _no_servable_target)
+        selector = patch.object(proxy, "_model_list_served_target", self._no_target)
         selector.start()
         self.addCleanup(selector.stop)
         for alias in self.backends["kobold"]["models"][1:]:

@@ -110,7 +110,7 @@ class TestLoadedModelIdentity:
         cfg, seed = self._patched(service_id, loaded_model_identity="path")
         with cfg, seed, patch.object(proxy, "_role_catalog_ids_for_loaded_path", lambda **_: set()):
             proxy._loaded_state.clear()
-            ids = asyncio.run(proxy._current_loaded_llm_model_ids(service_id))
+            ids = asyncio.run(proxy._current_loaded_llm_model_ids())
         assert {f"/models/{service_id}.gguf", f"{service_id}.gguf"} <= ids
 
 
