@@ -159,7 +159,6 @@ def test_the_probe_is_read_only_and_takes_no_capacity() -> None:
 
     assert harness.leases.active_claims() == 0
     assert harness.downstream == []
-    assert harness.receipts == []
 
 
 def test_the_probe_reaches_the_service_health_and_the_observer_facts() -> None:

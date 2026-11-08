@@ -111,8 +111,8 @@ ENGINE_PROTOCOLS_PATH = "/admin/api/engine-protocols"
 # caller's answer.
 MESH_PATHS = ("/v1/3d/generations", "/v1/3d/generations/glb")
 MESH_ROUTING = {
-    "POST": "{path} serve",
-    "HEAD": "405 allow=POST via {path} serve",
+    "POST": "<path> serve",
+    "HEAD": "405 allow=POST via <path> serve",
 }
 MESH_LIVE = {
     "HEAD": "none: 405 application/json allow=POST; app: 405 application/json allow=POST; admin: 405 application/json allow=POST",
@@ -324,7 +324,7 @@ def test_routing_differs_from_baseline_only_where_reviewed(current):
         if kind == "lifecycle_hop" and key not in old:
             continue  # new lifecycle hop endpoints; tests/test_litellm_inner_hop_endpoints.py covers them
         if kind == "mesh" and key not in old:
-            expected = MESH_ROUTING.get(_method_of(key), "/{path:path} unmatched_route").format(path=key.split(" ", 1)[1])
+            expected = MESH_ROUTING.get(_method_of(key), "/{path:path} unmatched_route").replace("<path>", key.split(" ", 1)[1])
             if outcome == expected:
                 continue
         if kind == "engines" and (key not in old or route_matrix.is_catch_all(outcome) or outcome.startswith("405 ")):

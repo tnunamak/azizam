@@ -26037,6 +26037,16 @@ async def gateway_image_generations_media_job(request: Request):
     return response
 
 
+def _mesh_job_content(job: Mapping[str, Any]) -> Response:
+    """A finished mesh job's content is the model itself (the sync route's answer), not a list of handles."""
+    asset_id = next((a.get("asset_id") for a in job.get("assets") or [] if isinstance(a, Mapping) and a.get("asset_id")), None)
+    path = asset_cache_path(asset_id) if isinstance(asset_id, str) else None
+    if path is None:
+        return JSONResponse({"error": {"message": "media job has no model asset", "type": "api_error",
+                                       "code": "media_job_assets_missing"}}, status_code=502)
+    return FileResponse(path, media_type=mesh_api.MESH_MEDIA_TYPE, headers={"x-asset-id": str(asset_id)})
+
+
 async def gateway_media_job_content(job_id: str, request: Request):
     """Return signed output asset handles for a completed gateway media job."""
     auth_context = _gateway_auth_context(
@@ -26106,6 +26116,8 @@ async def gateway_media_job_content(job_id: str, request: Request):
         }, status_code=503 if retryable else 410,
            headers={"Retry-After": "5"} if retryable else None)
     intent = str(job.get("intent") or "")
+    if intent == mesh_api.MESH_INTENT:
+        return _mesh_job_content(job)  # the plan was checked above, with the other kinds
     if intent == "image.generate":
         payload = _openai_image_payload_from_media_job(job)
         missing_message = "media job has no image assets"

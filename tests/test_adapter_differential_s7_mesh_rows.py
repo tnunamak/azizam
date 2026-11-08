@@ -2,7 +2,7 @@
 
 Each cell runs the real app, the real run core and worker, the real job store and the real multipart adapter. Only the
 engine HTTP is fake (``tests.support.mesh_harness.Harness``: the observer, the health read and ``/generate``). One cell is
-one outcome of the S7 matrix; its record is in ``fixtures/adapter_differential/s7_mesh_rows_cells.json``. To re-record,
+one outcome of the S7 matrix; its record is in ``fixtures/s7_mesh_rows/cells.json``. To re-record,
 run with ``--junit-xml-out`` and ``-o junit_logging=all`` (every run prints each cell after the ``S7-MESH-ROWS-RECORD``
 marker).
 
@@ -85,7 +85,7 @@ SYNC = "/v1/3d/generations"
 RAW = "/v1/3d/generations/glb"
 JOBS = "/gateway/v1/media/jobs"
 FIXTURES = Path(__file__).parent / "fixtures" / "adapter_differential"
-GOLDEN = FIXTURES / "s7_mesh_rows_cells.json"
+GOLDEN = Path(__file__).parent / "fixtures" / "s7_mesh_rows" / "cells.json"
 OLD_CELLS = FIXTURES / "s7_mr_cells.json"
 MARK = "S7-MESH-ROWS-RECORD"
 ASYNC = {"Prefer": "respond-async"}
