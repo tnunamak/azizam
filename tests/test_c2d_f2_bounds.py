@@ -56,3 +56,45 @@ def test_deep_generic_json_returns_refusal(tmp_path) -> None:
 def test_deep_multipart_inputs_return_refusal(tmp_path) -> None:
     result = _read(multipart_request({"inputs": DEEP.decode()}, []), tmp_path)
     assert isinstance(result, RunRefused) and result.http_status == 422
+
+
+# ---- oracle gaps (items 4-6) ----------------------------------------------------------------------------------------
+
+from tests.support import adapter_differential as ad  # noqa: E402
+from tests.support import adapter_differential_deltas as listed  # noqa: E402
+from tests.support.adapter_differential_deltas import Delta, DeltaError  # noqa: E402
+
+
+def test_payload_http_date_prompt_is_compared_exactly() -> None:
+    first = 'prompt: "Mon, 02 Nov 2026 10:00:00 GMT"'
+    second = 'prompt: "Tue, 03 Nov 2026 11:11:11 GMT"'
+    assert ad.Normalizer().text(first, payload=True) != ad.Normalizer().text(second, payload=True)
+    # outside a payload the date is a clock reading of this run, still masked
+    assert ad.Normalizer().text(first) == ad.Normalizer().text(second)
+
+
+def _body_golden(text: str) -> dict:
+    return {"caller": [{"response": {"body": {"text": text}}}]}
+
+
+def test_delta_cannot_replace_serialized_json_body_subtree() -> None:
+    golden = _body_golden('{"status": "queued"}')
+    whole = Delta("envelope_v2", "$.caller[0].response.body.text", '{"status": "queued"}',
+                  '{"status": "running"}', "the envelope is version 2")
+    with pytest.raises(DeltaError, match="JSON"):
+        listed.apply_deltas(golden, [whole])
+    leaf = Delta("envelope_v2", "$.caller[0].response.body.text#$.status", "queued", "running", "the envelope is version 2")
+    assert json.loads(listed.apply_deltas(golden, [leaf])["caller"][0]["response"]["body"]["text"]) == {"status": "running"}
+    plain = Delta("envelope_v2", "$.caller[0].response.body.text", "hello", "world", "the envelope is version 2")
+    assert listed.apply_deltas(_body_golden("hello"), [plain])["caller"][0]["response"]["body"]["text"] == "world"
+
+
+@pytest.mark.parametrize("path, golden", [
+    ("$.flag", {"flag": False}),
+    ("$.body.text#$.flag", {"body": {"text": '{"flag": false}'}}),
+])
+def test_delta_old_value_requires_the_exact_json_type(path, golden) -> None:
+    with pytest.raises(DeltaError, match="unmatched"):
+        listed.apply_deltas(golden, [Delta("envelope_v2", path, 0, 1, "the envelope is version 2")])
+    out = listed.apply_deltas(golden, [Delta("envelope_v2", path, False, True, "the envelope is version 2")])
+    assert out is not None
