@@ -275,3 +275,12 @@ def test_the_mesh_cell_matches_its_recording(name: str) -> None:
 
 def test_the_recording_holds_exactly_the_cells() -> None:
     assert set(_golden()) == set(CELLS)
+
+
+def test_a_changed_route_would_fail_the_golden() -> None:
+    """Sensitivity control: an engine that answers 500 for 502, or a policy that allows, is a different record."""
+    mutant = Harness()
+    mutant.downstream_mode = 500
+    assert _masked(_sync(mutant, **_image()))["answer"]["status"] != _golden()["upstream_failure"]["engine_502"]["answer"]["status"]
+    allowed = _masked(_sync(Harness(), **_image(seed="42")))
+    assert allowed != _golden()["policy_refusal"]
