@@ -101,11 +101,31 @@ def _walk(node: Any, steps: Sequence[str | int], path: str) -> tuple[Any, str | 
     return node, last
 
 
+def _differs(held: Any, old: Any) -> bool:
+    """Whether the golden's value is not the delta's old value, by the final comparison's type-aware equality
+    (``0`` is not ``False``, ``1`` is not ``1.0``)."""
+    from tests.support import adapter_differential as ad
+    return ad.traces_differ(held, old)
+
+
+def _is_json_document_text(value: Any) -> bool:
+    """A string that parses as a JSON object or array: replacing it whole would hide a change inside it."""
+    if not isinstance(value, str) or not value.lstrip().startswith(("{", "[")):
+        return False
+    try:
+        return isinstance(json.loads(value), (dict, list))
+    except (ValueError, RecursionError):
+        return False
+
+
 def _replace(document: Any, path: str, old: Any, new: Any, *, remove: bool = False) -> None:
     outer, _, inner = path.partition("#")
     holder, key = _walk(document, _steps(outer), outer)
     if not inner:
-        if holder[key] != old:
+        if _is_json_document_text(holder[key]):
+            raise DeltaError(f"{path}: the value is a serialized JSON document; name a leaf with {outer}#$.key, "
+                             "never the whole text")
+        if _differs(holder[key], old):
             raise DeltaError(f"unmatched delta at {path}: the golden holds {holder[key]!r}, the delta says {old!r}")
         if remove:
             del holder[key]
@@ -117,7 +137,7 @@ def _replace(document: Any, path: str, old: Any, new: Any, *, remove: bool = Fal
         raise DeltaError(f"{outer} holds no JSON text")
     parsed = json.loads(text)
     inner_holder, inner_key = _walk(parsed, _steps(inner), path)
-    if inner_holder[inner_key] != old:
+    if _differs(inner_holder[inner_key], old):
         raise DeltaError(f"unmatched delta at {path}: the golden holds {inner_holder[inner_key]!r}, the delta says {old!r}")
     if remove:
         del inner_holder[inner_key]

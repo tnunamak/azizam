@@ -120,3 +120,32 @@ def test_a_good_observer_answer_still_reads() -> None:
             return await multipart_adapter.read_observer(client, _spec(), "http://obs/f")
 
     assert _run(go()) == {"free": 5, "total": 9}
+
+
+def test_probe_rejects_compressed_expansion_before_buffering_excess() -> None:
+    """An 8 KiB gzip reply that expands to 8 MiB is refused, and no decoded buffer passes the fixed cap (review F2, P1)."""
+    import gzip
+    import tracemalloc
+
+    packed = gzip.compress(b"\x00" * (8 * MIB))
+    assert len(packed) < 16 * 1024
+    seen: list[httpx.Request] = []
+
+    class _Gzip(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, headers={"content-encoding": "gzip"}, stream=_Body([packed], 0.0, [0]))
+
+    async def go():
+        async with httpx.AsyncClient(transport=_Gzip()) as client:
+            return await multipart_adapter.read_observer(client, _spec(), "http://obs/f")
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(PoolObserverError):
+            _run(go())
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 2 * MIB, f"a decoded buffer of {peak} bytes was held"
+    assert seen[0].headers.get("accept-encoding") == "identity"

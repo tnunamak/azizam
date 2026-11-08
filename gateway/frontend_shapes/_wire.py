@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from typing import Any
 
 from starlette.exceptions import HTTPException
-from starlette.formparsers import MultiPartException
+from starlette.formparsers import MultiPartException, MultiPartParser
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -62,7 +62,7 @@ async def json_object(request: Request) -> dict[str, Any] | Response:
     """The request body as a JSON object, or a 400 in the shape's vocabulary."""
     try:
         parsed = json.loads(await request.body() or b"")
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):  # a body nested past the parser's depth is invalid too
         return error_response(400, "Invalid JSON body")
     if not isinstance(parsed, dict):
         return error_response(400, "The request body must be a JSON object")
@@ -109,6 +109,26 @@ class _FormTooLarge(Exception):
     pass
 
 
+class _TextBoundedParser(MultiPartParser):
+    """The form parser, refusing once the text parts together pass ``FORM_PART_BYTES``. File parts spool to disk and
+    are bounded by the body budget; text parts are buffered in memory, so their total is counted on its own, before
+    a chunk is added to the part (a file budget never pays for text)."""
+
+    _text_taken = 0
+
+    def on_part_data(self, data: bytes, start: int, end: int) -> None:
+        if self._current_part.file is None:
+            self._text_taken += end - start
+            if self._text_taken > FORM_PART_BYTES:
+                raise _FormTooLarge
+        super().on_part_data(data, start, end)
+
+
+def _close_spills(parser: MultiPartParser) -> None:
+    for handle in parser._files_to_close_on_error:  # starlette private; re-check on a Starlette upgrade (request_forms)
+        handle.close()
+
+
 def _bounded(request: Request, budget: float) -> Request:
     """The same request with a body that raises once more than ``budget`` bytes have been taken from the stream.
     Content-Length is never consulted: a chunked body declares nothing."""
@@ -130,12 +150,16 @@ async def split_form(request: Request, limits: FormLimits) -> tuple[dict[str, An
     """A multipart body as its fields and its file parts (name, upload) in the order received. The body is bounded
     while it is read: its bytes by ``limits.body_budget``, its file and text parts by their counts. A file part whose
     name is addressed below a top-level input is refused (``media_path_unsupported``, 422)."""
+    bounded = _bounded(request, limits.body_budget)
+    parser = _TextBoundedParser(bounded.headers, bounded.stream(), max_files=limits.max_files,
+                                max_fields=limits.max_fields, max_part_size=FORM_PART_BYTES)
     try:
-        form = await _bounded(request, limits.body_budget).form(
-            max_files=limits.max_files, max_fields=limits.max_fields, max_part_size=FORM_PART_BYTES)
+        form = await parser.parse()
     except _FormTooLarge:
+        _close_spills(parser)
         return error_response(413, "The request body is larger than this route accepts", code="payload_too_large")
     except (MultiPartException, HTTPException, ValueError):  # the parser's own error is a ValueError
+        _close_spills(parser)
         return error_response(400, "The request body is not valid multipart/form-data", code="invalid_request_body")
     fields: dict[str, Any] = {}
     uploads: list[tuple[str, Any]] = []
