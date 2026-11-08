@@ -261,9 +261,16 @@ def _stored_entry(workflow_id: str, record: Mapping[str, Any], generation: int,
     if facts is None and workflow_id in bundled and record.get("policy") is None:
         facts = _facts_of(bundled[workflow_id].facts)
     overrides = record.get("overrides")
+    stored = Provenance(bool(identity.get("trusted", False)), identity.get("source") or provenance.get("source"))
+    base = bundled.get(workflow_id)
+    if overrides == workflow_id and base is not None and digest(manifest) == digest(base.manifest):
+        # An override whose contract is the bundled file unchanged (a run-control change: state or publication) runs
+        # what the release reviewed, so it has the bundled provenance. Trust comes from that comparison, never from a
+        # stored flag; any contract edit makes the record a stored one again.
+        stored = Provenance(base.identity.trusted, base.identity.source) if base.identity else BUNDLED_PROVENANCE
     return _entry(
         manifest, facts=facts,
-        provenance=Provenance(bool(identity.get("trusted", False)), identity.get("source") or provenance.get("source")),
+        provenance=stored,
         state=state, published=bool(record.get("published", False)),
         incarnation=str(record.get("incarnation") or "stored"),
         record_revision=int(record.get("record_revision") or generation),

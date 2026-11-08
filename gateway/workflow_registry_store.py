@@ -375,10 +375,6 @@ class WorkflowRegistryStore:
             old = self._effective_record(stored, workflow_id)
             if old is not None:
                 record = self._carry(old, self._stored_has(stored, workflow_id))
-                # A run-control change leaves the contract as it is, so it keeps the provenance it was reviewed under
-                # (a contract edit drops it: ``_carry`` never copies ``identity``).
-                if isinstance(old.get("identity"), Mapping):
-                    record["identity"] = copy.deepcopy(dict(old["identity"]))
             elif workflow_id in self._bundled_ids() and base.get(workflow_id) is not None:
                 record = self._bundled_override(base.get(workflow_id))
             else:
@@ -472,8 +468,6 @@ class WorkflowRegistryStore:
             "source": "ui", "editable": True, "enabled": True,
             "state": entry.state, "published": entry.published, "incarnation": entry.incarnation,
             "record_revision": entry.record_revision + 1,
-            # The bundled contract unchanged: its provenance stays (a later contract edit drops it).
-            "identity": {"trusted": entry.provenance.trusted, "source": entry.provenance.source},
         }
         if entry.facts is not None:
             record["policy"] = facts_record(entry.facts)
