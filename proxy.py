@@ -342,7 +342,7 @@ from gateway.video_limits import limits_for_workflow, video_limits
 from gateway.app_key_openapi import augment_app_key_openapi
 from gateway import operation_security
 from gateway.workflow_openapi import augment_openapi as _augment_workflow_openapi
-from gateway.workflow_openapi import advertised_inputs_schema, workflow_catalog
+from gateway.workflow_openapi import VIDEO_REFERENCE_INPUT, advertised_inputs_schema, workflow_catalog
 from gateway.discovery_metadata import (
     build_gateway_discovery_metadata,
     build_llms_txt,
@@ -12365,7 +12365,7 @@ async def _proxy_graph_video_create(
                 auth_context,
                 request=request,
                 holder=media_holder,
-                accepts=_input_accepts(video_manifest, "image"),
+                accepts=_input_accepts(video_manifest, VIDEO_REFERENCE_INPUT),
             )
         except _InputReferenceError as e:
             return Response(
@@ -12811,7 +12811,7 @@ async def _submit_video_chain(
             try:
                 image_bytes, image_name = await _resolve_input_reference(
                     body["input_reference"], auth_context, request=request, holder=media_holder,
-                    accepts=_input_accepts(_find_video_manifest(workflow_name, workflow_cfg), "image"))
+                    accepts=_input_accepts(_find_video_manifest(workflow_name, workflow_cfg), VIDEO_REFERENCE_INPUT))
             except _InputReferenceError as exc:
                 return _json_error(400, str(exc), param="input_reference")
             first_frame_image = await _upload_graph_input(image_bytes, image_name, "image/png", auth_context)

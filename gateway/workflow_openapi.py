@@ -73,6 +73,8 @@ _IMAGE_EDIT_MANAGED = frozenset(
 # The multipart part the OpenAI-compatible edit route reads pictures from. One
 # part per picture, in submission order; the field repeats.
 _IMAGE_EDIT_IMAGE_PART = "image[]"
+# The contract input a video request's ``input_reference`` fills. The projection and the route read it from here.
+VIDEO_REFERENCE_INPUT = "image"
 _MESH_PATH = "/v1/meshes/generate"
 
 _JSON_TYPES = {
@@ -352,7 +354,7 @@ def _route_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, Any
                 out[name] = {"in": "body", "field": "size", "combine": ["width", "height"]}
             elif name == "length":
                 out[name] = {"in": "body", "field": "seconds"}
-            elif name == "image":
+            elif name == VIDEO_REFERENCE_INPUT:
                 out[name] = {"in": "body", "field": "input_reference"}
             elif name in ROUTE_MANAGED_VIDEO_INPUTS:
                 out[name] = {"in": "none"}
