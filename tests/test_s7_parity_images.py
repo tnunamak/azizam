@@ -968,7 +968,6 @@ def test_images_J24_concurrency_is_bounded(tmp_path):
 
 
 @pytest.mark.parametrize("suffix", ["", "/results", "/events"])
-@ROW_PENDING
 def test_images_J25_J27_read_routes(tmp_path, suffix):
     old, row = job_pair(tmp_path, job_body(), job_setup(), after=job_get(suffix))
     old_has(old, "an answer", status(old, 1))
