@@ -76,11 +76,11 @@ def _row(raw: Mapping[str, Any]) -> FrontendRow:
     if len(answers) != 1 or not answers <= {None, *shape_forms}:
         raise RowError(f"{row_id}: runtime_policy.default_answer must be one of {sorted(shape_forms) or 'none (the shape has no answer forms)'}, "
                        "the same on every route")
-    words = {route.runtime_policy.get("receipt_words", "outcome") for route in routes}
-    if len(words) != 1 or not words <= {"outcome", "http"}:
-        raise RowError(f"{row_id}: runtime_policy.receipt_words must be outcome or http, the same on every route")
+    names = {route.runtime_policy.get("receipt_names", "id") for route in routes}
+    if len(names) != 1 or not names <= {"id", "short"}:
+        raise RowError(f"{row_id}: runtime_policy.receipt_names must be id or short, the same on every route")
     return FrontendRow(id=row_id, shape=raw["shape"], routes=routes, selects=dict(selects), mode=raw["mode"],
-                       job_failure_text=next(iter(texts)), job_retries=next(iter(retries)), default_answer=next(iter(answers)), receipt_words=next(iter(words)),
+                       job_failure_text=next(iter(texts)), job_retries=next(iter(retries)), default_answer=next(iter(answers)), receipt_names=next(iter(names)),
                        receipt_protocol=str(raw.get("receipt_protocol") or ""),
                        strictness=raw.get("strictness", "exact"), lists_as_model=bool(raw.get("lists_as_model", False)),
                        receipt_opens=_receipt_opens(row_id, raw))

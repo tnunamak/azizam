@@ -27037,22 +27037,9 @@ _RUN_RECEIPT_OWNERS: dict[str, "_RunReceiptOwner"] = {}
 
 
 class _RunReceiptOwner(ReceiptLifecycleOwner):
-    """A request receipt for a run. A handed-off owner is kept here so the run core can close it by request id.
+    """A request receipt for a run. A handed-off owner is kept here so the run core can close it by request id."""
 
-    With ``http_words`` the receipt closes with the words the image routes always wrote: ok, rejected or error by the
-    HTTP status of the answer (a closing the run core does is told by the job's outcome), and no terminal reason."""
-
-    def __init__(self, receipt: RouteReceipt, *, http_words: bool = False) -> None:
-        super().__init__(receipt, record_reason=not http_words)
-        self._http_words = http_words
-
-    def report(self, *, status: str, reason: str, http: int | None = None) -> None:
-        if self._http_words:
-            if http is not None:
-                status = "ok" if http < 400 else "rejected" if http < 500 else "error"
-            else:
-                status = {"succeeded": "ok", "failed": "error"}.get(status, status)
-        super().report(status=status, reason=reason)
+    short_names = False             # the receipt names the workflow without its intent prefix (row data, ``receipt_names``)
 
     def handoff(self) -> "_RunReceiptOwner":
         super().handoff()
@@ -27066,10 +27053,12 @@ def _open_row_receipt(auth: AuthContext, request_id: str, path: str, row: Any) -
     identity = auth.identity
     # The receipt's intent is the one the route's policy declares (row data), as the old routes recorded it; usage and
     # activity read their capability from it. A route that declares none records the generic run intent.
-    return _RunReceiptOwner(RouteReceipt(
+    owner = _RunReceiptOwner(RouteReceipt(
         protocol=row.receipt_protocol, intent=row_routes.route_intent(row, path), path=path, request_id=request_id,
         app_profile=plan_ref(identity), app_id=identity.app_id if identity else None,
-        api_key_name=identity.name if identity else None), http_words=row.receipt_words == "http")
+        api_key_name=identity.name if identity else None))
+    owner.short_names = row.receipt_names == "short"
+    return owner
 
 
 def _record_row_inputs(owner: _RunReceiptOwner, notes: Any) -> None:
@@ -27083,7 +27072,7 @@ def _name_row_receipt(owner: _RunReceiptOwner, workflow_id: str, record_revision
     receipt = owner.receipt
     version = None if record_revision is None else str(record_revision)
     name = workflow_id
-    if owner._http_words:
+    if owner.short_names:
         # The image routes named the workflow by what follows its intent, and its version was the contract's own.
         name = workflow_id.removeprefix(f"{receipt.intent}.")
         receipt.requested_workflow = name

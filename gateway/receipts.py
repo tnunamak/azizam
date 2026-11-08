@@ -824,10 +824,8 @@ class ReceiptLifecycleOwner:
         checkpoint: Callable[[RouteReceipt], object] | None = None,
         touch: Callable[[RouteReceipt], object] | None = None,
         heartbeat_s: float = HEARTBEAT_INTERVAL_S,
-        record_reason: bool = True,
     ) -> None:
         self.receipt = receipt
-        self._record_reason = record_reason
         default_persistence = begin is None
         # Delayed import avoids the receipt_store -> receipts import cycle and
         # keeps persistence ownership here rather than in each HTTP route.
@@ -886,8 +884,7 @@ class ReceiptLifecycleOwner:
         if self._closed:
             return
         self._closed = True
-        if self._record_reason:
-            self.receipt.metadata["terminal_reason"] = reason
+        self.receipt.metadata["terminal_reason"] = reason
         if self._on_terminal is not None:
             try:
                 self._on_terminal(self.receipt, reason)
