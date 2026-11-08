@@ -129,8 +129,11 @@ def _workflow_contract(workflow_id: str = "owner.sweep.demo", **changes: Any) ->
 
 
 def _saved_workflow(ctx: Ctx, revisions: int = 1) -> dict[str, Any]:
-    """Save the owner workflow the ``{workflow_id}`` routes name (as the owner), with ``revisions`` saved revisions."""
+    """Save the owner workflow the ``{workflow_id}`` routes name (as the owner), with ``revisions`` saved revisions. The
+    sweep calls a factory once per caller: a workflow an earlier call saved is used as it is."""
     created = ctx.owner.post("/admin/api/workflows", json={"contract": _workflow_contract()}, headers=csrf_for(ctx.owner))
+    if created.status_code == 409 and created.json()["error"]["code"] == "workflow_exists":
+        return {}
     assert created.status_code == 201, created.text
     for number in range(2, revisions + 1):
         edited = ctx.owner.put("/admin/api/workflows/owner.sweep.demo",
