@@ -4097,6 +4097,12 @@ async def _current_loaded_llm_target(
     *,
     enforce_gateway_policy: bool = True,
 ) -> tuple[CurrentLoadedLlmTarget | None, Response | None]:
+    """Resolve `current` to the first healthy, allowed backend that has a loaded model.
+
+    Candidates keep priority order. A healthy candidate that is refused (not an LLM
+    backend, operator availability override) or has no loaded model is skipped; the
+    first refusal is returned when no later candidate qualifies.
+    """
     active = await get_active_backend()
     if not active:
         return None, openai_error_response(
@@ -4105,25 +4111,41 @@ async def _current_loaded_llm_target(
             error_type="service_unavailable",
             code="current_model_unavailable",
         )
-    if active not in DERIVED.LLM_BACKEND_HOSTS:
-        return None, openai_error_response(
-            f"model 'current' requested, but active backend {active!r} is not an OpenAI-compatible LLM backend.",
-            status_code=503,
-            error_type="service_unavailable",
-            code="current_model_unavailable",
-        )
-    availability = (await asyncio.to_thread(_service_availability_response, active, service_label=active))
-    if availability is not None:
-        return None, availability
-
-    loaded_model = await current_llm_model_for_backend(active)
-    if not loaded_model:
-        return None, _current_model_unavailable_response(active)
-    return CurrentLoadedLlmTarget(
-        backend=active,
-        host=DERIVED.LLM_BACKEND_HOSTS[active],
-        model=loaded_model,
-    ), None
+    first_refusal: Response | None = None
+    remaining: list[str] = []
+    candidates = _llm_backend_candidates()
+    if active in candidates:
+        remaining = candidates[candidates.index(active) + 1:]
+    pending: list[str] = [active]
+    while pending or remaining:
+        if pending:
+            backend = pending.pop(0)
+        else:
+            backend = remaining.pop(0)
+            if not await check_service_health(backend):
+                continue
+        refusal: Response | None
+        if backend not in DERIVED.LLM_BACKEND_HOSTS:
+            refusal = openai_error_response(
+                f"model 'current' requested, but active backend {backend!r} is not an OpenAI-compatible LLM backend.",
+                status_code=503,
+                error_type="service_unavailable",
+                code="current_model_unavailable",
+            )
+        else:
+            refusal = await asyncio.to_thread(_service_availability_response, backend, service_label=backend)
+        if refusal is None:
+            loaded_model = await current_llm_model_for_backend(backend)
+            if loaded_model:
+                return CurrentLoadedLlmTarget(
+                    backend=backend,
+                    host=DERIVED.LLM_BACKEND_HOSTS[backend],
+                    model=loaded_model,
+                ), None
+            refusal = _current_model_unavailable_response(backend)
+        if first_refusal is None:
+            first_refusal = refusal
+    return None, first_refusal
 
 
 async def refresh_openai_model_aliases() -> int:
