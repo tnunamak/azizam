@@ -131,12 +131,11 @@ def test_a_bundled_workflow_runs_through_the_core_and_the_engine_gets_the_adapte
     assert {c.split()[1] for c in engine.calls} <= {"/prompt", "/history/p1", "/view", "/ws", "/queue"}
 
 
-@pytest.mark.parametrize("workflow_id", ["face-likeness", "mesh.generate.trellis-2"])
+@pytest.mark.parametrize("workflow_id", ["image.analyze.face-likeness", "mesh.generate.trellis-2", "image.edit.image-identity"])
 def test_a_binding_kind_without_a_registered_adapter_is_unavailable_and_calls_no_engine(world, workflow_id):  # W4
     engine = FakeGraphEngine(manifest_of(IMAGE_ID), png_bytes((9, 9, 9)), "image/png", "out.png")
     serve_engine(world, engine)
     response = call("post", f"/gateway/v1/workflows/{workflow_id}/run", json={"inputs": {}},
                     headers={"Prefer": "wait=5"})
-    assert response.status_code in (409, 422, 503), response.text
-    assert response.json()["error"]["code"] in ("binding_unavailable", "invalid_inputs"), response.text
+    assert (response.status_code, response.json()["error"]["code"]) == (503, "binding_unavailable"), response.text
     assert engine.calls == []
