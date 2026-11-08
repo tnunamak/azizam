@@ -26836,8 +26836,10 @@ def _workflow_run_response(result: Any, *, status_code: int | None = None) -> Re
 
 def _new_row_spool() -> request_spool.FileRequestSpool:
     limits = _WORKFLOW_RUN_PORT.result_limits()
+    # The bytes decide a file's type, as for every other upload: the declared type never makes a file something it is not.
     return request_spool.FileRequestSpool(
-        _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(limits, "max_asset_bytes", 256 * 1024 * 1024))
+        _WORKFLOW_RUN_SPOOL_ROOT, max_bytes=getattr(limits, "max_asset_bytes", 256 * 1024 * 1024),
+        measure=lambda head, _declared: media_inputs.measure(head).media_type)
 
 
 # What the mounted frontend rows read from this module (gateway/row_routes.py).
