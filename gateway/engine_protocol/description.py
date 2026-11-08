@@ -154,12 +154,23 @@ class JobSpec:
 
 
 @dataclass(frozen=True)
+class Poll:
+    """The cadence of status checks for a run: the ``ramp_s`` gaps first (0 is an immediate check), then ``interval_s``.
+    ``max_polls`` None leaves the deployment's wait budget as the only bound."""
+
+    ramp_s: tuple[float, ...]
+    interval_s: float
+    max_polls: int | None = None
+
+
+@dataclass(frozen=True)
 class Operation:
     name: str
     op_class: str                # inventory | generate | control
     request: RequestSpec | None = None
     response: ResponseSpec | None = None
     job: JobSpec | None = None
+    poll: Poll | None = None     # set exactly on a run operation (an adapter operation the workflow contract's intent names)
 
 
 @dataclass(frozen=True)
@@ -401,13 +412,28 @@ class _Compiler:
 
     # --- operations ----------------------------------------------------------------------------
 
+    def _poll(self, op: dict, place: str) -> Poll | None:
+        """A run operation must say how it is polled; any other operation must not."""
+        spec = op.get("poll")
+        if not op.get("run"):
+            if spec is not None:
+                self.bad(place, "'poll' belongs to a run operation (set 'run: true')")
+            return None
+        if spec is None:
+            self.bad(place, "a run operation must declare 'poll'")
+            return None
+        return Poll(tuple(float(gap) for gap in spec["ramp_s"]), float(spec["interval_s"]), spec.get("max_polls"))
+
     def _operation(self, name: str, op: dict, executor: str) -> Operation | None:
         place = f"operations.{name}"
         has = [key for key in ("request", "job") if key in op]
+        poll = self._poll(op, place)
         if executor.startswith("adapter:"):
             if has or "response" in op:
                 self.bad(place, f"an adapter executor declares names only: the adapter owns the wire, so '{(has or ['response'])[0]}' is not allowed")
-            return Operation(name, op["class"])
+            return Operation(name, op["class"], poll=poll)
+        if op.get("run") or "poll" in op:
+            self.bad(place, "only a reviewed adapter runs a workflow: 'run' and 'poll' are not allowed on an http-v1 operation")
         if "request" in op and "job" in op:
             self.bad(place, "declare either 'request' or 'job', not both")
             return None

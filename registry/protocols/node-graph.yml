@@ -11,7 +11,8 @@
 # there is refused when the workflow is saved. `inputs_via: map` says inputs reach
 # the engine only through the binding's input map. `result_selectors` is the
 # selector form a binding of this engine accepts: each named result says which node of the graph made it and
-# which file list of that node's history entry holds it (gateway/output_selectors.py).
+# which file list of that node's history entry holds it (gateway/output_selectors.py). `result_processing` lists,
+# in order, the reviewed stages the adapter runs on a round's files before the result is stored.
 protocol_version: 1
 id: node-graph
 title: Node-graph prompt engine
@@ -29,6 +30,7 @@ binding_fields:
   edge_only_inputs: {kind: input_list}
   route_bound_inputs: {kind: input_list}
   mask_to_source_alpha: {kind: boolean}
+  result_processing: {kind: enum_list, values: [source_alpha_mask, post_composite_mask, background_fallback, offset_inpaint]}
 result_selectors:
   version: 1
   identity: [node, key, from]
@@ -91,3 +93,11 @@ operations:
   graph.delete_history: {class: control}
   graph.stats: {class: inventory}
   graph.free: {class: control}
+  # Run operations: the workflow contract's intent names one. `poll` is how the gateway asks whether the run finished:
+  # the `ramp_s` gaps first (0 is an immediate check), then every `interval_s`; `max_polls` null leaves the deployment's
+  # wait budget as the bound. Each operation keeps the cadence its routes have always used.
+  image.generate: {class: generate, run: true, poll: {ramp_s: [0, 0.05, 0.1, 0.2, 0.4], interval_s: 0.5, max_polls: null}}
+  image.edit: {class: generate, run: true, poll: {ramp_s: [0, 0.05, 0.1, 0.2, 0.4], interval_s: 0.5, max_polls: null}}
+  audio.generate: {class: generate, run: true, poll: {ramp_s: [], interval_s: 2.0, max_polls: 600}}
+  video.generate: {class: generate, run: true, poll: {ramp_s: [], interval_s: 5.0, max_polls: null}}
+  video.edit: {class: generate, run: true, poll: {ramp_s: [], interval_s: 5.0, max_polls: null}}
