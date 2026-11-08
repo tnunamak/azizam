@@ -14715,10 +14715,14 @@ async def _current_loaded_llm_model_ids(
     Metadata uses the identity observed here, without another loaded-state read.
     Its declaration matching must not expand the availability ids.
     """
-    try:
-        active = active_backend or await get_active_backend()
-    except Exception:
-        active = None
+    active = None
+    if metadata_ids is not None:
+        # Only metadata needs the active backend; the id set comes from every
+        # path-identity backend, so plain id reads skip the health probe.
+        try:
+            active = active_backend or await get_active_backend()
+        except Exception:
+            active = None
 
     ids: set[str] = set()
     loaded_paths: dict[str, str] = {}
@@ -29882,11 +29886,9 @@ async def _ollama_loaded_model_summaries(
     if (await asyncio.to_thread(_litellm_runtime_config)).enabled:
         return []
 
-    try:
-        active = await get_active_backend()
-    except Exception:
-        active = None
-    loaded_ids = await _current_loaded_llm_model_ids(active)
+    # The ids come from every path-identity backend, so no single backend owns
+    # them; `/api/ps` reports names and sizes only.
+    loaded_ids = await _current_loaded_llm_model_ids()
 
     summaries: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -29897,10 +29899,8 @@ async def _ollama_loaded_model_summaries(
         entry: dict[str, Any] = {
             "id": name,
             "object": "model",
-            "owned_by": active or "azizam",
             "created": _entry_created_ts(loaded_id if loaded_id.startswith("/") else None),
             "azizam_loaded": True,
-            "azizam_backend": active or "",
         }
         if loaded_id.startswith("/"):
             try:
