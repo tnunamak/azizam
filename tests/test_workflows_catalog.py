@@ -19,9 +19,9 @@ from gateway.capabilities import Capability, unavailable_capability
 from gateway.discovery import WorkflowRegistry
 from gateway.user_runtime import UserPortalError
 from gateway.workflow_openapi import augment_openapi
+from tests.support.registry_provider import provider_of
 from tests.support.workflow_docs import STANDARD_FACTS
 from gateway.workflows_catalog import (
-from tests.support.registry_provider import provider_of
     _workflow_description,
     build_workflows_catalog,
     create_workflows_catalog_router,
