@@ -297,6 +297,9 @@ def graph_selector_cardinality(selector: Mapping[str, str]) -> tuple[int, int | 
 # ---------------------------------------------------------------------------
 
 
+UPLOAD_PATH = "/upload/image"
+
+
 class InputRefused(ProtocolError):
     """The typed inputs do not satisfy the manifest. ``param`` is the input's name."""
 
@@ -402,7 +405,7 @@ class GraphSession:
             raise failure(error) from error
 
     async def upload(self, files: Mapping[str, Any], *, headers: Any = UNSET) -> WireReply:
-        return await self._send(self.client.post, "/upload/image", want_text=True, **supplied(headers=headers, files=files))
+        return await self._send(self.client.post, UPLOAD_PATH, want_text=True, **supplied(headers=headers, files=files))
 
     async def cancel(self, prompt_id: str, *, headers: Any = UNSET, timeout: Any = UNSET) -> WireReply:
         return await self._send(self.client.post, f"/api/jobs/{prompt_id}/cancel",
@@ -528,7 +531,7 @@ class NodeGraphAdapter:
     async def stage_input(self, conn: Connection, *, filename: str, data: bytes, media_type: str) -> str:
         """Hand one input file to the engine and return the name the engine holds it under, for the run's body."""
         async with self._use(conn, None) as session:
-            reply = await session.upload({"image": (filename, data, media_type)})
+            reply = await session.upload({UPLOAD_PATH.rpartition("/")[2]: (filename, data, media_type)})  # the form field is the path's last segment
         name = reply.json().get("name") if reply.status == 200 else None
         if not isinstance(name, str) or not name:
             raise UpstreamError(reply.status, "The engine did not take the input file.")
