@@ -1,5 +1,6 @@
 import asyncio, json
-from tests.test_adapter_differential_s7_mesh_rows import *  # noqa
+import tests.test_adapter_differential_s7_mesh_rows as m
+SYNC,ASYNC,JOBS,form,job_id_of,run=m.SYNC,m.ASYNC,m.JOBS,m.form,m.job_id_of,m.run
 from tests.test_adapter_differential_s7_mesh_rows import rig  # noqa
 
 def test_x(rig):
