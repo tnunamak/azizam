@@ -160,6 +160,25 @@ def test_publish_state_and_delete_are_visible_in_the_listing(api):  # rows 2, 4,
     assert api.get(f"/admin/api/workflows/{ID}").json()["workflow"]["incarnation"] != incarnation
 
 
+def test_a_bundled_workflow_unpublishes_and_publishes_again_through_the_owner_api(api):  # row 2 for a bundled id
+    def detail():
+        return api.get(f"/admin/api/workflows/{BUNDLED_ID}").json()["workflow"]
+
+    def publish(value):
+        return api.post(f"/admin/api/workflows/{BUNDLED_ID}/publish", json={"published": value},
+                        headers={"If-Match": os_n(api)})
+
+    assert detail()["published"] is True
+    off = publish(False)
+    assert off.status_code == 200, off.json()
+    assert detail()["published"] is False
+    row = next(r for r in api.get("/admin/api/workflows").json()["workflows"] if r["id"] == BUNDLED_ID)
+    assert row["published"] is False
+    on = publish(True)
+    assert on.status_code == 200, on.json()
+    assert detail()["published"] is True
+
+
 def test_delete_of_a_bundled_id_is_409_id_is_bundled(api):
     response = api.delete(f"/admin/api/workflows/{BUNDLED_ID}", headers={"If-Match": os_n(api)})
     assert response.status_code == 409 and response.json()["error"]["code"] == "id_is_bundled"
