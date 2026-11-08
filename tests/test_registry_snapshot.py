@@ -380,7 +380,7 @@ def test_the_write_time_name_check_reads_the_dynamic_aliases_as_the_snapshot_doe
     aliases = {"decisions": {"engines": {"oracle-decider": {"service": "decisions", "model": "oracle-decider-v1"}},
                              "stable": {"decide": ["oracle-decider"]}}}
     monkeypatch.setattr(service_registry, "_dynamic_model_aliases", lambda: aliases)
-    assert name_clashes(service_registry.registry_name_pairs({"services": services}, bundled=())) == []
+    assert not name_clashes(service_registry.registry_name_pairs({"services": services}, bundled=()))
     elsewhere = {"decisions": {**aliases["decisions"], "engines": {"oracle-decider": {"service": "other", "model": "m"}}}}
     monkeypatch.setattr(service_registry, "_dynamic_model_aliases", lambda: elsewhere)
     assert name_clashes(service_registry.registry_name_pairs({"services": services}, bundled=()))
