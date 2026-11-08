@@ -1,11 +1,12 @@
 // "Choose from Library" on a media input. The Library's download route answers
 // with a short-lived signed link, not the picture, so a pick must read the file
 // from that link and the request must carry the picture's own bytes.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { PICTURE_ITEM, RECORDING_ITEM, stubbedLibrary } from "../../../tests/helpers/library-stub";
 import { MediaInput } from "./media-input";
+import { LibraryPicker } from "./library-picker";
 
 const ID = `img_${"a".repeat(64)}`;
 const SIGNED = "http://gateway.test/v1/assets/signed-picture";
@@ -103,6 +104,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
 });
 
 function FileHarness({ onFile }: { onFile: (file: File | null) => void }) {
@@ -563,7 +565,7 @@ const memo = (letter: string, prompt: string, daysAgo: number) => ({
   createdAt: NOW_S - daysAgo * DAY,
 });
 
-test("audio is a list of rows, each with the icon, the whole title, the length and the date", async () => {
+test("audio is a list of rows, each with the icon, the whole title and length under a day heading", async () => {
   const sunday = memo("c", "Voice memo: groceries for Sunday dinner, and the long list of things to do before the guests arrive", 2);
   const monday = memo("d", "Voice memo: groceries for Monday lunch", 4);
   const library = stubbedLibrary([sunday, monday]);
@@ -579,7 +581,8 @@ test("audio is a list of rows, each with the icon, the whole title, the length a
     expect(row.querySelector("svg")).not.toBeNull();
     expect(row.querySelector("img, video")).toBeNull();
     expect(row.textContent).toContain("1:23");
-    expect(row.textContent).toMatch(/\b[A-Z][a-z]{2} \d{1,2}\b/);
+    expect(row.textContent).not.toMatch(/\b[A-Z][a-z]{2} \d{1,2}\b/);
+    expect(row.closest("section")?.querySelector("h3")).not.toBeNull();
     const title = row.querySelector("span.line-clamp-2")!;
     expect(title.getAttribute("title")).toBe(row.getAttribute("aria-label"));
   }
@@ -1181,4 +1184,64 @@ test("a click on the pending Remove from somewhere else does end the pick", asyn
   await settle();
   // Remove told the screen it holds nothing, and no file ever arrived.
   expect(onFile.mock.calls.every(([file]) => file === null)).toBe(true);
+});
+
+const PICKER_NOW = new Date(2026, 9, 26, 12);
+
+function datedPicker(kind: "image" | "audio") {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(PICKER_NOW);
+  const assets = [
+    { asset_id: "today", prompt: "Teal today", created_at: new Date(2026, 9, 26, 10).getTime() },
+    { asset_id: "yesterday", prompt: "Amber yesterday", created_at: new Date(2026, 9, 25, 10).getTime() },
+    { asset_id: "undated", prompt: "Teal undated", created_at: null },
+  ].map((asset) => ({
+    ...asset, kind, media_type: kind === "image" ? "image/png" : "audio/wav",
+    duration_s: 83, download_url: SIGNED, thumbnail_url: THUMB,
+  }));
+  vi.stubGlobal("fetch", vi.fn(async () => reply(JSON.stringify({ assets }), "application/json")));
+  return <LibraryPicker open onOpenChange={() => {}} kind={kind} onPick={() => {}} />;
+}
+
+test.each(["image", "audio"] as const)("the %s picker groups the right items under named day sections", async (kind) => {
+  render(datedPicker(kind));
+  await screen.findByRole("button", { name: "Teal today" });
+  for (const [heading, title] of [
+    ["Today", "Teal today"], ["Yesterday", "Amber yesterday"], ["Undated", "Teal undated"],
+  ]) {
+    const section = screen.getByRole("region", { name: heading });
+    expect(within(section).getByRole("heading", { level: 3, name: heading })).toBeTruthy();
+    const list = within(section).getByRole("list");
+    expect(within(list).getAllByRole("button")).toHaveLength(1);
+    const item = within(list).getByRole("button", { name: title });
+    expect(list.className).toContain(kind === "audio" ? "flex-col" : "grid-cols-3");
+    if (kind === "audio") {
+      expect(item.textContent).toContain("1:23");
+      expect(item.textContent).not.toContain("Oct 26");
+      expect(item.textContent).not.toContain("Oct 25");
+    }
+  }
+});
+
+test("picker search keeps only the matching day headings and their items", async () => {
+  render(datedPicker("image"));
+  await screen.findByRole("button", { name: "Teal today" });
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Amber" } });
+  expect(screen.queryByRole("region", { name: "Today" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Undated" })).toBeNull();
+  const section = screen.getByRole("region", { name: "Yesterday" });
+  expect(within(section).getByRole("button", { name: "Amber yesterday" })).toBeTruthy();
+  expect(within(section).getAllByRole("listitem")).toHaveLength(1);
+});
+
+test("a Library with no dates at all shows its items without any day heading", async () => {
+  const assets = ["Teal one", "Amber two"].map((prompt, index) => ({
+    asset_id: `undated-${index}`, prompt, kind: "image", media_type: "image/png", created_at: null,
+    download_url: SIGNED, thumbnail_url: THUMB,
+  }));
+  vi.stubGlobal("fetch", vi.fn(async () => reply(JSON.stringify({ assets }), "application/json")));
+  render(<LibraryPicker open onOpenChange={() => {}} kind="image" onPick={() => {}} />);
+  await screen.findByRole("button", { name: "Teal one" });
+  expect(screen.getByRole("button", { name: "Amber two" })).toBeTruthy();
+  expect(screen.queryByRole("heading", { level: 3 })).toBeNull();
 });

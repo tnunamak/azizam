@@ -299,13 +299,15 @@ async function openTranscribe(page: Page, viewport: { width: number; height: num
 }
 
 /**
- * Audio is a list, one row per clip: the icon, the whole title (up to two lines, never cut to one), the length and the
- * date. Two clips whose titles start alike can be told apart, and a long title is shown in full.
+ * Audio is a list, one row per clip under a heading for the day it was made: the icon, the whole title (up to two
+ * lines, never cut to one) and the length. Two clips whose titles start alike can be told apart, and a long title is
+ * shown in full.
  */
 async function audioList(page: Page) {
   const dialog = page.getByRole("dialog");
-  const list = dialog.locator("ul");
-  expect(await list.evaluate((el) => getComputedStyle(el).display)).toBe("flex");
+  for (const list of await dialog.locator("ul").all()) {
+    expect(await list.evaluate((el) => getComputedStyle(el).display)).toBe("flex");
+  }
   const rows = dialog.locator("ul button");
   await expect(rows).toHaveCount(RECORDINGS.length);
   const tops = new Set<number>();
@@ -323,7 +325,9 @@ async function audioList(page: Page) {
     expect(fit.clipped, recorded.prompt).toBe(false);
     expect(fit.lines).toBeLessThanOrEqual(2);
     await expect(row).toContainText("0:03");
-    await expect(row).toContainText(/\b[A-Z][a-z]{2} \d{1,2}\b/);
+    await expect(row.locator("xpath=ancestor::section[1]/h3")).toHaveText(
+      /^(Today|Yesterday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|[A-Z][a-z]{2} \d{1,2})$/,
+    );
     tops.add(Math.round((await row.boundingBox())!.y));
   }
   // One row per clip, one under another.

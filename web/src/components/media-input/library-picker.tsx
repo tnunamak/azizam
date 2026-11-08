@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Check, ImageIcon, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +24,7 @@ import {
   withArticle,
   type MediaTypes,
 } from "@/lib/media-pick";
-import { libraryDate, libraryTitle, type LibraryAsset, type LibraryPick } from "@/lib/library-file";
+import { groupLibraryByDay, libraryTitle, type LibraryAsset, type LibraryPick } from "@/lib/library-file";
 
 type LibraryPage = { assets?: LibraryAsset[]; next_cursor?: string | null };
 
@@ -54,6 +54,7 @@ export function LibraryPicker({
   currentId?: string | null;
   onPick: (pick: LibraryPick) => void;
 }) {
+  const headingPrefix = useId();
   const noun = nounOverride ?? mediaNoun(kind);
   const Icon = kindIcon(kind);
   // A picture or video is a grid of thumbnails; a kind with nothing to look at (audio) is a list of rows.
@@ -99,6 +100,10 @@ export function LibraryPicker({
   const shown = needle
     ? assets.filter((asset) => libraryTitle(asset, noun).toLowerCase().includes(needle))
     : assets;
+  const now = new Date();
+  const groups = groupLibraryByDay(shown, now);
+  // A Library with no dates at all gets no heading: one "Undated" over everything says nothing.
+  const dayHeadings = !(groups.length === 1 && groups[0].key === "undated");
 
   function pageUrl(cursor?: string | null) {
     const query = new URLSearchParams({
@@ -349,117 +354,131 @@ export function LibraryPicker({
               No {noun}s match “{query.trim()}”.
             </p>
           )}
-          {state === "ready" && shown.length > 0 && layout === "list" && (
-            <ul className="flex flex-col gap-1">
-              {shown.map((asset) => {
-                const title = libraryTitle(asset, noun);
-                const length =
-                  typeof asset.duration_s === "number" && asset.duration_s > 0
-                    ? formatDuration(asset.duration_s)
-                    : null;
-                const facts = [length, libraryDate(asset.created_at)].filter(Boolean).join(" · ");
+          {state === "ready" && shown.length > 0 && (
+            <div className="flex flex-col gap-4">
+              {groups.map((group, index) => {
+                const headingId = `${headingPrefix}-day-${index}`;
                 return (
-                  <li key={asset.asset_id} className="min-w-0">
-                    <button
-                      type="button"
-                      title={title}
-                      aria-label={title}
-                      aria-current={isCurrent(asset) ? "true" : undefined}
-                      onClick={(event) => {
-                        noteLibraryTileClick(event);
-                        onPick(asset);
-                      }}
-                      className={cn(
-                        "hover:bg-border rounded-media flex min-h-14 w-full cursor-pointer items-center gap-3 p-2 text-left transition-colors",
-                        FOCUS_RING,
-                      )}
-                    >
-                      <span className="rounded-media bg-muted/40 text-muted-foreground flex size-10 shrink-0 items-center justify-center border">
-                        <Icon aria-hidden="true" className="size-5" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span title={title} className="line-clamp-2 text-sm font-medium break-words">
-                          {title}
-                        </span>
-                        {facts && <span className="text-muted-foreground text-meta block">{facts}</span>}
-                      </span>
-                      {isCurrent(asset) && currentMark}
-                    </button>
-                  </li>
+                  <section key={`${group.key}-${index}`} aria-labelledby={dayHeadings ? headingId : undefined}>
+                    {dayHeadings && (
+                      <h3 id={headingId} className="text-muted-foreground text-meta mb-1.5 font-medium">
+                        {group.label}
+                      </h3>
+                    )}
+                    {layout === "list" ? (
+                      <ul className="flex flex-col gap-1">
+                        {group.items.map((asset) => {
+                          const title = libraryTitle(asset, noun);
+                          const length =
+                            typeof asset.duration_s === "number" && asset.duration_s > 0
+                              ? formatDuration(asset.duration_s)
+                              : null;
+                          return (
+                            <li key={asset.asset_id} className="min-w-0">
+                              <button
+                                type="button"
+                                title={title}
+                                aria-label={title}
+                                aria-current={isCurrent(asset) ? "true" : undefined}
+                                onClick={(event) => {
+                                  noteLibraryTileClick(event);
+                                  onPick(asset);
+                                }}
+                                className={cn(
+                                  "hover:bg-border rounded-media flex min-h-14 w-full cursor-pointer items-center gap-3 p-2 text-left transition-colors",
+                                  FOCUS_RING,
+                                )}
+                              >
+                                <span className="rounded-media bg-muted/40 text-muted-foreground flex size-10 shrink-0 items-center justify-center border">
+                                  <Icon aria-hidden="true" className="size-5" />
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span title={title} className="line-clamp-2 text-sm font-medium break-words">
+                                    {title}
+                                  </span>
+                                  {length && <span className="text-muted-foreground text-meta block">{length}</span>}
+                                </span>
+                                {isCurrent(asset) && currentMark}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : (
+                      <ul className="grid grid-cols-3 gap-x-2 gap-y-3 sm:grid-cols-4 lg:grid-cols-5">
+                        {group.items.map((asset) => {
+                          const title = libraryTitle(asset, noun);
+                          // The list's own signed links show the item; the download route
+                          // answers with a link, not an image.
+                          const link =
+                            (kind === "image" ? asset.thumbnail_url : null) ??
+                            asset.download_url;
+                          const src = link && !unshown.has(asset.asset_id) ? link : null;
+                          const length =
+                            typeof asset.duration_s === "number" && asset.duration_s > 0
+                              ? formatDuration(asset.duration_s)
+                              : null;
+                          return (
+                            <li key={asset.asset_id} className="min-w-0">
+                              <button
+                                type="button"
+                                title={title}
+                                aria-label={title}
+                                aria-current={isCurrent(asset) ? "true" : undefined}
+                                onClick={(event) => {
+                                  noteLibraryTileClick(event);
+                                  onPick(asset);
+                                }}
+                                className={cn("rounded-media group flex w-full cursor-pointer flex-col gap-1 text-left", FOCUS_RING)}
+                              >
+                                <span
+                                  className={cn(
+                                    "rounded-media bg-muted/40 relative flex aspect-square w-full items-center justify-center overflow-hidden border transition-colors",
+                                    isCurrent(asset) ? "border-primary border-2" : "group-hover:border-foreground/40",
+                                  )}
+                                >
+                                  {isCurrent(asset) && <span className="absolute top-1 right-1 z-10">{currentMark}</span>}
+                                  {!src ? (
+                                    <span className="text-muted-foreground flex flex-col items-center gap-1 p-1 text-xs">
+                                      <ImageIcon aria-hidden="true" className="size-6" />
+                                      Preview unavailable
+                                    </span>
+                                  ) : kind === "video" ? (
+                                    <video
+                                      src={src}
+                                      muted
+                                      preload="metadata"
+                                      className="size-full object-cover"
+                                      onError={() => markUnshown(asset.asset_id)}
+                                    />
+                                  ) : (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img
+                                      src={src}
+                                      alt=""
+                                      loading="lazy"
+                                      className="size-full object-cover"
+                                      onError={() => markUnshown(asset.asset_id)}
+                                    />
+                                  )}
+                                </span>
+                                {/* Inner padding, so the label's first letter is well clear of the focus ring around the tile. */}
+                                <span title={title} className="text-meta line-clamp-2 px-1.5 font-medium break-words">
+                                  {title}
+                                </span>
+                                {length && (
+                                  <span className="text-muted-foreground text-meta -mt-1 block px-1.5">{length}</span>
+                                )}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </section>
                 );
               })}
-            </ul>
-          )}
-          {state === "ready" && shown.length > 0 && layout === "grid" && (
-            <ul className="grid grid-cols-3 gap-x-2 gap-y-3 sm:grid-cols-4 lg:grid-cols-5">
-              {shown.map((asset) => {
-                const title = libraryTitle(asset, noun);
-                // The list's own signed links show the item; the download route
-                // answers with a link, not an image.
-                const link =
-                  (kind === "image" ? asset.thumbnail_url : null) ??
-                  asset.download_url;
-                const src = link && !unshown.has(asset.asset_id) ? link : null;
-                const length =
-                  typeof asset.duration_s === "number" && asset.duration_s > 0
-                    ? formatDuration(asset.duration_s)
-                    : null;
-                return (
-                  <li key={asset.asset_id} className="min-w-0">
-                    <button
-                      type="button"
-                      title={title}
-                      aria-label={title}
-                      aria-current={isCurrent(asset) ? "true" : undefined}
-                      onClick={(event) => {
-                        noteLibraryTileClick(event);
-                        onPick(asset);
-                      }}
-                      className={cn("rounded-media group flex w-full cursor-pointer flex-col gap-1 text-left", FOCUS_RING)}
-                    >
-                      <span
-                        className={cn(
-                          "rounded-media bg-muted/40 relative flex aspect-square w-full items-center justify-center overflow-hidden border transition-colors",
-                          isCurrent(asset) ? "border-primary border-2" : "group-hover:border-foreground/40",
-                        )}
-                      >
-                        {isCurrent(asset) && <span className="absolute top-1 right-1 z-10">{currentMark}</span>}
-                        {!src ? (
-                          <span className="text-muted-foreground flex flex-col items-center gap-1 p-1 text-xs">
-                            <ImageIcon aria-hidden="true" className="size-6" />
-                            Preview unavailable
-                          </span>
-                        ) : kind === "video" ? (
-                          <video
-                            src={src}
-                            muted
-                            preload="metadata"
-                            className="size-full object-cover"
-                            onError={() => markUnshown(asset.asset_id)}
-                          />
-                        ) : (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={src}
-                            alt=""
-                            loading="lazy"
-                            className="size-full object-cover"
-                            onError={() => markUnshown(asset.asset_id)}
-                          />
-                        )}
-                      </span>
-                      {/* Inner padding, so the label's first letter is well clear of the focus ring around the tile. */}
-                      <span title={title} className="text-meta line-clamp-2 px-1.5 font-medium break-words">
-                        {title}
-                      </span>
-                      {length && (
-                        <span className="text-muted-foreground text-meta -mt-1 block px-1.5">{length}</span>
-                      )}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+            </div>
           )}
           {state === "ready" && more === "error" && (
             <p role="alert" className="text-destructive text-xs">
