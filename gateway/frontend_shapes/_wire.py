@@ -82,9 +82,8 @@ async def split_form(request: Request) -> tuple[dict[str, Any], list[tuple[str, 
     is addressed below a top-level input is refused (``media_path_unsupported``, 422)."""
     try:
         form = await request.form()
-    except (MultiPartException, HTTPException, ValueError) as error:  # the parser's own error is a ValueError
-        return error_response(400, "The request body is not valid multipart/form-data", code="invalid_request_body",
-                              reason=str(getattr(error, "message", None) or getattr(error, "detail", "")))
+    except (MultiPartException, HTTPException, ValueError):  # the parser's own error is a ValueError
+        return error_response(400, "The request body is not valid multipart/form-data", code="invalid_request_body")
     fields: dict[str, Any] = {}
     uploads: list[tuple[str, Any]] = []
     for name, value in form.multi_items():

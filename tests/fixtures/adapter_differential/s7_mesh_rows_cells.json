@@ -6,14 +6,14 @@
    "content_type": "application/json",
    "json": {
     "content_url": "/gateway/v1/media/jobs/ID/content",
-    "created_at": 1794157231,
+    "created_at": 1794157281,
     "error": null,
     "id": "ID",
     "job_id": "ID",
     "object": "media.job",
     "poll_url": "/gateway/v1/media/jobs/ID",
     "status": "queued",
-    "updated_at": 1794157231,
+    "updated_at": 1794157281,
     "workflow_id": "mesh.generate.trellis-2"
    },
    "location": "/gateway/v1/media/jobs/ID",
@@ -57,14 +57,14 @@
    "content_type": "application/json",
    "json": {
     "content_url": "/gateway/v1/media/jobs/ID/content",
-    "created_at": 1794157231,
+    "created_at": 1794157281,
     "error": null,
     "id": "ID",
     "job_id": "ID",
     "object": "media.job",
     "poll_url": "/gateway/v1/media/jobs/ID",
     "status": "queued",
-    "updated_at": 1794157231,
+    "updated_at": 1794157281,
     "workflow_id": "mesh.generate.trellis-2"
    },
    "location": "/gateway/v1/media/jobs/ID",
@@ -103,14 +103,14 @@
    "content_type": "application/json",
    "json": {
     "content_url": "/gateway/v1/media/jobs/ID/content",
-    "created_at": 1794157231,
+    "created_at": 1794157281,
     "error": null,
     "id": "ID",
     "job_id": "ID",
     "object": "media.job",
     "poll_url": "/gateway/v1/media/jobs/ID",
     "status": "queued",
-    "updated_at": 1794157231,
+    "updated_at": 1794157281,
     "workflow_id": "mesh.generate.trellis-2"
    },
    "location": "/gateway/v1/media/jobs/ID",
@@ -165,14 +165,14 @@
    "content_type": "application/json",
    "json": {
     "content_url": "/gateway/v1/media/jobs/ID/content",
-    "created_at": 1794157232,
+    "created_at": 1794157281,
     "error": null,
     "id": "ID",
     "job_id": "ID",
     "object": "media.job",
     "poll_url": "/gateway/v1/media/jobs/ID",
     "status": "queued",
-    "updated_at": 1794157232,
+    "updated_at": 1794157281,
     "workflow_id": "mesh.generate.trellis-2"
    },
    "location": "/gateway/v1/media/jobs/ID",
@@ -211,14 +211,14 @@
    "content_type": "application/json",
    "json": {
     "content_url": "/gateway/v1/media/jobs/ID/content",
-    "created_at": 1794157232,
+    "created_at": 1794157282,
     "error": null,
     "id": "ID",
     "job_id": "ID",
     "object": "media.job",
     "poll_url": "/gateway/v1/media/jobs/ID",
     "status": "queued",
-    "updated_at": 1794157232,
+    "updated_at": 1794157282,
     "workflow_id": "mesh.generate.trellis-2"
    },
    "location": "/gateway/v1/media/jobs/ID",
@@ -263,14 +263,14 @@
    "content_type": "application/json",
    "json": {
     "content_url": "/gateway/v1/media/jobs/ID/content",
-    "created_at": 1794157232,
+    "created_at": 1794157282,
     "error": null,
     "id": "ID",
     "job_id": "ID",
     "object": "media.job",
     "poll_url": "/gateway/v1/media/jobs/ID",
     "status": "queued",
-    "updated_at": 1794157232,
+    "updated_at": 1794157282,
     "workflow_id": "mesh.generate.trellis-2"
    },
    "location": "/gateway/v1/media/jobs/ID",
@@ -674,12 +674,19 @@
    "status": 422
   },
   "not_multipart": {
-   "body": "SW50ZXJuYWwgU2VydmVyIEVycm9y",
-   "content_type": "text/plain; charset=utf-8",
-   "json": null,
+   "body": null,
+   "content_type": "application/json",
+   "json": {
+    "error": {
+     "code": "invalid_request_body",
+     "message": "The request body is not valid multipart/form-data",
+     "reason": "",
+     "type": "invalid_request_error"
+    }
+   },
    "location": null,
    "retry_after": null,
-   "status": 500
+   "status": 400
   },
   "seed_negative": {
    "body": null,

@@ -11,34 +11,52 @@ Oracle for the engine side: ``fixtures/adapter_differential/s7_mr_cells.json`` h
 same bytes from the new rows for the same input, so the engine saw no change.
 
 Cell map (new cell -> the ``mr`` cell it replaces) and every difference from the old route. The old route was one
-handler; the raw row is its closest wire (the answer is the GLB), the LocalAI row answers JSON that carries the model.
+handler with its own lease, receipts and wire. The raw row is its closest wire (the answer is the GLB); the LocalAI row
+answers JSON that carries the model. In every cell the engine saw the same request (the oracle test below). Differences
+that hold for every cell: (a) the old ``x-request-id`` and ``x-asset-id`` headers and the route's receipt rows are gone
+(the run core keeps a job row and a Library asset; no per-request receipt); (b) a failed run's message is the run core's
+generic text ("The job failed."), the status and code carry the reason (old: a sentence per case); (c) the job is a
+workflow job (``intent: workflow.run``, ``workflow_id`` names the workflow), not a mesh job with its own mode.
 
-* ``success_raw``, ``success_sync`` -> ``success``. Status 200 and the model bytes are the same on the raw row. The
-  LocalAI row answers JSON ``{created, data:[{b64_json}], ...}``. Gone: the ``x-request-id`` and ``x-asset-id`` headers
-  and the receipt row (the run core keeps a job row and Library asset; no request receipt for the route).
-* ``async_job`` -> the async part of ``admission_refusal`` / ``success``: ``Prefer: respond-async`` answers 202 with a job
-  object. Old: ``{id, object: media.job, request_id, status}`` plus ``Location``; new: the run core's job object. The job
-  ends ``succeeded`` with one asset, as before.
-* ``busy_lease`` -> ``admission_refusal``: the second request is refused while the first holds the pool. Status 503 and
-  ``Retry-After: 30`` are the same; the code is ``resource_unavailable`` and the message is the run core's generic text
-  (old: "The GPU is busy. Try again shortly."). Gone: the failed receipt row. New: a respond-async second request
-  creates a job that fails ``resource_unavailable`` (old route had no such job).
-* ``observer_refusal``, ``health_503``, ``service_problem`` -> no ``mr`` recording (the old unit tests held them). The
-  old route answered 503 with its own codes; the rows answer by category (see the cell facts).
-* ``engine_failure`` -> ``upstream_failure``: 502 ``upstream_error`` is the same; the message is the generic text.
-  The unreachable engine answers 502 ``upstream_unavailable`` (old: 502 ``upstream_error``).
-* ``wait_timeout`` -> ``wait_timeout``: the engine stalls past its configured time; status 504 ``upstream_timeout``.
-  The old sync form answered its timeout the same way; the job form fails the job ``upstream_timeout``.
-* ``cancel_running`` -> ``cancel_queued``: the cancel is accepted while the engine works, the job ends ``canceled``
-  and the pool is free afterwards. The old error text "Canceled by requester" is now the run core's.
-* ``cancel_finished`` -> ``cancel_finished``: the finished job refuses the cancel (409) in both worlds.
-* ``replay_same`` / ``replay_conflict`` -> ``replay_same`` / ``replay_conflict``: the old route had no replay (two
-  engine calls). The rows replay: the same key and body gives the first job and one engine call; the same key with a
-  different body is refused 409.
-* ``disconnect`` -> ``disconnect``: a respond-async client that leaves keeps its job (it finishes). A sync client that
-  leaves cancels nothing in the engine: the engine call finishes and the pool is free.
-* ``policy_refusal`` -> ``policy_refusal``: 403 ``MODEL_NOT_IN_PLAN``, no engine call (the same).
-* ``validation_refusal`` -> ``validation_refusal``: 400 per case (the same status; codes and messages are the shape's).
+* ``success_raw`` -> ``success``: status 200, ``model/gltf-binary`` and the exact model bytes, as before.
+  ``success_sync`` is the LocalAI row (new wire; no ``mr`` cell): 200 JSON ``{created, data: [{b64_json, media_type}]}``.
+* ``async_job`` -> the 202 part of ``admission_refusal`` and ``success``: ``Prefer: respond-async`` answers 202 with the
+  run core's job object (``poll_url``, ``content_url``, ``status: queued``) and ``Location``. Old: ``{id, object, request_id,
+  status: running}``. The job ends ``succeeded`` with one result, as before.
+* ``queued_behind`` (no ``mr`` cell): the run core runs one job at a time by default (``images.media_jobs.concurrency``),
+  so a second request waits in ``queued`` behind the first and then succeeds. Old: the second request was refused at once
+  (see ``busy_lease``). This is the main behaviour change of the move.
+* ``busy_lease`` -> ``admission_refusal``: with two runs allowed at once, the second is refused 503 with ``Retry-After: 30``
+  while the first holds the pool, as before. The code is ``resource_unavailable`` (old: same code, message "The GPU is
+  busy. Try again shortly."). New: a ``respond-async`` request creates a job that fails ``resource_unavailable`` with
+  ``retryable: true`` and category ``capacity`` (old route: no job). The first job still succeeds and the pool is free.
+* ``observer_refusal`` -> no ``mr`` cell: the observer answers 500, so capacity is unknown: 503 ``resource_unavailable``
+  with ``Retry-After: 30`` and no engine call.
+* ``health_503`` -> no ``mr`` cell: the engine's health read answers 503: 503 ``service_unavailable``, no engine call.
+* ``service_problem`` -> no ``mr`` cell: a disabled service, an absent service and a service with no pool policy each
+  answer 503 ``binding_unavailable`` before any job exists (``binding_problem``). Old: 503 ``service_unavailable``.
+* ``engine_failure`` -> ``upstream_failure``: the engine's 502 answers 502 ``upstream_error`` (same). An unreachable
+  engine answers 502 ``upstream_unavailable`` (old: ``upstream_error``). The job form ends ``failed`` with category
+  ``upstream``.
+* ``wait_timeout`` -> ``wait_timeout``: an engine that stalls past its configured time answers 504 ``upstream_timeout``
+  (same). The job form fails the job ``upstream_timeout`` with category ``timeout``.
+* ``cancel_running`` -> ``cancel_queued``: the cancel is accepted while the engine works (``cancel_requested`` true, job
+  still ``running``), a second cancel answers the same, the run ends ``canceled`` with no result, and the pool is free
+  afterwards. Same as before; the error text "Canceled by requester" is not carried.
+* ``cancel_finished`` -> ``cancel_finished``: a finished job refuses the cancel ("This job has already finished"),
+  twice, as before.
+* ``replay_same`` / ``replay_conflict`` -> the same names: old route had no replay (two engine calls). The rows replay: the
+  same key and body gives the first answer with one engine call; the same key with a different body answers 409
+  ``idempotency_conflict`` with one engine call.
+* ``disconnect`` -> ``disconnect``: a ``respond-async`` client that leaves keeps its job (it runs and succeeds). A sync
+  caller that walks away while the engine works does not stop the engine call; the pool stays held until the engine
+  returns and is then free. Same as before.
+* ``policy_refusal`` -> ``policy_refusal``: 403, no engine call. Old code ``MODEL_NOT_IN_PLAN``; new ``not_in_access_plan``
+  (the runtime route policy's own answer), with the plan details.
+* ``validation_refusal`` -> ``validation_refusal``: a negative seed answers 422 ``invalid_inputs`` (old 400); a request
+  without a picture answers 400 ``missing_input``; bytes that are not a picture answer 422 ``invalid_inputs`` (media type
+  not accepted; the bytes decide the type); a body that is not multipart answers 400 ``invalid_request_body`` (old 400).
+  No engine call in any of them.
 
 Nothing masks a status, a code, a header named below, an engine request or a byte. Only the multipart boundary, job ids,
 request ids and timestamps are replaced.
@@ -116,7 +134,7 @@ def _mask(value: Any) -> Any:
     text = json.dumps(value, sort_keys=True)
     text = re.sub(r"\b(?:mj|job|req)_[0-9a-f]{8,}\b", "ID", text)
     text = re.sub(r"\b(?:run|chatcmpl|wf|rid)[-_][0-9a-zA-Z-]{8,}\b", "ID", text)
-    text = re.sub(r'"created": \d+', '"created": 0', text)
+    text = re.sub(r'"(created|created_at|updated_at)": \d+', r'"\1": 0', text)
     return json.loads(text)
 
 
