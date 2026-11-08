@@ -62,6 +62,22 @@ def fact(name: str, value: Any, warning: str | None = None) -> None:
         facts.append((name, value, warning))
 
 
+def result_headers(names: Mapping[str, str], facts: Mapping[str, Any]) -> dict[str, str]:
+    """The headers a row shows of a run's facts: one per fact the run returned, under the name the row gives it."""
+    headers: dict[str, str] = {}
+    for key, header in names.items():
+        value = facts.get(key)
+        if value is None or value == [] or value == "":
+            continue
+        if isinstance(value, bool):
+            headers[header] = "true" if value else "false"
+        elif isinstance(value, (list, tuple)):
+            headers[header] = "; ".join(str(item) for item in value)
+        else:
+            headers[header] = str(value)
+    return headers
+
+
 def note(name: str, *, rejected: str | None = None, ignored: str | None = None) -> None:
     """The shape met input ``name``: accepted, or refused (``rejected`` is the reason), or ignored (``ignored``)."""
     notes = _NOTES.get(None)

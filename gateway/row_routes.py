@@ -213,6 +213,9 @@ async def _serve_open(deps: RowRouteDeps, row: FrontendRow, answered: FrontendRo
     response = await shape.to_response(outcome, answered, jobs=deps.jobs(), caller=caller, request=request)
     view = await asyncio.to_thread(_job_view, deps, outcome.job_id, caller)
     status, reason = _outcome(view, waited=answered.mode != "job")
+    if view is not None and view.status == "succeeded" and row.result_receipt and deps.record_facts is not None:
+        kept = [(name, view.result_metadata[key], None) for key, name in row.result_receipt.items() if key in view.result_metadata]
+        deps.record_facts(owner, kept)
     owner.report(status=status, reason=reason)
     if view is not None and view.status == "succeeded" and answered.mode != "job":
         asset = next((ref.asset_id for ref in (view.results or ()) if ref.asset_id), None)

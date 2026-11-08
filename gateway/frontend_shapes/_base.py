@@ -248,7 +248,9 @@ class Shape:
             return _wire.error_response(504, "The job did not finish in time", kind="api_error", code=self.timeout_code)
         try:
             answer = {**(getattr(getattr(request, "state", None), "answer_form", None) or {}), "request": request}
-            return await self.render_success(view, jobs, caller, answer)
+            response = await self.render_success(view, jobs, caller, answer)
+            response.headers.update(_wire.result_headers(row.result_headers, {**view.result_metadata, **answer}))
+            return response
         except (JobNotFound, ResultUnavailable):
             return _wire.error_response(404, "The result is not available", code="result_unavailable")
 

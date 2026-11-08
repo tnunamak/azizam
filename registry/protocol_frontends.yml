@@ -902,6 +902,8 @@ frontends:
     mode: sync
     receipt_protocol: openai.images
     receipt_opens: before_policy
+    result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
+    result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
     lists_as_model: true
     selects: {match: {inputs: {prompt: {type: string}}, outputs: {media_type: "image/*"}}}
@@ -915,6 +917,8 @@ frontends:
     mode: sync
     receipt_protocol: openai.images
     receipt_opens: before_policy
+    result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
+    result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
     lists_as_model: true
     selects: {match: {inputs: {prompt: {type: string}, source_image: {media_type: "image/*"}}, outputs: {media_type: "image/*"}}}
@@ -928,6 +932,8 @@ frontends:
     mode: sync
     receipt_protocol: openai.images
     receipt_opens: before_policy
+    result_headers: {warnings: X-Proxy-Warning, rounds: X-Image-Rounds, returned: X-Image-Returned, size_adjusted: X-Azizam-Size-Adjusted, models_freed: X-ComfyUI-Models-Freed, background_removal: X-Image-Background-Removal, background_removal_source: X-Image-Background-Removal-Source}
+    result_receipt: {models_freed: comfyui_models_freed_for_vram}
     strictness: exact
     selects: {match: {inputs: {source_image: {media_type: "image/*"}}, outputs: {media_type: "image/*"}}}
     routes:

@@ -227,26 +227,11 @@ class OpenAIImagesJson(Shape):
             items.append(item)
         body: dict[str, Any] = {"created": view.created_at_s, "data": items}
         body.update({name: value for name, value in (answer or {}).items() if name in ECHOED})
-        return JSONResponse(body, headers=result_headers(view.result_metadata, answer or {}))
+        return JSONResponse(body)
 
 
-# The answer fields that repeat the request, and the headers the result's facts become (name: metadata key).
+# The answer fields that repeat the request.
 ECHOED = ("output_format", "background", "quality", "size")
-
-
-def result_headers(metadata: Mapping[str, Any], answer: Mapping[str, Any]) -> dict[str, str]:
-    """The response headers for the facts the run returned (rounds, files, warnings) and the size note of the request."""
-    headers: dict[str, str] = {}
-    warnings = metadata.get("warnings")
-    if warnings:
-        headers["X-Proxy-Warning"] = "; ".join(str(w) for w in warnings)
-    if "rounds" in metadata:
-        headers["X-Image-Rounds"] = str(metadata["rounds"])
-    if "returned" in metadata:
-        headers["X-Image-Returned"] = str(metadata["returned"])
-    if answer.get("size_adjusted"):
-        headers["X-Azizam-Size-Adjusted"] = str(answer["size_adjusted"])
-    return headers
 
 
 IMAGE_PARTS = ("image[]", "image", "images")      # the file parts that carry the pictures to change
