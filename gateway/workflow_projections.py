@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from gateway.discovery import WorkflowRecord, summarize_catalog, summarize_workflow
-from gateway.manifests import ManifestIdentity, accepts_of
+from gateway.manifests import Provenance, accepts_of, manifest_identity
 from gateway.output_selectors import effective_count
 from gateway.result_bundle import ResultLimits
 from gateway.workflow_policy import PolicyFacts
@@ -27,13 +27,13 @@ BINDING_UNKNOWN = "binding_unknown"
 RUN_PATH = "/gateway/v1/workflows/{}/run"
 
 
-def record_of(entry: WorkflowEntry) -> WorkflowRecord:
-    """A plain ``WorkflowRecord`` view of an entry, for the builders that still read records (the OpenAPI schemas)."""
-    identity = ManifestIdentity(entry.id, str(entry.contract.get("version") or "") or None, entry.contract_digest,
-                                entry.provenance.trusted, entry.provenance.source)
+def record_of(entry: WorkflowEntry, source_path: str = "") -> WorkflowRecord:
+    """A plain ``WorkflowRecord`` view of an entry, for the builders that still read records (the OpenAPI schemas). Its
+    identity is the manifest identity receipts record, not the execution digest."""
+    identity = manifest_identity(_thaw(entry.contract), Provenance(entry.provenance.trusted, entry.provenance.source))
     facts = None if entry.facts is None else PolicyFacts(
         entry.facts.exposure, entry.facts.trust_tier, entry.facts.resource_tier, entry.facts.resource_class, tuple(entry.facts.tags))
-    return WorkflowRecord(manifest=_thaw(entry.contract), identity=identity, source_path=Path(entry.provenance.source or ""),
+    return WorkflowRecord(manifest=_thaw(entry.contract), identity=identity, source_path=Path(source_path),
                           facts=facts)
 
 
@@ -69,7 +69,7 @@ class SnapshotRegistry:
     workflows (5.9: an unpublished workflow is the owner's alone)."""
 
     def __init__(self, snapshot: RegistrySnapshot, *, published_only: bool = False) -> None:
-        self._records = {wid: record_of(entry) for wid, entry in sorted(snapshot.workflows.items())
+        self._records = {wid: record_of(entry, snapshot.source_paths.get(wid, "")) for wid, entry in sorted(snapshot.workflows.items())
                          if entry.published or not published_only}
 
     def records(self) -> list[WorkflowRecord]:

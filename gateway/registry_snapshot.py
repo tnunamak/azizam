@@ -49,6 +49,7 @@ from gateway.workflow_runtime_types import (
 ROOT = Path(__file__).resolve().parent.parent
 FRONTENDS_PATH = ROOT / "registry" / "protocol_frontends.yml"
 BUNDLED_STATE = "active"
+BUNDLED_INCARNATION = "bundled"
 # The stable alias tables of the model-alias config section: operation -> {stable: {name: target}, openai: [{match, to}]}.
 _GLOB_CHARS = "*?["
 
@@ -229,7 +230,7 @@ def _entry(contract: Mapping[str, Any], *, facts: WorkflowFacts | None, provenan
 def _bundled_entry(record: WorkflowRecord, generation: int) -> WorkflowEntry:
     return _entry(record.manifest, facts=_facts_of(record.facts),
                   provenance=Provenance(record.identity.trusted, record.identity.source) if record.identity else BUNDLED_PROVENANCE,
-                  state=BUNDLED_STATE, published=True, incarnation="bundled", record_revision=generation, overrides=None)
+                  state=BUNDLED_STATE, published=True, incarnation=BUNDLED_INCARNATION, record_revision=generation, overrides=None)
 
 
 def _stored_facts(raw: Any) -> WorkflowFacts | None:
@@ -375,6 +376,8 @@ class Snapshot:
     frontends: Mapping[str, FrontendRow]
     names: SnapshotNames
     _intents: Mapping[str, tuple[WorkflowEntry, ...]] = field(repr=False, compare=False, default_factory=dict)
+    # Where a bundled workflow was loaded from, for the admin view only; never part of the digest or a decision.
+    source_paths: Mapping[str, str] = field(repr=False, compare=False, default_factory=dict)
 
     def get(self, workflow_id: str) -> WorkflowEntry | None:
         return self.workflows.get(workflow_id)
@@ -429,7 +432,9 @@ def build(document: Mapping[str, Any] | None, bundled: BundledRelease | Mapping[
         "names": sorted([name, owner.kind, owner.id] for name, owner in pairs),
     })
     return Snapshot(revision=generation, digest=snapshot_digest, workflows=ordered, frontends=MappingProxyType(frontends),
-                    names=names, _intents=MappingProxyType({k: tuple(v) for k, v in intents.items()}))
+                    names=names, _intents=MappingProxyType({k: tuple(v) for k, v in intents.items()}),
+                    source_paths=MappingProxyType({wid: str(release.workflows[wid].source_path) for wid, entry in ordered.items()
+                                                   if entry.incarnation == BUNDLED_INCARNATION and wid in release.workflows}))
 
 
 def load_current(path: Any, *, model_aliases: Mapping[str, Any] | None = None) -> Snapshot:
