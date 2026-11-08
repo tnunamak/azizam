@@ -138,8 +138,17 @@ These aliases send requests to whichever local LLM is loaded. Inheritance follow
 `current` would serve at that moment. A listing that includes either alias makes one invocation of
 the selector `current` routes with: it walks the LLM backends in priority order and skips a backend
 that is unhealthy, refused by an operator override, or has no model loaded. A backend the selector
-skips lends no metadata. The loaded model maps to declarations of that backend only, through chat
-execution's activation resolver. A listing that includes neither alias makes no observation.
+skips lends no metadata. The loaded model maps to declarations of that backend only:
+
+- A backend with `loaded_model_identity: path` matches on the loaded file path, through chat
+  execution's activation resolver. Its served name is never used, because a name does not prove
+  which weights are loaded. If the loaded path is gone when the listing maps it, nothing matches.
+- Any other backend reports the id it serves. That id matches the records whose deployment asks the
+  engine for it: `upstream_model`, else `deployment`, else `model`, else `id`, the same rule that
+  builds the deployment. Ids compare without surrounding spaces and ignoring case, as model ids do
+  elsewhere in the gateway.
+
+A listing that includes neither alias makes no observation.
 
 Probe cost: the selector may health-check candidates, in priority order, up to the first servable
 one, and read the loaded model of that backend. Health answers are cached for about 10 seconds. The
@@ -157,8 +166,9 @@ The member catalog makes no observation and uses the conservative fallback.
   policy data, not from the alias name.
 - `context_window`: a value observed from the running engine wins. Without one, the aliases take the
   smallest `context_window` configured on the loaded model's records, ahead of static alias values.
-- When no backend is servable, no id of the served model is declared (for example `cydonia-24b`), or
-  the declaration match is ambiguous, the aliases keep their own declaration: text in, text out, no tags.
+- When no backend is servable, no id of the served model is declared (for example `cydonia-24b`), a
+  path backend's loaded path is gone or matches no record, or the declaration match is ambiguous, the
+  aliases keep their own declaration: text in, text out, no tags.
 - The inherited values win over the aliases' own `model_metadata`, which is only the fallback.
 - Clients may cache `/v1/models`. After a model swap, a client can see the previous model's values
   until it lists the models again.
