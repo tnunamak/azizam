@@ -77,7 +77,9 @@ class VideoEngine:
             pending = [[index, pid, {}, {}, []] for index, pid in enumerate(self.prompts)] if self.pending else []
             return httpx.Response(200, json={"queue_running": [], "queue_pending": pending})
         if request.method == "GET" and path == "/view":
-            return httpx.Response(200, content=self.clip, headers={"content-type": "video/mp4"})
+            # A stream, not content=: httpx reads a content= response at construction, and the gateway reads
+            # /view as a stream (media_fetch.read_bounded_media_response), as it does with a real engine.
+            return httpx.Response(200, stream=httpx.ByteStream(self.clip), headers={"content-type": "video/mp4"})
         if request.method == "POST" and path == "/upload/image":
             name = "uploaded.mp4" if b"video/mp4" in request.content else "uploaded.png"
             return httpx.Response(200, json={"name": name, "subfolder": "", "type": "input"})
