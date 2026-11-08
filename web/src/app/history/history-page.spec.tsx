@@ -249,6 +249,55 @@ describe("opening one request", () => {
     expect(mocks.receiptRetention).toHaveBeenCalledWith("req_a");
   });
 
+  it("refetches a receipt whose history entry arrives after the record", async () => {
+    mocks.requestHistoryPage.mockResolvedValue({ requests: [item("a", "chat-a")], next_cursor: null });
+    mocks.receiptRetention.mockResolvedValueOnce({ retention: [] });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /chat-a/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("The receipt for this request isn’t available.")).toBeVisible();
+    expect(await within(dialog).findByText(/^Kept the request and its reply until /, {}, { timeout: 2000 })).toBeVisible();
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(mocks.receiptRetention).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not poll a receipt whose first answer already has its history entry", async () => {
+    mocks.requestHistoryPage.mockResolvedValue({ requests: [item("a", "chat-a")], next_cursor: null });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /chat-a/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/^Kept the request and its reply until /)).toBeVisible();
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(mocks.receiptRetention).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops after fifteen receipt reads when the history entry never arrives", async () => {
+    mocks.requestHistoryPage.mockResolvedValue({ requests: [item("a", "chat-a")], next_cursor: null });
+    mocks.receiptRetention.mockResolvedValue({ retention: [] });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /chat-a/ }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(mocks.receiptRetention).toHaveBeenCalledTimes(15), { timeout: 10000 });
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(mocks.receiptRetention).toHaveBeenCalledTimes(15);
+    expect(within(dialog).getByText("The receipt for this request isn’t available.")).toBeVisible();
+    expect(within(dialog).queryByText(/^Kept the request/)).not.toBeInTheDocument();
+  }, 15000);
+
+  it("stops polling a kept request without a received part and does not claim a reply", async () => {
+    mocks.requestHistoryPage.mockResolvedValue({ requests: [item("a", "chat-a")], next_cursor: null });
+    mocks.receiptRetention.mockResolvedValue({
+      retention: [{ kind: "request_history", decision: "kept", reason: "kept", kept_until_ms: (NOW + 86_400) * 1000, parts: ["accepted"], limited_by: "member_choice" }],
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /chat-a/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/^Kept the request until /)).toBeVisible();
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(mocks.receiptRetention).toHaveBeenCalledTimes(1);
+    expect(within(dialog).queryByText(/^Kept the request and its reply until /)).not.toBeInTheDocument();
+  });
+
   it("keeps the raw record folded away under Technical details, with the app, route and headers", async () => {
     mocks.requestHistoryPage.mockResolvedValue({ requests: [item("a", "chat-a")], next_cursor: null });
     renderPage();
