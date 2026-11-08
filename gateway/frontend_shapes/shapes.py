@@ -11,6 +11,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, ClassVar
 
+from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 import json
@@ -235,6 +236,22 @@ class OpenAIImagesJson(Shape):
 ECHOED = ("output_format", "background", "quality", "size")
 
 
+MASKING: dict[str, Callable[[bytes, bytes], Any]] = {}    # the deployment's mask reading: "source_alpha": (picture, mask) -> (picture, mode) | Response
+
+
+class _Bytes:
+    """A file part whose content is already in memory (the picture a mask was folded into)."""
+
+    content_type = "image/png"
+
+    def __init__(self, filename: str | None, content: bytes) -> None:
+        self.filename, self._content = filename, content
+
+    async def read(self, size: int = -1) -> bytes:
+        block, self._content = (self._content, b"") if size < 0 else (self._content[:size], self._content[size:])
+        return block
+
+
 IMAGE_PARTS = ("image[]", "image", "images")      # the file parts that carry the pictures to change
 MASK_PART = "mask"
 SECOND_CHOICE = ".multi_image"                   # DEFAULT_WORKFLOWS key suffix: the default when several pictures arrive
@@ -301,6 +318,28 @@ class OpenAIImagesMultipart(OpenAIImagesJson):
 
     def check_count(self, count: int) -> Response | None:
         return None
+
+    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request
+                              ) -> list[tuple[str, Any]] | Response:
+        """A workflow whose binding asks for the mask in the source picture's alpha gets one picture and no mask part."""
+        masks = [upload for name, upload in uploads if name == MASK_PART]
+        compose = MASKING.get("source_alpha")
+        if not masks or compose is None or not any(b.binding.get("mask_to_source_alpha") for b in entry.bindings.values()):
+            return uploads
+        first = next((upload for name, upload in uploads if name in IMAGE_PARTS), None)
+        if first is None:
+            return uploads
+        made = compose(await first.read(), await masks[0].read())
+        if isinstance(made, Response):
+            _wire.note(MASK_PART, rejected="invalid_mask")
+            return made
+        content, mode = made
+        answer = getattr(request.state, "answer_form", None)
+        if isinstance(answer, dict):
+            answer["image_mask"] = "workflow"
+            answer["image_mask_source"] = mode
+        return [(name, _Bytes(first.filename, content) if upload is first else upload)
+                for name, upload in uploads if name != MASK_PART]
 
     def refine_target(self, target: str | None, *, named: bool, uploads: Sequence[tuple[str, Any]],
                       exists: Callable[[str], bool]) -> str | None:
@@ -383,6 +422,8 @@ class OpenAIImagesVariations(OpenAIImagesMultipart):
         return target
 
     def postcheck(self, entry: WorkflowEntry, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
+        # The wire has no workflow of its own: the receipt names the edit workflow it ran through.
+        _wire.fact("variations_delegated_workflow", entry.id.removeprefix(f"{entry.contract.get('intent')}."))
         return None
 
 

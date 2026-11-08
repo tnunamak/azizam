@@ -183,6 +183,10 @@ class Shape:
         refused = self.postcheck(chosen, fields, uploads)
         if refused is not None:
             return refused
+        prepared = await self.prepare_uploads(chosen, uploads, request)
+        if isinstance(prepared, Response):
+            return prepared
+        uploads = prepared
         mapping = self.file_inputs(chosen, [name for name, _ in uploads])
         if isinstance(mapping, Response):
             return mapping
@@ -221,6 +225,11 @@ class Shape:
     def postcheck(self, entry: WorkflowEntry, fields: Mapping[str, Any], uploads: Sequence[tuple[str, Any]]) -> Response | None:
         """Hook: refusals the wire made once the workflow is known."""
         return None
+
+    async def prepare_uploads(self, entry: WorkflowEntry, uploads: list[tuple[str, Any]], request: Request
+                              ) -> list[tuple[str, Any]] | Response:
+        """Hook: the file parts the run is given, once the workflow is known (a wire may fold one part into another)."""
+        return uploads
 
     def fill_inputs(self, entry: WorkflowEntry, inputs: dict[str, Any], wire: Mapping[str, Any]) -> dict[str, Any]:
         """Hook: a shape sets inputs the wire spells differently (``size`` as width and height)."""

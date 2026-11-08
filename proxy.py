@@ -26887,9 +26887,11 @@ class _AdaptiveBatching:
 
 
 def _graph_runner_batching(ctx: workflow_run.RunContext, adapter: Any):
-    """Rounds are sized from free memory for a workflow that takes a count of pictures; any other run is one round."""
+    """Rounds are sized from free memory for a workflow that takes a count of pictures or answers with pictures; any other run
+    is one round."""
     spec = ctx.pin.contract.get("inputs") or {}
-    return _AdaptiveBatching() if "batch_size" in spec else None
+    pictures = any(str((out or {}).get("media_type") or "").startswith("image/") for out in (ctx.pin.contract.get("outputs") or {}).values())
+    return _AdaptiveBatching() if "batch_size" in spec or pictures else None
 
 
 def _graph_binding_problem(binding: Any) -> str | None:
@@ -26955,6 +26957,15 @@ frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesMultipar
 frontend_wire_shapes.DEFAULT_WORKFLOWS[
     frontend_wire_shapes.OpenAIImagesMultipart.shape_id + frontend_wire_shapes.SECOND_CHOICE] = _image_multiref_edit_default_workflow
 frontend_wire_shapes.DEFAULT_WORKFLOWS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = _image_variations_default_workflow
+def _mask_into_source_alpha(image: bytes, mask: bytes) -> Any:
+    """The picture with the edit mask folded into its alpha (and the mask's mode), or the refusal of a bad picture or mask."""
+    context, error = _prepare_image_edit_mask_context(source_image_content=image, mask_content=mask)
+    if error is not None:
+        return error
+    return _apply_edit_mask_as_source_alpha(context), context.mask_mode
+
+
+frontend_wire_shapes.MASKING["source_alpha"] = _mask_into_source_alpha
 # What the variations wire sets in the workflow it runs: its fixed prompt, and the partial-denoise strength where declared.
 frontend_wire_shapes.FIXED_INPUTS[frontend_wire_shapes.OpenAIImagesVariations.shape_id] = lambda: {
     "prompt": IMAGE_VARIATIONS_PROMPT, "denoise": _image_variations_denoise()}
